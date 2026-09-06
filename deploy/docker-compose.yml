@@ -35,10 +35,13 @@ services:
       WEBAUTHN_ORIGIN: https://${DOMAIN}
       WEBAUTHN_RP_NAME: DA ERP
       ALLOW_DEMO_SEED: "false"
+      SEED_DEFAULT_LOCATIONS: "false"
+      MASTER_IMPORT_INITIAL_PASSWORD: ${MASTER_IMPORT_INITIAL_PASSWORD}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - uploads:/app/uploads
       - backups:/app/backups
+      - ./golive:/app/private/golive
     expose:
       - "8001"
 

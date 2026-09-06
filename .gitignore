@@ -106,3 +106,5 @@ credentials.json
 # deploy VPS
 /deploy/.env
 /deploy/backups/
+/deploy/golive/*
+!/deploy/golive/.gitkeep

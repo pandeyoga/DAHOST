@@ -88,7 +88,7 @@ if [ -d "$APP_DIR/.git" ]; then
 else
   git clone --branch "$BRANCH" --depth 1 "$REPO_URL" "$APP_DIR"
 fi
-mkdir -p "$APP_DIR/deploy/emergent_stub/emergentintegrations/llm/openai"
+mkdir -p "$APP_DIR/deploy/emergent_stub/emergentintegrations/llm/openai" "$APP_DIR/deploy/golive"
 cd "$APP_DIR"
 
 # tulis berkas hanya bila belum ada (atau REGEN=1) → versi di repo (bila ada) tidak ditimpa
@@ -147,7 +147,7 @@ EOF
 
 put deploy/Dockerfile.backend <<'EOF'
 # DA ERP backend — Python 3.11 (sama dengan lingkungan pengembangan).
-FROM python:3.11-slim
+FROM python:3.11-slim-bookworm
 
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 TZ=Asia/Jakarta
 
@@ -315,10 +315,13 @@ services:
       WEBAUTHN_ORIGIN: https://${DOMAIN}
       WEBAUTHN_RP_NAME: DA ERP
       ALLOW_DEMO_SEED: "false"
+      SEED_DEFAULT_LOCATIONS: "false"
+      MASTER_IMPORT_INITIAL_PASSWORD: ${MASTER_IMPORT_INITIAL_PASSWORD}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     volumes:
       - uploads:/app/uploads
       - backups:/app/backups
+      - ./golive:/app/private/golive
     expose:
       - "8001"
 
@@ -407,7 +410,7 @@ cp -f .env "$DEST/.env.last" && chmod 600 "$DEST/.env.last"
 find "$DEST" -name "*.archive.gz" -mtime +$KEEP_DAYS -delete
 echo "$(date '+%F %T') backup OK → $OUT ($(du -h "$OUT" | cut -f1))"
 EOF
-chmod +x deploy/update.sh deploy/backup.sh
+chmod +x deploy/update.sh deploy/backup.sh deploy/golive.sh 2>/dev/null || true
 
 # ───────────────────────────── 7. .env ────────────────────────────────────
 log "7/9 Berkas rahasia $ENV_FILE (tidak ditimpa bila sudah ada) — TANPA variabel Emergent"
@@ -415,12 +418,14 @@ if [ -f "$ENV_FILE" ]; then
   echo "Memakai $ENV_FILE yang sudah ada."
   sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|;s|^ACME_EMAIL=.*|ACME_EMAIL=$ACME_EMAIL|" "$ENV_FILE"
   grep -q '^ANTHROPIC_API_KEY=' "$ENV_FILE" || echo "ANTHROPIC_API_KEY=" >> "$ENV_FILE"
+  grep -q '^MASTER_IMPORT_INITIAL_PASSWORD=' "$ENV_FILE" || echo "MASTER_IMPORT_INITIAL_PASSWORD=Dewi@123" >> "$ENV_FILE"
 else
   {
     echo "DOMAIN=$DOMAIN"
     echo "ACME_EMAIL=$ACME_EMAIL"
     echo "DB_NAME=dahost_erp"
     echo "JWT_SECRET=$(openssl rand -hex 48)"
+    echo "MASTER_IMPORT_INITIAL_PASSWORD=Dewi@123"
     echo "ANTHROPIC_API_KEY="
   } > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
@@ -478,6 +483,11 @@ cat <<SUMMARY
    Backup manual  : bash $APP_DIR/deploy/backup.sh
    Restore        : bash $APP_DIR/deploy/backup.sh restore <berkas.archive.gz>
    Restart semua  : cd $APP_DIR/deploy && docker compose restart
+
+ DATA NYATA (go-live) — belum dimuat, dilakukan terpisah (lihat deploy/README_DEPLOY.md §5):
+   scp MASTER_DATA_DA_PERBAIKAN_2.xlsx root@$SERVER_IP:$APP_DIR/deploy/golive/
+   bash $APP_DIR/deploy/golive.sh prepare MASTER_DATA_DA_PERBAIKAN_2.xlsx
+   bash $APP_DIR/deploy/golive.sh check && bash $APP_DIR/deploy/golive.sh reset && bash $APP_DIR/deploy/golive.sh apply
 
  Fitur AI (opsional): isi ANTHROPIC_API_KEY di $ENV_FILE lalu
    cd $APP_DIR/deploy && docker compose up -d backend

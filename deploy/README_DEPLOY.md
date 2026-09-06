@@ -72,7 +72,39 @@ REGEN=1 bash /opt/dahost/deploy/install_vps.sh       # tulis ulang berkas deploy
 Volume Docker: `mongo_data` (database), `uploads` (`/app/uploads`), `backups` (`/app/backups`),
 `caddy_data` (sertifikat). `docker compose down` **tanpa** `-v` tidak menghapus data.
 
-## 4. Catatan
+## 4. Data nyata (go-live) — TIDAK otomatis
+
+Yang di-seed otomatis saat backend start hanya **konfigurasi**: superadmin, roles/permission, COA + posting
+profile, proses produksi, kategori produk, satuan. Data demo dimatikan (`ALLOW_DEMO_SEED=false`) dan lokasi
+bawaan `GED-*/ZNA-*` dimatikan (`SEED_DEFAULT_LOCATIONS=false`) sesuai keputusan owner.
+
+Data nyata (lokasi, karyawan, warna, kain, aksesoris, model, barang jadi, BOM, vendor, katalog, 25 user, dll.)
+dimuat dari **workbook Excel klien** lewat `scripts/import_master_template.py` — mengikuti
+`docs/GO_LIVE_RUNBOOK.md`. Berkas itu ada di `private/golive/` yang **di-gitignore**, jadi **tidak ikut ke
+GitHub/VPS** — harus diunggah manual:
+
+```bash
+# dari laptop (berkas sumber klien):
+scp MASTER_DATA_DA_PERBAIKAN_2.xlsx root@187.77.116.148:/opt/dahost/deploy/golive/
+
+# di VPS:
+cd /opt/dahost
+bash deploy/golive.sh prepare MASTER_DATA_DA_PERBAIKAN_2.xlsx   # susun workbook go-live (+ sheet DAFTAR_PERBAIKAN)
+bash deploy/golive.sh gate                                      # gate importir harus hijau
+bash deploy/golive.sh check                                     # dry-run → harus 0 kesalahan
+bash deploy/golive.sh reset                                     # kosongkan data demo (mongodump dulu, ketik HAPUS), restart backend
+bash deploy/golive.sh apply                                     # impor --apply 2× (idempoten)
+```
+Kalau workbook go-live sudah jadi (`MASTER_DATA_DA_GOLIVE.xlsx`), taruh langsung di `deploy/golive/` dan lewati
+`prepare`. Angka yang diharapkan pada impor pertama ada di `docs/GO_LIVE_RUNBOOK.md`
+(mis. 10_BOM 464 · 14_KATALOG_JUAL 628 · 17_USER 25). Sandi awal 25 akun: `MASTER_IMPORT_INITIAL_PASSWORD`
+di `deploy/.env` (bawaan `Dewi@123`, wajib ganti saat login pertama). Setelah impor: Portal Produksi →
+Costing → Terapkan HPP.
+
+Bila VPS sudah terpasang sebelum bagian ini ada: `bash deploy/update.sh` dulu (menambah env
+`SEED_DEFAULT_LOCATIONS`, mount `deploy/golive`, dan `mongodump` di image backend), lalu ikuti urutan di atas.
+
+## 5. Catatan
 
 * Folder `deploy/` ikut ter-version di repo DAHOST; `deploy/.env` dan `deploy/backups/` di-gitignore.
 * Skrip ini **belum dijalankan/diverifikasi** di VPS (sesuai permintaan). Bila build gagal, kirim 80 baris
