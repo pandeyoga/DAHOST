@@ -80,3 +80,29 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
+
+# Bootstrap cache = KEADAAN MESIN, bukan kode (temuan Session #26).
+# `.bootstrap_cache/fe.md5` yang ikut ter-commit membuat bootstrap MELEWATI
+# `yarn install` pada clone baru (hash-nya reproducible + node_modules template
+# sudah ada) ⇒ `@simplewebauthn/browser` tak terpasang ⇒ `yarn build` MERAH.
+# `admin_token.txt` juga JWT hidup — tidak boleh ikut ke repo.
+.bootstrap_cache/
+
+# Data review klien tidak boleh diterbitkan atau ikut commit baru.
+/private/
+/uploads/
+/backups/
+/data_import/client_package*/
+/frontend/public/downloads/REVIEW_DATA_CLIENT.xlsx
+/.tok
+*.log
+
+# deploy VPS
+/deploy/.env
+/deploy/backups/

@@ -1,15 +1,37 @@
 import * as React from "react"
 
 import { cn } from "@/lib/utils"
+import { ResponsiveTableWrapper } from "./responsive-table-wrapper"
 
-const Table = React.forwardRef(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
+/**
+ * Session #11.13 TD-015: Table is now wrapped in ResponsiveTableWrapper,
+ * which adds:
+ *   - Horizontal scroll on small viewports
+ *   - Scroll-shadow indicators (left/right) that auto-fade based on scroll position
+ *   - Optional sticky-first-column via `stickyFirstCol`
+ *
+ * Props:
+ *   - `stickyFirstCol` (bool) — sticky first column on horizontal scroll (default: false)
+ *   - `wrapperClassName` (string) — extra classes for the wrapper div
+ *   - `responsive` (bool) — disable wrapper entirely if false (default: true)
+ */
+const Table = React.forwardRef(({ className, stickyFirstCol = false, wrapperClassName, responsive = true, ...props }, ref) => {
+  const tableEl = (
     <table
       ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props} />
-  </div>
-))
+      className={cn("w-full caption-bottom text-sm min-w-max", className)}
+      {...props}
+    />
+  );
+  if (!responsive) {
+    return <div className="relative w-full overflow-auto">{tableEl}</div>;
+  }
+  return (
+    <ResponsiveTableWrapper stickyFirstCol={stickyFirstCol} className={wrapperClassName}>
+      {tableEl}
+    </ResponsiveTableWrapper>
+  );
+})
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef(({ className, ...props }, ref) => (

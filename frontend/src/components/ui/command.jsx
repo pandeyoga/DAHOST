@@ -1,5 +1,6 @@
 import * as React from "react"
 import { Command as CommandPrimitive } from "cmdk"
+import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Search } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -16,13 +17,20 @@ const Command = React.forwardRef(({ className, ...props }, ref) => (
 ))
 Command.displayName = CommandPrimitive.displayName
 
+// A11y polish (Session #11.13): Explicit hidden Title/Description for
+// CommandDialog so Radix never emits a "Missing Description or
+// aria-describedby" warning. Consumers can override with `title` / `description`.
 const CommandDialog = ({
   children,
+  title = "Command palette",
+  description = "Search for commands and modules",
   ...props
 }) => {
   return (
     <Dialog {...props}>
       <DialogContent className="overflow-hidden p-0">
+        <DialogPrimitive.Title className="sr-only">{title}</DialogPrimitive.Title>
+        <DialogPrimitive.Description className="sr-only">{description}</DialogPrimitive.Description>
         <Command
           className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5">
           {children}

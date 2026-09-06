@@ -43,19 +43,80 @@ const sheetVariants = cva(
   }
 )
 
-const SheetContent = React.forwardRef(({ side = "right", className, children, ...props }, ref) => (
-  <SheetPortal>
-    <SheetOverlay />
-    <SheetPrimitive.Content ref={ref} className={cn(sheetVariants({ side }), className)} {...props}>
-      <SheetPrimitive.Close
-        className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
-        <X className="h-4 w-4" />
-        <span className="sr-only">Close</span>
-      </SheetPrimitive.Close>
-      {children}
-    </SheetPrimitive.Content>
-  </SheetPortal>
-))
+// ─────────────────────────────────────────────────────────────────────────────
+// A11y polish (Session #11.13 — TD-A11y): auto-inject hidden Title/Description
+// when consumer omits them. Same pattern as DialogContent in dialog.jsx.
+// ─────────────────────────────────────────────────────────────────────────────
+function _hasSheetTitleChild(children) {
+  let found = false
+  React.Children.forEach(children, (child) => {
+    if (found) return
+    if (!React.isValidElement(child)) return
+    const dn = child.type?.displayName || child.type?.name || ""
+    if (dn === "SheetTitle" || dn === "Title") {
+      found = true
+      return
+    }
+    if (child.props?.children && _hasSheetTitleChild(child.props.children)) {
+      found = true
+    }
+  })
+  return found
+}
+
+function _hasSheetDescChild(children) {
+  let found = false
+  React.Children.forEach(children, (child) => {
+    if (found) return
+    if (!React.isValidElement(child)) return
+    const dn = child.type?.displayName || child.type?.name || ""
+    if (dn === "SheetDescription" || dn === "Description") {
+      found = true
+      return
+    }
+    if (child.props?.children && _hasSheetDescChild(child.props.children)) {
+      found = true
+    }
+  })
+  return found
+}
+
+const SheetContent = React.forwardRef(({ side = "right", className, children, "aria-describedby": ariaDescribedBy, "aria-labelledby": ariaLabelledBy, ...props }, ref) => {
+  const autoDescId = React.useId()
+  const autoTitleId = React.useId()
+  const hasDesc = React.useMemo(() => _hasSheetDescChild(children), [children])
+  const hasTitle = React.useMemo(() => _hasSheetTitleChild(children), [children])
+  const needsAutoDesc = !ariaDescribedBy && !hasDesc
+  const needsAutoTitle = !ariaLabelledBy && !hasTitle
+  return (
+    <SheetPortal>
+      <SheetOverlay />
+      <SheetPrimitive.Content
+        ref={ref}
+        aria-describedby={ariaDescribedBy || (needsAutoDesc ? autoDescId : undefined)}
+        aria-labelledby={ariaLabelledBy || (needsAutoTitle ? autoTitleId : undefined)}
+        className={cn(sheetVariants({ side }), className)}
+        {...props}>
+        <SheetPrimitive.Close
+          className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-secondary">
+          <X className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </SheetPrimitive.Close>
+        {needsAutoTitle && (
+          <SheetPrimitive.Title id={autoTitleId} className="sr-only">
+            Sheet
+          </SheetPrimitive.Title>
+        )}
+        {needsAutoDesc && (
+          <SheetPrimitive.Description id={autoDescId} className="sr-only">
+            Sheet content
+          </SheetPrimitive.Description>
+        )}
+        {children}
+      </SheetPrimitive.Content>
+    </SheetPortal>
+  )
+})
 SheetContent.displayName = SheetPrimitive.Content.displayName
 
 const SheetHeader = ({
