@@ -526,6 +526,12 @@ async def post_cash_opening_balance(db, acc: dict, user: dict) -> dict:
     existing = await _find_existing_je(db, "cash_opening_balance", source_ref)
     if existing:
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
+    # Saldo awal rekening ini sudah lewat jurnal pembuka Go-Live (walau kemudian dibalik) → jangan dobel.
+    ob = await db.rahaza_journal_entries.find_one(
+        {"source_module": "opening_balance", "status": {"$ne": "voided"}, "lines.account_code": cash_code},
+        {"_id": 0, "je_number": 1})
+    if ob:
+        return {"ok": True, "skipped": True, "reason": f"saldo awal sudah via jurnal pembuka {ob['je_number']}"}
     mapping = await get_mapping(db, "cash_opening_balance")
     equity_code = mapping.get("credit_opening_equity")
     if not equity_code:
