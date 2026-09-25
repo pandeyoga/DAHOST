@@ -1,0 +1,19 @@
+{
+  "summary": "Iter218 — Berkas FOKUS end-to-end verified. Backend pytest 8/8 lulus (struktur 5-sheet, warna sel kuning/biru/abu, saran varian dari nama bahan pembeda, MATERIAL pcs_per_base + harga tetap per kemasan, apply idempoten, gap shrink setelah apply, no-file mode, auth guard). Frontend flow di tab 'Impor Harga · Rekening · BOM' juga lulus penuh: fill-page render, fill-download-fokus/gap/download/fill-file semua ada; unduhan pertama menghasilkan DATA_YANG_PERLU_DIISI_DA_FOKUS.xlsx; setelah pilih berkas SISA, label tombol berubah 'Berkas FOKUS — sisa dari berkas ini', fill-preview + fill-issue-cats muncul, unduhan ke-2 juga sukses; 0 console error. DB direstore oleh fixture pytest (seed_golive_restore.sh --force).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter218_gap_fokus.py",
+    "/app/test_reports/pytest/iter218.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (7/7 checks)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Tidak ada seed baru. DB dipulihkan lewat scripts/seed_golive_restore.sh --force di teardown fixture pytest.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Berkas FOKUS module lengkap. Tab masuk via sessionStorage.setItem('hub_tab_fin-accounting-master-hub','fill') + hash '#fin-accounting-master-hub' (perlu reload). data-testid utama: fill-page, fill-download-fokus, fill-download-gap, fill-download, fill-file, fill-preview, fill-issue-cats. SISA sample path: /app/private/golive/DATA_YANG_PERLU_DIISI_DA_SISA_upload.xlsx.",
+  "rca of the issue": "N/A — semua tes hijau."
+}

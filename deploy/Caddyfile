@@ -1,0 +1,60 @@
+{
+    email {$ACME_EMAIL}
+    # 2026-09-25 — matikan HTTP/3 (QUIC). Satu perangkat klien gagal memuat bundle JS
+    # dengan ERR_QUIC_PROTOCOL_ERROR (UDP/443 bermasalah di jaringannya); tanpa QUIC
+    # Chrome memakai HTTP/2 yang stabil. Tidak berpengaruh ke sertifikat maupun API.
+    servers {
+        protocols h1 h2
+    }
+}
+
+# Caddy mengurus sertifikat Let's Encrypt otomatis + PERPANJANGAN otomatis (tanpa cron tambahan).
+{$DOMAIN} {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+
+    # Semua /api/* → FastAPI
+    handle /api/* {
+        reverse_proxy backend:8001 {
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                read_timeout 300s
+            }
+        }
+    }
+
+    # Sisanya → SPA React
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    request_body {
+        max_size 100MB
+    }
+
+    log {
+        output file /data/access.log {
+            roll_size 50mb
+            roll_keep 5
+        }
+        # FASE 4 (T-22): jangan simpan query string (token unduh/sesi) di log akses
+        format filter {
+            wrap console
+            request>uri query {
+                delete token
+                delete auth
+            }
+        }
+    }
+}
+
+www.{$DOMAIN} {
+    redir https://{$DOMAIN}{uri} permanent
+}

@@ -1,0 +1,21 @@
+from common import *
+seed()
+import datetime; T = datetime.date.today().isoformat()
+print('='*78); print('T9  KONTROL POSITIF — bagian inti yang TERBUKTI BENAR'); print('='*78)
+r = post('/api/rahaza/ar-invoices','accounting',{'customer_id':'C1','issue_date':T,'due_date':T,'tax_pct':11,'items':[{'description':'x','qty':10,'unit_price':100000}]}); ar=r.json()['id']
+post(f'/api/rahaza/ar-invoices/{ar}/send','accounting')
+r1 = post(f'/api/rahaza/ar-invoices/{ar}/payment','accounting',{'amount':500000,'account_id':'CA1','date':T})
+r2 = post(f'/api/rahaza/ar-invoices/{ar}/payment','accounting',{'amount':900000,'account_id':'CA1','date':T})
+print('  AR 1.110.000: bayar 500rb ->', r1.status_code, r1.json().get('status'), '| bayar lagi 900rb (lebih dari sisa) ->', r2.status_code)
+chk('pembayaran melebihi sisa ditolak', r2.status_code, 400)
+r = post('/api/rahaza/journals','accounting',{'date':T,'description':'tak seimbang','post':True,'lines':[{'account_code':'6-2900','debit':100,'credit':0},{'account_code':'1-1201','debit':0,'credit':90}]})
+chk('jurnal tak seimbang ditolak', r.status_code, 400)
+r = post('/api/rahaza/journals','accounting',{'date':T,'description':'akun header','post':True,'lines':[{'account_code':'6-2000','debit':100,'credit':0},{'account_code':'1-1201','debit':0,'credit':100}]})
+chk('akun header (non-postable) ditolak', r.status_code, 400)
+tb = H.client.get(f'/api/rahaza/finance/reports/trial-balance?to={T}', headers=H.tok('accounting')).json()
+print('  neraca saldo totals:', tb.get('totals'), '| balanced:', tb.get('balanced'))
+chk('neraca saldo menyatakan dirinya seimbang', tb.get('balanced'), True)
+from routes.rahaza_fixed_assets import _generate_schedule
+sl = _generate_schedule({'purchase_cost':60000000,'residual_value':6000000,'useful_life_months':60,'depreciation_method':'straight_line','purchase_date':'2026-01-01'})
+chk('garis lurus: 900rb/bln dan berhenti di nilai residu 6 jt', (sl[0]['depr_amount'], sl[-1]['book_value_end']), (900000.0, 6000000.0))
+print('\n  hasil:', sum(R), 'lulus dari', len(R))

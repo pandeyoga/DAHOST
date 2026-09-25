@@ -1,0 +1,26 @@
+{
+  "summary": "Iter 233 — Mode SEMENTARA 'Stok Boleh Minus' (inventory_allow_negative). Backend 9/9 lulus: config default ON (category=inventory, data_type=boolean); PO INTERNAL DA-1101-BRG-ALLSIZE qty=5 dibuat; material-preview mengembalikan applicable/allow_negative/has_shortage=true, blocking=false, per-material 'problem' berisi 'akan dibuat minus di GD-L1-ACC/GD-L2'; POST /api/vendor-shipments 201 dengan material_issue.mi_number + negative_stock_lines; GET /api/rahaza/material-stock?negative=1 mengembalikan hanya baris qty<0 (A-* di GD-L1-ACC, CUT-* di GD-L2, semua punya material_code/location_code/unit); shipment KEDUA membuat stok makin minus & preview sebelumnya menampilkan 'stok kurang (akan minus …)'; PUT value=false → preview blocking=true, POST vendor-shipments 400 'Surat jalan TIDAK dibuat…'; PUT value=true berhasil dikembalikan. Frontend spot-check lulus: WMS→Stok Minus menampilkan banner AKTIF + empty state (DB bersih), VendorShipment module memuat tombol Buat Shipment Normal, MaklonConfig tab 'Gudang & Stok' menampilkan toggle 'Stok Boleh Minus'. Tidak ada 5xx pada backend.err.log selama pengujian; tidak ada ChunkLoadError. Cleanup lengkap: 0 baris minus, 0 MI, 0 shipment, 0 journal_mi tersisa; PO uji terhapus (menyisakan hanya 'MKL-KOHTRI-00001-2026-0001'); counters SHP/PO-INT/MI/JE uji dibersihkan; setelan tetap ON.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter233_negative_stock.py",
+    "/app/test_reports/pytest/iter233.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "core/negative_stock.py: fallback_location aman (query aktif, urut kode), tetapi lokasi bawaan aksesoris di-hardcode ke 'aksesoris' vs 'bahan'. Tidak ada masalah selama kedua storage_role tersedia di rahaza_locations. Sudah terverifikasi di data go-live.",
+    "routes/vendor_shipment.material_preview: response menggunakan key 'materials' (bukan 'lines') — konsisten dengan FE saat ini (VendorShipmentModule.jsx). Tidak ada regresi.",
+    "routes/dewi_system_config.update_config: coercion boolean lewat bool()/str-map → benar untuk 'true'/'false'. Aman.",
+    "Perhatian minor (bukan bug): DELETE /api/vendor-shipments/{id} TIDAK mengembalikan stok/MI (perilaku lama, sudah diketahui owner). Owner harus lakukan opname setelah mode dimatikan agar baris minus tidak menumpuk."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter233_negative_stock.py"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% (spot-check 3/3 modul + regresi console)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Test sementara: 1 PO INT (SN-UJI-TA-NEG, notes UJI-TA-NEG), 2 vendor shipments, 2 MI + 14 baris rahaza_material_stock minus + journal_entries mi + stock_ledger. SEMUA sudah dihapus oleh test_99_cleanup — diverifikasi via mongo (material_stock=0, material_issues=0, vendor_shipments=0, journal mi=0, stock_ledger=0). production_pos hanya menyisakan 'MKL-KOHTRI-00001-2026-0001' (data owner, tidak disentuh).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "File /app/backend/tests/test_iter233_negative_stock.py bisa dijalankan ulang kapan saja (data referensi vendor pak aan + varian DA-1101-BRG-ALLSIZE bersifat tetap di data go-live). Selalu jalankan dengan urutan sekuensial: `python -m pytest backend/tests/test_iter233_negative_stock.py -v -o addopts=''`. Cleanup di test_99 idempoten dan aman (hanya menghapus baris qty<0, MI ber-notes/UJI-TA-NEG atau SHP-202609). Setelan inventory_allow_negative dikembalikan ON di akhir; jika di masa depan default berubah ke OFF, sesuaikan test_01.",
+  "rca_of_the_issue": "Tidak ada bug. Implementasi mode SEMENTARA 'Stok Boleh Minus' bekerja sesuai spesifikasi owner (ON di-default, non-blocking, peringatan kuning, laporan Stok Minus, toggle OFF ketat kembali)."
+}

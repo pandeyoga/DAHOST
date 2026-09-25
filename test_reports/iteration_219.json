@@ -1,0 +1,38 @@
+{
+  "summary": "FASE 1 + FASE 2.2 verified. /app/tests/test_fase1_audit.py 22/22 PASS (T-04, T-06, T-07 dgn skenario periode terkunci, T-08, T-10, T-14a). /app/tests/test_fase2_rbac.py 56/58 PASS. Semua gate skrip lolos: audit_authz --gate exit 0 (189<=189), verify_data_integrity 25 PASS INV-JL-2 termasuk, find_duplicate_active_je 0 duplikat + indeks uniq_active_source_ref ADA, find_orphan_draft_ar 0/0. Frontend static bundle: login admin/cmt_vendor/pic_toko sukses tanpa error 403 mencolok di layar utama (admin lihat 'Pilih Portal', cmt_vendor masuk Vendor Portal dgn dashboard, pic_toko lihat Pilih Portal dgn semua kartu 'Tidak ada akses' — konsisten dgn RBAC).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/rahaza/employees", "issue": "Master karyawan bocor ke SEMUA peran eksternal (vendor, cmt_vendor, buyer, klien_maklon) DAN peran portal marketing (pic_toko, marketing_kol, cs_staff) — semua dapat 200 dengan daftar karyawan nyata. server.py:1556 `app.include_router(rahaza_master_router)` DIPASANG TANPA `dependencies=_DENY_EXTERNAL_AND_MKT`, dan router `routes/rahaza_master.py` tidak punya gerbang fungsi. Ini melanggar FASE 2.2. Pasang `dependencies=_DENY_EXTERNAL_AND_MKT` (atau `_DENY_EXTERNAL` bila peran marketing sengaja boleh baca sebagian master).", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/dewi/maklon/pos", "issue": "Peran 'buyer' mendapat 200 (harusnya 403 sebagai peran EKSTERNAL). Router `routes/dewi_maklon_pos.py` mengandalkan `deny_external_dep` dari `routes/production_rbac.py` yang `EXTERNAL_ROLES = ('klien_maklon','vendor','cmt_vendor')` — TIDAK termasuk 'buyer'. server.py:1671 hanya memasang `dependencies=_DENY_MKT`. Tambahkan `_DENY_EXTERNAL` (atau perluas EXTERNAL_ROLES di production_rbac.py ke tuple dari core.authz).", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/tests/test_fase1_audit.py",
+    "/app/tests/test_fase2_rbac.py"
+  ],
+  "action_items": [
+    "server.py:1556 — pasang `dependencies=_DENY_EXTERNAL_AND_MKT` pada `include_router(rahaza_master_router)` supaya /api/rahaza/employees & master lain tertutup dari peran eksternal + marketing.",
+    "routes/production_rbac.py — sinkronkan EXTERNAL_ROLES dengan core.authz.EXTERNAL_ROLES (tambahkan 'buyer'), atau tambah `_DENY_EXTERNAL` pada include_router dewi_maklon_pos_router / dewi_kasbon_router / dewi_maklon_bridge_router yang saat ini hanya `_DENY_MKT`.",
+    "Rekomendasi: setelah patch, jalankan ulang `/app/scripts/audit_authz.py --gate` dan tambahkan uji regresi ke /app/tests/test_fase2_rbac.py (dua baris untuk buyer→/dewi/maklon/pos dan external→/rahaza/employees) supaya baseline gate menurun."
+  ],
+  "critical_code_review_comments": [
+    "core/authz.py & routes/production_rbac.py mendefinisikan DUA konstanta EXTERNAL_ROLES yang berbeda (buyer tidak ada di production_rbac). Refactor: import EXTERNAL_ROLES dari core.authz untuk mencegah drift.",
+    "server.py sangat panjang (>2400 baris) dan penuh include_router manual — rawan lupa memasang dependency baru. Pertimbangkan helper `include_internal(router, extra=[])` yang selalu memasang `_DENY_EXTERNAL_AND_MKT` default."
+  ],
+  "updated_files": [
+    "/app/tests/test_fase2_rbac.py (baru)"
+  ],
+  "success_rate": {"backend": "96% (78/80: 22/22 fase1 + 56/58 fase2 rbac)", "frontend": "100% smoke login 3 peran"},
+  "test_credentials": "Sesuai /app/memory/test_credentials.md — admin@garment.com/Admin@123 + uji.{role}@dewiaditya.id/Dewi@123 (tidak ada rate-limit ter-hit).",
+  "seed_data_creation": "Semua dokumen uji dibuat & dibersihkan oleh test_fase1_audit.py (self-cleanup). Tidak menyentuh data seed nyata.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Setelah main agent memperbaiki 2 gap RBAC di atas, cukup jalankan ulang `cd /app/backend && set -a && . .env && set +a && python ../tests/test_fase2_rbac.py` — harus 0 GAGAL. Juga verifikasi `python3 /app/scripts/audit_authz.py --gate` masih exit 0. Skrip fase1 (test_fase1_audit.py) sudah stabil, cukup smoke.",
+  "rca of the issue": "1) /api/rahaza/employees: gerbang level router FASE 2.2 hanya sebagian dipasang; rahaza_master_router terlewat saat T-01 (tidak ada `dependencies=` di server.py:1556). 2) buyer→/dewi/maklon/pos: EXTERNAL_ROLES lokal di production_rbac.py tidak sinkron dgn core.authz.EXTERNAL_ROLES; buyer tidak masuk daftar deny lokal & server.py hanya memasang _DENY_MKT. Mitigasi: tambahkan dependencies=_DENY_EXTERNAL_AND_MKT ke include_router rahaza_master_router; ganti EXTERNAL_ROLES di production_rbac.py menjadi `from core.authz import EXTERNAL_ROLES`."
+}

@@ -1,0 +1,29 @@
+{
+  "summary": "Iterasi 230 — sisa temuan audit 2026-09-23 (FIN-11..21, PROD-01, MAK-02, RND-04, Papan Temuan Audit). Backend: 18/18 PASSED (pytest xdist). Frontend Playwright: Papan Temuan Audit di portal Administrasi Sistem — total=30, selesai=29 (97%), tabel 30 baris; filter portal R&D → 4 baris (RND-01..RND-04). Semua data uji dibersihkan (T13/T14-*/T20/UJI-FIN15-*/UJI-FIN17-*, JE + journal_lines, sesi & txn bank-recon uji). Sandi rnd_staff (ega.ar@dewiaditya.id) di-patch sementara ke TempTest@123 dan dikembalikan ke hash asli. PO maklon contoh MKL-KOHTRI-00001-2026-0001 tidak diubah (cutting_input=123 tetap).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter230_final_audit.py",
+    "/app/test_reports/pytest/iter230.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "rahaza_journals.post_journal: _mirror_lines dijalankan setelah update atomik (baris 273-280). Aman untuk kasus concurrent post (winner-only mirror). Namun bila _mirror_lines raise setelah status berubah ke 'posted', header sudah 'posted' tanpa journal_lines → GL tidak konsisten. Pertimbangkan try/except dengan rollback status draft, atau gunakan transaksi replicaset.",
+    "rahaza_bank_transfers.void (baris 205-209): void tanpa JE membentuk cabang 'voided_without_je=true' — sudah benar. Tapi guard hanya `gl_posted=False`; jika create_transfer sempat memposting parsial (crash mid-JE), gl_posted bisa False padahal ada JE 'bt:{id}'. Idempoten check sebaiknya juga menghapus/void tautan JE existing dengan source_ref='bt:{id}'.",
+    "dewi_bank_reconciliation.add_transaction (baris 373): insert_one memakai `doc` awal, bukan `kept[0]`; secara efektif sama karena kept berisi doc bila tidak duplikat, tetapi lebih eksplisit gunakan kept[0] agar konsisten dengan bulk-path.",
+    "rahaza_accruals.create_recurring_accruals: dedup check via description+type+period+recurring_template_id (baris 366-371). Jika deskripsi templat diubah setelah anak dibuat, dedup gagal → duplikasi silent. Tambahkan unique index parsial atau kunci (template_id, target_period) yang deterministik.",
+    "rahaza_admin.audit-findings: data hard-coded di data/audit_findings_2026_09_23.py — sumber kebenaran ada di file .md memory/. Pertimbangkan endpoint refresh atau generator dari markdown supaya papan tidak drift dari dokumen audit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter230_final_audit.py",
+    "/app/test_reports/pytest/iter230.xml",
+    "/app/test_reports/iteration_230.json"
+  ],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100% (Papan Temuan board + filter)"},
+  "test_credentials": "admin@garment.com/Admin@123 OK (rate limit 10/60s teramati — testing agent menunggu 65s antara sesi backend & UI). ega.ar@dewiaditya.id sandi BUKAN 'Dewi@123' — fixture rnd_token men-patch bcrypt('TempTest@123') pada session-setup dan MENGEMBALIKAN hash asli di teardown fixture.",
+  "seed_data_creation": "Semua sementara & dihapus di teardown: T13 (rahaza_bank_transfers), T14-TPL/T14-CHILD + anak periode 2026-09 (rahaza_accruals), T20 (rahaza_ar_invoices), UJI-FIN15-INF/NAN & UJI-FIN17-CONCURRENT (rahaza_journal_entries + rahaza_journal_lines), sesi bank-recon periode 2026-10 + transaksi UJI-FIN18. Tidak ada seeder demo dijalankan, tidak ada model/BOM DA-* diubah, PO maklon contoh tidak diubah.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite baru: /app/backend/tests/test_iter230_final_audit.py (18 tests, 4 detik dgn pytest-xdist). Fixture rnd_token OTOMATIS men-patch sandi ega.ar@dewiaditya.id ke TempTest@123 lalu MENGEMBALIKAN hash asli — aman diulang. Rate limit login 10/60s berlaku per akun; tambahkan sleep 60s sebelum UI Playwright jika baru selesai run pytest yang login admin. Papan Temuan Audit (module id 'audit-findings') tersedia di portal Administrasi Sistem, menu 'Papan Temuan Audit' — data-testid: audit-findings-board, audit-total, audit-done, audit-findings-table, audit-row-<ID>. Semua 30 temuan portal Finance/Produksi/Maklon/R&D sudah 'selesai' kecuali 1 'diterima' (mitigasi terdokumentasi).",
+  "rca of the issue": "Tidak ada bug ditemukan pada iterasi ini. Semua endpoint & UI dari daftar temuan berperilaku sesuai spesifikasi PLAN_PERBAIKAN_TEMUAN_2026-09-23.md. FIN-17 (atomik post): update_one dengan filter {'id': je_id, 'status': 'draft'} memastikan hanya satu thread menang; loser dapat 409 dan _mirror_lines hanya dieksekusi oleh winner → journal_lines tepat 2 baris. FIN-14 (recurring): query templat sudah memfilter recurring_template_id ∈ {None, ''} sehingga anak tidak dijadikan templat baru. FIN-15 (Inf/NaN): _validate_lines memakai math.isfinite setelah float(). FIN-13 (void tanpa JE): guard `not gl_posted` men-set 'voided_without_je=True' tanpa memanggil _create_posted_je. Papan Temuan: /api/rahaza/admin/audit-findings memerlukan _require_super → admin (200) & rnd_staff (403)."
+}

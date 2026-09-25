@@ -1,0 +1,22 @@
+{
+  "summary": "Iter130 BOM_OTOMATIS end-to-end: 6/6 pytest lolos (fokus tanpa file → sheetnames tepat & BOM_OTOMATIS header 10-kolom hanya-header; PETUNJUK menyebut BOM_OTOMATIS; fill-preview totals bom_lines=2/bom_groups=2/bom_models=2, warnings 'BOM_AKSESORIS baris 3:' + 'BOM_OTOMATIS baris 3:', semua bom_issues punya 'where'; gap-fokus DENGAN file menulis KODE-TIDAK-ADA-XYZ & KODE-TIDAK-ADA-ABC di BOM_AKSESORIS dgn kode_material kuning FFF2CC, MODEL_A/MODEL_B masing-masing 1x kepala kelompok; gap-workbook Laporan SISA memuat KODE-TIDAK-ADA-ABC; fill-apply idempoten (a1.bom_models=2, boms_touched>0, a2.boms_touched=0 & boms_unchanged=a1.touched+a1.unchanged); DB direstore dari seed setelah apply). Frontend: login admin sukses, klik Portal Keuangan, hash fin-accounting-master-hub, tab 'Impor Harga · Rekening · BOM' → data-testid=fill-page tampil, teks 'BOM_OTOMATIS' hadir di kartu Langkah 1, tombol fill-download-fokus memicu POST /api/rahaza/master/gap-fokus 200 dengan Content-Type xlsx.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_bom_fokus_iter130.py",
+    "/app/test_reports/pytest/iter130_bom_fokus.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "gap_sisa.bom_rows_from_wb kini menyertakan label sumber sheet + baris pada elemen ke-10 (dipakai issue_text.where) — sudah dites lewat warnings dan bom_issues.where.",
+    "gap_fokus.build_fokus_workbook memisahkan kelompok siap-otomatis ke sheet BOM_OTOMATIS; kelompok bermasalah ditulis utuh ke BOM_AKSESORIS dengan sel kode_material FFF2CC — terverifikasi."
+  ],
+  "updated_files": ["/app/backend/tests/test_bom_fokus_iter130.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@garment.com / Admin@123 (login sekali, token dicache di /tmp/tok agar tidak kena rate-limit)",
+  "seed_data_creation": "Tidak ada. DB direstore dari /app/seed/DA_SEED_GOLIVE.archive.gz setelah fill-apply (verified rc=0).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Skrip test_bom_fokus_iter130.py memilih 2 model kosong pertama dari sheet BOM_AKSESORIS berkas FOKUS tanpa file sebagai MODEL_A/MODEL_B dan ACC1 pertama pcs berharga dari REF_AKSESORIS — otomatis adaptif jika seed berubah. Setelah fill-apply, restore DB WAJIB (sudah dimasukkan ke finally-block).",
+  "rca of the issue": "N/A — semua kasus fungsional yang diminta iter130 lolos."
+}

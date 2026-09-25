@@ -1,0 +1,23 @@
+{
+  "summary": "Read-only backend verification for konsolidasi master data CV. Dewi Aditya (iter 227). Created /app/backend/tests/test_konsolidasi_iter227.py with 37 test cases covering: DB invariants (variant+BOM counts 807/777, version==1, unique active key), BOM content rules (CUT-* prefix, A-HTG-0003 qty 1 pcs, A-PIN-0001 qty 1 pcs, extra accessory, material link + unit_cost_base = material.unit_cost, uom_status not mismatch/unlinked), material prices (A-K22-0014, A-REN-0004, A-KRT-0007, A-BIS-0001, A-LBL-0004 roll=1000, A-PIN-0001 pack=5000, A-HTG-0003, A-TLK-0001, A-K22 gross factor 1440), HPP models (DA-4104, DA-1101, DA-1508, DA-1509 tervalidasi), new variants (DA-1209/1210/1211 HTM S/M/L, DA-3302-HTM-XL, DA-2201-* accessory, no DA-3604/DA-4201 ALLSIZE, no DA-3306-*, discontinued models inactive), FG per new variant (type='fg' in rahaza_materials), R&D (dewi_rnd_tech_packs=104 all v1 draft is_latest bom_unlinked_count=0, bom_items non-empty for 98 active styles + 6 discontinued empty; dewi_rnd_materials=12 KN-*; dewi_rnd_styles=104 all promoted_to_model_id), APIs (login admin@garment.com, /api/dewi/rnd/completeness returns missing 0/0/0 total 104 discontinued 6, /api/dewi/rnd/tech-packs?search=DA-1101 returns 1 doc v1 draft with 6 bom_items & 6 colorways, /api/rahaza/master/harga-review xlsx sheet MATERIAL MERAH<=4), downloads (EXPORT_SKU_BOM_DA.xlsx 200 with RINGKASAN_SKU 807 rows 777 BOM_LENGKAP + 30 BOM_NONAKTIF, LAPORAN_KONSOLIDASI_2026-09-23.md 200), laporan_kekosongan_bom.py (98 E_LENGKAP, 6 F_DIHENTIKAN, 0 HARUS DIISI), konsolidasi.py dry-run idempoten (bom_update=0, bom_baru=0, varian.baru=0). Result: 37/37 PASSED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_konsolidasi_iter227.py",
+    "/app/test_reports/pytest/iter227.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "rahaza_model_variants uses 'active' bool (not 'is_active'); rahaza_boms has both 'active' and 'is_active' - potential drift risk, prefer single source of truth.",
+    "rahaza_materials uses 'type' (not 'material_type') for FG marker while BOM item objects use 'material_type' - naming inconsistency across collections.",
+    "dewi_rnd_tech_packs for 6 discontinued styles carry empty bom_items but is_latest=True status=draft — acceptable given F_DIHENTIKAN scoping, but frontend/UI must exclude discontinued when computing tech-pack completeness."
+  ],
+  "updated_files": ["/app/backend/tests/test_konsolidasi_iter227.py"],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "test_credentials": "admin@garment.com / Admin@123 (rate limit 10/60s honored — token cached at session scope).",
+  "seed_data_creation": "None. All tests are strictly read-only per instruction.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite lives at /app/backend/tests/test_konsolidasi_iter227.py. Field notes: variants active flag = 'active' (bool), BOM active = 'active', BOM items list is under 'materials', material FG marker is 'type'='fg'. Konsolidasi dry-run runs in ~1 min. When testing API /api/dewi/rnd/tech-packs the response is a bare JSON list (not envelope).",
+  "rca of the issue": "No production bug. Three initial test failures were harness bugs: (a) regex `E_LENGKAP[^0-9]+(\\d+)` greedily consumed the newline+adjacent digit of F_DIHENTIKAN; fixed to `(\\d+)\\s+E_LENGKAP`. (b) Assertion required non-empty bom_items on all 104 tech packs but 6 discontinued styles are correctly stored with empty arrays; test now whitelists the 6 discontinued codes. (c) tech-packs API returns a bare list; test now handles both list and envelope shapes."
+}

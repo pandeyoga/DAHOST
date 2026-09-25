@@ -1,0 +1,24 @@
+{
+  "summary": "Iter224 verifikasi fitur Berkas FOKUS (POST /api/rahaza/master/gap-fokus). Backend 8/8 PASS, frontend download flow PASS. Semua persyaratan review terpenuhi: sheet order [PETUNJUK, RINGKASAN_MODEL, VARIAN_BARU, BOM_AKSESORIS, BOM_OTOMATIS, MATERIAL, REF_AKSESORIS]; RINGKASAN header persis 9 kolom incl. di_berkas_anda; tanpa file → semua di_berkas_anda='—' & BOM_OTOMATIS header-only; dengan DA_3 → 47 baris ringkasan, tidak ada '—', 6 model dihentikan (DA-2104/2107/2108/2501/3601/3602) berisi 'tidak ada di berkas Anda' + row fill EDEDED penuh, model di berkas cocok regex '<n> kelompok · <n> otomatis · <n> perlu isian'; BOM_OTOMATIS tanpa sel kuning; setiap group BOM_AKSESORIS ≥1 sel kuning atau blank_group head; konsistensi terverifikasi (DA-1401: 3 otomatis + 3 perlu isian; DA-2112: 24 otomatis + 0 perlu isian). Roundtrip fill-preview atas hasil FOKUS: ok=true, errors=[], bom_groups>0 (parser membaca BOM_OTOMATIS via BOM_SHEETS). Guards: unauth 401/403 OK, .csv → 400 OK. Frontend: login admin, hash fin-accounting-master-hub, tab 'Impor Harga · Rekening · BOM', klik data-testid='fill-download-fokus' → download event tercapture, nama file = DATA_YANG_PERLU_DIISI_DA_FOKUS.xlsx, 35400 bytes, tanpa toast error.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_gap_fokus_iter224.py",
+    "/app/test_reports/pytest/iter224.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "gap_fokus.build_fokus_workbook: split_otomatis() memakai identitas objek PatternFill (f is YELLOW) — aman selama modul menggunakan konstanta modul YELLOW; jangan clone/replace fill di jalur ini agar identitas terjaga.",
+    "RINGKASAN_MODEL kolom 'di_berkas_anda': logika ternary '—' vs pf-format vs 'tidak ada di berkas Anda' benar; row EDEDED (discontinued) menimpa fill kolom itu — verifikasi visual OK.",
+    "BOM_OTOMATIS diikutkan parser via BOM_SHEETS di core/gap_sisa.py (baris 30). fill-preview roundtrip 200 ok=true membuktikan sheet baru terbaca tanpa error.",
+    "Endpoint gap-fokus konsisten dengan gap-workbook: _read() 400 untuk non-.xlsx, _require_fin() 401/403 untuk unauth."
+  ],
+  "updated_files": ["/app/backend/tests/test_gap_fokus_iter224.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (1/1)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Tidak ada. Tidak memanggil fill-apply / seed. Hanya login, gap-fokus, fill-preview.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Fitur Berkas FOKUS stabil. Rerun: `python -m pytest /app/backend/tests/test_gap_fokus_iter224.py -v` (butuh /app/private/golive/DATA_YANG_PERLU_DIISI_DA_3.xlsx). Frontend adalah prebuilt static bundle — jangan rebuild. Sample konsistensi terkunci: DA-1401=3+3, DA-2112=24+0; 47 baris ringkasan; 6 model dihentikan.",
+  "rca of the issue": "N/A — tidak ada bug. Kode gap_fokus.py sudah menerapkan (a) split BOM_OTOMATIS/BOM_AKSESORIS berdasarkan ada-tidaknya sel YELLOW per group, (b) kolom di_berkas_anda dengan 3 mode (—/format/tidak ada), (c) row EDEDED untuk discontinued, (d) parser BOM_SHEETS mengikutkan BOM_OTOMATIS di roundtrip."
+}

@@ -1,0 +1,29 @@
+{
+  "summary": "Iter 231 — verifikasi perbaikan ChunkLoadError + regresi API + assertion DB read-only. Backend: 17/17 PASSED (test_iter231_chunkload_fix.py). Frontend Playwright: 6 modul lintas portal (wh-material-issue, prod-pos-internal, cmt-permak, audit-findings, fin-recap, rnd-styles) semua termuat tanpa 'Portal Error'/'ChunkLoadError'. Simulasi chunk hilang (page.route abort satu chunk baru saat pengguna klik cmt-permak) berhasil dipulihkan otomatis oleh lazyRetry — modul Permak/Perbaikan tetap tampil penuh, tanpa reload penuh (retry ke-2 berhasil, chunk_reload_at TIDAK di-set). Kode: semua lazy import di src/ memakai lazyRetry (hanya lazyRetry.js yang memuat React.lazy); ErrorBoundary.getDerivedStateFromError memanggil reloadOnceForNewBuild untuk isChunkLoadError. rebuild_frontend.sh menyimpan OLD_STATIC (mktemp -d) & menyalin chunk lama yang tidak ada di build baru (<7 hari). DB: 807 cut-panel materials (unit_cost=0, value_status=unvalued), 98 model aktif hidup (hpp=0, hpp_source='menunggu_cutting', validation='menunggu_cutting'; 6 model 'dihentikan' mempertahankan HPP lama — sesuai desain), semua baris BOM aktif is_cut_panel unit_cost_base=0. Uji owner (mongomock): t5_reports 6/6, t1_recap 7/7, t9_control 5/5. Tidak menulis DB nyata, tidak rebuild frontend, tidak menyeed data.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter231_chunkload_fix.py",
+    "/app/test_reports/pytest/iter231.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "lazyRetry.js: jeda antar retry tetap 800 ms tanpa jitter → pada rebuild yang sedang berjalan, dua tab yang gagal bersamaan akan menekan server statik pada milidetik yang sama. Pertimbangkan exponential backoff dgn jitter kecil (contoh: 300–800ms + random).",
+    "ErrorBoundary.reloadOnceForNewBuild: sessionStorage 'chunk_reload_at' TTL 60 detik. Pada build sangat lambat (>60s) yang gagal DUA kali, boundary akhirnya menampilkan kartu error. Aman, namun ada baiknya menambahkan pesan spesifik untuk kasus ChunkLoadError (bukan generic 'Portal Error') agar owner tidak salah paham.",
+    "rebuild_frontend.sh: OLD_STATIC menyalin file dengan mtime ≤7 hari dari mktemp yang baru dibuat — mtime dipreservasi via 'cp -r' (tanpa -p awalnya, lalu 'cp -p' di dalam loop). Verifikasi bahwa 'cp -r build/static/. \"$OLD_STATIC\"/' juga mempertahankan mtime (default GNU cp: tidak; -p diperlukan). Risiko: file salinan mendapatkan mtime saat ini → semua akan lolos filter 'mtime -7' selamanya (tidak pernah kedaluwarsa). Tambahkan '-p' pada baris 24 juga: 'cp -rp build/static/. \"$OLD_STATIC\"/'.",
+    "moduleRegistry.js panjang (>1300 baris) — sudah dilaporkan iterasi sebelumnya. Split by portal (production, finance, rnd, ...) akan memperkecil main-bundle & mempercepat lazy load.",
+    "audit_findings_2026_09_23.py masih hard-coded (30 item) — konsisten dgn iter230; belum ditangani."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter231_chunkload_fix.py",
+    "/app/test_reports/pytest/iter231.xml",
+    "/app/test_reports/iteration_231.json"
+  ],
+  "success_rate": {"backend": "100% (17/17)", "frontend": "100% (6/6 modul + simulasi chunk-hilang)"},
+  "test_credentials": "admin@garment.com / Admin@123 — rate limit login 10/60s teramati; testing agent menunggu 65s antara run pytest & Playwright.",
+  "seed_data_creation": "Tidak ada seed / mutasi DB nyata. Semua cek pymongo read-only. Uji owner harness memakai mongomock (terisolasi).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression baru: /app/backend/tests/test_iter231_chunkload_fix.py (17 tests, ~12 dtk pytest-xdist) — mencakup: (a) statik grep 'React.lazy(...import(' HANYA di lazyRetry.js, (b) ErrorBoundary auto-reload untuk ChunkLoadError, (c) rebuild_frontend.sh OLD_STATIC, (d) API health/audit-findings/completeness/financial-recap/downloads gzip/production-detail cutting_input=123, (e) DB read-only cut-panel materials(807, unit_cost=0), BOM lines(0), models aktif hidup(98, hpp=0), (f) master_fill._standard_cost_enabled guard, (g) uji owner t5/t1/t9. PENTING: model aktif kolom benar adalah 'active' (bukan 'is_active'); 6 model 'dihentikan' mempertahankan HPP lama & TIDAK dihitung dalam 98. Playwright modul: cukup set window.location.hash lalu tunggu 2.5s, lalu grep 'Portal Error' pada document.body.innerText. Simulasi chunk-hilang: page.route abort chunk /static/js/*.chunk.js pertama yang BELUM di-load — lazyRetry retry ×2 (800ms) menyembuhkan tanpa reload penuh.",
+  "rca of the issue": "Tidak ada bug baru. Perbaikan ChunkLoadError sudah lengkap dan terverifikasi: (1) lazyRetry membungkus SEMUA React.lazy panggilan di src/ (verifikasi grep negatif); (2) ErrorBoundary.getDerivedStateFromError memanggil reloadOnceForNewBuild untuk isChunkLoadError sehingga kartu 'Portal Error' TIDAK tampil pada ChunkLoadError yang bisa direcovery; (3) rebuild_frontend.sh mempertahankan chunk lama (OLD_STATIC → tmp dir → salin kembali file yang tidak ada di build baru & ≤7 hari) sehingga tab lama yang masih memegang index.html lama tetap bisa memuat chunk lamanya. Simulasi Playwright dgn page.route abort membuktikan retry lazyRetry berhasil pada percobaan ke-2 tanpa reload penuh."
+}
