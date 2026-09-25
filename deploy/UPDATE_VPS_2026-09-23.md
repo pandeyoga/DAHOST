@@ -19,6 +19,14 @@ Direktori VPS: `/opt/dahost` (docker compose di `/opt/dahost/deploy`).
   varian R&D 806 · tech pack 104 · material R&D 12 · riwayat harga 311.
   Sinkron memakai **kunci alami** → tidak menghapus stok/order/keuangan/user, tidak menduplikasi.
 
+## (2026-09-25) Penarikan saldo platform → semua rekening bank terbaca, menu pindah ke Finance
+Setelah update kode, cek rekening yang terbaca (read-only, aman):
+```bash
+cd /opt/dahost/deploy
+docker compose --env-file .env exec -T backend python /app/scripts/cek_rekening_pencairan.py
+```
+✓ = muncul di Portal Keuangan → Saldo & Pencairan Marketplace. ✗ = tidak muncul + alasannya (nonaktif / belum tertaut GL).
+
 ## Saldo awal kas & bank (2026-09-24, dari saldo_erp.xlsx) — jalankan SEKALI setelah update kode
 ```bash
 cd /opt/dahost/deploy
