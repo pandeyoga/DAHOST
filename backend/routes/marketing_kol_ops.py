@@ -25,10 +25,13 @@ async def create_session(data: SessionCreate, request: Request):
     account = await db.marketing_platform_accounts.find_one({'id': data.account_id}, {'_id': 0})
     if not account:
         raise HTTPException(404, 'Account tidak ditemukan')
+    assigned = creator.get('assigned_account_ids') or []
+    if assigned and data.account_id not in assigned:
+        raise HTTPException(400, f"Creator '{creator['name']}' tidak di-assign ke toko '{account['account_name']}'.")
     session = {
         'id': _uid(), 'creator_id': data.creator_id, 'creator_name': creator['name'],
         'creator_code': creator['creator_code'], 'account_id': data.account_id,
-        'account_name': account['account_name'], 'platform': data.platform,
+        'account_name': account['account_name'], 'platform': account.get('platform') or data.platform,
         'date': data.date, 'session_name': data.session_name or f"Live {data.date}",
         'duration_minutes': data.duration_minutes, 'viewers': data.viewers,
         'peak_viewers': data.peak_viewers, 'revenue': data.revenue, 'orders': data.orders,
@@ -200,6 +203,19 @@ async def list_catalog(request: Request, account_id: Optional[str] = Query(None)
     return serialize_doc(items)
 
 
+async def _fg_master(db, fg_product_id: str) -> dict:
+    fg = await db.rahaza_materials.find_one({'id': fg_product_id, 'type': 'fg'}, {'_id': 0})
+    if not fg:
+        raise HTTPException(400, 'Produk harus dipilih dari Master FG (Produksi) — teks bebas tidak diterima.')
+    return fg
+
+
+def _apply_fg(data: CatalogItemCreate, fg: dict) -> None:
+    data.product_name = fg.get('name') or fg.get('code')
+    data.sku = fg.get('code') or data.sku
+    data.category = fg.get('category') or fg.get('subtype') or data.category
+
+
 @router.post('/kol/catalog')
 async def add_catalog_item(data: CatalogItemCreate, request: Request):
     await require_auth(request)
@@ -207,6 +223,7 @@ async def add_catalog_item(data: CatalogItemCreate, request: Request):
     account = await db.marketing_platform_accounts.find_one({'id': data.account_id}, {'_id': 0})
     if not account:
         raise HTTPException(404, 'Account tidak ditemukan')
+    _apply_fg(data, await _fg_master(db, data.fg_product_id))
     if await db.marketing_creator_catalog.find_one({'account_id': data.account_id, 'sku': data.sku}):
         raise HTTPException(400, f"SKU '{data.sku}' sudah ada di katalog akun ini")
     item = {
@@ -230,6 +247,7 @@ async def update_catalog_item(item_id: str, data: CatalogItemCreate, request: Re
     item = await db.marketing_creator_catalog.find_one({'id': item_id}, {'_id': 0})
     if not item:
         raise HTTPException(404, 'Item katalog tidak ditemukan')
+    _apply_fg(data, await _fg_master(db, data.fg_product_id))
     update_data = {
         'product_name': data.product_name, 'sku': data.sku, 'category': data.category or '',
         'unit_price': data.unit_price, 'description': data.description or '',

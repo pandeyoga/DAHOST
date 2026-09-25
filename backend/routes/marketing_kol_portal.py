@@ -202,7 +202,7 @@ async def creator_create_session(data: CreatorPortalSessionCreate, request: Requ
     session = {
         'id': _uid(), 'creator_id': creator['id'], 'creator_name': creator['name'],
         'creator_code': creator.get('creator_code'), 'account_id': data.account_id,
-        'account_name': account['account_name'], 'platform': data.platform,
+        'account_name': account['account_name'], 'platform': account.get('platform') or data.platform,
         'date': data.date, 'session_name': data.session_name or f"Live {data.date}",
         'duration_minutes': data.duration_minutes, 'viewers': data.viewers,
         'peak_viewers': data.peak_viewers, 'revenue': data.revenue, 'orders': data.orders,

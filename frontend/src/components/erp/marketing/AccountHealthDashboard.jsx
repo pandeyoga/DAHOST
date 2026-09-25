@@ -253,24 +253,15 @@ function OCRModal({ open, onClose, onSaved, token }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs">Platform</Label>
-                <Select value={editData.platform || 'shopee'} onValueChange={v => setEditData(d => ({ ...d, platform: v }))}>
-                  <SelectTrigger className="h-8 mt-0.5 text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="shopee">🛒 Shopee</SelectItem>
-                    <SelectItem value="tiktok">🎵 TikTok</SelectItem>
-                    <SelectItem value="tokopedia">🟢 Tokopedia</SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="h-8 mt-0.5 text-sm flex items-center px-3 rounded-md border border-input bg-muted/30" data-testid="snapshot-platform-readonly">
+                  {editData.platform || '—'}
+                </div>
               </div>
               <div>
                 <Label className="text-xs">Nama Akun</Label>
-                <Input
-                  className="h-8 mt-0.5 text-sm"
-                  value={editData.account_name || ''}
-                  onChange={e => setEditData(d => ({ ...d, account_name: e.target.value }))}
-                />
+                <div className="h-8 mt-0.5 text-sm flex items-center px-3 rounded-md border border-input bg-muted/30" data-testid="snapshot-account-readonly">
+                  {editData.account_name || '—'}
+                </div>
               </div>
             </div>
 
@@ -290,7 +281,7 @@ function OCRModal({ open, onClose, onSaved, token }) {
               <Button variant="outline" onClick={() => setStep('upload')}>
                 <Camera size={14} className="mr-2" /> Upload Ulang
               </Button>
-              <Button onClick={handleSave} disabled={!editData.account_name} data-testid="save-snapshot-btn">
+              <Button onClick={handleSave} disabled={!editData.account_id} data-testid="save-snapshot-btn">
                 <Save size={14} className="mr-2" /> Simpan Snapshot
               </Button>
             </DialogFooter>

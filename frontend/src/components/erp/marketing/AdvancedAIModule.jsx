@@ -21,6 +21,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
+import { CatalogSkuMultiSelect } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 function fmt(n) { return new Intl.NumberFormat('id-ID').format(n || 0); }
@@ -439,10 +440,9 @@ function DynamicPricingTab({ authH }) {
 
               {/* Exclude SKU */}
               <div>
-                <Label className="text-xs font-semibold">Exclude SKU (pisah dengan koma)</Label>
-                <Input className="mt-1 h-9 text-sm" placeholder="SKU001, SKU002, ..."
-                  value={(draft.exclude_skus || []).join(', ')}
-                  onChange={e => setDraft(d => ({ ...d, exclude_skus: e.target.value.split(',').map(s => s.trim()).filter(Boolean) }))} />
+                <Label className="text-xs font-semibold">Exclude SKU (dari katalog)</Label>
+                <CatalogSkuMultiSelect value={draft.exclude_skus || []} testId="ai-exclude-skus"
+                  onChange={v => setDraft(d => ({ ...d, exclude_skus: v }))} />
               </div>
 
               <div className="flex items-center gap-2 p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg">

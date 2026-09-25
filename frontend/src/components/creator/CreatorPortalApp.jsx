@@ -436,10 +436,20 @@ function SessionInputModal({ token, onClose, onSaved }) {
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState({
     account_id: '', date: todayISO(), platform: 'shopee', session_name: '',
-    revenue: 0, orders: 0, viewers: 0, peak_viewers: 0, duration_minutes: 0, items: '', notes: '',
+    revenue: 0, orders: 0, viewers: 0, peak_viewers: 0, duration_minutes: 0, items: [], notes: '',
   });
   const [saving, setSaving] = useState(false);
+  const [catalog, setCatalog] = useState([]);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const acc = accounts.find((a) => a.id === form.account_id);
+
+  useEffect(() => {
+    if (!form.account_id) { setCatalog([]); return; }
+    apiCall(token, `/api/marketing/creator-portal/catalog?account_id=${form.account_id}`)
+      .then((d) => setCatalog(Array.isArray(d) ? d : []))
+      .catch(() => setCatalog([]));
+    setForm((f) => ({ ...f, items: [] }));
+  }, [token, form.account_id]);
 
   useEffect(() => {
     (async () => {
@@ -459,12 +469,12 @@ function SessionInputModal({ token, onClose, onSaved }) {
       await apiCall(token, '/api/marketing/creator-portal/sessions', {
         method: 'POST',
         body: JSON.stringify({
-          account_id: form.account_id, date: form.date, platform: form.platform,
+          account_id: form.account_id, date: form.date, platform: acc?.platform || form.platform,
           session_name: form.session_name || undefined,
           duration_minutes: Number(form.duration_minutes) || 0,
           revenue: Number(form.revenue) || 0, orders: Number(form.orders) || 0,
           viewers: Number(form.viewers) || 0, peak_viewers: Number(form.peak_viewers) || 0,
-          items_promoted: form.items.split(',').map((s) => s.trim()).filter(Boolean),
+          items_promoted: form.items,
           notes: form.notes,
         }),
       });
@@ -497,11 +507,7 @@ function SessionInputModal({ token, onClose, onSaved }) {
           <input type="date" data-testid="session-input-date" value={form.date} onChange={(e) => set('date', e.target.value)} className={inputCls} />
         </Field>
         <Field label="Platform">
-          <select data-testid="session-input-platform" value={form.platform} onChange={(e) => set('platform', e.target.value)} className={inputCls}>
-            <option value="shopee">Shopee</option>
-            <option value="tiktokshop">TikTokShop</option>
-            <option value="tokopedia">Tokopedia</option>
-          </select>
+          <div data-testid="session-input-platform" className={`${inputCls} opacity-70`}>{acc?.platform || 'otomatis dari akun'}</div>
         </Field>
       </div>
       <Field label="Nama Sesi">
@@ -517,7 +523,22 @@ function SessionInputModal({ token, onClose, onSaved }) {
         <Field label="Peak"><input type="number" min="0" data-testid="session-input-peak" value={form.peak_viewers} onChange={(e) => set('peak_viewers', e.target.value)} className={inputCls} /></Field>
       </div>
       <Field label="Produk Dipromosikan">
-        <input data-testid="session-input-items" value={form.items} onChange={(e) => set('items', e.target.value)} placeholder="Pisahkan dgn koma: Kaos, Celana" className={inputCls} />
+        <SmartNativeSelect data-testid="session-input-items" value="" disabled={!form.account_id} className={inputCls}
+          onChange={(e) => { const v = e.target.value; if (v && !form.items.includes(v)) set('items', [...form.items, v]); }}>
+          <option value="">{form.account_id ? (catalog.length ? '+ Tambah produk dari katalog' : 'Katalog akun ini kosong') : 'Pilih akun dulu'}</option>
+          {catalog.map((c) => {
+            const label = `${c.sku || ''} · ${c.product_name || c.name || ''}`.trim();
+            return <option key={c.id || c.sku} value={label}>{label}</option>;
+          })}
+        </SmartNativeSelect>
+        {form.items.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-1">
+            {form.items.map((it) => (
+              <button type="button" key={it} onClick={() => set('items', form.items.filter((x) => x !== it))}
+                className="px-2 py-0.5 rounded bg-foreground/10 text-[11px]">{it} ×</button>
+            ))}
+          </div>
+        )}
       </Field>
       <Field label="Catatan">
         <textarea rows={2} data-testid="session-input-notes" value={form.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Catatan (opsional)" className={inputCls} />

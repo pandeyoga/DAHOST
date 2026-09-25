@@ -18,7 +18,7 @@ import {
 } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
-import { MarketingAccountSelect } from './pickers/MarketingPickers';
+import { MarketingAccountSelect, useStorePlatforms } from './pickers/MarketingPickers';
 // F14b (temuan pemilik) — produk yang diluncurkan WAJIB produk yang ada di
 // Master Produk. Sebelum ini nama/bahan/model diketik bebas, dan saat status
 // menjadi "launched" sistem MEMBUAT barang jadi baru dari teks itu ⇒ satu
@@ -70,7 +70,6 @@ function KPICard({ label, value, sub, color, bg, icon: Icon }) {
   );
 }
 
-const PLATFORMS = ['shopee', 'tiktok', 'tokopedia', 'instagram', 'website'];
 
 const EMPTY_FORM = {
   // F14 — peluncuran WAJIB milik satu toko. Sebelum ini 8/8 dokumen demo tidak
@@ -90,6 +89,7 @@ const EMPTY_FORM = {
 export default function ProductLaunchModule({ token }) {
   const { toast } = useToast();
   const authH = useMemo(() => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
+  const PLATFORMS = useStorePlatforms(token);
 
   const [summary,    setSummary]    = useState(null);
   const [items,      setItems]      = useState([]);

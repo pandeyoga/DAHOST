@@ -328,3 +328,100 @@ export function CatalogItemSelect({
     </div>
   );
 }
+
+/* ─────────── MASTER WARNA / UKURAN / MODEL (Produksi & R&D) ─────────── */
+export function useMasterList(path, token) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    axios.get(`${API}${path}`, { headers: authHeader(token) })
+      .then((r) => { if (alive) setRows(Array.isArray(r.data) ? r.data : (r.data?.data || r.data?.items || [])); })
+      .catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, [path, token]);
+  return rows.filter((r) => r.active !== false);
+}
+
+/** Pilih banyak nilai dari master (mis. warna/ukuran). `value` = array nama. */
+export function MasterChipsSelect({ token, path, value = [], onChange, testId, emptyText }) {
+  const rows = useMasterList(path, token);
+  const toggle = (name) => onChange(value.includes(name) ? value.filter((v) => v !== name) : [...value, name]);
+  return (
+    <div className="flex flex-wrap gap-1.5 mt-1 max-h-32 overflow-auto p-1 rounded-md border border-input" data-testid={testId}>
+      {rows.length === 0 && <span className="text-[11px] text-muted-foreground px-1">{emptyText || 'Master kosong'}</span>}
+      {rows.map((r) => {
+        const name = r.name || r.code;
+        const on = value.includes(name);
+        return (
+          <button type="button" key={r.id || name} onClick={() => toggle(name)}
+            data-testid={`${testId}-${r.code || name}`}
+            className={`px-2 py-0.5 rounded text-[11px] border transition-colors ${on
+              ? 'bg-primary text-primary-foreground border-primary'
+              : 'border-foreground/15 text-foreground/70 hover:border-foreground/30'}`}>
+            {r.hex && <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: r.hex }} />}
+            {name}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Platform yang benar-benar dipakai toko aktif (Kelola Akun) — bukan daftar ketikan. */
+export function useStorePlatforms(token) {
+  const [list, setList] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    axios.get(`${API}/api/marketing/accounts`, { headers: authHeader(token), params: { status: 'active' } })
+      .then((r) => {
+        const rows = Array.isArray(r.data) ? r.data : (r.data?.accounts || r.data?.data || []);
+        const norm = (p) => { const v = String(p || '').toLowerCase(); return v === 'tiktokshop' ? 'tiktok' : v; };
+        if (alive) setList([...new Set(rows.map((a) => norm(a.platform)).filter(Boolean))]);
+      })
+      .catch(() => { if (alive) setList([]); });
+    return () => { alive = false; };
+  }, [token]);
+  return list;
+}
+
+/** Pilih banyak SKU dari katalog (cari lintas toko). `value` = array SKU. */
+export function CatalogSkuMultiSelect({ token, value = [], onChange, testId = 'catalog-sku-multi' }) {
+  const [q, setQ] = useState('');
+  const [hits, setHits] = useState([]);
+  useEffect(() => {
+    if (!q.trim()) { setHits([]); return undefined; }
+    const t = setTimeout(() => {
+      axios.get(`${API}/api/marketing/catalog-items/search`, { headers: authHeader(token), params: { q, limit: 15 } })
+        .then((r) => setHits(r.data?.items || r.data?.data || []))
+        .catch(() => setHits([]));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q, token]);
+  const add = (sku) => { if (sku && !value.includes(sku)) onChange([...value, sku]); setQ(''); setHits([]); };
+  return (
+    <div className="relative mt-1" data-testid={testId}>
+      <div className="flex flex-wrap gap-1 mb-1">
+        {value.map((s) => (
+          <span key={s} className="px-2 py-0.5 rounded bg-muted text-[11px] font-mono flex items-center gap-1">
+            {s}
+            <button type="button" onClick={() => onChange(value.filter((x) => x !== s))} data-testid={`${testId}-remove-${s}`}>×</button>
+          </span>
+        ))}
+      </div>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari SKU / nama produk di katalog…"
+        data-testid={`${testId}-search`}
+        className="w-full h-9 border border-input bg-background rounded-md px-3 text-sm" />
+      {hits.length > 0 && (
+        <div className="absolute z-20 left-0 right-0 mt-1 max-h-48 overflow-auto rounded-md border border-input bg-popover shadow">
+          {hits.map((i) => (
+            <button type="button" key={i.id} onClick={() => add(i.sku)}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted" data-testid={`${testId}-hit-${i.sku}`}>
+              <span className="font-mono mr-2">{i.sku}</span>{i.name}
+              <span className="text-muted-foreground ml-1">{i.account_name || ''}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

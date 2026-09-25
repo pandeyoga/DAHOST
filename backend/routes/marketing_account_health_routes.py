@@ -349,6 +349,13 @@ async def create_manual_snapshot(payload: ManualSnapshotIn, request: Request):
     else:
         status = "healthy"
 
+    acc = await db.marketing_platform_accounts.find_one({"id": payload.account_id}, {"_id": 0}) \
+        if payload.account_id else None
+    if not acc:
+        raise HTTPException(400, "Pilih toko dari Kelola Akun — snapshot harus menempel pada akun master.")
+    payload.platform = acc.get("platform") or payload.platform
+    payload.account_name = acc.get("account_name") or payload.account_name
+
     snap_dt = _now()
     if payload.snapshot_date:
         try:

@@ -1,19 +1,19 @@
 import { useState } from 'react';
-import { BarChart3, Plus, X, Save, Loader2 } from 'lucide-react';
+import { BarChart3, X, Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { API } from './utils';
+import { CatalogItemSelect } from '../pickers/MarketingPickers';
 
 export default function RecordPerformanceModal({ shift, authH, onClose, onSuccess }) {
   const [form, setForm] = useState({
     shift_id: shift.id,
-    platform: shift.platform || 'shopee',
+    platform: shift.platform || null,
     viewers: 0,
     peak_viewers: 0,
     revenue: 0,
@@ -24,7 +24,6 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
     notes: '',
   });
   const [saving, setSaving] = useState(false);
-  const [itemInput, setItemInput] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -51,11 +50,10 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
     }
   };
 
-  const addItem = () => {
-    if (itemInput.trim()) {
-      setForm((f) => ({ ...f, items_promoted: [...f.items_promoted, itemInput.trim()] }));
-      setItemInput('');
-    }
+  const addItem = (item) => {
+    if (!item) return;
+    const label = item.sku ? `${item.sku} · ${item.name}` : item.name;
+    setForm((f) => (f.items_promoted.includes(label) ? f : { ...f, items_promoted: [...f.items_promoted, label] }));
   };
 
   const removeItem = (index) => {
@@ -78,16 +76,10 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <Label className="text-xs font-semibold">Platform</Label>
-            <Select value={form.platform} onValueChange={(v) => setForm((f) => ({ ...f, platform: v }))}>
-              <SelectTrigger className="mt-1 h-9" data-testid="select-platform">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="shopee">Shopee</SelectItem>
-                <SelectItem value="tiktokshop">TikTokShop</SelectItem>
-                <SelectItem value="tokopedia">Tokopedia</SelectItem>
-              </SelectContent>
-            </Select>
+            <div className="mt-1 h-9 flex items-center px-3 rounded-md border border-input bg-muted/30 text-sm" data-testid="select-platform">
+              {shift.account_name ? `${shift.account_name} · ` : ''}{shift.platform || 'platform mengikuti toko'}
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1">Otomatis dari toko pada shift (bukan pilihan bebas).</p>
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -143,19 +135,8 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
 
           <div>
             <Label className="text-xs font-semibold">Items Promoted</Label>
-            <div className="mt-1 flex gap-2">
-              <Input
-                value={itemInput}
-                onChange={(e) => setItemInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addItem())}
-                placeholder="Nama produk"
-                className="h-9"
-                data-testid="input-item"
-              />
-              <Button type="button" size="sm" onClick={addItem} className="h-9">
-                <Plus size={14} />
-              </Button>
-            </div>
+            <CatalogItemSelect accountId={shift.account_id} value="" label="" required={false}
+              onChange={addItem} testId="input-item" className="mt-1" />
             {form.items_promoted.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
                 {form.items_promoted.map((item, i) => (

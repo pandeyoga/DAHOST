@@ -422,8 +422,10 @@ async def record_shift_performance(shift_id: str, data: ShiftPerformanceRecord, 
     if not shift.get('clock_out_time'):
         raise HTTPException(400, 'Shift belum di-clock out. Selesaikan shift terlebih dahulu.')
     
+    account = await db.marketing_platform_accounts.find_one({'id': shift.get('account_id')}, {'_id': 0, 'platform': 1}) \
+        if shift.get('account_id') else None
     update_data = {
-        'platform': data.platform,
+        'platform': (account or {}).get('platform') or data.platform,
         'viewers': data.viewers,
         'peak_viewers': data.peak_viewers,
         'revenue': data.revenue,

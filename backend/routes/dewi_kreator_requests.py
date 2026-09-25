@@ -46,6 +46,51 @@ VALID_TYPES = {'live_streaming', 'tiktok_video'}
 VALID_STATUSES = {'draft', 'submitted', 'approved_by_rnd', 'sample_ready', 'delivered', 'rejected', 'cancelled'}
 
 
+async def _resolve_links(db, body: dict, creating: bool) -> dict:
+    """Kreator, toko, model, warna, ukuran WAJIB menunjuk master — bukan teks bebas."""
+    out: dict = {}
+    if creating or 'kreator_id' in body:
+        kid = (body.get('kreator_id') or '').strip()
+        kol = await db.marketing_kol_creators.find_one({'id': kid}, {'_id': 0}) if kid else None
+        if not kol:
+            raise HTTPException(400, 'Pilih kreator dari Master KOL & Kreator.')
+        plats = kol.get('platforms') or {}
+        out.update(kreator_id=kid, kreator_name=kol.get('name', ''), kreator_code=kol.get('creator_code', ''),
+                   kreator_handle=plats.get('tiktok') or plats.get('shopee') or '')
+    if creating or 'account_id' in body:
+        aid = (body.get('account_id') or '').strip()
+        acc = await db.marketing_platform_accounts.find_one({'id': aid}, {'_id': 0}) if aid else None
+        if not acc:
+            raise HTTPException(400, 'Pilih toko dari Kelola Akun.')
+        kid = out.get('kreator_id') or body.get('kreator_id')
+        kol = await db.marketing_kol_creators.find_one({'id': kid}, {'_id': 0, 'assigned_account_ids': 1, 'name': 1}) if kid else None
+        assigned = (kol or {}).get('assigned_account_ids') or []
+        if assigned and aid not in assigned:
+            raise HTTPException(400, f"Kreator '{kol.get('name')}' tidak di-assign ke toko '{acc.get('account_name')}'.")
+        out.update(account_id=aid, account_name=acc.get('account_name', ''), platform=acc.get('platform', ''))
+    if 'model_id' in body:
+        mid = (body.get('model_id') or '').strip()
+        m = await db.rahaza_models.find_one({'id': mid}, {'_id': 0, 'code': 1, 'name': 1}) if mid else None
+        if mid and not m:
+            raise HTTPException(400, 'Model referensi tidak ada di Master Model.')
+        out.update(model_id=mid, model_code=(m or {}).get('code', ''), model_name=(m or {}).get('name', ''))
+    for key, coll, label in (('sample_colors', 'rahaza_colors', 'Warna'), ('sample_sizes', 'rahaza_sizes', 'Ukuran')):
+        if key not in body:
+            continue
+        vals = [str(v).strip() for v in (body.get(key) or []) if str(v).strip()]
+        rows = await db[coll].find({'active': {'$ne': False}}, {'_id': 0, 'code': 1, 'name': 1}).to_list(1000)
+        by = {}
+        for r in rows:
+            for k in (r.get('code'), r.get('name')):
+                if k:
+                    by[str(k).upper()] = r.get('name') or r.get('code')
+        bad = [v for v in vals if v.upper() not in by]
+        if bad:
+            raise HTTPException(400, f"{label} tidak ada di master: {', '.join(bad)}")
+        out[key] = list(dict.fromkeys(by[v.upper()] for v in vals))
+    return out
+
+
 # ─── LIST ────────────────────────────────────────────────────────────────────
 @router.get('')
 async def list_requests(
@@ -91,10 +136,9 @@ async def get_request(request_id: str, user: dict = Depends(require_auth)):
 async def create_request(body: dict, user: dict = Depends(require_auth)):
     db = get_db()
 
-    kreator_name = (body.get('kreator_name') or '').strip()
+    links = await _resolve_links(db, body, creating=True)
+    kreator_name = links['kreator_name']
     kreator_type = (body.get('kreator_type') or '').strip()
-    if not kreator_name:
-        raise HTTPException(400, 'Nama kreator wajib diisi')
     if kreator_type not in VALID_TYPES:
         raise HTTPException(400, f"kreator_type harus salah satu dari: {', '.join(VALID_TYPES)}")
     if not (body.get('product_concept') or '').strip():
@@ -143,6 +187,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
         'created_at': now_utc(),
         'updated_at': now_utc(),
     }
+    doc.update(links)
     await db.dewi_kreator_requests.insert_one(doc)
     return serialize(doc)
 
@@ -154,7 +199,10 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
     doc = await db.dewi_kreator_requests.find_one({'id': request_id})
     if not doc:
         raise HTTPException(404, 'Request tidak ditemukan')
-    upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'requester_id', 'request_code')}
+    upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'requester_id', 'request_code',
+                                                     'kreator_name', 'kreator_handle', 'kreator_code', 'account_name',
+                                                     'platform', 'model_code', 'model_name')}
+    upd.update(await _resolve_links(db, body, creating=False))
     upd['updated_at'] = now_utc()
     if 'kreator_type' in upd and upd['kreator_type'] not in VALID_TYPES:
         raise HTTPException(400, 'kreator_type tidak valid')

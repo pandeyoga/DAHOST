@@ -338,11 +338,9 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5">Platform</label>
-              <select value={form.platform} onChange={e => set('platform', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                <option value="tiktokshop">TikTok Shop</option>
-                <option value="shopee">Shopee Live</option>
-                <option value="tokopedia">Tokopedia</option>
-              </select>
+              <div data-testid="session-platform-readonly" className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70">
+                {(() => { const a = accounts.find(x => x.id === form.account_id); return a ? getPlatformConfig(a.platform).label : 'otomatis dari akun'; })()}
+              </div>
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5">Durasi (menit)</label>
@@ -409,13 +407,14 @@ function CatalogFormModal({ token, accounts, onClose, onSaved }) {
     set('fg_product_id', p.id);
     set('product_name', p.name || p.code);
     set('sku', p.code || '');
+    set('category', p.category || p.subtype || '');
     setFgSearch(p.name || p.code);
     setFgProducts([]);
   }
 
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!form.account_id || !form.product_name || !form.sku) { toast.error('Akun, nama produk, dan SKU wajib diisi'); return; }
+    if (!form.account_id || !form.fg_product_id) { toast.error('Pilih akun dan produk dari Master FG'); return; }
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/marketing/kol/catalog`, {
@@ -450,9 +449,10 @@ function CatalogFormModal({ token, accounts, onClose, onSaved }) {
             <label className="block text-xs font-medium mb-1.5">Cari Produk FG (dari Produksi)</label>
             <input
               value={fgSearch}
-              onChange={e => setFgSearch(e.target.value)}
+              onChange={e => { setFgSearch(e.target.value); setForm(f => ({ ...f, fg_product_id: '', product_name: '', sku: '', category: '' })); }}
               className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
               placeholder="Ketik nama/kode produk jadi..."
+              data-testid="kol-catalog-fg-search"
             />
             {fgProducts.length > 0 && (
               <div className="absolute top-full left-0 right-0 bg-[hsl(var(--card))] border border-foreground/10 rounded-lg mt-1 z-10 max-h-40 overflow-auto">
@@ -468,17 +468,17 @@ function CatalogFormModal({ token, accounts, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium mb-1.5">Nama Produk *</label>
-              <input value={form.product_name} onChange={e => set('product_name', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="Kemeja Batik Modern" />
+              <input data-testid="kol-catalog-name" value={form.product_name} readOnly className="w-full bg-foreground/10 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70 cursor-not-allowed" placeholder="otomatis dari Master FG" />
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5">SKU *</label>
-              <input value={form.sku} onChange={e => set('sku', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="SKU-001" />
+              <input data-testid="kol-catalog-sku" value={form.sku} readOnly className="w-full bg-foreground/10 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70 cursor-not-allowed" placeholder="otomatis dari Master FG" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium mb-1.5">Kategori</label>
-              <input value={form.category} onChange={e => set('category', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="Kemeja, Celana, dll" />
+              <input data-testid="kol-catalog-category" value={form.category} readOnly className="w-full bg-foreground/10 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70 cursor-not-allowed" placeholder="otomatis dari Master FG" />
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5">Harga (Rp)</label>

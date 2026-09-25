@@ -1134,6 +1134,8 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
   // dulu teks bebas yang tidak cocok master diam-diam hilang saat disimpan.
   const linkedToMaster = !!(form.fg_material_id || form.material_id || form.variant_id)
     || mode === 'from_fg';
+  // SKU/nama/varian milik master bila item tertaut; item lama tanpa tautan wajib ditautkan dulu.
+  const lockMaster = mode === 'from_fg' || !!(form.fg_material_id || form.material_id || form.variant_id);
   const masterCategoryLabel = [initial.category_code, initial.category_name || initial.category]
     .filter(Boolean).join(' · ');
 
@@ -1225,18 +1227,6 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
             >
               📦 Dari Master FG (Recommended)
             </button>
-            <button
-              type="button"
-              onClick={() => setMode('manual')}
-              className={`flex-1 px-3 py-2 rounded text-sm font-medium transition-colors ${
-                mode === 'manual'
-                  ? 'bg-indigo-600 text-foreground shadow-sm'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-              data-testid="mode-manual"
-            >
-              ✏️ Manual (Legacy)
-            </button>
           </div>
         )}
 
@@ -1292,8 +1282,9 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                     onChange={e => setForm(f => ({ ...f, sku: e.target.value }))}
                     placeholder="SKU-001"
                     required
-                    readOnly={mode === 'from_fg'}
-                    className={mode === 'from_fg' ? 'bg-muted/30' : ''}
+                    readOnly={lockMaster}
+                    className={lockMaster ? 'bg-muted/30' : ''}
+                    data-testid="catalog-item-sku"
                   />
                 </div>
                 <div className="space-y-1">
@@ -1346,8 +1337,9 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="Nama lengkap produk"
                   required
-                  readOnly={mode === 'from_fg'}
-                  className={mode === 'from_fg' ? 'bg-muted/30' : ''}
+                  readOnly={lockMaster}
+                  className={lockMaster ? 'bg-muted/30' : ''}
+                  data-testid="catalog-item-name"
                 />
               </div>
 
@@ -1357,8 +1349,9 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                   value={form.variant_info}
                   onChange={e => setForm(f => ({ ...f, variant_info: e.target.value }))}
                   placeholder="mis. Warna: Hitam, Putih | Size: S, M, L"
-                  readOnly={mode === 'from_fg'}
-                  className={mode === 'from_fg' ? 'bg-muted/30' : ''}
+                  readOnly={lockMaster}
+                  className={lockMaster ? 'bg-muted/30' : ''}
+                  data-testid="catalog-item-variant"
                 />
               </div>
 
@@ -1373,8 +1366,8 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                       setForm(f => ({
                         ...f,
                         variant_id: val,
-                        sku: (f.sku && f.sku.trim()) ? f.sku : (v?.sku || ''),
-                        variant_info: f.variant_info || (v ? `Warna: ${v.color_name}, Size: ${v.size_code}` : ''),
+                        sku: v?.sku || f.sku,
+                        variant_info: v ? `Warna: ${v.color_name}, Size: ${v.size_code}` : f.variant_info,
                       }));
                     }}
                   >

@@ -13,6 +13,7 @@ import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import { MarketingAccountSelect, MarketingCreatorSelect, MasterChipsSelect, useMasterList } from './marketing/pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -32,15 +33,16 @@ const KREATOR_TYPE_CONF = {
 };
 
 const emptyForm = {
-  kreator_name: '',
-  kreator_handle: '',
+  account_id: '',
+  kreator_id: '',
+  model_id: '',
   kreator_type: 'live_streaming',
   product_concept: '',
   reference_links: [],
   target_segment: '',
   sample_qty: 1,
-  sample_colors: '',
-  sample_sizes: '',
+  sample_colors: [],
+  sample_sizes: [],
   deadline: '',
   notes: '',
 };
@@ -76,6 +78,7 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
   const [delId, setDelId] = useState(null);
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const models = useMasterList('/api/rahaza/models', token);
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -108,15 +111,16 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
 
   const openEdit = (r) => {
     setForm({
-      kreator_name: r.kreator_name || '',
-      kreator_handle: r.kreator_handle || '',
+      account_id: r.account_id || '',
+      kreator_id: r.kreator_id || '',
+      model_id: r.model_id || '',
       kreator_type: r.kreator_type || 'live_streaming',
       product_concept: r.product_concept || '',
       reference_links: r.reference_links || [],
       target_segment: r.target_segment || '',
       sample_qty: r.sample_qty || 1,
-      sample_colors: (r.sample_colors || []).join(', '),
-      sample_sizes: (r.sample_sizes || []).join(', '),
+      sample_colors: r.sample_colors || [],
+      sample_sizes: r.sample_sizes || [],
       deadline: r.deadline || '',
       notes: r.notes || '',
     });
@@ -125,14 +129,10 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
   };
 
   const handleSave = async () => {
-    if (!form.kreator_name?.trim()) return toast.error('Nama kreator wajib diisi');
+    if (!form.account_id) return toast.error('Pilih toko dulu');
+    if (!form.kreator_id) return toast.error('Pilih kreator dari master KOL');
     if (!form.product_concept?.trim()) return toast.error('Konsep produk wajib diisi');
-    const payload = {
-      ...form,
-      sample_colors: form.sample_colors ? String(form.sample_colors).split(',').map(s => s.trim()).filter(Boolean) : [],
-      sample_sizes:  form.sample_sizes  ? String(form.sample_sizes).split(',').map(s => s.trim()).filter(Boolean)  : [],
-      sample_qty: Number(form.sample_qty) || 1,
-    };
+    const payload = { ...form, sample_qty: Number(form.sample_qty) || 1 };
     try {
       const url = editing ? `${API}/api/dewi/kreator-requests/${editing}` : `${API}/api/dewi/kreator-requests`;
       const method = editing ? 'PUT' : 'POST';
@@ -352,7 +352,8 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
                     <td className="px-4 py-3 font-mono text-xs font-semibold text-foreground">{r.request_code}</td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-foreground">{r.kreator_name}</div>
-                      {r.kreator_handle && <div className="text-xs text-foreground/40">@{r.kreator_handle}</div>}
+                      {r.kreator_handle && <div className="text-xs text-foreground/40">@{String(r.kreator_handle).replace(/^@/, '')}</div>}
+                      {r.account_name && <div className="text-[11px] text-foreground/50" data-testid={`kreator-req-toko-${r.id}`}>Toko: {r.account_name}</div>}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full border ${tc.cls}`}>
@@ -448,19 +449,11 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
           title={editing ? 'Edit Request KREATOR' : 'Buat Request KREATOR Baru'} size="lg">
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Nama Kreator <span className="text-red-700 dark:text-red-400">*</span></Label>
-                <Input className="mt-1" value={form.kreator_name}
-                  onChange={e => f('kreator_name', e.target.value)}
-                  placeholder="Contoh: Tasya Farasya"
-                  data-testid="kreator-form-name" />
-              </div>
-              <div>
-                <Label>Handle/Username</Label>
-                <Input className="mt-1" value={form.kreator_handle}
-                  onChange={e => f('kreator_handle', e.target.value)}
-                  placeholder="tasyafarasya" />
-              </div>
+              <MarketingAccountSelect token={token} value={form.account_id} label="Toko"
+                onChange={(v) => setForm(p => ({ ...p, account_id: v, kreator_id: '' }))}
+                testId="kreator-form-account" />
+              <MarketingCreatorSelect token={token} accountId={form.account_id} value={form.kreator_id}
+                label="Kreator / KOL" onChange={(v) => f('kreator_id', v)} testId="kreator-form-creator" />
             </div>
             <div>
               <Label>Tipe Kreator <span className="text-red-700 dark:text-red-400">*</span></Label>
@@ -501,17 +494,26 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
                   onChange={e => f('sample_qty', e.target.value)}
                   data-testid="kreator-form-qty" />
               </div>
+              <div className="col-span-2">
+                <Label>Model Referensi (opsional)</Label>
+                <SmartNativeSelect value={form.model_id} onChange={e => f('model_id', e.target.value)}
+                  data-testid="kreator-form-model"
+                  className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
+                  <option value="">— konsep baru / tanpa model —</option>
+                  {models.map(m => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+                </SmartNativeSelect>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Warna (pisah koma)</Label>
-                <Input className="mt-1" value={form.sample_colors}
-                  onChange={e => f('sample_colors', e.target.value)}
-                  placeholder="merah, hitam, krem" />
+                <Label>Warna (Master Warna)</Label>
+                <MasterChipsSelect token={token} path="/api/rahaza/colors" value={form.sample_colors}
+                  onChange={(v) => f('sample_colors', v)} testId="kreator-form-colors" />
               </div>
               <div>
-                <Label>Ukuran (pisah koma)</Label>
-                <Input className="mt-1" value={form.sample_sizes}
-                  onChange={e => f('sample_sizes', e.target.value)}
-                  placeholder="M, L, XL" />
+                <Label>Ukuran (Master Ukuran)</Label>
+                <MasterChipsSelect token={token} path="/api/rahaza/sizes" value={form.sample_sizes}
+                  onChange={(v) => f('sample_sizes', v)} testId="kreator-form-sizes" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -558,7 +560,9 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
               <div>
                 <div className="text-xs text-foreground/50">Kreator</div>
                 <div className="font-medium">{detail.kreator_name}</div>
-                {detail.kreator_handle && <div className="text-xs text-foreground/40">@{detail.kreator_handle}</div>}
+                {detail.kreator_handle && <div className="text-xs text-foreground/40">@{String(detail.kreator_handle).replace(/^@/, '')}</div>}
+                {detail.account_name && <div className="text-xs text-foreground/50">Toko: {detail.account_name}</div>}
+                {detail.model_code && <div className="text-xs text-foreground/50">Model: {detail.model_code} · {detail.model_name}</div>}
               </div>
               <div>
                 <div className="text-xs text-foreground/50">Tipe</div>
