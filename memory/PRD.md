@@ -1,5 +1,9 @@
 # PRD — CV. Dewi Aditya ERP
 
+## SESI 2026-09-25 #21 — Pembalik saldo awal ganda
+- `scripts/batal_saldo_awal_bank_20260924.py [--terapkan]`: jurnal pembalik (D/K ditukar) atas JE `opening_balance` source_ref `saldo_erp.xlsx (owner, 2026-09-24)`; idempoten (`opening_balance_reversal`/`reverse:<je_id>`).
+- Guard `post_cash_opening_balance`: lewati bila akun sudah ada di jurnal pembuka aktif (cegah dobel via Sinkron GL). Uji iteration_133 7/7.
+
 ## SESI 2026-09-25 #20 — Penarikan saldo platform → bank: semua rekening terbaca + pindah ke Finance
 - Akar masalah: pemilih "Rekening Pencairan" (`/api/marketing/accounts/coa-options`) hanya membaca COA ber-`flags.is_bank/is_cash`; rekening turunan (BRI/BCA per entitas, 1-1216/1-1217/1-1226/1-1227, e-wallet, rekening baru di Kas & Bank) tidak punya flag → tidak muncul.
 - `core/payout_banks.py` (SSOT `fin_statements.cash_account_codes`: leaf 1-1100/1-1200 + flag + `gl_account_code` master Kas & Bank) dipakai coa-options, validasi `coa_cash_code`, dan penarikan.

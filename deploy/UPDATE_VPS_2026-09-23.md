@@ -27,6 +27,17 @@ docker compose --env-file .env exec -T backend python /app/scripts/cek_rekening_
 ```
 ✓ = muncul di Portal Keuangan → Saldo & Pencairan Marketplace. ✗ = tidak muncul + alasannya (nonaktif / belum tertaut GL).
 
+## (2026-09-25 b) Saldo awal GANDA → jurnal pembalik (nominal sama, D/K ditukar)
+Bila skrip saldo awal terlanjur jalan padahal saldo bank sudah diisi manual:
+```bash
+cd /opt/dahost && bash deploy/backup.sh && bash deploy/update.sh
+cd /opt/dahost/deploy
+docker compose --env-file .env exec -T backend python /app/scripts/batal_saldo_awal_bank_20260924.py             # pratinjau
+docker compose --env-file .env exec -T backend python /app/scripts/batal_saldo_awal_bank_20260924.py --terapkan   # posting pembalik
+```
+Idempoten. Jurnal asli tetap ada (ditandai `reversed`). "Sinkron GL" di Kas & Bank tidak lagi memposting saldo awal per rekening
+yang sudah tercakup jurnal pembuka → tidak dobel lagi.
+
 ## Saldo awal kas & bank (2026-09-24, dari saldo_erp.xlsx) — jalankan SEKALI setelah update kode
 ```bash
 cd /opt/dahost/deploy
