@@ -1,5 +1,11 @@
 # PRD — CV. Dewi Aditya ERP
 
+## SESI 2026-09-25 #22 — Form Marketing wajib menunjuk master (bukan teks bebas)
+- Request KREATOR: Toko + Kreator (master KOL, disaring per toko) + Model referensi + Warna/Ukuran (chips master); backend `_resolve_links` menolak teks bebas.
+- KOL Katalog: nama/SKU/kategori hanya dari Master FG (server menimpa dari rahaza_materials). Sesi KOL / LiveHost performance / portal kreator: platform dari toko, produk dari katalog.
+- Peluncuran Produk: platform target dari toko aktif. Katalog: mode Manual dihapus, item tertaut master read-only. AI exclude SKU: pemilih katalog. Snapshot Kesehatan Akun: akun/platform dari master (backend 400 tanpa account_id).
+- Pickers baru di `marketing/pickers/MarketingPickers.jsx`: useMasterList, MasterChipsSelect, useStorePlatforms, CatalogSkuMultiSelect. Uji iteration_134 (13/13).
+
 ## SESI 2026-09-25 #21 — Pembalik saldo awal ganda
 - `scripts/batal_saldo_awal_bank_20260924.py [--terapkan]`: jurnal pembalik (D/K ditukar) atas JE `opening_balance` source_ref `saldo_erp.xlsx (owner, 2026-09-24)`; idempoten (`opening_balance_reversal`/`reverse:<je_id>`).
 - Guard `post_cash_opening_balance`: lewati bila akun sudah ada di jurnal pembuka aktif (cegah dobel via Sinkron GL). Uji iteration_133 7/7.
