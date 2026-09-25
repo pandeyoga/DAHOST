@@ -1,0 +1,38 @@
+{
+  "summary": "Iter 131 — Feature 'penarikan saldo platform ke bank' moved from Marketing to Finance and now reads ALL active cash/bank/e-wallet accounts (not only flagged ones). Backend: 5/5 pytest passed. Frontend UI verified: PayoutBankLinks card shows all 7 stores each with a payout-bank-select containing 22 options (20+ banks + placeholder); wd-new form has wd-input-bank with same 22 options and auto-fills to store's cash_code (1-1101) when a store is chosen; Marketing nav no longer shows 'Pencairan Toko'; Marketing → Kelola Akun edit dialog exposes acc-coa-cash-readonly ('1-1101 · Kas Kecil') with note 'Diatur oleh Finance di Portal Keuangan → Saldo & Pencairan Marketplace' and no cash select.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/marketing/withdrawals/bank-options", "issue": "Seed COA is missing 1-1216, 1-1217, 1-1218 (task spec expects 1-1211..1-1219). Returns 20 entries as target count, but with gaps in the 1-1211..1-1225 range. Likely a client seed data gap, not a code bug."},
+      {"endpoint": "POST /api/rahaza/cash-accounts", "issue": "When user posts a code like '1-19XX' that is not under an existing parent, the backend normalises it to a synthetic code like '1-1200-1-19EA' (rather than 400-ing or accepting as-is). The account is still usable and appears in bank-options, but the code shape is surprising."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter131_finance_payout_banks.py",
+    "/app/test_reports/pytest/iter131.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: extend the seed / client COA import so codes 1-1216..1-1218 exist (currently missing) — this is why bank-options returned 20 entries but not the exact 23-code set listed in the task spec.",
+    "OPTIONAL: decide whether POST /api/rahaza/cash-accounts should reject unknown parent prefixes with 400 instead of silently generating a synthetic child code (currently returns 200 with a code like '1-1200-1-19EA')."
+  ],
+  "critical_code_review_comments": [
+    "core/payout_banks.bank_options and core/fin_statements.cash_account_codes correctly union the flag-based COA + master rahaza_cash_accounts, so the original bug (only BCA/BRI shown) is fixed at the SSOT layer — every downstream (bank-options, coa-options.cash, PayoutBankLinks, wd-input-bank, WithdrawalImportPanel) benefits automatically.",
+    "routes/marketing_withdrawals._resolve_cash correctly validates cash_code against is_bank_code and stores it per-withdrawal; _coa_for uses per-withdrawal cash_code (not store default) — jurnal is correctly per-doc.",
+    "PUT /accounts/{id}/payout-bank validates via is_bank_code; setting revenue account (4-111) is properly rejected with 400.",
+    "AccountManagementModule edit dialog exposes coa_cash_code as read-only with note directing user to Finance portal — Marketing side no longer edits this field, matching the SSOT decision."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter131_finance_payout_banks.py"
+  ],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (all data-testids present & wired)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Ephemeral: one marketing_settlements doc inserted (net_payout 1,000,000) for balance check, one TEST_ cash-account created & deleted, one TEST_ withdrawal created & deleted. All cleaned inside the test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend tests at /app/backend/tests/test_iter131_finance_payout_banks.py cover bank-options, coa-options.cash, new-bank-appears-in-list, payout-bank validation, and withdrawal cash_code propagation to journal. Run with `pytest -o addopts='' /app/backend/tests/test_iter131_finance_payout_banks.py -v`. Note that pytest.ini contains xdist addopts so `-o addopts=''` is required when the plugin misbehaves. Frontend verified visually via Playwright — PayoutBankLinks lists 7 stores with 22-option selects; edit dialog uses testid `edit-acc-{account_code}` (not `acc-edit-*`)."
+}

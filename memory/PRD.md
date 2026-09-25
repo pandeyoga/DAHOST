@@ -1,5 +1,13 @@
 # PRD — CV. Dewi Aditya ERP
 
+## SESI 2026-09-25 #20 — Penarikan saldo platform → bank: semua rekening terbaca + pindah ke Finance
+- Akar masalah: pemilih "Rekening Pencairan" (`/api/marketing/accounts/coa-options`) hanya membaca COA ber-`flags.is_bank/is_cash`; rekening turunan (BRI/BCA per entitas, 1-1216/1-1217/1-1226/1-1227, e-wallet, rekening baru di Kas & Bank) tidak punya flag → tidak muncul.
+- `core/payout_banks.py` (SSOT `fin_statements.cash_account_codes`: leaf 1-1100/1-1200 + flag + `gl_account_code` master Kas & Bank) dipakai coa-options, validasi `coa_cash_code`, dan penarikan.
+- `routes/marketing_withdrawals.py`: `GET /bank-options`, `PUT /accounts/{id}/payout-bank` (Finance), field `cash_code` per penarikan (manual & impor) → jurnal Dr rekening terpilih / Cr piutang toko.
+- FE Finance (`fin-marketplace-settlement`): kartu `PayoutBankLinks` (tautan rekening default per toko) + pilih rekening tujuan di form penarikan & pratinjau impor.
+- Marketing: menu "Pencairan Toko" dihapus dari nav; Rekening Pencairan di Kelola Akun & Koreksi Data Toko jadi baca-saja ("diatur Finance").
+- Uji: iteration_131 (backend 5/5, UI lulus). Backlog: pilih rekening per baris impor; tampilkan no. rekening/atas nama di pemilih bila master Kas & Bank sudah terisi.
+
 ## SESI 2026-09-24 #19 — Saldo awal kas/bank (saldo_erp.xlsx) + Impor Jurnal Excel
 - `scripts/saldo_awal_bank_20260924.py [--dry-run]` (idempoten): COA rename 1-1219, nonaktif 1-1215 (catatan owner "dihapus" — saldo 14.651.211 TIDAK dimasukkan), 4 rekening baru (1-1216/1-1217 BCA, 1-1226/1-1227 BRI) saldo 0, cash_accounts (no. rek, atas nama, opening_balance), jurnal pembuka `opening_balance` Rp 585.418.930 via `core.opening_balance.post_opening`. Sudah dijalankan di preview (JE-20260925-0001). Perintah VPS di `deploy/UPDATE_VPS_2026-09-23.md`.
 - Impor jurnal: `core/journal_import.py` + `routes/rahaza_journal_import.py` (`/api/rahaza/finance/journal-import/{template,preview,apply}`); sheet MUTASI_KAS_BANK (1 baris = 1 mutasi → jurnal 2 baris) & JURNAL_UMUM (multi-baris per no_jurnal) + DAFTAR_AKUN; anti-dobel `source_ref=import:<sha8>:<sheet>:<baris>`; FE `finance/RahazaJournalImportModule.jsx` tab "Impor Jurnal (Excel)" di hub Jurnal. Diuji curl: error akun → 400, 4 jurnal terposting, impor ulang → 0 baru/4 dilewati.
