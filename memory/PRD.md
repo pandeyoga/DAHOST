@@ -1,5 +1,10 @@
 # PRD — CV. Dewi Aditya ERP
 
+## SESI 2026-09-25 #23 — BOM baru (2-BOM) + ekspor stock opname
+- `scripts/import_bom_baru_20260925.py [--terapkan]` + data `scripts/vps/data/bom_baru_20260925.xlsx`: 9 model · 115 SKU; baris CUT Excel diabaikan (potongan otomatis, tepat 1 per BOM), +HTG/PIN, idempoten. 20 kancing DA-1511 qty kosong → dilewati (isi manual).
+- `scripts/export_stock_opname.py [--out DIR]`: xlsx AKSESORIS/KAIN_ROLL/POTONGAN_CUTTING/FG, kolom kuning Lokasi Hitung + QTY FISIK (+Jumlah Roll). Contoh preview: /downloads/STOCK_OPNAME_2026-09-27.xlsx.
+- Panduan VPS: `deploy/UPDATE_VPS_2026-09-25.md` (termasuk pembalik saldo awal ganda). Uji iteration_235 8/8. Backlog: impor balik hasil opname (adjust stok per lokasi).
+
 ## SESI 2026-09-25 #22 — Form Marketing wajib menunjuk master (bukan teks bebas)
 - Request KREATOR: Toko + Kreator (master KOL, disaring per toko) + Model referensi + Warna/Ukuran (chips master); backend `_resolve_links` menolak teks bebas.
 - KOL Katalog: nama/SKU/kategori hanya dari Master FG (server menimpa dari rahaza_materials). Sesi KOL / LiveHost performance / portal kreator: platform dari toko, produk dari katalog.

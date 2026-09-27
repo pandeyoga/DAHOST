@@ -1,0 +1,21 @@
+{
+  "summary": "Backend-only verification of the 2026-09-25 BOM-baru import script, stock-opname exporter, and VPS update guide. All 8 test cases from the review request passed: preview counts, --terapkan creates exactly 9 models / 115 variants / 115 cut panels / 115 FG / 115 BOMs (each with exactly one is_cut_panel line + Excel accessories + auto-appended A-HTG-0003 & A-PIN-0001, qty '60 cm' parsed as 60, ALL SIZE→ALLSIZE), idempotency confirmed (bom_sama=115 on second run), conflict resolution confirmed (extra CUT line 'CUT-DA-9999-EXTRA-XL' pre-injected into DA-1517-BLE-XL was removed & BOM overwritten with warning 'baris potongan lain dihapus (konflik)'). Export produced xlsx with sheets PETUNJUK, _LOKASI (hidden, 7 non-kantor locations), AKSESORIS(324), KAIN_ROLL(191, extra 'Jumlah Roll' col), POTONGAN_CUTTING(711), FG(730) — counts match DB queries; list validation for Lokasi Hitung, decimal>=0 validation for QTY FISIK, hidden material_id column, frozen panes and auto-filter present. Public URL <REACT_APP_BACKEND_URL>/downloads/STOCK_OPNAME_2026-09-27.xlsx returns HTTP 200 (~180KB). UPDATE_VPS_2026-09-25.md includes all required steps (backup, update.sh, batal_saldo_awal preview+terapkan, import_bom_baru preview+terapkan, cek_rekening, export_stock_opname + docker compose cp). At the end reseeded DB and re-applied --terapkan as instructed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/scripts/import_bom_baru_20260925.py", "/app/scripts/export_stock_opname.py", "/app/deploy/UPDATE_VPS_2026-09-25.md"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "import_bom_baru_20260925.py: warna/ukuran lookup uses key() with uppercase — safe for whitespace and case; well-guarded.",
+    "The unique index model_size_color_active_unique on rahaza_boms actively prevents double-active versions; conflict path correctly overwrites in-place instead of inserting.",
+    "export_stock_opname.py: uses onhand_map with active-only filter; hidden material_id column is essential for future re-import — no import-back script yet, consider adding to roadmap.",
+    "FG count reported by export (730) is smaller than total FG in DB (760) because of active!=false filter — expected behaviour."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "N/A (skipped)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Ran seed_golive_restore.sh --force twice (start + end). Final state (per instruction): fresh seed + import_bom_baru_20260925.py --terapkan applied so 9 new models / 115 variants / 115 FG / 115 cut panels / 115 BOMs are present. HPP recomputed for the 9 touched models.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "DB state: fresh DA_SEED_GOLIVE + import_bom_baru_20260925.py --terapkan applied. 9 new models: DA-1511, DA-1512, DA-1513, DA-1514, DA-1517, DA-2508, DA-3518, DA-3519, DA-4204. Note DA-1515 & DA-1516 are NOT in the Excel (Excel only has 9 models even though request text listed 11 codes). 20 warnings on DA-1511 empty qty rows are expected. Export xlsx cached at /app/frontend/public/downloads/STOCK_OPNAME_2026-09-27.xlsx.",
+  "rca of the issue": "N/A — no issues encountered."
+}
