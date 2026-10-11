@@ -1,0 +1,46 @@
+{
+  "summary": "Comprehensive backend + frontend test for the iter-237 'account sync' feature (live role/status read in require_auth, role rename cascade, portal gate, and new /api/admin/access-sync/* admin endpoints). Created /app/backend/tests/test_access_sync.py (18 parametrized tests). 16/18 PASS. 2 FAIL — both uncover the SAME real bug in backend/auth.py::_load_live_user (line 215): the 'blocked' predicate uses AND instead of OR, so only `is_active: False` deactivates — `status: 'inactive'` alone and `active: False` alone do NOT block the token. Spec explicitly says all three variants must 401 /api/auth/me. Everything else works: (1) live perm add (mod.hr_leave.view) takes effect on the same old token within ~1.5s, (2) PUT /users switching role to TEST_sync_b2 instantly flips /auth/me to new role + 'finance' portal + mod.fin_expenses.view usable, (3) PUT /roles rename TEST_sync_b2→TEST_sync_b3 cascades to the user doc and preserves permissions on the same token, (4) role_id is auto-synced on POST/PUT users (TestLiveRoleSwitch assertion), (5) portal/granular gate — DELETE /rahaza/employees/x returns 403 x-rbac-denied=1, POST /rahaza/expenses returns 403 cross-portal, GET reads remain allowed cross-portal as designed, (6) /api/admin/access-sync/{audit,fix,user/{uid}} all 403 for non-superadmin, /fix is idempotent (2nd call fixed=0), audit returns summary {total,ok,error,fixable} and per-user portals/perm_count/granular_portals, user/{uid} returns module_access + granular list. Frontend (static bundle) verified via Playwright on preview URL as superadmin: Portal Administrasi Sistem → Kontrol Akses → tab 'Cek Sinkron Akun' renders — all required data-testids present (access-sync-module, access-sync-summary, access-sync-ok, access-sync-error, access-sync-refresh, access-sync-fix), 38 rows (access-sync-row-<email>), 38 view buttons (access-sync-view-<email>), detail dialog (access-sync-detail) opens with Peran / Portal yang bisa dibuka / Izin per modul sections. Summary shows Total 38, Sinkron 38, Bermasalah 0 (production data healthy), Fix button disabled with '(0)'.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "/api/auth/me (via require_auth → _load_live_user)",
+        "issue": "Deactivation only works via `is_active: False`. Setting `status: 'inactive'` alone or `active: False` alone does NOT block the old token — /auth/me keeps returning 200. Spec requires ANY of the three variants to 401. Root cause: backend/auth.py:215 uses AND instead of OR:  `blocked = u.get('is_active') is False or (u.get('status') not in (None, 'active') and not u.get('active', True))`. The parenthesised clause ties `status` and `active` together with AND, so each one alone is swallowed. Suggested fix: `blocked = (u.get('is_active') is False) or (u.get('active') is False) or (u.get('status') not in (None, 'active'))`. Verified reproducibly: parametrized test TestDeactivation ran all three variants — only `is_active=False` passed; the other two left the token working.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_access_sync.py",
+    "/app/backend/tests/test_granular_rbac.py",
+    "/app/test_reports/pytest/iter237_access_sync.xml"
+  ],
+  "action_items": [
+    "Fix backend/auth.py::_load_live_user line 215 — use OR between the three deactivation signals so `status: 'inactive'` or `active: False` alone also blocks the token (currently only `is_active: False` works)."
+  ],
+  "critical_code_review_comments": [
+    "backend/auth.py:_load_live_user — compound boolean predicate `(status not in {None,'active'}) AND (not active)` is almost certainly a typo for OR; it also makes the common case (admin toggles status='inactive') a silent no-op from an enforcement perspective, exactly the symptom reported by the user (akun tidak sinkron saat dinonaktifkan).",
+    "backend/routes/access_sync.py — clean, idempotent POST /fix (patch only if diff), proper superadmin gate, bump_rbac_cache after fix. Audit row 'status' uses 'error' only when any issue has severity != 'info'; downgrading role_unlinked/role_mismatch(with-doc) to 'info' is a nice touch so the UI badge stays green for cosmetic links.",
+    "backend/routes/admin.py::update_role — rename cascade updates users.role to the new name but keeps role_id, so permissions remain intact; verified end-to-end.",
+    "backend/routes/admin.py::_sync_role_link — correctly fills role_id when only role name is given AND vice versa on create/update; verified via TestLiveRoleSwitch that body returns role_id matching the new role doc.",
+    "auth.py cache invalidation (bump_rbac_cache on every PUT /users and /roles) is working: live perm add took effect on the SAME old token within one polling cycle (≤2s) in TestLivePermChange."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_access_sync.py (new)"
+  ],
+  "success_rate": {
+    "backend": "88.9% (16/18) — 2 failures both from the same single root-cause bug in deactivation logic",
+    "frontend": "100% — all data-testids on Cek Sinkron Akun tab render; summary + table + dialog verified"
+  },
+  "test_credentials": "admin@garment.com / Admin@123 (superadmin), test_sync@example.com / Test@1234 (role TEST_sync_a) — ALL test fixtures are seeded + torn down inside the test module.",
+  "seed_data_creation": "test_access_sync.py seeds TEST_sync_a + TEST_sync_b2 roles and test_sync@example.com user inside a module-scoped fixture, and deletes them on teardown. During the run the role may be renamed to TEST_sync_b3 (still deleted on teardown). No real client data touched. /api/admin/access-sync/fix was called twice as part of TestAccessSyncEndpoints.test_fix_idempotent on the real DB — safe (only normalizes role_id on users; production reported `fixed: 0` so no changes).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Live-sync feature works for role change + role rename + permission add — those are verified by test_access_sync.py (ran in ~67s). The only failing path is deactivation via `status: 'inactive'` or `active: False` alone (auth.py:215). After the main agent fixes _load_live_user, re-run `REACT_APP_BACKEND_URL=... pytest backend/tests/test_access_sync.py -o addopts= -v` and expect 18/18 PASS. The previous iteration's test file test_granular_rbac.py was previously tied to a `test_granular_hr` user which may now be removed; if it fails on fixtures, that's expected cleanup — not a regression of this iteration. Frontend Cek Sinkron Akun tab is reachable via localStorage keys erp_token/erp_user/erp_access (NOT token/user) + localStorage.erp_portal='sysadmin' + hash '#mgmt-access-hub'; useful for future scripts.",
+  "rca of the issue": "Deactivation bug: backend/auth.py:_load_live_user computes `blocked = u.get('is_active') is False or (u.get('status') not in (None, 'active') and not u.get('active', True))`. When admin sets ONLY `status: 'inactive'`, mongo doc has status='inactive' and active defaults to True (via .get('active', True)) → `not True` = False → the AND clause evaluates False → blocked=False. Same analysis for `active: False` alone: status defaults to 'active' → `status not in (None,'active')` = False → AND clause False → blocked=False. Only `is_active: False` triggers the first disjunct. Fix: change AND to OR so each of the three signals independently blocks. Reproduction: TestDeactivation.test_deactivate_blocks_token[patch0] (status) and [patch1] (active) both fail with /auth/me 200; [patch2] (is_active) passes. Mitigation for user: admin UI should set all three fields to the same value on deactivation OR patch backend logic as above."
+}
