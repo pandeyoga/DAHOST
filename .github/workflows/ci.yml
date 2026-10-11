@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Lint (ruff — hanya kelas kesalahan yang memecahkan runtime)
+        run: |
+          pip install ruff==0.6.9
+          ruff check backend --select F821,F811,F401,E9 --exclude backend/routes/_archive
+      - name: Uji unit hermetik (tanpa Mongo)
+        run: |
+          pip install pytest pytest-xdist pydantic fastapi
+          cd backend && python -m pytest tests/unit -n 0 -q
+      - name: Gate statis (T-01 authz · T-03/T-17 koleksi hantu · T-21 to_list(None))
+        run: |
+          python3 scripts/audit_authz.py --gate
+          python3 scripts/check_collection_writers.py --gate
+          python3 scripts/check_unbounded_queries.py --gate
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+      - name: Install (lockfile beku)
+        working-directory: frontend
+        run: yarn install --frozen-lockfile --network-timeout 600000
+      - name: Build
+        working-directory: frontend
+        env:
+          REACT_APP_BACKEND_URL: https://ci.invalid
+          CI: "false"
+        run: yarn build

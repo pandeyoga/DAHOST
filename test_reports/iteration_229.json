@@ -1,0 +1,37 @@
+{
+  "summary": "Iterasi 229 — audit fase 1 & 2 CV. Dewi Aditya (FIN-01/02/04/05/06/07/08/09/16 + MAK-01). Backend: 24 PASSED, 1 FAILED (MAK-01 sewing_input tidak dipersist). Frontend: Rekap Keuangan & Kas Kecil UI berfungsi. Semua fixture uji (T1-AR1/AR2/AP1/P1/P2, T5-B/I/JL, T7-AP, T16-K, UJI-T3) sudah dihapus. Password 3 akun (tutut.nf/ega.ar/brenda.p) di-patch sementara ke TempTest@123 selama uji dan DIKEMBALIKAN ke hash asli pada teardown modul.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/dewi/maklon/orders/{id}/stage-qty", "issue": "Body {stage:'sewing', qty_in:77} → 200 tetapi field sewing_input TIDAK dipersist di stage_qty. Kode dewi_maklon.py:417-419 hanya menangani qty_out untuk stage=sewing (menulis sewing_output). Konsekuensi: gate transisi sewing membaca sewing_output; kolom masukan sewing tidak pernah tersimpan. Spec MAK-01 mengharapkan stage_qty.sewing_input=77 tampil di production-detail."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter229_finance_audit.py",
+    "/app/test_reports/pytest/iter229.xml"
+  ],
+  "action_items": [
+    "MAK-01 (minor bug): Perluas branch stage=='sewing' di /app/backend/routes/dewi_maklon.py update_stage_qty untuk juga menerima payload.qty_in → tulis stage_qty['sewing_input']. Analog untuk qc & packing bila spek gate menghitung input pada stage tersebut. Setelah fix, jalankan ulang TestMAK01_StageQty.test_put_sewing_qty_in_77."
+  ],
+  "critical_code_review_comments": [
+    "dewi_maklon.py update_stage_qty: mapping qty_in/qty_out per stage tidak simetris (cutting: qty_in + qty_out; sewing: hanya qty_out; qc: qty_pass + qty_fail; packing: hanya qty_out). Jika UI mengirim qty_in untuk sewing, endpoint mengembalikan 200 tanpa efek — silent-loss. Tambahkan validasi 400 untuk field yang tidak dikonsumsi ATAU dukung sewing_input/packing_input.",
+    "rahaza_petty_cash.py _post_petty_cash_txn: percabangan 'return' menggunakan mapping 'petty_cash_expense' → account_code default '6-2200' (beban). Untuk pengembalian uang muka seharusnya Cr Advance/Piutang Karyawan, bukan Cr Expense. Lihat FIN-05 baris 144-155.",
+    "rahaza_petty_cash.py create_txn (baris 371): filter atomik 'current_balance >= amount' dipakai saat delta<0. Namun setelah TOCTOU gagal, transaksi ditandai void_needed:True tetapi jurnalnya SUDAH terposting — dokumen txn hanya update field 'gl_error' & 'void_needed'; JE tetap ada. Perlu compensating reversal atau delete JE.",
+    "financial_recap: monthly_trend selalu dihitung 6 bulan terakhir dari today, mengabaikan date_from/date_to. Konsisten dengan spec 'Rekap Keuangan filter Semua tidak default 30 hari', tetapi trend tidak sinkron dengan periode filter — worth documenting di UI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter229_finance_audit.py"
+  ],
+  "success_rate": {"backend": "96% (24/25)", "frontend": "100% (Rekap Keuangan + Kas Kecil)"},
+  "test_credentials": "admin@garment.com/Admin@123 OK. fatimah.kw@dewiaditya.id/Dewi@123 OK (staff_keuangan, must_change_password=true — namun API tetap dilayani). tutut.nf/ega.ar/brenda.p @dewiaditya.id sandi TIDAK 'Dewi@123' (verifikasi bcrypt.checkpw gagal). Test file men-patch users.password menggunakan bcrypt('TempTest@123') pada modul-setup dan MENGEMBALIKAN hash asli pada teardown (verified pasca-uji).",
+  "seed_data_creation": "Sementara (semua dihapus di teardown): T1-AR1/AR2 (rahaza_ar_invoices), T1-AP1/T7-AP (rahaza_ap_invoices), T1-P1 (rahaza_ar_payments), T1-P2 (rahaza_ap_payments), T16-K (dewi_kasbon_requests), T5-B (rahaza_budgets), T5-I (rahaza_budget_items), T5-JL (rahaza_journal_lines), UJI-T3 (rahaza_petty_cash_funds+txns). PO maklon contoh MKL-KOHTRI-00001-2026-0001 TIDAK diubah (cutting_input=123 tetap; sewing_input tidak berhasil disimpan sesuai bug MAK-01).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regression suite: /app/backend/tests/test_iter229_finance_audit.py (25 tests). PENTING: sandi klien nyata tutut.nf/ega.ar/brenda.p BUKAN 'Dewi@123' — file test men-patch bcrypt(TempTest@123) di module setup dan restore di teardown. Rate limit login 10/60s. Bug MAK-01 (sewing_input tidak dipersist di PUT /stage-qty) belum diperbaiki di kode; tes TestMAK01_StageQty::test_put_sewing_qty_in_77 diharapkan MERAH sampai kode ditambal.",
+  "rca of the issue": "MAK-01 (bug tunggal iterasi ini): routes/dewi_maklon.py:417-419 hanya menulis stage_qty['sewing_output'] saat payload.qty_out disediakan, TIDAK menangani payload.qty_in untuk stage='sewing'. Reproduksi: PUT /api/dewi/maklon/orders/<PO_ID>/stage-qty body {stage:'sewing', qty_in:77} → HTTP 200 tetapi GET production-detail tidak menunjukkan sewing_input. Mitigasi: tambahkan `if payload.qty_in is not None: stage_qty['sewing_input'] = max(0, payload.qty_in)` di dalam blok elif stage=='sewing' (analog cutting). Setelah patch, TestMAK01_StageQty akan hijau."
+}

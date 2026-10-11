@@ -1,0 +1,29 @@
+{
+  "summary": "FASE 4–5 hardening (T-22 transisi query-token, T-21 progress path, T-20 bulk-approve prefix /api/hr/expenses, T-28 restructure, regresi ruff --fix F401 124 import). Backend-only. Semua PASS: fase4 46/46, fase3 SSOT, fase2 RBAC, fase1 audit; pytest tests/unit 11/11; smoke iter223 20/20; gate audit_authz + collection_writers + unbounded_queries + ruff F821/F811/F401/E9 semua OK.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/tests/test_fase4_hardening.py",
+    "/app/tests/test_fase3_ssot.py",
+    "/app/tests/test_fase2_rbac.py",
+    "/app/tests/test_fase1_audit.py",
+    "/app/backend/tests/unit/test_auth_download_token.py",
+    "/app/tests/smoke_iter223.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "T-22 bug fix terverifikasi: auth.verify_download_token menangkap jwt.MissingRequiredClaimError (selain InvalidAudienceError) → token SESI di query melewati fallback → 200 CSV; warning '[download-token] token SESI dipakai di query string (deprecated)' tercatat di backend.err.log (dua entri per request smoke).",
+    "ALLOW_SESSION_TOKEN_IN_QUERY=\"1\" ada di backend/.env; toggling via test_auth_download_token.py test_session_token_in_query_follows_transition_flag terverifikasi hermetik.",
+    "T-28 struktur bersih: /app/backend/*.py = 10 file inti; /app/tests/legacy/backend_root berisi 19 skrip lama; /app/docs/CHANGELOG_SESI.md ada; /app/README.md 64 baris (< 120).",
+    "Regresi ruff --fix F401 (124 unused import di 67 modul routes/core): backend boot bersih; sampel GET /api/health, /rahaza/employees, /capacity/config, /production-variances/stats, /production-variances?limit=5, /wms/racks semua 200; ruff F821/F811/F401/E9 → All checks passed.",
+    "Rate limit login dihormati: satu login/token per akun (admin, uji.accounting, uji.operator) dan token di-reuse untuk 20+ request."
+  ],
+  "updated_files": ["/app/tests/smoke_iter223.py"],
+  "success_rate": {"backend": "100%", "frontend": "n/a (skip per instruksi)"},
+  "test_credentials": "admin@garment.com/Admin@123, uji.accounting@dewiaditya.id/Dewi@123, uji.operator@dewiaditya.id/Dewi@123",
+  "seed_data_creation": "Tidak ada seed baru; smoke_iter223 hanya bulk-approve dengan ID 'tidak-ada' (idempoten, tidak menyentuh DB).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Semua fase (1–5) hijau di run ini. Untuk regresi cepat: (a) `cd /app/backend && set -a && . .env && set +a && python ../tests/test_fase4_hardening.py` (46 cek); (b) `python -m pytest tests/unit -n 0 -q` (11 pass); (c) `python3 /app/tests/smoke_iter223.py` (verifikasi T-20/T-21/T-22 + regresi ruff). Gate CI: audit_authz(0≤0), collection_writers(21≤21), unbounded_queries(191≤191), ruff F821/F811/F401/E9 clean. Tidak ada Traceback/500 baru di backend.err.log.",
+  "rca of the issue": "N/A — tidak ada bug baru. Perbaikan T-22 (main agent): except tuple pada verify_download_token diperluas dgn jwt.MissingRequiredClaimError sehingga token SESI (tanpa claim 'aud=download') memicu fallback ke verify_token; kombinasi dgn ALLOW_SESSION_TOKEN_IN_QUERY=1 di .env → 200 CSV + peringatan deprecation."
+}

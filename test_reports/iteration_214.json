@@ -1,0 +1,33 @@
+{
+  "summary": "Iter214 — BOM_AKSESORIS v3 importer (bom_fill.py hardened) + Laporan Sisa + UI. Backend 11/11 tests pass, frontend flow verified end-to-end via Playwright on da37-bom-golive.preview.emergentagent.com. Preview totals, issue counts, BOM lines (row 2/4/5/6/10/12) validated. Apply scope=bom idempotent verified; fixture B replace-whole verified; Mongo state DA-1101 HTM/MHG/CRL/GRY, DA-1202 HTM, DA-1201 (6 BOMs) checked. Laporan Sisa 10 sheets validated with expected row counts. Gap-workbook confirms DA-1101/1202/1201 removed. Completeness endpoint exposes hpp check + hpp_unvalidated + per-row hpp_validation. Frontend flow: login → hash nav → tab click → upload → 8 issue chips → apply (hanya BOM) → result 'hanya BOM' + hpp-unvalidated → download LAPORAN_SISA_DA.xlsx.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Impor Harga · Rekening · BOM (fill-page)", "issues": ["Individual warning list items lack a distinctive data-testid (e.g., fill-warning-<i>); the container works but per-item testability is limited. The parent 'fill-warnings' area shows '11 catatan dilewati' as list correctly."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter214_bom_fill_v3.py",
+    "/app/test_reports/pytest/iter214.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: add data-testid='fill-warning-<idx>' to each warning <li> for finer-grained UI test hooks (spec-mentioned selector 'fill-warnings 11 item' — the container is present but not per-item testable)."
+  ],
+  "critical_code_review_comments": [
+    "bom_fill.parse_bom_sheet correctly reports 8 issue categories with counts; no color-guessing (verified by DA-1202 kelompok tanpa varian being skipped as expected).",
+    "apply_bom_groups replaces accessories per (model, variant) fully, keeps fabric+cut_panel lines — semantics match spec.",
+    "flag_hpp_validation writes hpp_validation.{status,reasons,at} on all active models; wired to completeness endpoint.",
+    "master_fill.apply_fill scope='bom' short-circuits to only BOM apply so HARGA_JUAL_SKU errors on other sheets don't block — verified: preview ok=false but scope=bom apply returns 200.",
+    "laporan_sisa builds 10 sheets (RINGKASAN + 1..8 + VARIAN_BARU) with correct row counts (VARIAN_BARU=2, 3_SATUAN_KODE_TAK_VALID=7, 6_HARGA_JUAL_SKU=2)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter214_bom_fill_v3.py"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all key selectors + flow verified)"},
+  "test_credentials": "admin@garment.com / Admin@123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Used pre-built fixtures /app/tests/fixtures/bom_v3_test.xlsx and bom_v3_test_b.xlsx. A-LBL-0004 pack_size=600 already set.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend REACT_APP_BACKEND_URL = https://da37-bom-golive.preview.emergentagent.com (not cakeflow-1). Test file: /app/backend/tests/test_iter214_bom_fill_v3.py — 11 tests all green. Legacy test_iter213_bom_fill_varian.py has outdated assertions (relied on color-guessing which is now removed); leave as-is or delete. DB state after this run: DA-1101 HTM/MHG = A-KRT-0003(70cm)+A-LBL-0004(1pcs) [fixture B applied last], CRL/GRY = A-KRT-0003(0.6m); DA-1202 HTM = A-K22-0014(3pcs); DA-1202 MGT retains A-K22-0005 from legacy iter213 (unchanged — expected). DA-1201 all 6 BOMs have A-KRT-0003 60cm. hpp_validation set on all active models.",
+  "rca of the issue": "N/A — all specs verified."
+}

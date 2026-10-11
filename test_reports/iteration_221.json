@@ -1,0 +1,21 @@
+{
+  "summary": "FASE 3 SSOT (T-03 wo_reader, T-17 koleksi hantu, T-18/T-19, gate 3.1) — backend-only. Menjalankan /app/tests/test_fase3_ssot.py (41 pengecekan) + smoke curl 5 endpoint T-03 + gate check_collection_writers + tail log. Semua PASS, tanpa 500.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/tests/test_fase3_ssot.py", "/app/scripts/check_collection_writers.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "test_fase3_ssot.py bersih (self-cleanup data uji: dewi_perf_*, rahaza_employees, cmt_receipt(_lines), rahaza_attendance_events, notifications).",
+    "log backend hanya berisi 503 terkendali dari /api/rahaza/ai/daily-summary saat ANTHROPIC key kosong — bukan 500 (endpoint tetap 200 pada run ini). Konteks numerik (total_qc_checked/fail) sudah benar dari qc_reader.",
+    "Gate check_collection_writers baseline=21 tercapai; koleksi hantu (rahaza_qc_events, rahaza_attendance, rahaza_alerts, capacity_config, hris_*) tidak muncul lagi.",
+    "core/qc_reader.qc_summary & qc_event_rows telah menjadi SSOT QC di atas cmt_receipts; digunakan konsisten oleh reports/executive, rahaza AI, analytics qc/rca."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "n/a (skip per instruksi)"},
+  "test_credentials": "admin@garment.com/Admin@123, uji.operator@dewiaditya.id/Dewi@123, uji.hr@dewiaditya.id/Dewi@123",
+  "seed_data_creation": "Data uji dibuat & dibersihkan otomatis oleh test_fase3_ssot.py (tag UJI3-<hex>).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "FASE 3 SSOT sudah hijau: 41/41 assertion, 5/5 endpoint T-03 (capacity/overview,bottlenecks,utilization; reports/executive/production-snapshot; rahaza/ai/daily-summary) → 200; gate writers 21 ≤ baseline 21; tidak ada trace 500 baru. Untuk regresi cepat cukup jalankan `cd /app/backend && set -a && . .env && set +a && python ../tests/test_fase3_ssot.py`.",
+  "rca of the issue": "N/A — tidak ada bug."
+}

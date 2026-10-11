@@ -1,0 +1,25 @@
+{
+  "summary": "Iter 232 — Fase G2 Nomor Otomatis Produksi & Maklon. Backend 12/12 lulus + Frontend 5/5 modul menampilkan DocNumberField dengan pratinjau nomor benar (SHP/PO-INT/PO-MKL/PMK/RTN). Rollback vendor-shipment untuk PO INTERNAL (stok kurang) TIDAK melubangi counter. Mode manual bekerja (wajib, kembar 409, pola bebas 400) dan berhasil dikembalikan ke auto. Semua dokumen UJI-TA sudah dihapus; counters uji juga dibersihkan.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter232_docnum_produksi_maklon.py",
+    "/app/test_reports/pytest/iter232.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ProductionPOModule.jsx & ProductionReturnModule.jsx sudah pakai DocNumberField konsisten; VendorShipmentModule menggunakan useDocNumberPolicy dengan refreshKey saat modal dibuka (bagus). Tidak ada regresi.",
+    "Rollback vendor-shipment memanggil release_number setelah insert gagal — verifikasi empiris: counter seq tetap setelah 400 stok kurang. Aman.",
+    "Save admin/doc-numbering: catatan minor — ketika mode dikembalikan ke default ('auto'), field mode tetap tersimpan di doc_number_configs; test membersihkannya via $unset supaya mode_is_custom kembali false. Bisa dipertimbangkan menambahkan endpoint 'reset mode' agar tidak perlu manipulasi DB langsung."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter232_docnum_produksi_maklon.py"
+  ],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% (5/5 modul preview terbaca)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Test membuat sementara PO INT + PO MKL + 3 vendor shipments (notes='UJI-TA') dan sudah dihapus di test_zzz_cleanup + skrip pembersih counter (SHP-202609-, PO-INT-202609-, PO-MKL-202609- semuanya dihapus karena tidak ada dokumen nyata memakai prefiks itu).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_iter232_docnum_produksi_maklon.py bisa dipakai ulang; jalankan dengan `python -m pytest backend/tests/test_iter232_docnum_produksi_maklon.py -v -o addopts=''` (nonaktifkan xdist karena tests share state antar-class). Server clock 2026-09; jika bulan/tahun berubah, ubah regex prefix. Manual-mode test mengembalikan mode ke 'auto' + $unset field mode di finally sehingga aman diulang.",
+  "rca_of_the_issue": "Tidak ada bug. Kode berjalan sesuai spesifikasi Fase G2."
+}

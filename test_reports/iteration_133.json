@@ -1,0 +1,23 @@
+{
+  "summary": "Backend-only regression for scripts/batal_saldo_awal_bank_20260924.py + post_cash_opening_balance double-post guard. All 7 pytest tests pass. Verified: (1) saldo_awal script posts JE Rp 585,418,930 (Dr 9 banks / Cr 3-2000); (2) reversal script preview writes nothing (JE count unchanged, no reversal doc); (3) --terapkan posts pembalik with same amounts D/K swapped, GL balances for 1-1211,1-1212,1-1213,1-1214,1-1219,1-1222,1-1223,1-1224,1-1225 and 3-2000 fully return to pre-script value, original JE tagged flags.reversed=true + reversed_by_je_number; (4) second --terapkan prints 'SUDAH ADA' and posts nothing (idempotent); (5) re-running saldo_awal script prints 'SUDAH ADA' and posts nothing (existing_opening finds the still-active JE-20260925-0001); (6) POST /api/rahaza/cash-accounts/sync-gl with admin token creates ZERO cash_opening_balance JEs touching accounts covered by the opening_balance JE (double-post guard at rahaza_posting.py:530 works); (7) regression — new cash-account with opening_balance>0 whose gl_account_code is NOT in the opening JE still posts its own cash_opening_balance JE (guard is scoped to matching account_code only). Seed restored via seed_golive_restore.sh --force after tests.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_batal_saldo_awal_bank.py",
+    "/app/test_reports/pytest/iter133_batal_saldo.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "batal_saldo_awal_bank_20260924.py:35 — filter uses status:{$ne:voided} but not flags.reversed. If someone runs the reversal twice on two DIFFERENT reversal source_refs (e.g. re-import xlsx with new source_ref) the guard at line 40 keys on (REV_MODULE, ref=reverse:<je_id>) so it stays idempotent — fine, but worth a comment.",
+    "rahaza_posting.py:530 double-post guard is scoped by lines.account_code — this correctly allows brand-new cash accounts (different GL code) to post their own opening JE. Consider logging the skip reason at INFO so ops can trace 'why did Sinkron GL not create a JE for this bank?' from backend logs alone.",
+    "Reversal keeps original JE.flags.locked=true from opening_balance flag; that is intentional (audit trail) but users clicking 'Void' in JE UI on the reversal itself would leave the original marked as reversed while the pembalik is voided → net effect: double opening balance again. Recommend blocking void on rows with source_module='opening_balance_reversal' OR auto-clearing flags.reversed on the original when the pembalik is voided."
+  ],
+  "updated_files": ["/app/backend/tests/test_batal_saldo_awal_bank.py"],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "test_credentials": "admin@garment.com / Admin@123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Test creates one temporary cash account (TEST_ prefix) then deletes it. seed_golive_restore.sh --force run at end to restore canonical preview seed (no opening_balance JE).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_batal_saldo_awal_bank.py MUST be run with -n0 (single worker) — module-scoped autouse fixture wipes opening_balance JEs at setup and xdist splits classes across workers, so parallel execution races against the DB state established by TestBatalSaldoAwal. Run: `pytest backend/tests/test_batal_saldo_awal_bank.py -n0 -v`. After the run, DB has an active opening_balance JE + its reversal; run `bash /app/scripts/seed_golive_restore.sh --force` to restore.",
+  "rca of the issue": "N/A — this is a feature/regression test, not a bug repro. Root cause of the original doubled-opening-balance issue (already fixed by main agent): saldo_awal script wrote opening_balance fields on rahaza_cash_accounts, and separately post_cash_opening_balance was called during Sinkron GL, posting a second cash_opening_balance JE for the same accounts. Fix (rahaza_posting.py:530-534) short-circuits when an active opening_balance JE already has a line on the same account_code."
+}

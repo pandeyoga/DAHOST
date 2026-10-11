@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 225 — GET /api/rahaza/master/harga-review (REVIEW_HARGA_MATERIAL_DA.xlsx) + roundtrip via /fill-preview + FE button 'Review harga aksesoris & kain (HPP)'. 14/14 backend pytest cases passed; frontend button visible, click triggers correct download; no error toasts. No writes performed (fill-apply not called).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_harga_review_iter225.py", "/app/test_reports/pytest/iter225.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "harga_review.py L127: query {type:{$ne:'fg'}} loads all non-fg materials incl. CUT-* into `mats` dict just to filter later at L194 — harmless but redundant; could pass same filter as gap workbook does.",
+    "harga_review.py L204: harga_per_satuan_beli col (H) is explicitly written as None (correct for roundtrip empty preview), but is also fill=YELLOW — verified matches spec.",
+    "core/master_fill.py parse_fill_workbook: only flags a material change when harga_beli>0 OR min_stok/pack_size differs. Roundtrip w/ untouched review file therefore correctly yields totals.materials=0 (verified)."
+  ],
+  "updated_files": ["/app/backend/tests/test_harga_review_iter225.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100%"},
+  "test_credentials": "admin@garment.com / Admin@123 (rate limit 10/60s — login once per module fixture)",
+  "seed_data_creation": "None — real client data, no writes performed (fill-apply intentionally NOT called).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test file /app/backend/tests/test_harga_review_iter225.py covers: endpoint auth+headers, sheet order, MATERIAL headers/rows/count-vs-mongo/ordering (MERAH→KUNING→plain)/fill colors/4 expected red codes (A-REN-0004, A-KRT-0007, A-BIS-0001, A-BIS-0002)/DA-4104 hpp≈515151/porsi≈98.3, BOM_BARIS_MAHAL top row A-REN-0004 biaya=506506, KAIN_PER_MODEL, and roundtrip via /fill-preview (untouched → materials=0; edited A-REN-0004 roll/20/214500 → unit_cost=10725). Column offsets: MAT_COLS occupies idx 0..10, then +harga_per_pcs_atau_m_sekarang(11), dipakai_di_model(12), dipakai_di_bom(13), qty_rata_per_pcs(14), biaya_per_pcs_maks(15), model_biaya_maks(16), porsi_hpp_maks_%(17), tingkat(18), kenapa_dicurigai(19).",
+  "rca of the issue": "N/A — new feature validated as spec'd."
+}

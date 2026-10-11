@@ -1,0 +1,33 @@
+{
+  "summary": "Iter216 — Verifikasi POST /gap-workbook (dengan berkas klien), GET /gap-workbook (tanpa berkas), importir VARIAN_BARU end-to-end (preview→apply idempoten), verifikasi DB langsung (rahaza_model_variants, rahaza_materials fg, rahaza_boms), dan regression preview turunnya model_tanpa_sku. Backend: 7/7 pytest lulus pada run pertama dari state nol (semua asserts nilai spec: PETUNJUK berisi 'DAMPAK BERKAS SEBELUMNYA' + 'DITERAPKAN : 340 baris bahan · 89 kelompok · 62 model'; BOM_AKSESORIS kolom masalah/tindakan + baris DA-1101 masalah 'maroon'; VARIAN_BARU 38 baris + kolom lengkap + DA-1209 Hitam → kode_warna=HTM; MATERIAL A-BAB-0001 keterangan mengandung 'isi kemasan'; GET tanpa berkas → filename DATA_YANG_PERLU_DIISI_DA.xlsx tanpa sheet VARIAN_BARU; fill-preview varian file totals.new_variants=7, bom_lines=0, errors=[]; fill-apply?scope=bom pertama variants_created=7, DA-1209-HTM-ALLSIZE di variants_created_skus, bom_models=1, bom_base_created=7, bom_lines_appended=28; run kedua idempoten variants_created=0, boms_unchanged=7, bom_lines_appended=0; DB langsung: 7 variants DA-1209, FG DA-1209-HTM-ALLSIZE retail_price_master=99000, BOM DA-1209 HTM berisi A-KRT-0003/A-LBL-0004/A-R15-0001/A-LBL-0007; preview ulang berkas klien: model_tanpa_sku turun dari 47 ke 40, bom_models=84 (>=63)). CATATAN: DB backend menyimpan BOM dengan `model_id` (UUID) bukan `model_code`; test disesuaikan (lookup rahaza_models code→id lalu query BOM). Frontend Playwright (state pasca-import): login admin → hash fin-accounting-master-hub → tab 'Impor Harga · Rekening · BOM' → tombol fill-download-gap awal 'Data yang Perlu Diisi (1 berkas)' → set_input_files fill-file dengan berkas gap klien → tombol berubah 'Data yang Perlu Diisi — SISA dari berkas ini' → klik → download suggested_filename='DATA_YANG_PERLU_DIISI_DA_SISA.xlsx'. Upload berkas uji varian → fill-apply (hanya BOM) → fill-result tampil 'Selesai (hanya BOM): 0 baris aksesoris terpasang · 7 BOM sudah sama · 1 kelompok / 1 model · 0 BOM dasar baru; HPP 84 dihitung · 40 belum tervalidasi · 64 tervalidasi' — konsisten dengan idempoten. fill-result-variants TIDAK tampil (varian sudah dibuat oleh backend test lebih dulu, sesuai spec 'catat saja'). Tidak ada console error merah.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter216_gap_workbook_variant_import.py",
+    "/app/test_reports/pytest/iter216.xml"
+  ],
+  "action_items": [
+    "Jalankan `bash scripts/seed_golive_restore.sh --force` untuk mengembalikan DB ke seed sebelum tester berikut menjalankan skenario VARIAN_BARU dari nol — testfile iter216 hanya sekali-tembak (state-dependent) karena setelah run pertama DA-1209 sudah memiliki 7 varian sehingga rerun akan menampilkan variants_created=0/boms_unchanged=7 (idempoten)."
+  ],
+  "critical_code_review_comments": [
+    "Importir VARIAN_BARU idempoten: run kedua dengan berkas sama menghasilkan variants_created=0 dan boms_unchanged=7 tanpa error — properti bagus untuk retry aman.",
+    "gap-workbook POST menyertakan sheet BOM_AKSESORIS dengan kolom 'masalah'/'tindakan' yang secara akurat menjelaskan alasan skip (contoh 'maroon' untuk warna tak dikenal di DA-1101) — memenuhi tujuan UX 'jelaskan dampak'.",
+    "PETUNJUK DAMPAK dinamis: menampilkan '340 baris bahan · 89 kelompok · 62 model' yang sesuai state DB (baseline pra-VARIAN_BARU). Ini adalah bukti persen state-aware.",
+    "MATERIAL A-BAB-0001 disertakan otomatis dengan keterangan 'isi kemasan' — pengingat proaktif kepada user untuk isi kemasan pack/roll agar HPP tervalidasi.",
+    "GET /gap-workbook (tanpa file) sengaja mengeluarkan sheet VARIAN_BARU sehingga tidak menyarankan pembuatan varian baru saat tidak ada berkas terpilih — kebijakan yang benar.",
+    "Frontend RahazaMasterFillModule.dlGap men-switch antara mode POST (bila file terpilih) & GET (tanpa file) dengan label yang berubah — terverifikasi visual & fungsional."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter216_gap_workbook_variant_import.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7) pada run pertama dari state nol; 4/7 pada rerun karena idempotency (sesuai desain)",
+    "frontend": "100% (semua data-testid ada, download & label transisi terverifikasi, tidak ada console error merah)"
+  },
+  "test_credentials": "admin@garment.com / Admin@123 (dari /app/memory/test_credentials.md)",
+  "seed_data_creation": "Tidak membuat seed. Namun DB mengalami perubahan permanen akibat fill-apply?scope=bom pertama: rahaza_model_variants DA-1209 (+7), rahaza_materials FG DA-1209-XXX-ALLSIZE (+7), rahaza_boms model_id DA-1209 (+7 BOM warna, 28 material lines). Main agent perlu menjalankan seed_golive_restore.sh --force untuk kembali ke seed bersih.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "REACT_APP_BACKEND_URL=https://bom-aksesoris-v3.preview.emergentagent.com. Berkas: /app/private/golive/DATA_YANG_PERLU_DIISI_DA_2.xlsx & /app/private/golive/uji_varian_baru_DA-1209.xlsx. Testfile iter216 self-contained, TAPI state-dependent: butuh state 'DA-1209 belum punya varian'. Jalankan `bash scripts/seed_golive_restore.sh --force` sebelum re-eksekusi. BOM di MongoDB menggunakan field `model_id` (UUID dari rahaza_models.id) bukan `model_code`; contoh: `db.rahaza_boms.find({model_id: <uuid>, color_code: 'HTM'})`. Nilai retail_price_master untuk FG disimpan sebagai float (99000.0), gunakan `==` dengan int aman karena Python. Pytest butuh env `REACT_APP_BACKEND_URL` diteruskan eksplisit + flag `--override-ini='addopts='` (karena backend/pytest.ini memakai xdist -n auto yang bisa mengacaukan ordering test state-dependent).",
+  "rca of the issue": "N/A — semua ekspektasi spec terpenuhi pada run pertama; kegagalan 3 test pada rerun murni akibat state-progression (idempotency), bukan bug."
+}

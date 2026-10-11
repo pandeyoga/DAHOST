@@ -1,0 +1,31 @@
+from common import *
+seed()
+import datetime; today = datetime.date.today().isoformat()
+print('='*78); print('T3  KAS KECIL'); print('='*78)
+r = post('/api/finance/petty-cash/funds','accounting',{'name':'Kas Kecil Kantor','opening_balance':1000000,'bank_account_code':'1-1201','custodian_name':'Rina'})
+print('  buat dana (accounting)', r.status_code, str(r.json())[:160])
+fund = (r.json() or {}).get('fund') or r.json(); fid = fund.get('id')
+print('  jurnal saldo awal:', str((r.json() or {}).get('gl_posting') or (r.json() or {}).get('posting_result'))[:200])
+chk('1-110 (kode kas kecil yang dipakai kode) ada di bagan akun', H.run(H.DB.rahaza_coa_accounts.count_documents({'code':'1-110','active':True}))>0, True)
+r = post('/api/finance/petty-cash/transactions','operator',{'fund_id':fid,'txn_type':'expense','amount':300000,'category':'ATK','memo':'beli ATK','txn_date':today})
+print('  pengeluaran 300rb oleh OPERATOR ->', r.status_code, '| posting:', str(r.json().get('gl_posting') or r.json().get('posting_result'))[:160])
+chk('operator ditolak mencatat transaksi kas kecil', r.status_code, 403)
+f = H.run(H.DB.rahaza_petty_cash_funds.find_one({'id':fid},{'_id':0,'current_balance':1}))
+chk('saldo dana TIDAK berubah bila jurnalnya gagal (dana = GL)', f['current_balance'], 1000000, tol=0)
+r = post('/api/finance/petty-cash/transactions','operator',{'fund_id':fid,'txn_type':'return','amount':50000000,'memo':'"pengembalian" tanpa uang muka','txn_date':today})
+f = H.run(H.DB.rahaza_petty_cash_funds.find_one({'id':fid},{'_id':0,'current_balance':1}))
+print('  "return" 50 jt tanpa uang muka ->', r.status_code, '| saldo dana sekarang', f['current_balance'])
+chk('pengembalian dibatasi uang muka yang pernah keluar', f['current_balance'] <= 1000000, True)
+# penutupan: pakai akun 1-1101 supaya jurnal tidak gagal karena akun, lalu lihat ARAH jurnal penutupan
+H.run(H.DB.rahaza_coa_accounts.insert_one({'id':'X110','code':'1-110','name':'Kas Kecil (legacy)','type':'ASSET','active':True,'is_group':False}))
+H.run(H.DB.rahaza_petty_cash_funds.update_one({'id':fid},{'$set':{'current_balance':700000}}))
+r = post(f'/api/finance/petty-cash/funds/{fid}/close','accounting')
+print('  tutup dana (sisa 700rb) ->', r.status_code, str(r.json())[:120])
+je = H.run(H.DB.rahaza_journal_entries.find_one({'id': r.json()['gl_posting']['je_id']},{'_id':0}))
+if je:
+    for ln in je['lines']: print(f"     {ln['account_code']:8s} {ln.get('account_name','')[:26]:26s} Dr {ln['debit']:>10,.0f}  Cr {ln['credit']:>10,.0f}")
+bank = [l for l in (je or {}).get('lines',[]) if l['account_code']=='1-1201']
+chk('penutupan mendebit BANK (uang kembali ke bank)', bool(bank and bank[0]['debit']>0), True)
+pc = [l for l in (je or {}).get('lines',[]) if l['account_code'] in ('1-110','1-1101')]
+chk('penutupan mengkredit KAS KECIL', bool(pc and pc[0]['credit']>0), True)
+print('\n  hasil:', sum(R), 'lulus dari', len(R))

@@ -1,0 +1,22 @@
+{
+  "summary": "Iter226 (backend only, read-only): validated /app/scripts/export_sku_bom.py against MongoDB and public download endpoint. All 9 pytest cases pass. Script runs cleanly and produces 4 sheets (DETAIL_BOM, RINGKASAN_SKU, RINGKASAN_MODEL, KETERANGAN). Row counts match DB exactly (model=104, RINGKASAN_SKU=665 = 645 varian + 20 model tanpa varian, DETAIL_BOM=2174). All 645 variant SKUs appear exactly once in RINGKASAN_SKU and >=1 in DETAIL_BOM. Status assertions verified: DA-2201-* (Ona) TANPA_BOM, DA-1101-BRG-ALLSIZE BOM_TANPA_AKSESORIS, DA-1101-CRL-ALLSIZE BOM_LENGKAP with baris_aksesoris=4, 30 SKU nonaktif -> BOM_NONAKTIF, 20 model tanpa varian -> TANPA_SKU dengan kolom sku kosong. Sample 5 baris DETAIL_BOM BOM_LENGKAP: kode_material/qty/satuan/qty_dasar/harga_per_satuan_dasar cocok dengan rahaza_boms.materials, biaya_baris = qty_dasar x harga_per_satuan_dasar, harga_master_saat_ini = rahaza_materials.unit_cost. RINGKASAN_MODEL distribusi status persis 20/1/2/1/18/56/6 (A/B/C/D2/D/E/F) - identik dengan output laporan_kekosongan_bom.py. Public download GET {REACT_APP_BACKEND_URL}/downloads/EXPORT_SKU_BOM_DA.xlsx -> HTTP 200 dan valid dibuka openpyxl dengan 4 sheet yang benar.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_export_sku_bom_iter226.py",
+    "/app/test_reports/pytest/iter226.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "export_sku_bom.py: pemilihan BOM per varian sudah tepat (color_code uppercased + size_id, prefer aktif dgn version max). Konsisten dengan konvensi laporan_kekosongan_bom.py.",
+    "Perbedaan kecil (bukan bug): export_sku_bom counts semua model (termasuk MODEL_NONAKTIF) sedangkan laporan_kekosongan hanya model aktif -- di DB ini semua model aktif jadi angka sama (104 vs 104).",
+    "rahaza_materials di-query dua kali (by code & by id). Bisa disatukan menjadi satu find untuk hemat IO -- micro-opt saja."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "n/a"},
+  "seed_data_creation": "none - read-only tests, output ditulis ke /tmp",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test file /app/backend/tests/test_export_sku_bom_iter226.py bisa dipakai regresi. Menjalankan script export ulang ke /tmp; TIDAK menyentuh /app/private/golive/EXPORT_SKU_BOM_DA.xlsx dan tidak menulis ke DB.",
+  "rca of the issue": "n/a - semua ekspektasi terpenuhi"
+}

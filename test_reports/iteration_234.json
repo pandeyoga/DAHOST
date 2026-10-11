@@ -1,0 +1,27 @@
+{
+  "summary": "Iter 234 — Toggle GDG-2 (production_require_material_issued) + Aksesoris kurang di permintaan ADDITIONAL + Smart-Native-Select portal panel. Backend 19/19 lulus (test_iter234_gdg2_and_additional_accessories.py): (A) Config default OFF, category='production', data_type='boolean'; PO INT DA-2101-MHG-ALLSIZE Confirmed → POST /production-jobs → 201 dengan material_issue_draft otomatis, SEMUA baris items.location_id terisi & tidak ada yang menunjuk lokasi karantina GD-L1-QC; progress OK saat toggle OFF; setelah PUT true progress ditolak 400 'GDG-2'; submit MI → pending_approval; approve → issued (dengan inventory_allow_negative ON); progress berikutnya 201; toggle dikembalikan OFF. (B) Alur aksesoris kurang: PO INT baru (BOM auto-explode po_accessories), shipment qty 10 → Received → inspection material missing_qty 2 + accessory_items 2 baris missing_qty 3; POST /material-requests ADDITIONAL 201; GET ?request_type=ADDITIONAL mengembalikan permintaan dengan accessory_shortages 2 baris (missing_qty 3); PUT approve dengan accessory_items [qty 2, qty 3] → child_shipment.accessory_items 2 baris (qty 2 & 3); GET /vendor-shipments/{child} accessory_items 2 baris; dewi_cmt_component_requests {inspection_id} berstatus 'fulfilled'. (C) PUT approve TANPA accessory_items pada permintaan lain → child otomatis membawa semua kekurangan (missing_qty=4). Frontend spot-check lulus: login OK, Portal Admin Sistem → Konfigurasi Maklon → tab 'Produksi' menampilkan toggle 'Progress Produksi Wajib Material Issue \"issued\" (GDG-2)' OFF (data-testid cfg-production_require_material_issued); klik ON → Simpan → toast '1 config disimpan' → reload persisted ON; klik OFF → Simpan → API GET value=False. Tidak ada 5xx di backend.err.log; tidak ada ChunkLoadError/pageerror. Cleanup lengkap: 0 MI, 0 shipment, 0 inspection, 0 material_request, 0 component_request, 0 progress uji, 0 stok minus; production_pos hanya menyisakan 'MKL-KOHTRI-00001-2026-0001'; production_require_material_issued=false + inventory_allow_negative=true.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter234_gdg2_and_additional_accessories.py",
+    "/app/test_reports/pytest/iter234.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "core/material_issue_engine.autofill_locations & best_location_for benar-benar mengecualikan lokasi 'karantina' (baik storage_role maupun role) — verifikasi empiris: MI draft dari job DA-2101 mengisi lokasi ke GD-L2/GD-L1-ACC, TIDAK PERNAH ke GD-L1-QC.",
+    "routes/exceptions.py::_accessory_shortages_for_request cerdas: dikurangi aksesoris yang sudah dikirim child sebelumnya (aman untuk banyak permintaan atas shipment yang sama). Approve tanpa body.accessory_items → fallback ke shortage inspeksi (tested C01 → child qty=4).",
+    "routes/exceptions.py::update_material_request menandai dewi_cmt_component_requests {inspection_id} → fulfilled HANYA saat ada aksesoris terkirim (acc_sent tidak kosong). Konsisten dengan spesifikasi owner (dulu material component_request tidak ikut fulfilled saat aksesoris disetujui — sekarang benar).",
+    "smart-native-select.jsx: portal panel via position:fixed dengan zIndex 9999 + flip ke atas (bila pos.bottom set) + data-testid `<id>-panel` — implementasi solid untuk keluar dari overflow modal. Tidak diuji UI end-to-end (butuh MI draft di DB), tapi lulus review kode.",
+    "Cleanup test file iter234 sekarang juga menyapu MI auto-issue 'Kirim Material CMT SHP-202609-*' (biasa muncul otomatis saat vendor-shipment dibuat untuk PO internal) — mencegah residu MI 'issued' setelah test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter234_gdg2_and_additional_accessories.py"
+  ],
+  "success_rate": {"backend": "100% (19/19)", "frontend": "100% (toggle GDG-2 end-to-end + tidak ada error console)"},
+  "test_credentials": "admin@garment.com / Admin@123",
+  "seed_data_creation": "Test sementara: 3 PO INT (UJI-TA2), 2 shipment induk + 2 child, 2 inspection + accessory items, 2 material_requests ADDITIONAL, 1 job internal + MI draft (di-issue). Semua telah dibersihkan via test_zzz_cleanup + skrip pembersih tambahan (auto-MI dari CMT). Setelan production_require_material_issued kembali FALSE; inventory_allow_negative tetap TRUE. production_pos hanya menyisakan dokumen owner 'MKL-KOHTRI-00001-2026-0001'.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "File /app/backend/tests/test_iter234_gdg2_and_additional_accessories.py bisa dijalankan ulang kapan saja (data referensi vendor pak aan + varian DA-2101-MHG-ALLSIZE + BOM aktif bersifat tetap di data go-live). Jalankan dengan urutan sekuensial: `python -m pytest backend/tests/test_iter234_gdg2_and_additional_accessories.py -v -o addopts=''`. Cleanup di test_zzz idempoten. UI dropdown MI 'Lokasi Ambil' TIDAK di-verify e2e via Playwright pada iterasi ini (butuh setup MI draft persisten); kode smart-native-select sudah lulus review — panel via portal fixed + testid `<id>-panel` + flip ke atas.",
+  "rca_of_the_issue": "Tidak ada bug. Semua alur yang diminta owner berjalan sesuai spesifikasi (toggle GDG-2, aksesoris kurang ikut di permintaan ADDITIONAL & child shipment, filter karantina di MI draft-from-job, autofill lokasi saat submit MI)."
+}

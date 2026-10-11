@@ -1,0 +1,31 @@
+{
+  "summary": "FASE 2.3–2.5 (T-01 otorisasi) diverifikasi. Semua uji lolos: (1) /app/tests/test_fase23_delete_gates.py → 58/58 PASS 'SEMUA LULUS' — 24 endpoint DELETE dengan matriks tolak/lolos, 2 uji kepemilikan (leaves/delegations), 7 uji FASE 2.5 (webhooks/manual, push/send, wo-due-scan, marketing/orders untuk cmt_vendor & pic_toko, comm/channels vendor, change-password self-service), plus 2 audit statik. (2) /app/tests/test_fase2_rbac.py → 0 GAGAL (regresi FASE 2.2 tetap stabil: ekternal 403 pada endpoint internal termasuk /api/rahaza/employees & /api/dewi/maklon/pos untuk buyer — gap dari iteration_219 sudah tertutup; peran marketing portal 403 pada domain non-mereka & BUKAN 403 pada HR self-service + modul kerja mereka; T-08 bulk-approve tetap benar). (3) `python3 /app/scripts/audit_authz.py --gate` exit 0 dengan output: 'TANPA GERBANG SAMA SEKALI (fungsi/berkas/server): 0' dan 'DELETE tanpa gerbang: 0' (baseline 0 ≤ 0). Tidak ada data nyata yang dibuat/dihapus; hanya id fiktif dipakai.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/tests/test_fase23_delete_gates.py",
+    "/app/tests/test_fase2_rbac.py",
+    "/app/scripts/audit_authz.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Duplikasi konstanta EXTERNAL_ROLES antara core/authz.py dan routes/production_rbac.py sekarang sudah konsisten (buyer termasuk) — tetap disarankan refactor: `from core.authz import EXTERNAL_ROLES` untuk mencegah drift ke depan.",
+    "server.py masih >2400 baris dengan banyak include_router manual — helper `include_internal(router, extra=[])` yang otomatis memasang _DENY_EXTERNAL_AND_MKT akan mengurangi risiko gap gerbang saat menambah router baru.",
+    "scripts/_patch_fase23_delete_gates.py memakai pendekatan pemetaan tabular endpoint→peran; pertimbangkan pindah pemetaan ke registry dekat router agar test discovery/gate audit tidak perlu skrip patch terpisah."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (58/58 fase2.3–2.5 + 0 gagal fase2 regresi + audit gate 0)", "frontend": "N/A (backend only)"},
+  "test_credentials": "Sesuai /app/memory/test_credentials.md — admin@garment.com/Admin@123 + uji.{role}@dewiaditya.id/Dewi@123. Login sekali per akun, token dipakai ulang. Tidak ada rate-limit ter-hit.",
+  "seed_data_creation": "Tidak ada. Semua panggilan DELETE memakai id fiktif 00000000-0000-4000-8000-000000000000 sehingga hasil 404/400/409/410 dihitung 'lolos gerbang' tanpa menyentuh dokumen nyata.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "FASE 1, 2.1, 2.2, 2.3, 2.4, 2.5 semua hijau per iteration_220. Untuk audit ulang cepat: (1) `cd /app && python3 scripts/audit_authz.py --gate` (harus exit 0, 'TANPA GERBANG SAMA SEKALI ... 0', 'DELETE tanpa gerbang: 0'); (2) `cd /app/backend && set -a && . .env && set +a && python3 ../tests/test_fase23_delete_gates.py` (SEMUA LULUS); (3) `python3 ../tests/test_fase2_rbac.py` (GAGAL: tidak ada). Fase 1: `python3 ../tests/test_fase1_audit.py` (22/22 stabil). Fase selanjutnya (bila ada FASE 3+) dapat memakai baseline gate=0 ini.",
+  "rca of the issue": "Tidak ada bug pada iterasi ini. Gap iteration_219 (rahaza/employees bocor + buyer→dewi/maklon/pos) sudah tertutup oleh main agent — dikonfirmasi ulang via test_fase2_rbac.py yang kini 0 GAGAL."
+}

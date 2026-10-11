@@ -1,0 +1,23 @@
+{
+  "summary": "Iter215 — Verifikasi baseline preview + apply BOM_AKSESORIS dari berkas gap klien DATA_YANG_PERLU_DIISI_DA_2.xlsx. Backend 5/5 pytest lulus (test_iter215_bom_golive.py) di https://bom-aksesoris-v3.preview.emergentagent.com. Semua nilai spec cocok persis: preview totals={bom_lines:137, bom_groups:72, bom_models:45, bom_models_in_file:104}, bom_issue_counts={satuan_tak_valid:466, qty_kosong:4, model_tanpa_sku:47, warna_tak_dikenal:2, kelompok_tanpa_varian:103}; fill-apply?scope=bom IDEMPOTEN → boms_unchanged=408, semua counter lain=0; laporan-sisa xlsx 10 sheet dengan row-count persis (1_MODEL_TANPA_SKU=20, VARIAN_BARU=38, 2_KELOMPOK_TANPA_VARIAN=103, 3_SATUAN_KODE_TAK_VALID=470, 4_WARNA_TAK_DIKENAL=2, 5_MATERIAL_HARGA_0=87, 6_HARGA_JUAL_SKU=62, 7_LAINNYA=131, 8_HPP_BELUM_TERVALIDASI=75); gap-workbook memiliki sheet BOM_AKSESORIS; DB state: rahaza_models=104, DA-1101 variant MHG berisi baris aksesoris A-KRT-0003 (BOM detail terverifikasi). Frontend Playwright: login admin → hash nav → tab 'Impor Harga · Rekening · BOM' → upload → preview → fill-bom-table + 5 chip fill-issue-cats + fill-warnings '652 catatan dilewati' → fill-apply (hanya BOM) → fill-result 'Selesai (hanya BOM): 0 baris aksesoris terpasang · 408 BOM sudah sama · 72 kelompok / 45 model · 0 BOM dasar baru; HPP: 44 dihitung · 75 belum tervalidasi · 29 tervalidasi' + fill-result-hpp-unvalidated tampil → fill-download-laporan mengunduh LAPORAN_SISA_DA.xlsx. Tidak ada console error merah. fill-apply-all TIDAK diklik sesuai instruksi.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter215_bom_golive.py",
+    "/app/test_reports/pytest/iter215.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "fill-apply?scope=bom terverifikasi idempoten pada baseline post-BOM (boms_unchanged=408). Guard scope='bom' pada master_fill.apply_fill efektif melewati sheet HARGA_JUAL_SKU dsb; response ok=true meskipun preview.ok mungkin false karena issue kategori.",
+    "Toast frontend menampilkan ringkasan yang sesuai dengan payload backend ('44 model dihitung · 75 belum tervalidasi'), memvalidasi wiring hpp_validation via flag_hpp_validation.",
+    "Fill-warnings menampilkan 652 catatan dilewati (jumlahnya = 466+4+47+2+103+30 lain-lain sesuai laporan sisa 7_LAINNYA=131 & kategori bergabung). Konsisten dengan bom_issue_counts."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter215_bom_golive.py"],
+  "success_rate": {"backend": "100% (5/5)", "frontend": "100% (flow selesai, semua data-testid ada, unduhan diterima)"},
+  "test_credentials": "admin@garment.com / Admin@123 (dari /app/memory/test_credentials.md)",
+  "seed_data_creation": "Tidak ada — semua uji read-only atau idempoten (apply scope=bom pada data yang sudah diterapkan → 0 perubahan). Tidak menjalankan seed/reset.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend URL: https://bom-aksesoris-v3.preview.emergentagent.com (bukan da37-bom-golive lama). Berkas uji: /app/private/golive/DATA_YANG_PERLU_DIISI_DA_2.xlsx. State DB saat ini: baseline rekonstruksi + BOM aksesoris sudah diterapkan (408 BOM final). Endpoint model BOM detail: /api/rahaza/boms/{bom_id} — /api/rahaza/models/{uuid}/bom hanya memberi matrix ringkasan (bukan materials); untuk cek baris aksesoris ambil bom_id dari matrix lalu GET /boms/{id}. Test file iter215 self-contained, aman dijalankan berulang. JANGAN memanggil fill-apply tanpa scope=bom.",
+  "rca of the issue": "N/A — semua ekspektasi spec terpenuhi."
+}

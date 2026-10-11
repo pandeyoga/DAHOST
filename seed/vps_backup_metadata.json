@@ -1,0 +1,15 @@
+{
+  "backup_name": "manual_20260917_130216",
+  "timestamp": "20260917_130216",
+  "created_at": "2026-09-17T13:02:18+07:00",
+  "size": "2.5M",
+  "mongo_uri": "mongodb://mongo:27017",
+  "database": "dahost_erp",
+  "status": "success",
+  "golive_seed": {
+    "file": "DA_SEED_GOLIVE.archive.gz",
+    "built_at": "2026-09-17T18:16Z",
+    "database": "dahost_erp",
+    "content": "baseline VPS 13:02 + DATA_YANG_PERLU_DIISI_DA (2).xlsx semua sheet (BOM aksesoris, 229 harga jual, 30 SKU nonaktif, 7 toko)"
+  }
+}
