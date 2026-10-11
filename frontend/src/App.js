@@ -21,7 +21,7 @@ import { configureApi } from './lib/apiFetch';
 import ErrorBoundary from './components/ErrorBoundary';
 // Pre-Dev Health Check (2026-05-26): RC-2 fix — chunk retry + fallback
 import { lazyWithRetry } from './lib/lazyWithRetry';
-import { saveEffectiveAccess } from './components/erp/portalAccess';
+import { saveEffectiveAccess, refreshEffectiveAccess } from './components/erp/portalAccess';
 
 // Session #11.18 EXTENDED — Performance optimization: lazy-load alternate portal UIs
 // Sprint A.0 + Pre-Dev Health Check: wrapped with lazyWithRetry to survive network blips
@@ -637,6 +637,23 @@ function App() {
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
   }, [user]);
+
+  // Sinkron akses LIVE: saat sesi dipulihkan, tiap tab kembali fokus, dan tiap 60 dtk.
+  // Perubahan di "Peran & Hak Akses"/"Pengguna" langsung terasa tanpa login ulang.
+  useEffect(() => {
+    if (!token) return undefined;
+    const sync = () => { if (document.visibilityState !== 'hidden') refreshEffectiveAccess(token); };
+    const onUpd = (e) => { if (e.detail) setUser((u) => ({ ...(u || {}), ...e.detail })); };
+    window.addEventListener('erp-access-updated', onUpd);
+    window.addEventListener('focus', sync);
+    const iv = setInterval(sync, 60000);
+    sync();
+    return () => {
+      window.removeEventListener('erp-access-updated', onUpd);
+      window.removeEventListener('focus', sync);
+      clearInterval(iv);
+    };
+  }, [token]);
 
   // Configure apiFetch wrapper with 401 auto-logout handler (runs once on mount)
   useEffect(() => {

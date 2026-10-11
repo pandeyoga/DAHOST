@@ -130,20 +130,18 @@ async def require_auth(request: Request):
     user = verify_token(request)
     if not user:
         raise HTTPException(status_code=401, detail='Unauthorized')
-    # Pre-load permissions for custom roles
+    # SINKRON: peran & status dibaca LIVE dari DB (bukan dari JWT) — perubahan peran
+    # di Manajemen Pengguna langsung berlaku tanpa login ulang; akun nonaktif langsung ditolak.
+    live = await _load_live_user(user.get('id'))
+    if live is None:
+        raise HTTPException(status_code=401, detail='Akun tidak ditemukan. Silakan login ulang.')
+    if live.get('blocked'):
+        raise HTTPException(status_code=401, detail='Akun tidak aktif. Hubungi admin.')
+    user['role'] = live.get('role') or user.get('role', '')
     role = user.get('role', '')
-    if role == 'superadmin' or role == 'admin':
-        user['_permissions'] = ['*']
-        user['_role_perms'] = ['*']
-    elif role == 'vendor':
-        user['_permissions'] = ['dashboard.view', 'shipment.view', 'jobs.view', 'jobs.create', 'progress.view', 'progress.create']
-        user['_role_perms'] = list(user['_permissions'])
-    elif role == 'cmt_vendor':
-        user['_permissions'] = ['cmt.my_jobs.view', 'cmt.progress.create', 'cmt.do.view']
-        user['_role_perms'] = list(user['_permissions'])
-    elif role == 'buyer':
-        user['_permissions'] = ['dashboard.view', 'po.view', 'shipment.view']
-        user['_role_perms'] = list(user['_permissions'])
+    if role in FIXED_ROLE_PERMS:
+        user['_permissions'] = list(FIXED_ROLE_PERMS[role])
+        user['_role_perms'] = list(FIXED_ROLE_PERMS[role])
     else:
         # Custom / legacy role: baca izin role + izin tambahan per orang.
         # `_role_perms` dipakai routes.shared.perms_configured() untuk memutuskan
@@ -167,8 +165,65 @@ _rbac_cache: dict = {}
 
 
 def bump_rbac_cache():
-    """Kosongkan cache izin — dipanggil setelah role/permission diubah."""
+    """Kosongkan cache izin — dipanggil setelah role/permission/user diubah."""
     _rbac_cache.clear()
+
+
+# Peran bawaan dengan izin tetap (tidak dikonfigurasi lewat layar Peran).
+FIXED_ROLE_PERMS = {
+    'superadmin': ['*'],
+    'admin': ['*'],
+    'vendor': ['dashboard.view', 'shipment.view', 'jobs.view', 'jobs.create', 'progress.view', 'progress.create'],
+    'cmt_vendor': ['cmt.my_jobs.view', 'cmt.progress.create', 'cmt.do.view'],
+    'buyer': ['dashboard.view', 'po.view', 'shipment.view'],
+}
+
+
+async def resolve_role_doc(db, role: str, role_id=None, projection=None):
+    """SATU aturan pencarian dokumen peran: nama persis, lalu nama tanpa beda huruf, lalu role_id.
+
+    Nama peran = acuan utama (dipakai check_role & token); role_id hanya cadangan bila nama
+    tidak ditemukan — mencegah akun "tak sinkron" saat role diubah tanpa role_id.
+    """
+    proj = projection or {'_id': 0}
+    if role:
+        doc = await db.roles.find_one({'name': role}, proj)
+        if doc:
+            return doc
+        import re as _re
+        doc = await db.roles.find_one({'name': {'$regex': f'^{_re.escape(str(role))}$', '$options': 'i'}}, proj)
+        if doc:
+            return doc
+    if role_id:
+        return await db.roles.find_one({'id': role_id}, proj)
+    return None
+
+
+async def _load_live_user(user_id):
+    """Peran + status terkini user dari DB (cache singkat). None = bukan akun `users`."""
+    if not user_id:
+        return None
+    key = ('live', str(user_id))
+    hit = _rbac_cache.get(key)
+    nowts = datetime.now(timezone.utc).timestamp()
+    if hit and hit[0] > nowts:
+        return hit[1]
+    u = await get_db().users.find_one({'id': user_id}, {'_id': 0, 'role': 1, 'role_id': 1, 'status': 1,
+                                                       'active': 1, 'is_active': 1})
+    live = None
+    if u:
+        blocked = u.get('is_active') is False or (u.get('status') not in (None, 'active') and not u.get('active', True))
+        live = {'role': u.get('role'), 'role_id': u.get('role_id'), 'blocked': blocked}
+    _rbac_cache[key] = (nowts + _RBAC_TTL_SECONDS, live)
+    return live
+
+
+async def compute_permissions(role: str, user_id) -> list:
+    """Izin efektif (peran + tambahan per orang, sudah diekspansi) — dipakai login, /auth/me, gerbang."""
+    if role in FIXED_ROLE_PERMS:
+        return list(FIXED_ROLE_PERMS[role])
+    role_perms, extra = await _load_rbac(role, user_id)
+    return sorted(set(role_perms) | set(extra))
 
 
 async def _load_portals(role: str, user_id) -> list:
@@ -179,11 +234,7 @@ async def _load_portals(role: str, user_id) -> list:
         return list(hit[1])
     db = get_db()
     u = await db.users.find_one({'id': user_id}, {'_id': 0, 'role_id': 1, 'extra_portals': 1}) if user_id else None
-    role_doc = None
-    if u and u.get('role_id'):
-        role_doc = await db.roles.find_one({'id': u['role_id']}, {'_id': 0, 'portals': 1})
-    if not role_doc:
-        role_doc = await db.roles.find_one({'name': role}, {'_id': 0, 'portals': 1})
+    role_doc = await resolve_role_doc(db, role, (u or {}).get('role_id'), {'_id': 0, 'portals': 1})
     portals = list((role_doc or {}).get('portals') or [])
     portals += [p for p in ((u or {}).get('extra_portals') or []) if p not in portals]
     _rbac_cache[key] = (nowts + _RBAC_TTL_SECONDS, portals)
@@ -198,16 +249,14 @@ async def _load_rbac(role: str, user_id):
         return list(hit[1]), list(hit[2])
     db = get_db()
     role_perms: list = []
-    custom_role = await db.roles.find_one({'name': role}, {'_id': 0, 'id': 1})
+    udoc = await db.users.find_one({'id': user_id}, {'_id': 0, 'extra_permissions': 1, 'role_id': 1}) if user_id else None
+    custom_role = await resolve_role_doc(db, role, (udoc or {}).get('role_id'), {'_id': 0, 'id': 1})
     if custom_role:
         rows = await db.role_permissions.find(
             {'role_id': custom_role['id']}, {'_id': 0, 'permission_key': 1}
-        ).to_list(1000)
+        ).to_list(3000)
         role_perms = sorted({rp.get('permission_key') for rp in rows if rp.get('permission_key')})
-    extra_perms: list = []
-    if user_id:
-        udoc = await db.users.find_one({'id': user_id}, {'_id': 0, 'extra_permissions': 1})
-        extra_perms = [p for p in ((udoc or {}).get('extra_permissions') or []) if p]
+    extra_perms = [p for p in ((udoc or {}).get('extra_permissions') or []) if p]
     # Izin granular `mod.*` menyiratkan izin lama (data/module_catalog.py) supaya penjaga lama konsisten.
     from data.module_catalog import expand_permissions
     role_perms, extra_perms = expand_permissions(role_perms), expand_permissions(extra_perms)

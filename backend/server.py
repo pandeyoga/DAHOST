@@ -663,6 +663,8 @@ app.include_router(maklon_client_tracking_router, dependencies=_DENY_MKT)
 app.include_router(maklon_seed_router, dependencies=_DENY_MKT)
 # Session #11.16 Phase D — finance_router REMOVED (file deleted, was stub-only after Phase B).
 app.include_router(admin_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+from routes.access_sync import router as access_sync_router
+app.include_router(access_sync_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(invoice_edit_requests_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(dashboard_router)
 # P2 Refactor: operations.py split — include all sub-routers (deprecated accessories omitted)

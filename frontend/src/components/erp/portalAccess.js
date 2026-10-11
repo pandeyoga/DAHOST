@@ -81,6 +81,40 @@ export function canDo(menuId, action = 'view') {
   return acts === null ? true : acts.includes(action);
 }
 
+/**
+ * Sinkron ulang akses dari server (`/api/auth/me`): portal, menu tersembunyi, izin per modul,
+ * peran & izin di `erp_user`. Memancarkan event `erp-access-updated` agar App/PortalShell
+ * langsung memakai akses terbaru tanpa login ulang.
+ */
+export async function refreshEffectiveAccess(token) {
+  if (!token) return null;
+  try {
+    const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!r.ok) return null;
+    const me = await r.json();
+    saveEffectiveAccess({
+      portals: me.portals || [], hidden_modules: me.hidden_modules || [],
+      is_super: !!me.is_super, module_access: me.module_access || {},
+    });
+    let merged = me;
+    try {
+      const prev = JSON.parse(localStorage.getItem('erp_user') || '{}');
+      merged = {
+        ...prev, role: me.role, name: me.name ?? prev.name, permissions: me.permissions || [],
+        portals: me.portals || [], hidden_modules: me.hidden_modules || [],
+        module_access: me.module_access || {}, is_super: !!me.is_super,
+      };
+      localStorage.setItem('erp_user', JSON.stringify(merged));
+    } catch { /* noop */ }
+    window.dispatchEvent(new CustomEvent('erp-access-updated', { detail: merged }));
+    return merged;
+  } catch {
+    return null;
+  }
+}
+
 /** Role user aktif (dibaca dari sesi tersimpan, sama pola dgn hiddenModules). */
 export function currentRole() {
   try {

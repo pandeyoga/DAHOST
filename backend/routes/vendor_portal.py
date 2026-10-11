@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, hash_password, check_role
+from auth import require_auth, serialize_doc, log_activity, hash_password, check_role, bump_rbac_cache
 from utils.counters import gen_prefixed_number
 import uuid
 
@@ -334,6 +334,7 @@ async def update_vendor_account(account_id: str, payload: VendorAccountUpdate, r
             raise HTTPException(400, "Password minimal 6 karakter.")
         update['password'] = hash_password(payload.password)
     await db.users.update_one({'id': account_id}, {'$set': update})
+    bump_rbac_cache()
     await log_activity(user['id'], user.get('name',''), f"update_vendor_account:{acc.get('email','')}", 'vendor_portal', account_id)
     return {'ok': True, 'password_reset': bool(payload.password)}
 
@@ -349,9 +350,11 @@ async def delete_vendor_account(account_id: str, request: Request, hard: bool = 
         raise HTTPException(404, "Akun vendor tidak ditemukan.")
     if hard:
         await db.users.delete_one({'id': account_id})
+        bump_rbac_cache()
         await log_activity(user['id'], user.get('name',''), f"delete_vendor_account:{acc.get('email','')}", 'vendor_portal', account_id)
         return {'ok': True, 'deleted': True}
     await db.users.update_one({'id': account_id}, {'$set': {'is_active': False, 'updated_at': _now()}})
+    bump_rbac_cache()
     await log_activity(user['id'], user.get('name',''), f"deactivate_vendor_account:{acc.get('email','')}", 'vendor_portal', account_id)
     return {'ok': True, 'deleted': False}
 

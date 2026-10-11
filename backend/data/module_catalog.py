@@ -417,6 +417,20 @@ MODULES: list[dict] = [
 
 MODULE_BY_ID = {m["id"]: m for m in MODULES}
 
+# Portal lain yang menampilkan menu modul ini (pintasan lintas-portal di portalNav.js).
+# Dipakai gerbang akses-portal agar layar pintasan tetap jalan. Perbarui bila menu dipindah.
+ALSO_PORTALS = {
+    "mgmt_reports": ["rnd"], "mgmt_approval": ["hr"], "prod_vendor_cmt": ["maklon"], "prod_po": ["maklon"],
+    "prod_vendor_shipment": ["maklon"], "prod_cmt_receive": ["maklon"], "prod_cmt_permak": ["maklon"],
+    "prod_cmt_monitor": ["maklon"], "prod_buyer_shipment": ["maklon"], "prod_jobs": ["maklon"],
+    "prod_variance": ["maklon"], "prod_cmt_billing": ["finance"], "proc_match": ["finance"],
+    "proc_shopping_list": ["warehouse"], "wh_material_issue": ["production"], "wh_sku_bridge": ["toko"],
+    "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
+    "rnd_dashboard": ["management"],
+}
+for _mod in MODULES:
+    _mod["also_portals"] = ALSO_PORTALS.get(_mod["id"], [])
+
 # prefix API -> modul, urut dari prefix terpanjang (longest-prefix-match)
 _PATH_INDEX = sorted(((p.rstrip("/"), m) for m in MODULES for p in m["paths"]), key=lambda x: -len(x[0]))
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import logging
 
-from auth import _load_rbac, verify_download_token, verify_token_str
+from auth import _load_live_user, _load_portals, _load_rbac, verify_download_token, verify_token_str
 from core.authz import EXTERNAL_ROLES
 from data.module_catalog import (
     ACTION_LABELS, PORTAL_LABELS, detect_action, granular_portals, match_module, perm_key,
@@ -37,23 +37,36 @@ def _token_payload(scope) -> dict | None:
 
 
 async def evaluate(method: str, path: str, payload: dict | None):
-    """Return (module, action) bila DITOLAK, else None."""
+    """Return (module, action, reason) bila DITOLAK, else None."""
     mod = match_module(path)
     if not mod or not payload:
         return None
-    role = (payload.get("role") or "").lower()
+    live = await _load_live_user(payload.get("id"))
+    role = ((live or {}).get("role") or payload.get("role") or "").lower()
     if role in SUPER_ROLES or role in EXTERNAL_ROLES:
         return None
     role_perms, extra = await _load_rbac(role, payload.get("id"))
     perms = set(role_perms) | set(extra)
-    if "*" in perms or mod["portal"] not in granular_portals(perms):
+    if "*" in perms:
         return None
     action = detect_action(method, path, mod)
     if action == "view" and mod["lookup"]:
         return None
+    # 1) Akses PORTAL (khusus aksi tulis/approve/export; baca lintas-portal tetap untuk layar pintasan):
+    #    bila owner sudah mengatur daftar portal peran, modul di portal yang tidak dicentang ditolak.
+    configured = await _load_portals(role, payload.get("id")) if action != "view" else None
+    if configured:
+        from routes.shared import PORTAL_ACCESS
+        allowed = set(configured) | {p for p, roles in PORTAL_ACCESS.items() if role in roles}
+        allowed |= granular_portals(perms)
+        if not ({mod["portal"], *mod["also_portals"]} & allowed):
+            return mod, action, "portal"
+    # 2) Izin granular per modul (aktif per portal setelah owner mencentang izin mod.*).
+    if mod["portal"] not in granular_portals(perms):
+        return None
     if perm_key(mod["id"], action) in perms:
         return None
-    return mod, action
+    return mod, action, "perm"
 
 
 class ModulePermissionGateMiddleware:
@@ -70,11 +83,16 @@ class ModulePermissionGateMiddleware:
             denied = None
         if not denied:
             return await self.app(scope, receive, send)
-        mod, action = denied
-        detail = (f"Akses ditolak: peran Anda tidak punya izin '{ACTION_LABELS[action]}' pada modul "
-                  f"'{mod['label']}' (Portal {PORTAL_LABELS.get(mod['portal'], mod['portal'])}). "
-                  f"Hubungi admin untuk menambahkan izin {perm_key(mod['id'], action)}.")
-        body = json.dumps({"detail": detail, "code": "RBAC_MODULE_DENIED",
+        mod, action, reason = denied
+        portal_label = PORTAL_LABELS.get(mod['portal'], mod['portal'])
+        if reason == "portal":
+            detail = (f"Akses ditolak: peran Anda tidak diberi akses Portal {portal_label} "
+                      f"(modul '{mod['label']}'). Hubungi admin untuk mencentang portal ini di Peran & Hak Akses.")
+        else:
+            detail = (f"Akses ditolak: peran Anda tidak punya izin '{ACTION_LABELS[action]}' pada modul "
+                      f"'{mod['label']}' (Portal {portal_label}). "
+                      f"Hubungi admin untuk menambahkan izin {perm_key(mod['id'], action)}.")
+        body = json.dumps({"detail": detail, "code": "RBAC_PORTAL_DENIED" if reason == "portal" else "RBAC_MODULE_DENIED",
                            "module": mod["id"], "action": action}).encode()
         await send({"type": "http.response.start", "status": 403, "headers": [
             (b"content-type", b"application/json"), (b"x-rbac-denied", b"1"),

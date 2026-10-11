@@ -43,14 +43,31 @@ async def create_user(request: Request):
         raise HTTPException(409, f"Email '{email}' sudah terdaftar.")
     hashed = hash_password(body.get('password', 'User@123'))
     new_user = {'id': new_id(), **body, 'email': email, 'password': hashed, 'status': 'active', 'created_at': now(), 'updated_at': now()}
+    await _sync_role_link(db, new_user)
     try:
         await db.users.insert_one(new_user)
     except Exception as e:
         if 'duplicate key' in str(e).lower() or 'E11000' in str(e):
             raise HTTPException(409, f"Email '{email}' sudah terdaftar.")
         raise HTTPException(500, f"Gagal membuat user: {e}")
+    bump_rbac_cache()
     result = {k: v for k, v in new_user.items() if k != 'password'}
     return JSONResponse(serialize_doc(result), status_code=201)
+
+
+async def _sync_role_link(db, doc: dict) -> None:
+    """Jaga `role` (nama) & `role_id` selalu menunjuk peran yang SAMA — sumber utama akun tak sinkron."""
+    if 'role' not in doc and 'role_id' not in doc:
+        return
+    from auth import resolve_role_doc
+    if doc.get('role_id') and 'role' not in doc:
+        rd = await db.roles.find_one({'id': doc['role_id']}, {'_id': 0, 'id': 1, 'name': 1})
+    else:
+        rd = await resolve_role_doc(db, doc.get('role'), None, {'_id': 0, 'id': 1, 'name': 1})
+    if rd:
+        doc['role'], doc['role_id'] = rd['name'], rd['id']
+    else:
+        doc['role_id'] = None  # peran bawaan (superadmin/vendor/...) tanpa dokumen roles
 
 @router.put("/users/{uid}")
 async def update_user(uid: str, request: Request):
@@ -63,6 +80,7 @@ async def update_user(uid: str, request: Request):
     body.pop('id', None)
     if body.get('password'):
         body['password'] = hash_password(body['password'])
+    await _sync_role_link(db, body)
     await db.users.update_one({'id': uid}, {'$set': {**body, 'updated_at': now()}})
     bump_rbac_cache()
     return serialize_doc(await db.users.find_one({'id': uid}, {'password': 0, '_id': 0}))
@@ -81,6 +99,7 @@ async def delete_user(uid: str, request: Request):
     if doc['id'] == user['id']:
         raise HTTPException(403, 'Cannot delete own account')
     await db.users.delete_one({'id': uid})
+    bump_rbac_cache()
     return {'success': True}
 
 
@@ -284,6 +303,11 @@ async def update_role(role_id: str, request: Request):
     if 'hidden_modules' in body:
         _set['hidden_modules'] = [str(m) for m in (body.get('hidden_modules') or [])]
     await db.roles.update_one({'id': role_id}, {'$set': _set})
+    if _set.get('name') and _set['name'] != before_role.get('name'):
+        # Ganti nama peran: semua akun pemakai ikut pindah (tanpa ini akun kehilangan izinnya).
+        await db.users.update_many(
+            {'$or': [{'role_id': role_id}, {'role': before_role.get('name')}]},
+            {'$set': {'role': _set['name'], 'role_id': role_id, 'updated_at': now()}})
 
     if 'permissions' in body:
         perms = validate_keys(body['permissions'])

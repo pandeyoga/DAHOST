@@ -125,25 +125,11 @@ async def login(request: Request):
     # Clear failed attempts on success (both layers)
     await _clear_attempts(db, bf_key_ip, bf_key_email)
 
-    # Get user permissions for immediate use (without /auth/me call)
-    user_perms = []
+    # Izin efektif — SATU sumber dengan require_auth & gerbang modul (auth.compute_permissions).
+    from auth import compute_permissions, bump_rbac_cache
     role = u.get('role', '')
-    if role == 'superadmin':
-        user_perms = ['*']
-    elif role == 'vendor':
-        user_perms = ['dashboard.view', 'shipment.view', 'jobs.view', 'jobs.create', 'progress.view', 'progress.create']
-    elif role == 'buyer':
-        user_perms = ['dashboard.view', 'po.view', 'shipment.view']
-    else:
-        # Check custom role
-        if u.get('role_id'):
-            role_perms = await db.role_permissions.find({'role_id': u['role_id']}, {'_id': 0}).to_list(500)
-            user_perms = [rp.get('permission_key') for rp in role_perms]
-        else:
-            custom_role = await db.roles.find_one({'name': role})
-            if custom_role:
-                role_perms = await db.role_permissions.find({'role_id': custom_role['id']}, {'_id': 0}).to_list(500)
-                user_perms = [rp.get('permission_key') for rp in role_perms]
+    bump_rbac_cache()  # login = titik sinkron: buang cache izin lama
+    user_perms = await compute_permissions(role, u['id'])
 
     token = create_token(u)
     await log_activity(u['id'], u['name'], 'Login', 'Auth', f"User {u['email']} logged in")
@@ -163,12 +149,8 @@ async def login(request: Request):
     _portals, _hidden, _maccess = get_user_portals(u), [], {}
     try:
         from routes.shared import resolve_role_access
-        from data.module_catalog import expand_permissions
         _acc = await resolve_role_access(db, {'id': u['id'], 'role': role})
         _portals, _hidden, _maccess = _acc['portals'], _acc['hidden_modules'], _acc['module_access']
-        if _acc['extra_permissions'] and '*' not in user_perms:
-            user_perms = sorted(set(user_perms) | set(_acc['extra_permissions']))
-        user_perms = expand_permissions(user_perms)
     except Exception as e:  # noqa: BLE001 — login TIDAK BOLEH gagal karena RBAC.
         # Fallback ke portal bawaan `get_user_portals`. 2026-08-07: dulu `pass`
         # senyap, sehingga bila resolusi izin gagal, pengguna diam-diam masuk
@@ -213,31 +195,13 @@ async def auth_me(request: Request):
     user = await require_auth(request)
     db = get_db()
     u = await db.users.find_one({'id': user['id']}, {'password': 0, '_id': 0})
-    # Include user permissions for RBAC
-    user_perms = []
+    # Izin efektif — SATU sumber dengan require_auth & gerbang modul (auth.compute_permissions).
+    from auth import compute_permissions
     role = u.get('role', '') if u else ''
-    
-    if role == 'superadmin':
-        user_perms = ['*']  # Full access
-    elif role == 'vendor':
-        user_perms = ['dashboard.view', 'shipment.view', 'jobs.view', 'jobs.create', 'progress.view', 'progress.create']
-    elif role == 'buyer':
-        user_perms = ['dashboard.view', 'po.view', 'shipment.view']
-    else:
-        # Check if this is a custom role
-        if u.get('role_id'):
-            # User has custom role assigned via role_id
-            role_perms = await db.role_permissions.find({'role_id': u['role_id']}, {'_id': 0}).to_list(500)
-            user_perms = [rp.get('permission_key') for rp in role_perms]
-        else:
-            # Try to find role by name (legacy)
-            custom_role = await db.roles.find_one({'name': role})
-            if custom_role:
-                role_perms = await db.role_permissions.find({'role_id': custom_role['id']}, {'_id': 0}).to_list(500)
-                user_perms = [rp.get('permission_key') for rp in role_perms]
-    
+    user_perms = await compute_permissions(role, user['id'])
     result = serialize_doc(u) if u else {}
     result['permissions'] = user_perms
+    result['permissions_synced_at'] = datetime.now(timezone.utc).isoformat()
     # 2026-08-05 — akses efektif (portal + menu tersembunyi + izin tambahan per
     # user) diselesaikan SATU tempat: routes/shared.resolve_role_access.
     try:
@@ -247,10 +211,6 @@ async def auth_me(request: Request):
         result['hidden_modules'] = access['hidden_modules']
         result['module_access'] = access['module_access']
         result['is_super'] = access['is_super']
-        if access['extra_permissions'] and '*' not in user_perms:
-            result['permissions'] = sorted(set(user_perms) | set(access['extra_permissions']))
-        from data.module_catalog import expand_permissions
-        result['permissions'] = expand_permissions(result['permissions'])
     except Exception:  # noqa: BLE001 — jangan sampai /auth/me gagal karena RBAC
         result['portals'] = get_user_portals({"role": role})
         result['hidden_modules'] = []

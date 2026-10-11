@@ -8,6 +8,7 @@ import HubTabs from './HubTabs';
 // ada di satu modul: RoleManagementModule ("Peran & Hak Akses").
 const UserManagementModule = lazyRetry(() => import('../UserManagementModule'));
 const RoleManagementModule = lazyRetry(() => import('../RoleManagementModule'));
+const AccessSyncModule = lazyRetry(() => import('../AccessSyncModule'));
 
 export default function ManagementAccessHub(props) {
   return (
@@ -18,6 +19,7 @@ export default function ManagementAccessHub(props) {
       tabs={[
         { key: 'users', label: 'Pengguna', Component: UserManagementModule },
         { key: 'roles', label: 'Peran & Hak Akses', Component: RoleManagementModule },
+        { key: 'sync', label: 'Cek Sinkron Akun', Component: AccessSyncModule },
       ]}
       {...props}
     />

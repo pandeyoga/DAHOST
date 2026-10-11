@@ -195,12 +195,11 @@ async def resolve_role_access(db, user: dict) -> dict:
     u = await db.users.find_one({"id": user.get("id")}, {"_id": 0, "extra_portals": 1,
                                                         "hidden_modules": 1,
                                                         "extra_permissions": 1,
-                                                        "role_id": 1}) or {}
-    role_doc = None
-    if u.get("role_id"):
-        role_doc = await db.roles.find_one({"id": u["role_id"]}, {"_id": 0})
-    if not role_doc:
-        role_doc = await db.roles.find_one({"name": role}, {"_id": 0})
+                                                        "role_id": 1, "role": 1}) or {}
+    if u.get("role"):
+        role = str(u["role"]).lower()  # peran LIVE dari DB, bukan dari token
+    from auth import resolve_role_doc
+    role_doc = await resolve_role_doc(db, role, u.get("role_id"))
     portals = list((role_doc or {}).get("portals") or [])
     portals += [p for p in (u.get("extra_portals") or []) if p not in portals]
     hidden = list((role_doc or {}).get("hidden_modules") or [])

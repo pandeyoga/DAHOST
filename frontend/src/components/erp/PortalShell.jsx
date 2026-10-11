@@ -25,7 +25,7 @@
 
 import { useState, useMemo, useEffect, Suspense, lazy } from 'react';
 import ModuleAccessBadge from './portal-shell/ModuleAccessBadge';
-import { saveEffectiveAccess } from './portalAccess';
+import { refreshEffectiveAccess } from './portalAccess';
 import { lazyRetry } from '../../lib/lazyRetry';
 import { CommandPalette } from './CommandPalette';
 // Session #11.18 EXTENDED — Lazy-load help/guide UIs since they only render when opened
@@ -75,19 +75,11 @@ export default function PortalShell({
   // Segarkan akses efektif (portal, menu tersembunyi, izin per modul) tiap portal dibuka
   // supaya perubahan di "Peran & Hak Akses" terasa tanpa login ulang.
   useEffect(() => {
-    if (!token) return;
-    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((me) => {
-        if (!me) return;
-        saveEffectiveAccess({
-          portals: me.portals || [], hidden_modules: me.hidden_modules || [],
-          is_super: !!me.is_super, module_access: me.module_access || {},
-        });
-        setAccessTick((t) => t + 1);
-      })
-      .catch(() => {});
-  }, [token, portal]);
+    const onUpd = () => setAccessTick((t) => t + 1);
+    window.addEventListener('erp-access-updated', onUpd);
+    return () => window.removeEventListener('erp-access-updated', onUpd);
+  }, []);
+  useEffect(() => { refreshEffectiveAccess(token); }, [token, portal]);
 
   const nav = PORTAL_NAV[portal] || PORTAL_NAV.management;
   // IA v4 — Portal "satu pintu" (mis. Manajemen Aset): sidebar & pill section
