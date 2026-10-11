@@ -1,5 +1,15 @@
 # PRD — CV. Dewi Aditya ERP
 
+
+## SESI 2026-10-11 #24 — Hak akses granular per modul (Lihat/Tambah/Ubah/Hapus/Approve/Export)
+- Permintaan owner (asli): "saya ingin fokus pada hak akses dan role, masih banyak bagian yang role dan hak aksesnya masih sangat terbatas, saya ingin lengkap seperti di maklon". Pilihan: izin granular per modul diatur per role; pakai layar "Peran & Hak Akses" yang sudah ada (tanpa duplikasi); semua portal selain Maklon.
+- SSOT baru `backend/data/module_catalog.py`: 114 modul (mengikuti menu `portalNav.js`) di 12 portal (manajemen, produksi, cutting, pengadaan, gudang, aksesoris, keuangan, penjualan, SDM, marketing, RnD, aset). Kunci `mod.<modul>.<aksi>`; `implies` → izin lama ikut diberikan (penjaga lama konsisten); `extras` = izin khusus (payroll.run, final PR, operator.input, cutting.input); `lookup` = GET data acuan tetap terbuka.
+- `middleware/module_permission_gate.py` (ASGI, sebelum APIv1 rewriter): method + kata kunci path → aksi → 403 `x-rbac-denied` + pesan ID. Fallback aman PER PORTAL: aktif hanya bila peran sudah punya ≥1 izin `mod.*` di portal itu. Super role & peran eksternal dilewati.
+- `permission_catalog.grouped_permissions`: portal granular = modul granular + "Akses Portal"; izin lama → `legacy_modules` (terlipat di UI). `auth._load_rbac` mengekspansi izin; `auth._load_portals` + `check_portal_access` kini menghormati `roles.portals` (ditambahkan ke bawaan — memperbaiki peran custom yang ditolak `require_portal`); `require_portal` menerima izin `mod.*`.
+- Login & `/auth/me`: `module_access` {menu: [aksi]} + menu tanpa `view` masuk `hidden_modules`. FE: `RoleManagementModule` + `GranularModuleRow` (matriks 6 aksi, aksi → otomatis Lihat), `portalAccess.moduleActions/canDo`, `ModuleAccessBadge` (Mode lihat saja/Akses terbatas), PortalShell menyegarkan `/auth/me`, toast global `lib/rbacDeniedGuard.js`.
+- Uji iteration_236: backend 15/15, frontend lulus. Data uji dibersihkan.
+- Backlog: P1 tombol "Konversi izin lama → per modul" per peran; P1 sembunyikan tombol Tambah/Ubah/Hapus di layar modul memakai `canDo`; P2 izin granular untuk Portal Maklon (bila diminta).
+
 ## SESI 2026-09-25 #23 — BOM baru (2-BOM) + ekspor stock opname
 - `scripts/import_bom_baru_20260925.py [--terapkan]` + data `scripts/vps/data/bom_baru_20260925.xlsx`: 9 model · 115 SKU; baris CUT Excel diabaikan (potongan otomatis, tepat 1 per BOM), +HTG/PIN, idempoten. 20 kancing DA-1511 qty kosong → dilewati (isi manual).
 - `scripts/export_stock_opname.py [--out DIR]`: xlsx AKSESORIS/KAIN_ROLL/POTONGAN_CUTTING/FG, kolom kuning Lokasi Hitung + QTY FISIK (+Jumlah Roll). Contoh preview: /downloads/STOCK_OPNAME_2026-09-27.xlsx.

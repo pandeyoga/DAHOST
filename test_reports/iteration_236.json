@@ -1,0 +1,31 @@
+{
+  "summary": "Comprehensive backend + frontend testing of the new granular RBAC per module feature (iter 236). Created /app/backend/tests/test_granular_rbac.py with 15 pytest cases covering: (1) GET /api/permissions?grouped=1 shape — all 12 granular portals present with granular=true, hr/finance/procurement/warehouse etc. carry mod.* keys; maklon/sysadmin/collaboration remain non-granular; legacy_modules key present per group. (2) HR portal modules exposed with 6 action keys (view/create/edit/delete/approve/export) for hr_employees, hr_payroll, hr_attendance, hr_recruitment. (3) POST /api/roles and PUT /api/roles/{id} accept and persist mod.* keys (body field is `permissions`), DELETE cleans up. (4) Middleware gate behaviour for test_granular_hr: GET /api/rahaza/employees 200, POST passes gate (gate doesn't 403), DELETE /api/rahaza/employees/xyz 403 with header x-rbac-denied:1 and detail containing 'Hapus', GET /api/rahaza/payroll-runs 200, POST payroll-runs/x/approve 403, GET /api/rahaza/attendance 403, GET /api/dewi/recruitment/jobs 403, GET /api/hr/shifts 200 (lookup). (5) Superadmin not gated on /api/rahaza/attendance. (6) Login payload (nested under `user.permissions`) and /api/auth/me include module_access ({hr-employees:[create,view], hr-payroll-hub:[view]}) + hidden_modules (hr-attendance-hub, hr-recruitment, …) + implied legacy keys (hr.employee.view, hr.employee.manage, hr.payroll.view). (7) Cache invalidation: PUT /api/roles/{id} adding mod.hr_attendance.view flips gate to 200 within ~2s (bump_rbac_cache). All 15 tests PASS. Frontend verified via Playwright on preview URL: as superadmin → Portal Administrasi Sistem → Kontrol Akses → tab 'Peran & Hak Akses' → selected role test_hr_granular → perm-group-hr found, all 6 action buttons for hr_employees exist (perm-mod.hr_employees.view/create/edit/delete/approve/export), legacy-toggle-hr present, module-hr_employees-level-none/view/full all present, presets preset-view/operator/approver/full all present. As test_granular_hr: sidebar shows ONLY Data Karyawan, Penggajian, Kasbon (hidden menus hr-attendance-hub, hr-leave-hub, hr-recruitment, hr-onboarding not rendered — verified visually in screenshot). data-testid=module-access-badge renders 'Akses terbatas · izin Anda: Tambah Lihat' on hr-employees and 'Mode lihat saja · izin Anda: Lihat' on hr-payroll-hub exactly as required.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_granular_rbac.py",
+    "/app/test_reports/pytest/iter236_rbac.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "middleware/module_permission_gate.py: solid design — fallback aman per-portal (granular_portals()) prevents accidental breakage of legacy roles; lookup=True on acuan modules (hr_shift, prod_master_product, wh_master, …) wisely lets GET pass for all internal users so cross-portal dropdowns keep working.",
+    "data/module_catalog.detect_action: path-token heuristics for approve/export/preview could misclassify endpoints like `/api/.../confirm-draft` as approve; today the test endpoints behave correctly but owners should keep an eye on new endpoints added without an explicit action override.",
+    "routes/admin.py: PUT /api/roles/{id} accepts body['permissions'] (not 'permission_keys'); existing frontend passes 'permissions'. GET /api/roles/{id} not implemented (405 on direct GET) — all consumers use list endpoint which embeds permission_keys; acceptable but a single-GET would simplify future audit tooling.",
+    "auth.py: _rbac_cache TTL + bump_rbac_cache correctly invalidates on PUT role; test confirms attendance-view flip takes effect within one polling cycle (~2s).",
+    "Login payload places `permissions` under `user.permissions` while duplicating `module_access` and `hidden_modules` at top level — mild inconsistency; frontend handles both already, but documenting the SSOT shape would help future consumers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_granular_rbac.py (new)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (all data-testids & hidden-menu behaviour verified)"},
+  "test_credentials": "admin@garment.com / Admin@123 ; test_granular_hr@example.com / Test@1234 (both verified working)",
+  "seed_data_creation": "No persistent seed changes. TEST_mod_role_<ts> created and deleted inside the role-CRUD test. Cache-invalidation test temporarily added mod.hr_attendance.view to the existing test_hr_granular role and restored the original permission set in the finally block.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Granular RBAC feature is working end-to-end (backend gate + login/auth-me + frontend sidebar filter + ModuleAccessBadge + role UI). Regression suite lives at /app/backend/tests/test_granular_rbac.py and takes ~6s. Important payload note: POST/PUT /api/roles uses body['permissions'] (not 'permission_keys'); the response however carries 'permission_keys'. The permissions catalog endpoint shape is {groups:[{portal, portal_label, granular, modules:[{id,label,granular,menus,lookup,permissions:[{key,action,description}]}], legacy_modules:[...]}], total}. Login response puts user.permissions nested; module_access & hidden_modules duplicated at top-level and under user.",
+  "rca of the issue": "N/A — no bugs found. Initial test failures (first pytest run) were my own expectation errors (wrong body field name 'permission_keys', wrong top-level perms key, assumed GET /api/roles/{id} existed, assumed flat legacy_modules key); corrected and re-run all green."
+}
