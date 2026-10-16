@@ -25,6 +25,7 @@
 
 import { useState, useMemo, useEffect, Suspense, lazy } from 'react';
 import ModuleAccessBadge from './portal-shell/ModuleAccessBadge';
+import ModuleActionGuard from './portal-shell/ModuleActionGuard';
 import { refreshEffectiveAccess } from './portalAccess';
 import { lazyRetry } from '../../lib/lazyRetry';
 import { CommandPalette } from './CommandPalette';
@@ -183,7 +184,7 @@ export default function PortalShell({
         <main className={`flex-1 overflow-y-auto${portal === 'self' ? ' pb-14 md:pb-0' : ''}`}>
           <div className="max-w-[1400px] mx-auto p-4 sm:p-6">
             <ModuleAccessBadge moduleId={currentModule} />
-            {contentWrapper}
+            <ModuleActionGuard moduleId={currentModule}>{contentWrapper}</ModuleActionGuard>
           </div>
         </main>
       </div>

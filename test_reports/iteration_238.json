@@ -1,0 +1,33 @@
+{
+  "summary": "Tested granular RBAC #24 follow-ups. Backend: POST /api/roles/granular-suggestion (superadmin 200, non-super 403, unauth 401/403, invalid portal 'maklon' 400, single-portal filter, fallback to PORTAL_ACCESS when portals empty, does NOT persist) and PUT /api/roles/{id} with >500 keys returns all keys (7/7 pytest pass). UI: Kontrol Akses > Peran & Hak Akses tab — accounting: convert-legacy-all-btn 43 -> 247 izin, toast '204 izin per modul ditambahkan (43 modul)', role-dirty-badge appears, role-reset-btn reverts to 43; group-finance-convert-legacy adds 91 keys (18 modul), reset reverts; nothing saved (accounting still 43 keys via API). ModuleActionGuard: created role uji_lihat_saja (finance/self/collaboration) + user, applied group-finance-level-view + Save (19 izin) via UI; as that user 'Mode lihat saja' badge shows on fin-expenses/fin-cash/fin-kasbon/fin-petty-cash/fin-accounting-master-hub; Tambah/Export (exp-add, dtv2-expenses-export), ca-add + row pen/trash icons, Kasbon CSV, CoA 'Tambah Akun'/Edit/Hapus all hidden with data-rbac-hidden='1'; superadmin sees all (0 hidden, no badge). Backend also enforces: POST /api/rahaza/expenses -> 403 with clear message for the view-only user. Test role/user cleaned up.",
+  "backend_issues": {"critical": [], "minor": [
+    {"endpoint": "/api/roles/granular-suggestion", "issue": "Raw request.json() without Pydantic model; non-string 'portal' / non-list 'portals' not validated (returns 400 by accident or coerces). Low risk (superadmin only)."}
+  ]},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ModuleActionGuard", "issue": "Only scans buttons inside the main content div. Radix Dialog/Sheet/DropdownMenu content is portalled to <body>, and DropdownMenuItem are role=menuitem divs, so Hapus/Edit/Approve in row action menus, detail sheets or dialogs are NOT hidden for view-only users (backend still blocks with 403). Not observed in tested modules but structurally uncovered.", "selector": "[data-testid='module-action-guard']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "fin-expenses (view-only user)", "issues": ["Empty state still says 'Klik \"Tambah\" untuk input biaya operasional.' while Tambah is hidden", "Date filters use native browser date input (mm/dd/yyyy) instead of shadcn calendar (pre-existing)"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_granular_suggestion_rbac.py", "/app/test_reports/pytest/pytest_iter238.xml"],
+  "action_items": [
+    "Optional: extend ModuleActionGuard to cover portalled overlays (dialogs/sheets/dropdown menuitems) e.g. via a context-aware canDo in shared components, or observe document.body for elements opened from within the guarded module",
+    "Optional: hide/adjust empty-state copy referencing 'Tambah' when canDo(create) is false",
+    "Optional: consider warning in convert-legacy toast that actions without legacy mapping (delete/approve) are granted fully when the role can open the portal (accounting finance becomes 92/94) — owner should review before saving"
+  ],
+  "critical_code_review_comments": [
+    "ModuleActionGuard classification is regex-heuristic: buttons like 'Buat Laporan', 'Cetak'/'Unduh' for read-only reports will be hidden for users lacking create/export — intended for export, but /^buat/ could hide non-create actions",
+    "suggest_from_legacy grants all unmapped actions when portal access is true — preserves legacy semantics but is very permissive",
+    "granular_suggestion lacks Pydantic body validation"
+  ],
+  "updated_files": ["/app/backend/tests/test_granular_suggestion_rbac.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@garment.com/Admin@123, uji.accounting@dewiaditya.id/Dewi@123 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Temporary role uji_lihat_saja + user test.lihatsaja@dewiaditya.id and role TEST_many_keys_role created and deleted; accounting role verified unchanged (43 keys).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Role screen is at hash mgmt-access-hub (Administrasi Sistem portal) then click tab 'Peran & Hak Akses'. Finance module ids: fin-expenses, fin-cash, fin-petty-cash, fin-kasbon, fin-accounting-master-hub. Expense API is /api/rahaza/expenses. Regression: pytest backend/tests/test_granular_suggestion_rbac.py."
+}

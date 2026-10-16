@@ -245,6 +245,35 @@ export default function RoleManagementModule({ token, userRole }) {
 
   const clearPerms = () => setDraft((d) => ({ ...d, permissions: [] }));
 
+  // Konversi izin lama + akses portal draf -> izin per modul (hanya menambah, belum tersimpan).
+  const [converting, setConverting] = useState('');
+  const convertLegacy = async (portal) => {
+    setConverting(portal || 'all');
+    try {
+      const res = await fetch(`${API}/api/roles/granular-suggestion`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ role_name: draft.name, portals: draft.portals, permissions: draft.permissions, portal }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+      const before = new Set(draft.permissions);
+      const added = (body.keys || []).filter((k) => !before.has(k));
+      if (!added.length) {
+        toast.info('Tidak ada izin per modul baru', { description: 'Izin lama peran ini sudah tercermin, atau peran belum punya akses ke portal ini.' });
+        return;
+      }
+      setDraft((d) => ({ ...d, permissions: Array.from(new Set([...d.permissions, ...added])) }));
+      const mods = (body.portals || []).reduce((n, p) => n + p.modules, 0);
+      toast.success(`${added.length} izin per modul ditambahkan (${mods} modul)`, {
+        description: 'Belum tersimpan — periksa matriks lalu tekan Simpan.',
+      });
+    } catch (e) {
+      toast.error('Gagal mengonversi izin lama', { description: e.message });
+    } finally {
+      setConverting('');
+    }
+  };
+
   const copyFromRole = (rid) => {
     const src = roles.find((r) => r.id === rid);
     if (!src) return;
@@ -613,6 +642,11 @@ export default function RoleManagementModule({ token, userRole }) {
                       {p.label}
                     </Button>
                   ))}
+                  <Button variant="outline" size="sm" disabled={!!converting}
+                          title="Isi izin per modul (Lihat/Tambah/Ubah/...) dari izin lama & portal peran ini"
+                          onClick={() => convertLegacy(null)} data-testid="convert-legacy-all-btn">
+                    {converting === 'all' ? <Loader2 className="animate-spin" /> : <RotateCcw />} Konversi izin lama → per modul
+                  </Button>
                   <Button variant="ghost" size="sm" onClick={clearPerms} data-testid="preset-clear">
                     <X /> Kosongkan
                   </Button>
@@ -679,6 +713,13 @@ export default function RoleManagementModule({ token, userRole }) {
                                   {lv.label}
                                 </Button>
                               ))}
+                              {grp.modules.some((m) => m.granular) && (
+                                <Button variant="ghost" size="sm" className="h-7 text-[11px]" disabled={!!converting}
+                                        onClick={() => convertLegacy(grp.portal)}
+                                        data-testid={`group-${grp.portal}-convert-legacy`}>
+                                  {converting === grp.portal ? <Loader2 className="animate-spin" /> : <RotateCcw />} Konversi izin lama
+                                </Button>
+                              )}
                             </div>
                           )}
                           <div className="space-y-2">

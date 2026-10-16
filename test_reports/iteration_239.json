@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend retest of ModuleActionGuard portal-scan fix. Created view-only role uji_lihat_saja (portals finance/self/collaboration, 18 mod.fin_*.view keys) + user test.lihatsaja@dewiaditya.id via API (helper /app/backend/tests/setup_viewonly_role.py). As that user: (1) REAL Radix Dialog - fin-expenses > 'Klaim Karyawan (Disbursement)' > row click opens 'Proses Klaim Biaya' dialog (portalled): Tolak + Setujui hidden (data-rbac-hidden='1', display none), Tutup + Close (X) visible, Tutup closes dialog. (pending-approval API returns [] for non-APPROVER_ROLES names, so that list response was route-mocked in Playwright with a real TEST_ claim id; the dialog/guard are real). (2) Synthetic portal injection on live bundle: appended [role=dialog] with Hapus/Simpan/Batal/Tutup/Setujui/Edit/Tolak and [data-radix-popper-content-wrapper]>[role=menu] with menuitems Hapus/Edit/Lihat Detail/Approve -> within 300ms Hapus/Setujui/Edit/Tolak/Approve hidden, Simpan/Batal/Tutup/Lihat Detail visible. (3) fin-accounting-master-hub: coa-add + all coa-edit/coa-delete hidden; 'Mode lihat saja' badge shown. (4) Header user menu (not Radix) shows Command Palette/Bantuan/Panduan/Keluar, nothing hidden; Keluar logs out to login page. Notification panel and Cmd-K dialog: no elements hidden outside the module. rAF latency 6-12ms after scans - no freeze/loop. Regression superadmin: 0 hidden elements, no badge on fin-accounting-master-hub/fin-expenses/fin-cash; same claim dialog shows Tolak/Setujui/Tutup. Cleanup: role, user and TEST_guard_claim deleted (claim removed via Mongo because API only deletes drafts).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Proses Klaim Biaya dialog (view-only user)", "issues": ["'Catatan persetujuan (opsional)' input still shown even though Tolak/Setujui are hidden - looks like an orphan field"]},
+      {"screen": "fin-cash (view-only user)", "issues": ["'Sinkron Bagan Akun & GL' (mutating action) stays visible - text not matched by RULES heuristic; backend should still 403"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/setup_viewonly_role.py"],
+  "action_items": [
+    "Optional: hide approval-note input in EmployeeExpenseApprovalModule detail dialog when canDo(moduleId,'approve') is false",
+    "Optional: classify non-standard mutating buttons (e.g. 'Sinkron ...', 'Import') via explicit data-rbac-action attribute instead of relying on text regex"
+  ],
+  "critical_code_review_comments": [
+    "Guard observes document.body globally and scans ALL [role=dialog]/[role=menu] while a guarded module is mounted - global overlays (e.g. a profile dialog with 'Edit Profil', chat 'Hapus pesan') opened from the header would be hidden too. Not observed in tested header widgets (user menu isn't Radix; notif/Cmd-K had no matches), but scoping is not module-specific.",
+    "Unhide only happens on re-scan; on unmount the guard does not restore elements in still-open global portals (low risk since portals usually unmount with the module).",
+    "Only childList mutations are observed - text/attribute changes on an existing button (e.g. label toggled from 'Lihat' to 'Hapus') won't be re-classified until some childList mutation occurs (usually happens anyway in React)."
+  ],
+  "updated_files": ["/app/backend/tests/setup_viewonly_role.py"],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100%"},
+  "test_credentials": "admin@garment.com/Admin@123; temp user test.lihatsaja@dewiaditya.id/Dewi@123 (deleted)",
+  "seed_data_creation": "Temp role uji_lihat_saja, user test.lihatsaja@dewiaditya.id, claim TEST_guard_claim (EC-202610-0001) - all deleted. Note: claim-number counter advanced by 1.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use `cd /app/backend && python tests/setup_viewonly_role.py setup|cleanup` to create/remove the view-only finance role+user quickly. Real Radix dialog with approve buttons: fin-expenses > tab 'Klaim Karyawan (Disbursement)' > row click; /api/hr/expenses/pending-approval returns items only for APPROVER_ROLES role names, so mock it via page.route for custom roles. CoA edits are inline forms (not dialogs); delete uses confirm."
+}

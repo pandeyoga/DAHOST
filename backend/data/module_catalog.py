@@ -539,3 +539,28 @@ def grouped_modules(portal: str) -> list[dict]:
 
 def all_granular_keys() -> set:
     return {perm_key(m["id"], a) for m in MODULES for a in m["actions"]}
+
+
+def suggest_from_legacy(keys, portal: str, has_portal_access: bool) -> list:
+    """Usulan izin `mod.*` untuk satu portal yang setara dengan izin lama + akses portal.
+
+    Aksi dengan pemetaan `implies` diberikan bila SEMUA izin lama itu dimiliki; aksi tanpa
+    pemetaan diberikan bila peran sudah bisa membuka portalnya (aturan lama = penjaga router).
+    Aksi apa pun otomatis ikut memberi `view`.
+    """
+    keys = set(keys or ())
+    out = []
+    for mod in MODULES:
+        if mod["portal"] != portal:
+            continue
+        imp = mod["implies"]
+        granted = []
+        for act in mod["actions"]:
+            need = imp.get(act) or (imp.get("manage") if act in ("create", "edit", "delete") else None)
+            ok = all(k in keys for k in need) if need else has_portal_access
+            if ok:
+                granted.append(act)
+        if granted and "view" in mod["actions"] and "view" not in granted:
+            granted.append("view")
+        out += [perm_key(mod["id"], a) for a in granted]
+    return out

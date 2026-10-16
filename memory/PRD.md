@@ -1,5 +1,13 @@
 # PRD — CV. Dewi Aditya ERP
 
+## SESI 2026-10-16 #25 — Clone ulang + lanjutan backlog hak akses granular
+- Repo `pandeyoga/DAHOST` di-clone ke /app, bootstrap (`scripts/bootstrap.sh` + `_setup_deps.sh`), seed go-live, akun uji, frontend rebuild — app jalan.
+- P1 SELESAI: tombol **"Konversi izin lama → per modul"** (semua portal: `convert-legacy-all-btn`; per portal: `group-<portal>-convert-legacy`) di Peran & Hak Akses. Backend `POST /api/roles/granular-suggestion` (superadmin, tidak menyimpan) memakai `module_catalog.suggest_from_legacy`: aksi ber-`implies` diberikan bila semua izin lama dimiliki; aksi tanpa pemetaan diberikan bila peran sudah bisa membuka portalnya; aksi apa pun → `view`. Hasil masuk draf, owner tinggal Simpan.
+- P1 SELESAI: `portal-shell/ModuleActionGuard.jsx` (dibungkus di PortalShell) menyembunyikan tombol/menuitem Tambah/Ubah/Hapus/Approve/Export (teks, aria/title, data-testid, ikon lucide) sesuai `module_access`, termasuk dialog/menu Radix yang di-portal; super role tidak terpengaruh. Penjaga sungguhan tetap backend.
+- Bug: `PUT /api/roles/{id}` memotong `permission_keys` di 500 → 5000.
+- Uji: iteration_238 (backend 7/7, UI lulus) + iteration_239 (dialog/menu portal lulus).
+- Backlog: P2 izin granular Portal Maklon; P2 sembunyikan teks/kolom yatim (mis. "Klik Tambah…", catatan persetujuan) untuk mode lihat saja.
+
 
 ## SESI 2026-10-11 #24 — Hak akses granular per modul (Lihat/Tambah/Ubah/Hapus/Approve/Export)
 - Permintaan owner (asli): "saya ingin fokus pada hak akses dan role, masih banyak bagian yang role dan hak aksesnya masih sangat terbatas, saya ingin lengkap seperti di maklon". Pilihan: izin granular per modul diatur per role; pakai layar "Peran & Hak Akses" yang sudah ada (tanpa duplikasi); semua portal selain Maklon.

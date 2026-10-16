@@ -282,7 +282,7 @@ async def update_role(role_id: str, request: Request):
         raise HTTPException(404, 'Role tidak ditemukan.')
     before_perms = [p['permission_key'] for p in await db.role_permissions.find(
         {'role_id': role_id}, {'_id': 0, 'permission_key': 1}
-    ).to_list(500)]
+    ).to_list(5000)]
 
     _set = {'updated_at': now()}
     if 'name' in body:
@@ -321,7 +321,7 @@ async def update_role(role_id: str, request: Request):
     after_role = await db.roles.find_one({'id': role_id}, {'_id': 0})
     after_perms = [p['permission_key'] for p in await db.role_permissions.find(
         {'role_id': role_id}, {'_id': 0, 'permission_key': 1}
-    ).to_list(500)]
+    ).to_list(5000)]
     bump_rbac_cache()
     await log_audit(db, entity_type='role', entity_id=role_id, action='update',
                     before={**before_role, 'permissions': sorted(before_perms)},
@@ -347,7 +347,7 @@ async def delete_role(role_id: str, request: Request):
         raise HTTPException(400, f"Role masih dipakai {used} pengguna. Pindahkan pengguna dulu.")
     before_perms = [p['permission_key'] for p in await db.role_permissions.find(
         {'role_id': role_id}, {'_id': 0, 'permission_key': 1}
-    ).to_list(500)]
+    ).to_list(5000)]
     await db.role_permissions.delete_many({'role_id': role_id})
     await db.roles.delete_one({'id': role_id})
     bump_rbac_cache()
@@ -355,6 +355,34 @@ async def delete_role(role_id: str, request: Request):
                     before={**role, 'permissions': sorted(before_perms)}, after=None,
                     user=user, request=request)
     return {'success': True}
+
+@router.post("/roles/granular-suggestion")
+async def granular_suggestion(request: Request):
+    """Usulan izin per modul (mod.*) dari izin lama + akses portal draf peran (tidak menyimpan)."""
+    user = await require_auth(request)
+    if user.get('role') != 'superadmin':
+        raise HTTPException(403, 'Forbidden')
+    from data.module_catalog import GRANULAR_PORTALS, PORTAL_LABELS, suggest_from_legacy
+    from routes.shared import PORTAL_ACCESS
+    body = await request.json()
+    keys = set(validate_keys(body.get('permissions')))
+    portals = [str(p) for p in (body.get('portals') or [])]
+    role_name = str(body.get('role_name') or '').lower()
+    wanted = body.get('portal')
+    targets = [wanted] if wanted else list(GRANULAR_PORTALS)
+    if any(t not in GRANULAR_PORTALS for t in targets):
+        raise HTTPException(400, 'Portal tidak mendukung izin per modul.')
+    result, all_keys = [], []
+    for pid in targets:
+        access = (pid in portals) if portals else (role_name in PORTAL_ACCESS.get(pid, []))
+        access = access or bool({f'{pid}.view', f'{pid}.manage'} & keys)
+        sug = suggest_from_legacy(keys, pid, access)
+        if sug:
+            result.append({'portal': pid, 'portal_label': PORTAL_LABELS[pid],
+                           'portal_access': access, 'keys': sug,
+                           'modules': len({k.split('.')[1] for k in sug})})
+            all_keys += sug
+    return {'portals': result, 'keys': all_keys}
 
 # ─── Audit convenience: RBAC change history ─────────────────────────────────
 @router.get("/roles/audit")
