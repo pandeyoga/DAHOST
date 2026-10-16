@@ -6,7 +6,7 @@ import pytest
 import requests
 from pymongo import MongoClient
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://erp-da-testing.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://fresh-context-1.preview.emergentagent.com").rstrip("/")
 CLIENT_XLSX = "/app/private/golive/DATA_YANG_PERLU_DIISI_DA_2.xlsx"
 TEST_XLSX = "/app/private/golive/uji_harga_nonaktif.xlsx"
 

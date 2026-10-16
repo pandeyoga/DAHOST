@@ -13,6 +13,7 @@
 
 import { useState, useEffect } from 'react';
 import { PORTAL_NAV, findModuleLabel } from './portalNav';
+import { moduleBlocked } from '../portalAccess';
 
 const MAX = 5;
 
@@ -53,7 +54,7 @@ export default function RecentModulesFooter({ portal, currentModule, onModuleCha
 
   // Show only those NOT currently active and yang punya nama, max 4 items
   const shown = recent
-    .filter((m) => m !== currentModule)
+    .filter((m) => m !== currentModule && !moduleBlocked(m, undefined, portal))
     .map((m) => ({ id: m, label: labelOf(m) }))
     .filter((m) => !!m.label)
     .slice(0, 4);

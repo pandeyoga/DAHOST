@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 
 # Backend URL from environment
-BACKEND_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BACKEND_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 
 # Test credentials
 ADMIN_EMAIL = "admin@garment.com"

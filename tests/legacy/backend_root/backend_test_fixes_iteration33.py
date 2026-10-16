@@ -18,7 +18,7 @@ from datetime import datetime, date
 from pymongo import MongoClient
 
 # Backend URL from environment
-BASE_URL = os.getenv("REACT_APP_BACKEND_URL", "https://backend-test-suite-6.preview.emergentagent.com")
+BASE_URL = os.getenv("REACT_APP_BACKEND_URL", "https://fresh-context-1.preview.emergentagent.com")
 API_BASE = f"{BASE_URL}/api"
 
 # MongoDB connection

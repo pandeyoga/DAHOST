@@ -4319,7 +4319,7 @@ Selisih 20 pcs = **4 run kebocoran × 5 pcs** (Temuan 1) — `plan.md:115` sendi
 fiktif** (bagian EKSEKUSI menghapus baris stok lalu insert dari baseline) ·
 `tests/backend_test_fase12.py` hard-assert `9667750 (±100)`/`32220 (±10)` ⇒ **FAIL PASTI**.
 * **Bonus temuan:** berkas uji yang sama mematok `BASE_URL` ke preview container lama
-  (`https://backend-test-suite-6.preview.emergentagent.com`) yang **sudah mati** ⇒ menguji host salah.
+  (`https://fresh-context-1.preview.emergentagent.com`) yang **sudah mati** ⇒ menguji host salah.
 * **Fix:** SSOT tunggal `scripts/lib/acc_baseline.py` — semua total **DITURUNKAN** dari tabel
   `STOCK_BASELINE × COST_BASELINE` + `assert` pengaman (qty **32.200**, nilai **Rp 9.663.750**,
   8 bernilai / 2 belum, unvalued_qty 3.300). `cleanup_fase10_qa.py` &

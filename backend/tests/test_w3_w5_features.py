@@ -3,7 +3,7 @@ import os
 import pytest
 import requests
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://backend-test-suite-6.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://fresh-context-1.preview.emergentagent.com').rstrip('/')
 
 RECEIPT_ID = "2a3f4a50-ca98-4b31-ac03-cdcc0f7cef7c"
 RECEIPT_CODE = "CMT-RCV-00001"

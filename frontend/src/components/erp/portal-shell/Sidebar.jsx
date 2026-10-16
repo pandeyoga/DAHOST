@@ -11,9 +11,9 @@
 
 import { Menu, X, Tv2 } from 'lucide-react';
 import NavItem from './NavItem';
-import { hiddenModules, navItemAllowed, currentRole } from '../portalAccess';
+import { navItemVisible, currentRole } from '../portalAccess';
 import RecentModulesFooter from './RecentModulesFooter';
-import { formatSectionLabel, findModuleLabel } from './portalNav';
+import { formatSectionLabel, findModuleLabel, PORTAL_NAV } from './portalNav';
 
 export default function Sidebar({
   portal,
@@ -29,13 +29,8 @@ export default function Sidebar({
 }) {
   // 2026-08-05 (RBAC visibilitas menu) — pintu yang disembunyikan owner untuk
   // role/user ini tidak dirender. Kosong = tampilkan semua (perilaku lama).
-  const _hidden = hiddenModules();
-  // 2026-08-08 — sebagian pintu lebih sempit kewenangannya daripada portalnya
-  // (mis. "Input Vendor CMT" berdampak ke tagihan). Pintu yang tidak berwenang
-  // TIDAK dirender supaya tidak jadi menu buntu "tidak berwenang".
   const _role = currentRole();
-  const visible = (list) => (list || []).filter(
-    (it) => !_hidden.includes(it.id) && navItemAllowed(it, _role));
+  const visible = (list) => (list || []).filter((it) => navItemVisible(it, _role, portal));
 
   return (
     <>
@@ -163,7 +158,8 @@ export default function Sidebar({
                 className="text-[10px] text-foreground/40 truncate"
                 data-testid="topbar-module-title"
               >
-                {findModuleLabel(portal, currentModule)}
+                {[portal, ...Object.keys(PORTAL_NAV)].map((p) => findModuleLabel(p, currentModule))
+                  .find((l) => l && l !== currentModule) || ''}
               </p>
               {/* Phase 1.5: TV link moved from sidebar section to footer */}
               <a

@@ -10,7 +10,7 @@ import os
 import requests
 import pytest
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://backend-test-suite-6.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://fresh-context-1.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 PWD = "Dewi@123"
 

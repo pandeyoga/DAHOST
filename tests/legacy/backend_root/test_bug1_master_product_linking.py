@@ -20,7 +20,7 @@ import requests
 import sys
 import os
 
-API = os.environ.get('REACT_APP_BACKEND_URL', 'https://backend-test-suite-6.preview.emergentagent.com')
+API = os.environ.get('REACT_APP_BACKEND_URL', 'https://fresh-context-1.preview.emergentagent.com')
 
 class TestBug1MasterProductLinking:
     def __init__(self):

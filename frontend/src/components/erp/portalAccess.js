@@ -1,6 +1,7 @@
 // Single source of truth for role → portal access (frontend).
 // Keep in sync with backend routes/shared.py PORTAL_ACCESS.
 // Portal ids match portalNav.js keys.
+import { PORTAL_NAV } from './portal-shell/portalNav';
 
 // Roles that can access ALL portals.
 export const SUPER_ROLES = ['superadmin', 'admin', 'owner'];
@@ -145,13 +146,58 @@ export function navItemAllowed(item, role) {
   return roles.map(x => String(x).toLowerCase()).includes(r);
 }
 
+/** Pintu menu tampil untuk user aktif di portal ini? (menu tersembunyi owner/izin Lihat + pembatasan peran pintu) */
+export function navItemVisible(item, role, portalId) {
+  if (!item || item.isHeader) return true;
+  const h = hiddenModules();
+  return !h.includes(item.id) && !(portalId && h.includes(`${portalId}::${item.id}`)) && navItemAllowed(item, role);
+}
+
+const realItems = (list) => (list || []).filter((i) => !i.isHeader);
+
+/** Navigasi portal yang sudah disaring: menu, grup & bagian (tab atas) yang kosong dibuang. */
+export function visibleNav(nav, role, portalId) {
+  if (!nav) return nav;
+  const vis = (list) => (list || []).filter((it) => navItemVisible(it, role, portalId));
+  const sections = (nav.sections || []).map((s) => (s.groups?.length
+    ? { ...s, groups: s.groups.map((g) => ({ ...g, items: vis(g.items) })).filter((g) => realItems(g.items).length) }
+    : { ...s, items: vis(s.items) }))
+    .filter((s) => realItems(s.items).length || (s.groups || []).length);
+  return { ...nav, sections };
+}
+
+export function firstVisibleModule(nav) {
+  for (const s of nav?.sections || []) {
+    const items = s.items?.length ? s.items : (s.groups || []).flatMap((g) => g.items || []);
+    const first = realItems(items)[0];
+    if (first) return first.id;
+  }
+  return null;
+}
+
+/** Modul ini pintu menu yang disembunyikan untuk user aktif? (bukan pintu menu = tidak diblok) */
+export function moduleBlocked(moduleId, role, portalId) {
+  if (!moduleId) return false;
+  const h = hiddenModules();
+  if (h.includes(moduleId) || (portalId && h.includes(`${portalId}::${moduleId}`))) return true;
+  const items = Object.values(PORTAL_NAV).flatMap((n) => (n.sections || []).flatMap((s) => [
+    ...(s.items || []), ...(s.groups || []).flatMap((g) => g.items || [])]));
+  const matches = items.filter((i) => i.id === moduleId);
+  return matches.length > 0 && !matches.some((i) => navItemAllowed(i, role));
+}
+
+function portalHasVisibleMenu(portalId, role) {
+  const nav = PORTAL_NAV[portalId];
+  return !nav || visibleNav(nav, role, portalId).sections.length > 0;
+}
+
 export function canAccessPortal(role, portalId) {
   const r = (role || '').toLowerCase();
   if (SUPER_ROLES.includes(r)) return true;
   if (ALL_ROLE_PORTALS.includes(portalId)) return true;
   const acc = readEffectiveAccess();
-  if (acc && Array.isArray(acc.portals) && acc.portals.length) {
-    return acc.portals.includes(portalId);
-  }
-  return (PORTAL_ROLES[portalId] || []).includes(r);
+  const listed = (acc && Array.isArray(acc.portals) && acc.portals.length)
+    ? acc.portals.includes(portalId)
+    : (PORTAL_ROLES[portalId] || []).includes(r);
+  return listed && portalHasVisibleMenu(portalId, r);
 }

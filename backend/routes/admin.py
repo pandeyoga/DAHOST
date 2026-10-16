@@ -376,7 +376,10 @@ async def granular_suggestion(request: Request):
     for pid in targets:
         access = (pid in portals) if portals else (role_name in PORTAL_ACCESS.get(pid, []))
         access = access or bool({f'{pid}.view', f'{pid}.manage'} & keys)
-        sug = suggest_from_legacy(keys, pid, access)
+        # Peran bawaan tanpa izin tersimpan: penjaga lama meloloskan semua aksi portalnya (can_act legacy).
+        pkeys = keys | {f'{pid}.view', f'{pid}.manage', f'{pid}.approve'} \
+            if (not keys and role_name in PORTAL_ACCESS.get(pid, [])) else keys
+        sug = suggest_from_legacy(pkeys, pid, access)
         if sug:
             result.append({'portal': pid, 'portal_label': PORTAL_LABELS[pid],
                            'portal_access': access, 'keys': sug,

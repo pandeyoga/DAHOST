@@ -1,0 +1,38 @@
+{
+  "summary": "Tested custom-role menu auto-hide (backend and frontend). Backend: 12/12 pytest pass. The permission catalog lists Maklon as granular with the 8 mak_* modules, and legacy maklon_ops is in legacy_modules. For uji_custom_menu, login returns portals [collaboration, finance, maklon, self], and hidden_modules hides every maklon-* menu except maklon-pos-engine/maklon-po-360 and every fin-* menu except fin-hpp/fin-hpp-produk. Endpoint checks: pos 200, invoices 403 with the x-rbac-denied header, POST samples 403, GET clients 200 (lookup=True, as designed), POST clients 403. Frontend: the portal selector only allows Keuangan, Maklon, Kolaborasi and Portal Saya; other cards are locked with 'Tidak ada akses'. In Maklon the 'Keuangan & Analitik' pill is gone. The hidden default landing (maklon-dashboard) redirects to the first visible menu (#vendor-admin) with the toast 'Menu ini tidak tersedia untuk peran Anda.'. Hash #maklon-billing redirects with the toast, and #maklon-po-360 opens normally. 'Terakhir' filters out hidden menus seeded into localStorage. The Ctrl+K menu list has no hidden menus and no menus from blocked portals, but its 'Pindah Portal' group still lists blocked portals. Keuangan shows the HPP pill plus a 'Hutang (AP)' pill made of shared legacy menus. Regression: superadmin sees 16/16 portals, Maklon has 4 pills (23 menus) and Keuangan has 7 pills. The Peran & Hak Akses screen shows the Maklon group with the 8 modules, and 'Konversi izin lama' worked as a draft (14 keys), then was reset without saving. uji.accounting is unchanged: 0 hidden menus and all 7 finance pills.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/roles/granular-suggestion (portal=maklon)", "issue": "Built-in admin_maklon has 0 stored permissions; its legacy access comes from the role/PORTAL_ACCESS guard. The suggestion returns only view+export for 7 modules. It returns nothing for mak_dashboard, because mak_dashboard view/export imply maklon.view and the role does not hold that key explicitly. It suggests no create/edit/delete/approve, because _MAKLON implies needs explicit maklon.view/manage. If the owner converts and saves, admin_maklon loses the Maklon dashboard (the portal's landing page) and all write actions. Suggested fix: in suggest_from_legacy, count implied keys '<portal>.view/.manage' as held when has_portal_access is true and the role is in the legacy router guard (e.g. MAKLON_ROLES), or at least always grant view when has_portal_access."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CommandPalette 'Pindah Portal' group", "issue": "PORTAL_ITEMS is static and not filtered by canAccessPortal. uji_custom_menu sees cmdk-portal-management/production/warehouse/hr. Choosing hr does nothing and shows no toast.", "selector": "[data-testid^='cmdk-portal-']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Custom role > Maklon > Monitoring Progress > Monitoring CMT", "issue": "Shared legacy production menus stay visible, which is expected, but the backend rejects them: toast 'Gagal memuat monitoring CMT: Akses ditolak: butuh izin monitoring CMT (cmt.view)'. Visible menus lead to 403 for custom roles without Produksi perms.", "affected_selectors": ["[data-testid='sidebar-items']"]},
+      {"flow": "Custom role > Keuangan pills", "issue": "The review expected only the HPP pill. 'Hutang (AP)' (Faktur Supplier (Bahan), Invoice Vendor CMT) is also visible, because those menus belong to Pengadaan/Produksi modules (proc_match, prod_cmt_billing) that are not granular for this role. This follows the same legacy rule as the Maklon production shortcuts; confirm with the owner whether that is wanted.", "affected_selectors": ["[data-testid='section-pill-0']"]}
+    ],
+    "design_issues": [
+      {"screen": "Sidebar footer", "issue": ["The current-module caption shows the raw id 'mgmt-roles' instead of the label 'Peran & Hak Akses' in the Manajemen portal."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter240_custom_role_menu_hide.py", "/app/test_reports/pytest/iter240.xml"],
+  "action_items": [
+    "Filter CommandPalette 'Pindah Portal' items with canAccessPortal(role, id). Pass the allowed portal list from PortalShell, as already done for moduleSuggestions.",
+    "Fix suggest_from_legacy for roles whose legacy access is role-based (admin_maklon has 0 explicit keys), so that 'Konversi izin lama' does not drop mak_dashboard and the write actions.",
+    "Optional: either hide shared legacy menus whose backend guard the role cannot pass (e.g. Monitoring CMT needs cmt.view), or tell the owner that custom roles also need Produksi/Pengadaan module perms for those shortcuts."
+  ],
+  "critical_code_review_comments": [
+    "portalAccess.moduleBlocked only blocks ids in hidden_modules or restricted by nav roles. A hash to a module of a portal the user cannot open (e.g. accounting with #maklon-billing) silently stays in the current portal with the stale hash and shows no toast.",
+    "RecentModulesFooter still writes the blocked module into localStorage briefly before the redirect. Display filtering hides it, so this is harmless, but it is noise.",
+    "Backend view_portals + get_user_portals union and the frontend canAccessPortal check for at least one visible menu are consistent; no issues found."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter240_custom_role_menu_hide.py"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "~88% (core hide/redirect/pills/recent/palette-modules OK; palette portal switcher not filtered)"},
+  "seed_data_creation": "None. The uji_custom_menu role was not modified. The admin_maklon convert was draft only and was reset.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Use hash navigation (#mgmt-roles, #maklon-billing) after picking a portal card. Ctrl+K: data-testid cmdk-input, cmdk-module-<id>, cmdk-portal-<id>. Portal cards: portal-selector-<id>-card; locked cards contain 'Tidak ada akses'. The accounting role doc has explicit portals [finance, assets, self, collaboration, toko], so maklon/sales/procurement are not shown for it; this is pre-existing config."
+}

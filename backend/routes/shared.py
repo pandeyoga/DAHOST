@@ -206,18 +206,20 @@ async def resolve_role_access(db, user: dict) -> dict:
     hidden += [m for m in (u.get("hidden_modules") or []) if m not in hidden]
     user["_portals"] = portals
     # Izin granular per modul: menu tanpa izin `view` ikut disembunyikan + peta aksi per menu.
-    from data.module_catalog import menu_access
+    from data.module_catalog import menu_access, view_portals
     role_keys = []
     if role_doc and role_doc.get("id"):
-        rows = await db.role_permissions.find({"role_id": role_doc["id"]}, {"_id": 0, "permission_key": 1}).to_list(2000)
+        rows = await db.role_permissions.find({"role_id": role_doc["id"]}, {"_id": 0, "permission_key": 1}).to_list(5000)
         role_keys = [r.get("permission_key") for r in rows if r.get("permission_key")]
-    perm_hidden, module_access = menu_access(role_keys + list(u.get("extra_permissions") or []),
-                                             is_super=role in SUPER_ROLES)
+    all_keys = role_keys + list(u.get("extra_permissions") or [])
+    perm_hidden, module_access = menu_access(all_keys, is_super=role in SUPER_ROLES)
     hidden += [m for m in perm_hidden if m not in hidden]
+    # Portal yang diberi izin Lihat per modul ikut terbuka walau belum dicentang di "Akses Portal".
+    eff_portals = sorted(set(get_user_portals(user)) | (set() if role in SUPER_ROLES else view_portals(all_keys)))
     return {
         "role": role,
         "is_super": role in SUPER_ROLES,
-        "portals": get_user_portals(user),
+        "portals": eff_portals,
         "hidden_modules": [] if role in SUPER_ROLES else hidden,
         "module_access": module_access,
         "extra_permissions": list(u.get("extra_permissions") or []),

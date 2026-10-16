@@ -5,7 +5,7 @@ Tests API behavior for enforced vs non-enforced document types
 import requests
 import sys
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 
 class DocNumberingAPITest:
     def __init__(self):

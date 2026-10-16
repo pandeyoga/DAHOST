@@ -26,7 +26,10 @@
 import { useState, useMemo, useEffect, Suspense, lazy } from 'react';
 import ModuleAccessBadge from './portal-shell/ModuleAccessBadge';
 import ModuleActionGuard from './portal-shell/ModuleActionGuard';
-import { refreshEffectiveAccess } from './portalAccess';
+import {
+  refreshEffectiveAccess, visibleNav, firstVisibleModule, moduleBlocked, navItemVisible, canAccessPortal,
+} from './portalAccess';
+import { toast } from 'sonner';
 import { lazyRetry } from '../../lib/lazyRetry';
 import { CommandPalette } from './CommandPalette';
 // Session #11.18 EXTENDED — Lazy-load help/guide UIs since they only render when opened
@@ -72,7 +75,7 @@ export default function PortalShell({
   const [tourSteps, setTourSteps] = useState(null); // null = not active
   const [guideOpen, setGuideOpen] = useState(false);
 
-  const [, setAccessTick] = useState(0);
+  const [accessTick, setAccessTick] = useState(0);
   // Segarkan akses efektif (portal, menu tersembunyi, izin per modul) tiap portal dibuka
   // supaya perubahan di "Peran & Hak Akses" terasa tanpa login ulang.
   useEffect(() => {
@@ -82,7 +85,19 @@ export default function PortalShell({
   }, []);
   useEffect(() => { refreshEffectiveAccess(token); }, [token, portal]);
 
-  const nav = PORTAL_NAV[portal] || PORTAL_NAV.management;
+  const role = (user?.role || '').toLowerCase();
+  // Menu, grup & tab bagian disaring sesuai hak akses (tab yang isinya kosong ikut hilang).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const nav = useMemo(() => visibleNav(PORTAL_NAV[portal] || PORTAL_NAV.management, role, portal), [portal, role, accessTick]);
+  const blocked = moduleBlocked(currentModule, role, portal);
+  // Menu tersembunyi yang dibuka lewat link langsung / Ctrl+K / riwayat → arahkan ke menu pertama yang boleh.
+  useEffect(() => {
+    if (!blocked) return;
+    toast.info('Menu ini tidak tersedia untuk peran Anda.');
+    const first = firstVisibleModule(nav);
+    if (first) onModuleChange?.(first); else onBack?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocked, currentModule, nav]);
   // IA v4 — Portal "satu pintu" (mis. Manajemen Aset): sidebar & pill section
   // DISEMBUNYIKAN karena navigasi sudah 100% ditangani tab di dalam modul.
   // Dua lapis navigasi untuk satu halaman = beban kognitif tanpa manfaat.
@@ -92,8 +107,10 @@ export default function PortalShell({
   const moduleSuggestions = useMemo(() => {
     const out = [];
     Object.entries(PORTAL_NAV).forEach(([pid, p]) => {
+      if (!canAccessPortal(role, pid)) return;
       p.sections.forEach((sec) => {
         const pushItem = (item, groupLabel = null) => {
+          if (item.isHeader || !navItemVisible(item, role, pid)) return;
           out.push({
             // Compound id ensures uniqueness across portals (same item.id may
             // legitimately appear in multiple portal navs — e.g. ai-actions in
@@ -112,7 +129,8 @@ export default function PortalShell({
       });
     });
     return out;
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, accessTick]);
 
   // ── Section-based nav: top pills = sections, left sidebar = items of active section ──
   const activeSectionIndex = Math.max(
@@ -183,8 +201,16 @@ export default function PortalShell({
         {/* Main content — add pb for mobile bottom nav on 'self' portal */}
         <main className={`flex-1 overflow-y-auto${portal === 'self' ? ' pb-14 md:pb-0' : ''}`}>
           <div className="max-w-[1400px] mx-auto p-4 sm:p-6">
-            <ModuleAccessBadge moduleId={currentModule} />
-            <ModuleActionGuard moduleId={currentModule}>{contentWrapper}</ModuleActionGuard>
+            {blocked ? (
+              <div className="py-16 text-center text-sm text-foreground/50" data-testid="module-blocked-notice">
+                Menu ini tidak tersedia untuk peran Anda.
+              </div>
+            ) : (
+              <>
+                <ModuleAccessBadge moduleId={currentModule} />
+                <ModuleActionGuard moduleId={currentModule}>{contentWrapper}</ModuleActionGuard>
+              </>
+            )}
           </div>
         </main>
       </div>

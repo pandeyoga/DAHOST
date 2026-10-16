@@ -14,7 +14,7 @@ import os
 from datetime import datetime
 
 # Read backend URL from frontend/.env
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 
 class Fase4RegressionTest:
     def __init__(self):

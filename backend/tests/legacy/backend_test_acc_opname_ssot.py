@@ -21,7 +21,7 @@ Test Coverage:
 10. Regression: GET /api/wms/opname2 excludes accessory-domain sessions
 11. Regression: POST /api/wms/opname2/start not blocked by accessory opname
 
-Public endpoint: https://backend-test-suite-6.preview.emergentagent.com
+Public endpoint: https://fresh-context-1.preview.emergentagent.com
 Admin credentials: admin@garment.com / Admin@123
 """
 
@@ -30,7 +30,7 @@ import sys
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 ADMIN_EMAIL = "admin@garment.com"
 ADMIN_PASSWORD = "Admin@123"
 

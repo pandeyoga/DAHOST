@@ -6,7 +6,7 @@ import requests
 import sys
 
 # Use PUBLIC endpoint from frontend .env
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 API_PREFIX = "/api"
 
 # Test credentials

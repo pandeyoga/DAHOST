@@ -143,8 +143,8 @@
   },
   
   "test_environment": {
-    "backend_url": "https://backend-test-suite-6.preview.emergentagent.com",
-    "frontend_url": "https://backend-test-suite-6.preview.emergentagent.com",
+    "backend_url": "https://fresh-context-1.preview.emergentagent.com",
+    "frontend_url": "https://fresh-context-1.preview.emergentagent.com",
     "test_accounts_used": [
       "admin@garment.com (Admin/Superadmin)",
       "gudang@dewiaditya.id (Warehouse - admin_gudang role)"

@@ -6,7 +6,7 @@ import requests
 from datetime import datetime
 
 # Use public endpoint
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 
 # Test credentials
 ADMIN = {"email": "admin@garment.com", "password": "Admin@123"}

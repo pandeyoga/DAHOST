@@ -8,7 +8,7 @@ import sys
 import json
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 LOGIN_EMAIL = "admin@garment.com"
 LOGIN_PASSWORD = "Admin@123"
 

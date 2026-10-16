@@ -11,7 +11,7 @@ Test Coverage:
 - POC migration scripts (poc_maklon_consolidation, poc_p2p_flow)
 - Existing data accessibility (MKLO-LEG-001/002/003)
 
-Public endpoint: https://backend-test-suite-6.preview.emergentagent.com
+Public endpoint: https://fresh-context-1.preview.emergentagent.com
 Admin credentials: admin@garment.com / Admin@123
 """
 
@@ -20,7 +20,7 @@ import sys
 from datetime import datetime, date
 from typing import Optional, Dict, Any, List
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 ADMIN_EMAIL = "admin@garment.com"
 ADMIN_PASSWORD = "Admin@123"
 

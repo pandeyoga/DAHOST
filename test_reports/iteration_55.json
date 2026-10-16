@@ -171,7 +171,7 @@
   },
   
   "test_environment": {
-    "url": "https://backend-test-suite-6.preview.emergentagent.com",
+    "url": "https://fresh-context-1.preview.emergentagent.com",
     "credentials_used": "marketing@dewiaditya.id / Dewi@123 (role manager_marketing)",
     "frontend_mode": "STATIC BUNDLE (already rebuilt by main agent - not rebuilt during test)",
     "demo_data": "July 2026 seeded with 559 orders for TikTok Outfit Boutique (omzet produk Rp 59.783.811, diskon penjual Rp 48.020.983)",

@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 
 # Get backend URL from environment
-BACKEND_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BACKEND_URL = "https://fresh-context-1.preview.emergentagent.com"
 LOGIN_EMAIL = "admin@garment.com"
 LOGIN_PASSWORD = "Admin@123"
 

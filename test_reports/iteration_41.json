@@ -110,8 +110,8 @@
   ],
   
   "environment": {
-    "frontend_url": "https://backend-test-suite-6.preview.emergentagent.com",
-    "backend_url": "https://backend-test-suite-6.preview.emergentagent.com/api",
+    "frontend_url": "https://fresh-context-1.preview.emergentagent.com",
+    "backend_url": "https://fresh-context-1.preview.emergentagent.com/api",
     "test_credentials": "admin@garment.com / Admin@123",
     "modules_tested": [
       "cmt-override-portal (hash: cmt-override-portal)",

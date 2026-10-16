@@ -17,7 +17,7 @@ import sys
 import os
 from datetime import datetime
 
-BASE_URL = os.environ.get("API_BASE", "https://backend-test-suite-6.preview.emergentagent.com")
+BASE_URL = os.environ.get("API_BASE", "https://fresh-context-1.preview.emergentagent.com")
 ADMIN_CREDS = {"email": "admin@garment.com", "password": "Admin@123"}
 
 class Colors:

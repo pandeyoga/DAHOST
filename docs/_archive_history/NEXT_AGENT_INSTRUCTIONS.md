@@ -145,7 +145,7 @@ Selalu gunakan SSOT collections ini (BUKAN duplikasi baru):
 ## 🔑 Auth & Access
 
 ```
-Production URL: https://backend-test-suite-6.preview.emergentagent.com
+Production URL: https://fresh-context-1.preview.emergentagent.com
 Admin:          admin@garment.com / Admin@123
 JWT Header:     Authorization: Bearer <token>
 Expiry:         24 hours

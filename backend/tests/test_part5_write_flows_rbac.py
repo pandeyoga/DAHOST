@@ -25,7 +25,7 @@ import time
 from datetime import datetime, date, timedelta
 from typing import Dict, Optional
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 
 # Test accounts (from test_credentials.md)
 ACCOUNTS = {

@@ -18,7 +18,7 @@ import requests
 import sys
 
 # Public endpoint from frontend/.env
-API = "https://backend-test-suite-6.preview.emergentagent.com"
+API = "https://fresh-context-1.preview.emergentagent.com"
 
 class TD011Phase1Tester:
     def __init__(self):

@@ -6,7 +6,7 @@ import requests
 import sys
 
 class Phase6AutoCoaAPITester:
-    def __init__(self, base_url="https://backend-test-suite-6.preview.emergentagent.com"):
+    def __init__(self, base_url="https://fresh-context-1.preview.emergentagent.com"):
         self.base_url = base_url
         self.token = None
         self.tests_run = 0

@@ -67,7 +67,7 @@
 ## 🔑 Test Credentials
 
 ```
-URL:      https://backend-test-suite-6.preview.emergentagent.com
+URL:      https://fresh-context-1.preview.emergentagent.com
 Email:    admin@garment.com
 Password: Admin@123
 Role:     Super Admin (semua akses)

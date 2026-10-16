@@ -74,7 +74,7 @@
   "test_details": {
     "test_type": "frontend_only",
     "test_date": "2026-08-17",
-    "test_environment": "https://backend-test-suite-6.preview.emergentagent.com",
+    "test_environment": "https://fresh-context-1.preview.emergentagent.com",
     "test_credentials": "admin@garment.com / Admin@123",
     "deep_link_tested": "#mgmt-pdf",
     "features_tested": [

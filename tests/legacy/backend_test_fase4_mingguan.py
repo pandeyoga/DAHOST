@@ -10,7 +10,7 @@ import sys
 import requests
 from datetime import date, datetime, timedelta, timezone
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TANGGAL DINAMIS (perbaikan main agent, 2026-08-10)

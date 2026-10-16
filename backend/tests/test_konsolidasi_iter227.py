@@ -11,7 +11,7 @@ from pymongo import MongoClient
 from openpyxl import load_workbook
 
 # ---- Setup ----
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "https://sku-inventory-pull.preview.emergentagent.com"
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or "https://fresh-context-1.preview.emergentagent.com"
 MONGO_URL = "mongodb://localhost:27017"
 DB_NAME = "test_database"
 

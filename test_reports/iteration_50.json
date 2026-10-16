@@ -61,7 +61,7 @@
           "Authentication/session management code in frontend",
           "Route guards or protected route components"
         ],
-        "reproduction_steps": "1. Login with admin@garment.com 2. Navigate to https://backend-test-suite-6.preview.emergentagent.com/?portal=toko&module=marketing-fulfillment 3. Observe redirect to login page",
+        "reproduction_steps": "1. Login with admin@garment.com 2. Navigate to https://fresh-context-1.preview.emergentagent.com/?portal=toko&module=marketing-fulfillment 3. Observe redirect to login page",
         "expected_behavior": "After successful login, navigation to module URLs should maintain session and load the requested module",
         "actual_behavior": "Session expires and user is redirected to login page"
       }

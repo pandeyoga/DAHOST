@@ -19,7 +19,7 @@ import time
 from datetime import datetime
 from typing import Dict, List, Optional
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_USERS = [

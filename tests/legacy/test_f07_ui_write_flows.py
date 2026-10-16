@@ -9,7 +9,7 @@ import sys
 import json
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 TEST_ACCOUNT_CODE = "UJI-QA-F07"
 
 class F07UIWriteFlowsTester:

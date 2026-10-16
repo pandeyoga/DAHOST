@@ -15,7 +15,7 @@ import re
 import requests
 import pytest
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://sku-inventory-pull.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://fresh-context-1.preview.emergentagent.com').rstrip('/')
 ADMIN_EMAIL = 'admin@garment.com'
 ADMIN_PW = 'Admin@123'
 

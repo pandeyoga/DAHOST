@@ -36,7 +36,7 @@ PORTAL_LABELS = {
     "management": "Manajemen", "production": "Produksi", "cutting": "Cutting",
     "procurement": "Pengadaan", "warehouse": "Gudang", "accessories": "Aksesoris",
     "finance": "Keuangan", "sales": "Penjualan", "hr": "SDM / HRIS", "toko": "Marketing / Toko",
-    "rnd": "RnD & Desain", "assets": "Manajemen Aset",
+    "rnd": "RnD & Desain", "assets": "Manajemen Aset", "maklon": "Maklon",
 }
 GRANULAR_PORTALS = tuple(PORTAL_LABELS)
 
@@ -47,6 +47,7 @@ def _m(portal, mid, label, menus, paths=(), actions=_ALL, implies=None, extras=(
 
 
 _TOKO = {"view": ["toko.view"], "manage": ["toko.manage"], "approve": ["toko.approve"]}
+_MAKLON = {"view": ["maklon.view"], "manage": ["maklon.manage"], "approve": ["maklon.approve"]}
 
 MODULES: list[dict] = [
     # ── MANAJEMEN ───────────────────────────────────────────────────────────
@@ -413,6 +414,27 @@ MODULES: list[dict] = [
     # ── ASET ────────────────────────────────────────────────────────────────
     _m("assets", "assets_main", "Manajemen Aset, Peminjaman & Pelepasan", ["asset-management"], ["/api/assets"], _ALL,
        {"view": ["assets.view"], "manage": ["assets.manage"], "approve": ["assets.manage"]}),
+
+    # ── MAKLON (menu pintasan Produksi di portal ini mengikuti modul Produksi-nya) ──
+    _m("maklon", "mak_clients", "Data Klien Maklon", ["maklon-clients"], ["/api/dewi/maklon/clients"], _CRUD,
+       _MAKLON, lookup=True),
+    _m("maklon", "mak_buyer_catalog", "Katalog Buyer & Template BOM", ["maklon-buyer-catalog"],
+       ["/api/dewi/maklon/buyer-catalog", "/api/dewi/maklon/bom-templates"], _CRUD, _MAKLON, lookup=True),
+    _m("maklon", "mak_po", "PO Maklon & Detail PO", ["maklon-pos-engine", "maklon-po-360"],
+       ["/api/dewi/maklon/pos", "/api/dewi/maklon/pos-summary", "/api/dewi/maklon/orders", "/api/dewi/maklon/bom",
+        "/api/dewi/maklon/material-receive", "/api/dewi/maklon/dispatches"], _ALL, _MAKLON),
+    _m("maklon", "mak_samples", "Sampel & QC Maklon", ["maklon-samples"],
+       ["/api/dewi/maklon/samples", "/api/dewi/maklon/qc"], _ALL, _MAKLON),
+    _m("maklon", "mak_dashboard", "Dashboard, Alur Produksi & Tracking Maklon",
+       ["maklon-dashboard", "maklon-alur-produksi", "maklon-tracking"],
+       ["/api/dewi/maklon/summary", "/api/maklon/sla", "/api/maklon-client"], _VE,
+       {"view": ["maklon.view"], "export": ["maklon.view"]}),
+    _m("maklon", "mak_billing", "Invoice & Pembayaran Maklon", ["maklon-billing"],
+       ["/api/dewi/maklon/invoices", "/api/dewi/maklon/payments", "/api/dewi/maklon/reports",
+        "/api/dewi/maklon/finance"], _ALL, _MAKLON),
+    _m("maklon", "mak_hpp", "HPP Jahit", ["maklon-hpp"], ["/api/dewi/maklon/hpp"], _CRUD, _MAKLON),
+    _m("maklon", "mak_ai_quote", "Estimasi AI (Quote)", ["maklon-ai-quote"], ["/api/maklon/ai-quote"],
+       ("view", "create", "approve", "export"), _MAKLON),
 ]
 
 MODULE_BY_ID = {m["id"]: m for m in MODULES}
@@ -489,6 +511,16 @@ def granular_portals(keys) -> set:
     return out
 
 
+def view_portals(keys) -> set:
+    """Portal pemilik modul yang diberi izin `view` — portal ini ikut terbuka di pemilih portal."""
+    out = set()
+    for k in keys or ():
+        mod, act = _parse(k)
+        if mod and act == "view":
+            out.add(mod["portal"])
+    return out
+
+
 def expand_permissions(keys) -> list:
     """Tambahkan izin lama yang tersirat dari izin granular (agar penjaga lama tetap konsisten)."""
     out = set(k for k in (keys or ()) if k)
@@ -518,6 +550,13 @@ def menu_access(keys, is_super: bool = False) -> tuple[list, dict]:
             prev = set(access.get(menu, []))
             access[menu] = sorted(prev | set(acts))
     hidden = sorted(m for m, acts in access.items() if "view" not in acts)
+    # Menu pintasan modul portal lain (ALSO_PORTALS) di portal yang sudah granular: tanpa izin Lihat
+    # modul pemiliknya → disembunyikan HANYA di portal pintasan itu (format "<portal>::<menu>").
+    for mod in MODULES:
+        if mod["portal"] in gportals or perm_key(mod["id"], "view") in keys:
+            continue
+        for p in set(mod["also_portals"]) & gportals:
+            hidden += [f"{p}::{menu}" for menu in mod["menus"]]
     return hidden, access
 
 
@@ -561,6 +600,8 @@ def suggest_from_legacy(keys, portal: str, has_portal_access: bool) -> list:
             if ok:
                 granted.append(act)
         if granted and "view" in mod["actions"] and "view" not in granted:
+            granted.append("view")
+        if not granted and has_portal_access and "view" in mod["actions"]:
             granted.append("view")
         out += [perm_key(mod["id"], a) for a in granted]
     return out

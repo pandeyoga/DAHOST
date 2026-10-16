@@ -1,5 +1,15 @@
 # PRD — CV. Dewi Aditya ERP
 
+## SESI 2026-10-16 #26 — Peran custom: menu otomatis tersembunyi + Maklon granular
+- Push ke GitHub `pandeyoga/DAHOST` main (commit-tree di atas origin/main, tanpa force; token hanya header sekali pakai).
+- Maklon kini granular (`module_catalog`: mak_clients, mak_buyer_catalog, mak_po, mak_samples, mak_dashboard, mak_billing, mak_hpp, mak_ai_quote; implies maklon.view/manage/approve). Menu pintasan Produksi di Maklon tetap ikut modul Produksi-nya.
+- `menu_access`: menu pintasan (ALSO_PORTALS) di portal granular tanpa izin Lihat modul pemiliknya → `hidden_modules` berformat `<portal>::<menu>` (hanya tersembunyi di portal pintasan).
+- `resolve_role_access.portals` = bawaan ∪ portal yang punya izin `mod.*.view` (`view_portals`).
+- FE `portalAccess`: `navItemVisible/visibleNav/firstVisibleModule/moduleBlocked(id, role, portal)`; `canAccessPortal` mensyaratkan ≥1 menu terlihat. PortalShell: tab bagian kosong hilang, modul tersembunyi (URL/hash/Ctrl+K/riwayat/landing) → dialihkan ke menu pertama + toast; Ctrl+K "Pindah Portal" & daftar modul disaring; Terakhir disaring; caption sidebar tidak lagi id mentah.
+- Saran konversi izin lama: peran bawaan tanpa izin tersimpan dianggap punya `<portal>.view/manage/approve`; akses portal → minimal `view` per modul.
+- Uji: iteration_240 + iteration_241 (backend 22/22, UI lulus). Sisa minor: hash modul milik portal lain yang tak bisa diakses (mis. #proc-3way-match dari Keuangan) tidak memunculkan toast (konten tidak terbuka).
+- Backlog: P2 sembunyikan teks/kolom yatim mode lihat saja; impor balik hasil opname.
+
 ## SESI 2026-10-16 #25 — Clone ulang + lanjutan backlog hak akses granular
 - Repo `pandeyoga/DAHOST` di-clone ke /app, bootstrap (`scripts/bootstrap.sh` + `_setup_deps.sh`), seed go-live, akun uji, frontend rebuild — app jalan.
 - P1 SELESAI: tombol **"Konversi izin lama → per modul"** (semua portal: `convert-legacy-all-btn`; per portal: `group-<portal>-convert-legacy`) di Peran & Hak Akses. Backend `POST /api/roles/granular-suggestion` (superadmin, tidak menyimpan) memakai `module_catalog.suggest_from_legacy`: aksi ber-`implies` diberikan bila semua izin lama dimiliki; aksi tanpa pemetaan diberikan bila peran sudah bisa membuka portalnya; aksi apa pun → `view`. Hasil masuk draf, owner tinggal Simpan.

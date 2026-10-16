@@ -35,7 +35,7 @@
   "should_main_agent_test_itself": true,
   
   "notes": {
-    "test_environment": "Preview URL: https://backend-test-suite-6.preview.emergentagent.com",
+    "test_environment": "Preview URL: https://fresh-context-1.preview.emergentagent.com",
     "test_accounts_used": [
       "finance@dewiaditya.id / Dewi@123 (role: accounting)",
       "direktur@dewiaditya.id / Dewi@123 (role: director, NEW account)",

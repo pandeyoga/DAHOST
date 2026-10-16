@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timezone
 
 # Configuration - MUST use public endpoint
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 CREDENTIALS = {

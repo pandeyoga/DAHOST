@@ -8,7 +8,7 @@ import sys
 from datetime import datetime
 
 # Use public endpoint from frontend/.env
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 
 class P1HousekeepingTest:
     def __init__(self):

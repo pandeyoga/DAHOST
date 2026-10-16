@@ -8,7 +8,7 @@ import sys
 import uuid
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 
 class W4ReturnsTester:
     def __init__(self):

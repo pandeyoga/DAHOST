@@ -1,0 +1,25 @@
+{
+  "summary": "Retested the 4 fixes from iteration_240. All passed, and so did the regressions. Backend: 22/22 pytest pass (iter240 12 + new iter241 10). For uji.custom_menu, hidden_modules now contains 14 'maklon::' entries (vendor-admin, cmt-override-portal, prod-pos-internal, po-closure, prod-shipments-vendor, da-cmt-receive, cmt-permak, cmt-monitor, cmt-component-requests, prod-shipments-buyer, prod-work-orders, prod-monitoring, prod-variance, prod-variance-report) and 3 'finance::' entries (prod-cmt-billing, proc-3way-match, proc-ap-invoices). Superadmin and accounting have no '::' entries. The granular suggestion for admin_maklon/maklon returns exactly 39 keys, including mod.mak_dashboard.view and view/create/edit/delete/approve for mak_po. A role with maklon portal access but no keys gets view for all 8 modules. A role without access gets [], a non-superadmin gets 403, and a bad portal gets 400. Frontend, custom role in Maklon: one pill (Produksi Maklon) with PO Maklon + Detail PO. The landing redirects to #maklon-pos-engine with the toast 'Menu ini tidak tersedia untuk peran Anda.'. Hash #cmt-monitor and #vendor-admin redirect with the toast, and #maklon-po-360 opens. Ctrl+K 'Pindah Portal' lists only cmdk-portal-finance, and searching 'CMT' gives no results. Custom role in Keuangan: only the 'Anggaran, Biaya & Aset' pill (HPP, HPP per Potong); Hutang AP is gone. Hash #proc-ap-invoices and #prod-cmt-billing redirect to fin-hpp with the toast, and searching Ctrl+K for 'Faktur' gives no results. The footer caption shows labels (PO Maklon, Detail PO, HPP); for ids not in any nav (mgmt-roles) it is empty, with no raw id. Regression: superadmin sees Maklon with 4 pills / 23 menus (Vendor CMT, Monitoring CMT etc. present), Keuangan with 7 pills including Hutang (AP) with Faktur Supplier/Invoice Vendor CMT, Produksi with 4 pills, and all 5 cmdk portals. uji.accounting is unchanged: portals finance/toko/collaboration/assets/self, all 7 finance pills including Hutang AP, and cmdk portals only finance.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Custom role > Keuangan > hash #proc-3way-match", "issue": "Low priority and not a regression. proc-3way-match is not in the finance PORTAL_NAV, only in procurement, so the 'finance::proc-3way-match' hidden entry has no effect. The hash maps to the procurement portal, which the user cannot access. The address stays #proc-3way-match while HPP stays rendered, and no redirect toast appears. Content is not exposed.", "affected_selectors": ["[data-testid='topbar-module-title']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_iter240_custom_role_menu_hide.py", "/app/backend/tests/test_iter241_shortcut_hide_suggestion.py", "/app/test_reports/pytest/iter241.xml"],
+  "action_items": [
+    "Optional: when a hash targets a module in a portal the user cannot access (e.g. #proc-3way-match for a custom role in Keuangan), reset the hash to the current module and show the same toast. Today the URL is left stale."
+  ],
+  "critical_code_review_comments": [
+    "module_catalog.menu_access emits '::' entries for every ALSO_PORTALS menu, even when that menu is not in the shortcut portal's nav (finance::proc-3way-match). This is harmless but adds noise; consider deriving the entries from the actual nav membership.",
+    "Sidebar footer caption looks the label up in [portal, ...all portals]. Sub-modules reached through hubs (mgmt-roles) now show an empty caption. If a caption is wanted for them, consider falling back to a MODULE_REGISTRY label map."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter241_shortcut_hide_suggestion.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "None. The uji_custom_menu role/user was left intact; no suggestions were saved.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Login on /login renders the portal selector in place (the URL stays /login). Portal cards: portal-selector-<id>-card. Section pills: section-pill-<n>; there is also a section-pill-nav wrapper, so filter on a numeric suffix. The custom role's portals are collaboration/finance/maklon/self. Maklon 'Pindah Portal' items are only management/production/warehouse/finance/hr (the PORTAL_ITEMS static list, now filtered)."
+}

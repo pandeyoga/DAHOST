@@ -141,7 +141,7 @@ Selisih 20 pcs = **4 run kebocoran × 5 pcs** (Temuan 1). `plan.md:115` sendiri 
 3. `tests/backend_test_fase12.py` hard-assert `9667750 (±100)` & `32220 (±10)` ⇒ **FAIL PASTI**
    (nyata −4.000 & −20).
 4. Berkas uji yang sama juga mematok `BASE_URL` ke preview container lama
-   (`https://backend-test-suite-6.preview.emergentagent.com`) yang **sudah mati** ⇒ menguji host salah.
+   (`https://fresh-context-1.preview.emergentagent.com`) yang **sudah mati** ⇒ menguji host salah.
 
 ### Yang dikerjakan
 * `scripts/lib/acc_baseline.py` — **SSOT tunggal**. Semua total **DITURUNKAN** dari tabel

@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Tuple
 
 # Public endpoint from frontend/.env
-API = "https://backend-test-suite-6.preview.emergentagent.com"
+API = "https://fresh-context-1.preview.emergentagent.com"
 
 class ComprehensiveERPTester:
     def __init__(self):

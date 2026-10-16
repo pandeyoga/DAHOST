@@ -9,7 +9,7 @@ import os
 import time
 
 # Public URL for testing
-BASE_URL = os.environ.get("API_URL", "https://backend-test-suite-6.preview.emergentagent.com")
+BASE_URL = os.environ.get("API_URL", "https://fresh-context-1.preview.emergentagent.com")
 
 # Test credentials
 ADMIN_CRED = {"email": "admin@garment.com", "password": "Admin@123"}

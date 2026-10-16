@@ -7,7 +7,7 @@ import requests
 import sys
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 
 # Test credentials
 ADMIN_EMAIL = "admin@garment.com"

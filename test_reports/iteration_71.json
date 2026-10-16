@@ -117,8 +117,8 @@
   },
   
   "testing_environment": {
-    "backend_url": "https://backend-test-suite-6.preview.emergentagent.com/api",
-    "frontend_url": "https://backend-test-suite-6.preview.emergentagent.com",
+    "backend_url": "https://fresh-context-1.preview.emergentagent.com/api",
+    "frontend_url": "https://fresh-context-1.preview.emergentagent.com",
     "test_user": "admin@garment.com",
     "modules_tested": [
       "sys-doc-numbering",

@@ -62,6 +62,6 @@
     
     "code_quality": "All data-testids properly implemented. Component follows Indonesian language requirements. No console errors. Clean implementation matching backend test expectations.",
     
-    "test_environment": "Frontend served as PREBUILT STATIC BUNDLE via node static_server.js on port 3000. Backend URL: https://backend-test-suite-6.preview.emergentagent.com. Login rate-limited to 10/60 seconds."
+    "test_environment": "Frontend served as PREBUILT STATIC BUNDLE via node static_server.js on port 3000. Backend URL: https://fresh-context-1.preview.emergentagent.com. Login rate-limited to 10/60 seconds."
   }
 }

@@ -12,7 +12,7 @@ import io
 import json
 from pathlib import Path
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 BACKUP_FILE = "/tmp/bk/backup.zip"
 
 # Test artifacts tracking
@@ -77,7 +77,7 @@ def test_a_download_via_ticket(token):
     # A3: GET {url} TANPA Authorization → 200, ZIP valid
     # URL is relative, need to prepend base URL
     if download_url.startswith("/api"):
-        full_download_url = f"https://backend-test-suite-6.preview.emergentagent.com{download_url}"
+        full_download_url = f"https://fresh-context-1.preview.emergentagent.com{download_url}"
     else:
         full_download_url = download_url
     

@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useTheme } from '@/components/theme/ThemeProvider';
 import { Badge } from '@/components/ui/badge';
+import { canAccessPortal, currentRole } from './portalAccess';
 
 const PORTAL_ITEMS = [
   { id: 'management', label: 'Portal Management', icon: BarChart3 },
@@ -228,7 +229,7 @@ export function CommandPalette({
         {searchQuery.length < 2 && (
           <>
             <CommandGroup heading="Pindah Portal">
-              {PORTAL_ITEMS.map(p => {
+              {PORTAL_ITEMS.filter((p) => canAccessPortal(currentRole(), p.id)).map(p => {
                 const Icon = p.icon;
                 return (
                   <CommandItem

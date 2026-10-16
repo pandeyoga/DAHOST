@@ -9,7 +9,7 @@ import sys
 import json
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 ADMIN_CREDS = {"email": "admin@garment.com", "password": "Admin@123"}
 
 class Colors:

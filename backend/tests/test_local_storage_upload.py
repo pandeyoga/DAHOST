@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://dahost-staging.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://fresh-context-1.preview.emergentagent.com").rstrip("/")
 UPLOAD_ROOT = Path(os.environ.get("UPLOAD_ROOT", "/app/uploads"))
 
 

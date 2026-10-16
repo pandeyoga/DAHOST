@@ -28,7 +28,7 @@ import io
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 LOGIN_EMAIL = "admin@garment.com"
 LOGIN_PASSWORD = "Admin@123"
 

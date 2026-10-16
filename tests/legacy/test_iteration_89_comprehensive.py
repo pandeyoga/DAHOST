@@ -10,7 +10,7 @@ from playwright.async_api import async_playwright
 import json
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 CREDENTIALS = {
     "email": "admin@garment.com",
     "password": "Admin@123"

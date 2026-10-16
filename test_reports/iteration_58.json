@@ -77,7 +77,7 @@
       "Backend API spot checks (already GREEN per review request)"
     ],
     "testing_environment": {
-      "frontend_url": "https://backend-test-suite-6.preview.emergentagent.com",
+      "frontend_url": "https://fresh-context-1.preview.emergentagent.com",
       "login_credentials": "admin@garment.com / Admin@123",
       "rate_limit": "10 logins per 60 seconds",
       "navigation_method": "window.location.hash + reload",

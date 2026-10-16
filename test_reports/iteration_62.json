@@ -130,7 +130,7 @@
     "approach": "Frontend-only testing as requested. Backend already proven working (47/47 + 28/28 + gate 30/30). Used API testing via curl/requests after Playwright navigation issues.",
     "preparation": "Successfully logged in, identified stores (Shopee Daluna, Shopee Moen), uploaded sample file to STORE A, committed 4 orders",
     "cleanup": "All test data removed: 3 sessions rolled back and deleted, 0 test orders remaining, 0 test sessions in history",
-    "test_environment": "Public URL: https://backend-test-suite-6.preview.emergentagent.com, Admin credentials used, Rate limit respected (10/60s)",
+    "test_environment": "Public URL: https://fresh-context-1.preview.emergentagent.com, Admin credentials used, Rate limit respected (10/60s)",
     "language": "Application in Indonesian as specified"
   }
 }

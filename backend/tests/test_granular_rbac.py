@@ -6,7 +6,7 @@ import pytest
 import requests
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL")
-            or "https://role-permissions-22.preview.emergentagent.com").rstrip("/")
+            or "https://fresh-context-1.preview.emergentagent.com").rstrip("/")
 
 ADMIN_EMAIL = "admin@garment.com"
 ADMIN_PASS = "Admin@123"

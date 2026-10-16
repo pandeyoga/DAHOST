@@ -142,8 +142,8 @@
   },
   
   "testing_environment": {
-    "frontend_url": "https://backend-test-suite-6.preview.emergentagent.com",
-    "backend_url": "https://backend-test-suite-6.preview.emergentagent.com/api",
+    "frontend_url": "https://fresh-context-1.preview.emergentagent.com",
+    "backend_url": "https://fresh-context-1.preview.emergentagent.com/api",
     "test_user": "admin@garment.com",
     "browser": "Chromium (Playwright)",
     "viewport": "1920x1080 (desktop)",

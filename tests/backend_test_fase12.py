@@ -19,7 +19,7 @@ CRITICAL CONSTRAINTS:
 
 CATATAN FASE 13 (dua bug tooling di berkas ini yang diperbaiki 2026-07-26):
 1. `BASE_URL` dulu DIPATOK ke preview URL container lama
-   (`https://backend-test-suite-6.preview.emergentagent.com`) yang sudah MATI, jadi
+   (`https://fresh-context-1.preview.emergentagent.com`) yang sudah MATI, jadi
    seluruh berkas ini menguji host yang salah. Sekarang dibaca dari
    `frontend/.env` (`REACT_APP_BACKEND_URL`) dengan fallback localhost.
 2. Angka baseline dulu DIPATOK `9667750 / 32220`. Angka itu RESIDU QA: seeder

@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 
 # Public endpoint from frontend/.env
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com"
 API_URL = f"{BASE_URL}/api"
 
 class TestRunner:

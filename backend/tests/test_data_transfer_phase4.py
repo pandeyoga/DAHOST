@@ -6,7 +6,7 @@ import requests
 import sys
 from datetime import datetime
 
-BASE_URL = "https://backend-test-suite-6.preview.emergentagent.com/api"
+BASE_URL = "https://fresh-context-1.preview.emergentagent.com/api"
 ADMIN_CREDS = {"email": "admin@garment.com", "password": "Admin@123"}
 
 # 8 registry keys to test

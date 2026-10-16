@@ -2,7 +2,7 @@
 
 Snapshot DB preview (master klien + COA 4-digit + semua sinkronisasi hijau, TANPA data uji):
 `dahost_snapshot_2026-09-13.archive.gz` (≈550 KB). Unduh dari preview:
-`https://dahost-staging.preview.emergentagent.com/api/uploads/dahost_snapshot_2026-09-13.archive.gz`
+`https://fresh-context-1.preview.emergentagent.com/api/uploads/dahost_snapshot_2026-09-13.archive.gz`
 
 Gate yang hijau saat snapshot dibuat: `verify_finance_sync.py` 9/9 · `verify_master_sync.py` 10/10 ·
 `verify_data_integrity.py` 24/24 · `verify_pencairan_finance.py` 27/27.
