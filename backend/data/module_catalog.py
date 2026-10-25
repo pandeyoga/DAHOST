@@ -441,14 +441,21 @@ MODULE_BY_ID = {m["id"]: m for m in MODULES}
 
 # Portal lain yang menampilkan menu modul ini (pintasan lintas-portal di portalNav.js).
 # Dipakai gerbang akses-portal agar layar pintasan tetap jalan. Perbarui bila menu dipindah.
+# 2026-10-26: + layar di portal lain yang MENULIS ke API modul ini (dulu 403 untuk peran ber-portal terbatas):
+#   Keuangan → klaim/penyelesaian dinas, master kategori & GL klaim (hr_expense), HPP job (prod_jobs),
+#   ekspor laporan klien maklon dari HPP (mgmt_reports), backfill valuasi FG (prod_cmt_receive),
+#   lengkapi master (rnd_master_product); SDM → review kasbon (fin_kasbon), HR AI Insights (prod_analytics);
+#   Produksi/RnD → Master Produk, BOM & material baru (prod_master_product, rnd_master_product, wh_master).
 ALSO_PORTALS = {
-    "mgmt_reports": ["rnd"], "mgmt_approval": ["hr"], "prod_vendor_cmt": ["maklon"], "prod_po": ["maklon"],
-    "prod_vendor_shipment": ["maklon"], "prod_cmt_receive": ["maklon"], "prod_cmt_permak": ["maklon"],
-    "prod_cmt_monitor": ["maklon"], "prod_buyer_shipment": ["maklon"], "prod_jobs": ["maklon"],
-    "prod_variance": ["maklon"], "prod_cmt_billing": ["finance"], "proc_match": ["finance"],
-    "proc_shopping_list": ["warehouse"], "wh_material_issue": ["production"], "wh_sku_bridge": ["toko"],
-    "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
-    "rnd_dashboard": ["management"],
+    "mgmt_reports": ["rnd", "finance", "production"], "mgmt_approval": ["hr"], "prod_vendor_cmt": ["maklon"],
+    "prod_po": ["maklon"], "prod_vendor_shipment": ["maklon"], "prod_cmt_receive": ["maklon", "finance"],
+    "prod_cmt_permak": ["maklon"], "prod_cmt_monitor": ["maklon"], "prod_buyer_shipment": ["maklon"],
+    "prod_jobs": ["maklon", "finance"], "prod_variance": ["maklon"], "prod_cmt_billing": ["finance"],
+    "proc_match": ["finance"], "proc_shopping_list": ["warehouse"], "wh_material_issue": ["production"],
+    "wh_sku_bridge": ["toko"], "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
+    "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
+    "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
+    "wh_master": ["production", "rnd"],
 }
 for _mod in MODULES:
     _mod["also_portals"] = ALSO_PORTALS.get(_mod["id"], [])
@@ -462,6 +469,21 @@ _EXPORT_TOKENS = {"export", "pdf", "excel", "xlsx", "csv", "download", "print", 
 _READ_TOKENS = {"preview", "simulate", "search", "calculate", "lookup", "suggest", "estimate", "check",
                 "compute", "query", "filter", "resolve"}
 
+# Endpoint swalayan Portal Saya (karyawan bertindak untuk DIRINYA SENDIRI) — dilewati gerbang modul karena
+# Portal Saya terbuka untuk semua karyawan, sedangkan path-nya milik modul SDM/Keuangan. Kepemilikan dijaga
+# handler masing-masing (`resolve_employee_for` / cek pemilik; atas nama orang lain hanya HR).
+SELF_SERVICE = (
+    ("POST", r"/api/rahaza/attendance/selfie/clock-(in|out)"),
+    ("POST", r"/api/rahaza/attendance/sessions/(start|end)"),
+    ("POST", r"/api/rahaza/attendance/permits/[^/]+/cancel"),
+    ("POST", r"/api/rahaza/leaves/(request|upload-document)"),
+    ("POST", r"/api/rahaza/leaves/[^/]+/cancel"),
+    ("POST", r"/api/rahaza/overtime"),
+    ("GET", r"/api/rahaza/payslips/[^/]+/pdf"),
+    ("POST", r"/api/dewi/kasbon/requests"),
+)
+_SELF_SERVICE_RX = [(m, re.compile(p + r"/?")) for m, p in SELF_SERVICE]
+
 
 def perm_key(module_id: str, action: str) -> str:
     return f"mod.{module_id}.{action}"
@@ -473,6 +495,12 @@ def match_module(path: str):
         if p == prefix or p.startswith(prefix + "/"):
             return mod
     return None
+
+
+def is_self_service(method: str, path: str) -> bool:
+    """True bila request = aksi swalayan Portal Saya (lihat SELF_SERVICE)."""
+    method = (method or "GET").upper()
+    return any(m == method and rx.fullmatch(path or "") for m, rx in _SELF_SERVICE_RX)
 
 
 def detect_action(method: str, path: str, module: dict) -> str:
