@@ -3,8 +3,6 @@ Iteration 229 — CV. Dewi Aditya audit fase 1 & 2 (FIN-01/02/04/05/06/07/08/09/
 Testing agent notes: real client data. All inserted TEST/T1/T5/T7/T16 fixtures MUST be cleaned in teardown.
 """
 import os
-import time
-import uuid
 import pytest
 import requests
 from pymongo import MongoClient

@@ -4,13 +4,11 @@ Iterasi 230 — sisa temuan audit 2026-09-23:
 Semua data uji WAJIB dihapus setelah uji.
 """
 import os
-import asyncio
 import time
 import pytest
 import requests
 import bcrypt
 from datetime import date
-from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import MongoClient
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/") or \

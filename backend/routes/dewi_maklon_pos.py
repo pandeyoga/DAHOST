@@ -1189,7 +1189,7 @@ async def maklon_pos_summary(user: dict = Depends(require_auth)):
             'total_value': {'$sum': '$total_value'},
         }}
     ]
-    result = await db.dewi_maklon_pos.aggregate(pipeline).to_list(length=None)
+    result = await db.dewi_maklon_pos.aggregate(pipeline).to_list(100)  # satu baris per status PO
     summary = {
         'by_status': {r['_id']: {'count': r['count'], 'total_qty': r['total_qty'], 'total_value': r['total_value']} for r in result},
         'total_pos': await db.dewi_maklon_pos.count_documents({}),

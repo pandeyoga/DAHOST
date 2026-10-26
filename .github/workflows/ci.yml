@@ -19,7 +19,8 @@ jobs:
           ruff check backend --select F821,F811,F401,E9 --exclude backend/routes/_archive
       - name: Uji unit hermetik (tanpa Mongo)
         run: |
-          pip install pytest pytest-xdist pydantic fastapi
+          # versi diambil dari requirements.txt; uji unit mengimpor auth (PyJWT, bcrypt, motor, dotenv)
+          pip install pytest pytest-xdist $(grep -iE '^(fastapi|pydantic|starlette|PyJWT|bcrypt|motor|pymongo|python-dotenv)==' backend/requirements.txt)
           cd backend && python -m pytest tests/unit -n 0 -q
       - name: Gate statis (T-01 authz · T-03/T-17 koleksi hantu · T-21 to_list(None))
         run: |
@@ -35,7 +36,8 @@ jobs:
         with:
           node-version: "20"
           cache: yarn
-          cache-dependency-path: frontend/yarn.lock
+          # yarn.lock sengaja tidak di-commit (scripts/push_github.sh) → kunci cache dari package.json
+          cache-dependency-path: frontend/package.json
       - name: Install (lockfile beku)
         working-directory: frontend
         run: yarn install --frozen-lockfile --network-timeout 600000
