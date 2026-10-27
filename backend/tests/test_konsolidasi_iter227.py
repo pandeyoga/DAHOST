@@ -374,7 +374,7 @@ class TestKonsolidasiDryRun:
         out = (r.stdout or "") + (r.stderr or "")
         assert r.returncode == 0, f"dry-run failed rc={r.returncode}\n{out[-3000:]}"
         # Must not include bom_update or bom_baru with non-zero counts, or varian.baru>0
-        import re, json as _json
+        import re
         # try parse json output
         # simple textual checks
         low = out.lower()

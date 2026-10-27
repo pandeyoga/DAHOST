@@ -145,6 +145,19 @@ async def _require_leave_approver(request: Request):
     raise HTTPException(403, "Forbidden: hanya Manager/HR yang boleh approve cuti.")
 
 
+async def _ensure_own_or_hr(db, user: dict, employee_id: str, message: str):
+    """Pemohon sendiri atau HR/admin (T-01 2.3) — endpoint swalayan Portal Saya dilewati gerbang modul,
+    jadi kepemilikan WAJIB dijaga di sini."""
+    role = (user.get("role") or "").lower()
+    perms = user.get("_permissions") or []
+    if role in HR_ROLES + ("admin", "superadmin") or "*" in perms or "hr.manage" in perms:
+        return
+    from utils.employee_identity import resolve_my_employee
+    my_emp = await resolve_my_employee(db, user)
+    if not my_emp or my_emp.get("id") != employee_id:
+        raise HTTPException(403, message)
+
+
 # ── LEAVE TYPES (Master) ───────────────────────────────────────────────────────
 
 @router.get("/leave-types")
@@ -465,6 +478,8 @@ async def request_leave(request: Request):
 
     if not (employee_id and leave_type_id and from_date and to_date):
         raise HTTPException(400, "employee_id, leave_type_id, from_date, to_date wajib diisi.")
+    await _ensure_own_or_hr(db, user, employee_id,
+                            "Cuti/izin hanya bisa diajukan untuk diri sendiri; atas nama karyawan lain hanya oleh HR.")
 
     # Validate employee & leave type
     emp = await db.rahaza_employees.find_one({"id": employee_id})
@@ -929,12 +944,8 @@ async def delete_leave(leave_id: str, request: Request):
     leave = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     if not leave:
         raise HTTPException(404, "Leave request tidak ditemukan.")
-    role = (user.get("role") or "").lower()
-    if role not in HR_ROLES + ("admin", "superadmin"):
-        from utils.employee_identity import resolve_my_employee
-        my_emp = await resolve_my_employee(db, user)
-        if not my_emp or my_emp.get("id") != leave.get("employee_id"):
-            raise HTTPException(403, "Hanya pemohon cuti sendiri atau HR yang boleh menghapus pengajuan ini.")
+    await _ensure_own_or_hr(db, user, leave.get("employee_id"),
+                            "Hanya pemohon cuti sendiri atau HR yang boleh menghapus pengajuan ini.")
     if leave.get("status") not in ("draft", "rejected"):
         raise HTTPException(400, "Hanya leave Draft/Rejected yang bisa dihapus.")
 
@@ -956,6 +967,8 @@ async def cancel_leave(leave_id: str, request: Request):
     leave = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     if not leave:
         raise HTTPException(404, "Leave request tidak ditemukan.")
+    await _ensure_own_or_hr(db, user, leave.get("employee_id"),
+                            "Hanya pemohon cuti sendiri atau HR yang boleh membatalkan cuti ini.")
     if leave.get("status") != "approved":
         raise HTTPException(400, "Hanya leave Approved yang bisa dibatalkan.")
 

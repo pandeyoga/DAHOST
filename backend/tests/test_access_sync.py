@@ -7,7 +7,6 @@ Covers:
 """
 import os
 import time
-import uuid
 
 import pytest
 import requests

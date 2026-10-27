@@ -5,7 +5,8 @@ Satu gerbang untuk semua endpoint yang prefix-nya terdaftar di `data/module_cata
 
 Model "fallback aman" (per portal): gerbang hanya aktif bila peran/pengguna sudah diberi
 minimal satu izin `mod.*` pada portal modul tersebut. Super role (superadmin/admin/owner),
-izin "*", dan peran eksternal (punya penjaga portal sendiri) selalu dilewati.
+izin "*", peran eksternal (punya penjaga portal sendiri), dan endpoint swalayan Portal Saya
+(`module_catalog.SELF_SERVICE`) selalu dilewati.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import logging
 from auth import _load_live_user, _load_portals, _load_rbac, verify_download_token, verify_token_str
 from core.authz import EXTERNAL_ROLES
 from data.module_catalog import (
-    ACTION_LABELS, PORTAL_LABELS, detect_action, granular_portals, match_module, perm_key,
+    ACTION_LABELS, PORTAL_LABELS, detect_action, granular_portals, is_self_service, match_module, perm_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,9 @@ async def evaluate(method: str, path: str, payload: dict | None):
     """Return (module, action, reason) bila DITOLAK, else None."""
     mod = match_module(path)
     if not mod or not payload:
+        return None
+    # Swalayan Portal Saya (absen, cuti, lembur, kasbon, slip sendiri): kepemilikan dijaga handler.
+    if is_self_service(method, path):
         return None
     live = await _load_live_user(payload.get("id"))
     role = ((live or {}).get("role") or payload.get("role") or "").lower()
