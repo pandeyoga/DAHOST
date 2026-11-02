@@ -4,6 +4,9 @@ Menampilkan history semua adjustment stok (saat ini: opname_adjustment)
 dengan filter by operator, posisi, rak, gedung, dan tanggal.
 
 Sumber data: rahaza_fg_movements where source in (opname_adjustment, ...)
+            + (2026-11-02) sesi opname mesin baru K9 (`wh_opname3_sessions`, engine='k9', status
+              'approved'): satu baris per material yang selisih (`result.lines`). Selisih K9 dihitung per
+              LOKASI (bukan per bin), jadi baris ini tidak ikut saringan posisi/rak/gedung.
 
 Routes:
   GET  /api/wms/audit/adjustments       — list + pagination + filters
@@ -25,6 +28,64 @@ router = APIRouter(prefix="/api/wms/audit", tags=["wms-audit"])
 
 # Sources that count as "stock adjustments" for the audit trail
 ADJUSTMENT_SOURCES = ["opname_adjustment"]
+K9_SOURCE = "opname_k9"
+_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def _aware(dt):
+    if isinstance(dt, str):
+        dt = _parse_iso(dt)
+    if not isinstance(dt, datetime):
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def k9_adjustment_rows(sess: dict) -> list:
+    """Baris audit dari satu sesi opname K9 yang sudah disetujui (fungsi murni, 2026-11-02)."""
+    out = []
+    lines = ((sess.get("result") or {}).get("lines")) or []
+    for ln in lines:
+        var = float(ln.get("variance_qty") or 0)
+        if not var:
+            continue
+        out.append({
+            "source": K9_SOURCE, "engine": "k9", "session_id": sess.get("id"),
+            "session_ref": sess.get("session_no"), "timestamp": sess.get("approved_at"),
+            "created_by": sess.get("approved_by_name") or sess.get("approved_by") or "",
+            "position_id": None, "position_barcode": None,
+            "location_code": sess.get("location_code"), "fg_code": ln.get("material_code"),
+            "material_code": ln.get("material_code"), "material_name": ln.get("material_name"),
+            "direction": "adjust_in" if var > 0 else "adjust_out", "qty": round(abs(var), 4),
+            "value": ln.get("variance_value"), "reason": ln.get("reason") or "",
+            "notes": (f"Opname {sess.get('session_no')} · {sess.get('location_code') or ''}: sistem "
+                      f"{ln.get('system_qty')} → hitung {ln.get('counted_qty')}"),
+        })
+    return out
+
+
+async def _k9_rows(db, *, operator=None, position_barcode=None, rack_id=None, building_id=None,
+                   date_from=None, date_to=None, direction=None) -> list:
+    """Baris audit sesi opname K9 dengan saringan yang sama dengan sumber lama."""
+    if position_barcode or rack_id or building_id:
+        return []                                  # selisih K9 per lokasi — tidak punya posisi bin
+    q: dict = {"engine": "k9", "status": "approved"}
+    df, dt = _parse_iso(date_from), _parse_iso(date_to)
+    if df or dt:
+        q["approved_at"] = {**({"$gte": df} if df else {}), **({"$lte": dt} if dt else {})}
+    sessions = await db.wh_opname3_sessions.find(q, {"_id": 0, "snapshot": 0, "lines": 0}) \
+        .sort("approved_at", -1).to_list(500)
+    rows = [r for s in sessions for r in k9_adjustment_rows(s)]
+    if operator:
+        import re as _re
+        rx = _re.compile(_re.escape(operator), _re.I)
+        rows = [r for r in rows if rx.search(r.get("created_by") or "")]
+    if direction in ("adjust_in", "adjust_out"):
+        rows = [r for r in rows if r["direction"] == direction]
+    return rows
+
+
+def _sort_desc(rows: list) -> list:
+    return sorted(rows, key=lambda r: _aware(r.get("timestamp")) or _EPOCH, reverse=True)
 
 
 async def _auth_or_token(request: Request, token: Optional[str] = None):
@@ -111,9 +172,12 @@ async def list_adjustments(
         rack_id=rack_id, building_id=building_id,
         date_from=date_from, date_to=date_to, direction=direction,
     )
-    total = await db.rahaza_fg_movements.count_documents(q)
-    rows = await db.rahaza_fg_movements.find(q, {"_id": 0})\
-        .sort("timestamp", -1).skip(skip).limit(limit).to_list(500)
+    k9 = await _k9_rows(db, operator=operator, position_barcode=position_barcode, rack_id=rack_id,
+                        building_id=building_id, date_from=date_from, date_to=date_to, direction=direction)
+    total = await db.rahaza_fg_movements.count_documents(q) + len(k9)
+    legacy = await db.rahaza_fg_movements.find(q, {"_id": 0})\
+        .sort("timestamp", -1).limit(skip + limit).to_list(skip + limit)
+    rows = _sort_desc(legacy + k9)[skip:skip + limit]
 
     # Enrich position path (building/zone/rack)
     pos_ids = [r.get("position_id") for r in rows if r.get("position_id")]
@@ -222,6 +286,30 @@ async def adjustment_stats(
         for r in by_position
     ]
 
+    # 2026-11-02: + selisih sesi opname K9 (per lokasi)
+    k9 = await _k9_rows(db, operator=operator, position_barcode=position_barcode, rack_id=rack_id,
+                        building_id=building_id, date_from=date_from, date_to=date_to)
+    ops = {o["operator"]: o for o in by_operator}
+    for r in k9:
+        q_ = float(r["qty"] or 0)
+        if r["direction"] == "adjust_in":
+            surplus_count += 1
+            surplus_qty = round(surplus_qty + q_, 4)
+        else:
+            shortage_count += 1
+            shortage_qty = round(shortage_qty + q_, 4)
+        o = ops.setdefault(r["created_by"] or "unknown", {
+            "operator": r["created_by"] or "unknown", "count": 0, "surplus_qty": 0.0, "shortage_qty": 0.0,
+            "net_qty": 0.0, "last_activity": None})
+        o["count"] += 1
+        o["surplus_qty" if r["direction"] == "adjust_in" else "shortage_qty"] = round(
+            o["surplus_qty" if r["direction"] == "adjust_in" else "shortage_qty"] + q_, 4)
+        o["net_qty"] = round(o["surplus_qty"] - o["shortage_qty"], 4)
+        ts = _aware(r.get("timestamp"))
+        if ts and (not o["last_activity"] or ts.isoformat() > str(o["last_activity"])):
+            o["last_activity"] = ts.isoformat()
+    by_operator = sorted(ops.values(), key=lambda o: -o["count"])[:10]
+
     total = surplus_count + shortage_count
     return serialize_doc({
         "total_adjustments": total,
@@ -254,6 +342,9 @@ async def export_adjustments_csv(
         date_from=date_from, date_to=date_to, direction=direction,
     )
     rows = await db.rahaza_fg_movements.find(q, {"_id": 0}).sort("timestamp", -1).to_list(500)
+    rows = _sort_desc(rows + await _k9_rows(
+        db, operator=operator, position_barcode=position_barcode, rack_id=rack_id, building_id=building_id,
+        date_from=date_from, date_to=date_to, direction=direction))[:1000]
 
     # Enrich positions
     pos_ids = [r.get("position_id") for r in rows if r.get("position_id")]
@@ -272,10 +363,10 @@ async def export_adjustments_csv(
     for r in rows:
         p = pos_map.get(r.get("position_id"), {})
         writer.writerow([
-            r.get("timestamp").isoformat() if r.get("timestamp") else "",
+            _aware(r.get("timestamp")).isoformat() if _aware(r.get("timestamp")) else "",
             r.get("session_ref", ""),
             r.get("created_by", ""),
-            p.get("building_code", ""),
+            p.get("building_code", "") or r.get("location_code") or "",
             p.get("zone_code", ""),
             p.get("rack_code", ""),
             r.get("position_barcode", ""),
@@ -324,8 +415,9 @@ async def hotspot_rca(position_barcode: str, request: Request):
     if len(rows) < 3:
         raise HTTPException(400, f"Posisi {position_barcode} belum punya cukup data (minimal 3 adjustment, ada {len(rows)}).")
 
-    # Enrich position info
-    pos = await db.wh_positions.find_one({"barcode": position_barcode}, {"_id": 0})
+    # Enrich position info — 2026-11-02: lewat resolver SSOT (kode bin lama/alias tetap dikenali)
+    from core.scan_resolver import position_by_barcode
+    pos = await position_by_barcode(db, position_barcode)
     pos_info = {
         "barcode": position_barcode,
         "label": pos.get("label") if pos else "",

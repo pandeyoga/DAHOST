@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   Plus, Edit2, Trash2, Eye, RefreshCw, ChevronDown,
-  Package, Calendar, AlertTriangle, CheckCircle, Upload, TrendingDown
+  Package, Calendar, AlertTriangle, CheckCircle, Upload, TrendingDown, Printer
 } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -230,6 +230,18 @@ export default function FixedAssetsModule({ token }) {
           </div>
           {selected.status === 'active' && (
             <div className="flex gap-2">
+              {/* 2026-11-02 (registri aset tunggal): label aset dari registri induk — generator sama dgn Portal Aset */}
+              <Button size="sm" variant="outline" data-testid="fa-print-label" onClick={async () => {
+                try {
+                  const r = await fetch(`/api/rahaza/finance/fixed-assets/${selected.id}/label-pdf`, { headers: { Authorization: headers.Authorization } });
+                  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || `HTTP ${r.status}`); }
+                  const url = URL.createObjectURL(await r.blob());
+                  window.open(url, '_blank');
+                  setTimeout(() => URL.revokeObjectURL(url), 60000);
+                } catch (e) { toast.error(e.message); }
+              }}>
+                <Printer className="w-3.5 h-3.5 mr-1" /> Label
+              </Button>
               <Button size="sm" variant="outline" onClick={() => { setDisposeOpen(true); setDisposeForm({ disposal_date: new Date().toISOString().slice(0,10), disposal_value: '', notes: '' }); }}>
                 <Trash2 className="w-3.5 h-3.5 mr-1" /> Dispose
               </Button>

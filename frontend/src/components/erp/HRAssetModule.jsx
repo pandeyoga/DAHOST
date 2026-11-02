@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Package, Plus, Edit2, Trash2, RefreshCw, Search, Tag,
   UserCheck, ArrowLeftRight, Printer, CheckCircle2, Clock,
-  AlertCircle, X, Save, Loader2, QrCode, Filter, Download,
+  AlertCircle, X, Save, Loader2, Filter, Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -214,15 +214,7 @@ export default function HRAssetModule({ token }) {
     if (selectedEmp) loadEmpAssets(selectedEmp.id);
   };
 
-  const handlePrintLabel = (a) => {
-    const url = `${API}/api/dewi/assets/${a.asset_id}/label`;
-    window.open(`${url}?token=${token}`, '_blank');
-  };
-
-  const handlePrintBulk = () => {
-    const params = filterCat ? `?category=${encodeURIComponent(filterCat)}` : '';
-    window.open(`${API}/api/dewi/assets/labels/bulk${params}`, '_blank');
-  };
+  // 2026-11-02 (registri aset tunggal): cetak label dipindah ke Portal Aset / Keuangan › Aset Tetap.
 
   const filteredEmps = employees.filter(e =>
     empSearch ? (e.name.toLowerCase().includes(empSearch.toLowerCase()) ||
@@ -279,9 +271,9 @@ export default function HRAssetModule({ token }) {
                 {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_CFG[s]?.label || s}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" onClick={handlePrintBulk} title="Cetak semua label">
-              <Printer className="w-4 h-4 mr-1" /> Cetak Semua Label
-            </Button>
+            <span className="text-xs text-muted-foreground" data-testid="hr-asset-label-moved">
+              <Printer className="w-3.5 h-3.5 inline mr-1" />Label aset dicetak dari Portal Aset (kode registri Aset Tetap)
+            </span>
           </div>
 
           {/* Asset table */}
@@ -320,10 +312,6 @@ export default function HRAssetModule({ token }) {
                     <td className="px-4 py-3 text-sm">{fmtRp(a.purchase_price)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                        <Button size="icon" variant="ghost" className="h-7 w-7" title="Cetak Label"
-                          onClick={() => handlePrintLabel(a)} data-testid={`print-label-${a.asset_id}`}>
-                          <QrCode className="w-3.5 h-3.5" />
-                        </Button>
                         {a.status === 'Available' && (
                           <Button size="icon" variant="ghost" className="h-7 w-7 text-blue-600 dark:text-blue-400" title="Tugaskan"
                             onClick={() => setAssignDialog({ asset: a, mode: 'assign' })}

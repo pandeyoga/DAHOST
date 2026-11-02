@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import Modal from './Modal';
 // Sprint A.1: UniversalScanner SSOT replaces inline BarcodeScanner
 import UniversalScanner from './scanner/UniversalScanner';
+import { sameScanCode } from './scanner/scanCode';
 import useUomOptions from '@/hooks/useUomOptions';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { UomSelect, UomConversionHint, baseUnitOf } from './uom/UomPicker';
@@ -126,7 +127,8 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
   // U3 — Barcode scan handler: match scanned code to material
   const handleBarcodeScan = useCallback((code) => {
     setShowScanner(false);
-    const mat = materials.find(m => m.code === code || m.id === code);
+    // 2026-11-02 (Paket 3a): aturan kode scan bersama (tanpa beda huruf, prefix scanner dibuang)
+    const mat = materials.find(m => sameScanCode(m.code, code) || m.id === code);
     if (!mat) { alert(`Material dengan kode '${code}' tidak ditemukan.`); return; }
     // If scanTarget has miId+itemIdx, update that specific MI item
     if (scanTarget && detail) {

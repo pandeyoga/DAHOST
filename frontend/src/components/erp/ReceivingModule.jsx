@@ -42,7 +42,20 @@ const EMPTY_ITEM = () => ({
   expiry_date: '',  // U7: expiry date
   reject_reason: '', // FASE 6: alasan reject → dibawa ke Karantina QC
   rolls: [],        // FASE H-5: rincian gulungan (kain/benang) — nomor roll otomatis
+  unit_price: '',   // 2026-11-02 (K11): harga satuan WAJIB untuk penerimaan tanpa PO
 });
+
+// 2026-11-02 (K11): alasan reject FISIK → Karantina QC; alasan DOKUMEN/KUANTITAS → catatan saja
+// (tidak menambah stok; sisa PO tetap terbuka). Jenisnya dari backend (`kind` kategori reject).
+function rejectHint(cats, code, qty, unit) {
+  const kind = (cats.find((c) => c.code === code) || {}).kind;
+  if (kind === 'dokumen') {
+    return <>Alasan Reject — {qty} {unit} <strong>tidak masuk stok</strong> (catatan di GR saja; sisa PO tetap terbuka)</>;
+  }
+  return <>Alasan Reject — {qty} {unit} akan masuk <strong>Karantina QC</strong></>;
+}
+const rejectOptLabel = (rc) => `${rc.label}${rc.kind === 'dokumen' ? ' · catatan saja' : ' · karantina'}`;
+const priceOf = (it) => parseFloat(it?.unit_price) || parseFloat(it?.unit_cost) || 0;
 
 export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const [receipts, setReceipts]   = useState([]);
@@ -199,6 +212,9 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       received_qty:  item.qty_ordered || 0,
       rejected_qty:  0,
       unit:          item.unit || 'pcs',
+      // 2026-11-02 (K11): harga baris PO (satuan dasar) ikut — dulu GR dari pilih-PO tanpa harga
+      po_item_id:    item.id,
+      unit_price:    item.unit_cost || 0,
     }));
 
     setForm(f => ({
@@ -226,6 +242,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           + `${st.diff ? ` (selisih ${st.diff > 0 ? '+' : ''}${fmtQty(st.diff, 3)})` : ''}.\n\n`
           + 'Perbaiki angkanya — stok dan gulungan harus menjelaskan penerimaan yang sama.');
         return;
+      }
+      // 2026-11-02 (K11): penerimaan TANPA PO boleh, tetapi harga satuan WAJIB
+      if (!form.po_id) {
+        const noPrice = (form.items || []).find(it => it.material_id
+          && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
+        if (noPrice) {
+          alert(`Harga satuan wajib diisi untuk penerimaan tanpa PO (${noPrice.sku || noPrice.product_name || 'baris'}).\n\n`
+            + 'Harga ini menjadi nilai persediaan, HPP rata-rata, dan dasar tagihan pemasok.');
+          return;
+        }
       }
       // FASE 6: ubah `reject_reason` (UI) → `reject_reasons[]` (kontrak backend/karantina)
       const items = (form.items || []).map(it => {
@@ -298,6 +324,14 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             + 'rak mana pun, dan Put-Away tidak bisa menemukannya.');
           return;
         }
+        // 2026-11-02 (K11): GR tanpa PO wajib berharga (backend menolak bila kosong)
+        if (!receipt.po_id) {
+          const noPrice = items.find(it => it.material_id && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
+          if (noPrice) {
+            alert(`Harga satuan wajib diisi untuk penerimaan tanpa PO (${noPrice.sku || noPrice.product_name || 'baris'}).`);
+            return;
+          }
+        }
       }
       const locPick = locations.find(l => l.id === (detailLocationId || receipt.location_id));
       const badRoll = items.find(it => (it.rolls || []).length
@@ -323,9 +357,13 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         // FASE 6: beri tahu bila ada qty reject yang masuk Karantina QC
         const updated = await res.json().catch(() => ({}));
         const qs = updated?.quarantine_summary;
-        if (qs?.total_qty > 0) {
-          alert(`Barang diterima.\n\n${qs.total_qty} unit REJECT dipindahkan ke ${qs.location?.name || 'Karantina QC'} `
-            + `(stok diblokir).\nTindak lanjuti di menu Gudang → "Karantina QC": lepas ke stok, retur supplier, atau scrap.`);
+        const ds = updated?.reject_doc_summary;
+        if (qs?.total_qty > 0 || ds?.total_qty > 0) {
+          alert('Barang diterima.\n\n'
+            + (qs?.total_qty > 0 ? `${qs.total_qty} unit REJECT fisik dipindahkan ke ${qs.location?.name || 'Karantina QC'} `
+              + '(stok diblokir).\nTindak lanjuti di menu Gudang → "Karantina QC": lepas ke stok, Buat Retur Pembelian, atau scrap.\n\n' : '')
+            + (ds?.total_qty > 0 ? `${ds.total_qty} unit ditolak karena alasan dokumen/kuantitas — TIDAK masuk stok, `
+              + 'hanya dicatat di GR; sisa PO tetap terbuka.' : ''));
         }
         // FASE H-5: umpan balik gulungan — nomor yang terbit & baris kain yang
         // masih menunggu gulungan (supaya Cutting tidak mandek tanpa peringatan).
@@ -766,6 +804,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         <label className="text-[10px] text-muted-foreground">Received</label>
                         <GlassInput type="number" value={item.received_qty} onChange={e => updateItem(idx, 'received_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-received-${idx}`} />
                       </div>
+                      {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP) */}
+                      <div>
+                        <label className={`text-[10px] ${form.po_id ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400 font-semibold'}`}>
+                          Harga/sat (Rp){form.po_id ? '' : ' *'}
+                        </label>
+                        <GlassInput type="number" min="0" step="any" value={item.unit_price ?? ''}
+                          onChange={e => updateItem(idx, 'unit_price', e.target.value)}
+                          placeholder={form.po_id ? 'dari PO' : 'wajib'} className="h-8 text-xs"
+                          data-testid={`item-price-${idx}`} />
+                      </div>
                       <div className="flex gap-1">
                         <div className="flex-1">
                           <label className="text-[10px] text-muted-foreground">Rejected</label>
@@ -781,7 +829,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       {(parseFloat(item.rejected_qty) || 0) > 0 && (
                         <div className="col-span-2">
                           <label className="text-[10px] text-amber-700 dark:text-amber-400">
-                            Alasan Reject — {item.rejected_qty} {item.unit} akan masuk <strong>Karantina QC</strong>
+                            {rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}
                           </label>
                           <SmartNativeSelect
                             value={item.reject_reason || ''}
@@ -790,7 +838,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                             data-testid={`item-reject-reason-${idx}`}
                           >
                             <option value="">— pilih alasan —</option>
-                            {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rc.label}</option>)}
+                            {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rejectOptLabel(rc)}</option>)}
                           </SmartNativeSelect>
                         </div>
                       )}
@@ -975,7 +1023,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         {(parseFloat(item.rejected_qty) || 0) > 0 && (
                           <div className="mt-1.5">
                             <label className="text-[10px] text-amber-700 dark:text-amber-400">
-                              Alasan Reject — {item.rejected_qty} {item.unit} akan masuk <strong>Karantina QC</strong>
+                              {rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}
                             </label>
                             <SmartNativeSelect
                               value={item.reject_reason || ''}
@@ -984,8 +1032,23 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                               data-testid={`gr-detail-reject-reason-${idx}`}
                             >
                               <option value="">— pilih alasan —</option>
-                              {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rc.label}</option>)}
+                              {rejectCats.map(rc => <option key={rc.code} value={rc.code}>{rejectOptLabel(rc)}</option>)}
                             </SmartNativeSelect>
+                          </div>
+                        )}
+                        {/* 2026-11-02 (K11): GR tanpa PO — harga satuan wajib sebelum dikonfirmasi */}
+                        {!showDetail.po_id && item.material_id && (
+                          <div className="mt-1.5">
+                            <label className="text-[10px] text-amber-700 dark:text-amber-400 font-semibold">
+                              Harga satuan (Rp) * — tanpa PO
+                            </label>
+                            <GlassInput
+                              type="number" min="0" step="any"
+                              value={item.unit_price ?? item.unit_cost ?? ''}
+                              onChange={e => updateDetailItem(idx, { unit_price: e.target.value })}
+                              className="h-8 text-xs"
+                              data-testid={`gr-detail-price-${idx}`}
+                            />
                           </div>
                         )}
                       </div>

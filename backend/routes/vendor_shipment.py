@@ -587,6 +587,18 @@ async def update_vendor_shipment(sid: str, request: Request):
     await log_activity(user['id'], user['name'], 'Update', 'Vendor Shipment', f"Updated shipment: {sid}")
     return serialize_doc(await db.vendor_shipments.find_one({'id': sid}, {'_id': 0}))
 
+async def shipment_issued_mis(db, sid: str) -> list:
+    """MI (surat jalan ini + SJ anaknya) yang bahannya SUDAH keluar gudang dan belum diretur penuh.
+    2026-11-02 (K10). Status MI tetap 'issued' setelah retur (dibaca HPP & gerbang produksi);
+    retur dicatat di `return_status` ('partial' | 'full') oleh Retur Material."""
+    child_ids = [c['id'] for c in await db.vendor_shipments.find(
+        {'parent_shipment_id': sid}, {'_id': 0, 'id': 1}).to_list(None)]
+    rows = await db.rahaza_material_issues.find(
+        {'vendor_shipment_id': {'$in': [sid] + child_ids}, 'status': 'issued'},
+        {'_id': 0, 'id': 1, 'mi_number': 1, 'return_status': 1}).to_list(None)
+    return [m for m in rows if m.get('return_status') != 'full']
+
+
 @router.delete("/vendor-shipments/{sid}")
 async def delete_vendor_shipment(sid: str, request: Request):
     user = await require_auth(request)
@@ -595,6 +607,25 @@ async def delete_vendor_shipment(sid: str, request: Request):
     db = get_db()
     doc = await db.vendor_shipments.find_one({'id': sid})
     if not doc: raise HTTPException(404, 'Not found')
+    # ── 2026-11-02 (K10, audit g.md No.28): hapus DIKUNCI setelah bahan dikeluarkan ──────────
+    # Dulu hapus SJ hanya menghapus dokumen + job; Material Issue, potongan stok, dan jurnal
+    # Dr WIP / Cr persediaan TETAP ⇒ MI yatim, dan SJ ulang memotong stok DUA kali. Bahan yang
+    # sudah keluar dikembalikan lewat Retur Material (stok kembali + jurnal balik + status MI).
+    blocking = await shipment_issued_mis(db, sid)
+    if blocking:
+        nums = ', '.join(m.get('mi_number') or m.get('id') for m in blocking)
+        raise HTTPException(
+            400,
+            f"Surat jalan {doc.get('shipment_number') or sid} tidak bisa dihapus: bahan sudah dikeluarkan "
+            f"dari gudang lewat Material Issue {nums}. Gunakan Retur Material untuk mengembalikan bahan "
+            "ke gudang (stok kembali, jurnal dibalik, status MI diperbarui); setelah semua bahan diretur, "
+            "surat jalan boleh dihapus.")
+    # MI yang belum keluar (draft/menunggu approval) ikut dibatalkan — tidak meninggalkan MI yatim
+    child_ids = [c['id'] for c in await db.vendor_shipments.find({'parent_shipment_id': sid}, {'_id': 0, 'id': 1}).to_list(None)]
+    await db.rahaza_material_issues.update_many(
+        {'vendor_shipment_id': {'$in': [sid] + child_ids}, 'status': {'$in': ['draft', 'pending_approval']}},
+        {'$set': {'status': 'cancelled', 'cancel_reason': f"Surat jalan {doc.get('shipment_number')} dihapus",
+                  'updated_at': now()}})
     inspections = await db.vendor_material_inspections.find({'shipment_id': sid}).to_list(None)
     for insp in inspections:
         await db.vendor_material_inspection_items.delete_many({'inspection_id': insp['id']})

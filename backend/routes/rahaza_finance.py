@@ -762,7 +762,18 @@ async def create_ap(request: Request):
         "created_by": user["id"], "created_by_name": user.get("name", ""),
     }
     await db.rahaza_ap_invoices.insert_one(doc)
-    return serialize_doc(doc)
+    # 2026-11-02 (K11): faktur MANUAL untuk pemasok yang masih punya GR belum ditagih → peringatan
+    # "gunakan Tagihan dari GR" (faktur manual tidak menutup GRNI; barang yang sama bisa tertagih dua kali).
+    # Hanya peringatan — faktur tetap tersimpan (biaya non-GR seperti jasa tetap lewat jalur ini).
+    from routes.rahaza_ap_from_gr import uninvoiced_gr_warning
+    try:
+        warn = await uninvoiced_gr_warning(db, vendor_name=vendor_name, supplier_id=body.get("supplier_id"))
+    except Exception:  # noqa: BLE001 — peringatan tidak boleh menggagalkan faktur yang sudah tersimpan
+        warn = {"warning": None, "grs": [], "amount": 0.0}
+    out = serialize_doc(doc)
+    out["warning"] = warn.get("warning")
+    out["uninvoiced_grs"] = serialize_doc(warn.get("grs") or [])
+    return out
 
 
 @router.post("/ap-invoices/{iid}/payment")

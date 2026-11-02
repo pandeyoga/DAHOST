@@ -216,7 +216,8 @@ async def place(data: PlaceIn, request: Request):
     if data.position_id:
         pos = await db.wh_positions.find_one({"id": data.position_id}, {"_id": 0})
     if not pos and data.position_barcode:
-        pos = await db.wh_positions.find_one({"barcode": data.position_barcode}, {"_id": 0})
+        from core.scan_resolver import position_by_barcode  # SSOT kode scan (2026-11-02)
+        pos = await position_by_barcode(db, data.position_barcode)
     if not pos:
         raise HTTPException(404, "Lokasi bin tidak ditemukan (cek id/barcode).")
 

@@ -60,6 +60,8 @@ const EnginePOModule             = lazyRetry(() => import('./engine/ProductionPO
 const EngineJobsModule           = lazyRetry(() => import('./engine/WorkOrderModule'));
 const EngineProgressModule       = lazyRetry(() => import('./engine/ProductionProgressModule'));
 const EngineReturnModule         = lazyRetry(() => import('./engine/ProductionReturnModule'));
+// 2026-11-02 (K10): layar Retur Material produksi → gudang (MI / Surat Jalan → stok + jurnal balik).
+const RahazaMaterialReturnModule = lazyRetry(() => import('./RahazaMaterialReturnModule'));
 const EngineBuyerShipmentModule  = lazyRetry(() => import('./engine/BuyerShipmentModule'));
 const EngineVendorShipmentModule = lazyRetry(() => import('./engine/VendorShipmentModule'));
 const EngineVarianceModule       = lazyRetry(() => import('./engine/OverproductionModule'));
@@ -132,6 +134,7 @@ const BackupRestoreModule = lazyRetry(() => import('./BackupRestoreModule'));
 const DocNumberingModule = lazyRetry(() => import('./DocNumberingModule'));
 
 const WHReturnsModule  = lazyRetry(() => import('./WHReturnsModule'));
+const WHScanOutModule  = lazyRetry(() => import('./WHScanOutModule'));  // 2026-11-02 (K15)
 const QuarantineModule = lazyRetry(() => import('./QuarantineModule'));  // FASE 6: Karantina QC (INV-8)
 const StockSchemaHealthModule = lazyRetry(() => import('./StockSchemaHealthModule'));  // FASE 6.6-A: kesehatan skema baris stok
 // O1.2 — CMTPackingModule tidak lagi dipakai. FASE H-8: prod-cmt-packing → `da-cmt-receive`
@@ -550,6 +553,9 @@ const DirectSalesModule          = lazyRetry(() => import('./sales/DirectSalesMo
 const SalesReportModule          = lazyRetry(() => import('./sales/SalesReportModule'));
 const ProcurementSpendModule     = lazyRetry(() => import('./procurement/ProcurementSpendModule'));
 const SupplierInvoiceModule      = lazyRetry(() => import('./procurement/SupplierInvoiceModule'));
+// 2026-11-02 (K11): Retur Pembelian (Pengadaan) & Nota Debit (Keuangan) — dulu menu ada di portalNav tapi kosong.
+const PurchaseReturnModule       = lazyRetry(() => import('./procurement/PurchaseReturnModule'));
+const DebitNoteModule            = lazyRetry(() => import('./finance/DebitNoteModule'));
 
 // WMS (Phase 7 — Warehouse Management System w/ Scanner)
 const WMSModule                 = lazyRetry(() => import('./WMSModule'));
@@ -659,6 +665,8 @@ export const MODULE_REGISTRY = {
   'wh-bin':        makeRedirect('wh-structure'),
   'wh-accessory':  AccessoryModule,
   'wh-returns':    WHReturnsModule,
+  // 2026-11-02 (K15): Scan Keluar Penjualan marketplace (stok + HPP WAC per scan, jurnal per lembar)
+  'wh-scan-out':   WHScanOutModule,
   // FASE 6 (INV-8): Karantina QC — barang reject QC (stok diblokir) + disposisi
   'wh-quarantine': QuarantineModule,
   // FASE 6.6-A: Kesehatan & rekonsiliasi skema baris stok (juga tab di hub Stok & Akurasi)
@@ -747,7 +755,8 @@ export const MODULE_REGISTRY = {
 
   // ── P0 FIX: Previously broken menus ────────────────────────────────────
   // Papan Rework — was missing mapping, falls back to ManagementDashboard
-  'prod-rework-board':    makeRedirect('prod-material-returns'),  // FASE 5
+  // 2026-11-02 (K10): papan rework = retur barang dari buyer (dulu lewat id `prod-material-returns`).
+  'prod-rework-board':    makeRedirect('prod-buyer-returns'),
   // Pengaturan Alert — was missing mapping
   'prod-alert-settings':  RahazaAlertSettingsModule,
 
@@ -959,6 +968,8 @@ export const MODULE_REGISTRY = {
   }),
   'proc-3way-match':       ThreeWayMatchModule,
   'proc-ap-invoices':      SupplierInvoiceModule,
+  'proc-purchase-returns': PurchaseReturnModule,     // 2026-11-02 (K11)
+  'fin-debit-notes':       DebitNoteModule,          // 2026-11-02 (K11)
 
   'prod-capacity-planning':     CapacityPlanningModule,   // Phase 2 — Capacity Planning Lite
 
@@ -1218,7 +1229,11 @@ export const MODULE_REGISTRY = {
   // koleksi `cmt_receipts`). Dulu dialihkan ke `wms-cmt-dispatches` yang koleksi
   // dispatch-nya 0 dokumen. Pintu yang benar-benar mengerjakannya: "Terima FG dari CMT".
   'prod-cmt-packing': makeRedirect('da-cmt-receive'),
-  'prod-material-returns': EngineReturnModule,  // FASE 5: returns engine baru
+  // 2026-11-02 (K10): `prod-material-returns` DULU menunjuk retur BUYER (EngineReturnModule) padahal
+  // namanya Retur Material. Sekarang = layar Retur Material produksi → gudang; retur buyer pindah ke
+  // id sendiri `prod-buyer-returns` (deep-link papan rework ikut dialihkan).
+  'prod-material-returns': RahazaMaterialReturnModule,
+  'prod-buyer-returns':    EngineReturnModule,  // FASE 5: returns engine (barang dari buyer)
 
   // ─── Phase 6 — HRIS (Full) ────────────────────────────────────────────────
   'hr-performance': HRPerformanceModule,     // deeplink backward compat

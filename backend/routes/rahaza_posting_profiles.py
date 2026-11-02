@@ -397,6 +397,22 @@ DEFAULT_PROFILES = [
         },
     },
     {
+        # 2026-11-02 (K11): Retur Pembelian (Pengadaan) & Nota Debit (Keuangan). Harga = harga GR asal;
+        # persediaan keluar senilai WAC, selisihnya ke PPV. DA bukan PKP → tanpa PPN retur.
+        # Klaim retur ke pemasok memakai 1-1620 (belum ada akun khusus "Barang Retur di Pemasok").
+        "event_type": "purchase_return",
+        "description": "Retur Pembelian & Nota Debit → klaim retur / GRNI / Hutang vs Persediaan (harga GR, selisih WAC ke PPV)",
+        "mapping": {
+            "inventory_rm": "1-1401",
+            "inventory_accessory": "1-1402",
+            "supplier_claim": "1-1620",
+            "grni": "2-1150",
+            "ap": "2-1100",
+            "price_variance": "5-1900",
+            "scrap_expense": "6-4300",
+        },
+    },
+    {
         # 2026-11-02 (K41 = a): "Keluarkan Stok FG" dijurnal senilai WAC, Cr 1-1404 (cogs_shipment)
         "event_type": "fg_issue",
         "description": "Keluarkan Stok FG (non-penjualan) → Dr akun per alasan / Cr Persediaan Barang Jadi (WAC)",
@@ -452,6 +468,19 @@ DEFAULT_PROFILES = [
             "control_ap_cmt":      "2-1110",
         },
     },
+    {
+        # 2026-11-02 (K15): Scan Keluar Penjualan marketplace — SATU jurnal per lembar harian saat
+        # Tutup Hari, nilai = Σ WAC baris scan (core/scan_out.py). Akun bawaan = HPP penjualan langsung
+        # (cogs_shipment); profil terpisah supaya HPP marketplace bisa dipisah & dipetakan ulang Keuangan.
+        "event_type": "cogs_marketplace_scan",
+        "description": "Scan Keluar Penjualan marketplace (harian) → Dr HPP per komponen / Cr Persediaan Barang Jadi (WAC)",
+        "mapping": {
+            "debit_cogs_material": "5-1000",
+            "debit_cogs_labor": "5-2000",
+            "debit_cogs_overhead": "5-3500",
+            "credit_fg_inventory": "1-1404",
+        },
+    },
 ]
 
 # ── Label manusiawi (SATU sumber; dipakai layar Profil Posting & laci keterikatan Bagan Akun) ──
@@ -500,6 +529,8 @@ EVENT_LABELS = {
     "year_end_close": "Tutup buku tahunan",
     "subledger_opening_balance": "Saldo awal go-live (rincian piutang/hutang)",
     "fg_issue": "Keluarkan Stok FG (sampel / internal / lainnya)",
+    "purchase_return": "Retur Pembelian & Nota Debit",
+    "cogs_marketplace_scan": "HPP Scan Keluar Penjualan marketplace (harian)",   # 2026-11-02 (K15)
 }
 ROLE_LABELS = {
     "debit_ar": "Piutang (Dr)", "credit_ar": "Piutang (Cr)",
@@ -574,7 +605,27 @@ ROLE_LABELS_BY_EVENT = {
     ("employee_travel", "debit_employee_advance"): "Uang muka dinas karyawan (Dr saat bayar, Cr saat selesai)",
     ("employee_travel", "credit_bank_default"): "Rekening bayar uang muka dinas — cadangan (Cr)",
     ("payroll_finalize", "credit_bpjs_payable"): "Hutang BPJS gabungan — cadangan bila per lembaga kosong (Cr)",
+    # 2026-11-02 (K11): Retur Pembelian & Nota Debit (peran dipakai di sisi debit maupun kredit)
+    ("purchase_return", "supplier_claim"): "Klaim retur ke pemasok — barang dikirim balik, menunggu penyelesaian",
+    ("purchase_return", "grni"): "Hutang belum ditagih / GRNI (nota debit sebelum faktur)",
+    ("purchase_return", "ap"): "Hutang usaha (nota debit setelah faktur)",
+    ("purchase_return", "price_variance"): "Selisih harga GR vs HPP rata-rata (PPV)",
+    ("purchase_return", "scrap_expense"): "Beban barang dimusnahkan (ditanggung DA)",
 }
+
+# ── 2026-11-02 (K9, Sesi Opname tunggal `core.opname_engine`): profil LAWAN selisih opname — satu blok,
+# ditambahkan di AKHIR daftar profil beserta labelnya. Akun persediaan per jenis tetap dibaca dari profil
+# `inventory_adjust` (jalur INVENTORY_ROLE_BY_KIND: 1-1401 / 1-1402 / 1-1404); profil ini hanya
+# memegang lawannya: selisih hitung → 5-1950 Selisih Persediaan, baris beralasan "rusak" → 6-4300.
+DEFAULT_PROFILES.append({
+    "event_type": "inventory_count_variance",
+    "description": "Sesi Opname disetujui → Dr/Cr Persediaan per jenis vs Selisih Persediaan (rusak: Beban Scrap)",
+    "mapping": {
+        "adjustment_expense": "5-1950",
+        "debit_scrap_expense": "6-4300",
+    },
+})
+EVENT_LABELS["inventory_count_variance"] = "Selisih Sesi Opname (lawan per jenis persediaan)"
 
 
 def event_label(event_type: str) -> str:

@@ -18,39 +18,66 @@
  *   disabled              — boolean
  *   autoFocus             — boolean (inline)
  *   inputClassName        — className tambahan untuk input
+ *
+ * 2026-11-02 (Paket 3a) — props tambahan, SEMUA opsional (pemakai lama tidak berubah):
+ *   continuous            — kamera tetap menyala & bisa scan berkali-kali (anti-dobel
+ *                           1,5 dtk untuk kode yang sama); modal tidak menutup sendiri.
+ *   feedback              — bunyi/getar saat kode terbaca (bawaan: = continuous).
+ *   keepFocus             — (inline) input kembali fokus setelah setiap scan.
+ *   dedupeMs              — (inline) abaikan kode sama dari wedge dalam jeda ini (bawaan 0).
+ * Kode SELALU dinormalisasi (`scanCode.normalizeScanCode`, cermin backend) sebelum onScan.
+ * Layar scan keluar (K15) & opname (K9) memakai komponen ini — jangan buat scanner baru.
  */
 import { useState, useRef, useCallback, useEffect, useId } from 'react';
 import {
-  Camera, Keyboard, X, AlertTriangle, Loader2, Scan, ScanLine
+  Camera, Keyboard, AlertTriangle, Loader2, Scan, ScanLine, CheckCircle2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Modal from '../Modal';
-import { useCameraScanner } from './useScanner';
+import { useCameraScanner, useWedgeInput } from './useScanner';
+import { normalizeScanCode, scanFeedback } from './scanCode';
 
 // ─── Internal: Camera + Manual modal contents ─────────────────────────────────
-function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode' }) {
+function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuous = false, feedback }) {
   const uid = useId().replace(/:/g, '_');
   const elementId = `universal-qr-${uid}`;
   const [tab, setTab]           = useState('camera');
   const [manual, setManual]     = useState('');
   const [scanLoading, setScanLoading] = useState(false);
+  const [reads, setReads]       = useState({ count: 0, last: '', at: 0 });
+  const beepOn = feedback ?? continuous;
 
   const {
     cameraState, setCameraState, cameraError, startCamera, stopCamera
-  } = useCameraScanner({ elementId });
+  } = useCameraScanner({ elementId, continuous });
 
-  const handleDetected = useCallback(async (code, source) => {
+  const handleDetected = useCallback(async (raw, source) => {
+    const code = normalizeScanCode(raw);
+    if (!code) return;
+    if (continuous) {
+      // Kamera tetap jalan; tampilkan bacaan terakhir + hitungan.
+      if (beepOn) scanFeedback('ok');
+      setReads((r) => ({ count: r.count + 1, last: code, at: Date.now() }));
+      onScan?.(code, source);
+      return;
+    }
     setScanLoading(true);
     try {
       await stopCamera();
-      onScan(code, source);
+      if (beepOn) scanFeedback('ok');
+      onScan?.(code, source);   // AssetScannerModal mengirim onScan=undefined saat loading
       onClose?.();
     } finally {
       setScanLoading(false);
     }
-  }, [onScan, onClose, stopCamera]);
+  }, [onScan, onClose, stopCamera, continuous, beepOn]);
+
+  // Callback terbaru disimpan di ref: kamera TIDAK di-restart setiap kali induk
+  // render ulang dengan fungsi onScan baru (dulu: restart per scan → anti-dobel
+  // hilang & barcode yang masih di depan kamera terbaca dua kali).
+  const detectRef = useRef(handleDetected);
+  detectRef.current = handleDetected;
 
   // Auto-start camera when on camera tab
   useEffect(() => {
@@ -58,10 +85,10 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode' }) {
     let cancelled = false;
     (async () => {
       if (cancelled) return;
-      await startCamera(handleDetected);
+      await startCamera((code, source) => detectRef.current(code, source));
     })();
     return () => { cancelled = true; };
-  }, [tab, startCamera, handleDetected]);
+  }, [tab, startCamera]);
 
   // Stop camera when switching away
   const switchTab = async (next) => {
@@ -76,8 +103,17 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode' }) {
     e?.preventDefault();
     const code = manual.trim();
     if (!code) return;
+    setManual('');
     await handleDetected(code, 'manual');
   };
+  // Kilatan hijau 700 ms setiap kali kode terbaca (mode kontinu)
+  const [justRead, setJustRead] = useState(false);
+  useEffect(() => {
+    if (!reads.at) return undefined;
+    setJustRead(true);
+    const t = setTimeout(() => setJustRead(false), 700);
+    return () => clearTimeout(t);
+  }, [reads.at]);
 
   return (
     <div className="space-y-3" data-testid="universal-scanner-content">
@@ -112,13 +148,29 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode' }) {
       {/* Camera tab */}
       {tab === 'camera' && (
         <div className="space-y-2">
-          <div className="rounded-xl overflow-hidden border border-[var(--glass-border)]">
+          <div className={`rounded-xl overflow-hidden border-2 transition-colors ${
+            justRead ? 'border-emerald-500' : 'border-[var(--glass-border)]'}`}>
             <div
               id={elementId}
               className="w-full aspect-square bg-black/85"
               data-testid="scanner-viewport"
             />
           </div>
+          {continuous && (
+            <div
+              className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs border ${
+                justRead
+                  ? 'bg-emerald-50 dark:bg-emerald-400/10 border-emerald-300 dark:border-emerald-400/30 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-muted-foreground'}`}
+              data-testid="scanner-continuous-status"
+            >
+              <span className="inline-flex items-center gap-1.5 font-mono truncate">
+                <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                {reads.last || 'Siap — scan berkali-kali tanpa menutup kamera'}
+              </span>
+              <span className="font-semibold shrink-0 ml-2" data-testid="scanner-continuous-count">{reads.count} scan</span>
+            </div>
+          )}
           <div className="text-center text-[11px] text-muted-foreground">
             {cameraState === 'starting' && (
               <span className="inline-flex items-center gap-1">
@@ -181,6 +233,13 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode' }) {
         </form>
       )}
 
+      {continuous && onClose && (
+        <Button type="button" variant="outline" className="w-full" onClick={onClose}
+          data-testid="scanner-continuous-done">
+          Selesai scan
+        </Button>
+      )}
+
       <div className="text-[10px] text-muted-foreground text-center">
         Tips: tekan{' '}
         <kbd className="px-1 py-0.5 border border-[var(--glass-border)] rounded bg-[var(--glass-bg)]">
@@ -193,7 +252,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode' }) {
 }
 
 // ─── Modal Variant ────────────────────────────────────────────────────────────
-function ScannerModal({ open, onClose, onScan, title = 'Scan Barcode' }) {
+function ScannerModal({ open, onClose, onScan, title = 'Scan Barcode', continuous = false, feedback }) {
   if (!open) return null;
   return (
     <Modal
@@ -202,64 +261,51 @@ function ScannerModal({ open, onClose, onScan, title = 'Scan Barcode' }) {
       size="sm"
       data-testid="universal-scanner-modal"
     >
-      <ScannerModalContent onScan={onScan} onClose={onClose} title={title} />
+      <ScannerModalContent onScan={onScan} onClose={onClose} title={title}
+        continuous={continuous} feedback={feedback} />
     </Modal>
   );
 }
 
 // ─── Inline Variant ───────────────────────────────────────────────────────────
-// Input dengan tombol kamera. Keyboard wedge auto-detected.
+// Input dengan tombol kamera. Keyboard wedge auto-detected (useWedgeInput).
 function ScannerInline({
   onScan, placeholder = 'Scan atau ketik barcode...', label, disabled,
-  autoFocus = false, inputClassName = '', 'data-testid': testId
+  autoFocus = false, inputClassName = '', 'data-testid': testId,
+  continuous = false, keepFocus = false, feedback = false, dedupeMs = 0,
 }) {
   const [value, setValue]       = useState('');
   const [modalOpen, setModalOpen] = useState(false);
+  const [flashAt, setFlashAt]   = useState(0);
   const inputRef                = useRef(null);
-  const lastTsRef               = useRef(0);
-  const isScannerRef            = useRef(false);
-  const timerRef                = useRef(null);
 
-  const WEDGE_INTERVAL = 30;
-  const MIN_LEN = 3;
+  const refocus = useCallback(() => {
+    if (keepFocus) setTimeout(() => inputRef.current?.focus(), 0);
+  }, [keepFocus]);
 
-  const fireScan = useCallback((code) => {
-    if (!code.trim()) return;
+  const fireScan = useCallback((code, source, beep = true) => {
     setValue('');
-    onScan?.(code.trim(), 'inline');
-  }, [onScan]);
+    setFlashAt(Date.now());
+    if (feedback && beep) scanFeedback('ok');
+    onScan?.(code, source);
+    refocus();
+  }, [onScan, feedback, refocus]);
 
-  const handleKeyDown = (e) => {
-    const now = Date.now();
-    const interval = now - lastTsRef.current;
-    lastTsRef.current = now;
+  const { handleKeyDown } = useWedgeInput({
+    inputRef, dedupeMs, onCode: (code) => fireScan(code, 'inline'),
+  });
 
-    if (e.key === 'Enter') {
-      const code = value.trim();
-      if (code.length >= MIN_LEN) {
-        e.preventDefault();
-        fireScan(code);
-      }
-      return;
-    }
-    if (e.key.length === 1 && interval < WEDGE_INTERVAL) {
-      isScannerRef.current = true;
-    }
-    if (isScannerRef.current) {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => {
-        const code = inputRef.current?.value?.trim() || '';
-        if (code.length >= MIN_LEN) fireScan(code);
-        isScannerRef.current = false;
-      }, 150);
-    }
-  };
+  // Hapus kilatan hijau setelah 600 ms
+  useEffect(() => {
+    if (!flashAt) return undefined;
+    const t = setTimeout(() => setFlashAt(0), 600);
+    return () => clearTimeout(t);
+  }, [flashAt]);
 
   // Camera modal onScan callback
-  const handleModalScan = (code) => {
-    setValue(code);
-    setModalOpen(false);
-    onScan?.(code, 'camera');
+  const handleModalScan = (code, source = 'camera') => {
+    if (!continuous) setModalOpen(false);
+    fireScan(normalizeScanCode(code), source, false);   // modal sudah berbunyi sendiri
   };
 
   return (
@@ -276,7 +322,7 @@ function ScannerInline({
           placeholder={placeholder}
           disabled={disabled}
           autoFocus={autoFocus}
-          className={`font-mono pr-10 ${inputClassName}`}
+          className={`font-mono pr-10 transition-shadow ${flashAt ? 'ring-2 ring-emerald-500' : ''} ${inputClassName}`}
           data-testid="scanner-inline-input"
         />
         <button
@@ -292,9 +338,11 @@ function ScannerInline({
       </div>
       <ScannerModal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => { setModalOpen(false); refocus(); }}
         onScan={handleModalScan}
         title="Scan Barcode"
+        continuous={continuous}
+        feedback={feedback || continuous}
       />
     </>
   );
@@ -304,11 +352,11 @@ function ScannerInline({
 // Hanya tombol yang membuka modal
 function ScannerButton({
   onScan, title = 'Scan Barcode', label, disabled, size = 'sm', variant: btnVariant = 'outline',
-  'data-testid': testId, className = ''
+  'data-testid': testId, className = '', continuous = false, feedback,
 }) {
   const [open, setOpen] = useState(false);
   const handleScan = (code, source) => {
-    setOpen(false);
+    if (!continuous) setOpen(false);
     onScan?.(code, source);
   };
   return (
@@ -325,7 +373,8 @@ function ScannerButton({
         <Scan className="w-3.5 h-3.5" />
         {label || 'Scan'}
       </Button>
-      <ScannerModal open={open} onClose={() => setOpen(false)} onScan={handleScan} title={title} />
+      <ScannerModal open={open} onClose={() => setOpen(false)} onScan={handleScan} title={title}
+        continuous={continuous} feedback={feedback} />
     </>
   );
 }
@@ -358,6 +407,10 @@ export default function UniversalScanner({
   size,
   btnVariant,
   className,
+  continuous,
+  feedback,
+  keepFocus,
+  dedupeMs,
   'data-testid': testId,
 }) {
   if (variant === 'modal') {
@@ -367,6 +420,8 @@ export default function UniversalScanner({
         onClose={onClose}
         onScan={onScan}
         title={title}
+        continuous={continuous}
+        feedback={feedback}
       />
     );
   }
@@ -380,6 +435,8 @@ export default function UniversalScanner({
         size={size}
         variant={btnVariant}
         className={className}
+        continuous={continuous}
+        feedback={feedback}
         data-testid={testId}
       />
     );
@@ -393,6 +450,10 @@ export default function UniversalScanner({
       disabled={disabled}
       autoFocus={autoFocus}
       inputClassName={inputClassName}
+      continuous={continuous}
+      feedback={feedback}
+      keepFocus={keepFocus}
+      dedupeMs={dedupeMs}
       data-testid={testId}
     />
   );

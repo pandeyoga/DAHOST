@@ -22,7 +22,7 @@ const TABS = [
   { id: 'replacement', label: 'Permintaan Pengganti', icon: AlertTriangle },
 ];
 
-export default function VendorShipmentModule({ userRole, hasPerm = () => false, portalId }) {
+export default function VendorShipmentModule({ userRole, hasPerm = () => false, portalId, onNavigate }) {
   // Pemisahan data per proses bisnis: Portal Produksi = internal, Portal Maklon = maklon.
   const businessType = portalId === 'maklon' ? 'maklon' : portalId === 'production' ? 'internal' : null;
   const [activeTab, setActiveTab] = useState('shipments');
@@ -366,11 +366,20 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   );
 
   const handleDelete = async () => {
+    const target = confirmDelete;
     try {
-      await apiDelete(`/vendor-shipments/${confirmDelete.id}`);
+      await apiDelete(`/vendor-shipments/${target.id}`);
       setConfirmDelete(null);
       fetchAll();
-    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
+    } catch (e) {
+      setConfirmDelete(null);
+      // 2026-11-02 (K10): SJ yang bahannya sudah keluar dikunci backend → arahkan ke Retur Material.
+      const locked = /Retur Material/i.test(e.message || '');
+      toast.error(e.message || 'Gagal menghapus', locked && onNavigate ? {
+        duration: 12000,
+        action: { label: 'Buka Retur Material', onClick: () => onNavigate('prod-material-returns', { vendor_shipment_id: target.id }) },
+      } : undefined);
+    }
   };
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID') : '-';
@@ -969,7 +978,8 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
         </Modal>
       )}
 
-      {confirmDelete && <ConfirmDialog title="Hapus Shipment?" message={`Shipment "${confirmDelete.shipment_number}" akan dihapus.`} onConfirm={handleDelete} onCancel={() => setConfirmDelete(null)} />}
+      {/* 2026-11-02 (K10): teks konfirmasi mengikuti kunci backend — SJ yang bahannya sudah keluar tidak bisa dihapus */}
+      {confirmDelete && <ConfirmDialog title="Hapus Shipment?" message={`Shipment "${confirmDelete.shipment_number}" akan dihapus. Surat jalan tidak bisa dihapus setelah bahan keluar — gunakan Retur Material untuk mengembalikan bahan ke gudang (stok kembali & jurnal dibalik), lalu hapus.`} onConfirm={handleDelete} onCancel={() => setConfirmDelete(null)} />}
 
       {/* Phase 16: Modal Buat Permintaan Manual (untuk shipment yang sudah ter-inspeksi) */}
       {manualReqShipment && (

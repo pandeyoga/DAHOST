@@ -450,6 +450,8 @@ export default function RahazaStockModule({ token }) {
                     {m.type === 'issue'    && <span className="text-red-600 dark:text-red-300">Issue</span>}
                     {m.type === 'transfer' && <span className="text-primary">Transfer</span>}
                     {m.type === 'adjust'   && <span className="text-amber-600 dark:text-amber-300">Adjust</span>}
+                    {/* 2026-11-02 (K9): mutasi mesin opname tunggal */}
+                    {m.type === 'opname'   && <span className="text-sky-600 dark:text-sky-300">Opname</span>}
                   </td>
                   <td className="px-3 py-1.5 text-foreground">{m.material_code}</td>
                   <td className="px-3 py-1.5 text-right font-mono font-semibold text-foreground">{Number(m.qty).toFixed(3)} {m.unit || ''}</td>

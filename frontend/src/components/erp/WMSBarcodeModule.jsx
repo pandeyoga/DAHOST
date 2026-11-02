@@ -79,7 +79,9 @@ export default function WMSBarcodeModule() {
   const [itemsMeta, setItemsMeta] = useState({ total: 0, returned: 0 });
   const [loadingItems, setLoadingItems] = useState(false);
   const [cart, setCart] = useState([]);
-  const [includeStock, setIncludeStock] = useState(true);
+  const [includeStock, setIncludeStock] = useState(true);
+  // 2026-11-02 (keputusan owner): ukuran label barang jadi — standar 100×70 / hangtag 70×40
+  const [fgSize, setFgSize] = useState('standard');
   const [note, setNote] = useState('');
   const [pos, setPos] = useState([]);
   const [poId, setPoId] = useState('');
@@ -150,7 +152,8 @@ export default function WMSBarcodeModule() {
           kind,
           rows: cart.filter(r => r.master_linked !== false)
             .map(r => ({ id: r.material_id || undefined, code: r.code, copies: Number(r.copies) || 1 })),
-          include_stock: kind === 'material' ? includeStock : false,
+          include_stock: kind === 'material' ? includeStock : false,
+          size: kind === 'fg' ? fgSize : 'standard',
           source: poInfo ? 'produksi' : 'manual',
           po_id: poInfo?.po_id || null,
           note,
@@ -321,6 +324,16 @@ export default function WMSBarcodeModule() {
             </table>
           </GlassPanel>
 
+          {kind === 'fg' && (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              Ukuran label:
+              <select value={fgSize} onChange={e => setFgSize(e.target.value)} data-testid="barcode-fg-size"
+                className="h-8 px-2 rounded-lg border border-input bg-background text-xs text-foreground">
+                <option value="standard">Label standar 100×70 mm</option>
+                <option value="hangtag">Hangtag kecil 70×40 mm</option>
+              </select>
+            </label>
+          )}
           {kind === 'material' && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input type="checkbox" checked={includeStock} onChange={e => setIncludeStock(e.target.checked)}
@@ -405,7 +418,7 @@ export default function WMSBarcodeModule() {
                   data-testid={`barcode-history-${h.job_number}`}>
                   <td className="px-4 py-2 font-mono text-xs text-foreground">{h.job_number}</td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
-                    {h.kind === 'fg' ? 'Barang Jadi' : 'Bahan'}
+                    {h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang Jadi · hangtag' : 'Barang Jadi') : 'Bahan'}
                   </td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
                     {h.source === 'produksi' ? 'Dari produksi' : 'Manual'}

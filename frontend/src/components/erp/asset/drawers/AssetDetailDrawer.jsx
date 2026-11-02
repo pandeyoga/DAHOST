@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import {
-  Package, Edit, ArrowRight, Trash2, Barcode, QrCode, Printer,
+  Package, Edit, ArrowRight, Trash2, Printer,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apicall, fmtCurrency, fmtDate, API } from '../utils';
@@ -250,20 +250,13 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
             {/* Barcode & QR Actions */}
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Label & Barcode</p>
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="outline" size="sm" className="w-full" onClick={() => {
-                  const url = `${API}/api/assets/${asset.id}/barcode`;
-                  window.open(url, '_blank');
-                }} data-testid="view-barcode-btn">
-                  <Barcode size={14} className="mr-1" /> Lihat Barcode
-                </Button>
-                <Button variant="outline" size="sm" className="w-full" onClick={() => {
-                  const url = `${API}/api/assets/${asset.id}/qrcode`;
-                  window.open(url, '_blank');
-                }} data-testid="view-qr-btn">
-                  <QrCode size={14} className="mr-1" /> Lihat QR Code
-                </Button>
-              </div>
+              {/* 2026-11-02: barcode & QR terpisah (PNG) dihapus — label aset tunggal memakai kode registri
+                  Aset Tetap (Keuangan); aset yang belum tertaut ditolak dengan pesan. */}
+              {!asset.fixed_asset_id && (
+                <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="asset-label-unlinked">
+                  Tautkan aset ini ke registri Aset Tetap (Keuangan) dulu — kode label = kode registri.
+                </p>
+              )}
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => {
                   const url = `${API}/api/assets/${asset.id}/label-pdf?template=standard`;

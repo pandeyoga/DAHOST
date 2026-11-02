@@ -44,6 +44,8 @@ const MV_META = {
   issue: { label: 'Keluar', icon: ArrowUpCircle, tone: 'text-amber-700 dark:text-amber-400' },
   scrap: { label: 'Scrap', icon: Trash2, tone: 'text-red-700 dark:text-red-400' },
   opname_adjust: { label: 'Opname', icon: History, tone: 'text-sky-600 dark:text-sky-400' },
+  // 2026-11-02 (K9): mutasi mesin opname tunggal bertipe `opname`
+  opname: { label: 'Opname', icon: History, tone: 'text-sky-600 dark:text-sky-400' },
   adjust: { label: 'Penyesuaian', icon: History, tone: 'text-sky-600 dark:text-sky-400' },
 };
 

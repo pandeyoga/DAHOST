@@ -548,9 +548,11 @@ async def scan_in(movement_id: str, data: ScanInIn, request: Request):
     # 3. Update position if provided
     position_id = None
     if data.position_barcode:
-        pos = await db.wh_positions.find_one({"barcode": data.position_barcode}, {"_id": 0})
+        from core.scan_resolver import position_by_barcode  # SSOT kode scan (2026-11-02)
+        pos = await position_by_barcode(db, data.position_barcode)
         if pos:
             position_id = pos["id"]
+            data.position_barcode = pos.get("barcode") or data.position_barcode  # simpan kode baku
             new_qty = pos.get("qty", 0) + qty
             await db.wh_positions.update_one(
                 {"id": pos["id"]},
@@ -669,7 +671,8 @@ async def scan_out(movement_id: str, data: ScanOutIn, request: Request):
 
     # 4. Update position if provided
     if data.position_barcode:
-        pos = await db.wh_positions.find_one({"barcode": data.position_barcode}, {"_id": 0})
+        from core.scan_resolver import position_by_barcode  # SSOT kode scan (2026-11-02)
+        pos = await position_by_barcode(db, data.position_barcode)
         if pos:
             new_qty = max(0, pos.get("qty", 0) - qty)
             await db.wh_positions.update_one(

@@ -294,6 +294,15 @@ PROFILE_ROLE_TABLES = [
      "label": "Mesin posting persediaan: akun per jenis barang (bahan 1-1401 · aksesoris 1-1402 · barang jadi 1-1404)"},
     {"module": "routes.rahaza_posting", "attr": "FG_ISSUE_DEBIT", "shape": "reason_profile_role",
      "label": "Keluarkan Stok FG: akun debit per alasan (nilai WAC, Cr persediaan barang jadi)"},
+    # 2026-11-02 (K11): Retur Pembelian & Nota Debit — klaim retur / GRNI / hutang / PPV / beban musnah
+    {"module": "routes.rahaza_posting", "attr": "PURCHASE_RETURN_ROLES", "shape": "event_kind_role",
+     "label": "Retur Pembelian & Nota Debit: klaim retur, GRNI, hutang, selisih harga, beban musnah"},
+    # 2026-11-02 (K15): Scan Keluar Penjualan — jurnal HPP harian per lembar (komponen WAC / Cr 1-1404)
+    {"module": "core.scan_out", "attr": "PROFILE_ROLES", "shape": "event_kind_role",
+     "label": "Scan Keluar Penjualan: HPP harian per lembar (Dr HPP per komponen WAC / Cr persediaan barang jadi)"},
+    # 2026-11-02 (K9): Sesi Opname — lawan selisih (5-1950) / barang rusak (6-4300), satu jurnal per sesi
+    {"module": "core.opname_engine", "attr": "CONTRA_ROLES", "shape": "event_kind_role",
+     "label": "Sesi Opname: lawan selisih hitung (5-1950) / baris rusak (6-4300); persediaan per jenis"},
 ]
 
 

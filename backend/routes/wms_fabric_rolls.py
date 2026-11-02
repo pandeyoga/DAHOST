@@ -46,21 +46,9 @@ from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth, serialize_doc
 from core import fabric_roll_engine  # FASE H-5: satu pintu penerbitan & pemakaian roll
-import io
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
-
-try:
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.units import mm
-    from barcode import Code128
-    from barcode.writer import ImageWriter
-    from PIL import Image as PILImage
-    REPORTLAB_OK = True
-except ImportError:
-    REPORTLAB_OK = False
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/fabric-rolls", tags=["wms-fabric-rolls"])
@@ -585,36 +573,19 @@ async def roll_label_pdf(roll_id: str, request: Request, token: Optional[str] = 
         {"$or": [{"id": roll_id}, {"roll_no": roll_id}]}, {"_id": 0})
     if not roll:
         raise HTTPException(404, "Roll tidak ditemukan")
-    if not REPORTLAB_OK:
+    # 2026-11-02 (Paket 3a): gambar label lewat SSOT `core/label_render`
+    # (Code128 vektor, quiet zone 10X) — dulu generator PNG sendiri di sini.
+    # Qty dicetak sesuai satuan roll (dulu selalu "x m / y kg").
+    from core import label_render as lr
+    if not lr.LABELS_OK:
         raise HTTPException(500, "ReportLab tidak tersedia")
-
-    buf = io.BytesIO()
-    W, H = 90 * mm, 50 * mm
-    c = canvas.Canvas(buf, pagesize=(W, H))
-    # Header
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(3 * mm, H - 7 * mm, "CV. DEWI ADITYA")
-    c.setFont("Helvetica", 7)
-    c.drawString(3 * mm, H - 12 * mm, f"ROLL: {roll['roll_no']}")
-    c.drawString(3 * mm, H - 17 * mm, f"{roll.get('material_name', '')} | {roll.get('color', '')}")
-    c.drawString(3 * mm, H - 22 * mm, f"LOT: {roll.get('color_lot', '-')} | {roll.get('supplier_name', '')}")
-    c.drawString(3 * mm, H - 27 * mm, f"{roll.get('length_m', 0):.1f}m / {roll.get('weight_kg', 0):.2f}kg")
-    # Barcode
+    v = fabric_roll_engine.with_display_uom(roll)
+    unit = v.get("uom") or "meter"
+    doc = {**v, "qty_text": f"Qty: {v['qty_total']:,.2f} {unit} · sisa {v['qty_remaining']:,.2f} {unit}"}
     try:
-        barcode_buf = io.BytesIO()
-        w = ImageWriter()
-        Code128(roll["roll_no"], writer=w).write(barcode_buf, options={"module_width": 0.35, "module_height": 10.0, "quiet_zone": 2.0, "text_distance": 2.0, "font_size": 6, "write_text": True})
-        barcode_buf.seek(0)
-        img = PILImage.open(barcode_buf)
-        img_buf = io.BytesIO()
-        img.save(img_buf, "PNG")
-        img_buf.seek(0)
-        from reportlab.lib.utils import ImageReader
-        c.drawImage(ImageReader(img_buf), 3 * mm, 5 * mm, width=84 * mm, height=16 * mm, preserveAspectRatio=True)
-    except Exception as e:
-        log.warning(f"Barcode generation failed: {e}")
-    c.save()
-    buf.seek(0)
+        buf = lr.single_label_pdf("roll", doc)
+    except lr.LabelCodeError as e:
+        raise HTTPException(400, str(e))
     return StreamingResponse(
         buf,
         media_type="application/pdf",

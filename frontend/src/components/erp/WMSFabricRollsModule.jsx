@@ -179,6 +179,24 @@ export default function WMSFabricRollsModule({ token }) {
     }
   };
 
+  // 2026-11-02 (Paket 3a): label roll (Code128 = nomor roll) dulu hanya ada sebagai
+  // endpoint tanpa tombol di layar mana pun. PDF diambil dengan header Authorization
+  // (bukan token sesi di URL) lalu dibuka di tab baru.
+  const printRollLabel = async (roll) => {
+    try {
+      const r = await fetch(`${API}/api/wms/fabric-rolls/${roll.id}/label-pdf`, { headers: { Authorization: headers.Authorization } });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || `HTTP ${r.status}`);
+      }
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      toast.error(`Gagal mencetak label roll: ${e.message || e}`);
+    }
+  };
+
   const handleView = async (roll) => {
     try {
       const r = await fetch(`${API}/api/wms/fabric-rolls/${roll.id}`, { headers });
@@ -640,6 +658,12 @@ export default function WMSFabricRollsModule({ token }) {
                               data-testid={`issue-btn-${roll.roll_no}`}>
                               Issue
                             </Button>
+                            <Button size="sm" variant="outline" title="Cetak label barcode roll"
+                              className="h-7 px-2 text-xs border-foreground/10"
+                              onClick={(e) => { e.stopPropagation(); printRollLabel(roll); }}
+                              data-testid={`label-btn-${roll.roll_no}`}>
+                              <Printer className="w-3 h-3" />
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -728,6 +752,16 @@ export default function WMSFabricRollsModule({ token }) {
                   >
                     <Truck className="w-3 h-3 mr-1" />
                     Issue
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    title="Cetak label barcode roll"
+                    className="border-foreground/10 hover:bg-foreground/5 text-xs"
+                    onClick={(e) => { e.stopPropagation(); printRollLabel(roll); }}
+                    data-testid={`label-btn-grid-${roll.roll_no}`}
+                  >
+                    <Printer className="w-3 h-3" />
                   </Button>
                 </div>
               </div>

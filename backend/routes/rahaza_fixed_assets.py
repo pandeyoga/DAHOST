@@ -490,6 +490,15 @@ async def depreciation_due(request: Request):
     return serialize_doc(due)
 
 
+@router.get("/fixed-assets/{fa_id}/label-pdf")
+async def fixed_asset_label_pdf(fa_id: str, request: Request, template: str = "standard"):
+    """2026-11-02 (registri aset tunggal): label aset dari registri induk — generator & kode SAMA dengan
+    Portal Aset (`routes/asset/scan_label.asset_label_response`)."""
+    from routes.asset.scan_label import asset_label_response
+    await require_auth(request)
+    return await asset_label_response(get_db(), fixed_asset_id=fa_id, template=template)
+
+
 @router.get("/fixed-assets-summary")
 async def fixed_assets_summary(request: Request):
     await require_auth(request)

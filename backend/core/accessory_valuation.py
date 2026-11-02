@@ -148,33 +148,101 @@ async def apply_receipt_cost(db, material_id: str, qty_in: float, cost_in: float
     }
 
 
+REVALUATION_COLL = "rahaza_inventory_revaluations"
+
+
+def revaluation_delta(qty: float, old_cost: float, new_cost: float) -> float:
+    """Selisih nilai stok revaluasi = qty bernilai × (HPP baru − HPP lama). Fungsi murni."""
+    return round(_f(qty) * (_f(new_cost) - _f(old_cost)), 2)
+
+
 async def set_unit_cost(db, material_id: str, new_cost: float, *, actor: dict | None = None,
                         notes: str = "") -> dict:
-    """Koreksi HPP manual (mis. hasil audit) + riwayat. Tidak mengubah qty."""
+    """Koreksi HPP manual = REVALUASI persediaan bernilai audit (2026-11-02, K12).
+
+    Dulu hanya menimpa `unit_cost` + riwayat, TANPA jurnal (uji T2: 200 m 17.500 → 18.000 →
+    nilai stok +100.000, buku besar tetap) sehingga kartu stok ≠ buku besar. Sekarang:
+      * alasan (`notes`) WAJIB; aktor & riwayat tercatat;
+      * dokumen `rahaza_inventory_revaluations` (RVL-YYYYMM-NNNN) + jurnal
+        Dr/Cr persediaan per jenis (aksesoris 1-1402, bahan 1-1401, FG 1-1404) ↔ 5-1950 sebesar
+        qty bernilai × (HPP baru − HPP lama);
+      * jurnal GAGAL ⇒ HPP TIDAK diubah (tidak ada revaluasi setengah jadi).
+    qty = stok yang ADA DI NILAI PERSEDIAAN (`quarantine.valued_onhand`: tanpa reject GR di karantina).
+    Fungsi ini generik per material — berlaku juga untuk koreksi HPP bahan lain bila jalurnya dibuka."""
     mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
     if not mat:
         return {"ok": False, "error": "Material tidak ditemukan."}
+    reason = str(notes or "").strip()
+    if not reason:
+        return {"ok": False, "error": "Alasan koreksi HPP wajib diisi — revaluasi persediaan harus punya jejak audit."}
     new_cost = _f(new_cost)
     if new_cost < 0:
         return {"ok": False, "error": "Harga satuan tidak boleh negatif."}
     old_cost = resolve_unit_cost(mat)
-    qty_before = await stock_service.get_onhand(material_id, db=db)
+    from core import quarantine
+    from routes.rahaza_posting import inventory_kind, post_inventory_revaluation
+    from utils.counters import gen_prefixed_number
+    qty = await quarantine.valued_onhand(db, material_id)
+    delta = revaluation_delta(qty, old_cost, new_cost)
+    reval = {
+        "id": _uid(),
+        "reval_number": await gen_prefixed_number(db, REVALUATION_COLL, "reval_number",
+                                                  f"RVL-{_now():%Y%m}-", 4),
+        "material_id": material_id, "material_code": mat.get("code", ""),
+        "material_name": mat.get("name", ""), "kind": inventory_kind(mat),
+        "qty": round(_f(qty), 4), "old_unit_cost": round(old_cost, 4), "new_unit_cost": round(new_cost, 4),
+        "delta_value": delta, "value_before": round(_f(qty) * old_cost, 2),
+        "value_after": round(_f(qty) * new_cost, 2), "reason": reason, "source": "set_hpp",
+        "actor": {"id": (actor or {}).get("id", ""), "name": (actor or {}).get("name", "")},
+        "created_at": _now(),
+    }
+    posting = {"ok": True, "skipped": True, "reason": "selisih nilai 0 — tidak ada jurnal"}
+    if abs(delta) >= 0.005:
+        posting = await post_inventory_revaluation(db, reval, actor or {})
+        if not posting.get("ok"):
+            return {"ok": False, "error": f"Jurnal revaluasi gagal: {posting.get('error')}. HPP TIDAK diubah."}
+    reval.update({"je_id": posting.get("je_id"), "je_number": posting.get("je_number")})
+    await db[REVALUATION_COLL].insert_one(dict(reval))
     await db.rahaza_materials.update_one(
         {"id": material_id},
         {"$set": {"unit_cost": new_cost, "cost_method": "manual",
                   "cost_updated_at": _now(), "updated_at": _now()}},
     )
     await _record_history(db, material_id=material_id, old_cost=old_cost, new_cost=new_cost,
-                          qty_before=qty_before, qty_in=0, cost_in=new_cost,
-                          source="manual", actor=actor, notes=notes)
+                          qty_before=qty, qty_in=0, cost_in=new_cost, source="manual", actor=actor,
+                          notes=f"{reval['reval_number']} · {reason}")
     return {
         "ok": True,
         "material_id": material_id,
         "old_unit_cost": round(old_cost, 4),
         "new_unit_cost": round(new_cost, 4),
-        "stock_qty": round(qty_before, 4),
-        "stock_value": round(qty_before * new_cost, 2),
+        "stock_qty": round(_f(qty), 4),
+        "stock_value": round(_f(qty) * new_cost, 2),
+        "revaluation": {k: reval[k] for k in ("id", "reval_number", "qty", "delta_value", "value_before",
+                                              "value_after", "reason", "je_number")},
     }
+
+
+async def apply_value_change(db, material_id: str, delta_value: float, *, actor: dict | None = None,
+                             notes: str = "", source: str = "purchase_return") -> dict:
+    """Ubah NILAI stok bernilai tanpa mengubah qty → HPP rata-rata baru (2026-11-02, K11).
+
+    Dipakai potongan harga atas barang yang sudah di persediaan (Retur Pembelian "diterima dengan
+    diskon"): HPP_baru = (qty × HPP_lama + Δnilai) / qty. qty bernilai ≤ 0 ⇒ tidak bisa diserap
+    persediaan (`applied=False`; pemanggil membukukan selisihnya ke PPV)."""
+    from core import quarantine
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0}) or {}
+    old_cost = resolve_unit_cost(mat)
+    qty = await quarantine.valued_onhand(db, material_id)
+    if qty <= 1e-9:
+        return {"applied": False, "qty": round(_f(qty), 4), "old_unit_cost": round(old_cost, 4)}
+    new_cost = round(max(0.0, (qty * old_cost + _f(delta_value)) / qty), 4)
+    await db.rahaza_materials.update_one(
+        {"id": material_id}, {"$set": {"unit_cost": new_cost, "cost_updated_at": _now(), "updated_at": _now()}})
+    await _record_history(db, material_id=material_id, old_cost=old_cost, new_cost=new_cost,
+                          qty_before=qty, qty_in=0, cost_in=new_cost, source=source, actor=actor, notes=notes)
+    return {"applied": True, "qty": round(_f(qty), 4), "old_unit_cost": round(old_cost, 4),
+            "new_unit_cost": new_cost}
 
 
 async def summary(db, *, include_zero_stock: bool = True) -> dict:
@@ -302,6 +370,7 @@ UNVALUED_WINDOW_HOURS = 24
 _MV_LABEL_ID = {
     "receive": "penerimaan", "issue": "pengeluaran", "scrap": "scrap",
     "opname_adjust": "penyesuaian opname",
+    "opname": "penyesuaian opname",   # 2026-11-02 (K9): tipe mutasi mesin opname tunggal
 }
 
 

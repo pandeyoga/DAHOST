@@ -49,19 +49,45 @@ def _now(): return datetime.now(timezone.utc)
 
 # ── Reject Categories (Textile/Garment Industry Standard) ────────────────────
 
+# 2026-11-02 (K11, audit g.md No.20): `kind` memisahkan alasan reject.
+#   fisik   → barangnya ADA tetapi cacat/salah → masuk KARANTINA (stok terblokir);
+#   dokumen → kuantitas kurang / terlambat / dokumen → TIDAK menambah stok, hanya catatan di GR
+#             (sisa PO tetap terbuka karena PO dihitung dari qty bersih).
+# Dulu "Jumlah Kurang dari PO" pun menambah stok karantina: barang yang tidak pernah datang tercatat ada.
+REJECT_KIND_PHYSICAL = "fisik"
+REJECT_KIND_DOCUMENT = "dokumen"
 REJECT_CATEGORIES = [
-    {"code": "FABRIC_DEFECT",     "label": "Cacat Bahan (kotoran, lubang, stain)",  "severity": "major"},
-    {"code": "COLOR_MISMATCH",    "label": "Warna Tidak Sesuai Spec",                "severity": "major"},
-    {"code": "MEASUREMENT_OUT",   "label": "Ukuran Di Luar Toleransi",               "severity": "major"},
-    {"code": "QUANTITY_SHORT",    "label": "Jumlah Kurang dari PO",                  "severity": "critical"},
-    {"code": "DAMAGED_PACKAGING", "label": "Kemasan Rusak (basah, sobek)",           "severity": "minor"},
-    {"code": "WRONG_ITEM",        "label": "Salah Kirim Item",                       "severity": "critical"},
-    {"code": "LATE_DELIVERY",     "label": "Terlambat (Past PO Due Date)",           "severity": "minor"},
-    {"code": "MISSING_DOCS",      "label": "Dokumen Tidak Lengkap",                  "severity": "minor"},
-    {"code": "STITCHING_DEFECT",  "label": "Cacat Jahitan",                          "severity": "major"},
-    {"code": "ACCESSORY_MISSING", "label": "Aksesoris/Trims Kurang",                 "severity": "major"},
-    {"code": "OTHER",             "label": "Lainnya",                                "severity": "minor"},
+    {"code": "FABRIC_DEFECT",     "label": "Cacat Bahan (kotoran, lubang, stain)",  "severity": "major", "kind": "fisik"},
+    {"code": "COLOR_MISMATCH",    "label": "Warna Tidak Sesuai Spec",                "severity": "major", "kind": "fisik"},
+    {"code": "MEASUREMENT_OUT",   "label": "Ukuran Di Luar Toleransi",               "severity": "major", "kind": "fisik"},
+    {"code": "QUANTITY_SHORT",    "label": "Jumlah Kurang dari PO",                  "severity": "critical", "kind": "dokumen"},
+    {"code": "DAMAGED_PACKAGING", "label": "Kemasan Rusak (basah, sobek)",           "severity": "minor", "kind": "fisik"},
+    {"code": "WRONG_ITEM",        "label": "Salah Kirim Item",                       "severity": "critical", "kind": "fisik"},
+    {"code": "LATE_DELIVERY",     "label": "Terlambat (Past PO Due Date)",           "severity": "minor", "kind": "dokumen"},
+    {"code": "MISSING_DOCS",      "label": "Dokumen Tidak Lengkap",                  "severity": "minor", "kind": "dokumen"},
+    {"code": "STITCHING_DEFECT",  "label": "Cacat Jahitan",                          "severity": "major", "kind": "fisik"},
+    {"code": "ACCESSORY_MISSING", "label": "Aksesoris/Trims Kurang",                 "severity": "major", "kind": "dokumen"},
+    {"code": "OTHER",             "label": "Lainnya",                                "severity": "minor", "kind": "fisik"},
 ]
+_REJECT_KIND = {c["code"]: c["kind"] for c in REJECT_CATEGORIES}
+
+
+def reject_kind(code) -> str:
+    """'fisik' | 'dokumen' untuk satu kode alasan. Kode tak dikenal = fisik (barangnya ada)."""
+    return _REJECT_KIND.get(str(code or "").strip().upper(), REJECT_KIND_PHYSICAL)
+
+
+def split_reject_qty(reasons, rejected_qty: float) -> tuple[float, float]:
+    """(qty fisik → karantina, qty dokumen/kuantitas → catatan saja) dari alasan reject satu baris GR.
+
+    Fungsi murni. Alasan tanpa qty memakai sisa qty reject; sisa yang tidak dijelaskan alasan apa pun
+    dianggap fisik (perilaku lama: semua reject masuk karantina)."""
+    rej = max(0.0, float(rejected_qty or 0))
+    rows = normalize_reject_reasons(reasons, default_qty=rej)
+    doc = sum(max(0.0, float(r.get("qty") or 0)) for r in rows
+              if reject_kind(r.get("code")) == REJECT_KIND_DOCUMENT)
+    doc = min(doc, rej)
+    return round(rej - doc, 4), round(doc, 4)
 
 SEVERITY_WEIGHTS = {"critical": 3, "major": 2, "minor": 1}
 

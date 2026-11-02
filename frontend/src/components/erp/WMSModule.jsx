@@ -225,6 +225,8 @@ function StructureTab({ token }) {
   const [modal, setModal] = useState(null); // {type: 'building'|'zone'|'rack', data: null|obj}
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({});
+  // 2026-11-02 (K9): pilihan lokasi gudang untuk menautkan zona (`zone.location_id`, dibaca mesin opname)
+  const [locations, setLocations] = useState([]);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const loadBuildings = useCallback(async () => {
@@ -243,9 +245,13 @@ function StructureTab({ token }) {
   }, [headers]);
 
   useEffect(() => { loadBuildings(); }, [loadBuildings]);
+  useEffect(() => {
+    fetch(`${API}/api/rahaza/locations`, { headers }).then(r => (r.ok ? r.json() : []))
+      .then(d => setLocations(Array.isArray(d) ? d : [])).catch(() => setLocations([]));
+  }, [headers]);
 
   function openBldgModal(data = null) { setForm(data || { code: '', name: '', address: '' }); setModal({ type: 'building', data }); }
-  function openZoneModal(data = null) { setForm(data || { code: '', name: '', zone_type: 'rm', building_id: selectedBldg }); setModal({ type: 'zone', data }); }
+  function openZoneModal(data = null) { setForm(data ? { ...data, location_id: data.location_id || '' } : { code: '', name: '', zone_type: 'rm', building_id: selectedBldg, location_id: '' }); setModal({ type: 'zone', data }); }
   function openRackModal(data = null) { setForm(data || { code: '', name: '', zone_id: selectedZone, num_shelves: 4, slots_per_shelf: 6, capacity_per_slot: 0, capacity_unit: '' }); setModal({ type: 'rack', data }); }
 
   async function handleSave() {
@@ -366,6 +372,9 @@ function StructureTab({ token }) {
                 </div>
                 <Badge cls={ZONE_TYPE_COLORS[z.zone_type] || ZONE_TYPE_COLORS.general}>{ZONE_TYPE_LABELS[z.zone_type]}</Badge>
                 <div className="text-xs text-muted-foreground mt-2">{z.rack_count} rak</div>
+                <div className={`text-xs mt-1 ${z.location_id ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}`} data-testid="zone-location">
+                  {z.location_id ? `Lokasi: ${z.location_code || ''} ${z.location_name || ''}` : 'Belum ditautkan ke lokasi gudang (opname tidak menjangkau rak zona ini)'}
+                </div>
               </div>
             ))}
           </div>
@@ -442,6 +451,13 @@ function StructureTab({ token }) {
                   <select value={form.zone_type||'general'} onChange={e => setForm(f => ({...f, zone_type: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
                     <option value="rm">Bahan Baku (RM)</option><option value="fg">Produk Jadi (FG)</option><option value="wip">Work-in-Progress</option><option value="transit">Transit</option><option value="general">Umum</option>
                   </select>
+                </div>
+                <div><label className="block text-xs mb-1.5">Lokasi Gudang (untuk opname)</label>
+                  <select data-testid="zone-location-select" value={form.location_id||''} onChange={e => setForm(f => ({...f, location_id: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
+                    <option value="">— belum ditautkan —</option>
+                    {locations.map(l => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
+                  </select>
+                  <p className="text-[11px] text-muted-foreground mt-1">Rak & bin zona ini ikut dihitung saat opname lokasi yang dipilih.</p>
                 </div>
               </>}
               {modal.type === 'rack' && <>

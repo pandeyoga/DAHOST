@@ -130,7 +130,9 @@ MODULES: list[dict] = [
        {"view": ["cmt.view", "fin.ap.view"], "manage": ["cmt.belanja.manage"], "approve": ["cmt.approve"]}),
     _m("production", "prod_sewing_cost", "Biaya Jahit", ["prod-sewing-cost"], ["/api/production/sewing-cost"], _CRUD,
        {"view": ["hpp.view"], "manage": ["hpp.manage"]}),
-    _m("production", "prod_material_req", "Kebutuhan & Retur Material", ["prod-material-requirements"],
+    # 2026-11-02 (K10): + menu "Retur Material" (`prod-material-returns`, dipasang lagi).
+    _m("production", "prod_material_req", "Kebutuhan & Retur Material",
+       ["prod-material-requirements", "prod-material-returns"],
        ["/api/rahaza/material-requirements", "/api/production/material-returns"], _ALL,
        {"view": ["bom.view"], "approve": ["inventory.approve"]}),
     _m("production", "prod_analytics", "Analitik & Estimasi AI Produksi", ["prod-analytics-hub", "prod-ai-insights"],
@@ -173,6 +175,11 @@ MODULES: list[dict] = [
         "approve": ["proc.match.approve"]}),
     _m("procurement", "proc_shopping_list", "Belanja Mingguan", ["wh-shopping-list"], ["/api/rahaza/shopping-list"],
        ("view", "create", "export"), {"view": ["inv.stock.view"], "create": ["proc.pr.manage"]}),
+    # 2026-11-02 (K11): Retur Pembelian (RTP) — dokumen milik Pengadaan. Ditulis juga dari Karantina QC
+    #   (Gudang: "Buat Retur Pembelian") dan di-refund dari layar Nota Debit (Keuangan) → ALSO_PORTALS.
+    _m("procurement", "proc_purchase_returns", "Retur Pembelian", ["proc-purchase-returns"],
+       ["/api/rahaza/purchase-returns"], _ALL,
+       {"view": ["proc.po.view"], "manage": ["proc.po.manage"], "approve": ["proc.po.approve"]}),
 
     # ── GUDANG ──────────────────────────────────────────────────────────────
     _m("warehouse", "wh_dashboard", "Dashboard, Alert & Reorder", ["warehouse-dashboard", "warehouse-smart"],
@@ -211,6 +218,9 @@ MODULES: list[dict] = [
        ["/api/wms/delivery-notes", "/api/wms/cmt-dispatches"], _ALL,
        {"view": ["shipment.view"], "manage": ["shipment.manage"], "approve": ["shipment.dispatch"]}),
     _m("warehouse", "wh_returns", "Retur Fisik", ["wh-returns"], ["/api/wh/returns"], _ALL,
+       {"view": ["warehouse.view"], "manage": ["warehouse.manage"], "approve": ["warehouse.approve"]}),
+    # 2026-11-02 (K15): Scan Keluar Penjualan marketplace (lembar harian, stok + HPP per scan).
+    _m("warehouse", "wh_scan_out", "Scan Keluar Penjualan", ["wh-scan-out"], ["/api/wh/scan-out"], _ALL,
        {"view": ["warehouse.view"], "manage": ["warehouse.manage"], "approve": ["warehouse.approve"]}),
     _m("warehouse", "wh_sku_bridge", "Jembatan SKU", ["sku-bridge"], ["/api/sku-bridge"], _CRUD),
     _m("warehouse", "wh_tools", "Barcode, Struktur Gudang & Satuan", ["wh-barcode", "wh-structure", "wh-units"],
@@ -255,6 +265,9 @@ MODULES: list[dict] = [
        {"view": ["finance.view"], "manage": ["finance.manage"]}),
     _m("finance", "fin_ap", "Aging Hutang (AP)", ["fin-ap-aging"], ["/api/rahaza/ap-aging"], _VE,
        {"view": ["fin.ap.view"]}),
+    # 2026-11-02 (K11): Nota Debit pemasok (atas Retur Pembelian) diterbitkan Keuangan.
+    _m("finance", "fin_debit_notes", "Nota Debit Pemasok", ["fin-debit-notes"], ["/api/rahaza/debit-notes"],
+       ("view", "create", "export"), {"view": ["fin.ap.view"], "create": ["fin.ap.manage"]}),
     _m("finance", "fin_cash", "Kas & Bank, Prediksi Kas", ["fin-cash", "fin-ai-cashflow"],
        ["/api/rahaza/cash-accounts", "/api/rahaza/cash-movements", "/api/finance/ai-cashflow"], _ALL,
        {"view": ["fin.cash.view", "fin.payment.view"], "manage": ["fin.cash.manage", "fin.payment.manage"],
@@ -466,6 +479,11 @@ ALSO_PORTALS = {
     #   `prod_cmt_billing` + "maklon" supaya aksi tulisnya tidak ditolak gerbang.
     # 2026-11-02 (K34/K25): Keuangan menyetujui pembatalan run gaji & membayar gaji/BPJS.
     "hr_payroll": ["finance"],
+    # 2026-11-02 (K11): Retur Pembelian dibuat dari Karantina QC (Gudang) dan refund-nya dicatat dari
+    #   layar Nota Debit (Keuangan).
+    "proc_purchase_returns": ["warehouse", "finance"],
+    # 2026-11-02 (K10): gudang menerima Retur Material (menu pintasan di Portal Gudang).
+    "prod_material_req": ["warehouse"],
 }
 for _mod in MODULES:
     _mod["also_portals"] = ALSO_PORTALS.get(_mod["id"], [])

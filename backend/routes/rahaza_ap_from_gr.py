@@ -27,6 +27,7 @@ from database import get_db
 from auth import serialize_doc, log_activity
 from utils.counters import gen_prefixed_number
 from routes.rahaza_posting_profiles import get_mapping
+from core import purchase_returns as pr  # 2026-11-02 (K11): qty susulan & nota debit dibaca tagihan
 import uuid
 import logging
 
@@ -34,6 +35,16 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/rahaza', tags=['rahaza-ap-from-gr'])
 
 VARIANCE_TOLERANCE_PCT = 0.5  # ± 0.5% considered matched
+BILLABLE_GR_STATUSES = ('received', 'completed', 'partial_received')
+# GR yang MUNGKIN masih punya baris belum ditagih: belum pernah difaktur, ATAU punya penerimaan
+# susulan / baris yang belum difaktur (penanda `has_unbilled_lines`).
+_UNBILLED_OR = [
+    {'ap_invoice_id': {'$exists': False}},
+    {'ap_invoice_id': None},
+    {'ap_invoice_id': ''},
+    {'has_unbilled_lines': True},
+]
+RTP_COUNTED = ('awaiting_settlement', 'settled')
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PERAN KEUANGAN — SSOT, JANGAN DITULIS ULANG DI TEMPAT LAIN
@@ -125,12 +136,8 @@ async def grs_available_for_invoice(
     await _require_finance_view(request)
     db = get_db()
     q: Dict[str, Any] = {
-        'status': {'$in': ['received', 'completed', 'partial_received']},
-        '$or': [
-            {'ap_invoice_id': {'$exists': False}},
-            {'ap_invoice_id': None},
-            {'ap_invoice_id': ''},
-        ]
+        'status': {'$in': list(BILLABLE_GR_STATUSES)},
+        '$or': _UNBILLED_OR,
     }
     if vendor_name:
         q['supplier_name'] = {'$regex': vendor_name, '$options': 'i'}
@@ -148,12 +155,13 @@ async def grs_available_for_invoice(
             continue
         total_rejected = sum(float(i.get('rejected_qty', 0) or 0) for i in items)
         total_net = total_received - total_rejected
-        # Compute receivable amount = sum(received_qty * unit_cost) for net items
-        receivable_amount = sum(
-            float(i.get('received_qty', 0) or 0) * float(i.get('unit_cost') or i.get('unit_price') or 0)
-            - float(i.get('rejected_qty', 0) or 0) * float(i.get('unit_cost') or i.get('unit_price') or 0)
-            for i in items
-        )
+        # 2026-11-02 (K11): yang bisa ditagih = qty bersih belum ditagih − potongan nota debit +
+        # penerimaan susulan (lepas reject / pengganti) yang belum ditagih — SATU rumus
+        # `core.purchase_returns.gr_billable_lines` (dipakai juga saat faktur dibuat).
+        billable = pr.gr_billable_lines(gr)
+        if not billable:
+            continue
+        receivable_amount = sum(b['amount'] for b in billable)
         out.append({
             'id': gr['id'],
             'receipt_number': gr.get('receipt_number'),
@@ -170,8 +178,52 @@ async def grs_available_for_invoice(
             'total_rejected': total_rejected,
             'total_net': total_net,
             'receivable_amount': round(receivable_amount, 2),
+            'billable_qty': round(sum(b['qty'] for b in billable), 4),
+            'late_billable_qty': round(sum(b['qty'] for b in billable if b['type'] == 'late'), 4),
+            'already_invoiced': bool(gr.get('ap_invoice_id')),
+            'billable_lines': billable,
         })
     return {'total': len(out), 'items': serialize_doc(out)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-11-02 (K11): faktur MANUAL untuk pemasok yang masih punya GR belum ditagih
+# ─────────────────────────────────────────────────────────────────────────────
+async def uninvoiced_gr_warning(db, *, vendor_name: Optional[str] = None,
+                                supplier_id: Optional[str] = None) -> Dict[str, Any]:
+    """Peringatan "gunakan Tagihan dari GR" untuk faktur manual (dipakai layar/endpoint faktur manual).
+
+    Faktur manual didebit ke beban/akun pilihan, BUKAN GRNI — bila pemasok yang sama punya GR yang
+    belum ditagih, GRNI tidak pernah tertutup dan barang yang sama bisa ditagih dua kali."""
+    if not vendor_name and not supplier_id:
+        return {'warning': None, 'grs': [], 'amount': 0.0}
+    q: Dict[str, Any] = {'status': {'$in': list(BILLABLE_GR_STATUSES)}, '$or': _UNBILLED_OR}
+    if supplier_id:
+        q['supplier_id'] = supplier_id
+    else:
+        import re as _re
+        q['supplier_name'] = {'$regex': f'^{_re.escape(vendor_name.strip())}$', '$options': 'i'}
+    rows = []
+    async for gr in db.warehouse_receiving.find(q, {'_id': 0}):
+        billable = pr.gr_billable_lines(gr)
+        if billable:
+            rows.append({'id': gr['id'], 'receipt_number': gr.get('receipt_number'), 'po_number': gr.get('po_number'),
+                         'amount': round(sum(b['amount'] for b in billable), 2)})
+    amount = round(sum(r['amount'] for r in rows), 2)
+    warning = None
+    if rows:
+        warning = (f"Pemasok ini masih punya {len(rows)} penerimaan (GR) yang belum ditagih senilai "
+                   f"Rp {amount:,.0f} ({', '.join(r['receipt_number'] or '?' for r in rows[:5])}). "
+                   "Gunakan Tagihan dari GR — faktur manual tidak menutup Hutang Belum Ditagih (GRNI) "
+                   "dan barang yang sama bisa tertagih dua kali.")
+    return {'warning': warning, 'grs': rows, 'amount': amount}
+
+
+@router.get('/grs/uninvoiced-warning')
+async def get_uninvoiced_gr_warning(request: Request, vendor_name: Optional[str] = None,
+                                    supplier_id: Optional[str] = None):
+    await _require_finance_view(request)
+    return serialize_doc(await uninvoiced_gr_warning(get_db(), vendor_name=vendor_name, supplier_id=supplier_id))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -224,10 +276,13 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
     po_ids = set()
     po_numbers = set()
     for gr in grs:
-        if gr.get('status') not in ('received', 'completed', 'partial_received'):
+        if gr.get('status') not in BILLABLE_GR_STATUSES:
             raise HTTPException(400, f"GR {gr.get('receipt_number')} status '{gr.get('status')}' belum siap di-invoice.")
-        if gr.get('ap_invoice_id'):
-            raise HTTPException(400, f"GR {gr.get('receipt_number')} sudah memiliki AP Invoice {gr.get('ap_invoice_number')}.")
+        # 2026-11-02 (K11): GR yang sudah difaktur boleh ditagih lagi HANYA untuk baris yang belum
+        # ditagih (penerimaan susulan: lepas reject, pengganti tukar barang, musnah ditanggung DA).
+        if not pr.gr_billable_lines(gr):
+            raise HTTPException(400, f"GR {gr.get('receipt_number')} sudah ditagih seluruhnya"
+                                     f"{' (AP ' + str(gr.get('ap_invoice_number')) + ')' if gr.get('ap_invoice_id') else ''}.")
         gr_vendor = (gr.get('supplier_name') or '').strip()
         if not gr_vendor:
             raise HTTPException(400, f"GR {gr.get('receipt_number')} tidak ada supplier_name.")
@@ -247,35 +302,40 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
     override_map = {it.gr_item_id: it for it in (payload.items_override or [])}
 
     # Build invoice items
+    # 2026-11-02 (K11): baris = `pr.gr_billable_lines` — qty bersih belum ditagih dikurangi qty/nilai
+    # yang sudah diselesaikan nota debit, ditambah penerimaan susulan yang belum ditagih (baris
+    # tersendiri pada harganya). Kunci override: `gr_item_id` (baris dasar) atau
+    # `<gr_item_id>:late:<id>` (penerimaan susulan).
     inv_items: List[Dict[str, Any]] = []
     for gr in grs:
-        for li in (gr.get('items') or []):
-            li_id = li.get('id') or li.get('po_item_id')
-            received_qty = float(li.get('received_qty', 0) or 0)
-            rejected_qty = float(li.get('rejected_qty', 0) or 0)
-            net_qty = received_qty - rejected_qty
-            unit_cost = float(li.get('unit_cost') or li.get('unit_price') or 0)  # GR manual simpan unit_price
-
+        by_id = {pr.line_id_of(li): li for li in (gr.get('items') or [])}
+        for b in pr.gr_billable_lines(gr):
+            li = by_id.get(b['gr_item_id']) or {}
+            li_id = b['gr_item_id']
+            unit_cost = b['price']   # harga GR bersih (setelah potongan nota debit) = dasar GRNI
             if override_map:
-                # Only invoice items in override map
-                if li_id not in override_map:
+                if b['key'] not in override_map:
                     continue
-                ov = override_map[li_id]
+                ov = override_map[b['key']]
                 inv_qty = ov.invoiced_qty
                 inv_price = ov.unit_price if ov.unit_price is not None else unit_cost
                 inv_desc = ov.description or li.get('material_name') or li.get('product_name') or ''
             else:
-                if net_qty <= 0:
+                if b['qty'] <= 0:
                     continue
-                inv_qty = net_qty
+                inv_qty = b['qty']
                 inv_price = unit_cost
                 inv_desc = li.get('material_name') or li.get('product_name') or 'Item'
+                if b['type'] == 'late':
+                    inv_desc = f"{inv_desc} — penerimaan susulan ({b.get('source') or '-'})"
 
             amt = round(inv_qty * inv_price, 2)
             inv_items.append({
                 'id': _uid(),
                 'gr_id': gr['id'],
                 'gr_number': gr.get('receipt_number'),
+                'gr_line_type': b['type'],
+                'late_id': b.get('late_id'),
                 'gr_item_id': li_id,
                 'po_item_id': li.get('po_item_id'),
                 'material_id': li.get('material_id'),
@@ -375,16 +435,35 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
     }
     await db.rahaza_ap_invoices.insert_one(doc)
 
-    # Stamp ap_invoice_id on all GRs
-    await db.warehouse_receiving.update_many(
-        {'id': {'$in': payload.gr_ids}},
-        {'$set': {
-            'ap_invoice_id': doc['id'],
-            'ap_invoice_number': invoice_number,
-            'invoiced_at': _now(),
-            'updated_at': _now(),
-        }}
-    )
+    # Stamp ap_invoice_id on all GRs — 2026-11-02 (K11): tanda per baris (dasar & susulan) supaya
+    # baris yang belum ikut faktur ini tetap bisa ditagih; `ap_invoice_id` dokumen tetap diisi
+    # (dibaca layar lain) dan `ap_invoice_ids` menyimpan semua faktur GR ini.
+    for gr in grs:
+        included = {(it['gr_item_id'], it['gr_line_type'], it.get('late_id'))
+                    for it in inv_items if it['gr_id'] == gr['id']}
+        items = gr.get('items') or []
+        for li in items:
+            lid = pr.line_id_of(li)
+            if (lid, 'base', None) in included:
+                li['base_ap_invoice_id'] = doc['id']
+            elif not pr.base_billed(gr, li):
+                li['base_ap_invoice_id'] = None     # belum ditagih — tetap muncul di "siap ditagih"
+            for lr in li.get('late_receipts') or []:
+                if (lid, 'late', lr.get('id')) in included:
+                    lr['ap_invoice_id'] = doc['id']
+                    lr['ap_invoice_number'] = invoice_number
+        after = {**gr, 'items': items, 'ap_invoice_id': doc['id']}
+        await db.warehouse_receiving.update_one({'id': gr['id']}, {
+            '$set': {
+                'items': items,
+                'ap_invoice_id': doc['id'],
+                'ap_invoice_number': invoice_number,
+                'invoiced_at': _now(),
+                'has_unbilled_lines': bool(pr.gr_billable_lines(after)),
+                'updated_at': _now(),
+            },
+            '$addToSet': {'ap_invoice_ids': doc['id']},
+        })
 
     await log_activity(
         user['id'], user.get('name', ''),
@@ -451,13 +530,18 @@ async def three_way_match_dashboard(
         gr_count = len(grs)
         total_received_qty = 0.0
         total_received_value = 0.0
+        total_late_qty = 0.0
         for gr in grs:
             for li in (gr.get('items') or []):
-                rq = float(li.get('received_qty', 0) or 0)
-                rj = float(li.get('rejected_qty', 0) or 0)
-                uc = float(li.get('unit_cost') or li.get('unit_price') or 0)
-                total_received_qty += rq - rj
-                total_received_value += (rq - rj) * uc
+                # 2026-11-02 (K11): dasar tagihan = bersih + penerimaan susulan − qty/nilai yang
+                # diselesaikan nota debit sebelum faktur (SATU rumus core.purchase_returns.line_values)
+                v = pr.line_values(li)
+                total_received_qty += v['net_qty'] + v['late_qty'] - v['deducted_qty']
+                total_received_value += v['received_value']
+                total_late_qty += v['late_qty']
+        returned_qty = 0.0
+        async for rtp in db[pr.RTP_COLL].find({'po_id': po_id, 'status': {'$in': list(RTP_COUNTED)}}, {'_id': 0}):
+            returned_qty += sum(float(ln.get('qty') or 0) for ln in rtp.get('lines') or [])
 
         # AP Invoices linked
         invoices = await db.rahaza_ap_invoices.find(
@@ -514,6 +598,8 @@ async def three_way_match_dashboard(
             'gr_count': gr_count,
             'total_received_qty': round(total_received_qty, 4),
             'total_received_value': round(total_received_value, 2),
+            'total_late_qty': round(total_late_qty, 4),        # 2026-11-02 (K11) penerimaan susulan
+            'total_returned_qty': round(returned_qty, 4),      # 2026-11-02 (K11) kolom "diretur"
             'invoice_count': invoice_count,
             'total_invoiced_qty': round(total_invoiced_qty, 4),
             'total_invoiced_value': round(total_invoiced_value, 2),
@@ -589,6 +675,9 @@ async def three_way_match_detail(po_id: str, request: Request):
             'received_qty': 0,
             'rejected_qty': 0,
             'net_qty': 0,
+            'late_qty': 0,        # 2026-11-02 (K11): penerimaan susulan (lepas reject / pengganti)
+            'returned_qty': 0,    # 2026-11-02 (K11): qty Retur Pembelian (dikirim/selesai)
+            'deducted_qty': 0,    # qty yang diselesaikan nota debit sebelum faktur
             'received_value': 0,
             'invoiced_qty': 0,
             'invoiced_amount': 0,
@@ -613,11 +702,19 @@ async def three_way_match_detail(po_id: str, request: Request):
                 continue
             rq = float(li.get('received_qty', 0) or 0)
             rj = float(li.get('rejected_qty', 0) or 0)
-            uc = float(li.get('unit_cost', 0) or 0)
+            v = pr.line_values(li)   # 2026-11-02 (K11): harga baris SSOT + susulan − nota debit
             line_map[key]['received_qty'] += rq
             line_map[key]['rejected_qty'] += rj
-            line_map[key]['net_qty'] += rq - rj
-            line_map[key]['received_value'] += (rq - rj) * uc
+            line_map[key]['late_qty'] += v['late_qty']
+            line_map[key]['deducted_qty'] += v['deducted_qty']
+            line_map[key]['net_qty'] += v['net_qty'] + v['late_qty'] - v['deducted_qty']
+            line_map[key]['received_value'] += v['received_value']
+
+    async for rtp in db[pr.RTP_COLL].find({'po_id': po_id, 'status': {'$in': list(RTP_COUNTED)}}, {'_id': 0}):
+        for ln in rtp.get('lines') or []:
+            key = _resolve_line(ln)
+            if key:
+                line_map[key]['returned_qty'] += float(ln.get('qty') or 0)
 
     for inv in invoices:
         for li in (inv.get('items') or []):
@@ -659,3 +756,13 @@ async def three_way_match_detail(po_id: str, request: Request):
         'lines': lines,
         'tolerance_pct': VARIANCE_TOLERANCE_PCT,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-11-02 (K11): Retur Pembelian & Nota Debit — router-nya DIGABUNG ke router ini (prefix
+# /api/rahaza, satu pendaftaran di server.py), karena keduanya satu siklus hutang pemasok.
+# Diimpor di AKHIR berkas: modul itu memakai `_require_finance` dari berkas ini (impor malas).
+# ─────────────────────────────────────────────────────────────────────────────
+from routes.rahaza_purchase_returns import router as _purchase_returns_router  # noqa: E402
+
+router.include_router(_purchase_returns_router)

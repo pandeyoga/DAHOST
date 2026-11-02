@@ -1275,6 +1275,9 @@ app.include_router(cashflow_ai_router, dependencies=_DENY_EXTERNAL)
 # Blueprint §3.7 — Return & Refund Portal Gudang
 from routes.dewi_wh_returns import router as dewi_wh_returns_router
 app.include_router(dewi_wh_returns_router, dependencies=_DENY_EXTERNAL)
+# 2026-11-02 (K15) — Gudang → OUTBOUND → Scan Keluar Penjualan (scan harian, HPP WAC per lembar)
+from routes.wh_scan_out import router as wh_scan_out_router
+app.include_router(wh_scan_out_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
 # Blueprint §2.7 — CMT Packing & Stok Opname
 from routes.dewi_cmt_packing import router as dewi_cmt_packing_router

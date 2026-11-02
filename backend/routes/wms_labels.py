@@ -4,142 +4,37 @@ Generate label PDF berisi barcode Code128 untuk:
   - Single posisi: GET /api/wms/positions/{position_id}/label-pdf
   - Semua posisi dalam rak: GET /api/wms/racks/{rack_id}/labels-pdf
   - Multiple posisi by IDs: POST /api/wms/labels/batch-pdf {position_ids: [...]}
+  - Label LOKASI (2026-11-02, K9): GET /api/wms/locations/{location_id}/label-pdf,
+    GET /api/wms/locations/labels-pdf?ids=a,b (kosong = semua lokasi aktif)
 
-Layout: 3 kolom × 8 baris label per A4 (24 label/halaman),
-       ukuran ~70mm × 35mm, mirip label printer industri.
+Layout: 3 kolom × 8 baris label per A4 (24 label/halaman), 65 × 33 mm.
+
+2026-11-02 (Paket 3a): gambar label dipindah ke `core/label_render.py`
+(`draw_bin_label`, generator Code128 vektor yang sama dengan label FG/bahan/roll).
+Dulu berkas ini punya generator PNG sendiri: kode posisi 25 karakter diperkecil
+ke lebar modul ±0,18 mm (uji decode 203 dpi: 0/24 label terbaca; kini 10/24 —
+kode posisi sependek mungkin tetap disarankan, 18 karakter: 24/24).
 """
 
-import io
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from database import get_db
 from auth import require_auth, verify_download_token
-
-# ReportLab + python-barcode
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
-from barcode import Code128
-from barcode.writer import ImageWriter
-from PIL import Image as PILImage
+from core import label_render as lr
 
 router = APIRouter(prefix="/api/wms", tags=["wms-labels"])
 
 
-# ─── Layout constants (A4) ───────────────────────────────────────────────────
-PAGE_W, PAGE_H = A4   # 595 × 842 pt
-COLS = 3
-ROWS = 8
-LABEL_W = 65 * mm
-LABEL_H = 33 * mm
-MARGIN_X = (PAGE_W - COLS * LABEL_W) / 2
-MARGIN_Y = (PAGE_H - ROWS * LABEL_H) / 2
-
-
-def _make_barcode_png(value: str) -> io.BytesIO:
-    """Generate Code128 barcode as PNG bytes (in-memory)."""
-    buf = io.BytesIO()
-    writer = ImageWriter()
-    # Tweak writer options for tighter label
-    Code128(value, writer=writer).write(buf, options={
-        "module_width": 0.30,
-        "module_height": 10.0,
-        "font_size": 7,
-        "text_distance": 2.0,
-        "quiet_zone": 1.5,
-        "write_text": False,  # we draw text ourselves
-    })
-    buf.seek(0)
-    return buf
-
-
-def _draw_label(c: canvas.Canvas, x: float, y: float, position: dict):
-    """Draw one label at (x, y) bottom-left corner."""
-    barcode = position.get("barcode", "")
-    label_text = position.get("label", "")
-    bldg = position.get("building_code", "")
-    zone = position.get("zone_code", "")
-    rack = position.get("rack_code", "")
-
-    # Border (faint)
-    c.setStrokeColorRGB(0.85, 0.85, 0.85)
-    c.setLineWidth(0.4)
-    c.rect(x, y, LABEL_W, LABEL_H, stroke=1, fill=0)
-
-    # Top text: location code path
-    c.setFillColorRGB(0.2, 0.2, 0.2)
-    c.setFont("Helvetica-Bold", 8)
-    location_path = f"{bldg} / {zone} / {rack}"
-    c.drawString(x + 3 * mm, y + LABEL_H - 5 * mm, location_path)
-
-    # Sublabel
-    c.setFont("Helvetica", 7)
-    c.setFillColorRGB(0.45, 0.45, 0.45)
-    c.drawString(x + 3 * mm, y + LABEL_H - 9 * mm, label_text or "")
-
-    # Barcode image
+def _build_pdf(positions: List[dict], title: str):
+    """PDF label posisi (A4 3×8) — 400 bila ada posisi tanpa barcode yang sah."""
+    if not lr.LABELS_OK:
+        raise HTTPException(500, "Pustaka pencetak label (reportlab) tidak tersedia")
     try:
-        png_buf = _make_barcode_png(barcode)
-        img = PILImage.open(png_buf)
-        # Convert to RGB for ReportLab
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        # Resize keeping aspect ratio so it fits
-        target_w = LABEL_W - 8 * mm
-        target_h = 14 * mm
-        from reportlab.lib.utils import ImageReader
-        c.drawImage(ImageReader(img),
-                    x + 4 * mm, y + 9 * mm,
-                    width=target_w, height=target_h,
-                    preserveAspectRatio=True, anchor='c', mask='auto')
-    except Exception:
-        # Fallback: draw text-only box
-        c.setFont("Courier-Bold", 9)
-        c.setFillColorRGB(0, 0, 0)
-        c.drawString(x + 4 * mm, y + 16 * mm, "[Barcode N/A]")
-
-    # Bottom: barcode value (human-readable)
-    c.setFont("Courier", 7)
-    c.setFillColorRGB(0.1, 0.1, 0.1)
-    c.drawCentredString(x + LABEL_W / 2, y + 4 * mm, barcode)
-
-
-def _build_pdf(positions: List[dict], title: str) -> io.BytesIO:
-    """Build PDF with labels arranged on A4. Returns BytesIO."""
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=A4)
-    c.setTitle(title)
-
-    per_page = COLS * ROWS
-    total = len(positions)
-
-    for i, pos in enumerate(positions):
-        col = i % COLS
-        row = (i // COLS) % ROWS
-        x = MARGIN_X + col * LABEL_W
-        # Top-down: row 0 is top, so y is computed from top
-        y = PAGE_H - MARGIN_Y - (row + 1) * LABEL_H
-        _draw_label(c, x, y, pos)
-
-        # Page break
-        if (i + 1) % per_page == 0 and (i + 1) < total:
-            # Footer
-            c.setFont("Helvetica", 7)
-            c.setFillColorRGB(0.5, 0.5, 0.5)
-            c.drawString(MARGIN_X, MARGIN_Y / 2, f"{title}  ·  Page {(i + 1) // per_page}")
-            c.showPage()
-
-    # Final page footer
-    c.setFont("Helvetica", 7)
-    c.setFillColorRGB(0.5, 0.5, 0.5)
-    last_page = (total - 1) // per_page + 1 if total else 1
-    c.drawString(MARGIN_X, MARGIN_Y / 2, f"{title}  ·  Page {last_page}  ·  {total} label")
-
-    c.save()
-    buf.seek(0)
-    return buf
+        return lr.grid_labels_pdf("bin", positions, title=title, footer=True)
+    except lr.LabelCodeError as e:
+        raise HTTPException(400, str(e))
 
 
 async def _auth_or_token(request: Request, token: Optional[str] = None):
@@ -191,6 +86,45 @@ async def rack_labels_pdf(rack_id: str, request: Request, token: Optional[str] =
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="labels_rack_{rack.get("code","")}.pdf"'},
     )
+
+
+# ── LABEL LOKASI (2026-11-02, K9) ────────────────────────────────────────────
+# Sesi Opname per lokasi: petugas men-scan label LOKASI (Code128 = `rahaza_locations.code`) untuk
+# konteks "lantai / belum dirak". Resolver bersama (`core.scan_resolver.resolve_bin`) sudah
+# mengenali kode lokasi. Digambar generator label bin yang sama (`core.label_render`, ukuran
+# 65 × 33 mm): baris atas "LOKASI · peran", baris kedua nama lokasi.
+def location_label_doc(loc: dict) -> dict:
+    role = loc.get("storage_role") or loc.get("type") or ""
+    return {"id": loc.get("id"), "barcode": loc.get("code") or "", "building_code": "LOKASI",
+            "zone_code": str(role).upper() if role else "", "label": loc.get("name") or "",
+            "name": loc.get("name") or loc.get("code")}
+
+
+@router.get("/locations/{location_id}/label-pdf")
+async def location_label_pdf(location_id: str, request: Request, token: Optional[str] = Query(None)):
+    """Label satu lokasi (A4, posisi kiri-atas) — dicetak berlembar di printer kantor."""
+    await _auth_or_token(request, token)
+    db = get_db()
+    loc = await db.rahaza_locations.find_one({"id": location_id}, {"_id": 0})
+    if not loc:
+        raise HTTPException(404, "Lokasi tidak ditemukan")
+    pdf = _build_pdf([location_label_doc(loc)], f"Label Lokasi {loc.get('code')}")
+    return StreamingResponse(pdf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'inline; filename="label_lokasi_{loc.get("code","")}.pdf"'})
+
+
+@router.get("/locations/labels-pdf")
+async def locations_labels_pdf(request: Request, ids: Optional[str] = Query(None), token: Optional[str] = Query(None)):
+    """Label banyak lokasi (`ids` dipisah koma; kosong = semua lokasi aktif)."""
+    await _auth_or_token(request, token)
+    db = get_db()
+    q = {"id": {"$in": [i for i in (ids or "").split(",") if i]}} if ids else {"active": {"$ne": False}}
+    locs = await db.rahaza_locations.find(q, {"_id": 0}).sort("code", 1).to_list(500)
+    if not locs:
+        raise HTTPException(404, "Tidak ada lokasi cocok")
+    pdf = _build_pdf([location_label_doc(x) for x in locs], f"Label Lokasi ({len(locs)})")
+    return StreamingResponse(pdf, media_type="application/pdf",
+                             headers={"Content-Disposition": 'inline; filename="label_lokasi.pdf"'})
 
 
 class BatchLabelsIn(BaseModel):

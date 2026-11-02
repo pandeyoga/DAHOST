@@ -356,6 +356,11 @@ async def get_config(key: str, user: dict = Depends(require_auth)):
 @router.put('/{key}')
 async def update_config(key: str, payload: ConfigUpdate, user: dict = Depends(require_auth)):
     db = get_db()
+    # 2026-11-02 (K15): Langkah 2 (potong stok dari impor) tidak boleh menyala bersama Scan Keluar.
+    from core.scan_out import langkah2_guard
+    blocked = langkah2_guard(key, payload.value)
+    if blocked:
+        raise HTTPException(409, blocked)
     existing = await db.dewi_system_config.find_one({'key': key})
     if not existing:
         raise HTTPException(404, f'Config {key} tidak ditemukan')
@@ -406,7 +411,11 @@ async def bulk_update(payload: BulkUpdateIn, user: dict = Depends(require_auth))
             {'key': {'$in': keys_list}}, {'_id': 0}
         ):
             existing_configs_map[d['key']] = d
+    from core.scan_out import langkah2_guard  # 2026-11-02 (K15)
     for key, value in payload.model_dump().items():
+        if langkah2_guard(key, value):
+            errors.append(f'{key}: {langkah2_guard(key, value)}')
+            continue
         existing = existing_configs_map.get(key)
         if not existing:
             errors.append(f'{key}: tidak ditemukan')

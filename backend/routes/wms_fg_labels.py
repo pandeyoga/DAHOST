@@ -77,7 +77,7 @@ async def fg_label_pdf(fg_id: str, request: Request, token: Optional[str] = Quer
         raise HTTPException(404, f"Barang jadi tidak ditemukan: {fg_id}")
     if not lr.LABELS_OK:
         raise HTTPException(500, "Pustaka pencetak label tidak tersedia")
-    pdf = lr.single_label_pdf("fg", fg)
+    pdf = _pdf_or_400(lr.single_label_pdf, "fg", fg)
     fname = f"fg-{lr.code_of(fg)}.pdf"
     return StreamingResponse(pdf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{fname}"'})
@@ -101,19 +101,40 @@ async def batch_fg_labels_pdf(data: BatchFGLabelsIn, request: Request):
     fg_items = await _find_fg_many(db, data.fg_ids)
     if not fg_items:
         raise HTTPException(404, "Tidak ada barang jadi ditemukan")
-    pdf = lr.grid_labels_pdf("fg", fg_items, title=f"FG Labels ({len(fg_items)})")
+    pdf = _pdf_or_400(lr.grid_labels_pdf, "fg", fg_items, title=f"FG Labels ({len(fg_items)})")
     return StreamingResponse(pdf, media_type="application/pdf", headers={
         "Content-Disposition": f'attachment; filename="fg_labels_batch_{len(fg_items)}.pdf"'})
 
 
 @router.post("/label-pdf/custom")
 async def custom_fg_label_pdf(fg: dict, request: Request):
-    """Label dari data bebas (ad-hoc) — WAJIB memuat `sku`."""
+    """Label dengan teks tambahan ad-hoc (mis. `batch_number`) — `sku` WAJIB ada di master FG.
+
+    2026-11-02 (Paket 3a): dulu SKU apa pun diterima (uji: `NGAWUR-123` → 200 + PDF),
+    padahal aturan menu Buat Barcode adalah "nilai barcode = kode master". Label
+    yang SKU-nya dikarang akan discan menjadi barang yang tidak ada. Sekarang SKU
+    di-resolve lewat `core.scan_resolver` (tanpa beda huruf besar/kecil) dan kode,
+    nama, warna, ukuran diambil dari master; field bebas hanya pelengkap teks.
+    """
     await require_auth(request)
     if not fg.get("sku"):
         raise HTTPException(400, "Field 'sku' wajib diisi")
     if not lr.LABELS_OK:
         raise HTTPException(500, "Pustaka pencetak label tidak tersedia")
-    pdf = lr.single_label_pdf("fg", fg)
+    from core import scan_resolver
+    hit = await scan_resolver.resolve_fg(get_db(), scan_resolver.normalize_code(fg["sku"]))
+    if not hit:
+        raise HTTPException(400, f"SKU '{fg['sku']}' tidak ada di master Barang Jadi — label tidak "
+                                 "dicetak (barcode harus bisa discan menjadi barang yang ada).")
+    master = hit["_doc"]
+    doc = {**fg, **{k: v for k, v in master.items() if v not in (None, "")}}
+    pdf = _pdf_or_400(lr.single_label_pdf, "fg", doc)
     return StreamingResponse(pdf, media_type="application/pdf", headers={
-        "Content-Disposition": f'attachment; filename="fg-custom-{fg["sku"]}.pdf"'})
+        "Content-Disposition": f'attachment; filename="fg-custom-{lr.code_of(doc)}.pdf"'})
+
+
+def _pdf_or_400(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except lr.LabelCodeError as e:
+        raise HTTPException(400, str(e))

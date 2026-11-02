@@ -1494,6 +1494,14 @@ INVENTORY_ROLE_BY_KIND = {
     "inventory_adjust":  {"bahan": "inventory_rm", "aksesoris": "inventory_accessory", "fg": "inventory_fg"},
     "inventory_scrap":   {"bahan": "credit_inventory_rm", "aksesoris": "credit_inventory_accessory",
                           "fg": "credit_inventory_fg"},
+    # 2026-11-02 (K11): Retur Pembelian & Nota Debit — persediaan bahan / aksesoris (debit atau kredit)
+    "purchase_return":   {"bahan": "inventory_rm", "aksesoris": "inventory_accessory"},
+}
+# 2026-11-02 (K11): peran akun non-persediaan Retur Pembelian & Nota Debit (profil `purchase_return`).
+# Kunci = peran logis di `core.purchase_returns.plan_*`; nilai = peran profil. Dibaca coa_bindings.
+PURCHASE_RETURN_ROLES = {
+    "purchase_return": {"klaim": "supplier_claim", "grni": "grni", "hutang": "ap",
+                        "selisih_harga": "price_variance", "scrap": "scrap_expense"},
 }
 INVENTORY_KIND_LABELS = {"bahan": "bahan baku", "aksesoris": "aksesoris", "fg": "barang jadi"}
 
@@ -1778,6 +1786,120 @@ async def post_inventory_adjust(db, movement: dict, user: dict) -> dict:
     result = await _create_posted_je(db, je_date, memo, event_type, source_ref, lines, user)
     await _save_source_posting_result(db, "rahaza_material_movements", mv_id, result)
     return result
+
+
+def _je_date_of(value) -> date:
+    try:
+        return datetime.fromisoformat(str(value or _now()).replace("Z", "+00:00")).date()
+    except Exception:
+        return date.today()
+
+
+async def post_inventory_revaluation(db, reval: dict, user: dict) -> dict:
+    """2026-11-02 (K12): Set HPP = REVALUASI persediaan bernilai audit.
+
+    Selisih nilai stok = qty bernilai × (HPP baru − HPP lama). Naik ⇒ Dr Persediaan (per jenis:
+    bahan 1-1401 · aksesoris 1-1402 · FG 1-1404) / Cr Selisih Persediaan (5-1950); turun ⇒ sebaliknya.
+    Akun memakai profil `inventory_adjust` (peran yang sama dengan opname/penyesuaian — tidak ada
+    profil kembar). Idempoten lewat `source_ref = reval:<id>`."""
+    rid = reval.get("id")
+    source_ref = f"reval:{rid}"
+    existing = await _find_existing_je(db, "inventory_revaluation", source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
+    mapping = await get_mapping(db, "inventory_adjust")
+    inv_code, inv_err = inventory_account(mapping, "inventory_adjust", reval.get("kind") or "bahan")
+    adj_code = mapping.get("adjustment_expense")
+    if not inv_code or not adj_code:
+        return {"ok": False, "error": inv_err or "Mapping 'inventory_adjust.adjustment_expense' belum diisi."}
+    amount = round(float(reval.get("delta_value") or 0), 2)
+    if abs(amount) < 0.005:
+        return {"ok": True, "skipped": True, "reason": "selisih nilai 0 — tidak ada jurnal"}
+    memo = (f"Revaluasi HPP {reval.get('material_code') or reval.get('material_id')} · "
+            f"{reval.get('qty'):g} × ({reval.get('new_unit_cost'):g} − {reval.get('old_unit_cost'):g}) · "
+            f"{reval.get('reason') or ''}").strip()
+    a = abs(amount)
+    if amount > 0:
+        lines = [{"account_code": inv_code, "debit": a, "credit": 0, "description": memo},
+                 {"account_code": adj_code, "debit": 0, "credit": a, "description": memo}]
+    else:
+        lines = [{"account_code": adj_code, "debit": a, "credit": 0, "description": memo},
+                 {"account_code": inv_code, "debit": 0, "credit": a, "description": memo}]
+    return await _create_posted_je(db, _je_date_of(reval.get("created_at")), memo, "inventory_revaluation",
+                                   source_ref, lines, user)
+
+
+async def post_material_return(db, ret: dict, lines_in: list, user: dict) -> dict:
+    """2026-11-02 (K10): Retur Material dari produksi/CMT kembali ke gudang = BALIKAN Material Issue.
+
+    Dr Persediaan per jenis (bahan 1-1401 · aksesoris 1-1402) / Cr WIP 1-1403 — atau Cr biaya proyek
+    maklon bila MI-nya maklon (`cost_target='maklon'`) — sebesar qty × HPP SAAT KELUAR
+    (`unit_cost_applied` baris MI), bukan HPP hari ini. Akun = profil `inventory_issue` (peran yang
+    sama dengan jurnal keluarnya). `lines_in`: [{material_id, qty, unit_cost, kind, cost_target}]."""
+    rid = ret.get("id")
+    source_ref = f"pmr:{rid}"
+    existing = await _find_existing_je(db, "inventory_issue_return", source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
+    mapping = await get_mapping(db, "inventory_issue")
+    debit_by: dict = {}
+    credit_by: dict = {}
+    for ln in lines_in:
+        amt = round(float(ln.get("qty") or 0) * float(ln.get("unit_cost") or 0), 2)
+        if amt <= 0:
+            continue
+        inv_code, inv_err = inventory_account(mapping, "inventory_issue", ln.get("kind") or "bahan")
+        cr_role = "debit_maklon_material" if ln.get("cost_target") == "maklon" else "debit_wip"
+        cr_code = mapping.get(cr_role)
+        if not inv_code or not cr_code:
+            return {"ok": False, "error": inv_err or f"Mapping 'inventory_issue.{cr_role}' belum diisi."}
+        debit_by[inv_code] = debit_by.get(inv_code, 0.0) + amt
+        credit_by[cr_code] = credit_by.get(cr_code, 0.0) + amt
+    if not debit_by:
+        return {"ok": True, "skipped": True, "reason": "nilai retur 0 (HPP keluar 0) — tidak ada jurnal"}
+    memo = f"Retur Material {ret.get('ref_no') or rid} ← MI {ret.get('mi_number') or '-'}"
+    lines = [{"account_code": c, "debit": round(v, 2), "credit": 0, "description": memo} for c, v in debit_by.items()]
+    lines += [{"account_code": c, "debit": 0, "credit": round(v, 2), "description": memo} for c, v in credit_by.items()]
+    return await _create_posted_je(db, _je_date_of(ret.get("received_at")), memo, "inventory_issue_return",
+                                   source_ref, lines, user)
+
+
+async def post_purchase_return(db, *, source_ref: str, memo: str, lines: list, user: dict,
+                               je_date=None, ap_code: Optional[str] = None,
+                               cash_code: Optional[str] = None) -> dict:
+    """2026-11-02 (K11): jurnal Retur Pembelian / Nota Debit dari baris ber-PERAN.
+
+    `lines`: [{role, debit, credit, kind?, description?}] — role ∈ inventory (per `kind`),
+    supplier_claim, grni, ap, price_variance, scrap_expense, cash. Kode akun dari profil
+    `purchase_return`; `ap` boleh diganti akun hutang faktur asal (`ap_code`, sub-ledger pemasok),
+    `cash` = akun GL rekening kas yang dipilih. Peran kosong ⇒ DITOLAK (tanpa kode cadangan).
+    Idempoten lewat `source_module=purchase_return` + `source_ref`."""
+    existing = await _find_existing_je(db, "purchase_return", source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
+    mapping = await get_mapping(db, "purchase_return")
+    out = []
+    for ln in lines:
+        d, c = round(float(ln.get("debit") or 0), 2), round(float(ln.get("credit") or 0), 2)
+        if d <= 0 and c <= 0:
+            continue
+        role = ln["role"]
+        if role == "inventory":
+            code, err = inventory_account(mapping, "purchase_return", ln.get("kind") or "bahan")
+        elif role == "cash":
+            code, err = (cash_code or ""), "Rekening kas/bank penerima refund belum dipilih."
+        elif role == "ap" and ap_code:
+            code, err = ap_code, ""
+        else:
+            code = str(mapping.get(role) or "").strip()
+            err = f"Mapping 'purchase_return.{role}' belum diisi — lengkapi di Profil Posting."
+        if not code:
+            return {"ok": False, "error": err}
+        out.append({"account_code": code, "debit": d, "credit": c,
+                    "description": ln.get("description") or memo})
+    if not out:
+        return {"ok": True, "skipped": True, "reason": "nilai 0 — tidak ada jurnal"}
+    return await _create_posted_je(db, je_date or date.today(), memo, "purchase_return", source_ref, out, user)
 
 
 async def post_cogs_shipment(db, shipment: dict, user: dict) -> dict:

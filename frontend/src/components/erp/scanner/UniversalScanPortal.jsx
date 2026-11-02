@@ -11,7 +11,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import {
   ScanLine, X, CheckCircle2, AlertTriangle, Loader2, Clock,
-  Package, Box, Layers, ClipboardList, ShoppingCart, Columns, Truck, History,
+  Package, Box, Layers, ClipboardList, ShoppingCart, Columns, Truck, History, Shirt, MapPin,
 } from 'lucide-react';
 import { ScannerModalContent } from './UniversalScanner';
 import axios from 'axios';
@@ -19,7 +19,11 @@ import axios from 'axios';
 const API = process.env.REACT_APP_BACKEND_URL;
 
 // ─── Entity type config ───────────────────────────────────────────────────────
+// 2026-11-02 (Paket 3a): + `fg` (SKU barang jadi, Code128 & QR label) dan `bin`
+// (posisi rak / lokasi) — resolver backend kini `core.scan_resolver`.
 const ENTITY_CFG = {
+  fg:             { icon: Shirt,         color: 'text-rose-600 dark:text-rose-400',    bg: 'bg-rose-50 dark:bg-rose-400/10',    border: 'border-rose-300 dark:border-rose-400/20',    label: 'Barang Jadi (SKU)' },
+  bin:            { icon: MapPin,        color: 'text-teal-600 dark:text-teal-400',    bg: 'bg-teal-50 dark:bg-teal-400/10',    border: 'border-teal-300 dark:border-teal-400/20',    label: 'Lokasi / Bin' },
   asset:          { icon: Package,       color: 'text-blue-600 dark:text-blue-400',    bg: 'bg-blue-50 dark:bg-blue-400/10',    border: 'border-blue-300 dark:border-blue-400/20',    label: 'Aset' },
   bundle:         { icon: Box,           color: 'text-purple-600 dark:text-purple-400',  bg: 'bg-purple-50 dark:bg-purple-400/10',  border: 'border-purple-300 dark:border-purple-400/20',  label: 'Bundle Produksi' },
   material:       { icon: Layers,        color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-400/10', border: 'border-emerald-300 dark:border-emerald-400/20', label: 'Material' },
@@ -127,7 +131,7 @@ function NotFoundCard({ code, onScanAgain }) {
         </div>
       </div>
       <p className="text-xs text-zinc-400">
-        Kode ini tidak cocok dengan aset, bundle, material, WO, PO, roll kain, atau delivery order yang terdaftar.
+        Kode ini tidak cocok dengan SKU barang jadi, bahan, lokasi/bin, roll kain, bundle, WO, PO, delivery order, atau aset yang terdaftar.
       </p>
       <button
         onClick={onScanAgain}
@@ -278,7 +282,7 @@ export default function UniversalScanPortal({ token, onNavigate }) {
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-foreground">Universal Scan</p>
-                  <p className="text-[10px] text-zinc-500">Asset • Bundle • Material • WO • PO • Roll • DO</p>
+                  <p className="text-[10px] text-zinc-500">SKU • Bahan • Bin • Roll • Bundle • WO • PO • DO • Aset</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
