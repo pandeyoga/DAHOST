@@ -699,11 +699,10 @@ export default function CatalogItemsView({
                   </td>
                   <td className="px-2.5 py-1.5 tabular-nums whitespace-nowrap">
                     {rp(r.hpp_effective ?? r.hpp)}
+                    {/* 2026-11-02 (owner No.26a) — label sumber dari backend (core/catalog_margin SOURCE_LABEL):
+                        "WAC aktual" / "estimasi (kalkulator HPP)" / "ketikan katalog" / "belum ada". */}
                     <span className="ml-1 text-[10px] text-muted-foreground">
-                      ({r.hpp_source_effective === 'fg_fifo_avg' ? 'batch FIFO'
-                        : r.hpp_source_effective === 'fg_master' ? 'master FG'
-                        : r.hpp_source_effective === 'catalog_manual' ? 'ketikan katalog'
-                        : 'belum ada'})
+                      ({r.hpp_source_label || 'belum ada'})
                     </span>
                   </td>
                   {/* SESI #37 — HPP tidak diketahui ⇒ lencana, BUKAN 0%/100%.

@@ -432,6 +432,46 @@ RULES = [
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "success": 3}
 
+# ─── 2026-11-02 — SARING PER PERAN ───────────────────────────────────────────
+# Dulu SEMUA kartu tampil untuk siapa pun yang membuka dasbor portal (mis. tim_packing melihat
+# "Setup dasar belum lengkap" & "Material di bawah stok minimum"). Kini setiap aturan punya peta
+# peran dari SSOT (core/roles + PORTAL_ACCESS lewat `alert_roles_for_portal`, yaitu peran NYATA
+# portal ∩ peran domain), dan portal yang diminta divalidasi terhadap akses efektif user.
+SUPER_ROLES = ("superadmin", "admin", "owner")
+
+
+def rule_roles() -> dict:
+    """{nama aturan: set peran yang boleh melihat kartunya}."""
+    from core import roles as _r
+    from routes.shared import PORTAL_ACCESS
+    from utils.notif_unified import alert_roles_for_portal
+    setup = set(SUPER_ROLES)
+    prod = setup | set(_r.MGMT_ROLES) | set(alert_roles_for_portal("production"))
+    stock = prod | set(alert_roles_for_portal("warehouse"))
+    planning = prod | set(PORTAL_ACCESS.get("management") or [])
+    return {
+        "rule_setup_empty": setup,
+        "rule_empty_database_hint": prod,
+        "rule_wo_missing_bom": prod,
+        "rule_orders_overdue": planning,
+        "rule_low_stock_materials": stock,
+        "rule_qc_fail_rate_today": planning,
+        "rule_wo_without_mi": stock,
+        "rule_wo_missing_bundles": prod,
+        "rule_lines_without_assignment_today": prod,
+        "rule_orders_without_wo": prod,
+        "rule_assignments_missing_operator": prod,
+        "rule_orders_due_soon": planning,
+        "rule_draft_mi_stale": stock,
+    }
+
+
+def rules_for_role(role: str, rules=None) -> list:
+    """Aturan yang berlaku untuk satu peran (aturan tanpa peta = hanya super)."""
+    role = (role or "").lower()
+    peta = rule_roles()
+    return [r for r in (rules or RULES) if role in peta.get(r.__name__, set(SUPER_ROLES))]
+
 
 @router.get("")
 async def get_next_actions(request: Request):
@@ -448,8 +488,19 @@ async def get_next_actions(request: Request):
     portal = (sp.get("portal") or "production").lower()
     limit = q_int(sp.get("limit"), default=8, name="limit", minimum=1, maximum=15, clamp=True)
 
+    # 2026-11-02 — portal yang diminta harus termasuk akses efektif user (peran + izin per modul)
+    from routes.shared import resolve_role_access
+    access = await resolve_role_access(db, dict(user))
+    role = access.get("role") or (user.get("role") or "").lower()
+    meta = {"portal": portal, "generated_at": _now(), "rule_count": 0,
+            "user": user.get("name") or user.get("email"), "role": role}
+    if not access.get("is_super") and portal not in (access.get("portals") or []):
+        return {"actions": [], "meta": {**meta, "portal_denied": True}}
+    rules = rules_for_role(role)
+    meta["rule_count"] = len(rules)
+
     cards = []
-    for rule in RULES:
+    for rule in rules:
         try:
             card = await rule(db, portal)
             if card:
@@ -462,12 +513,4 @@ async def get_next_actions(request: Request):
     # Sort by severity then by count desc
     cards.sort(key=lambda c: (SEVERITY_ORDER.get(c.get("severity"), 9), -int(c.get("count") or 0)))
 
-    return {
-        "actions": cards[:limit],
-        "meta": {
-            "portal": portal,
-            "generated_at": _now(),
-            "rule_count": len(RULES),
-            "user": user.get("name") or user.get("email"),
-        }
-    }
+    return {"actions": cards[:limit], "meta": meta}

@@ -1326,7 +1326,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           <td className="px-3 py-2 text-right font-bold">{it.qty?.toLocaleString('id-ID')}</td>
                           <td className="px-3 py-2 text-right text-emerald-700">{fmt(it.selling_price_snapshot)}</td>
                           <td className="px-3 py-2 text-right text-amber-700">{fmt(it.cmt_price_snapshot)}</td>
-                          <td className={`px-3 py-2 text-right font-medium ${marginPcs >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmt(marginPcs)}</td>
+                          <td className={`px-3 py-2 text-right font-medium ${isInternal ? 'text-muted-foreground' : marginPcs >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{isInternal ? '—' : fmt(marginPcs)}</td>
                         </tr>
                       );
                     })}</tbody>
@@ -1335,13 +1335,35 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       <td className="px-3 py-2 text-right">{detailData.items.reduce((s,i)=>s+(i.qty||0),0).toLocaleString('id-ID')} pcs</td>
                       <td className="px-3 py-2 text-right text-emerald-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>
                       <td className="px-3 py-2 text-right text-amber-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
-                      <td className="px-3 py-2 text-right text-blue-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
+                      <td className="px-3 py-2 text-right text-blue-700">{isInternal ? '—' : fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
                     </tr></tfoot>
                   </table>
                 </div>
 
+                {/* 2026-11-02 (K16): PO INTERNAL tidak punya harga jual — "Est. Gross Margin"
+                    = 0 − CMT selalu negatif (−150.000) dan menyesatkan. Tampilkan HPP batch
+                    nyata (bahan BOM warna varian + jahit SPK) dari /cost-check. */}
+                {isInternal && (
+                  <div className="grid grid-cols-3 gap-3" data-testid="po-internal-hpp">
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <p className="text-xs text-amber-600 font-medium">Bahan (BOM warna varian)</p>
+                      <p className="text-xl font-bold text-amber-700 mt-1">{fmt((costCheck?.items || []).reduce((s, i) => s + (i.material_cost || 0) * (Number(i.qty) || 0), 0))}</p>
+                      <p className="text-xs text-amber-500 mt-0.5">Harga bahan × qty</p>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <p className="text-xs text-amber-600 font-medium">Biaya Jahit CMT (SPK)</p>
+                      <p className="text-xl font-bold text-amber-700 mt-1">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</p>
+                      <p className="text-xs text-amber-500 mt-0.5">Tarif jahit × qty</p>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                      <p className="text-xs text-blue-600 font-medium">Estimasi HPP Batch</p>
+                      <p className="text-xl font-bold text-blue-700 mt-1" data-testid="po-internal-hpp-batch">{costCheck ? fmt(costCheck.estimated_batch_value) : '…'}</p>
+                      <p className="text-xs text-blue-500 mt-0.5">PO internal = stok sendiri; margin lahir saat barang terjual</p>
+                    </div>
+                  </div>
+                )}
                 {/* Financial Summary */}
-                {(() => {
+                {!isInternal && (() => {
                   const totalSales = detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0);
                   const totalCMT = detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0);
                   const grossMargin = totalSales - totalCMT;

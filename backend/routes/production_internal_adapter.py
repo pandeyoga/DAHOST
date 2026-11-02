@@ -63,7 +63,9 @@ async def _active_bom(db, model_id, size_id, color=None):
     base = {'model_id': model_id, 'size_id': size_id, 'is_active': True, 'active': {'$ne': False}}
     color = (color or '').strip()
     if color:
-        specific = await db.rahaza_boms.find_one({**base, 'color': color}, {'_id': 0})
+        # 2026-11-02 (butir 10): cocok ke NAMA atau KODE warna (BOM menyimpan keduanya)
+        specific = await db.rahaza_boms.find_one(
+            {**base, '$or': [{'color': color}, {'color_code': color}]}, {'_id': 0})
         if specific:
             return specific
     general = await db.rahaza_boms.find_one(
@@ -256,7 +258,9 @@ async def create_mi_draft_from_job(db, job: dict, user: dict, default_loc=None):
         if not model_id or not size_id:
             missing_bom.append(f"item {ji.get('sku','?')}: tanpa model_id/size_id")
             continue
-        bom = await _active_bom(db, model_id, size_id)
+        # 2026-11-02 (butir 10, F1b): BOM per WARNA varian (dulu tanpa warna ⇒ BOM warna lain)
+        bom = await _active_bom(db, model_id, size_id,
+                                ji.get('color') or pi.get('color') or ji.get('color_code') or pi.get('color_code'))
         if not bom:
             missing_bom.append(f"item {ji.get('sku','?')}: BOM aktif tidak ditemukan")
             continue

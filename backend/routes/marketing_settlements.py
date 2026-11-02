@@ -131,6 +131,34 @@ COA = {
 # Potongan iklan dari pencairan = iklan platform itu sendiri (6-1100 kini akun induk).
 ADS_BY_PLATFORM = {"shopee": "6-1112", "tiktok": "6-1110", "tiktokshop": "6-1110", "tokopedia": "6-1113"}
 
+# 2026-11-02 (S2-H butir 7): akun POTONGAN dibaca dari peran Profil Posting `marketplace_settlement`
+# (bawaan = konstanta di atas, jadi perilaku sama sampai Finance mengubah profil). Konstanta tetap
+# menjadi cadangan bila peran dikosongkan (core/coa_bindings.CONSTANT_SOURCES, reads_profile=True).
+PROFILE_EVENT = "marketplace_settlement"
+COA_ROLES = {"returns": "debit_returns", "discount": "debit_discount", "platform_fee": "debit_platform_fee",
+             "ads": "debit_ads_default", "other": "credit_other_income", "other_expense": "debit_other_expense"}
+ADS_ROLES = {"shopee": "debit_ads_shopee", "tiktok": "debit_ads_tiktok", "tiktokshop": "debit_ads_tiktok",
+             "tokopedia": "debit_ads_tokopedia"}
+
+
+async def deduction_codes(db) -> tuple:
+    """({kunci COA: kode efektif}, {kunci: 'profil'|'global'}) — peran profil, cadangan konstanta."""
+    from routes.rahaza_posting_profiles import role_code
+    eff, sources = dict(COA), {k: "global" for k in COA}
+    for key, role in COA_ROLES.items():
+        code = await role_code(db, PROFILE_EVENT, role, None)
+        if code:
+            eff[key], sources[key] = code, "profil"
+    return eff, sources
+
+
+async def ads_code_for(db, platform: str) -> str | None:
+    """Akun iklan per platform: peran profil `debit_ads_<platform>`, cadangan ADS_BY_PLATFORM."""
+    from routes.rahaza_posting_profiles import role_code
+    p = (platform or "").lower()
+    role = ADS_ROLES.get(p)
+    return await role_code(db, PROFILE_EVENT, role, ADS_BY_PLATFORM.get(p)) if role else None
+
 # Field uang + arahnya terhadap `net_payout`. Satu daftar ini dipakai oleh
 # perhitungan selisih DAN pembuat jurnal, jadi keduanya mustahil berbeda.
 MONEY_FIELDS = {
@@ -199,9 +227,8 @@ ACCOUNT_COA_ROLES = {
 async def _resolve_coa(db, account: dict) -> dict:
     """Peta akun EFEKTIF untuk satu laporan dana dilepas. Melempar 400 bila toko
     belum punya akun piutang toko/pendapatan sendiri — TIDAK diam-diam memakai kontrol."""
-    eff = dict(COA)
-    sources = {k: "global" for k in COA}
-    ads = ADS_BY_PLATFORM.get((account.get("platform") or "").lower())
+    eff, sources = await deduction_codes(db)   # 2026-11-02 (S2-H butir 7): peran profil
+    ads = await ads_code_for(db, account.get("platform"))
     if ads and await db.rahaza_coa_accounts.find_one({"code": ads, "active": True, "is_group": {"$ne": True}}, {"_id": 0}):
         eff["ads"], sources["ads"] = ads, "platform"
     missing = []
@@ -341,7 +368,8 @@ async def coa_map(request: Request):
     await require_auth(request)
     db = get_db()
     out = []
-    for role, code in COA.items():
+    eff, _src = await deduction_codes(db)   # 2026-11-02: kode efektif (peran profil), bukan konstanta
+    for role, code in eff.items():
         acc = await db.rahaza_coa_accounts.find_one(
             {"code": code}, {"_id": 0, "code": 1, "name": 1, "type": 1, "active": 1})
         out.append({"role": role, "code": code,
@@ -1204,13 +1232,19 @@ async def post_settlement_journal(sid: str, request: Request):
         raise HTTPException(400, f"Hanya jurnal draf yang bisa diposting. "
                                  f"Status sekarang: {je.get('status')}.")
     await _check_period_open(db, date.fromisoformat(str(je["date"])[:10]))
+    # 2026-11-02 (S2-H butir 8): akun bisa dihapus/dinonaktifkan/dijadikan grup sesudah draf dibuat —
+    # validasi ULANG lewat aturan yang sama dengan Buku Jurnal (nama/tipe akun ikut disegarkan).
+    from routes.rahaza_journals import revalidate_draft_lines
+    lines, total_d, total_c = await revalidate_draft_lines(db, je)
     _res = await db.rahaza_journal_entries.update_one(
         {"id": je["id"], "status": "draft"},  # FIN-17: atomik
         {"$set": {"status": "posted", "posted_at": _now(),
-                  "posted_by": (user or {}).get("id"), "updated_at": _now()}})
+                  "posted_by": (user or {}).get("id"), "updated_at": _now(),
+                  "lines": lines, "total_debit": total_d, "total_credit": total_c}})
     if _res.modified_count == 0:
         raise HTTPException(409, "Jurnal sudah diposting oleh permintaan lain.")
     je["status"] = "posted"
+    je["lines"] = lines
     await _mirror_lines(db, je)
     await db[COLL].update_one({"id": sid}, {"$set": {
         "je_status": "posted", "updated_at": _now()}})
@@ -1245,6 +1279,7 @@ async def get_settlement(sid: str, request: Request):
     recv = _bal.receivable_code(account)
     coa_ready = bool(recv and (account.get("coa_revenue_code") or "").strip())
     binding = await _je_still_binding(db, doc)
+    _ded, _ = await deduction_codes(db)   # 2026-11-02: kode efektif (peran profil)
     return {
         "ok": True,
         "data": _ser(doc),
@@ -1254,7 +1289,7 @@ async def get_settlement(sid: str, request: Request):
             "receivable": recv or None,
             "cash": account.get("coa_cash_code") or None,
             "revenue": account.get("coa_revenue_code") or None,
-            "deduction_accounts": {k: v for k, v in COA.items()
+            "deduction_accounts": {k: v for k, v in _ded.items()
                                    if k not in ("receivable", "revenue")},
             "note": ("Dana bersih masuk ke akun saldo platform (piutang toko) dan pendapatan "
                      "diambil dari akun toko; akun potongan (retur, diskon, fee platform, "

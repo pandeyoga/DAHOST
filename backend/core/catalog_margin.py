@@ -23,10 +23,13 @@ satu-satunya item yang untung-ruginya TIDAK diketahui siapa pun.
 ATURAN
 ═══════════════════════════════════════════════════════════════════════════════
 1. **HPP EFEKTIF** dipilih menurut urutan yang paling dekat dengan biaya nyata:
-   `hpp_fifo_avg` FG  →  `hpp` FG  →  `hpp` katalog.
-   Sumbernya selalu ikut dilaporkan (`hpp_source_effective`) supaya pembaca
-   laporan tahu angka itu berasal dari lapisan batch, dari master, atau dari
-   ketikan tangan di katalog.
+   WAC aktual FG (`unit_cost`)  →  `hpp` FG (kalkulator, ESTIMASI)  →  `hpp` katalog.
+   Sumbernya selalu ikut dilaporkan (`hpp_source_effective` + `hpp_source_label`
+   + `hpp_is_estimate`) supaya pembaca laporan tahu angka itu biaya nyata (WAC),
+   perkiraan kalkulator, atau ketikan tangan di katalog.
+   2026-11-02 (owner No.26a): `hpp_fifo_avg` diganti WAC. WAC tinggal di
+   `unit_cost` sehingga tombol "Terapkan HPP per Potong" (menulis `hpp`) tidak bisa
+   menimpanya; selama WAC belum ada, HPP kalkulator tampil berlabel "estimasi".
 2. **HPP tidak diketahui ⇒ `margin_status='belum_bisa_diukur'`, `margin_pct=None`.**
    BUKAN 0, BUKAN 100. `None` memaksa layar menampilkan lencana, bukan angka.
 3. Alasannya ditulis (`margin_reason`) — "belum bisa diukur" tanpa sebab hanya
@@ -37,11 +40,17 @@ from __future__ import annotations
 OK = "ok"
 UNKNOWN = "belum_bisa_diukur"
 
-# Urutan sumber HPP, dari yang paling dekat dengan biaya nyata.
-HPP_PRIORITY = (
-    ("hpp_fifo_avg", "fg_fifo_avg"),
-    ("hpp", "fg_master"),
-)
+# Sumber HPP efektif (2026-11-02, owner No.26a) + label siap tampil.
+SRC_WAC = "fg_wac"              # biaya nyata: WAC FG (`unit_cost`, core/fg_cost_layers)
+SRC_ESTIMATE = "fg_estimasi"    # `hpp` master FG = kalkulator BOM / R&D (perkiraan)
+SRC_CATALOG = "catalog_manual"
+SOURCE_LABEL = {
+    SRC_WAC: "WAC aktual",
+    SRC_ESTIMATE: "estimasi (kalkulator HPP)",
+    SRC_CATALOG: "ketikan katalog",
+    "none": "belum ada",
+}
+FG_COST_PROJECTION = {"_id": 0, "id": 1, "hpp": 1, "hpp_source": 1, "unit_cost": 1, "wac_components": 1}
 
 
 def _f(v) -> float:
@@ -51,26 +60,32 @@ def _f(v) -> float:
         return 0.0
 
 
+def effective_fg_cost(mat: dict | None) -> dict:
+    """HPP efektif satu master FG (fungsi murni; dipakai katalog & Portal Penjualan).
+
+    WAC aktual hanya bila FG sudah dinilai WAC (`wac_components` ada) dan > 0 —
+    `unit_cost` FG lama yang kosong/0 tidak dianggap biaya nyata."""
+    m = mat or {}
+    wac = _f(m.get("unit_cost")) if isinstance(m.get("wac_components"), dict) else 0.0
+    if wac > 0:
+        src, hpp = SRC_WAC, wac
+    elif _f(m.get("hpp")) > 0:
+        src, hpp = SRC_ESTIMATE, _f(m.get("hpp"))
+    else:
+        src, hpp = "", 0.0
+    return {"hpp": round(hpp, 2), "source": src, "is_estimate": src == SRC_ESTIMATE,
+            "label": SOURCE_LABEL.get(src or "none", src),
+            "estimate_from": (m.get("hpp_source") or "") if src == SRC_ESTIMATE else ""}
+
+
 async def fg_cost_map(db, material_ids: list) -> dict:
-    """{material_id: {hpp, source}} — satu kueri, bukan N+1."""
+    """{material_id: {hpp, source, is_estimate, label}} — satu kueri, bukan N+1."""
     mids = [m for m in set(material_ids or []) if m]
     if not mids:
         return {}
     rows = await db.rahaza_materials.find(
-        {"id": {"$in": mids}},
-        {"_id": 0, "id": 1, "hpp": 1, "hpp_fifo_avg": 1, "hpp_source": 1},
-    ).to_list(len(mids) + 10)
-    out = {}
-    for r in rows:
-        chosen = 0.0
-        src = ""
-        for field, label in HPP_PRIORITY:
-            val = _f(r.get(field))
-            if val > 0:
-                chosen, src = val, label
-                break
-        out[r["id"]] = {"hpp": chosen, "source": src}
-    return out
+        {"id": {"$in": mids}}, FG_COST_PROJECTION).to_list(len(mids) + 10)
+    return {r["id"]: effective_fg_cost(r) for r in rows}
 
 
 def decorate(row: dict, fg_cost: dict = None) -> dict:
@@ -85,10 +100,12 @@ def decorate(row: dict, fg_cost: dict = None) -> dict:
     source = fg.get("source") or ""
     if hpp <= 0:
         hpp = _f(row.get("hpp"))
-        source = "catalog_manual" if hpp > 0 else "none"
+        source = SRC_CATALOG if hpp > 0 else "none"
 
     row["hpp_effective"] = round(hpp, 2)
     row["hpp_source_effective"] = source
+    row["hpp_source_label"] = SOURCE_LABEL.get(source, source)
+    row["hpp_is_estimate"] = source == SRC_ESTIMATE
 
     reasons = []
     if harga_jual <= 0:

@@ -30,32 +30,36 @@ async def get_report(report_type: str, request: Request):
             po_query['status'] = sp['status']
         pos = await db.production_pos.find(po_query, {'_id': 0}).sort('created_at', -1).to_list(500)
         rows = []
+        from core import dispatch_capacity as dcap
         for po in pos:
             if sp.get('vendor_id') and po.get('vendor_id') != sp['vendor_id']:
                 continue
             items = await db.po_items.find({'po_id': po['id']}).to_list(500)
+            # 2026-11-02 (K17 butir 1): produksi & dikirim ke buyer dari SSOT — dulu dikirim
+            # = Σ semua buyer_shipment_items (deklarasi CMT→DA ikut ⇒ 2×) dan produksi job anak
+            # rework ikut dihitung.
+            qmap = await dcap.po_item_quantities(db, [i['id'] for i in items])
             for item in items:
                 if sp.get('serial_number') and item.get('serial_number') != sp['serial_number']:
                     continue
-                # Get actual produced qty from production job items
-                ji_list = await db.production_job_items.find({'po_item_id': item['id']}).to_list(500)
-                produced_qty = sum(j.get('produced_qty', 0) for j in ji_list)
+                q = qmap.get(item['id']) or {}
+                produced_qty = int(q.get('produced_main', 0))
                 # Also check orphaned child items by sku+size+color
                 orphan_ji = await db.production_job_items.find({
                     '$or': [{'po_item_id': None}, {'po_item_id': ''}, {'po_item_id': {'$exists': False}}],
                     'sku': item.get('sku', ''), 'size': item.get('size', ''), 'color': item.get('color', '')
                 }).to_list(500)
-                counted_ids = {j['id'] for j in ji_list}
                 for oji in orphan_ji:
-                    if oji['id'] not in counted_ids:
-                        produced_qty += oji.get('produced_qty', 0)
-                # Get shipped to buyer
-                buyer_items = await db.buyer_shipment_items.find({'po_item_id': item['id']}).to_list(500)
-                shipped_qty = sum(bi.get('qty_shipped', 0) for bi in buyer_items)
+                    produced_qty += oji.get('produced_qty', 0)
+                shipped_qty = int(q.get('dispatched', 0))
                 ordered_qty = item.get('qty', 0)
                 harga = item.get('selling_price_snapshot', 0)
+                # `cmt_price_snapshot` = BIAYA JAHIT CMT per pcs (bukan HPP penuh — HPP = bahan +
+                # jahit + permak, ada di lapisan biaya). Kunci `hpp` dipertahankan untuk klien lama.
                 hpp = item.get('cmt_price_snapshot', 0)
                 rows.append({
+                    'biaya_jahit': hpp, 'total_biaya_jahit': ordered_qty * hpp,
+                    'qty_lolos_qc': int(q.get('accepted_total', 0)),
                     'tanggal': serialize_doc(po.get('po_date', po.get('created_at'))),
                     'no_po': po.get('po_number'), 'no_seri': item.get('serial_number', ''),
                     'kode_produk': item.get('sku', ''),
@@ -101,7 +105,9 @@ async def get_report(report_type: str, request: Request):
             if sp.get('vendor_id') and b.get('vendor_id') != sp['vendor_id']:
                 continue
             items = await db.buyer_shipment_items.find({'shipment_id': b['id']}).to_list(500)
-            rows.append({'direction': 'PRODUKSI → BUYER', 'shipment_number': b.get('shipment_number'),
+            # 2026-11-02 (K17): deklarasi CMT→DA bukan kiriman ke buyer — labelnya dibedakan
+            _dir = 'CMT → DA (deklarasi)' if (b.get('receiver_type') or 'buyer') == 'da' else 'PRODUKSI → BUYER'
+            rows.append({'direction': _dir, 'shipment_number': b.get('shipment_number'),
                          'shipment_type': 'NORMAL', 'vendor_name': b.get('vendor_name', ''),
                          'status': b.get('status', b.get('ship_status', '')),
                          'date': serialize_doc(b.get('created_at')),
@@ -126,7 +132,9 @@ async def get_report(report_type: str, request: Request):
         poi_ids = [x for x in poi_ids if x]
         bsi_by_poi = {}
         if poi_ids:
-            async for b in db.buyer_shipment_items.find({'po_item_id': {'$in': poi_ids}}):
+            # 2026-11-02 (K17 butir 1): hanya SJ ke BUYER (deklarasi CMT→DA tidak ikut)
+            from core import dispatch_capacity as dcap
+            for b in await dcap.buyer_dispatch_items(db, po_item_ids=poi_ids):
                 bsi_by_poi.setdefault(b['po_item_id'], []).append(b)
         rows = []
         cumulative_produced = {}
@@ -141,7 +149,7 @@ async def get_report(report_type: str, request: Request):
             cumulative_produced[poi_id] += p.get('completed_quantity', 0)
             cum_shipped = 0
             if (ji or {}).get('po_item_id'):
-                cum_shipped = sum(bi.get('qty_shipped', 0) for bi in bsi_by_poi.get(ji['po_item_id'], []))
+                cum_shipped = sum(dcap.item_dispatched(bi) for bi in bsi_by_poi.get(ji['po_item_id'], []))
             rows.append({
                 'date': serialize_doc(p.get('progress_date')),
                 'job_number': (job or {}).get('job_number', ''),

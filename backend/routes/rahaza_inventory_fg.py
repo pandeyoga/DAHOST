@@ -141,6 +141,22 @@ async def create_fg_issue(request: Request):
         "issued_by":       user.get("name", ""),
         "timestamp":       _fg_now(),
     })
+    # 2026-11-02 (K41 = a): HPP barang yang keluar dinilai WAC dan DIJURNAL lewat helper paket WAC
+    # (`post_fg_issue_cogs`: Dr akun alasan — profil `fg_issue` — / Cr 1-1404 senilai qty × WAC).
+    # Dulu pengeluaran ini hanya memotong stok; nilai 1-1404 tidak pernah turun. Gagal jurnal tidak
+    # membatalkan pengeluaran fisik, tetapi DICATAT di dokumen & dikembalikan ke layar.
+    from routes.rahaza_posting import post_fg_issue_cogs
+    try:
+        gl = await post_fg_issue_cogs(db, issue_doc, user)
+    except Exception as e:  # noqa: BLE001
+        gl = {"ok": False, "error": str(e)}
+    gl_set = {"gl_je_id": gl.get("je_id"), "gl_je_number": gl.get("je_number"),
+              "cogs": gl.get("cogs"), "unit_cost": gl.get("unit_cost"), "cogs_basis": "wac",
+              "debit_mapping": gl.get("debit_mapping"),
+              "gl_post_error": None if gl.get("ok") else (gl.get("error") or "jurnal gagal")}
+    await db.rahaza_fg_issues.update_one({"id": issue_id}, {"$set": gl_set})
+    issue_doc.update(gl_set)
     await log_activity(user["id"], user.get("name", ""), "fg_issue_created", "rahaza.fg_issue",
-                      f"{issue_number}: {mat.get('code')} qty={qty} reason={reason}")
+                      f"{issue_number}: {mat.get('code')} qty={qty} reason={reason}"
+                      + (f" je={gl.get('je_number')}" if gl.get("ok") else " (jurnal gagal)"))
     return serialize_doc({**issue_doc, "ok": True})

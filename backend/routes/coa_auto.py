@@ -206,8 +206,9 @@ async def ensure_subledger_account(
             {"_id": 0},
         )
         if existing:
-            # refresh nama bila berubah
-            if name and existing.get("name") != name:
+            # refresh nama bila berubah — 2026-11-02 (S2-H, T15): KECUALI nama yang diubah Finance di
+            # Bagan Akun (`name_user_set`); dulu nama itu ditimpa lagi setiap entitas disimpan/startup.
+            if name and existing.get("name") != name and not existing.get("name_user_set"):
                 await db.rahaza_coa_accounts.update_one(
                     {"id": existing["id"]},
                     {"$set": {"name": name, "updated_at": _now()}},
@@ -215,10 +216,13 @@ async def ensure_subledger_account(
                 existing["name"] = name
             return {"ok": True, "created": False, "code": existing["code"], "account": existing}
 
-        # 2) parent harus ada
+        # 2) parent harus ada (dan aktif — 2026-11-02 S2-H: sub-ledger baru tidak dibuat di bawah induk nonaktif)
         parent_acc = await db.rahaza_coa_accounts.find_one({"code": parent}, {"_id": 0})
         if not parent_acc:
             return {"ok": False, "error": f"Akun parent '{parent}' tidak ditemukan di COA"}
+        if parent_acc.get("active", True) is False:
+            return {"ok": False, "error": f"Akun parent '{parent}' nonaktif di Bagan Akun — aktifkan lagi atau "
+                                          f"ganti induk di Auto Akun"}
 
         acc_type = parent_acc.get("type") or "LIABILITY"
         normal = parent_acc.get("normal_balance") or _normal_balance_for(acc_type)
@@ -409,6 +413,7 @@ async def update_settings(request: Request):
             parent = await db.rahaza_coa_accounts.find_one({"code": pc}, {"_id": 0})
             if not parent:
                 raise HTTPException(400, f"Akun parent '{pc}' tidak ada di COA.")
+            await _guard_parent(db, key, parent)
             et[key]["parent_code"] = pc
     await db.rahaza_coa_auto_settings.update_one(
         {"id": "default"},
@@ -416,6 +421,27 @@ async def update_settings(request: Request):
     )
     await log_activity(user.get("id", ""), user.get("name", ""), "update_coa_auto_settings", "coa_auto", "settings")
     return {"ok": True, "entity_types": et}
+
+
+def _family(t: str) -> str:
+    t = (t or "").upper()
+    return t if t in ("ASSET", "LIABILITY", "EQUITY") else ("INCOME" if t in ("REVENUE", "OTHER_INCOME") else "EXPENSE")
+
+
+async def _guard_parent(db, key: str, parent: dict) -> None:
+    """2026-11-02 (S2-H): induk sub-ledger harus AKTIF dan sekeluarga tipe dengan induk bawaannya
+    (hutang di bawah liabilitas, piutang/bank di bawah aset). Dulu induk apa pun yang ada diterima →
+    sub-ledger hutang vendor bisa lahir di bawah akun beban."""
+    if parent.get("active", True) is False:
+        raise HTTPException(400, f"Akun induk '{parent.get('code')}' nonaktif di Bagan Akun.")
+    dflt = (DEFAULT_ENTITY_TYPES.get(key) or {}).get("parent_code")
+    if not dflt:
+        return
+    ref = await db.rahaza_coa_accounts.find_one({"code": dflt}, {"_id": 0, "type": 1})
+    want = (ref or {}).get("type") or ("LIABILITY" if dflt.startswith("2-") else "ASSET")
+    if _family(parent.get("type")) != _family(want):
+        raise HTTPException(400, f"Akun induk '{parent.get('code')}' bertipe {parent.get('type')}; induk "
+                                 f"sub-ledger '{key}' harus bertipe {want} (seperti bawaan {dflt}).")
 
 
 async def _patch_store_revenue(db, cur: dict, patch: dict) -> dict:
@@ -439,6 +465,8 @@ async def _patch_store_revenue(db, cur: dict, patch: dict) -> dict:
             raise HTTPException(400, f"Kelompok pendapatan '{c}' ({p}) tidak ada di COA.")
         if (acc.get("type") or "").upper() != "REVENUE":
             raise HTTPException(400, f"Akun '{c}' bukan akun pendapatan (REVENUE).")
+        if acc.get("active", True) is False:   # 2026-11-02 (S2-H)
+            raise HTTPException(400, f"Kelompok pendapatan '{c}' nonaktif di Bagan Akun.")
         groups[p] = c
     out["parent_by_platform"] = groups
     out["enabled"] = True

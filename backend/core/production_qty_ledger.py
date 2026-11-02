@@ -46,6 +46,11 @@ LEDGER_FIELDS = (
     "qty_claimed_by_vendor",   # Σ klaim surat jalan vendor (dokumen asli)
     "qty_short_open",          # belum sampai — masih kewajiban vendor (harus dicari/kirim ulang)
     "qty_short_resolved",      # selisih yang sudah diselesaikan (dikirim ulang / diputuskan)
+    # 2026-11-02 (K17 butir 4) — reject yang diperbaiki VENDOR lewat retur-ke-CMT. Dipisah
+    # dari `qty_repaired` (permak sendiri) supaya rumus lama `accepted = Σ qty_actual +
+    # Σ permak sendiri` tetap benar, tetapi INV-Q2 tertutup:
+    #   reject = rework_open + qty_repaired + qty_repaired_cmt + scrap (+ belum diputuskan)
+    "qty_repaired_cmt",
 )
 
 FG_LOCATION_CODE = "ZNA-FG"
@@ -111,7 +116,10 @@ def ledger_view(ji: dict) -> dict:
     accepted = _i(ji.get("qty_accepted"))
     reject = _i(ji.get("qty_reject"))
     rework_open = _i(ji.get("qty_rework_open"))
-    repaired = _i(ji.get("qty_repaired"))
+    repaired_da = _i(ji.get("qty_repaired"))
+    repaired_cmt = _i(ji.get("qty_repaired_cmt"))
+    # 2026-11-02 (K17 butir 4): "diperbaiki" = permak sendiri + retur-ke-CMT (INV-Q2)
+    repaired = repaired_da + repaired_cmt
     scrap = _i(ji.get("qty_scrap"))
     declared = _i(ji.get("qty_declared"))
     short_open = _i(ji.get("qty_short_open"))
@@ -126,6 +134,8 @@ def ledger_view(ji: dict) -> dict:
         "qty_reject": reject,
         "qty_rework_open": rework_open,
         "qty_repaired": repaired,
+        "qty_repaired_da": repaired_da,
+        "qty_repaired_cmt": repaired_cmt,
         "qty_scrap": scrap,
         # selisih kirim (barang TIDAK sampai) — Kasus 2 aturan owner
         "qty_claimed_by_vendor": claimed,
@@ -137,22 +147,43 @@ def ledger_view(ji: dict) -> dict:
     }
 
 
+async def main_job_item_for_po_item(db, po_item_id: str) -> dict | None:
+    """Job item INDUK (bukan job anak REWORK) untuk satu po_item — terbaru lebih dulu.
+
+    2026-11-02 (K17 butir 4): job anak REWORK hanya mengerjakan ULANG barang reject yang
+    sama; semua buku kuantitas (deklarasi, lolos, reject, permak) milik job induk.
+    """
+    if not po_item_id:
+        return None
+    rows = await db.production_job_items.find(
+        {"po_item_id": po_item_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    if not rows:
+        return None
+    from core.dispatch_capacity import _job_kinds
+    kinds = await _job_kinds(db, [r.get("job_id") for r in rows])
+    main = [r for r in rows if not (kinds.get(r.get("job_id")) or {}).get("rework")]
+    return (main or rows)[0]
+
+
 async def resolve_job_item_for_line(db, line: dict) -> dict | None:
     """Cari job item pemilik sebuah `cmt_receipt_lines`.
 
-    Prioritas: job_item_id eksplisit → po_item_id (job terbaru).
+    Prioritas: job_item_id eksplisit → po_item_id (job induk terbaru).
+    2026-11-02 (K17 butir 4): baris yang menunjuk job anak REWORK dialihkan ke job
+    INDUK — dulu deklarasi/lolos rework menempel di job anak sehingga job anak
+    `rework_open` −2 dan job induk tidak pernah menaikkan `repaired` (audit w3 S6).
     """
     if line.get("job_item_id"):
         ji = await db.production_job_items.find_one(
             {"id": line["job_item_id"]}, {"_id": 0})
         if ji:
+            job = await db.production_jobs.find_one(
+                {"id": ji.get("job_id")}, {"_id": 0, "shipment_type": 1}) if ji.get("job_id") else None
+            if str((job or {}).get("shipment_type") or "").upper() == "REWORK" and ji.get("po_item_id"):
+                return await main_job_item_for_po_item(db, ji["po_item_id"]) or ji
             return ji
     if line.get("po_item_id"):
-        rows = await db.production_job_items.find(
-            {"po_item_id": line["po_item_id"]}, {"_id": 0}
-        ).sort("created_at", -1).to_list(10)
-        if rows:
-            return rows[0]
+        return await main_job_item_for_po_item(db, line["po_item_id"])
     return None
 
 
@@ -314,9 +345,24 @@ async def apply_receipt_result(db, receipt: dict, lines: list, actor: dict | Non
 # ─────────────────────────────────────────────────────────────────────────────
 # MUTASI 2 — STOK FG LOLOS QC (lewat SSOT stok, bukan tulis mentah)
 # ─────────────────────────────────────────────────────────────────────────────
+MAKLON_FG_CATEGORY = "maklon_fg"
+
+
+async def client_owner_of_material(db, material_id: str) -> str:
+    """id klien pemilik bila master FG ini barang KLIEN maklon (K14), selain itu ''."""
+    if not material_id:
+        return ""
+    m = await db.rahaza_materials.find_one(
+        {"id": material_id}, {"_id": 0, "owner_type": 1, "owner_client_id": 1})
+    if (m or {}).get("owner_type") == "client":
+        return m.get("owner_client_id") or "maklon_client"
+    return ""
+
+
 async def post_fg_accepted(db, *, material_id: str, qty: int, ref: dict,
                            actor: dict | None = None, meta: dict | None = None,
-                           exit_cost: dict | None = None) -> dict:
+                           exit_cost: dict | None = None, owner_client: str = "",
+                           skip_cost_layer: bool = False) -> dict:
     """Tambah stok FG lewat `core/stock_service` supaya baris punya `location_id`
     kanonik, tercatat di ledger mutasi, dan terlihat opname/rekonsiliasi.
 
@@ -337,10 +383,22 @@ async def post_fg_accepted(db, *, material_id: str, qty: int, ref: dict,
     if not loc:
         raise RuntimeError("lokasi gudang FG (peran 'fg' / kode ZNA-FG) tidak ditemukan — "
                            "tandai satu lokasi berperan barang jadi di Master Lokasi")
+    # 2026-11-02 — K14 (keputusan owner): FG maklon (kain milik klien) DI LUAR neraca DA.
+    # Stoknya tercatat milik klien (`ownership` = id klien, kategori `maklon_fg`) sehingga
+    # tidak terbaca stok jual Penjualan Langsung / Fulfillment / Laporan Nilai FG (semuanya
+    # menyaring `fg_internal`), dan TIDAK membentuk lapisan biaya (nilainya 0 bagi DA —
+    # dulu lapisan Rp 0 berisi gap palsu "biaya jahit belum diisi").
+    owner_client = owner_client or await client_owner_of_material(db, material_id)
+    base_meta = ({"inventory_category": MAKLON_FG_CATEGORY, "ownership": owner_client}
+                 if owner_client else {"inventory_category": "fg_internal", "ownership": "cv_da"})
     row = await stock_service.add(material_id, loc, qty,
-                                  meta={"inventory_category": "fg_internal",
-                                        "ownership": "cv_da", **(meta or {})},
+                                  meta={**base_meta, **(meta or {}), **(base_meta if owner_client else {})},
                                   ref=ref, actor=actor, db=db)
+    if owner_client or skip_cost_layer:
+        # `skip_cost_layer`: barang PO maklon yang SKU-nya bentrok dengan FG DA — stoknya
+        # terpaksa satu baris dengan stok DA, tetapi tetap TIDAK membentuk lapisan Rp 0.
+        return {"location_id": loc, "row": row, "cost_layer": None,
+                "client_goods": owner_client or "maklon_sku_conflict"}
     layer = None
     try:
         from core import fg_cost_layers as fcl
@@ -446,12 +504,17 @@ async def apply_rework_outcome(db, permak: dict, *, qty_fixed: int, qty_scrap: i
     out = {"stock_released": 0, "scrapped": 0, "ledger": None, "mode": permak.get("permak_type")}
     from core import quarantine as qmod
 
+    # 2026-11-02 (K17 butir 4): hasil permak ditautkan ke job INDUK pemilik baris reject.
+    # Dulu dipilih job item TERBARU per po_item = job anak REWORK ⇒ job anak
+    # `rework_open` −2, job induk tetap 2, `reject_undecided` macet (audit w3 S6).
     job_item = None
-    if permak.get("po_item_id"):
-        rows = await db.production_job_items.find(
-            {"po_item_id": permak["po_item_id"]}, {"_id": 0}
-        ).sort("created_at", -1).to_list(5)
-        job_item = rows[0] if rows else None
+    if permak.get("source_receipt_line_id"):
+        src_line = await db.cmt_receipt_lines.find_one(
+            {"id": permak["source_receipt_line_id"]}, {"_id": 0})
+        if src_line:
+            job_item = await resolve_job_item_for_line(db, src_line)
+    if not job_item and permak.get("po_item_id"):
+        job_item = await main_job_item_for_po_item(db, permak["po_item_id"])
 
     is_return_to_cmt = (permak.get("permak_type") == "retur_ke_cmt")
 
@@ -501,8 +564,10 @@ async def apply_rework_outcome(db, permak: dict, *, qty_fixed: int, qty_scrap: i
             if qty_scrap:
                 inc["qty_scrap"] = qty_scrap
         else:
-            # retur ke CMT: reject keluar dari "menunggu" menjadi "sedang dikerjakan vendor"
-            # accepted akan naik lewat penerimaan rework.
+            # retur ke CMT: accepted naik lewat PENERIMAAN rework (qty_actual), jadi di sini
+            # hanya identitas reject yang ditutup: diperbaiki vendor (INV-Q2) atau dibuang.
+            if qty_fixed:
+                inc["qty_repaired_cmt"] = qty_fixed
             if qty_scrap:
                 inc["qty_scrap"] = qty_scrap
         inc = {k: v for k, v in inc.items() if v}
@@ -559,14 +624,21 @@ async def po_ledger_totals(db, po_id: str) -> dict:
     jis = await db.production_job_items.find(
         {"po_item_id": {"$in": item_ids}}, {"_id": 0}).to_list(None) if item_ids else []
     per_item: dict = {}
-    tot = {k: 0 for k in ("ordered", "produced", "declared", "accepted", "reject",
-                          "rework_open", "repaired", "scrap",
+    tot = {k: 0 for k in ("ordered", "produced", "rework_produced", "declared", "accepted", "reject",
+                          "rework_open", "repaired", "repaired_cmt", "scrap",
                           "claimed_by_vendor", "short_open", "short_resolved")}
     tot["ordered"] = sum(_i(i.get("qty")) for i in items)
+    from core.dispatch_capacity import _job_kinds
+    kinds = await _job_kinds(db, [ji.get("job_id") for ji in jis])
     for ji in jis:
         v = ledger_view(ji)
         p = per_item.setdefault(ji.get("po_item_id"), {k: 0 for k in tot})
-        p["produced"] += v["produced_qty"]
+        # 2026-11-02 (K17): produksi job anak REWORK bukan produksi baru (dulu 100 → 102)
+        if (kinds.get(ji.get("job_id")) or {}).get("rework"):
+            p["rework_produced"] += v["produced_qty"]
+        else:
+            p["produced"] += v["produced_qty"]
+        p["repaired_cmt"] += v["qty_repaired_cmt"]
         p["declared"] += v["qty_declared"]
         p["accepted"] += v["qty_accepted"]
         p["reject"] += v["qty_reject"]
@@ -577,9 +649,11 @@ async def po_ledger_totals(db, po_id: str) -> dict:
         p["short_open"] += v["qty_short_open"]
         p["short_resolved"] += v["qty_short_resolved"]
     # total dijumlahkan dari per_item supaya 1 po_item dengan banyak job item tidak dobel
-    for k in ("produced", "declared", "accepted", "reject", "rework_open", "repaired", "scrap",
-              "claimed_by_vendor", "short_open", "short_resolved"):
+    for k in ("produced", "rework_produced", "declared", "accepted", "reject", "rework_open",
+              "repaired", "repaired_cmt", "scrap", "claimed_by_vendor", "short_open", "short_resolved"):
         tot[k] = sum(p[k] for p in per_item.values())
+    # deklarasi "baru" = yang sampai dikurangi barang retur-ke-CMT yang kembali
+    tot["declared_main"] = max(0, tot["declared"] - tot["repaired_cmt"])
     tot["reject_undecided"] = max(
         0, tot["reject"] - tot["rework_open"] - tot["repaired"] - tot["scrap"])
     tot["reject_rate_pct"] = round(tot["reject"] / tot["produced"] * 100, 1) if tot["produced"] else 0.0
@@ -675,7 +749,7 @@ async def resolve_fg_material(db, *, sku: str = "", material_id: str = "") -> di
 
 
 async def issue_fg(db, *, material_id: str, qty: int, ref: dict,
-                  actor: dict | None = None, sku: str = "") -> dict:
+                  actor: dict | None = None, sku: str = "", skip_cost: bool = False) -> dict:
     """Kurangi stok FG lewat SSOT stok. Prioritas lokasi FG kanonik, lalu baris
     stok lain (kecuali karantina). Tidak pernah membuat stok minus."""
     from core import stock_service
@@ -722,6 +796,11 @@ async def issue_fg(db, *, material_id: str, qty: int, ref: dict,
         issued.append({"location_id": r["location_id"], "qty": take})
         left -= take
     out = {"issued": issued, "qty": qty - left}
+    # 2026-11-02 — K14: barang klien maklon tidak punya lapisan biaya DA → tidak ada
+    # konsumsi FIFO (dan tidak ada peringatan "keluar tanpa lapisan biaya" palsu).
+    if skip_cost or await client_owner_of_material(db, material_id):
+        out.update({"cogs": 0.0, "cogs_layers": [], "uncosted_qty": 0, "client_goods": True})
+        return out
     # ── SESI #34 (lanjutan) — BIAYA IKUT KELUAR BERSAMA BARANGNYA ─────────────
     # Lapisan HPP batch (FIFO) dibentuk saat barang jadi MASUK gudang
     # (`post_fg_accepted`). Kalau keluarnya tidak memakan lapisan, `qty_remaining`
@@ -783,7 +862,7 @@ async def recompute_group_target(db, po_item_id: str) -> dict:
     short_resolved = sum(_i(s.get("qty_resolved")) for s in shorts if s.get("status") != "cancelled")
 
     permaks = await db.dewi_cmt_permak.find({"po_item_id": po_item_id}, {"_id": 0}).to_list(None)
-    repaired = scrap = closed = 0
+    repaired = repaired_cmt = scrap = closed = 0
     for p in permaks:
         if str(p.get("status") or "") not in TERMINAL_PERMAK:
             continue
@@ -792,7 +871,10 @@ async def recompute_group_target(db, po_item_id: str) -> dict:
         scrap += qs
         if p.get("permak_type") != "retur_ke_cmt":
             repaired += qf
+        else:
+            repaired_cmt += qf     # 2026-11-02 (K17 butir 4) — INV-Q2
     return {
+        "qty_repaired_cmt": repaired_cmt,
         "qty_declared": arrived,
         "qty_accepted": accepted_base + repaired,
         "qty_reject": reject,
@@ -824,11 +906,25 @@ async def resync_from_documents(db, *, po_item_id: str, prefer_job_item_id: str 
             {"id": jis[0]["id"]}, {"$set": {**target, "updated_at": _now()}})
         return {"ok": True, "mode": "set", "job_item_id": jis[0]["id"],
                 "before": cur_total, "after": target}
-    pick = next((ji for ji in jis if ji["id"] == prefer_job_item_id), None) or jis[-1]
+    # 2026-11-02 (K17 butir 4): buku kuantitas milik job INDUK. Field buku job anak
+    # REWORK dinolkan (dulu menyimpan rework_open −2), lalu job induk menerima
+    # target dikurangi job lain yang sah (mis. job anak ADDITIONAL).
+    from core.dispatch_capacity import _job_kinds
+    kinds = await _job_kinds(db, [ji.get("job_id") for ji in jis])
+    main = await main_job_item_for_po_item(db, po_item_id)
+    pick = next((ji for ji in jis if ji["id"] == (main or {}).get("id")), None)
+    if not pick:
+        pick = next((ji for ji in jis if ji["id"] == prefer_job_item_id), None) or jis[-1]
+    reworks = [ji for ji in jis if ji["id"] != pick["id"]
+               and (kinds.get(ji.get("job_id")) or {}).get("rework")]
+    others = [ji for ji in jis if ji["id"] != pick["id"] and ji not in reworks]
+    for ji in reworks:
+        if any(_i(ji.get(f)) for f in target):
+            await db.production_job_items.update_one(
+                {"id": ji["id"]}, {"$set": {**{f: 0 for f in target}, "updated_at": _now()}})
     new_vals = {}
     for f, tgt in target.items():
-        delta = tgt - cur_total[f]
-        new_vals[f] = max(0, _i(pick.get(f)) + delta)
+        new_vals[f] = max(0, tgt - sum(_i(o.get(f)) for o in others))
     await db.production_job_items.update_one(
         {"id": pick["id"]}, {"$set": {**new_vals, "updated_at": _now()}})
     return {"ok": True, "mode": "delta", "job_item_id": pick["id"],

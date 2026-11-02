@@ -456,12 +456,14 @@ ALSO_PORTALS = {
     "mgmt_reports": ["rnd", "finance", "production"], "mgmt_approval": ["hr"], "prod_vendor_cmt": ["maklon"],
     "prod_po": ["maklon"], "prod_vendor_shipment": ["maklon"], "prod_cmt_receive": ["maklon", "finance"],
     "prod_cmt_permak": ["maklon"], "prod_cmt_monitor": ["maklon"], "prod_buyer_shipment": ["maklon"],
-    "prod_jobs": ["maklon", "finance"], "prod_variance": ["maklon"], "prod_cmt_billing": ["finance"],
+    "prod_jobs": ["maklon", "finance"], "prod_variance": ["maklon"], "prod_cmt_billing": ["finance", "maklon"],
     "proc_match": ["finance"], "proc_shopping_list": ["warehouse"], "wh_material_issue": ["production"],
     "wh_sku_bridge": ["toko"], "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
     "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
     "wh_master": ["production", "rnd"],
+    # 2026-11-02: tagihan CMT (posting/bayar) juga ditulis dari Portal Maklon (layar Tagihan CMT maklon) —
+    #   `prod_cmt_billing` + "maklon" supaya aksi tulisnya tidak ditolak gerbang.
     # 2026-11-02 (K34/K25): Keuangan menyetujui pembatalan run gaji & membayar gaji/BPJS.
     "hr_payroll": ["finance"],
 }

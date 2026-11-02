@@ -58,7 +58,8 @@ from core.cmt_receipt_status import (  # noqa: E402
 )
 
 
-async def _ensure_fg_for_cmt_line(db, ln: dict, doc: dict, user: dict) -> dict:
+async def _ensure_fg_for_cmt_line(db, ln: dict, doc: dict, user: dict,
+                                  client_owner: dict | None = None) -> dict:
     """SSOT resolver for a CMT receipt line → returns the REAL FG material doc.
 
     Priority:
@@ -97,6 +98,13 @@ async def _ensure_fg_for_cmt_line(db, ln: dict, doc: dict, user: dict) -> dict:
         "notes": f"Auto-created dari CMT receipt {doc.get('receipt_code')}",
         "created_at": _now(), "updated_at": _now(),
     }
+    if client_owner:
+        # 2026-11-02 — K14: barang jadi MAKLON = milik klien, di luar neraca DA (nilai 0).
+        fg.update({"owner_type": "client", "owner_client_id": client_owner.get("id"),
+                   "owner_client_name": client_owner.get("name", ""), "hpp": 0.0,
+                   "hpp_source": "maklon_client_goods",
+                   "notes": f"Barang klien maklon {client_owner.get('name', '')} — dibuat dari "
+                            f"penerimaan {doc.get('receipt_code')} (bukan stok jual DA)"})
     await db.rahaza_materials.insert_one(dict(fg))
     return fg
 
@@ -701,18 +709,27 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
                  f"({claimed}). Bila klaim vendor yang salah, pakai 'Koreksi deklarasi'.")
     if new_actual == old_actual and new_reject == old_reject:
         raise HTTPException(400, "Tidak ada perubahan angka.")
+    reject_quarantine = None
     if new_reject != old_reject:
-        # reject sudah menjadi barang karantina (dan mungkin sudah dipermak/diretur):
-        # mengubahnya butuh pembongkaran karantina → belum didukung, tolak jelas.
-        handled = await db.dewi_cmt_permak.count_documents({"source_receipt_line_id": line_id})
-        if handled:
+        # 2026-11-02 (K17 butir 6): 409 HANYA bila memang ada dokumen nyata yang terikat
+        # pada reject lama (permak/retur, atau barang di karantina). Dulu SELALU 409 dengan
+        # alasan "sudah masuk karantina" walau reject lama 0 (audit p.md P-2).
+        permak_doc = await db.dewi_cmt_permak.find_one(
+            {"source_receipt_line_id": line_id}, {"_id": 0, "permak_number": 1})
+        if permak_doc:
             raise HTTPException(
-                409, "Reject baris ini sudah diproses permak/retur ke CMT — angka reject "
-                     "tidak bisa dikoreksi. Selesaikan dulu dokumen permaknya.")
-        raise HTTPException(
-            409, "Koreksi qty REJECT belum didukung karena barang reject sudah masuk "
-                 "karantina QC. Batalkan/selesaikan dokumen karantina & permak terlebih "
-                 "dahulu, atau koreksi hanya qty LOLOS.")
+                409, f"Reject baris ini sudah diproses permak/retur ke CMT "
+                     f"({permak_doc.get('permak_number')}) — angka reject tidak bisa dikoreksi. "
+                     f"Selesaikan dulu dokumen permaknya.")
+        q_doc = await db.wh_quarantine_items.find_one(
+            {"source.receipt_line_id": line_id}, {"_id": 0, "id": 1, "quarantine_number": 1,
+                                                  "code": 1, "remaining_qty": 1})
+        if q_doc:
+            raise HTTPException(
+                409, f"Reject lama ({old_reject} pcs) sudah tercatat di karantina QC "
+                     f"{q_doc.get('quarantine_number') or q_doc.get('code') or q_doc.get('id')} — "
+                     f"selesaikan dokumen karantina itu dulu, atau koreksi hanya qty LOLOS.")
+        reject_quarantine = new_reject - old_reject
 
     delta = new_actual - old_actual
     stock_note = None
@@ -783,6 +800,28 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
         if wip_fg_koreksi is not None:
             stock_note["wip_fg_posting"] = serialize_doc(wip_fg_koreksi)
 
+    # reject BARU (sebelumnya tanpa dokumen karantina) → barangnya masuk karantina QC
+    if reject_quarantine and reject_quarantine > 0:
+        mat_r = await qty_ledger.resolve_fg_material(
+            db, material_id=fg_material_id, sku=line.get("sku_code", ""))
+        if mat_r:
+            try:
+                from core import quarantine as qmod
+                await qmod.quarantine_in(
+                    db, material_id=mat_r["id"], qty=reject_quarantine, unit="pcs",
+                    source={"type": "cmt_receipt", "receipt_id": receipt_id,
+                            "receipt_code": receipt.get("receipt_code"), "receipt_line_id": line_id,
+                            "po_id": receipt.get("po_id"), "po_number": receipt.get("po_number"),
+                            "vendor_id": receipt.get("cmt_vendor_id"), "vendor_name": receipt.get("cmt_name"),
+                            "job_item_id": line.get("job_item_id"), "sku": line.get("sku_code")},
+                    reject_reasons=[{"reason": body.get("reject_reason") or "koreksi_qc",
+                                     "qty": reject_quarantine}],
+                    notes=f"Koreksi hasil QC {receipt.get('receipt_code')}: reject +{reject_quarantine}",
+                    actor=user)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("karantina reject koreksi gagal (line %s)", line_id)
+                raise HTTPException(500, f"Reject koreksi gagal masuk karantina: {e}")
+
     entry = {"field": "qty_actual", "old": old_actual, "new": new_actual,
              "reject_old": old_reject, "reject_new": new_reject, "reason": reason,
              "by": user["name"], "by_id": user["id"], "at": _now(),
@@ -793,6 +832,18 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
     line = await db.cmt_receipt_lines.find_one({"id": line_id}, {"_id": 0})
     extra = await _after_correction(db, receipt_id, line, user, claimed,
                                    new_actual + new_reject, reason)
+    # 2026-11-02 (K17 butir 6, keputusan owner b): nilai tagihan CMT TIDAK diubah otomatis —
+    # tagihan penerimaan ini DITANDAI + Keuangan (accounting, staff_keuangan) diberi tahu.
+    try:
+        from core import short_shipment as _sm
+        extra["cmt_billing_flag"] = serialize_doc(await _sm.flag_cmt_payment_variance(
+            db, receipt_id, event_type="koreksi_hasil_qc", actor=user, qty=new_actual - old_actual,
+            reason=(f"koreksi hasil QC {receipt.get('receipt_code')} {line.get('sku_code') or ''}: "
+                    f"lolos {old_actual}→{new_actual}"
+                    + (f", reject {old_reject}→{new_reject}" if new_reject != old_reject else "")
+                    + f" ({reason})")) or {}) or None
+    except Exception:  # noqa: BLE001
+        logger.exception("penandaan tagihan CMT koreksi QC gagal (line %s)", line_id)
     # Angka dokumen (yang benar-benar sampai) berubah → vendor diberi tahu.
     try:
         from core import short_shipment as _sm
@@ -850,6 +901,14 @@ async def koreksi_deklarasi(receipt_id: str, line_id: str, request: Request):
     extra = {}
     if is_done:
         extra = await _after_correction(db, receipt_id, line, user, new_claim, arrived, reason)
+        # 2026-11-02 (K17 butir 6): koreksi deklarasi = dasar selisih berubah → tandai tagihan.
+        try:
+            await shortmod.flag_cmt_payment_variance(
+                db, receipt_id, event_type="koreksi_deklarasi", actor=user, qty=new_claim - old_claim,
+                reason=(f"koreksi klaim vendor {receipt.get('receipt_code')} {line.get('sku_code') or ''}: "
+                        f"{old_claim}→{new_claim} ({reason})"))
+        except Exception:  # noqa: BLE001
+            logger.exception("penandaan tagihan CMT koreksi deklarasi gagal (line %s)", line_id)
     # Vendor WAJIB diberi tahu (keputusan owner: koreksi sepihak + notifikasi jelas)
     try:
         await shortmod.notify_declaration_correction(
@@ -1018,8 +1077,15 @@ async def _finish_receipt(receipt_id: str, request: Request):
     # 2026-11-02 (F1): jenis PO dibaca SEBELUM stok masuk — PO INTERNAL membawa
     # `po_item_id` ke lapisan HPP (bahan BOM + jahit SPK). Maklon tidak diubah
     # (barang klien; keputusan "FG maklon" masih menunggu owner).
-    po_doc = await db.production_pos.find_one({"id": doc.get("po_id")}, {"_id": 0, "business_type": 1}) if doc.get("po_id") else None
+    po_doc = await db.production_pos.find_one(
+        {"id": doc.get("po_id")}, {"_id": 0, "business_type": 1, "buyer_id": 1, "customer_name": 1}
+    ) if doc.get("po_id") else None
     is_internal = (po_doc or {}).get("business_type", doc.get("business_type", "internal")) == "internal"
+    # 2026-11-02 — K14: FG maklon dicatat milik KLIEN (ownership = id klien, nilai 0).
+    client_owner = None if is_internal else {
+        "id": (po_doc or {}).get("buyer_id") or f"maklon_client:{(po_doc or {}).get('customer_name') or '-'}",
+        "name": (po_doc or {}).get("customer_name") or ""}
+    ownership_warnings = []
 
     # ── 1. Stok FG untuk qty lolos QC — lewat SSOT stok ──
     stock_result = []
@@ -1028,7 +1094,17 @@ async def _finish_receipt(receipt_id: str, request: Request):
         if qty <= 0:
             continue
         sku = (ln.get("sku_code") or "").strip()
-        fg = await _ensure_fg_for_cmt_line(db, ln, doc, user)
+        fg = await _ensure_fg_for_cmt_line(db, ln, doc, user, client_owner=client_owner)
+        owner_for_stock = ""
+        if client_owner and fg:
+            if fg.get("owner_type") == "client":
+                owner_for_stock = fg.get("owner_client_id") or client_owner["id"]
+            else:
+                # SKU klien sama dengan barang jadi DA: baris stok (material × lokasi) tidak
+                # bisa dipisah pemiliknya — dilaporkan, bukan ditebak.
+                ownership_warnings.append(
+                    f"K14: SKU {sku} PO maklon memakai master barang jadi DA — stok ini tercatat "
+                    f"milik DA. Pakai SKU artikel klien (Katalog Buyer) supaya barang klien terpisah.")
         if not fg:
             raise HTTPException(
                 400,
@@ -1055,7 +1131,8 @@ async def _finish_receipt(receipt_id: str, request: Request):
                 actor=user,
                 meta={"material_code": fg.get("code", sku),
                       "material_name": fg.get("name", ""),
-                      "unit": "pcs", "type": "finished_goods"})
+                      "unit": "pcs", "type": "finished_goods"},
+                owner_client=owner_for_stock, skip_cost_layer=bool(client_owner))
         except Exception as e:  # noqa: BLE001
             logger.exception("post stok FG gagal (receipt %s line %s)", receipt_id, ln["id"])
             raise HTTPException(500, f"Gagal menambah stok FG: {e}")
@@ -1118,6 +1195,8 @@ async def _finish_receipt(receipt_id: str, request: Request):
     result = await db.cmt_receipts.find_one({"id": receipt_id}, {"_id": 0})
     out = serialize_doc(_with_canon_status(result))
     out['stock_posted'] = stock_result
+    if ownership_warnings:
+        out['ownership_warnings'] = ownership_warnings
     out['qty_ledger'] = serialize_doc(ledger_result) if ledger_result else None
     if ap_result is not None:
         out['ap_mature'] = serialize_doc(ap_result)

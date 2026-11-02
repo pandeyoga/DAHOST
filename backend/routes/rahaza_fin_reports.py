@@ -613,17 +613,18 @@ async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# M-01 (Iter 116) — Nilai Persediaan Barang Jadi dari lapisan FIFO vs saldo GL 1-1404
+# M-01 (Iter 116) — Nilai Persediaan Barang Jadi vs saldo GL 1-1404
+# 2026-11-02 (owner No.26a): nilai = Σ stok bernilai × WAC (bukan lagi lapisan FIFO)
 # ═══════════════════════════════════════════════════════════════════════════════
 FG_INVENTORY_ACCOUNT = "1-1404"
 
 
 @router.get("/fg-inventory-valuation")
 async def fg_inventory_valuation(request: Request, as_of: Optional[str] = Query(None)):
-    """Kartu stok FG (fg_cost_layers qty_remaining × unit_cost) per SKU, dibandingkan
-    dengan saldo GL 1-1404 sampai `as_of` (default hari ini). Lapisan = posisi SAAT INI;
-    GL = per tanggal. Selisih dijelaskan: lapisan belum berjurnal (WIP→FG belum diposting),
-    lapisan tanpa biaya, dan stok fisik tanpa lapisan."""
+    """Nilai persediaan FG per SKU = stok FG milik DA yang bernilai × WAC (core/fg_cost_layers),
+    dibandingkan dengan saldo GL 1-1404 sampai `as_of` (default hari ini). Stok & WAC =
+    posisi SAAT INI; GL = per tanggal. Selisih dijelaskan: penerimaan bernilai yang belum
+    berjurnal (WIP→FG belum diposting) dan stok tanpa biaya (WAC 0 / penerimaan Rp 0)."""
     await require_auth(request)
     db = get_db()
     return await compute_fg_valuation(db, as_of or date.today().isoformat())
@@ -633,92 +634,122 @@ def fg_valuation_status(*, difference: float, unexplained: float, uncosted_qty: 
     """Status rekonsiliasi Nilai Persediaan FG (fungsi murni, 2026-11-02 / P-1).
 
     Dulu `reconciled`/`explained` hanya melihat selisih rupiah. Barang FG yang stoknya
-    ada tetapi lapisannya Rp 0 (`uncosted_qty` > 0) membuat nilai lapisan DAN GL sama-sama
+    ada tetapi biayanya Rp 0 (`uncosted_qty` > 0) membuat nilai stok DAN GL sama-sama
     0 → selisih 0 → "aman", padahal nilainya macet di WIP dan HPP jualnya 0. Sekarang
     stok tanpa biaya = TIDAK beres dan tidak terjelaskan, supaya alarm harian menyala.
     """
     issues = []
     if uncosted_qty > 0:
-        issues.append(f"{uncosted_qty:g} pcs FG berlapisan biaya Rp 0 — nilainya belum pindah dari WIP "
-                      "dan HPP penjualannya akan 0. Periksa BOM & biaya jahit SPK batch tersebut.")
+        issues.append(f"{uncosted_qty:g} pcs FG tanpa biaya (WAC 0 atau penerimaan Rp 0) — nilainya belum "
+                      "pindah dari WIP dan HPP penjualannya 0. Periksa BOM & biaya jahit SPK batch tersebut.")
     if abs(unexplained) >= 1:
-        issues.append(f"Selisih Rp {unexplained:,.0f} antara lapisan FIFO dan GL 1-1404 belum terjelaskan.")
+        issues.append(f"Selisih Rp {unexplained:,.0f} antara Σ stok × WAC dan GL 1-1404 belum terjelaskan.")
     no_uncosted = not (uncosted_qty > 0)
     return {"reconciled": abs(difference) < 1 and no_uncosted,
             "explained": abs(unexplained) < 1 and no_uncosted,
             "issues": issues}
 
 
+def fg_valuation_row(*, qty: float, wac: float, layers: list, wac_initialized: bool) -> dict:
+    """Satu baris laporan (fungsi murni). `layers` = semua lapisan SKU ini (jejak batch).
+
+    * nilai = qty bernilai × WAC (Σ stok × WAC, keputusan owner No.26a);
+    * `unposted_value` = penerimaan bernilai tanpa JE 1-1404 (semua lapisan, termasuk yang
+      jejaknya sudah habis — nilainya sudah masuk WAC tetapi tidak pernah masuk GL);
+    * `uncosted_qty` = stok tanpa biaya: seluruh stok bila WAC 0, selain itu lapisan Rp 0
+      yang masih tersisa (penerimaan Rp 0 tidak mengubah WAC — aturan bahan)."""
+    open_rows = [ly for ly in layers if float(ly.get("qty_remaining") or 0) > 0]
+    layer_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows)
+    trail_value = sum(float(ly.get("qty_remaining") or 0) * float(ly.get("unit_cost") or 0) for ly in open_rows)
+    zero_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows if float(ly.get("unit_cost") or 0) <= 0)
+    unposted = [ly for ly in layers if not ly.get("gl_je_id") and float(ly.get("total_cost") or 0) > 0]
+    if qty > 0 and wac <= 0:
+        uncosted = qty
+    else:
+        uncosted = min(zero_qty, max(qty, 0.0))
+    value = round(qty * wac, 2)
+    return {"stock_qty": round(qty, 2), "wac_unit_cost": round(wac, 4), "value": value,
+            "wac_initialized": wac_initialized,
+            # nama lama dipertahankan untuk layar (RahazaFGValuationModule): nilainya kini WAC
+            "avg_unit_cost": round(wac, 2), "layer_value": value,
+            "layer_qty": round(layer_qty, 2), "qty_diff": round(qty - layer_qty, 2),
+            "trail_value": round(trail_value, 2),
+            "unposted_layers": len(unposted),
+            "unposted_value": round(sum(float(ly.get("total_cost") or 0) for ly in unposted), 2),
+            "uncosted_qty": round(uncosted, 2), "layers_open": len(open_rows)}
+
+
 async def compute_fg_valuation(db, as_of_date: str) -> dict:
     """Inti laporan M-01 — dipakai endpoint di atas DAN cron `fg-valuation-check`."""
-    layers = await db.fg_cost_layers.find({}, {"_id": 0}).to_list(20000)
-    per_mat: dict = {}
-    unposted_value, unposted_layers, uncosted_qty = 0.0, 0, 0
+    from core import fg_cost_layers as fcl
+    from core.catalog_stock import blocked_location_ids
+    from core.stock_schema import read_qty
+    layers = await db.fg_cost_layers.find({}, {"_id": 0}).to_list(50000)
+    by_mat: dict = {}
     for ly in layers:
-        mid = ly.get("material_id") or ""
-        rem = float(ly.get("qty_remaining") or 0)
-        uc = float(ly.get("unit_cost") or 0)
-        m = per_mat.setdefault(mid, {"material_id": mid, "sku": ly.get("sku") or "", "layer_qty": 0.0, "layer_value": 0.0,
-                                     "layers_open": 0, "uncosted_qty": 0.0, "unposted_value": 0.0, "stock_qty": 0.0})
-        if rem > 0:
-            m["layer_qty"] += rem
-            m["layer_value"] += rem * uc
-            m["layers_open"] += 1
-            if uc <= 0:
-                m["uncosted_qty"] += rem
-                uncosted_qty += rem
-        if not ly.get("gl_je_id") and float(ly.get("total_cost") or 0) > 0:
-            # belum ada JE WIP→FG utk lapisan ini → GL 1-1404 belum memuat nilainya
-            unposted_layers += 1
-            unposted_value += float(ly.get("total_cost") or 0)
-            m["unposted_value"] += float(ly.get("total_cost") or 0)
+        by_mat.setdefault(ly.get("material_id") or "", []).append(ly)
+    fg_ids = [m["id"] async for m in db.rahaza_materials.find({"type": "fg"}, {"_id": 0, "id": 1})]
+    cat_ids = [r["_id"] for r in await db.rahaza_material_stock.aggregate([
+        {"$match": {"inventory_category": "fg_internal"}}, {"$group": {"_id": "$material_id"}}]).to_list(50000)]
+    ids = sorted({i for i in list(by_mat) + fg_ids + cat_ids if i})
+    mats = {m["id"]: m async for m in db.rahaza_materials.find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "code": 1, "name": 1, fcl.WAC_FIELD: 1, fcl.WAC_COMPONENTS: 1,
+                               "wac_source": 1})}
+    blocked = await blocked_location_ids(db)
+    qty_by: dict = {}
+    phys_by: dict = {}
+    async for s in db.rahaza_material_stock.find({"material_id": {"$in": ids}}, {"_id": 0}):
+        mid = s.get("material_id")
+        phys_by[mid] = phys_by.get(mid, 0.0) + read_qty(s)
+        if fcl.is_valued_row(s, blocked):
+            qty_by[mid] = qty_by.get(mid, 0.0) + read_qty(s)
 
-    stock_rows = await db.rahaza_material_stock.aggregate([
-        {"$match": {"inventory_category": "fg_internal"}},
-        {"$group": {"_id": "$material_id", "qty": {"$sum": {"$ifNull": ["$qty", 0]}}}},
-    ]).to_list(20000)
-    for s in stock_rows:
-        mid = s["_id"] or ""
-        m = per_mat.setdefault(mid, {"material_id": mid, "sku": "", "layer_qty": 0.0, "layer_value": 0.0,
-                                     "layers_open": 0, "uncosted_qty": 0.0, "unposted_value": 0.0, "stock_qty": 0.0})
-        m["stock_qty"] = float(s.get("qty") or 0)
-
-    mats = {m["id"]: m async for m in db.rahaza_materials.find({"id": {"$in": [k for k in per_mat if k]}},
-                                                              {"_id": 0, "id": 1, "code": 1, "name": 1})}
     rows = []
-    for mid, m in per_mat.items():
+    for mid in ids:
         info = mats.get(mid) or {}
-        m["code"] = info.get("code") or m["sku"] or mid[:8]
-        m["name"] = info.get("name") or ""
-        m["avg_unit_cost"] = round(m["layer_value"] / m["layer_qty"], 2) if m["layer_qty"] > 0 else 0.0
-        m["qty_diff"] = round(m["stock_qty"] - m["layer_qty"], 2)
-        for k in ("layer_qty", "layer_value", "uncosted_qty", "unposted_value", "stock_qty"):
-            m[k] = round(m[k], 2)
-        if m["layer_qty"] or m["stock_qty"] or m["unposted_value"]:
-            rows.append(m)
-    rows.sort(key=lambda r: -r["layer_value"])
+        ly = by_mat.get(mid) or []
+        initialized = isinstance(info.get(fcl.WAC_COMPONENTS), dict)
+        # FG yang belum pernah dinilai WAC: pratinjau WAC awal (rumus migrasi), tanpa menulis
+        wac = (float(info.get(fcl.WAC_FIELD) or 0) if initialized
+               else fcl.initial_wac_from_layers(ly)["unit_cost"])
+        qty = float(qty_by.get(mid, 0.0))
+        r = fg_valuation_row(qty=qty, wac=wac, layers=ly, wac_initialized=initialized)
+        if not (r["stock_qty"] or r["layer_qty"] or r["unposted_value"]):
+            continue
+        r.update({"material_id": mid, "code": info.get("code") or (ly[0].get("sku") if ly else "") or mid[:8],
+                  "name": info.get("name") or "", "sku": info.get("code") or "",
+                  "physical_qty": round(phys_by.get(mid, 0.0), 2),
+                  "wac_source": info.get("wac_source") or ("preview_from_layers" if ly else "none")})
+        rows.append(r)
+    rows.sort(key=lambda r: -abs(r["value"]))
 
     agg = await _aggregate_by_account(db, {"date": {"$lte": as_of_date}, "account_code": FG_INVENTORY_ACCOUNT})
     a = agg.get(FG_INVENTORY_ACCOUNT) or {}
     gl_balance = round(float(a.get("debit") or 0) - float(a.get("credit") or 0), 2)
-    layer_value = round(sum(r["layer_value"] for r in rows), 2)
-    difference = round(layer_value - gl_balance, 2)
+    value = round(sum(r["value"] for r in rows), 2)
+    unposted_value = round(sum(r["unposted_value"] for r in rows), 2)
+    uncosted_qty = round(sum(r["uncosted_qty"] for r in rows), 2)
+    difference = round(value - gl_balance, 2)
     explained = round(difference - unposted_value, 2)
     status = fg_valuation_status(difference=difference, unexplained=explained, uncosted_qty=uncosted_qty)
     return {
-        "as_of": as_of_date, "gl_account": FG_INVENTORY_ACCOUNT,
+        "as_of": as_of_date, "gl_account": FG_INVENTORY_ACCOUNT, "basis": "wac",
         "rows": rows,
-        "totals": {"stock_qty": round(sum(r["stock_qty"] for r in rows), 2), "layer_qty": round(sum(r["layer_qty"] for r in rows), 2),
-                   "layer_value": layer_value, "gl_balance": gl_balance, "difference": difference,
-                   "unposted_layers": unposted_layers, "unposted_value": round(unposted_value, 2),
-                   "uncosted_qty": round(uncosted_qty, 2), "unexplained_difference": explained},
+        "totals": {"stock_qty": round(sum(r["stock_qty"] for r in rows), 2),
+                   "layer_qty": round(sum(r["layer_qty"] for r in rows), 2),
+                   "value": value, "layer_value": value, "gl_balance": gl_balance, "difference": difference,
+                   "unposted_layers": sum(r["unposted_layers"] for r in rows), "unposted_value": unposted_value,
+                   "uncosted_qty": uncosted_qty, "unexplained_difference": explained,
+                   "wac_not_initialized": sum(1 for r in rows if not r["wac_initialized"])},
         "reconciled": status["reconciled"],
         "explained": status["explained"],
         "issues": status["issues"],
         "notes": [
-            "Nilai lapisan = Σ qty_remaining × unit_cost (FIFO, posisi saat ini).",
+            "Nilai = Σ stok FG milik DA yang bernilai (semua lokasi kecuali karantina/terblokir) × WAC "
+            "(rata-rata bergerak, keputusan owner No.26a). Kolom lama 'layer_value'/'avg_unit_cost' kini berisi angka WAC.",
             "Saldo GL = Dr − Cr akun 1-1404 sampai tanggal as_of.",
-            "unposted_value = lapisan bernilai yang belum punya JE WIP→FG (jalankan Backfill WIP→FG).",
-            "uncosted_qty = stok berlapisan tetapi unit_cost 0 (harga bahan/upah PO belum terisi).",
+            "unposted_value = penerimaan bernilai yang belum punya JE WIP→FG (jalankan Backfill WIP→FG).",
+            "uncosted_qty = stok tanpa biaya (WAC 0, atau penerimaan Rp 0 yang masih ada di jejak lapisan).",
+            "layer_qty = sisa jejak lapisan batch (analitik, bukan dasar nilai); qty_diff = stok − jejak.",
         ],
     }

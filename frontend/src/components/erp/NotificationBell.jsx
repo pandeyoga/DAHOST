@@ -1,39 +1,38 @@
 /**
- * NotificationBell — versi ringkas + popup detail (revisi owner 2026-07-27).
+ * NotificationBell — SATU kotak masuk di TopBar (revisi owner 2026-07-27, 2026-11-02).
  *
- * MASALAH LAMA: bel langsung menumpahkan seluruh daftar notifikasi tanpa
- * kategori, sehingga user tidak tahu notifikasi itu datang dari portal mana dan
- * dropdown-nya jadi panjang.
+ * 2026-11-02 (K30) — bel + ikon "Approval Inbox" terpisah DILEBUR jadi satu panel
+ * dengan dua tab:
+ *   · Perlu Tindakan — lencana merah = notifikasi action TERBUKA + pekerjaan yang
+ *     dihitung langsung dari dokumen (Approval Badge lama), tanpa hitung dobel
+ *     (backend: /api/notifications/categories → `action_open`). Item punya tombol
+ *     aksi yang membuka layar terkait (+ record_id/tab bila ada). Action yang sudah
+ *     selesai tertutup otomatis dan pindah ke "Riwayat".
+ *   · Pemberitahuan — kabar biasa; titik biru di bel bila ada yang belum dibaca.
+ * Kategori portal tetap ada sebagai filter sekunder di Pemberitahuan.
  *
- * SEKARANG:
- *   · Dropdown bel = RINGKAS — hitungan per kategori (portal sumber) + 5 notifikasi terbaru.
- *   · Tombol "Lihat Semua" membuka POPUP penuh: filter kategori, tandai dibaca,
- *     muat lebih banyak, dan lompat ke modul terkait.
- *   · Kategori & hak terima diatur backend (/api/notifications/categories),
- *     mengikuti konfigurasi admin (matriks kategori × role) + pembisuan per user.
- *
- * 2026-11-02 — perbaikan dari uji browser owner & audit notifikasi:
- *   · klik item (dropdown & Pusat Notifikasi) = tandai dibaca → tutup panel →
- *     buka layar terkait; tanpa tautan → buka detailnya. Dulu baris dropdown
- *     tidak bisa diklik sama sekali.
- *   · id rekaman (`link_id`), `link_params`, dan tab hub ikut diteruskan lewat
- *     event `erp:navigate-module` (App.handleNavigate: pindah portal + deepLinkParams).
- *   · Escape / klik di luar / perpindahan halaman menutup panel. Overlay
- *     `fixed inset-0` lama terkurung di header (backdrop-filter membuat header
- *     jadi containing block), jadi klik di luar header tidak menutup panel.
- *   · waktu: stempel server tanpa zona dibaca sebagai UTC (dulu "7 jam lalu"
- *     untuk notifikasi 1 menit), ditambah jam WIB absolut.
- *   · ponsel 375 px: panel `fixed` selebar layar (dulu 340 px berjangkar kanan
- *     → keluar layar di sisi kiri).
+ * 2026-11-02 — perbaikan sebelumnya tetap: klik item = tandai dibaca → tutup panel →
+ * buka layar terkait (event `erp:navigate-module` → App.handleNavigate: pindah portal +
+ * tab hub + deepLinkParams); Escape/klik di luar menutup panel; waktu UTC → WIB;
+ * panel selebar layar di ponsel.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bell, X, CheckCheck, ArrowRight, Loader2, BellOff, Settings2, ChevronDown } from 'lucide-react';
+import {
+  Bell, X, CheckCheck, ArrowRight, Loader2, BellOff, Settings2, ChevronDown,
+  ClipboardList, History, CheckCircle2,
+} from 'lucide-react';
 import Modal from './Modal';
 import NotificationPrefsDialog from './NotificationPrefsDialog';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || '';
 const PAGE_SIZE = 30;
-const LATEST_COUNT = 5;
+const DROPDOWN_COUNT = 6;
+
+export const INBOX_TABS = [
+  { key: 'action', label: 'Perlu Tindakan' },
+  { key: 'info', label: 'Pemberitahuan' },
+  { key: 'history', label: 'Riwayat' },
+];
 
 const CAT_TONE = {
   // "Untuk Saya" = notifikasi yang dialamatkan langsung ke pengguna ini
@@ -86,19 +85,21 @@ export function formatWIB(iso) {
 // Parameter navigasi dari sebuah notifikasi: id rekaman + link_params + tab hub.
 export function notifNavParams(n) {
   const params = { ...(n?.link_params || {}) };
-  const rid = n?.link_id || n?.source_id;
+  const rid = n?.action?.record_id || n?.link_id || n?.source_id;
   if (rid) {
     params.record_id = params.record_id || rid;
     params.link_id = rid;
   }
   if (!params.tab && n?.meta?.hub_tab) params.tab = n.meta.hub_tab;
-  params.from_notification = n?.id;
+  if (n?.id) params.from_notification = n.id;
   return params;
 }
 
 // Navigasi bersama bel & Portal Saya. Mengembalikan false bila tujuan tidak dikenal.
+// Item action: backend sudah mengisi `link_module` = action.target_menu (disesuaikan
+// portal penerima, K37) dan `link_params` = action.filter.
 export function navigateToNotification(n, fallback) {
-  const moduleId = n?.link_module;
+  const moduleId = n?.action?.target_menu || n?.link_module;
   if (!moduleId) return false;
   const detail = { moduleId, params: notifNavParams(n), handled: undefined };
   try { window.dispatchEvent(new CustomEvent('erp:navigate-module', { detail })); } catch (e) { /* noop */ }
@@ -107,6 +108,14 @@ export function navigateToNotification(n, fallback) {
     return true;
   }
   return detail.handled === true;
+}
+
+// Grup "Perlu Tindakan" dari dokumen (PR, AP, SDM, kasbon, retur, ...) → layar antreannya.
+export function navigateToGroup(g, fallback) {
+  return navigateToNotification({
+    link_module: g?.module_id,
+    link_params: g?.tab ? { tab: g.tab } : {},
+  }, fallback);
 }
 
 function CatChip({ cat, label, count, active, onClick }) {
@@ -123,13 +132,121 @@ function CatChip({ cat, label, count, active, onClick }) {
   );
 }
 
+export function TabButton({ active, label, count, tone = 'neutral', onClick, testId }) {
+  const badge = tone === 'action'
+    ? 'bg-red-500 text-white'
+    : 'bg-[hsl(var(--primary)/0.12)] text-[hsl(var(--primary))]';
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`flex-1 inline-flex items-center justify-center gap-1.5 h-9 px-2 text-xs font-medium border-b-2 transition-colors
+        ${active ? 'border-[hsl(var(--primary))] text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+      data-testid={testId}
+    >
+      {label}
+      {count > 0 && (
+        <span className={`min-w-[18px] h-[18px] px-1 rounded-full text-[10px] font-bold grid place-items-center tabular-nums ${badge}`}>
+          {count > 99 ? '99+' : count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// Satu baris grup pekerjaan dari dokumen (pengganti dropdown Approval Inbox lama).
+export function GroupRow({ g, onOpen }) {
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5" data-testid={`inbox-group-${g.key}`}>
+      <span className="shrink-0 grid place-items-center w-7 h-7 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
+        <ClipboardList className="w-3.5 h-3.5" />
+      </span>
+      <span className="min-w-0 flex-1 text-xs font-medium text-foreground">{g.label}</span>
+      <span className="shrink-0 min-w-[20px] h-5 px-1.5 rounded-full bg-amber-500 text-white text-[10px] font-bold grid place-items-center tabular-nums">
+        {g.count}
+      </span>
+      <button type="button" onClick={() => onOpen(g)}
+              className="shrink-0 inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-[hsl(var(--primary))] text-white text-[11px] font-medium hover:opacity-90"
+              data-testid={`inbox-group-open-${g.key}`}>
+        Buka <ArrowRight className="w-3 h-3" />
+      </button>
+    </div>
+  );
+}
+
+// Satu baris notifikasi (action / info / riwayat). `compact` = dropdown.
+export function InboxRow({ n, compact = false, expanded = false, onActivate, onAction, onMarkRead }) {
+  const text = n.message || n.body;
+  const isAction = n.kind === 'action' && !n.resolved_at;
+  const isHistory = n.kind === 'action' && !!n.resolved_at;
+  const unreadTone = !n.read && !isHistory ? 'bg-[hsl(var(--primary)/0.04)]' : '';
+  return (
+    <div className={`flex items-start gap-2 px-3 py-2.5 ${unreadTone} ${expanded ? 'ring-1 ring-inset ring-[hsl(var(--primary)/0.35)]' : ''}`}
+         data-testid={isAction ? 'inbox-action-row' : isHistory ? 'inbox-history-row' : 'notif-row'}>
+      <button type="button" onClick={() => onActivate?.(n)}
+              className="min-w-0 flex-1 text-left focus:outline-none focus-visible:underline"
+              aria-expanded={n.link_module ? undefined : expanded}>
+        <span className="flex items-center gap-1.5">
+          {n.category_label && (
+            <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[9px] font-semibold ${CAT_TONE[n.category] || CAT_TONE.sysadmin}`}>
+              {n.category_label}
+            </span>
+          )}
+          <span className={`block ${compact ? 'text-xs line-clamp-2' : 'text-sm'} ${n.read && !isAction ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>
+            {n.title || text}
+          </span>
+        </span>
+        {text && !compact && (
+          <span className={`block text-xs text-muted-foreground mt-0.5 whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}>{text}</span>
+        )}
+        <span className="block text-[10px] text-muted-foreground mt-1" title={formatWIB(n.created_at)}>
+          {timeAgo(n.created_at)}{compact ? '' : ` · ${formatWIB(n.created_at)}`}
+          {isHistory && (
+            <span className="ml-1 inline-flex items-center gap-0.5 text-emerald-700">
+              · <CheckCircle2 className="w-3 h-3" /> {n.resolved_label || 'Selesai'}
+              {n.resolved_at ? ` (${formatWIB(n.resolved_at)})` : ''}
+            </span>
+          )}
+          {!isAction && !isHistory && n.link_module && <span className="ml-1 text-[hsl(var(--primary))]">· Buka</span>}
+        </span>
+      </button>
+      {isAction && n.action && (
+        <button type="button" onClick={() => onAction?.(n)}
+                className="shrink-0 self-center inline-flex items-center gap-1 h-7 px-2.5 rounded-md bg-[hsl(var(--primary))] text-white text-[11px] font-medium hover:opacity-90"
+                data-testid="inbox-action-btn">
+          {n.action.label || 'Buka'} <ArrowRight className="w-3 h-3" />
+        </button>
+      )}
+      {!isAction && !isHistory && !n.read && onMarkRead && !compact && (
+        <button type="button" onClick={() => onMarkRead(n.id)}
+                className="shrink-0 self-center text-[11px] text-muted-foreground hover:text-foreground"
+                data-testid="notif-mark-one">
+          Tandai dibaca
+        </button>
+      )}
+      {!isAction && !isHistory && !n.link_module && !compact && (
+        <ChevronDown className={`shrink-0 self-center w-3.5 h-3.5 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      )}
+    </div>
+  );
+}
+
+const EMPTY_TEXT = {
+  action: 'Tidak ada yang perlu ditindaklanjuti.',
+  info: 'Belum ada pemberitahuan.',
+  history: 'Belum ada tindakan yang selesai.',
+};
+
 export function NotificationBell({ token, onNavigateModule }) {
   const [open, setOpen] = useState(false);
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [tab, setTab] = useState('action');
+  const [centerOpen, setCenterOpen] = useState(false);
+  const [centerTab, setCenterTab] = useState('action');
   const [prefsOpen, setPrefsOpen] = useState(false);
-  const [sum, setSum] = useState({ categories: [], latest: [], total_unread: 0, total: 0 });
-  const [items, setItems] = useState([]);
-  const [page, setPage] = useState({ total: 0, hasMore: false });
+  const [sum, setSum] = useState({ categories: [], action_open: 0, info_unread: 0, total: 0 });
+  const [box, setBox] = useState({ items: [], groups: [], total: 0, hasMore: false });
   const [filter, setFilter] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -143,25 +260,29 @@ export function NotificationBell({ token, onNavigateModule }) {
   const loadSummary = useCallback(async () => {
     if (!token) return;
     try {
-      const r = await fetch(`${BACKEND_URL}/api/notifications/categories?latest=${LATEST_COUNT}`, { headers: h });
+      const r = await fetch(`${BACKEND_URL}/api/notifications/categories?latest=1`, { headers: h });
       if (r.ok) setSum(await r.json());
     } catch { /* diam: bel tidak boleh merusak halaman */ }
 
   }, [token]);
 
-  const loadItems = useCallback(async (cat, { append = false, skip = 0 } = {}) => {
+  const loadBox = useCallback(async (t, { cat = '', append = false, skip = 0, limit = PAGE_SIZE } = {}) => {
+    if (!token) return;
     if (append) setLoadingMore(true); else setLoading(true);
     try {
-      const qs = new URLSearchParams({ limit: String(PAGE_SIZE), skip: String(skip) });
+      const qs = new URLSearchParams({ tab: t, limit: String(limit), skip: String(skip) });
       if (cat) qs.set('category', cat);
-      const r = await fetch(`${BACKEND_URL}/api/notifications/categorized?${qs}`, { headers: h });
+      const r = await fetch(`${BACKEND_URL}/api/notifications/inbox?${qs}`, { headers: h });
       if (r.ok) {
         const j = await r.json();
-        setItems((xs) => (append ? [...xs, ...(j.items || [])] : (j.items || [])));
-        setPage({ total: j.total ?? (j.items || []).length, hasMore: !!j.has_more });
+        setBox((b) => ({
+          items: append ? [...b.items, ...(j.items || [])] : (j.items || []),
+          groups: append ? b.groups : (j.groups || []),
+          total: j.total ?? 0,
+          hasMore: !!j.has_more,
+        }));
       } else if (!append) {
-        setItems([]);
-        setPage({ total: 0, hasMore: false });
+        setBox({ items: [], groups: [], total: 0, hasMore: false });
       }
     } catch { /* diam */ } finally {
       if (append) setLoadingMore(false); else setLoading(false);
@@ -171,7 +292,10 @@ export function NotificationBell({ token, onNavigateModule }) {
 
   useEffect(() => {
     loadSummary();
-    const t = setInterval(loadSummary, 60000);
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;   // tab tersembunyi: jangan polling
+      loadSummary();
+    }, 60000);
     return () => clearInterval(t);
   }, [loadSummary]);
 
@@ -192,7 +316,7 @@ export function NotificationBell({ token, onNavigateModule }) {
     };
   }, [open]);
   useEffect(() => {
-    const closeAll = () => { setOpen(false); setDetailOpen(false); };
+    const closeAll = () => { setOpen(false); setCenterOpen(false); };
     window.addEventListener('hashchange', closeAll);
     return () => window.removeEventListener('hashchange', closeAll);
   }, []);
@@ -200,7 +324,7 @@ export function NotificationBell({ token, onNavigateModule }) {
   const markRead = async (id) => {
     try {
       await fetch(`${BACKEND_URL}/api/notifications/unified/${id}/mark-read`, { method: 'POST', headers: h });
-      setItems((xs) => xs.map((x) => (x.id === id ? { ...x, read: true } : x)));
+      setBox((b) => ({ ...b, items: b.items.map((x) => (x.id === id ? { ...x, read: true } : x)) }));
       loadSummary();
     } catch { /* ignore */ }
   };
@@ -208,76 +332,134 @@ export function NotificationBell({ token, onNavigateModule }) {
   const markAll = async () => {
     try {
       await fetch(`${BACKEND_URL}/api/notifications/unified/mark-all-read`, { method: 'POST', headers: h });
-      setItems((xs) => xs.map((x) => ({ ...x, read: true })));
+      setBox((b) => ({ ...b, items: b.items.map((x) => ({ ...x, read: true })) }));
       loadSummary();
     } catch { /* ignore */ }
   };
 
-  const openDetail = (cat = '', focusId = null) => {
-    setOpen(false);
-    setDetailOpen(true);
-    setFilter(cat);
-    setExpandedId(focusId);
-    setNotice('');
-    loadItems(cat);
+  const toggleOpen = () => {
+    if (open) { setOpen(false); return; }
+    // Buka di tab yang berisi: Perlu Tindakan dulu, kecuali kosong.
+    const first = (sum.action_open || 0) > 0 || !(sum.info_unread > 0) ? 'action' : 'info';
+    setTab(first);
+    setFilter('');
+    setOpen(true);
+    loadBox(first, { limit: DROPDOWN_COUNT });
+    loadSummary();
   };
 
-  // Satu perilaku klik untuk dropdown & Pusat Notifikasi.
+  const switchTab = (t) => { setTab(t); loadBox(t, { limit: DROPDOWN_COUNT }); };
+
+  const openCenter = (t = 'action', focusId = null) => {
+    setOpen(false);
+    setCenterOpen(true);
+    setCenterTab(t);
+    setFilter('');
+    setExpandedId(focusId);
+    setNotice('');
+    loadBox(t);
+  };
+
+  const switchCenterTab = (t) => {
+    setCenterTab(t); setFilter(''); setExpandedId(null); setNotice(''); loadBox(t);
+  };
+
+  const go = (n) => {
+    setOpen(false);
+    setCenterOpen(false);
+    const ok = navigateToNotification(n, onNavigateModule);
+    if (!ok) {
+      // Tujuan tidak dikenal frontend — jangan diam: tampilkan detailnya.
+      setNotice('Layar tujuan notifikasi ini tidak tersedia. Detailnya ditampilkan di bawah.');
+      setCenterOpen(true);
+      setExpandedId(n.id);
+      loadBox(centerTab);
+    }
+  };
+
+  // Satu perilaku klik untuk dropdown & kotak masuk lengkap.
   const activate = (n, from) => {
     if (!n.read) markRead(n.id);
-    if (n.link_module) {
-      setOpen(false);
-      setDetailOpen(false);
-      const ok = navigateToNotification(n, onNavigateModule);
-      if (!ok) {
-        // Tujuan tidak dikenal frontend — jangan diam: tampilkan detailnya.
-        setNotice('Layar tujuan notifikasi ini tidak tersedia. Detailnya ditampilkan di bawah.');
-        setDetailOpen(true);
-        setExpandedId(n.id);
-        loadItems(filter);
-      }
-      return;
-    }
-    if (from === 'dropdown') openDetail('', n.id);
+    if (n.link_module || n.action?.target_menu) { go(n); return; }
+    if (from === 'dropdown') openCenter(n.kind === 'action' ? (n.resolved_at ? 'history' : 'action') : 'info', n.id);
     else setExpandedId((cur) => (cur === n.id ? null : n.id));
   };
 
-  const unread = sum.total_unread || 0;
-  const cats = (sum.categories || []).filter((c) => c.total > 0);
+  const openGroup = (g) => {
+    setOpen(false);
+    setCenterOpen(false);
+    navigateToGroup(g, onNavigateModule);
+  };
+
+  const actionCount = sum.action_open || 0;
+  const infoUnread = sum.info_unread || 0;
+  const cats = (sum.categories || []).filter((c) => (c.total - (c.action || 0)) > 0);
+  const ariaLabel = `Kotak masuk: ${actionCount} perlu tindakan, ${infoUnread} pemberitahuan belum dibaca`;
+
+  const renderList = (t, { compact }) => {
+    if (loading) {
+      return <div className="py-10 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>;
+    }
+    const groups = t === 'action' && !filter ? (box.groups || []) : [];
+    if (groups.length === 0 && box.items.length === 0) {
+      return (
+        <div className="px-3 py-8 text-center">
+          {t === 'history' ? <History className="w-6 h-6 mx-auto text-muted-foreground/40" />
+            : <BellOff className="w-6 h-6 mx-auto text-muted-foreground/40" />}
+          <p className="text-xs text-muted-foreground mt-2">{EMPTY_TEXT[t]}</p>
+        </div>
+      );
+    }
+    return (
+      <div className="divide-y divide-[var(--glass-border)]">
+        {groups.map((g) => <GroupRow key={g.key} g={g} onOpen={openGroup} />)}
+        {box.items.map((n) => (
+          <InboxRow key={n.id} n={n} compact={compact} expanded={expandedId === n.id}
+                    onActivate={(x) => activate(x, compact ? 'dropdown' : 'center')}
+                    onAction={(x) => { if (!x.read) markRead(x.id); go(x); }}
+                    onMarkRead={markRead} />
+        ))}
+      </div>
+    );
+  };
 
   return (
     <>
       <div className="relative" ref={wrapRef}>
         <button
           ref={btnRef}
-          onClick={() => { setOpen((o) => !o); loadSummary(); }}
+          onClick={toggleOpen}
           className="relative grid place-items-center h-9 w-9 rounded-full border border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground/60 hover:text-foreground hover:bg-[var(--nav-pill-active)] transition-colors"
           data-testid="notification-bell-btn"
-          aria-label={unread > 0 ? `Notifikasi, ${unread} belum dibaca` : 'Notifikasi'}
+          aria-label={ariaLabel}
+          title={ariaLabel}
           aria-haspopup="dialog"
           aria-expanded={open}
         >
           <Bell className="w-4 h-4" />
-          {unread > 0 && (
+          {actionCount > 0 ? (
             <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center"
-                  data-testid="notification-unread-badge" title={`${unread} belum dibaca`}>
-              {unread > 99 ? '99+' : unread}
+                  data-testid="notification-action-badge">
+              {actionCount > 99 ? '99+' : actionCount}
             </span>
-          )}
+          ) : infoUnread > 0 ? (
+            <span className="absolute top-0 right-0 w-2.5 h-2.5 rounded-full bg-[hsl(var(--primary))] ring-2 ring-[var(--card-surface)]"
+                  data-testid="notification-info-dot" />
+          ) : null}
         </button>
 
         {open && (
           <div
             role="dialog"
-            aria-label="Notifikasi"
-            className="fixed left-2 right-2 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[360px] z-50 rounded-xl border border-[var(--glass-border)] bg-[var(--popover-surface)] shadow-[var(--shadow-soft)] overflow-hidden"
+            aria-label="Kotak masuk"
+            className="fixed left-2 right-2 top-16 sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-2 sm:w-[380px] z-50 rounded-xl border border-[var(--glass-border)] bg-[var(--popover-surface)] shadow-[var(--shadow-soft)] overflow-hidden"
             data-testid="notification-dropdown"
           >
-            <div className="flex items-center justify-between px-3 py-2.5 border-b border-[var(--glass-border)]">
+            <div className="flex items-center justify-between px-3 pt-2.5 pb-1">
               <div>
-                <p className="text-sm font-semibold text-foreground">Notifikasi</p>
+                <p className="text-sm font-semibold text-foreground">Kotak Masuk</p>
                 <p className="text-[11px] text-muted-foreground tabular-nums">
-                  {unread} belum dibaca dari {sum.total || 0} total
+                  {actionCount} perlu tindakan · {infoUnread} pemberitahuan belum dibaca
                 </p>
               </div>
               <div className="flex items-center gap-1">
@@ -293,153 +475,94 @@ export function NotificationBell({ token, onNavigateModule }) {
               </div>
             </div>
 
-            <div className="px-3 py-2.5 border-b border-[var(--glass-border)]">
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1.5">
-                Per Portal
-              </p>
-              {cats.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Tidak ada notifikasi.</p>
-              ) : (
-                <div className="flex flex-wrap gap-1.5" data-testid="notif-category-chips">
-                  {cats.map((c) => (
-                    <CatChip key={c.key} cat={c.key} label={c.label} count={c.unread || c.total}
-                             onClick={() => openDetail(c.key)} />
-                  ))}
-                </div>
-              )}
+            <div role="tablist" aria-label="Jenis kotak masuk" className="flex border-b border-[var(--glass-border)] px-1">
+              <TabButton active={tab === 'action'} label="Perlu Tindakan" count={actionCount} tone="action"
+                         onClick={() => switchTab('action')} testId="inbox-tab-action" />
+              <TabButton active={tab === 'info'} label="Pemberitahuan" count={infoUnread}
+                         onClick={() => switchTab('info')} testId="inbox-tab-info" />
             </div>
 
-            <div className="max-h-[min(300px,calc(100vh-16rem))] overflow-y-auto">
-              {(sum.latest || []).length === 0 ? (
-                <div className="px-3 py-8 text-center">
-                  <BellOff className="w-6 h-6 mx-auto text-muted-foreground/40" />
-                  <p className="text-xs text-muted-foreground mt-2">Belum ada notifikasi.</p>
-                </div>
-              ) : (
-                (sum.latest || []).map((n) => (
-                  <button
-                    key={n.id}
-                    type="button"
-                    onClick={() => activate(n, 'dropdown')}
-                    className={`w-full text-left px-3 py-2 border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)] focus:outline-none focus-visible:bg-[var(--nav-pill-active)] ${n.read ? '' : 'bg-[hsl(var(--primary)/0.04)]'}`}
-                    data-testid="notif-latest-item"
-                  >
-                    <div className="flex items-start gap-2">
-                      <span className={`mt-0.5 shrink-0 px-1.5 py-0.5 rounded border text-[9px] font-semibold ${CAT_TONE[n.category] || CAT_TONE.sysadmin}`}>
-                        {n.category_label || (sum.categories.find((c) => c.key === n.category) || {}).label || n.category}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className={`text-xs line-clamp-2 ${n.read ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>{n.title || n.message}</p>
-                        <p className="text-[10px] text-muted-foreground" title={formatWIB(n.created_at)}>
-                          {timeAgo(n.created_at)}
-                          {n.link_module ? <span className="ml-1 text-[hsl(var(--primary))]">· Buka</span> : null}
-                        </p>
-                      </div>
-                    </div>
-                  </button>
-                ))
-              )}
+            <div className="max-h-[min(360px,calc(100vh-16rem))] overflow-y-auto">
+              {renderList(tab, { compact: true })}
             </div>
 
-            <button onClick={() => openDetail('')}
-              className="w-full py-2.5 text-xs font-medium text-[hsl(var(--primary))] hover:bg-[var(--nav-pill-active)] border-t border-[var(--glass-border)] inline-flex items-center justify-center gap-1"
-              data-testid="notification-see-all">
-              Lihat Semua <ArrowRight className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex border-t border-[var(--glass-border)]">
+              <button onClick={() => openCenter(tab)}
+                className="flex-1 py-2.5 text-xs font-medium text-[hsl(var(--primary))] hover:bg-[var(--nav-pill-active)] inline-flex items-center justify-center gap-1"
+                data-testid="notification-see-all">
+                Lihat semua <ArrowRight className="w-3.5 h-3.5" />
+              </button>
+              {tab === 'action' && (
+                <button onClick={() => openCenter('history')}
+                  className="flex-1 py-2.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-[var(--nav-pill-active)] inline-flex items-center justify-center gap-1 border-l border-[var(--glass-border)]"
+                  data-testid="notification-history">
+                  <History className="w-3.5 h-3.5" /> Riwayat tindakan
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      {detailOpen && (
-        <Modal title="Pusat Notifikasi" size="xl" onClose={() => setDetailOpen(false)}>
+      {centerOpen && (
+        <Modal title="Kotak Masuk" size="xl" onClose={() => setCenterOpen(false)}>
           <div className="space-y-3" data-testid="notification-detail-modal">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <button onClick={() => { setFilter(''); setExpandedId(null); loadItems(''); }}
-                className={`px-2.5 py-1 rounded-full border text-[11px] font-medium ${!filter ? 'bg-[hsl(var(--primary))] text-white border-transparent' : 'bg-[var(--card-surface)] border-[var(--glass-border)] text-foreground/70'}`}
-                data-testid="notif-filter-all">
-                Semua ({sum.total || 0})
-              </button>
-              {(sum.categories || []).map((c) => (
-                <CatChip key={c.key} cat={c.key} label={c.label} count={c.total} active={filter === c.key}
-                         onClick={() => { setFilter(c.key); setExpandedId(null); loadItems(c.key); }} />
+            <div role="tablist" aria-label="Jenis kotak masuk" className="flex border-b border-[var(--glass-border)]">
+              {INBOX_TABS.map((t) => (
+                <TabButton key={t.key} active={centerTab === t.key} label={t.label}
+                           count={t.key === 'action' ? actionCount : t.key === 'info' ? infoUnread : 0}
+                           tone={t.key === 'action' ? 'action' : 'neutral'}
+                           onClick={() => switchCenterTab(t.key)} testId={`inbox-center-tab-${t.key}`} />
               ))}
-              <div className="flex-1" />
-              <button onClick={() => setPrefsOpen(true)}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)]"
-                data-testid="notif-open-prefs">
-                <Settings2 className="w-3.5 h-3.5" /> Notifikasi saya
-              </button>
-              <button onClick={markAll}
-                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)]"
-                data-testid="notif-mark-all">
-                <CheckCheck className="w-3.5 h-3.5" /> Tandai semua dibaca
-              </button>
             </div>
+
+            {centerTab === 'info' && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <button onClick={() => { setFilter(''); setExpandedId(null); loadBox('info'); }}
+                  className={`px-2.5 py-1 rounded-full border text-[11px] font-medium ${!filter ? 'bg-[hsl(var(--primary))] text-white border-transparent' : 'bg-[var(--card-surface)] border-[var(--glass-border)] text-foreground/70'}`}
+                  data-testid="notif-filter-all">
+                  Semua ({sum.info_total || 0})
+                </button>
+                {cats.map((c) => (
+                  <CatChip key={c.key} cat={c.key} label={c.label} count={c.total - (c.action || 0)} active={filter === c.key}
+                           onClick={() => { setFilter(c.key); setExpandedId(null); loadBox('info', { cat: c.key }); }} />
+                ))}
+                <div className="flex-1" />
+                <button onClick={() => setPrefsOpen(true)}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)]"
+                  data-testid="notif-open-prefs">
+                  <Settings2 className="w-3.5 h-3.5" /> Notifikasi saya
+                </button>
+                <button onClick={markAll}
+                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)]"
+                  data-testid="notif-mark-all">
+                  <CheckCheck className="w-3.5 h-3.5" /> Tandai semua dibaca
+                </button>
+              </div>
+            )}
+            {centerTab === 'action' && (
+              <p className="text-xs text-muted-foreground">
+                Item di sini tertutup sendiri begitu tindakannya selesai (mis. PR disetujui/ditolak,
+                stok kembali normal, cuti diputuskan) lalu pindah ke <b>Riwayat</b>.
+              </p>
+            )}
 
             {notice && (
               <p className="text-xs rounded-lg border border-amber-200 bg-amber-50 text-amber-800 px-3 py-2" role="status">{notice}</p>
             )}
 
-            <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--glass-border)] divide-y divide-[var(--glass-border)] bg-[var(--card-surface)]">
-              {loading ? (
-                <div className="py-12 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>
-              ) : items.length === 0 ? (
-                <div className="py-12 text-center">
-                  <BellOff className="w-7 h-7 mx-auto text-muted-foreground/40" />
-                  <p className="text-sm text-muted-foreground mt-2">Tidak ada notifikasi pada kategori ini.</p>
+            <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)]">
+              {renderList(centerTab, { compact: false })}
+              {!loading && box.hasMore && (
+                <div className="p-2 text-center border-t border-[var(--glass-border)]">
+                  <button onClick={() => loadBox(centerTab, { cat: filter, append: true, skip: box.items.length })}
+                          disabled={loadingMore}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)] disabled:opacity-60"
+                          data-testid="notif-load-more">
+                    {loadingMore ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+                    Muat lebih banyak ({box.items.length} dari {box.total})
+                  </button>
                 </div>
-              ) : (
-                <>
-                  {items.map((n) => {
-                    const expanded = expandedId === n.id;
-                    const text = n.message || n.body;
-                    return (
-                      <div key={n.id}
-                           className={`flex items-start gap-3 ${n.read ? '' : 'bg-[hsl(var(--primary)/0.04)]'} ${expanded ? 'ring-1 ring-inset ring-[hsl(var(--primary)/0.35)]' : ''}`}
-                           data-testid="notif-row">
-                        <button type="button" onClick={() => activate(n, 'detail')}
-                                className="min-w-0 flex-1 text-left px-3 py-2.5 flex items-start gap-3 hover:bg-[var(--nav-pill-active)] focus:outline-none focus-visible:bg-[var(--nav-pill-active)]"
-                                aria-expanded={n.link_module ? undefined : expanded}>
-                          <span className={`mt-0.5 shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-semibold ${CAT_TONE[n.category] || CAT_TONE.sysadmin}`}>
-                            {n.category_label || n.category}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className={`block text-sm ${n.read ? 'text-muted-foreground' : 'text-foreground font-medium'}`}>{n.title || text}</span>
-                            {text && (
-                              <span className={`block text-xs text-muted-foreground mt-0.5 whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}>{text}</span>
-                            )}
-                            <span className="block text-[10px] text-muted-foreground mt-1">
-                              {timeAgo(n.created_at)} · {formatWIB(n.created_at)}
-                            </span>
-                          </span>
-                          {n.link_module ? (
-                            <span className="shrink-0 self-center text-[11px] text-[hsl(var(--primary))]">Buka</span>
-                          ) : (
-                            <ChevronDown className={`shrink-0 self-center w-3.5 h-3.5 text-muted-foreground transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                          )}
-                        </button>
-                        {!n.read && (
-                          <button onClick={() => markRead(n.id)}
-                                  className="shrink-0 self-center mr-3 text-[11px] text-muted-foreground hover:text-foreground"
-                                  data-testid="notif-mark-one">
-                            Tandai dibaca
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                  {page.hasMore && (
-                    <div className="p-2 text-center">
-                      <button onClick={() => loadItems(filter, { append: true, skip: items.length })}
-                              disabled={loadingMore}
-                              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs text-foreground hover:bg-[var(--nav-pill-active)] disabled:opacity-60"
-                              data-testid="notif-load-more">
-                        {loadingMore ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
-                        Muat lebih banyak ({items.length} dari {page.total})
-                      </button>
-                    </div>
-                  )}
-                </>
               )}
             </div>
           </div>
@@ -449,7 +572,7 @@ export function NotificationBell({ token, onNavigateModule }) {
         <NotificationPrefsDialog
           token={token}
           onClose={() => setPrefsOpen(false)}
-          onSaved={() => { loadSummary(); if (detailOpen) loadItems(filter); }}
+          onSaved={() => { loadSummary(); if (centerOpen) loadBox(centerTab, { cat: filter }); }}
         />
       )}
     </>

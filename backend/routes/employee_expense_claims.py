@@ -429,6 +429,8 @@ async def submit_claim(claim_id: str, user: dict = Depends(require_auth)):
             source_id=claim_id,
             source_ref=doc.get('claim_number'),
             target_roles=list(APPROVER_ROLES),
+            # 2026-11-02: pemohon (mis. accounting) tidak menerima "Perlu Tindakan" atas klaimnya sendiri
+            exclude_user_ids=[x for x in {user.get('id'), doc.get('employee_id')} if x],
             status='sent',
             meta={'link_module': 'hr-approval-inbox'},
         )

@@ -1,6 +1,7 @@
 """Portal Penjualan — Penjualan Langsung dari stok barang jadi (FG internal).
 
-Satu nota = stok FG keluar (FIFO, `production_qty_ledger.issue_fg`) + jurnal COGS
+Satu nota = stok FG keluar (`production_qty_ledger.issue_fg`, nilai = qty × WAC sejak
+2026-11-02, owner No.26a) + jurnal COGS
 (Dr 5-xxxx / Cr 1-1404) + invoice AR kanonik (`rahaza_ar_invoices`, source_module
 `direct_sale`) + (tunai) penerimaan kas. Semua jurnal lewat mesin posting yang sudah ada.
 """
@@ -141,8 +142,8 @@ async def fg_stock(request: Request, q: Optional[str] = None):
     ids = [k for k, v in avail.items() if v > 0]
     if not ids:
         return []
-    mats = await db.rahaza_materials.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "code": 1, "sku": 1, "name": 1,
-                                                                  "hpp": 1, "hpp_source": 1, "hpp_fifo_avg": 1}).to_list(20000)
+    from core.catalog_margin import FG_COST_PROJECTION, effective_fg_cost
+    mats = await db.rahaza_materials.find({"id": {"$in": ids}}, {**FG_COST_PROJECTION, "code": 1, "sku": 1, "name": 1}).to_list(20000)
     cats = await db.marketing_catalog_items.find({"fg_product_id": {"$in": ids}},
                                                  {"_id": 0, "fg_product_id": 1, "selling_price": 1, "price": 1}).to_list(20000)
     price_map = {c["fg_product_id"]: float(c.get("selling_price") or c.get("price") or 0) for c in cats}
@@ -151,9 +152,12 @@ async def fg_stock(request: Request, q: Optional[str] = None):
     for m in mats:
         if ql and ql not in (m.get("code") or "").lower() and ql not in (m.get("name") or "").lower():
             continue
+        # 2026-11-02 (owner No.26a): HPP = WAC aktual; bila belum ada → HPP kalkulator berlabel estimasi
+        cost = effective_fg_cost(m)
         out.append({"material_id": m["id"], "sku": m.get("code") or m.get("sku") or "", "name": m.get("name") or "",
-                    "available_qty": avail.get(m["id"], 0), "hpp": float(m.get("hpp_fifo_avg") or m.get("hpp") or 0),
-                    "hpp_source": m.get("hpp_source") or "none", "default_price": price_map.get(m["id"], 0)})
+                    "available_qty": avail.get(m["id"], 0), "hpp": cost["hpp"], "hpp_source": cost["source"],
+                    "hpp_is_estimate": cost["is_estimate"], "hpp_label": cost["label"],
+                    "default_price": price_map.get(m["id"], 0)})
     out.sort(key=lambda r: r["sku"])
     return out
 
@@ -257,7 +261,12 @@ async def _apply_ar_payment(db, inv_id: str, amount: float, cash_account_id: str
 
 
 async def _post_cogs(db, note: dict, issued_rows: list, user: dict) -> dict:
-    from routes.rahaza_posting import _create_posted_je, _fifo_rows_to_components, _find_existing_je
+    """Jurnal HPP nota: Dr 5-1000/5-2000/5-3500 (komponen WAC) / Cr 1-1404.
+
+    2026-11-02 (owner No.26a): nilai = qty × WAC saat keluar (`issue_fg` → `fcl.issue_wac`).
+    Cadangan "HPP master" (kalkulator BOM, perkiraan) DICABUT: mengkredit 1-1404 dengan
+    perkiraan membuat GL FG ≠ Σ stok × WAC. Barang dengan WAC 0 dilaporkan `uncosted_qty`."""
+    from routes.rahaza_posting import _create_posted_je, _fifo_rows_to_components, _find_existing_je, cogs_basis_label
     from routes.rahaza_posting_profiles import get_mapping
     source_ref = f"cogs_sale:{note['id']}"
     existing = await _find_existing_je(db, "cogs_direct_sale", source_ref)
@@ -267,33 +276,24 @@ async def _post_cogs(db, note: dict, issued_rows: list, user: dict) -> dict:
     dm, dl, do, cfg = (mapping.get(k) for k in ("debit_cogs_material", "debit_cogs_labor", "debit_cogs_overhead", "credit_fg_inventory"))
     if not all([dm, dl, do, cfg]):
         return {"ok": False, "error": "Mapping 'cogs_shipment' belum lengkap."}
-    fifo = await _fifo_rows_to_components(db, issued_rows)
-    # Fallback JUJUR (seperti post_cogs_shipment): pcs tanpa lapisan biaya memakai HPP master (perkiraan), diberi label.
-    est_total, est_rows = 0.0, []
-    for r in issued_rows:
-        if r.get("fg_cogs_uncosted_qty") and r.get("material_id"):
-            m = await db.rahaza_materials.find_one({"id": r["material_id"]}, {"_id": 0, "hpp": 1})
-            hpp = float((m or {}).get("hpp") or 0)
-            if hpp > 0:
-                est = round(hpp * int(r["fg_cogs_uncosted_qty"]), 2)
-                est_total += est
-                r["fg_cogs_estimated"] = est
-                est_rows.append(f"{r['sku']}: {r['fg_cogs_uncosted_qty']} pcs × HPP master Rp {hpp:,.0f}")
-    total = round(fifo["total"] + est_total, 2)
-    basis = "fifo_batch" if fifo["total"] > 0 and not est_total else ("hpp_master" if not fifo["total"] and est_total else "mixed")
+    val = await _fifo_rows_to_components(db, issued_rows)
+    total, basis = val["total"], val.get("basis") or "wac"
+    gaps = list(val["gaps"])
+    if val["uncosted_qty"]:
+        gaps.append(f"{val['uncosted_qty']} pcs keluar dengan WAC FG 0 (belum pernah ada biaya nyata) — "
+                    "HPP-nya tidak dibukukan; lengkapi biaya FG (penerimaan/opname).")
     if total <= 0:
-        return {"ok": False, "reason": "zero_cogs", "uncosted_qty": fifo["uncosted_qty"], "basis": basis,
-                "error": "COGS = 0: barang keluar tanpa lapisan biaya batch dan tanpa HPP master — HPP tidak bisa dibukukan."}
-    label = {"fifo_batch": "biaya batch FIFO", "hpp_master": "perkiraan HPP master", "mixed": "FIFO + perkiraan HPP master"}[basis]
-    memo = f"COGS Penjualan Langsung {note['note_number']} ({label})"
+        return {"ok": False, "reason": "zero_cogs", "uncosted_qty": val["uncosted_qty"], "basis": basis, "gaps": gaps,
+                "error": "COGS = 0: barang keluar dengan WAC FG 0 — HPP tidak bisa dibukukan."}
+    memo = f"COGS Penjualan Langsung {note['note_number']} ({cogs_basis_label(basis)})"
     lines = []
-    for code, amt, lbl in ((dm, fifo["material"] + est_total, "Material"), (dl, fifo["labor"], "Labor"), (do, fifo["overhead"], "Overhead")):
+    for code, amt, lbl in ((dm, val["material"], "Material"), (dl, val["labor"], "Labor"), (do, val["overhead"], "Overhead")):
         if amt > 0:
             lines.append({"account_code": code, "debit": round(amt, 2), "credit": 0, "description": f"{memo} - {lbl}"})
     lines.append({"account_code": cfg, "debit": 0, "credit": total, "description": f"{memo} - FG Inventory"})
     res = await _create_posted_je(db, date.fromisoformat(note["sale_date"]), memo, "cogs_direct_sale", source_ref, lines, user)
-    res.update({"total_cogs": total, "fifo_cogs": round(fifo["total"], 2), "estimated_cogs": round(est_total, 2), "basis": basis,
-                "uncosted_qty": fifo["uncosted_qty"], "gaps": fifo["gaps"] + est_rows})
+    res.update({"total_cogs": total, "estimated_cogs": 0.0, "basis": basis,
+                "uncosted_qty": val["uncosted_qty"], "gaps": gaps})
     return res
 
 
@@ -603,6 +603,33 @@ def _ratio_lines(je: Optional[dict]) -> dict:
     return {k: v / tot for k, v in out.items()} if tot else {}
 
 
+def return_cogs_lines(return_number: str, items: list, ratio: dict, fg_code: str, loss_code: Optional[str]) -> list:
+    """Baris jurnal balik HPP retur penjualan langsung (fungsi murni).
+
+    2026-11-02 (owner No.26a): barang BAIK kembali ke stok jual → Dr 1-1404; barang RUSAK
+    tidak masuk stok → Dr 6-1300 Kerugian Retur Rusak (sama dengan retur rusak gudang).
+    Dulu seluruh nilai — termasuk barang rusak yang tidak pernah masuk stok — didebit
+    1-1404, sehingga GL FG lebih besar dari Σ stok × WAC. Kredit: akun HPP asal, proporsional.
+    Tanpa akun kerugian (profil kosong) barang rusak tetap ke 1-1404 seperti dulu."""
+    good = round(sum(float(i.get("cogs") or 0) for i in items if i.get("condition") != "damaged" or not loss_code), 2)
+    bad = round(sum(float(i.get("cogs") or 0) for i in items if i.get("condition") == "damaged" and loss_code), 2)
+    total = round(good + bad, 2)
+    lines = []
+    if good > 0:
+        lines.append({"account_code": fg_code, "debit": good, "credit": 0, "description": f"Retur {return_number} FG kembali"})
+    if bad > 0:
+        lines.append({"account_code": loss_code, "debit": bad, "credit": 0,
+                      "description": f"Retur {return_number} barang rusak — tidak masuk stok"})
+    acc_amt = 0.0
+    codes = list(ratio.items())
+    for i, (code, r) in enumerate(codes):
+        amt = round(total - acc_amt, 2) if i == len(codes) - 1 else round(total * r, 2)
+        acc_amt += amt
+        if amt > 0:
+            lines.append({"account_code": code, "debit": 0, "credit": amt, "description": f"Retur {return_number} balik HPP"})
+    return lines
+
+
 @router.post("/direct-sales/{sid}/returns")
 async def create_return(sid: str, request: Request):
     user = await _require_write(request)
@@ -653,7 +680,9 @@ async def create_return(sid: str, request: Request):
                "cogs_total": round(sum(i["cogs"] for i in items), 2), "reason": body.get("reason") or "", "status": "posted",
                "created_at": _now(), "updated_at": _now(), "created_by": user["id"], "created_by_name": user.get("name", "")}
 
-    # 1) stok FG kembali + lapisan HPP baru (biaya = HPP saat keluar)
+    # 1) stok FG kembali + lapisan HPP baru (biaya = HPP saat keluar).
+    # 2026-11-02 (owner No.26a): `push_layer` = penerimaan WAC; komponen biaya mengikuti
+    # komponen WAC saat barang ini keluar (baris `fg_cogs_layers` ber-`components`).
     from core import fg_cost_layers as fcl
     from core import stock_service
     from core.production_qty_ledger import resolve_fg_location_id
@@ -664,10 +693,15 @@ async def create_return(sid: str, request: Request):
     for it in items:
         if it["condition"] == "damaged":
             continue  # barang rusak tidak kembali ke stok jual
+        src_layers = [ly for ly in (sold[it["material_id"]].get("fg_cogs_layers") or []) if isinstance(ly.get("components"), dict)]
+        comps = ({k: sum(float(ly["components"].get(k) or 0) for ly in src_layers) for k in fcl.COMP_KEYS}
+                 if src_layers else None)
         await stock_service.add(it["material_id"], loc, it["qty"], meta={"inventory_category": "fg_internal", "ownership": "cv_da"}, ref=ref, actor=user, db=db)
         layer = await fcl.push_layer(db, material_id=it["material_id"], qty=it["qty"], po_item={"sku": it["sku"]}, ref=ref, actor=user,
-                                     unit_cost=it["unit_cost"], breakdown={"source": "sales_return", "unit_cost": it["unit_cost"]})
+                                     unit_cost=it["unit_cost"], components=comps,
+                                     breakdown={"source": "sales_return", "unit_cost": it["unit_cost"]})
         it["layer_id"] = (layer or {}).get("id")
+        it["wac_after"] = ((layer or {}).get("wac") or {}).get("unit_cost")
 
     # 2) nota kredit: Dr Retur Penjualan (+ Dr PPN keluaran) / Cr Piutang pelanggan
     from routes.rahaza_posting import _ar_account_for_invoice, _create_posted_je
@@ -728,22 +762,23 @@ async def create_return(sid: str, request: Request):
             else:
                 ret_doc["customer_credit"] = excess  # saldo kredit pelanggan (belum dikembalikan)
 
-    # 4) balik HPP: Dr 1-1404 / Cr akun COGS asal (proporsional)
+    # 4) balik HPP: Dr 1-1404 (barang baik) / Dr 6-1300 (barang rusak) / Cr akun COGS asal (proporsional)
     cogs_post = None
     if ret_doc["cogs_total"] > 0:
         m_cogs = await get_mapping(db, "cogs_shipment")
         orig = await db.rahaza_journal_entries.find_one({"id": note.get("cogs_je_id")}, {"_id": 0, "lines": 1}) if note.get("cogs_je_id") else None
         ratio = _ratio_lines(orig) or {m_cogs.get("debit_cogs_material"): 1.0}
-        lines = [{"account_code": m_cogs.get("credit_fg_inventory") or "1-1404", "debit": ret_doc["cogs_total"], "credit": 0, "description": f"Retur {ret_doc['return_number']} FG kembali"}]
-        acc_amt = 0.0
-        codes = list(ratio.items())
-        for i, (code, r) in enumerate(codes):
-            amt = round(ret_doc["cogs_total"] - acc_amt, 2) if i == len(codes) - 1 else round(ret_doc["cogs_total"] * r, 2)
-            acc_amt += amt
-            if amt > 0:
-                lines.append({"account_code": code, "debit": 0, "credit": amt, "description": f"Retur {ret_doc['return_number']} balik HPP"})
+        loss_code = (await get_mapping(db, "return_damaged_loss")).get("debit_return_loss")
+        lines = return_cogs_lines(ret_doc["return_number"], items, ratio,
+                                  m_cogs.get("credit_fg_inventory") or "1-1404", loss_code)
         cogs_post = await _create_posted_je(db, date.fromisoformat(ret_date), f"Balik HPP retur {ret_doc['return_number']} ({note['note_number']})", "cogs_sales_return",
                                             f"cogs_return:{ret_doc['id']}", lines, user)
+        # 2026-11-02 (No.26a): lapisan barang kembali DITAUTKAN ke jurnalnya (Dr 1-1404), supaya
+        # Laporan Nilai FG tidak menghitungnya "penerimaan belum berjurnal" palsu.
+        lids = [i["layer_id"] for i in items if i.get("layer_id")]
+        if (cogs_post or {}).get("ok") and cogs_post.get("je_id") and lids:
+            await db[fcl.LAYERS].update_many({"id": {"$in": lids}}, {"$set": {
+                "gl_je_id": cogs_post["je_id"], "gl_basis": "sales_return"}})
 
     ret_doc.update({"cn_id": cn["id"], "cn_number": cn["cn_number"], "cn_je_id": cn_post.get("je_id"), "cn_je_number": cn_post.get("je_number"), "cn_post_error": cn_post.get("error"),
                     "applied_to_invoice": round(applied), "refund_amount": refund_amount, "refund_cash_account_id": refund_account if refund_amount else None,

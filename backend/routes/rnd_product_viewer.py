@@ -247,7 +247,14 @@ async def product_detail(material_id: str, request: Request):
         {"$or": [{"fg_material_id": material_id}, {"fg_product_id": material_id},
                  {"sku": mat.get("code")}]}, {"_id": 0}).to_list(50)
     model = await db.rahaza_models.find_one({"id": mat.get("model_id")}, {"_id": 0}) or {}
-    bom = await db.rahaza_boms.find_one({"model_id": mat.get("model_id")}, {"_id": 0}) or {}
+    # 2026-11-02 (butir 10, F1b): BOM aktif model × ukuran × WARNA produk ini (dulu BOM
+    # pertama model apa pun — ukuran & warna diabaikan).
+    from core import product_costing as pc
+    bom = {}
+    if mat.get("model_id") and mat.get("size_id"):
+        bom = await pc.find_active_bom(db, mat["model_id"], mat["size_id"], pc.color_of(mat) or None) or {}
+    if not bom and mat.get("model_id"):
+        bom = await db.rahaza_boms.find_one({"model_id": mat.get("model_id")}, {"_id": 0}) or {}
     return {"ok": True, "material": serialize_doc(mat), "model": serialize_doc(model),
             "hpp_layers": serialize_doc(snap), "catalog_items": serialize_doc(cat),
             "bom": {"exists": bool(bom), "id": bom.get("id", ""),

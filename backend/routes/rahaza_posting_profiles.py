@@ -17,6 +17,7 @@ Seed defaults (garment manufacturing, PSAK):
   inventory_receive : Dr Inventory RM (1-1401), Cr GRNI (2-1150)
   inventory_issue   : Dr WIP (1-1403), Cr Inventory RM (1-1401)
   inventory_adjust  : Dr/Cr Inventory (1-1401) vs Selisih Persediaan (5-1950) — 2026-11-02, owner No.19a
+                      (2026-11-02, K13/No.26a: akun persediaan per jenis — bahan 1-1401 · aksesoris 1-1402 · FG 1-1404)
   cogs_shipment     : Dr COGS Material (5-1000), Dr COGS Labor (5-2000), Dr COGS Overhead (5-3000), Cr FG Inventory (1-1404)
 """
 from fastapi import APIRouter, Request, HTTPException
@@ -130,6 +131,8 @@ DEFAULT_PROFILES = [
         "description": "Penerimaan bahan (GR) → Dr Persediaan / Cr Hutang Belum Ditagih (GRNI)",
         "mapping": {
             "debit_inventory_rm": "1-1401",
+            # 2026-11-02 (K13): penerimaan AKSESORIS → 1-1402 (akun persediaan mengikuti jenis barang)
+            "debit_inventory_accessory": "1-1402",
             "credit_ap_clearing": "2-1150",
         },
     },
@@ -139,6 +142,11 @@ DEFAULT_PROFILES = [
         "mapping": {
             "debit_wip": "1-1403",
             "credit_inventory_rm": "1-1401",
+            # 2026-11-02 (K13): pemakaian AKSESORIS (MI / kartu stok aksesoris) mengkredit 1-1402
+            "credit_inventory_accessory": "1-1402",
+            # 2026-11-02 (K14/P-7): aksesoris milik DA untuk pesanan MAKLON = biaya proyek maklon DA
+            # (barang jadi maklon di luar neraca DA → tidak lewat WIP/FG)
+            "debit_maklon_material": "5-4100",
         },
     },
     {
@@ -146,6 +154,9 @@ DEFAULT_PROFILES = [
         "description": "Penyesuaian/opname/lepas karantina → Dr/Cr Persediaan vs Selisih Persediaan",
         "mapping": {
             "inventory_rm": "1-1401",
+            # 2026-11-02 (K13 + owner No.26a): akun persediaan mengikuti JENIS barang yang disesuaikan
+            "inventory_accessory": "1-1402",
+            "inventory_fg": "1-1404",
             # 2026-11-02 (owner No.19a): dulu 6-2400 ATK & Supplies → beban ATK bisa minus karena opname.
             "adjustment_expense": "5-1950",
         },
@@ -380,9 +391,199 @@ DEFAULT_PROFILES = [
         "mapping": {
             "debit_scrap_expense":   "6-4300",
             "credit_inventory_rm":   "1-1401",
+            # 2026-11-02 (K13 + owner No.26a): scrap aksesoris → 1-1402, scrap barang jadi → 1-1404
+            "credit_inventory_accessory": "1-1402",
+            "credit_inventory_fg":   "1-1404",
+        },
+    },
+    {
+        # 2026-11-02 (K41 = a): "Keluarkan Stok FG" dijurnal senilai WAC, Cr 1-1404 (cogs_shipment)
+        "event_type": "fg_issue",
+        "description": "Keluarkan Stok FG (non-penjualan) → Dr akun per alasan / Cr Persediaan Barang Jadi (WAC)",
+        "mapping": {
+            "debit_sample": "6-1130",     # Biaya Pemasaran Lain-lain (sampel / promosi)
+            "debit_internal": "5-1000",   # HPP — keperluan internal / SJ internal / lainnya
+        },
+    },
+    # 2026-11-02 (S2-H, permintaan owner "tandai mana yang terhubung"): akun yang dulu HANYA terikat lewat
+    # kode yang ditulis langsung di program kini tampil sebagai peran profil, bawaan = kode program saat
+    # ini (dijaga uji: nilai bawaan == konstanta modulnya, lihat core/coa_bindings.CONSTANT_SOURCES).
+    # Modul konsumennya membaca peran ini lewat `role_code()` — sampai itu terpasang, layar Profil Posting
+    # menandai peran ini "masih dibaca dari kode program".
+    {
+        "event_type": "marketplace_settlement",
+        "description": "Pencairan dana marketplace (jurnal draft) → potongan & penyesuaian dari laporan dana dilepas",
+        "mapping": {
+            "debit_returns":       "4-1200",
+            "debit_discount":      "4-1300",
+            "debit_platform_fee":  "4-1400",
+            "debit_ads_default":   "6-1130",
+            "debit_ads_shopee":    "6-1112",
+            "debit_ads_tiktok":    "6-1110",
+            "debit_ads_tokopedia": "6-1113",
+            "credit_other_income": "7-4000",
+            "debit_other_expense": "6-2900",
+        },
+    },
+    {
+        "event_type": "employee_travel",
+        "description": "Perjalanan dinas → Dr Uang Muka Karyawan / Cr Bank; penyelesaian Dr Beban Dinas / Cr Uang Muka",
+        "mapping": {
+            "debit_employee_advance": "1-1610",
+            "debit_travel_expense":   "6-3400",
+            "credit_bank_default":    "1-1201",
+        },
+    },
+    {
+        "event_type": "year_end_close",
+        "description": "Tutup buku tahunan → saldo laba/rugi dipindah ke Laba Ditahan",
+        "mapping": {
+            "credit_retained_earnings": "3-2000",
+        },
+    },
+    {
+        "event_type": "subledger_opening_balance",
+        "description": "Saldo awal go-live → akun kontrol rincian piutang/hutang + penyeimbang Laba Ditahan",
+        "mapping": {
+            "credit_retained_earnings_balancing": "3-2000",
+            "control_ar_customer": "1-1301",
+            "control_ar_maklon":   "1-1305",
+            "control_ap_supplier": "2-1100",
+            "control_ap_cmt":      "2-1110",
         },
     },
 ]
+
+# ── Label manusiawi (SATU sumber; dipakai layar Profil Posting & laci keterikatan Bagan Akun) ──
+# 2026-11-02 (S2-H): dulu label hanya ada di layar (10 dari 37 event, 26 peran) → sisanya tampil
+# sebagai kunci teknis. Kini disajikan backend lewat GET /api/rahaza/posting-profiles/meta.
+EVENT_LABELS = {
+    "ar_invoice": "Faktur penjualan (AR)",
+    "ar_payment": "Penerimaan pembayaran piutang",
+    "ap_invoice": "Faktur pemasok (AP)",
+    "ap_payment": "Pembayaran hutang pemasok",
+    "expense": "Beban operasional",
+    "payroll_finalize": "Finalisasi payroll",
+    "payroll_payment": "Pembayaran gaji",
+    "inventory_receive": "Penerimaan bahan (GR)",
+    "inventory_issue": "Pengeluaran bahan ke produksi",
+    "inventory_adjust": "Penyesuaian / opname persediaan",
+    "cogs_shipment": "HPP pengiriman barang jadi",
+    "maklon_ar_invoice": "Faktur maklon",
+    "cmt_ap_invoice": "Tagihan vendor CMT",
+    "maklon_advance_payment": "Uang muka (DP) klien maklon",
+    "cash_opening_balance": "Saldo awal rekening kas/bank",
+    "cogs_marketplace_return": "Retur marketplace kondisi baik",
+    "return_damaged_loss": "Retur kondisi rusak",
+    "wip_to_fg_on_wo_complete": "WIP ke barang jadi (WO selesai)",
+    "petty_cash_expense": "Pengeluaran kas kecil",
+    "petty_cash_replenish": "Pengisian kas kecil",
+    "bank_transfer": "Transfer antar rekening",
+    "credit_note": "Nota kredit (retur penjualan)",
+    "variance_overproduction": "Selisih produksi lebih",
+    "variance_underproduction": "Selisih produksi kurang",
+    "asset_acquisition": "Perolehan aset tetap",
+    "depreciation": "Penyusutan bulanan",
+    "accrual": "Akrual akhir periode",
+    "accrual_reversal": "Pembalikan akrual",
+    "bad_debt_writeoff": "Penghapusan piutang tak tertagih",
+    "bank_recon_charge": "Rekonsiliasi bank: biaya bank",
+    "bank_recon_interest": "Rekonsiliasi bank: bunga",
+    "bank_recon_service_fee": "Rekonsiliasi bank: biaya layanan",
+    "asset_disposal": "Pelepasan aset tetap",
+    "employee_loan_disbursement": "Pencairan kasbon karyawan",
+    "employee_loan_repayment_payroll": "Cicilan kasbon lewat payroll",
+    "employee_loan_repayment_manual": "Pelunasan kasbon manual",
+    "inventory_scrap": "Scrap / bahan rusak",
+    "marketplace_settlement": "Pencairan dana marketplace",
+    "employee_travel": "Perjalanan dinas",
+    "year_end_close": "Tutup buku tahunan",
+    "subledger_opening_balance": "Saldo awal go-live (rincian piutang/hutang)",
+    "fg_issue": "Keluarkan Stok FG (sampel / internal / lainnya)",
+}
+ROLE_LABELS = {
+    "debit_ar": "Piutang (Dr)", "credit_ar": "Piutang (Cr)",
+    "credit_revenue": "Pendapatan (Cr)", "credit_revenue_maklon": "Pendapatan maklon (Cr)",
+    "credit_tax_output": "PPN keluaran (Cr)", "debit_tax_input": "PPN masukan (Dr)",
+    "debit_sales_discount": "Diskon penjualan (Dr)",
+    "debit_cash_default": "Kas/bank bawaan (Dr)", "credit_cash_default": "Kas/bank bawaan (Cr)",
+    "debit_cash": "Kas/bank (Dr)", "credit_cash": "Kas/bank (Cr)",
+    "debit_bank": "Bank (Dr)", "credit_bank": "Bank (Cr)", "credit_bank_default": "Bank bawaan (Cr)",
+    "debit_bank_target": "Bank tujuan (Dr)", "credit_bank_source": "Bank sumber (Cr)",
+    "debit_expense_default": "Beban bawaan (Dr)", "debit_expense": "Beban (Dr)", "credit_expense": "Beban (Cr)",
+    "debit_inventory_rm": "Persediaan bahan baku (Dr)", "credit_inventory_rm": "Persediaan bahan baku (Cr)",
+    "inventory_rm": "Persediaan bahan baku", "adjustment_expense": "Selisih persediaan",
+    # 2026-11-02 (K13 + owner No.26a): akun persediaan per jenis barang
+    "debit_inventory_accessory": "Persediaan aksesoris (Dr)", "credit_inventory_accessory": "Persediaan aksesoris (Cr)",
+    "inventory_accessory": "Persediaan aksesoris", "inventory_fg": "Persediaan barang jadi",
+    "credit_inventory_fg": "Persediaan barang jadi (Cr)",
+    "debit_maklon_material": "Aksesoris DA untuk pesanan maklon → biaya proyek maklon (Dr)",
+    # 2026-11-02 (K41 = a): Keluarkan Stok FG
+    "debit_sample": "Sampel / promosi barang jadi → beban promosi (Dr)",
+    "debit_internal": "Keperluan internal / SJ internal / lainnya → HPP (Dr)",
+    "debit_grni": "Hutang belum ditagih / GRNI (Dr)", "credit_ap_clearing": "Hutang belum ditagih / GRNI (Cr)",
+    "debit_price_variance": "Selisih harga pembelian (Dr)",
+    "credit_ap": "Hutang usaha (Cr)", "debit_ap": "Hutang usaha (Dr)",
+    "credit_purchase_discount": "Potongan pembelian (Cr)",
+    "debit_salary_expense": "Beban gaji (Dr)", "credit_salary_payable": "Hutang gaji (Cr)",
+    "debit_salary_payable": "Hutang gaji (Dr)", "credit_tax_pph21": "Hutang PPh 21 (Cr)",
+    "credit_bpjs_payable": "Hutang BPJS gabungan — cadangan (Cr)",
+    "credit_bpjs_kes_payable": "Hutang BPJS Kesehatan (Cr)", "credit_bpjs_tk_payable": "Hutang BPJS Ketenagakerjaan (Cr)",
+    "debit_bpjs_kes_employer_expense": "Beban iuran BPJS Kesehatan perusahaan (Dr)",
+    "debit_bpjs_tk_employer_expense": "Beban iuran BPJS Ketenagakerjaan perusahaan (Dr)",
+    "credit_other_deduction": "Potongan penyesuaian manual payroll (Cr)",
+    "debit_wip": "Persediaan WIP (Dr)", "credit_wip": "Persediaan WIP (Cr)",
+    "debit_cogs_material": "HPP bahan (Dr)", "debit_cogs_labor": "HPP tenaga kerja (Dr)",
+    "debit_cogs_overhead": "HPP overhead (Dr)", "credit_cogs": "HPP (Cr)",
+    "credit_fg_inventory": "Persediaan barang jadi (Cr)", "debit_fg_inventory": "Persediaan barang jadi (Dr)",
+    "debit_inventory_fg": "Persediaan barang jadi (Dr)",
+    "debit_cmt_wip_internal": "Upah jahit PO internal → WIP (Dr)",
+    "debit_cmt_expense_internal": "Biaya jahit internal (Dr, bila WIP kosong)",
+    "debit_cmt_expense_maklon": "Biaya vendor CMT maklon (Dr)", "debit_penalty_income": "Denda vendor (Cr)",
+    "credit_advance_customer": "Uang muka diterima maklon (Cr)", "credit_opening_equity": "Modal saldo awal (Cr)",
+    "debit_return_loss": "Kerugian retur rusak (Dr)",
+    "credit_petty_cash": "Kas kecil (Cr)", "debit_petty_cash": "Kas kecil (Dr)",
+    "debit_employee_advance": "Uang muka karyawan (Dr)",
+    "debit_revenue": "Retur penjualan (Dr)",
+    "credit_variance_income": "Pendapatan selisih produksi (Cr)", "debit_variance_loss": "Kerugian selisih produksi (Dr)",
+    "debit_fixed_asset": "Aset tetap (Dr)", "credit_fixed_asset": "Aset tetap (Cr)",
+    "debit_depr_expense": "Beban penyusutan (Dr)", "credit_accum_depr": "Akumulasi penyusutan (Cr)",
+    "debit_accum_depr": "Akumulasi penyusutan (Dr)",
+    "debit_loss_on_disposal": "Rugi pelepasan aset (Dr)", "credit_gain_on_disposal": "Laba pelepasan aset (Cr)",
+    "credit_accrued": "Beban akrual (Cr)", "debit_accrued": "Beban akrual (Dr)",
+    "debit_bad_debt_expense": "Beban piutang tak tertagih (Dr)",
+    "debit_bank_charges": "Biaya bank (Dr)", "credit_interest_income": "Pendapatan bunga (Cr)",
+    "debit_service_fee": "Biaya layanan bank (Dr)",
+    "debit_employee_loan_receivable": "Piutang kasbon karyawan (Dr)",
+    "credit_employee_loan_receivable": "Piutang kasbon karyawan (Cr)",
+    "debit_scrap_expense": "Beban scrap (Dr)",
+    "debit_returns": "Retur penjualan (Dr)", "debit_discount": "Diskon penjual (Dr)",
+    "debit_platform_fee": "Potongan / fee platform (Dr)", "debit_ads_default": "Iklan — bawaan (Dr)",
+    "debit_ads_shopee": "Iklan Shopee (Dr)", "debit_ads_tiktok": "Iklan TikTok (Dr)",
+    "debit_ads_tokopedia": "Iklan Tokopedia (Dr)", "credit_other_income": "Pendapatan lain / subsidi ongkir (Cr)",
+    "debit_other_expense": "Potongan lain (Dr)",
+    "debit_travel_expense": "Beban perjalanan dinas (Dr)",
+    "credit_retained_earnings": "Laba ditahan", "credit_retained_earnings_balancing": "Penyeimbang laba ditahan",
+    "control_ar_customer": "Kontrol piutang pelanggan", "control_ar_maklon": "Kontrol piutang maklon",
+    "control_ap_supplier": "Kontrol hutang pemasok", "control_ap_cmt": "Kontrol hutang vendor CMT",
+}
+# Peran yang maknanya khusus di satu event
+ROLE_LABELS_BY_EVENT = {
+    ("petty_cash_expense", "debit_expense_default"): "Beban kas kecil transaksi lama (Dr) — cadangan",
+    ("petty_cash_expense", "debit_employee_advance"): "Uang muka kas kecil atas nama karyawan (Dr)",
+    ("employee_travel", "debit_employee_advance"): "Uang muka dinas karyawan (Dr saat bayar, Cr saat selesai)",
+    ("employee_travel", "credit_bank_default"): "Rekening bayar uang muka dinas — cadangan (Cr)",
+    ("payroll_finalize", "credit_bpjs_payable"): "Hutang BPJS gabungan — cadangan bila per lembaga kosong (Cr)",
+}
+
+
+def event_label(event_type: str) -> str:
+    return EVENT_LABELS.get(event_type) or (event_type or "").replace("_", " ")
+
+
+def role_label(role: str, event_type: str | None = None) -> str:
+    return (ROLE_LABELS_BY_EVENT.get((event_type, role)) or ROLE_LABELS.get(role)
+            or (role or "").replace("_", " "))
 
 # Perbaikan WAJIB pada profil yang sudah tersimpan di DB (idempoten):
 # (event_type, role) → kode kanonik. Dipakai upgrade_posting_profiles().
@@ -408,6 +609,8 @@ PROFILE_CODE_FIXES = {
     ("employee_loan_disbursement", "credit_cash"): "1-1201",
     ("asset_disposal", "debit_cash"): "1-1201",
     ("inventory_adjust", "adjustment_expense"): "5-1950",    # 2026-11-02 owner No.19a: dulu 6-2400 ATK
+    # 2026-11-02 (S2-H): beban kas kecil lama pernah 6-2200 Listrik & Air (keliru) — pulihkan ke 6-2400
+    ("petty_cash_expense", "debit_expense_default"): "6-2400",
 }
 
 # 2026-11-02 (audit No.47): PROFILE_CODE_FIXES dulu DITIMPA setiap startup → pilihan Finance kembali
@@ -426,6 +629,7 @@ PROFILE_KNOWN_OLD_CODES = {
     ("employee_loan_disbursement", "credit_cash"): {"1-1101"},
     ("asset_disposal", "debit_cash"): {"1-1101"},
     ("inventory_adjust", "adjustment_expense"): {"6-2400"},
+    ("petty_cash_expense", "debit_expense_default"): {"6-2200"},
 }
 SYSTEM_UPDATERS = {None, "", "system", "coa-canonical-migration"}
 
@@ -493,6 +697,18 @@ async def list_profiles(request: Request):
     return serialize_doc(rows)
 
 
+@router.get("/meta")
+async def profiles_meta(request: Request):
+    """2026-11-02 (S2-H): label manusiawi event & peran + peran yang nilainya masih dibaca modul sebagai
+    kode program (`consumers[*].reads_profile=False`) — layar Profil Posting menandainya."""
+    await require_auth(request)
+    from core.coa_bindings import role_consumers
+    return {"events": EVENT_LABELS, "roles": ROLE_LABELS,
+            "roles_by_event": {f"{e}.{r}": lbl for (e, r), lbl in ROLE_LABELS_BY_EVENT.items()},
+            "consumers": role_consumers(),
+            "defaults": {p["event_type"]: p["mapping"] for p in DEFAULT_PROFILES}}
+
+
 @router.get("/{event_type}")
 async def get_profile(event_type: str, request: Request):
     await require_auth(request)
@@ -522,18 +738,24 @@ async def update_profile(event_type: str, request: Request):
         if codes:
             async for d in db.rahaza_coa_accounts.find({"code": {"$in": codes}}, {"_id": 0}):
                 coa_map[d["code"]] = d
+        # 2026-11-02 (S2-H): SEMUA peran bermasalah dilaporkan sekaligus, dengan label manusiawi + kunci
+        # peran dalam [..] supaya layar menandai baris yang tepat (dulu hanya yang pertama, kunci teknis).
+        problems = []
         for role, code in mapping.items():
             if not code:
                 continue
             code = str(code).strip()
             acc = coa_map.get(code)
+            who = f"Peran «{role_label(role, event_type)}» [{role}]"
             if not acc:
-                raise HTTPException(400, f"Role '{role}': akun '{code}' tidak ditemukan di CoA.")
-            if acc.get("is_group"):
-                raise HTTPException(400, f"Role '{role}': akun '{code}' adalah header (non-postable). Pilih akun leaf.")
-            if not acc.get("active"):
-                raise HTTPException(400, f"Role '{role}': akun '{code}' tidak aktif.")
+                problems.append(f"{who}: akun {code} tidak ada di Bagan Akun")
+            elif acc.get("is_group"):
+                problems.append(f"{who}: akun {code} adalah akun grup (header) — pilih akun rinci")
+            elif not acc.get("active"):
+                problems.append(f"{who}: akun {code} nonaktif — aktifkan lagi di Bagan Akun atau pilih akun lain")
             clean[role] = code
+        if problems:
+            raise HTTPException(400, "; ".join(problems) + ".")
         upd["mapping"] = clean
         # 2026-11-02 (audit No.47): catat peran yang DIUBAH/DIHAPUS pengguna agar startup
         # (upgrade_posting_profiles) tidak mengembalikannya ke bawaan.
@@ -624,6 +846,14 @@ async def get_mapping(db, event_type: str) -> dict:
     if not doc:
         return {}
     return doc.get("mapping") or {}
+
+
+async def role_code(db, event_type: str, role: str, default: str | None = None) -> str | None:
+    """2026-11-02 (S2-H): kode akun satu peran profil posting; kosong → `default` (konstanta modul).
+    Pintu baca untuk modul yang dulu memakai kode akun yang ditulis langsung (pencairan marketplace,
+    perjalanan dinas, tutup buku, saldo awal) — lihat `core.coa_bindings.CONSTANT_SOURCES`."""
+    code = (await get_mapping(db, event_type)).get(role)
+    return (str(code).strip() if code else "") or default
 
 
 @router.post("/seed-da")

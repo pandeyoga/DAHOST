@@ -64,17 +64,21 @@ async def seed_coa_endpoint(request: Request):
     try:
         from routes.rahaza_coa import seed_coa_accounts
         count_before = await db.rahaza_coa_accounts.count_documents({})
-        await seed_coa_accounts(db)
+        rep = await seed_coa_accounts(db)
         count_after = await db.rahaza_coa_accounts.count_documents({})
-        
-        await log_activity(user["id"], user.get("name", ""), "seed_coa", "admin", 
+
+        await log_activity(user["id"], user.get("name", ""), "seed_coa", "admin",
                           f"COA seeded: {count_before} → {count_after} accounts")
-        
+
+        # 2026-11-02 (S2-H): akun bawaan yang dibuat ulang & saldo normal akun kontra yang diperbaiki
+        # ikut dilaporkan (dulu seed menambah akun diam-diam).
         return {
-            "ok": True, 
+            "ok": True,
             "message": "COA seeded successfully",
             "count_before": count_before,
             "count_after": count_after,
+            "recreated": rep.get("recreated") or [],
+            "normal_balance_fixed": rep.get("normal_balance_fixed") or [],
         }
     except Exception as e:
         logger.exception("COA seed failed")
@@ -164,8 +168,19 @@ async def get_accounting_status(request: Request):
     pp_count = await db.rahaza_posting_profiles.count_documents({})
     eem_count = await db.employee_expense_categories.count_documents({})
     eem_gl_mapping_count = await db.employee_expense_gl_mappings.count_documents({})
-    
+    # 2026-11-02 (S2-H) INV-COA-REF: dulu status hanya menghitung dokumen. Kini juga rujukan
+    # konfigurasi → akun yang hilang/nonaktif/grup, cadangan kode yang akan terpakai, dan akun yang
+    # dilewati sinkron startup (buatan/ubahan pengguna). Satu sumber: core.coa_bindings.
+    try:
+        from core.coa_bindings import integrity_report
+        coa_integrity = await integrity_report(db)
+    except Exception as e:  # noqa: BLE001 — status tetap tampil walau cek integritas gagal
+        logger.exception("COA integrity check failed")
+        coa_integrity = {"ok": False, "error": str(e), "dangling_refs": [], "inactive_targets": [],
+                         "group_targets": [], "fallback_warnings": [], "sync_skipped": []}
+
     return {
+        "coa_integrity": coa_integrity,
         "ok": True,
         "coa": {
             "count": coa_count,

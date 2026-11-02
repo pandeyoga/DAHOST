@@ -474,6 +474,12 @@ async def notify_stage_approvers(db, doc: dict, stage: str, chain: list, *,
             target_roles=None if ids else roles,
             source_type="procurement_request", source_id=doc.get("id"),
             source_ref=number,
+            # 2026-11-02 (K30) — "Perlu Tindakan": tertutup otomatis begitu tahap
+            # `stage` diputuskan (utils/notif_unified._procurement_open). Kabar ke
+            # pemohon (`notify_requester`) & notifikasi tahap berikut memicu
+            # pemeriksaan ulang seketika lewat `notif_insert`.
+            kind="action",
+            source_collection=coll or _MODULE_COLLECTION.get("proc-requests"),
             meta={"link_module": module_id, "pr_id": doc.get("id"),
                   "request_number": number, "stage": stage,
                   "via_override": via_override,

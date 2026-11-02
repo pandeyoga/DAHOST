@@ -715,6 +715,35 @@ def _is_finance_actor(user: dict) -> bool:
     return (user.get("role") or "").lower() in FINANCE_ROLES
 
 
+# 2026-11-02 (K30) — "PERLU TINDAKAN" untuk Keuangan: pengajuan pembatalan run gaji FINAL.
+# Penerima = peran nyata Portal Keuangan (lolos `_is_finance_actor`); pengaju (HR) TIDAK ikut
+# menerima. Ditutup otomatis oleh resolver (`SOURCE_RULES['payroll_cancel']`: cancel_request.status).
+async def notify_payroll_cancel_request(db, run: dict, cr: dict):
+    try:
+        from utils.notif_unified import decider_roles, notif_insert
+        return await notif_insert(
+            db, type="rahaza", subtype="payroll_cancel_requested", severity="warning",
+            title=f"Pembatalan run gaji {run.get('run_number') or ''} menunggu persetujuan Keuangan".replace("  ", " "),
+            body=(f"{cr.get('requested_by_name') or 'HR'} mengajukan pembatalan run "
+                  f"{run.get('run_number') or run.get('id')} (periode {run.get('period') or run.get('period_code') or '-'}). "
+                  f"Alasan: {cr.get('reason') or '-'}. Persetujuan membuat jurnal pembalik."),
+            source_type="payroll_run", source_id=run["id"], source_ref=run.get("run_number"),
+            target_roles=decider_roles("finance", FINANCE_ROLES),
+            exclude_user_ids=[cr.get("requested_by")] if cr.get("requested_by") else None,
+            status="sent", meta={"link_module": "hr-payroll-run"})
+    except Exception as ne:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan pengajuan
+        log.warning(f"[payroll] notif pengajuan batal run gagal: {ne}")
+        return None
+
+
+async def close_payroll_cancel_notifs(db, run_id: str) -> int:
+    try:
+        from utils.notif_unified import resolve_for_source
+        return await resolve_for_source(db, "rahaza_payroll_runs", run_id)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def run_cancel_blockers(run: dict) -> list:
     """Alasan run belum boleh dibatalkan (murni)."""
     out = []
@@ -803,6 +832,7 @@ async def cancel_run(run_id: str, request: Request):
         await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {"cancel_request": cr, "updated_at": _now()}})
         await log_activity(user["id"], user.get("name", ""), "cancel_request", "rahaza.payroll_run",
                            f"{run.get('run_number')} — {reason}")
+        await notify_payroll_cancel_request(db, run, cr)   # 2026-11-02 (K30)
         return serialize_doc(await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0}))
 
     if action == "reject":
@@ -813,6 +843,7 @@ async def cancel_run(run_id: str, request: Request):
         cr = {**pending, "status": "rejected", "rejected_by": user["id"], "rejected_by_name": user.get("name", ""),
               "rejected_at": _now(), "reject_reason": reason}
         await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {"cancel_request": cr, "updated_at": _now()}})
+        await close_payroll_cancel_notifs(db, run_id)   # 2026-11-02 (K30)
         return serialize_doc(await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0}))
 
     if action != "approve":
@@ -831,6 +862,7 @@ async def cancel_run(run_id: str, request: Request):
     if blockers:
         raise HTTPException(400, "Run belum bisa dibatalkan: " + "; ".join(blockers) + ".")
     result = await _execute_run_cancel(db, run, user, reason)
+    await close_payroll_cancel_notifs(db, run_id)   # 2026-11-02 (K30)
     out = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     out["_cancel_result"] = result
     return serialize_doc(out)

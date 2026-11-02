@@ -23,6 +23,25 @@ RELATION_SHEETS = [
     ("HUTANG_SUPPLIER", "2-1100", ["kode_supplier", "nama_supplier", "no_tagihan", "tanggal_tagihan", "jumlah", "keterangan"]),
     ("HUTANG_VENDOR_CMT", "2-1110", ["kode_vendor", "nama_vendor", "no_tagihan", "tanggal_tagihan", "jumlah", "keterangan"]),
 ]
+# 2026-11-02 (S2-H butir 7): kode di atas = BAWAAN peran Profil Posting `subledger_opening_balance`;
+# yang dipakai pemeriksaan & template adalah peran profil (Finance bisa mengubahnya di layar).
+PROFILE_EVENT = "subledger_opening_balance"
+RELATION_ROLES = {"PIUTANG_PELANGGAN": "control_ar_customer", "PIUTANG_MAKLON": "control_ar_maklon",
+                  "HUTANG_SUPPLIER": "control_ap_supplier", "HUTANG_VENDOR_CMT": "control_ap_cmt"}
+
+
+async def retained_earnings_code(db) -> str:
+    from routes.rahaza_posting_profiles import role_code
+    return await role_code(db, PROFILE_EVENT, "credit_retained_earnings_balancing", RETAINED_EARNINGS)
+
+
+async def relation_sheets(db) -> list:
+    """RELATION_SHEETS dengan akun kontrol dari peran profil (cadangan: kode bawaan)."""
+    from routes.rahaza_posting_profiles import role_code
+    return [(name, await role_code(db, PROFILE_EVENT, RELATION_ROLES[name], ctrl), cols)
+            for name, ctrl, cols in RELATION_SHEETS]
+
+
 _HDR = Font(bold=True, color="FFFFFF")
 _FILL = PatternFill("solid", fgColor="1F4E78")
 PETUNJUK = [
@@ -61,7 +80,7 @@ async def build_template(db) -> tuple[bytes, int]:
                 c.font = Font(bold=True)
     for col, w in zip("ABCDEFGH", (12, 46, 12, 12, 10, 16, 16, 30)):
         ws.column_dimensions[col].width = w
-    for name, ctrl, cols in RELATION_SHEETS:
+    for name, ctrl, cols in await relation_sheets(db):
         ws = wb.create_sheet(name)
         _head(ws, cols)
         ws.append([f"# akun kontrol {ctrl} — total sheet ini harus = saldo {ctrl} di SALDO_AWAL"])
@@ -141,7 +160,7 @@ async def parse_workbook(db, data: bytes, balance_to_retained: bool = False) -> 
         td += d
         tc += c
     relations = []
-    for name, ctrl, _cols in RELATION_SHEETS:
+    for name, ctrl, _cols in await relation_sheets(db):
         if name not in wb.sheetnames:
             continue
         tot, n = 0.0, 0
@@ -162,8 +181,9 @@ async def parse_workbook(db, data: bytes, balance_to_retained: bool = False) -> 
             errors.append(f"{name}: rincian Rp {tot:,.0f} ≠ saldo akun kontrol {ctrl} Rp {bal:,.0f}")
     diff = round(td - tc, 2)
     balancing = None
-    if diff and balance_to_retained and RETAINED_EARNINGS in acc:
-        balancing = {"account_code": RETAINED_EARNINGS, "account_name": acc[RETAINED_EARNINGS]["name"], "account_type": "EQUITY",
+    re_code = await retained_earnings_code(db)
+    if diff and balance_to_retained and re_code in acc:
+        balancing = {"account_code": re_code, "account_name": acc[re_code]["name"], "account_type": "EQUITY",
                      "debit": round(-diff, 2) if diff < 0 else 0.0, "credit": round(diff, 2) if diff > 0 else 0.0,
                      "description": "Penyeimbang saldo awal → Laba Ditahan"}
         lines.append(balancing)

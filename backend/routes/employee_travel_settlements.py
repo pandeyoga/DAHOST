@@ -49,6 +49,15 @@ GL_TRAVEL_EXPENSE    = '6-3400'   # Biaya Perjalanan Dinas
 GL_EMPLOYEE_ADVANCE  = '1-1610'   # Uang Muka Karyawan
 GL_BANK_DEFAULT      = '1-1201'   # Bank BCA (default)
 
+
+async def _travel_codes(db) -> dict:
+    """2026-11-02 (S2-H butir 7): akun penyelesaian dinas dari peran Profil Posting `employee_travel`;
+    konstanta di atas = bawaan/cadangan bila peran dikosongkan (core/coa_bindings.CONSTANT_SOURCES)."""
+    from routes.rahaza_posting_profiles import role_code
+    return {'expense': await role_code(db, 'employee_travel', 'debit_travel_expense', GL_TRAVEL_EXPENSE),
+            'advance': await role_code(db, 'employee_travel', 'debit_employee_advance', GL_EMPLOYEE_ADVANCE),
+            'bank': await role_code(db, 'employee_travel', 'credit_bank_default', GL_BANK_DEFAULT)}
+
 from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08 · FIN-02
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (K25): pemisahan tugas
     ensure_not_self_approval, merge_own_failures, split_own_requests,
@@ -651,7 +660,9 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
 
     # Determine bank account — RC-05: bank asli = rahaza_cash_accounts (rahaza_bank_accounts phantom)
     bank_acc_id = payload.bank_account_id or doc.get('bank_account_id', '')
-    bank_gl_code = GL_BANK_DEFAULT
+    # 2026-11-02 (S2-H butir 7): akun dari peran Profil Posting `employee_travel` (bawaan = konstanta)
+    gl = await _travel_codes(db)
+    bank_gl_code = gl['bank']
     if bank_acc_id:
         ba = await db.rahaza_cash_accounts.find_one({'id': bank_acc_id}, {'_id': 0})
         if ba and (ba.get('gl_account_code') or ba.get('code')):
@@ -668,7 +679,7 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     # Line 1: Dr Beban Perjalanan Dinas (full actual amount)
     if total_actual > 0:
         lines.append({
-            'account_code': GL_TRAVEL_EXPENSE,
+            'account_code': gl['expense'],
             'debit': total_actual, 'credit': 0,
             'description': memo, 'cost_center_id': '',
         })
@@ -677,7 +688,7 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     # Line 2: Cr Uang Muka Karyawan (clear advance receivable)
     if advance > 0:
         lines.append({
-            'account_code': GL_EMPLOYEE_ADVANCE,
+            'account_code': gl['advance'],
             'debit': 0, 'credit': advance,
             'description': f'Clear advance {doc.get("trip_number","")}',
             'cost_center_id': '',
@@ -821,7 +832,7 @@ async def outstanding_advances(user: dict = Depends(require_auth)):
     return {
         'total': len(results),
         'total_outstanding': total_outstanding,
-        'gl_account': GL_EMPLOYEE_ADVANCE,
+        'gl_account': (await _travel_codes(db))['advance'],
         'items': results,
     }
 
@@ -923,21 +934,22 @@ async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = De
             actual = float(doc.get('total_actual', 0))
             difference = float(doc.get('difference', 0))
 
+            gl = await _travel_codes(db)   # 2026-11-02 (S2-H butir 7): peran profil
             je_lines = [
-                {'account_code': GL_TRAVEL_EXPENSE, 'description': 'Biaya Perjalanan Dinas', 'debit': actual, 'credit': 0},
-                {'account_code': GL_EMPLOYEE_ADVANCE, 'description': 'Clearing Uang Muka', 'debit': 0, 'credit': advance},
+                {'account_code': gl['expense'], 'description': 'Biaya Perjalanan Dinas', 'debit': actual, 'credit': 0},
+                {'account_code': gl['advance'], 'description': 'Clearing Uang Muka', 'debit': 0, 'credit': advance},
             ]
 
             if difference > 0:
                 je_lines.append({
-                    'account_code': GL_BANK_DEFAULT,
+                    'account_code': gl['bank'],
                     'description': 'Kembalian dari karyawan',
                     'debit': difference,
                     'credit': 0
                 })
             elif difference < 0:
                 je_lines.append({
-                    'account_code': GL_BANK_DEFAULT,
+                    'account_code': gl['bank'],
                     'description': 'Bayar tambahan ke karyawan',
                     'debit': 0,
                     'credit': abs(difference)

@@ -309,6 +309,8 @@ async def create_return(request: Request):
         "created_by": user["name"], "created_at": _now(), "updated_at": _now()
     }
     await db.wh_returns.insert_one(doc)
+    doc.pop("_id", None)
+    await _rb.notify_pending(db, doc, actor=user)   # 2026-11-02 (K30): pembuatnya tidak ikut menerima
     return JSONResponse(serialize_doc(doc), status_code=201)
 
 
@@ -348,6 +350,7 @@ async def delete_return(return_id: str, request: Request):
     if doc.get("status") != "Pending":
         raise HTTPException(400, "Hanya return berstatus Pending yang bisa dihapus")
     await db.wh_returns.delete_one({"id": return_id})
+    await _rb.close_pending_notifs(db, return_id)   # 2026-11-02 (K30): sumber hilang → tertutup
     return {"ok": True}
 
 
@@ -487,7 +490,7 @@ async def resolve_return(return_id: str, request: Request):
         raise HTTPException(400, f"Keputusan harus salah satu dari: {', '.join(ACTIONS)}")
 
     restock_qty = 0
-    if action in (_rb.ACTION_RESTOCK, _rb.ACTION_QUARANTINE):
+    if action in (_rb.ACTION_RESTOCK, _rb.ACTION_QUARANTINE, _rb.ACTION_DISPOSE):
         try:
             restock_qty = _rb.decision_qty(doc, body.get("restock_qty"))
         except _rb.ReturnBridgeError as e:
@@ -520,9 +523,28 @@ async def resolve_return(return_id: str, request: Request):
             restock_error = str(e)
             logger.error("[retur-gudang] restock %s gagal: %s", return_id, e)
 
+    # ── 2026-11-02 (K40) — keputusan "Dibuang": dicatat sebagai BEBAN ────────────
+    # Barang tidak masuk stok; nilai HPP-nya (qty × WAC saat keputusan) direklas Dr 6-1300 /
+    # Cr 5-1000 lewat penilai yang SAMA dengan retur rusak (`_value_damaged(disposed=True)`).
+    # Hasil `loss_*` (termasuk `loss_je_id`) disimpan supaya Balik Keputusan ikut membuat
+    # jurnal pembaliknya. Retur yang belum tertaut master FG tidak bisa dinilai → dicatat.
+    dispose_patch = {}
+    if action == _rb.ACTION_DISPOSE:
+        mid = doc.get("material_id") or doc.get("fg_material_id")
+        if mid:
+            dispose_patch = await _rb._value_damaged(db, doc, mid, restock_qty, user, disposed=True)
+        else:
+            dispose_patch = {"loss_kind": "disposed", "loss_je_id": None, "loss_post_error": (
+                "Retur belum tertaut master barang jadi — nilai kerugian 'Dibuang' tidak bisa dijurnal. "
+                "Tautkan ulang retur ini lalu Balik Keputusan & putuskan lagi.")}
+        dispose_patch["disposed_qty"] = restock_qty
+
     timeline_entry = {
         "status": "Resolved", "at": _now(), "by": user["name"],
-        "note": f"Aksi: {action} | {body.get('action_notes', '')}"
+        "note": f"Aksi: {action} | {body.get('action_notes', '')}" + (
+            f" | {restock_qty} pcs dibuang, beban Rp {dispose_patch['loss_amount']:,.0f}"
+            f" ({dispose_patch.get('loss_je_number') or 'jurnal gagal'})"
+            if dispose_patch.get("loss_amount") else "")
     }
     upd = {
         "status": "Resolved",
@@ -534,11 +556,13 @@ async def resolve_return(return_id: str, request: Request):
         "restock_qty": (restock_result or {}).get("qty", doc.get("restock_qty", 0))
         if restock_result else doc.get("restock_qty", 0),
         "restock_error": restock_error or "",
+        **dispose_patch,
         "updated_at": _now()
     }
     await db.wh_returns.update_one({"id": return_id}, {
         "$set": upd, "$push": {"timeline": timeline_entry}
     })
+    await _rb.close_pending_notifs(db, return_id)   # 2026-11-02 (K30): Perlu Tindakan gudang selesai
 
     # RC-FLOW-UX-11a (opsi B): callback ke marketing_returns bila retur ini
     # berasal dari retur Toko (link `source_marketing_return_id`). Update
@@ -734,6 +758,7 @@ async def cancel_return(return_id: str, request: Request):
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
     if result and result.get("source_marketing_return_id"):   # 2026-11-02 (K1)
         await _rb._stamp_marketing(db, result["source_marketing_return_id"], result)
+    await _rb.close_pending_notifs(db, return_id)   # 2026-11-02 (K30)
     return serialize_doc(result)
 
 

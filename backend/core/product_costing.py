@@ -1093,13 +1093,25 @@ async def apply_model_cost(db, model_id: str, user: dict, *, size_ids: list[str]
                           "hpp_updated_at": now, "hpp_breakdown": breakdown,
                           "updated_at": now}})
             fg_updated += res_fg.modified_count
+            # 2026-11-02 (owner No.26a): item katalog yang FG-nya SUDAH bernilai WAC memakai WAC itu
+            # (`fcl._sync_catalog`); HPP kalkulator hanya estimasi dan tidak boleh menimpanya.
+            # Satu definisi "sudah WAC" = `catalog_margin.effective_fg_cost` (sumber fg_wac).
+            wac_ids = []
             if fg_ids:
+                from core import catalog_margin as _cm
+                async for m in db.rahaza_materials.find(
+                        {"id": {"$in": fg_ids}}, {"_id": 0, "id": 1, "unit_cost": 1, "wac_components": 1}):
+                    if _cm.effective_fg_cost(m)["source"] == _cm.SRC_WAC:
+                        wac_ids.append(m["id"])
+            cat_ids = [i for i in fg_ids if i not in wac_ids]
+            if cat_ids:
                 res_items = await db.marketing_catalog_items.update_many(
-                    {"$or": [{"fg_material_id": {"$in": fg_ids}}, {"material_id": {"$in": fg_ids}}]},
+                    {"$or": [{"fg_material_id": {"$in": cat_ids}}, {"material_id": {"$in": cat_ids}}]},
                     {"$set": {"hpp": src["hpp_unit"], "hpp_source": HPP_SOURCE_BOM,
                               "hpp_updated_at": now, "updated_at": now}})
                 item_updated += res_items.modified_count
             applied.append({**label, "hpp_unit": src["hpp_unit"], "fg_count": len(fg_ids),
+                            "catalog_kept_wac": len(wac_ids),
                             "confidence": src["confidence"], "breakdown": breakdown})
 
     hpps = [a["hpp_unit"] for a in applied]

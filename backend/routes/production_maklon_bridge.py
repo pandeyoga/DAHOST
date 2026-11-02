@@ -62,20 +62,13 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
     po_items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).sort('created_at', 1).to_list(None)
     item_ids = [i['id'] for i in po_items]
 
-    # Aggregate produced (production_job_items — child jobs ikut karena juga ber-po_item_id)
-    prod_agg = await db.production_job_items.aggregate([
-        {'$match': {'po_item_id': {'$in': item_ids}}},
-        {'$group': {'_id': '$po_item_id', 'qty': {'$sum': '$produced_qty'}}},
-    ]).to_list(None) if item_ids else []
-    produced_by_item = {a['_id']: a['qty'] for a in prod_agg}
-    # Aggregate dispatched ke klien — HANYA surat jalan ke BUYER (deklarasi CMT→DA
-    # `receiver_type='da'` juga tersimpan di buyer_shipment_items; audit M-08).
-    buyer_ship_ids = await _buyer_shipment_ids_for_po(db, po_id)
-    disp_agg = await db.buyer_shipment_items.aggregate([
-        {'$match': {'po_item_id': {'$in': item_ids}, 'shipment_id': {'$in': buyer_ship_ids}}},
-        {'$group': {'_id': '$po_item_id', 'qty': {'$sum': '$qty_shipped'}}},
-    ]).to_list(None) if (item_ids and buyer_ship_ids) else []
-    dispatched_by_item = {a['_id']: a['qty'] for a in disp_agg}
+    # 2026-11-02 (K17 butir 5): cermin dibaca dari SSOT yang SAMA dengan daftar PO &
+    # pagar kirim — produksi job induk saja (job anak rework bukan produksi baru) dan
+    # dikirim = SJ BUYER efektif (deklarasi CMT→DA tidak ikut; audit M-08).
+    from core import dispatch_capacity as dcap
+    qmap = await dcap.po_item_quantities(db, item_ids)
+    produced_by_item = {k: v['produced_main'] for k, v in qmap.items()}
+    dispatched_by_item = {k: v['dispatched'] for k, v in qmap.items()}
 
     existing = await db.dewi_maklon_pos.find_one({'id': po_id}, {'_id': 0})
     ar_doc = None
@@ -138,8 +131,15 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
 
     mirror_status = PO_STATUS_TO_MAKLON.get(po.get('status', 'Draft'), 'draft')
     total_dispatched = sum(i['qty_dispatched'] for i in items)
-    if mirror_status == 'in_production' and total_dispatched > 0:
-        mirror_status = 'partial_delivered'
+    if mirror_status in ('in_production', 'confirmed') and total_dispatched > 0:
+        mirror_status = 'delivered' if total_dispatched >= total_qty > 0 else 'partial_delivered'
+    # 2026-11-02 (K16): margin maklon dari ANGKA NYATA = tagihan klien − (CMT + aksesoris DA
+    # + permak). Margin rencana (qty order × selisih tarif) tetap disimpan terpisah.
+    try:
+        actual = await maklon_actual_costs(db, po_id)
+    except Exception:  # noqa: BLE001
+        logger.exception('biaya nyata maklon gagal dihitung (PO %s)', po_id)
+        actual = None
     # Invoice yang sudah TERBIT (bukan draft) menang atas status produksi — layar finance
     # harus tetap melihat "Ditagih" walau PO baru saja ditutup (audit M-03/M-10).
     if ar_doc and (ar_doc.get('status') or 'draft') not in ('draft', 'cancelled') \
@@ -168,7 +168,11 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
         'total_qty': total_qty,
         'total_value': total_value,
         'total_cmt_cost': total_cmt_cost,
-        'gross_margin': round(total_value - total_cmt_cost, 2),
+        'gross_margin_plan': round(total_value - total_cmt_cost, 2),
+        'gross_margin': (actual['margin'] if actual and actual.get('has_actual')
+                         else round(total_value - total_cmt_cost, 2)),
+        'gross_margin_basis': 'aktual' if actual and actual.get('has_actual') else 'rencana',
+        'actual_cost': actual,
         'qty_dispatched': total_dispatched,
         'qty_produced': sum(i['qty_produced'] for i in items),
         'notes': po.get('notes', ''),
@@ -291,6 +295,10 @@ async def get_maklon_finance_state(po_id: str, request: Request):
 # PHASE B — CMT Receipt → AP Mature Helper (2026-07-16)
 # ═══════════════════════════════════════════════════════════════════════════
 
+class _SkipPosting(Exception):
+    """Tagihan bernilai 0 (seluruhnya dibatasi qty produksi) — tidak ada jurnal."""
+
+
 async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
     """Phase B: after DA approves a `cmt_receipts`, mature the AP payable to
     the CMT vendor in `dewi_cmt_payments` (Draft status) with:
@@ -331,25 +339,49 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
     ).to_list(None) if po_item_ids else []
     rate_by_item = {pi['id']: float(pi.get('cmt_price_snapshot', 0) or 0) for pi in po_items}
 
+    # 2026-11-02 (K17 butir 6): tagihan kumulatif per item ≤ qty PRODUKSI vendor (job
+    # induk). Dulu koreksi 10→8 lalu kiriman susulan 2 pcs menerbitkan tagihan kedua
+    # ⇒ Σ 12 pcs dibayar untuk produksi 10 (audit p.md No.33). Kiriman rework tetap
+    # tertagih sekali (produksi job anak rework tidak dihitung sebagai produksi baru).
+    from core import dispatch_capacity as dcap
+    qmap = await dcap.po_item_quantities(db, po_item_ids)
+    billed_before: dict = {}
+    async for p in db.dewi_cmt_payments.find(
+            {'po_id': receipt.get('po_id') or '__none__'}, {'_id': 0, 'breakdown': 1, 'status': 1}):
+        if str(p.get('status') or '').lower() in ('cancelled', 'void', 'voided'):
+            continue
+        for b in p.get('breakdown') or []:
+            k = b.get('po_item_id')
+            billed_before[k] = billed_before.get(k, 0) + int(b.get('qty_billed', b.get('qty_actual', 0)) or 0)
+
     total_pcs = 0
     total_rejected = 0
     subtotal = 0.0
     breakdown = []
     zero_rate_pcs = 0   # T-14(a): pcs diterima tanpa tarif CMT → tagihan Rp 0 harus berbendera
+    capped_pcs = 0
     for ln in lines:
         qty_actual = int(ln.get('qty_actual', 0) or 0)
         reject_qty = int(ln.get('reject_qty', 0) or 0)
         rate = rate_by_item.get(ln.get('po_item_id'), 0.0)
-        if rate <= 0 and qty_actual > 0:
-            zero_rate_pcs += qty_actual
-        line_amt = round(qty_actual * rate, 2)
+        produced = int((qmap.get(ln.get('po_item_id')) or {}).get('produced_main', 0) or 0)
+        qty_billed = qty_actual
+        if produced > 0:
+            room = max(0, produced - billed_before.get(ln.get('po_item_id'), 0))
+            qty_billed = min(qty_actual, room)
+            billed_before[ln.get('po_item_id')] = billed_before.get(ln.get('po_item_id'), 0) + qty_billed
+        capped_pcs += qty_actual - qty_billed
+        if rate <= 0 and qty_billed > 0:
+            zero_rate_pcs += qty_billed
+        line_amt = round(qty_billed * rate, 2)
         subtotal += line_amt
-        total_pcs += qty_actual
+        total_pcs += qty_billed
         total_rejected += reject_qty
         breakdown.append({
             'line_id': ln.get('id'),
             'sku_code': ln.get('sku_code', ''),
             'qty_actual': qty_actual,
+            'qty_billed': qty_billed,
             'reject_qty': reject_qty,
             'cmt_rate_per_pcs': rate,
             'line_amount': line_amt,
@@ -396,11 +428,17 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
             "dirapikan manual; receipt=%s", payment_code, receipt.get('id'))
 
     payment_id = new_id()
-    variance_flag = int(receipt.get('total_shipped_by_cmt', 0) or 0) != (total_pcs + total_rejected)
+    accepted_pcs = total_pcs + capped_pcs
+    variance_flag = int(receipt.get('total_shipped_by_cmt', 0) or 0) != (accepted_pcs + total_rejected)
     variance_reasons = []
     if variance_flag:
         variance_reasons.append(
-            f"qty dikirim CMT {int(receipt.get('total_shipped_by_cmt', 0) or 0)} ≠ diterima {total_pcs} + reject {total_rejected}")
+            f"qty dikirim CMT {int(receipt.get('total_shipped_by_cmt', 0) or 0)} ≠ diterima {accepted_pcs} + reject {total_rejected}")
+    if capped_pcs > 0:
+        variance_flag = True
+        variance_reasons.append(
+            f"{capped_pcs} pcs lolos QC TIDAK ditagih: tagihan kumulatif item ini sudah mencapai "
+            f"qty produksi vendor (kiriman susulan setelah koreksi/selisih) — keputusan Keuangan")
     if zero_rate_pcs > 0:
         variance_flag = True
         variance_reasons.append(
@@ -442,6 +480,8 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
         'variance_reason': receipt.get('variance_reason', '') or '; '.join(variance_reasons),
         'variance_reasons': variance_reasons,
         'zero_rate_pcs': zero_rate_pcs,
+        'capped_pcs': capped_pcs,
+        'needs_finance_review': bool(variance_flag),
         'breakdown': breakdown,
         'notes': f"Auto-matured dari CMT Receipt {receipt.get('receipt_code','')} (Phase B).",
         'created_at': now(), 'updated_at': now(),
@@ -449,15 +489,32 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
         'created_by_name': user.get('name', 'system'),
     }
     await db.dewi_cmt_payments.insert_one(doc)
+    # 2026-11-02 (K17 butir 6): angka "selisih belum diselesaikan" (selisih kirim terbuka
+    # penerimaan ini) langsung terisi untuk kolom layar tagihan CMT.
+    try:
+        from core import short_shipment as _sm
+        await _sm.refresh_cmt_payment_variance(db, receipt_id)
+        if capped_pcs > 0:
+            await _sm.notify_finance(
+                db, title=f"Tagihan CMT {payment_code} dibatasi qty produksi",
+                body=(f"{capped_pcs} pcs dari penerimaan {receipt.get('receipt_code', '')} tidak ditagih "
+                      f"karena tagihan kumulatif PO {doc['po_number']} sudah = qty produksi vendor."),
+                source_type='dewi_cmt_payments', source_id=doc['id'], source_ref=payment_code)
+    except Exception:  # noqa: BLE001
+        logger.exception('[maklon-bridge] segarkan selisih tagihan %s gagal', payment_code)
 
     # B-09: AP CMT masuk GL saat tagihan lahir dari penerimaan FG (akrual), bukan menunggu dibayar.
     try:
+        if subtotal <= 0 and capped_pcs > 0:
+            raise _SkipPosting()
         from routes.dewi_maklon_finance import post_cmt_ap_invoice
         ap_res = await post_cmt_ap_invoice(db, doc, user)
         if ap_res.get('ok'):
             await db.dewi_cmt_payments.update_one({'id': doc['id']}, {'$set': {'status': 'posted', 'updated_at': now()}})
         else:
             logger.warning("[maklon-bridge] AP CMT %s belum bisa diposting: %s", payment_code, ap_res.get('error'))
+    except _SkipPosting:
+        logger.info("[maklon-bridge] AP CMT %s bernilai 0 (dibatasi produksi) — tidak diposting", payment_code)
     except Exception as e:  # noqa: BLE001
         logger.error("[maklon-bridge] posting AP CMT %s gagal: %s", payment_code, e)
     try:
@@ -535,53 +592,50 @@ async def compute_po_fulfillment(db, po_id: str) -> dict:
         for i in po_items}
     total_ordered = sum(ordered_by_item.values())
 
-    bs_ids = await _buyer_shipment_ids_for_po(db, po_id)
-    bitems = await db.buyer_shipment_items.find(
-        {'po_item_id': {'$in': item_ids}, 'shipment_id': {'$in': bs_ids}}, {'_id': 0}
-    ).to_list(None) if (item_ids and bs_ids) else []
-
-    received_by_item: dict = {}
-    shipped_by_item: dict = {}
-    for bi in bitems:
-        poi = bi.get('po_item_id')
-        shipped = int(bi.get('qty_shipped', 0) or 0)
-        recv = bi.get('qty_received')
-        recv = int(recv) if recv is not None else shipped
-        received_by_item[poi] = received_by_item.get(poi, 0) + recv
-        shipped_by_item[poi] = shipped_by_item.get(poi, 0) + shipped
-
+    # 2026-11-02 (K17 butir 1): angka kirim/terima dari SSOT `core.dispatch_capacity`
+    # (SJ BUYER saja; diterima ≤ dikirim). Satu rumus dengan daftar PO, variance, papan.
+    from core import dispatch_capacity as dcap
+    qmap = await dcap.po_item_quantities(db, item_ids)
+    received_by_item = {poi: q['dispatched'] for poi, q in qmap.items() if q['shipped'] or q['dispatched']}
+    shipped_by_item = {poi: q['shipped'] for poi, q in qmap.items() if q['shipped']}
     total_received = sum(received_by_item.values())
     total_shipped = sum(shipped_by_item.values())
+    received_confirmed = sum(q['received_confirmed'] for q in qmap.values())
+    lines_unrecorded = sum(q['lines_unrecorded'] for q in qmap.values())
+    buyer_short_open = sum(q['buyer_short_open'] for q in qmap.values())
 
-    # PO INTERNAL: "terpenuhi" = sudah DIPRODUKSI (masuk FG) — bukan hanya yang
-    # sudah dikirim ke buyer. Tanpa ini PO dengan produksi nyata dilaporkan 100%
-    # short saat ditutup (audit iteration_102).
+    # PO INTERNAL: "terpenuhi" = sudah MASUK FG. 2026-11-02 (K17 butir 7): masuk FG =
+    # LOLOS QC (bukan produced — dulu produksi job anak rework ikut, 11 untuk lolos 10).
     po_doc = await db.production_pos.find_one({'id': po_id}, {'_id': 0, 'business_type': 1})
     is_internal = (po_doc or {}).get('business_type') == 'internal'
-    produced_by_item: dict = {}
-    if is_internal and item_ids:
-        async for ji in db.production_job_items.find(
-                {'po_item_id': {'$in': item_ids}}, {'_id': 0, 'po_item_id': 1, 'produced_qty': 1}):
-            poi = ji.get('po_item_id')
-            produced_by_item[poi] = produced_by_item.get(poi, 0) + int(ji.get('produced_qty', 0) or 0)
+    produced_by_item = {poi: q['produced_main'] for poi, q in qmap.items()}
     total_produced = sum(produced_by_item.values())
     fulfilled_by_item = {
-        poi: max(received_by_item.get(poi, 0), produced_by_item.get(poi, 0)) for poi in item_ids
+        poi: max(received_by_item.get(poi, 0), (qmap.get(poi) or {}).get('accepted_total', 0))
+        for poi in item_ids
     } if is_internal else received_by_item
     total_fulfilled = sum(fulfilled_by_item.values())
     qty_short = max(0, total_ordered - total_fulfilled)
     qty_short_pct = round(qty_short / total_ordered * 100, 2) if total_ordered > 0 else 0.0
     return {
         'po_id': po_id,
-        'basis': 'produced' if is_internal else 'buyer_received',
+        'basis': 'accepted' if is_internal else 'buyer_received',
         'total_ordered': total_ordered,
         'total_received': total_received,
         'total_shipped': total_shipped,
         'total_produced': total_produced,
+        'total_accepted': sum(q['accepted_total'] for q in qmap.values()),
         'total_fulfilled': total_fulfilled,
+        'received_confirmed': received_confirmed,
+        'lines_unrecorded': lines_unrecorded,
+        'buyer_short_open': buyer_short_open,
         'qty_short': qty_short,
         'qty_short_pct': qty_short_pct,
         'is_full': total_ordered > 0 and total_fulfilled >= total_ordered,
+        # 2026-11-02 (K17 butir 3): "selesai" hanya bila SEMUA baris SJ buyer sudah
+        # dicatat qty diterimanya (null ≠ diterima) dan tidak ada selisih terbuka.
+        'is_fully_confirmed': (total_ordered > 0 and total_fulfilled >= total_ordered
+                               and lines_unrecorded == 0 and buyer_short_open == 0),
         'ordered_by_item': ordered_by_item,
         'received_by_item': received_by_item,
         'rate_by_item': rate_by_item,
@@ -614,6 +668,73 @@ async def billable_lines_for_po(db, po_id: str) -> dict:
             'total_ordered': f['total_ordered'], 'total_received': f['total_received']}
 
 
+async def maklon_actual_costs(db, po_id: str) -> dict:
+    """2026-11-02 (K16) — biaya jahit PO dari ANGKA NYATA, satu rumus untuk HPP Jahit
+    maklon, cermin margin, dan laporan.
+
+      CMT        = Σ tagihan CMT nyata (`dewi_cmt_payments`, bukan batal) — tarif dari PO/SPK
+      aksesoris  = Σ nilai Material Issue PO ini (qty keluar × harga yang dibukukan)
+      permak     = Σ ongkos permak (`dewi_cmt_permak.total_cost`)
+      pendapatan = tagihan klien = qty diterima buyer × harga jasa (`billable_lines_for_po`)
+      margin     = pendapatan − (CMT + aksesoris DA + permak)
+    Kain klien BUKAN biaya DA (K14).
+    """
+    po = await db.production_pos.find_one({'id': po_id}, {'_id': 0}) or {}
+    items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(None)
+    qty_ordered = sum(int(i.get('qty', 0) or 0) for i in items)
+    cmt_rate_plan = round(sum(float(i.get('cmt_price_snapshot', 0) or 0) * int(i.get('qty', 0) or 0)
+                              for i in items), 2)
+    pays = [p async for p in db.dewi_cmt_payments.find({'po_id': po_id}, {'_id': 0})
+            if str(p.get('status') or '').lower() not in ('cancelled', 'void', 'voided')]
+    cmt_cost = round(sum(float(p.get('subtotal', p.get('net_amount', 0)) or 0) for p in pays), 2)
+    cmt_pcs = sum(int(p.get('total_pcs', 0) or 0) for p in pays)
+    acc_cost, mi_numbers = 0.0, []
+    async for mi in db.rahaza_material_issues.find(
+            {'production_po_id': po_id, 'status': {'$nin': ['rejected', 'draft', 'cancelled']}}, {'_id': 0}):
+        mi_numbers.append(mi.get('mi_number'))
+        for it in mi.get('items') or []:
+            acc_cost += float(it.get('qty_issued') or 0) * float(it.get('unit_cost_applied') or 0)
+    acc_cost = round(acc_cost, 2)
+    permak_cost = 0.0
+    async for p in db.dewi_cmt_permak.find({'po_id': po_id}, {'_id': 0, 'total_cost': 1}):
+        permak_cost += float(p.get('total_cost') or 0)
+    permak_cost = round(permak_cost, 2)
+    bill = await billable_lines_for_po(db, po_id)
+    revenue = float(bill.get('subtotal') or 0)
+    total_cost = round(cmt_cost + acc_cost + permak_cost, 2)
+    from core import dispatch_capacity as dcap
+    q = dcap.sum_quantities((await dcap.po_item_quantities(db, [i['id'] for i in items])).values())
+    basis_pcs = q['accepted_total'] or cmt_pcs
+    gaps = []
+    if not pays:
+        gaps.append('belum ada tagihan CMT (biaya jahit lahir saat Terima FG dari CMT selesai QC)')
+    has_da_acc = await db.dewi_maklon_bom.find_one(
+        {'po_id': po_id, 'materials.ownership': {'$in': ['cv_da_stock', 'cv_da', 'da_provided']}},
+        {'_id': 0, 'id': 1})
+    if has_da_acc and not mi_numbers:
+        # P-7: sejak 2026-11-02 Kirim Material CMT maklon menerbitkan MI aksesoris DA
+        # (core.material_issue_engine.issue_for_maklon_shipment). Celah ini kini hanya muncul untuk
+        # surat jalan LAMA / BOM tanpa material_id — tetap DILAPORKAN, bukan ditebak.
+        gaps.append('BOM PO ini memuat aksesoris milik DA (cv_da_stock), tetapi belum ada Material '
+                    'Issue — biaya aksesoris DA belum terbukukan')
+    return {
+        'po_id': po_id, 'po_number': po.get('po_number', ''), 'business_type': po.get('business_type'),
+        'qty_ordered': qty_ordered, 'qty_basis': basis_pcs, 'qty_billed_cmt': cmt_pcs,
+        'cmt_cost': cmt_cost, 'cmt_cost_plan': cmt_rate_plan,
+        'accessory_cost': acc_cost, 'material_issues': mi_numbers,
+        'permak_cost': permak_cost, 'total_cost': total_cost,
+        'hpp_per_pcs': round(total_cost / basis_pcs, 2) if basis_pcs else 0.0,
+        'revenue': round(revenue, 2), 'qty_billable': bill.get('total_received', 0),
+        'margin': round(revenue - total_cost, 2),
+        'margin_pct': round((revenue - total_cost) / revenue * 100, 2) if revenue else 0.0,
+        'has_actual': bool(pays),
+        'cmt_payments': [{'payment_code': p.get('payment_code'), 'total_pcs': p.get('total_pcs'),
+                          'subtotal': p.get('subtotal'), 'variance_flagged': p.get('variance_flagged')}
+                         for p in pays],
+        'gaps': gaps,
+    }
+
+
 async def try_auto_close_po_on_full(db, po_id: str, user: dict) -> dict:
     """Phase C §11.2: auto-transition PO → 'Completed' when buyer-received qty
     reaches the ordered qty. Idempotent + safe (never breaks the caller flow)."""
@@ -624,8 +745,12 @@ async def try_auto_close_po_on_full(db, po_id: str, user: dict) -> dict:
         if po.get('status') in ('Completed', 'Closed', 'Closed Short'):
             return {'closed': False, 'already': po.get('status')}
         f = await compute_po_fulfillment(db, po_id)
-        if not f['is_full']:
-            return {'closed': False, 'fulfillment': f}
+        # 2026-11-02 (K17 butir 3): dulu Completed saat baris lain belum dicatat
+        # (null dianggap diterima — w3 S11). Sekarang menunggu SEMUA baris tercatat.
+        if not f.get('is_fully_confirmed', f['is_full']):
+            return {'closed': False, 'fulfillment': f,
+                    'reason': ('menunggu qty diterima buyer dicatat untuk '
+                               f"{f.get('lines_unrecorded', 0)} baris") if f['is_full'] else 'belum penuh'}
         await db.production_pos.update_one({'id': po_id}, {'$set': {
             'status': 'Completed',
             'closed_reason': 'full_fulfillment',

@@ -474,12 +474,17 @@ async def post_withdrawal_journal(wid: str, request: Request):
     await _check_balance(db, _acc, round(float(doc.get("amount") or 0), 2), exclude_id=wid,
                          journal_stage=True)
     await _check_period_open(db, date.fromisoformat(str(je["date"])[:10]))
+    # 2026-11-02 (S2-H butir 8): validasi ULANG akun draf (aturan yang sama dengan Buku Jurnal).
+    from routes.rahaza_journals import revalidate_draft_lines
+    lines, total_d, total_c = await revalidate_draft_lines(db, je)
     _res = await db.rahaza_journal_entries.update_one(
         {"id": je["id"], "status": "draft"},  # FIN-17: atomik
-        {"$set": {"status": "posted", "posted_at": _now(), "posted_by": (user or {}).get("id"), "updated_at": _now()}})
+        {"$set": {"status": "posted", "posted_at": _now(), "posted_by": (user or {}).get("id"), "updated_at": _now(),
+                  "lines": lines, "total_debit": total_d, "total_credit": total_c}})
     if _res.modified_count == 0:
         raise HTTPException(409, "Jurnal sudah diposting oleh permintaan lain.")
     je["status"] = "posted"
+    je["lines"] = lines
     await _mirror_lines(db, je)
     await db[COLL].update_one({"id": wid}, {"$set": {"je_status": "posted", "updated_at": _now()}})
     return {"ok": True, "je_number": je["je_number"], "je_status": "posted",

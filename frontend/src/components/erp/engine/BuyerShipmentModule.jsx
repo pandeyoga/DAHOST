@@ -1435,11 +1435,11 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             {!consolidate && form.po_id && selectedPO?.business_type === 'internal' && (
               <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900" data-testid="internal-dispatch-info">
                 <div className="text-sm font-semibold">PO Produksi Internal — serah terima hasil produksi ke gudang stok sendiri</div>
-                Tidak perlu CMT Receipt. Batas qty = <strong>hasil produksi − sudah diserahkan</strong>.
+                Tidak perlu memilih CMT Receipt. Batas qty = <strong>lolos QC (atau hasil produksi sendiri) − sudah diserahkan</strong>.
                 Dokumen ini hanya mencatat serah terima: stok FG sudah bertambah lewat <em>Terima FG dari CMT</em>/scan-in,
                 jadi <strong>stok tidak dikurangi dan HPP tidak dibukukan</strong> — HPP lahir saat barang terjual (marketplace/penjualan langsung).
                 {capLoading ? ' Menghitung sisa bisa diserahkan…'
-                  : capTotals ? <> Sisa bisa diserahkan <strong>{Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs</strong> (diproduksi {Number(capTotals.internal_produced || 0).toLocaleString('id-ID')} − sudah diserahkan {Number(capTotals.dispatched || 0).toLocaleString('id-ID')}).</>
+                  : capTotals ? <> Sisa bisa diserahkan <strong>{Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs</strong> (lolos QC {Number(capTotals.accepted_total ?? capTotals.internal_produced ?? 0).toLocaleString('id-ID')} − sudah diserahkan {Number(capTotals.dispatched || 0).toLocaleString('id-ID')}).</>
                   : null}
               </div>
             )}

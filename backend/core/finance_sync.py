@@ -14,9 +14,12 @@ Dijalankan saat start server dan lewat POST /api/rahaza/finance/sync-masters. Me
 """
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
+
+log = logging.getLogger(__name__)
 
 CMT_AP_PARENT = "2-1110"
 MAKLON_AR_PARENT = "1-1305"
@@ -118,20 +121,40 @@ def cmt_ap_credit_needs_fix(prof: dict) -> bool:
 async def _backfill_subledgers(db, report: dict, user):
     from routes.coa_auto import ensure_subledger_for_entity, get_auto_settings
     settings = await get_auto_settings(db)
-    done = {}
+    done, restored = {}, []
+    codes = {a["code"] async for a in db.rahaza_coa_accounts.find({}, {"_id": 0, "code": 1}) if a.get("code")}
     for etype, cfg in (settings.get("entity_types") or {}).items():
         if not cfg.get("enabled") or not cfg.get("collection"):
             continue
         tf = cfg.get("target_field") or "gl_account_code"
         n = 0
-        async for ent in db[cfg["collection"]].find({"$or": [{tf: None}, {tf: {"$exists": False}}, {tf: ""}], "active": {"$ne": False}}, {"_id": 0}):
+        async for ent in db[cfg["collection"]].find({"active": {"$ne": False}}, {"_id": 0}):
+            cur = (ent.get(tf) or "").strip() if isinstance(ent.get(tf), str) else ent.get(tf)
+            # 2026-11-02 (S2-H): selain field KOSONG, pulihkan juga rujukan ke akun yang HILANG (dulu toko
+            # tetap menunjuk sub-ledger yang terhapus → pencairan ditolak, T12/STARTUP). Dilaporkan, tidak diam.
+            missing = bool(cur) and cur not in codes
+            if cur and not missing:
+                continue
+            if missing and not str(cur).startswith(f"{cfg.get('parent_code')}-"):
+                # bukan sub-ledger bentukan Auto Akun (mis. rekening → akun bank biasa): jangan diganti
+                # diam-diam, cukup dilaporkan (juga tampil di INV-COA-REF Setup Akuntansi).
+                restored.append({"entity_type": etype, "entity": ent.get("code") or ent.get("id"),
+                                 "was": cur, "now": None, "note": "akun tidak ada — tidak diubah otomatis"})
+                continue
             if cfg["collection"] == "marketing_platform_accounts":
                 ent = {**ent, "code": ent.get("account_code") or ent.get("code"), "name": ent.get("account_name") or ent.get("name")}
             res = await ensure_subledger_for_entity(db, etype, ent, user)
             if res.get("ok"):
                 n += 1
+                codes.add(res.get("code"))
+                if missing:
+                    restored.append({"entity_type": etype, "entity": ent.get("code") or ent.get("id"),
+                                     "was": cur, "now": res.get("code")})
         done[etype] = n
     report["subledgers_created"] = done
+    report["subledgers_restored"] = restored
+    if restored:
+        log.warning("[finance_sync] rujukan sub-ledger ke akun yang hilang dipulihkan: %s", restored)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -320,18 +343,73 @@ async def ensure_store_revenue_account(db, store: dict, *, rev_accounts: dict | 
     return {"code": code, "created": True}
 
 
+SYSTEM_CREATORS = {None, "", "system"}
+SYSTEM_CREATOR_NAMES = {"auto-seed", "finance_sync", "system"}
+
+
+def _system_created(a: dict) -> bool:
+    return a.get("created_by") in SYSTEM_CREATORS or a.get("created_by_name") in SYSTEM_CREATOR_NAMES
+
+
+async def store_revenue_deactivation_plan(db, *, rev_accounts: dict | None = None, used: set | None = None,
+                                          parents: set | None = None) -> dict:
+    """Akun pendapatan toko yang TIDAK dipakai toko mana pun → {deactivate: [kode], skipped: [{code,…,reason}]}.
+
+    2026-11-02 (S2-H, T13): dulu SEMUA akun di kelompok pendapatan toko yang tak dipakai toko
+    dinonaktifkan diam-diam tiap server menyala — termasuk akun yang sengaja dibuat/dihidupkan Finance.
+    Kini yang dinonaktifkan hanya akun buatan SISTEM (seed/sinkron) tanpa rujukan konfigurasi lain;
+    akun buatan/ubahan pengguna DILEWATI dan dilaporkan (log startup + Setup Akuntansi › Integritas COA).
+    Satu fungsi untuk sinkron DAN laporan supaya keduanya tidak pernah berbeda."""
+    cfg = await store_revenue_settings(db)
+    if rev_accounts is None:
+        rev_accounts = await _store_revenue_accounts(db, cfg["parent_by_platform"])
+    if used is None:
+        used = {s.get("coa_revenue_code") async for s in db.marketing_platform_accounts.find(
+            {"active": {"$ne": False}}, {"_id": 0, "coa_revenue_code": 1}) if s.get("coa_revenue_code")}
+    if parents is None:
+        parents = set(cfg["parent_by_platform"].values())
+    deactivate, skipped = [], []
+    for c, a in rev_accounts.items():
+        if c in used or not a.get("active", True) or c in parents or "lain" in (a.get("name") or "").lower():
+            continue  # sub-total/header, "Lain-lain" (penampung) tetap hidup
+        if await db.rahaza_journal_lines.count_documents({"account_code": c}) or await db.marketing_platform_accounts.count_documents({"coa_revenue_code": c}):
+            continue
+        reason = None
+        if a.get("active_user_set"):
+            reason = "status aktif diatur pengguna di Bagan Akun"
+        elif not _system_created(a):
+            reason = f"akun buatan pengguna ({a.get('created_by_name') or a.get('created_by')})"
+        else:
+            from core import coa_bindings as cb
+            bl = [b for b in (await cb.collect_bindings(db, [c])).get(c, []) if b["kind"] in cb.CONFIG_KINDS]
+            if bl:
+                reason = "masih dirujuk — " + cb.describe(bl)
+        if reason:
+            skipped.append({"code": c, "name": a.get("name"), "reason": reason})
+        else:
+            deactivate.append(c)
+    return {"deactivate": deactivate, "skipped": skipped}
+
+
 async def _sync_stores(db, report: dict):
     stores = await db.marketing_platform_accounts.find({"active": {"$ne": False}}, {"_id": 0}).to_list(500)
     _cfg = await store_revenue_settings(db)            # 2026-11-02 (K35)
     rev_accounts = await _store_revenue_accounts(db, _cfg["parent_by_platform"])
-    used, created, mapped = set(), [], []
+    used, created, mapped, errors = set(), [], [], []
     for s in stores:
         group = revenue_group_for(s.get("platform"))   # 2026-11-02: `tiktokshop` dikenali
         if not group:
             continue
         code = s.get("coa_revenue_code")
         if not code or code not in rev_accounts:
-            res = await ensure_store_revenue_account(db, s, rev_accounts=rev_accounts, used=used)
+            try:
+                res = await ensure_store_revenue_account(db, s, rev_accounts=rev_accounts, used=used)
+            except ValueError as e:
+                # 2026-11-02 (S2-H): satu toko gagal (mis. kelompok penuh) tidak boleh menghentikan
+                # seluruh sinkron startup (dulu ValueError → langkah sinkron berikutnya terlewati).
+                errors.append({"store": s.get("account_code"), "error": str(e)})
+                log.warning("[finance_sync] akun pendapatan toko %s gagal: %s", s.get("account_code"), e)
+                continue
             code = res["code"]
             if res["created"]:
                 created.append(code)
@@ -348,18 +426,22 @@ async def _sync_stores(db, report: dict):
         # dihidupkan/ditimpa di sini. `mapped` tetap dilaporkan (toko → akun) untuk
         # jejak sinkron; sumber COA toko adalah master toko itu sendiri.
         mapped.append((s.get("account_code"), code, ar))
+    plan = await store_revenue_deactivation_plan(db, rev_accounts=rev_accounts, used=used,
+                                                 parents=set(_cfg["parent_by_platform"].values()))
     deactivated = []
-    _parents = set(_cfg["parent_by_platform"].values())
-    for c, a in rev_accounts.items():
-        if c in used or not a.get("active", True) or c in _parents or "lain" in a["name"].lower():
-            continue  # sub-total/header, "Lain-lain" (penampung) tetap hidup
-        if await db.rahaza_journal_lines.count_documents({"account_code": c}) or await db.marketing_platform_accounts.count_documents({"coa_revenue_code": c}):
-            continue
+    for c in plan["deactivate"]:
         await db.rahaza_coa_accounts.update_one({"code": c}, {"$set": {"active": False, "updated_at": _now(), "deactivated_reason": "toko tidak ada di master (finance_sync)"}})
         deactivated.append(c)
+    if deactivated:
+        log.warning("[finance_sync] akun pendapatan toko buatan sistem tanpa toko DINONAKTIFKAN: %s", deactivated)
+    if plan["skipped"]:
+        log.warning("[finance_sync] akun pendapatan toko tanpa toko DILEWATI (buatan/ubahan pengguna): %s",
+                    [(x["code"], x["reason"]) for x in plan["skipped"]])
     stale = await db.rahaza_channel_gl_mapping.update_many({"channel_key": {"$nin": [s.get("account_code") for s in stores]}, "active": True},
                                                             {"$set": {"active": False, "updated_at": _now()}})
-    report["stores"] = {"mapped": mapped, "revenue_created": created, "revenue_deactivated": deactivated, "channel_map_deactivated": stale.modified_count}
+    report["stores"] = {"mapped": mapped, "revenue_created": created, "revenue_deactivated": deactivated,
+                        "revenue_deactivation_skipped": plan["skipped"], "revenue_errors": errors,
+                        "channel_map_deactivated": stale.modified_count}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

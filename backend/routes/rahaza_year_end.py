@@ -17,7 +17,7 @@ from routes.rahaza_posting import _create_posted_je, _find_existing_je, _get_acc
 
 router = APIRouter(prefix="/api/rahaza/year-end", tags=["rahaza-year-end"])
 SOURCE_MODULE = "year_end_close"
-RETAINED_EARNINGS = "3-2000"
+RETAINED_EARNINGS = "3-2000"   # bawaan peran profil year_end_close.credit_retained_earnings (2026-11-02)
 PL_TYPES = {"REVENUE", "COGS", "EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE"}
 
 
@@ -52,9 +52,12 @@ async def _preview(db, year: int) -> dict:
         lines.append({"account_code": acc["code"], "account_name": acc["name"], "type": t,
                       "debit": max(0, bal), "credit": -bal if bal < 0 else 0})
     existing = await _find_existing_je(db, SOURCE_MODULE, f"yearend:{year}")
-    re_acc = await _get_account(db, RETAINED_EARNINGS)
+    # 2026-11-02 (S2-H butir 7): akun Laba Ditahan dari peran Profil Posting (bawaan = konstanta)
+    from routes.rahaza_posting_profiles import role_code
+    re_code = await role_code(db, "year_end_close", "credit_retained_earnings", RETAINED_EARNINGS)
+    re_acc = await _get_account(db, re_code)
     return {"year": year, "open_periods": open_periods, "net_income": round(net, 2), "lines": lines,
-            "retained_earnings_account": RETAINED_EARNINGS, "retained_earnings_ok": bool(re_acc),
+            "retained_earnings_account": re_code, "retained_earnings_ok": bool(re_acc),
             "already_closed": bool(existing),
             "existing_je": {"id": existing["id"], "je_number": existing.get("je_number")} if existing else None,
             "can_close": not open_periods and not existing and bool(re_acc) and bool(lines)}
@@ -95,13 +98,13 @@ async def close_year(request: Request):
     if pv["open_periods"]:
         raise HTTPException(400, f"Periode belum closed: {', '.join(pv['open_periods'])}. Tutup semua periode dulu.")
     if not pv["retained_earnings_ok"]:
-        raise HTTPException(400, f"Akun Laba Ditahan {RETAINED_EARNINGS} tidak ditemukan/aktif.")
+        raise HTTPException(400, f"Akun Laba Ditahan {pv['retained_earnings_account']} tidak ditemukan/aktif.")
     if not pv["lines"]:
         raise HTTPException(400, f"Tidak ada saldo L/R tahun {year} untuk ditutup.")
     net = pv["net_income"]
     lines = [{"account_code": ln["account_code"], "debit": ln["debit"], "credit": ln["credit"],
               "description": f"Penutupan {ln['account_name']} {year}"} for ln in pv["lines"]]
-    lines.append({"account_code": RETAINED_EARNINGS, "debit": -net if net < 0 else 0, "credit": max(0, net),
+    lines.append({"account_code": pv["retained_earnings_account"], "debit": -net if net < 0 else 0, "credit": max(0, net),
                   "description": f"Laba (rugi) bersih {year} → Laba Ditahan"})
     res = await _create_posted_je(db, date(year, 12, 31), f"Jurnal Penutup Tahun {year} — laba bersih {net:,.0f} ke Laba Ditahan",
                                   SOURCE_MODULE, f"yearend:{year}", lines, user, allow_closed_period=True)

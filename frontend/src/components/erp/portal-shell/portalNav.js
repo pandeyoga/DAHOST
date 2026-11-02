@@ -719,7 +719,10 @@ export const PORTAL_NAV = {
       {
         label: 'KEUANGAN & ANALITIK',
         items: [
-          { id: 'maklon-billing',  label: 'Invoice',     icon: Banknote },
+          { id: 'maklon-billing',  label: 'Invoice Klien', icon: Banknote },
+          // 2026-11-02 (K16): tagihan vendor CMT PO maklon — layar yang SAMA dengan Produksi/
+          // Keuangan (ProductionCMTBillingModule, scope maklon dari portal), bukan duplikat.
+          { id: 'prod-cmt-billing', label: 'Tagihan Vendor CMT', icon: Banknote },
           { id: 'maklon-hpp',      label: 'HPP Jahit',   icon: Target },
           { id: 'maklon-ai-quote', label: 'Estimasi AI', icon: Sparkles },
         ],

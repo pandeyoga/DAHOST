@@ -88,6 +88,53 @@ async def _kasbon_requester_user_id(db, doc: dict):
         u = await db.users.find_one({"email": doc.get("submitted_by")}, {"_id": 0, "id": 1})
     return (u or {}).get("id")
 
+# ── 2026-11-02 (K30) — "PERLU TINDAKAN": kasbon menunggu HR (review) lalu Keuangan (pencairan) ──
+# Penerima = peran NYATA portal yang lolos gerbang endpoint keputusannya (hr-review: HR_ROLES,
+# disburse: FINANCE_ROLES). Pengaju (submitted_by) dan karyawan pemilik kasbon TIDAK ikut menerima.
+# Ditutup otomatis oleh resolver (`SOURCE_RULES['kasbon_review'/'kasbon_disburse']`).
+async def _kasbon_owner_user_ids(db, doc: dict) -> list:
+    ids = {await _kasbon_requester_user_id(db, doc)}
+    if doc.get("submitted_by"):
+        u = await db.users.find_one({"email": doc["submitted_by"]}, {"_id": 0, "id": 1})
+        ids.add((u or {}).get("id"))
+    return sorted(i for i in ids if i)
+
+
+async def notify_kasbon_stage(db, doc: dict, *, stage: str, actor: dict | None = None):
+    """stage: 'review' (→ HR) | 'disburse' (→ Keuangan). Tidak pernah raise."""
+    try:
+        from utils.notif_unified import decider_roles, notif_insert
+        label = doc.get("type_label") or "Kasbon"
+        nominal = f"Rp {float(doc.get('amount') or 0):,.0f}".replace(",", ".")
+        excl = set(await _kasbon_owner_user_ids(db, doc))
+        if stage == "review":
+            excl.add((actor or {}).get("id"))   # yang menekan "Ajukan" (bisa HR atas nama karyawan)
+        if stage == "review":
+            kw = dict(subtype="kasbon_submitted", target_roles=decider_roles("hr", HR_ROLES),
+                      title=f"{label} {doc.get('request_number', '')} menunggu review HR".strip(),
+                      body=f"{doc.get('employee_name') or 'Karyawan'} mengajukan {label.lower()} {nominal}"
+                           + (f" — {doc.get('purpose')}" if doc.get("purpose") else "") + ".",
+                      meta={"link_module": "hr-kasbon"})
+        else:
+            kw = dict(subtype="kasbon_disburse_pending", target_roles=decider_roles("finance", FINANCE_ROLES),
+                      title=f"{label} {doc.get('request_number', '')} disetujui HR — menunggu pencairan".strip(),
+                      body=f"{label} {doc.get('employee_name') or 'karyawan'} {nominal} siap dicairkan Keuangan.",
+                      meta={"link_module": "fin-kasbon"})
+        return await notif_insert(db, type="rahaza", severity="warning", source_type="kasbon",
+                                  source_id=doc.get("id"), source_ref=doc.get("request_number"),
+                                  exclude_user_ids=sorted(x for x in excl if x), status="sent", **kw)
+    except Exception:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan transaksi
+        _log.warning("[kasbon] notifikasi Perlu Tindakan gagal (%s)", doc.get("request_number"), exc_info=True)
+        return None
+
+
+async def close_kasbon_notifs(db, req_id: str) -> int:
+    try:
+        from utils.notif_unified import resolve_for_source
+        return await resolve_for_source(db, "dewi_kasbon_requests", req_id)
+    except Exception:  # noqa: BLE001
+        return 0
+
 # F13 — modul ini menyentuh UANG (pencairan kasbon + jurnalnya). Tanpa logger,
 # satu-satunya jejak kegagalan posting adalah nilai balik yang sering tidak
 # diperiksa pemanggilnya.
@@ -323,6 +370,7 @@ async def submit_kasbon_request(
 
     await db.dewi_kasbon_requests.insert_one(doc)
     doc.pop("_id", None)
+    await notify_kasbon_stage(db, doc, stage="review", actor=user)   # 2026-11-02 (K30)
     return {"ok": True, "request": doc}
 
 
@@ -480,6 +528,9 @@ async def hr_review_kasbon(
               if approved else "ditolak HR.") + (f" Catatan: {body.get('notes')}" if body.get("notes") else "")),
         link_module="portal-kasbon", source_type="kasbon", source_id=req_id,
         source_ref=doc.get("request_number"))
+    await close_kasbon_notifs(db, req_id)   # 2026-11-02 (K30): review HR selesai
+    if approved and updated:
+        await notify_kasbon_stage(db, updated, stage="disburse", actor=user)
     return {"ok": True, "request": _ser(updated)}
 
 
@@ -537,6 +588,7 @@ async def finance_disburse(
         amount_val, user, je_date=disb_date, cash_code=acc["gl_code"],
     )
     await db.dewi_kasbon_requests.update_one({"id": req_id}, {"$set": _gl_flags(gl_result)})
+    await close_kasbon_notifs(db, req_id)   # 2026-11-02 (K30): pencairan selesai
     # T-10: kegagalan posting GL TIDAK boleh tampil sebagai "berhasil" di layar.
     return {"ok": bool(gl_result.get("ok")), "request": _ser(updated), "gl": gl_result,
             "message": None if gl_result.get("ok") else
@@ -654,6 +706,7 @@ async def cancel_kasbon(
             "updated_at": _now().isoformat(),
         }},
     )
+    await close_kasbon_notifs(db, req_id)   # 2026-11-02 (K30)
     return {"ok": True}
 
 

@@ -455,15 +455,16 @@ async def create_vendor_shipment(request: Request):
     # surat jalan yang baru dibuat DIBATALKAN kembali (tidak meninggalkan dokumen
     # setengah jadi — pelajaran surat jalan yatim di Fase E).
     material_issue = None
-    # HANYA untuk produksi INTERNAL. Pada MAKLON, material adalah milik KLIEN dan
-    # datang lewat kiriman klien — bukan stok gudang DA. Aturan ini bukan tebakan:
-    # `production_internal_adapter.create_mi_draft_from_job()` sudah menolak job
-    # maklon dengan alasan yang sama ("maklon: material dari klien via shipment").
-    # Memotong stok DA untuk maklon justru akan MENGHILANGKAN kain milik DA yang
-    # tidak pernah dikirim.
+    # Pada MAKLON, KAIN/bahan adalah milik KLIEN dan datang lewat kiriman klien — bukan
+    # stok gudang DA (`production_internal_adapter.create_mi_draft_from_job()` menolak job
+    # maklon dengan alasan yang sama). 2026-11-02 (K14 / P-7): TETAPI aksesoris MILIK DA di
+    # BOM maklon (`ownership='cv_da_stock'`) tetap dikeluarkan lewat MI sebagai biaya DA —
+    # dulu seluruh surat jalan maklon dikecualikan sehingga stok aksesoris DA tidak turun dan
+    # biayanya hilang. Mesin & aturan stok kurang SAMA dengan internal
+    # (`core.material_issue_engine.issue_for_maklon_shipment`); kain klien tidak di-MI.
+    _is_maklon_ship = shipment_business_type == 'maklon'
     _is_material_out = (
-        shipment_business_type != 'maklon'
-        and body.get('shipment_type', 'NORMAL') in ('NORMAL', 'ADDITIONAL', 'REPLACEMENT')
+        body.get('shipment_type', 'NORMAL') in ('NORMAL', 'ADDITIONAL', 'REPLACEMENT')
         and not is_vendor(user)
     )
     if _is_material_out:
@@ -477,8 +478,12 @@ async def create_vendor_shipment(request: Request):
             await release_number(db, 'vendor_shipments.shipment_number', shipment['shipment_number'])
 
         try:
-            material_issue = await mie.issue_for_vendor_shipment(
-                db, shipment, inserted_items, user)
+            if _is_maklon_ship:
+                material_issue = await mie.issue_for_maklon_shipment(
+                    db, shipment, inserted_items, user)
+            else:
+                material_issue = await mie.issue_for_vendor_shipment(
+                    db, shipment, inserted_items, user)
         except mie.MaterialShortage as e:
             await _rollback_shipment()
             lines = '; '.join(

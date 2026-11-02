@@ -108,6 +108,52 @@ class ReturnBridgeError(Exception):
     """Kegagalan yang harus terlihat (mis. lokasi master tidak ada)."""
 
 
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K30) — "PERLU TINDAKAN" untuk gudang: retur menunggu keputusan
+# ═════════════════════════════════════════════════════════════════════════════
+def wh_decider_roles() -> list:
+    """Peran nyata Portal Gudang yang berwenang memutuskan retur (SSOT PORTAL_ACCESS ∩ WAREHOUSE_ROLES,
+    sama dengan grup `wh_return` di routes/approval_badge.py)."""
+    from core.roles import WAREHOUSE_ROLES
+    from utils.notif_unified import decider_roles
+    return decider_roles("warehouse", WAREHOUSE_ROLES)
+
+
+async def notify_pending(db, wh: dict, *, actor=None) -> str | None:
+    """Notifikasi action `wh_return_pending` ke peran gudang untuk SATU retur yang menunggu
+    keputusan. Pembuatnya (bila pengguna) tidak ikut menerima. Ditutup otomatis oleh resolver
+    (`SOURCE_RULES['wh_return']`) begitu status keluar dari Pending/Received/Inspected."""
+    if not wh or not wh.get("id") or wh.get("status") not in OPEN_STATUSES:
+        return None
+    try:
+        from utils.notif_unified import notif_insert
+        who = (actor or {}).get("id")
+        prod = wh.get("product_name") or wh.get("sku_code") or "barang"
+        src = {"marketing_return": "retur Marketing", "order_cancel_after_ship": "pembatalan setelah kirim (RTS)"
+               }.get(wh.get("source") or "", "retur")
+        return await notif_insert(
+            db, type="rahaza", subtype="wh_return_pending", severity="warning",
+            title=f"Retur {wh.get('return_code') or ''} menunggu keputusan gudang".replace("  ", " "),
+            body=(f"{src.capitalize()} {wh.get('order_number') or '-'}: {prod} × {wh.get('qty') or 1}. "
+                  "Terima paket, periksa kondisi, lalu putuskan (stok & jurnal lahir saat keputusan)."),
+            source_type="wh_return", source_id=wh["id"], source_ref=wh.get("return_code"),
+            target_roles=wh_decider_roles(), exclude_user_ids=[who] if who else None,
+            status="sent", meta={"link_module": "wh-returns"})
+    except Exception:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan pekerjaan gudang
+        logger.warning("[retur] notifikasi Perlu Tindakan gagal untuk %s", wh.get("return_code"), exc_info=True)
+        return None
+
+
+async def close_pending_notifs(db, wh_id: str) -> int:
+    """Periksa ulang (resolver K30 yang ada) action retur ini sesudah statusnya berubah."""
+    try:
+        from utils.notif_unified import resolve_for_source
+        return await resolve_for_source(db, WH, wh_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("[retur] penutupan notifikasi gagal untuk %s", wh_id, exc_info=True)
+        return 0
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -467,6 +513,8 @@ async def ensure_wh_return(db, ret: dict, *, actor=None, condition=None,
     })
     await db[WH].insert_one(doc)
     doc.pop("_id", None)
+    if not auto_restock:
+        await notify_pending(db, doc, actor=actor)   # 2026-11-02 (K30)
 
     out = {"created": True, "restocked": False, "wh_return": doc, "identity": ident,
            "message": (f"Retur fisik {code} dibuat di Gudang (Pending). Stok BELUM bergerak — "
@@ -531,40 +579,55 @@ async def _unit_cost_for(db, mid: str) -> float:
     return round(unit_cost, 2)
 
 
-async def _value_damaged(db, wh_ret: dict, mid: str, qty: int, actor: dict) -> dict:
-    """Retur rusak → karantina (nilai 0): reklas HPP menjadi Kerugian Retur Rusak (Iter 122)."""
+async def _value_damaged(db, wh_ret: dict, mid: str, qty: int, actor: dict,
+                         disposed: bool = False) -> dict:
+    """Retur rusak → karantina (nilai 0): reklas HPP menjadi Kerugian Retur Rusak (Iter 122).
+
+    2026-11-02 (owner No.26a): nilai = qty × WAC FG saat keputusan (`fcl.wac_state`).
+    K40: `disposed=True` = keputusan "Dibuang" — jurnal sama (Dr 6-1300 / Cr 5-1000
+    senilai WAC), barang TIDAK masuk stok. Pemanggil: `routes/dewi_wh_returns.resolve_return`
+    untuk aksi "Dibuang / Dispose" (hasilnya `loss_*`, sehingga Balik Keputusan ikut
+    membuat jurnal pembaliknya)."""
+    from core import fg_cost_layers as fcl
     from routes.rahaza_posting import post_return_damaged_loss
     out = {"loss_unit_cost": 0.0, "loss_amount": 0.0, "loss_je_id": None,
-           "loss_je_number": None, "loss_post_error": None}
+           "loss_je_number": None, "loss_post_error": None, "loss_basis": "wac",
+           "loss_kind": "disposed" if disposed else "damaged"}
     try:
-        unit_cost = await _unit_cost_for(db, mid)
+        unit_cost = (await fcl.wac_state(db, mid, actor=actor))["unit_cost"]   # WAC 4 desimal; jurnal dibulatkan per total
         out["loss_unit_cost"] = unit_cost
         out["loss_amount"] = round(unit_cost * qty, 2)
-        je = await post_return_damaged_loss(db, wh_ret, qty, unit_cost, actor or {})
+        je = await post_return_damaged_loss(db, wh_ret, qty, unit_cost, actor or {}, disposed=disposed)
         out["loss_je_id"] = je.get("je_id")
         out["loss_je_number"] = je.get("je_number")
         out["loss_post_error"] = None if je.get("ok") else je.get("error")
     except Exception as e:  # noqa: BLE001
-        logger.error("[retur-jembatan] kerugian retur rusak %s gagal: %s", wh_ret.get("return_code"), e)
+        logger.error("[retur-jembatan] kerugian retur %s %s gagal: %s",
+                     out["loss_kind"], wh_ret.get("return_code"), e)
         out["loss_post_error"] = str(e)
     return out
 
 
 async def _value_restock(db, wh_ret: dict, mid: str, qty: int, actor: dict) -> dict:
-    """Lapisan HPP + jurnal balik HPP untuk retur yang kembali ke stok jual."""
+    """Lapisan HPP + jurnal balik HPP untuk retur yang kembali ke stok jual.
+
+    2026-11-02 (owner No.26a / K15): nilai = qty × WAC FG saat keputusan gudang. Barang
+    masuk lewat `fcl.push_layer` (penerimaan WAC; biayanya = WAC sehingga WAC tidak
+    bergeser kecuali stok sedang minus/kosong) + Dr 1-1404 / Cr HPP senilai sama."""
     from core import fg_cost_layers as fcl
     from routes.rahaza_posting import post_marketplace_return_restock
     out = {"hpp_unit_cost": 0.0, "hpp_layer_id": None, "cogs_je_id": None,
-           "cogs_je_number": None, "cogs_post_error": None}
+           "cogs_je_number": None, "cogs_post_error": None, "hpp_basis": "wac"}
     try:
-        unit_cost = await _unit_cost_for(db, mid)
+        state = await fcl.wac_state(db, mid, actor=actor)
+        unit_cost = state["unit_cost"]   # biaya masuk = WAC persis → WAC tidak bergeser
         out["hpp_unit_cost"] = unit_cost
         ref = {"type": "wh_return_restock", "id": wh_ret["id"],
                "return_code": wh_ret.get("return_code", ""),
                "marketing_return_id": wh_ret.get("source_marketing_return_id")}
         if unit_cost > 0:
             layer = await fcl.push_layer(db, material_id=mid, qty=qty, ref=ref, actor=actor,
-                                         unit_cost=unit_cost,
+                                         unit_cost=unit_cost, components=state["components"],
                                          breakdown={"source": "marketplace_return", "unit_cost": unit_cost})
             out["hpp_layer_id"] = (layer or {}).get("id")
         je = await post_marketplace_return_restock(db, wh_ret, qty, unit_cost, actor or {})
@@ -801,6 +864,7 @@ async def auto_process(db, wh_return_id: str, *, condition=None, qty=None,
     res = await restock(db, fresh, condition=cond, qty=n, actor=actor, note=note)
     if res.get("wh_return") and doc.get("source_marketing_return_id"):
         await _stamp_marketing(db, doc["source_marketing_return_id"], res["wh_return"])
+    await close_pending_notifs(db, wh_return_id)   # 2026-11-02 (K30)
     return res
 
 
@@ -925,6 +989,7 @@ async def cancel_for_marketing_return(db, ret: dict, *, actor=None,
             "$push": {"timeline": {"status": STATUS_CANCELLED, "at": _now_iso(),
                                    "by": who, "note": note}}})
         fresh = await db[WH].find_one({"id": wh["id"]}, {"_id": 0}) or wh
+        await close_pending_notifs(db, wh["id"])   # 2026-11-02 (K30)
         return {"state": "cancelled", "wh_return": fresh,
                 "message": f"Pekerjaan Retur Fisik {code} di Gudang ikut dibatalkan."}
     if status == STATUS_RESOLVED:
@@ -1045,6 +1110,24 @@ async def reverse_decision(db, wh_return_id: str, *, actor=None, reason: str = "
                 f"bisa dikeluarkan lagi ({e}). Barangnya mungkin sudah terjual/berpindah — "
                 "koreksi lewat Stock Opname, bukan lewat pembalikan retur.") from e
     layer = await _unwind_restock_layer(db, doc, qty, actor) if stock_out else None
+    # 2026-11-02 (owner No.26a): penerimaan WAC restock ikut DIBATALKAN pada biaya asalnya
+    # (`hpp_unit_cost`) — cermin jurnal pembalik di bawah (Dr 5-1000 / Cr 1-1404 senilai sama),
+    # sehingga WAC kembali dan Σ stok × WAC tetap = saldo GL 1-1404 (selisih 0). Hanya untuk
+    # restock ke stok jual; karantina bernilai 0 dan tidak pernah masuk WAC.
+    wac_reversal = None
+    unit_in = float(doc.get("hpp_unit_cost") or 0)
+    if stock_out and mid and unit_in > 0 and doc.get("stock_effect") == "sellable":
+        from core import fg_cost_layers as fcl
+        try:
+            res_w = await fcl.reverse_receipt(
+                db, material_id=mid, qty=qty, unit_cost=unit_in, actor=actor,
+                ref={"type": "wh_return_reversal", "id": doc["id"], "return_code": code})
+            wac_reversal = {k: res_w.get(k) for k in ("unit_cost", "wac_before", "qty_after",
+                                                       "adjustment_fg", "rule")}
+            wac_reversal["adjustment_je_id"] = (res_w.get("adjustment_je") or {}).get("je_id")
+        except Exception as e:  # noqa: BLE001 — stok sudah keluar; galat WAC dicatat, tidak ditelan
+            logger.error("[retur-jembatan] pembalikan WAC %s gagal: %s", code, e)
+            wac_reversal = {"error": str(e)}
 
     reversals = []
     for key in ("cogs_je_id", "loss_je_id"):
@@ -1068,6 +1151,7 @@ async def reverse_decision(db, wh_return_id: str, *, actor=None, reason: str = "
         "$set": {"status": STATUS_REVERSED, "decision_reversed_at": _now_iso(),
                  "decision_reversed_by": who, "decision_reversed_reason": reason,
                  "reversal_stock_out": stock_out, "reversal_layer": layer,
+                 "reversal_wac": wac_reversal,
                  "reversal_journals": reversals, "restocked": False,
                  "restock_reversed": bool(stock_out), "updated_at": _now_iso()},
         "$push": {"timeline": {"status": STATUS_REVERSED, "at": _now_iso(), "by": who,
@@ -1103,6 +1187,7 @@ async def reverse_decision(db, wh_return_id: str, *, actor=None, reason: str = "
         await db[WH].insert_one(new_doc)
         new_doc.pop("_id", None)
         await db[WH].update_one({"id": wh_return_id}, {"$set": {"superseded_by": new_doc["id"]}})
+        await notify_pending(db, new_doc, actor=actor)   # 2026-11-02 (K30): putuskan ulang
 
     if mid and stock_out:
         await refresh_catalog_cache(db, mid)
@@ -1110,7 +1195,7 @@ async def reverse_decision(db, wh_return_id: str, *, actor=None, reason: str = "
     if doc.get("source_marketing_return_id"):
         await _stamp_marketing(db, doc["source_marketing_return_id"], new_doc or final_old)
     return {"reversed": True, "wh_return": final_old, "reopened": new_doc,
-            "stock_out": stock_out, "journals": reversals,
+            "stock_out": stock_out, "journals": reversals, "wac": wac_reversal,
             "message": note + (f" · dibuka ulang sebagai {new_doc['return_code']}" if new_doc else "")}
 
 
@@ -1192,6 +1277,8 @@ async def ensure_rts_returns(db, order: dict, *, actor=None, reason: str = "") -
             "account_id": order.get("account_id"),
         })
         await db[WH].insert_one(doc)
+        doc.pop("_id", None)
+        await notify_pending(db, doc, actor=actor)   # 2026-11-02 (K30)
         created.append(code)
     if created:
         try:

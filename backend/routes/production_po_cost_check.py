@@ -17,11 +17,15 @@ async def po_cost_check(po_id: str, request: Request):
     if not po:
         raise HTTPException(404, "PO tidak ditemukan")
     from core.fg_cost_layers import compute_batch_unit_cost
+    from core import product_costing as pc
     items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(None)
     rows, warn = [], 0
     for it in items:
         qty = int(float(it.get("qty") or 0) or 1)
-        c = await compute_batch_unit_cost(db, po_item=it, qty=qty)
+        # 2026-11-02 (butir 10, F1b): BOM per WARNA varian SPK (sama dengan lapisan biaya).
+        # Dulu PO CRL dihitung dari BOM BURGUNDY: 47.175 padahal lapisan nyata 106.396,10.
+        with pc.bom_color_scope(pc.color_of(it)):
+            c = await compute_batch_unit_cost(db, po_item=it, qty=qty)
         issues = []
         if c["material_source"] == "none" or c["material_cost"] <= 0:
             issues.append("harga bahan kosong (BOM/harga master belum ada)")

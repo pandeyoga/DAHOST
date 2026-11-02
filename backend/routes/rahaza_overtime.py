@@ -196,7 +196,58 @@ async def create_request(request: Request):
         "updated_at": _now(),
     }
     await db.rahaza_overtime_requests.insert_one(doc)
+    await notify_overtime_submitted(db, doc, actor=user)   # 2026-11-02 (K30)
     return {"ok": True, "overtime": _s(doc)}
+
+
+# ── 2026-11-02 (K30) — "PERLU TINDAKAN" UNTUK HR: PENGAJUAN LEMBUR ─────────────
+# Dulu lembur masuk Perlu Tindakan hanya lewat hitungan dokumen (routes/approval_badge.py).
+# Penerima = peran NYATA Portal SDM yang berwenang memutuskan (gerbang approve di berkas ini &
+# kotak masuk HR); pengaju dan karyawan pemilik lembur TIDAK ikut menerima. Ditutup otomatis oleh
+# resolver (`SOURCE_RULES['overtime']`) begitu status keluar dari 'pending'.
+OVERTIME_DECIDER_ROLES = ("hr", "hr_manager")
+
+
+async def _overtime_owner_user_ids(db, ot: dict) -> set:
+    from utils.notif_recipients import active_user_filter
+    ids = {ot.get("submitted_by")}
+    if ot.get("employee_id"):
+        rows = await db.users.find(active_user_filter({"employee_id": ot["employee_id"]}),
+                                   {"_id": 0, "id": 1}).to_list(5)
+        ids |= {r.get("id") for r in rows}
+        emp = await db.rahaza_employees.find_one({"id": ot["employee_id"]}, {"_id": 0, "user_id": 1})
+        ids.add((emp or {}).get("user_id"))
+    return {i for i in ids if i}
+
+
+async def notify_overtime_submitted(db, ot: dict, *, actor: dict | None = None):
+    try:
+        from utils.notif_unified import decider_roles, notif_insert
+        emp = await db.rahaza_employees.find_one({"id": ot.get("employee_id")}, {"_id": 0, "name": 1}) or {}
+        who = emp.get("name") or ot.get("submitted_by_name") or "Karyawan"
+        excl = await _overtime_owner_user_ids(db, ot) | {(actor or {}).get("id")}
+        return await notif_insert(
+            db, type="rahaza", subtype="overtime_request_submitted", severity="warning",
+            title="Pengajuan lembur menunggu persetujuan",
+            body=(f"{who} mengajukan lembur {ot.get('date')} {ot.get('start_time')}–{ot.get('end_time')} "
+                  f"({ot.get('hours')} jam)." + (f" Alasan: {ot.get('reason')}" if ot.get("reason") else "")),
+            source_type="overtime", source_id=ot.get("id"),
+            target_roles=decider_roles("hr", OVERTIME_DECIDER_ROLES),
+            exclude_user_ids=sorted(x for x in excl if x), status="sent",
+            meta={"link_module": "hr-approval-inbox"})
+    except Exception as ne:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan pengajuan
+        import logging
+        logging.getLogger(__name__).warning("[overtime] notif pengajuan gagal: %s", ne)
+        return None
+
+
+async def close_overtime_notifs(db, ot_id: str) -> int:
+    """Periksa ulang action lembur ini lewat resolver K30 yang ada (sesudah diputuskan/dibatalkan)."""
+    try:
+        from utils.notif_unified import resolve_for_source
+        return await resolve_for_source(db, "rahaza_overtime_requests", ot_id)
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 # ── 2026-11-02 — KABAR KEPUTUSAN LEMBUR KE PEMOHON ──────────────────────────
@@ -205,6 +256,7 @@ async def create_request(request: Request):
 # karyawan diajukan & dipantau di Portal Saya › Cuti & Lembur (`portal-cuti`).
 # Helper ini juga boleh dipanggil jalur lain (mis. routes/hr_approval_inbox.py).
 async def notify_overtime_decision(db, ot: dict, *, approved: bool, reason: str = ""):
+    await close_overtime_notifs(db, ot.get("id"))   # 2026-11-02 (K30): Perlu Tindakan HR selesai
     try:
         from routes.rahaza_notifications import publish_notification
         from utils.notif_recipients import active_user_filter
@@ -312,4 +364,5 @@ async def cancel_request(ot_id: str, request: Request):
         {"id": ot_id},
         {"$set": {"status": "cancelled", "updated_at": _now()}}
     )
+    await close_overtime_notifs(db, ot_id)   # 2026-11-02 (K30)
     return {"ok": True}

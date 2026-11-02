@@ -239,7 +239,9 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
         # Transaksi LAMA (sebelum 2026-11-02) tanpa akun tersimpan — hanya untuk retry-posting data lama.
         # Ambil expense account dari GL mapping atau posting profile
         mapping = await get_mapping(db, 'petty_cash_expense')
-        expense_code = mapping.get('debit_expense_default', '6-2200')
+        # 2026-11-02 (S2-H butir 9): cadangan 6-2200 (Listrik & Air — KELIRU) DIHAPUS. Akun dari
+        # pemetaan kategori, lalu peran profil; keduanya kosong ⇒ ditolak dengan pesan jelas.
+        expense_code = (mapping.get('debit_expense_default') or '').strip()
         # Cek apakah ada kategori yang dipetakan ke GL
         category = txn.get('category')
         if category:
@@ -248,6 +250,11 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
             )
             if cat_map:
                 expense_code = cat_map['gl_account_code']
+        if not expense_code:
+            return {'ok': False, 'error': (
+                "Akun beban kas kecil belum ditentukan: kategori "
+                f"'{category or '-'}' belum dipetakan di Pemetaan GL dan peran Profil Posting "
+                "'petty_cash_expense.debit_expense_default' kosong. Isi salah satunya lalu posting ulang.")}
         memo = f"Kas Kecil {txn_type.capitalize()}: {txn.get('memo') or txn.get('payee') or category or 'Pengeluaran'}"
         lines = [
             {'account_code': expense_code, 'debit': round(amount, 2), 'credit': 0,
@@ -271,7 +278,12 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
     elif txn_type == 'return':
         # Pengembalian uang muka → Dr Petty Cash / Cr Expense/Advance
         mapping = await get_mapping(db, 'petty_cash_expense')
-        expense_code = mapping.get('debit_expense_default', '6-2200')
+        # 2026-11-02 (S2-H butir 9): tanpa cadangan 6-2200 — peran kosong ⇒ ditolak dengan pesan jelas
+        expense_code = (mapping.get('debit_expense_default') or '').strip()
+        if not expense_code:
+            return {'ok': False, 'error': (
+                "Peran Profil Posting 'petty_cash_expense.debit_expense_default' (beban kas kecil transaksi "
+                "lama) kosong — isi di Profil Posting lalu posting ulang pengembalian ini.")}
         memo = f"Return Kas Kecil: {txn.get('memo') or 'Pengembalian'}"
         lines = [
             {'account_code': petty_cash_code, 'debit': round(amount, 2), 'credit': 0,

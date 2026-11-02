@@ -15,6 +15,9 @@ SUMBER KEBENARAN (urutan hitung):
   declared = Σ baris penerimaan SELESAI QC (qty_shipped_by_cmt, atau actual+reject)
   reject   = Σ reject_qty baris tsb
   repaired = Σ qty_fixed permak `permak_sendiri` berstatus terminal berhasil
+  repaired_cmt = Σ qty_fixed permak `retur_ke_cmt` terminal (2026-11-02, K17 butir 4 — diperbaiki
+             VENDOR; field `qty_repaired_cmt` ditulis core/production_qty_ledger, dulu tidak dikenali
+             skrip ini sehingga hitung ulang tidak pernah memeriksanya)
   scrap    = Σ qty_scrap permak terminal (kedua tipe)
   accepted = Σ qty_actual + repaired
   rework_open = reject − Σ terminal(qty_fixed + qty_scrap)      (≥ 0)
@@ -38,7 +41,9 @@ FIELDS = ("qty_declared", "qty_accepted", "qty_reject",
           "qty_rework_open", "qty_repaired", "qty_scrap",
           # SELISIH KIRIM (aturan owner 2026-08-01): dokumen = kenyataan.
           # `qty_declared` = yang BENAR-BENAR sampai; klaim vendor dipisah.
-          "qty_claimed_by_vendor", "qty_short_open", "qty_short_resolved")
+          "qty_claimed_by_vendor", "qty_short_open", "qty_short_resolved",
+          # 2026-11-02 (K17 butir 4): reject yang diperbaiki vendor lewat retur-ke-CMT (INV-Q2)
+          "qty_repaired_cmt")
 TERMINAL_OK = "selesai_berhasil"
 TERMINAL_BAD = "gagal_buang"
 
@@ -116,7 +121,7 @@ def audit_ledger(db, apply: bool = False, verbose: bool = True) -> list[dict]:
         short_resolved = sum(_i(s.get("qty_resolved")) for s in srows
                              if s.get("status") != "cancelled")
 
-        repaired = scrap = closed = 0
+        repaired = repaired_cmt = scrap = closed = 0
         for p in perm_by_poi.get(key, []):
             if str(p.get("status") or "") not in (TERMINAL_OK, TERMINAL_BAD):
                 continue
@@ -125,12 +130,15 @@ def audit_ledger(db, apply: bool = False, verbose: bool = True) -> list[dict]:
             scrap += qs
             if p.get("permak_type") != "retur_ke_cmt":
                 repaired += qf
+            else:
+                repaired_cmt += qf   # sama dengan production_qty_ledger.apply_rework_outcome (retur ke CMT)
         target = {
             "qty_declared": declared,
             "qty_accepted": accepted_base + repaired,
             "qty_reject": reject,
             "qty_rework_open": max(0, reject - closed),
             "qty_repaired": repaired,
+            "qty_repaired_cmt": repaired_cmt,
             "qty_scrap": scrap,
             "qty_claimed_by_vendor": claimed,
             "qty_short_open": short_open,

@@ -255,6 +255,13 @@ async def check_low_stock(db, settings: dict) -> list:
 
 
 # ─── Contract Expiry Check ───────────────────────────────────────────────────
+# 2026-11-02 (K30) — SATU definisi jendela alert kontrak: dipakai rule ini DAN
+# resolver notifikasi (utils/notif_unified._contract_open) yang menutup
+# "Perlu Tindakan" kontrak begitu kontrak diperpanjang di luar jendela ini.
+CONTRACT_ALERT_TYPES = ("PKWT", "Magang")
+CONTRACT_ALERT_DAYS = 30
+
+
 async def check_expiring_contracts(db, settings: Optional[dict] = None) -> list:
     """
     Cek karyawan PKWT/Magang dengan kontrak mendekati berakhir.
@@ -273,7 +280,7 @@ async def check_expiring_contracts(db, settings: Optional[dict] = None) -> list:
         {
             "active": True,
             "contract_end_date": {"$exists": True, "$nin": [None, ""]},
-            "contract_type": {"$in": ["PKWT", "Magang"]},
+            "contract_type": {"$in": list(CONTRACT_ALERT_TYPES)},
         },
         {"_id": 0, "id": 1, "employee_code": 1, "name": 1, "contract_type": 1,
          "contract_end_date": 1, "department": 1}
@@ -300,7 +307,7 @@ async def check_expiring_contracts(db, settings: Optional[dict] = None) -> list:
             severity, label = "error", f"Kontrak berakhir dalam {days_left} hari"
         elif days_left <= 14:
             severity, label = "warning", f"Kontrak berakhir dalam {days_left} hari"
-        elif days_left <= 30:
+        elif days_left <= CONTRACT_ALERT_DAYS:
             severity, label = "warning", f"Kontrak berakhir dalam {days_left} hari"
         else:
             continue  # too far ahead

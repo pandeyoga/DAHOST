@@ -3,6 +3,10 @@
 Module under test: routes/rahaza_posting.post_cogs_on_buyer_dispatch
                    (+ helper _fifo_cogs_for_dispatch) and core/fg_cost_layers.
 
+2026-11-02 (owner No.26a): barang jadi kini dinilai WAC (rata-rata bergerak). Basis jurnal
+'wac'; qty "tanpa biaya" hanya bila WAC FG = 0. Stok sintetis ditulis supaya `push_layer`
+melihat qty lama yang benar (tanpa itu qty lama negatif => jurnal selisih WAC palsu).
+
 All DB artifacts use a synthetic material_id (uuid) so no real FG master /
 cost layer / marketing catalog row is ever touched, and every document is
 marked with a unique MARK so cleanup is exhaustive.
@@ -70,6 +74,17 @@ async def _mk_shipment(db, mat_id, sku, qty, *, fg_cogs=None, layers=None,
     return shp, item
 
 
+async def _stock(db, mat_id, delta):
+    """Baris stok sintetis (milik DA, bukan karantina) — dasar "qty lama" WAC."""
+    row = await db.rahaza_material_stock.find_one({"material_id": mat_id, "notes": MARK})
+    if row:
+        await db.rahaza_material_stock.update_one({"id": row["id"]}, {"$inc": {"qty": delta}})
+    else:
+        await db.rahaza_material_stock.insert_one({
+            "id": str(uuid.uuid4()), "material_id": mat_id, "location_id": f"T1LOC-{MARK}",
+            "qty": delta, "notes": MARK, "ownership": "cv_da", "inventory_category": "fg_internal"})
+
+
 async def _cleanup(db, je_ids, layer_ids, ship_ids):
     for je_id in je_ids:
         await db.rahaza_journal_entries.delete_many({"id": je_id})
@@ -81,6 +96,7 @@ async def _cleanup(db, je_ids, layer_ids, ship_ids):
     await db.rahaza_hpp_snapshots.delete_many({"notes": MARK})
     await db[fcl.LAYERS].delete_many({"id": {"$in": layer_ids}})
     await db[fcl.CONSUMPTIONS].delete_many({"ref.source": MARK})
+    await db.rahaza_material_stock.delete_many({"notes": MARK})
     for sid in ship_ids:
         await db.rahaza_journal_entries.delete_many(
             {"source_ref": {"$regex": sid}})
@@ -105,11 +121,13 @@ async def _scenarios():
     out = {}
     je_ids, layer_ids, ship_ids = [], [], []
     try:
-        # ---- A: FIFO batch basis -------------------------------------------
+        # ---- A: WAC basis --------------------------------------------------
+        await _stock(db, mat_id, 10)
         layer = await fcl.push_layer(
             db, material_id=mat_id, qty=10, unit_cost=UNIT_COST, breakdown=dict(BD),
             po_item={"sku": sku, "po_number": MARK}, ref={"type": MARK}, actor=USER)
         layer_ids.append(layer["id"])
+        await _stock(db, mat_id, -4)
         cons = await fcl.consume_fifo(db, material_id=mat_id, qty=4,
                                       ref={"source": MARK}, actor=USER)
         shp, item = await _mk_shipment(db, mat_id, sku, 4, fg_cogs=cons["cogs"],
@@ -131,18 +149,24 @@ async def _scenarios():
              "status": {"$ne": "voided"}})
         out["B"] = {"res": res_b, "count": n_je}
 
-        # ---- C: uncosted qty reported --------------------------------------
-        layer2 = await fcl.push_layer(
-            db, material_id=mat_id, qty=3, unit_cost=UNIT_COST, breakdown=dict(BD),
-            po_item={"sku": sku, "po_number": MARK}, ref={"type": MARK}, actor=USER)
-        layer_ids.append(layer2["id"])
-        cons2 = await fcl.consume_fifo(db, material_id=mat_id, qty=12,
+        # ---- C: uncosted qty reported (WAC: hanya FG yang WAC-nya 0) ---------
+        mat0 = f"T1MAT0-{uuid.uuid4()}"
+        await _stock(db, mat0, 3)
+        cons2 = await fcl.consume_fifo(db, material_id=mat0, qty=3,
                                        ref={"source": MARK}, actor=USER)
-        shp_c, item_c = await _mk_shipment(db, mat_id, sku, 12, fg_cogs=cons2["cogs"],
+        await _stock(db, mat_id, -2)
+        cons2b = await fcl.consume_fifo(db, material_id=mat_id, qty=2,
+                                        ref={"source": MARK}, actor=USER)
+        shp_c, item_c = await _mk_shipment(db, mat0, f"{sku}-0", 3, fg_cogs=cons2["cogs"],
                                           layers=cons2["layers_used"],
                                           uncosted=cons2["uncosted_qty"])
         ship_ids.append(shp_c["id"])
-        res_c = await post_cogs_on_buyer_dispatch(db, shp_c, [item_c], 1, USER)
+        item_c2 = {"id": str(uuid.uuid4()), "shipment_id": shp_c["id"], "sku": sku, "qty_shipped": 2,
+                   "notes": MARK, "fg_material_id": mat_id, "dispatch_seq": 1,
+                   "fg_cogs": cons2b["cogs"], "fg_cogs_layers": cons2b["layers_used"],
+                   "fg_cogs_uncosted_qty": cons2b["uncosted_qty"]}
+        await db.buyer_shipment_items.insert_one(dict(item_c2))
+        res_c = await post_cogs_on_buyer_dispatch(db, shp_c, [item_c, item_c2], 1, USER)
         if res_c.get("je_id"):
             je_ids.append(res_c["je_id"])
         out["C"] = {"res": res_c, "cons": cons2}
@@ -173,10 +197,12 @@ async def _scenarios():
         out["E"] = {"res": res_e, "count": n_e}
 
         # ---- F: mixed dispatch, one line FULLY uncosted (no layers at all) --
+        await _stock(db, mat_id, 4)
         layer3 = await fcl.push_layer(
             db, material_id=mat_id, qty=4, unit_cost=UNIT_COST, breakdown=dict(BD),
             po_item={"sku": sku, "po_number": MARK}, ref={"type": MARK}, actor=USER)
         layer_ids.append(layer3["id"])
+        await _stock(db, mat_id, -4)
         cons3 = await fcl.consume_fifo(db, material_id=mat_id, qty=4,
                                        ref={"source": MARK}, actor=USER)
         sid = str(uuid.uuid4())
@@ -207,13 +233,13 @@ def SC():
     return run(_scenarios())
 
 
-# ══════════════ FIFO batch COGS journal (routes/rahaza_posting) ══════════════
-class TestFifoCogsJournal:
+# ══════════════ WAC COGS journal (routes/rahaza_posting) ══════════════
+class TestWacCogsJournal:
 
-    def test_a_basis_is_fifo_batch_and_amount_equals_fg_cogs(self, SC):
+    def test_a_basis_is_wac_and_amount_equals_fg_cogs(self, SC):
         a = SC["A"]
         assert a["res"].get("ok") is True, a["res"]
-        assert a["res"]["basis"] == "fifo_batch", a["res"]
+        assert a["res"]["basis"] == "wac", a["res"]
         assert a["fg_cogs"] == 4 * UNIT_COST, a["fg_cogs"]
         assert round(float(a["res"]["amount"]), 2) == round(float(a["fg_cogs"]), 2)
 
@@ -246,7 +272,7 @@ class TestFifoCogsJournal:
 
     def test_a_memo_states_the_cost_basis(self, SC):
         memo = SC["A"]["je"]["memo"]
-        assert "batch" in memo.lower() or "fifo" in memo.lower(), memo
+        assert "wac" in memo.lower(), memo
 
     def test_b_idempotent_single_journal(self, SC):
         b = SC["B"]
@@ -256,7 +282,7 @@ class TestFifoCogsJournal:
 
     def test_c_uncosted_qty_reported_with_note(self, SC):
         c = SC["C"]
-        assert c["cons"]["uncosted_qty"] > 0, c["cons"]
+        assert c["cons"]["uncosted_qty"] == 3 and c["cons"]["cogs"] == 0, c["cons"]   # WAC FG 0
         assert c["res"].get("ok") is True, c["res"]
         assert int(c["res"].get("uncosted_qty") or 0) == c["cons"]["uncosted_qty"]
         note = c["res"].get("note") or ""
@@ -284,7 +310,7 @@ class TestFifoCogsJournal:
         journal understates COGS by 10 pcs with no `uncosted_qty` and no note."""
         f = SC["F"]["res"]
         assert f.get("ok") is True, f
-        assert f["basis"] == "fifo_batch", f
+        assert f["basis"] == "wac", f
         assert int(f.get("uncosted_qty") or 0) == 10, (
             f"10 pcs left the warehouse with no cost layer but uncosted_qty="
             f"{f.get('uncosted_qty')} and note={f.get('note')!r}")

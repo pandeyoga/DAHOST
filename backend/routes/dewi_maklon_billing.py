@@ -642,11 +642,60 @@ async def delete_payment(payment_id: str, user: dict = Depends(require_auth)):
 
 @router.get('/hpp/{order_id}')
 async def get_hpp(order_id: str, user: dict = Depends(require_auth)):
+    """HPP Jahit maklon — 2026-11-02 (K16): dari ANGKA NYATA, bukan ketikan manual.
+
+    Dulu `404 "HPP belum diinput"` untuk setiap PO baru karena komponen harus diketik
+    ulang (tidak membaca tarif CMT PO/SPK maupun tagihan CMT). Sekarang komponen diambil
+    dari `production_maklon_bridge.maklon_actual_costs`: tagihan CMT nyata + aksesoris DA
+    (Material Issue) + permak. Margin = tagihan klien − biaya itu. Dokumen ketikan lama
+    (bila ada) hanya dikembalikan sebagai `manual_snapshot` untuk pembanding.
+    """
     db = get_db()
-    hpp = await db.dewi_maklon_hpp.find_one({'order_id': order_id})
-    if not hpp:
-        raise HTTPException(404, 'HPP belum diinput untuk order ini')
-    return _clean(hpp)
+    manual = await db.dewi_maklon_hpp.find_one({'order_id': order_id})
+    po = await db.production_pos.find_one({'id': order_id}, {'_id': 0, 'id': 1, 'business_type': 1})
+    if not po:
+        if not manual:
+            raise HTTPException(404, 'Order maklon tidak ditemukan')
+        return {**_clean(manual), 'source': 'manual'}
+    from routes.production_maklon_bridge import maklon_actual_costs
+    a = await maklon_actual_costs(db, order_id)
+    items = await db.po_items.find({'po_id': order_id}, {'_id': 0}).to_list(None)
+    qty_ordered = a['qty_ordered'] or 1
+    rate_plan = (a['cmt_cost_plan'] / qty_ordered) if qty_ordered else 0
+    cmt_qty = a['qty_billed_cmt']
+    components = [
+        {'name': 'Upah jahit CMT (tagihan nyata)' if cmt_qty else 'Upah jahit CMT (tarif PO/SPK, belum ditagih)',
+         'category': 'labor', 'qty': cmt_qty or qty_ordered, 'unit': 'pcs',
+         'unit_cost': round(a['cmt_cost'] / cmt_qty, 2) if cmt_qty else round(rate_plan, 2),
+         'total': a['cmt_cost'] if cmt_qty else round(a['cmt_cost_plan'], 2), 'source': 'dewi_cmt_payments'},
+        {'name': 'Aksesoris milik DA (Material Issue)', 'category': 'packaging', 'qty': 1, 'unit': 'lot',
+         'unit_cost': a['accessory_cost'], 'total': a['accessory_cost'], 'source': 'rahaza_material_issues'},
+        {'name': 'Permak / perbaikan', 'category': 'other', 'qty': 1, 'unit': 'lot',
+         'unit_cost': a['permak_cost'], 'total': a['permak_cost'], 'source': 'dewi_cmt_permak'},
+    ]
+    direct = round(sum(c['total'] for c in components), 2)
+    profit_pct = float((manual or {}).get('profit_margin_pct')
+                       or await get_config_value(db, 'hpp_profit_margin_pct', 20.0) or 0)
+    basis = a['qty_basis'] or qty_ordered
+    hpp_pcs = round(direct / basis, 2) if basis else 0.0
+    price = (sum(float(i.get('selling_price_snapshot', 0) or 0) * int(i.get('qty', 0) or 0) for i in items)
+             / qty_ordered) if qty_ordered else 0.0
+    return {
+        'order_id': order_id, 'source': 'actual', 'po_number': a['po_number'],
+        'qty_ordered': a['qty_ordered'], 'qty_basis': basis,
+        'components': components, 'direct_cost': direct,
+        # overhead belum diputuskan owner → 0 (tidak ditebak)
+        'overhead_pct': 0.0, 'overhead_amount': 0.0,
+        'total_hpp': direct, 'hpp_per_pcs': hpp_pcs,
+        'profit_margin_pct': profit_pct,
+        'suggested_price_per_pcs': round(hpp_pcs * (1 + profit_pct / 100), 2),
+        'current_price_per_pcs': round(price, 2),
+        'actual_margin_pct': round((price - hpp_pcs) / hpp_pcs * 100, 2) if hpp_pcs > 0 else 0,
+        'revenue': a['revenue'], 'margin': a['margin'], 'margin_pct': a['margin_pct'],
+        'actual': a, 'gaps': a['gaps'],
+        'notes': (manual or {}).get('notes', ''),
+        'manual_snapshot': _clean(manual) if manual else None,
+    }
 
 @router.post('/hpp')
 async def upsert_hpp(payload: HPPIn, user: dict = Depends(require_auth)):

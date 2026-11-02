@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, Bell, BellOff, Check, CheckCheck, ArrowRight, AlertCircle } from 'lucide-react';
+import { Loader2, Bell, BellOff, CheckCheck, AlertCircle, History } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { formatWIB, timeAgo, navigateToNotification } from './NotificationBell';
+import {
+  INBOX_TABS, GroupRow, InboxRow, TabButton, navigateToGroup, navigateToNotification,
+} from './NotificationBell';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const PAGE_SIZE = 30;
@@ -14,34 +16,43 @@ const PAGE_SIZE = 30;
  * Portal Saya › Notifikasi.
  *
  * 2026-11-02 — perbaikan audit notifikasi:
- *   · lencana "Belum Dibaca" membaca `unread` (API /unified/stats); dulu membaca
- *     `total_unread` yang tidak ada ⇒ lencana tidak pernah tampil;
+ *   · lencana "Belum Dibaca" membaca `unread`; dulu `total_unread` yang tidak ada;
  *   · waktu tampil relatif + jam WIB (dulu `created_at.slice(0,16)` = jam UTC mentah);
- *   · perilaku klik sama dengan bel: tandai dibaca lalu buka layar terkait
- *     (dengan id rekaman), tanpa tautan → buka detail; "Muat lebih banyak";
+ *   · perilaku klik sama dengan bel: tandai dibaca lalu buka layar terkait;
  *   · gagal memuat tampil sebagai pesan galat, bukan "Tidak ada notifikasi".
+ *
+ * 2026-11-02 (K30) — layar ini memakai kotak masuk yang SAMA dengan bel
+ * (`/api/notifications/inbox`): tab Perlu Tindakan · Pemberitahuan · Riwayat,
+ * komponen baris dipakai bersama (NotificationBell.jsx), tanpa daftar kedua.
  */
 export default function PortalSayaNotifikasi({ headers, onNavigate }) {
   const { toast } = useToast();
-  const [items, setItems] = useState([]);
-  const [unread, setUnread] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
+  const [tab, setTab] = useState('action');
+  const [box, setBox] = useState({ items: [], groups: [], total: 0, hasMore: false });
+  const [counts, setCounts] = useState({ action: 0, info: 0 });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [expandedId, setExpandedId] = useState(null);
 
-  const load = useCallback(async ({ append = false, skip = 0 } = {}) => {
-    if (append) setLoadingMore(true);
+  const loadCounts = useCallback(async () => {
     try {
-      const [listRes, statsRes] = await Promise.all([
-        axios.get(`${API}/api/notifications/unified?limit=${PAGE_SIZE}&skip=${skip}`, { headers }),
-        axios.get(`${API}/api/notifications/unified/stats`, { headers }),
-      ]);
-      const got = listRes.data.items || [];
-      setItems((xs) => (append ? [...xs, ...got] : got));
-      setHasMore(!!listRes.data.has_more);
-      setUnread(statsRes.data.unread || 0);
+      const r = await axios.get(`${API}/api/notifications/categories?latest=1`, { headers });
+      setCounts({ action: r.data.action_open || 0, info: r.data.info_unread || 0 });
+    } catch (e) { /* hitungan opsional */ }
+  }, [headers]);
+
+  const load = useCallback(async (t, { append = false, skip = 0 } = {}) => {
+    if (append) setLoadingMore(true); else setLoading(true);
+    try {
+      const r = await axios.get(`${API}/api/notifications/inbox?tab=${t}&limit=${PAGE_SIZE}&skip=${skip}`, { headers });
+      const got = r.data.items || [];
+      setBox((b) => ({
+        items: append ? [...b.items, ...got] : got,
+        groups: append ? b.groups : (r.data.groups || []),
+        total: r.data.total || 0,
+        hasMore: !!r.data.has_more,
+      }));
       setError('');
     } catch (e) {
       setError('Notifikasi gagal dimuat. Coba muat ulang halaman.');
@@ -51,13 +62,13 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
     }
   }, [headers]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(tab); loadCounts(); }, [load, loadCounts, tab]);
 
   const markRead = async (id) => {
     try {
       await axios.post(`${API}/api/notifications/unified/${id}/mark-read`, {}, { headers });
-      setItems((xs) => xs.map((n) => (n.id === id ? { ...n, read: true } : n)));
-      setUnread((u) => Math.max(0, u - 1));
+      setBox((b) => ({ ...b, items: b.items.map((n) => (n.id === id ? { ...n, read: true } : n)) }));
+      loadCounts();
     } catch (e) {
       toast({ title: 'Gagal menandai.', variant: 'destructive' });
     }
@@ -66,29 +77,28 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
   const markAll = async () => {
     try {
       await axios.post(`${API}/api/notifications/unified/mark-all-read`, {}, { headers });
-      setItems((xs) => xs.map((n) => ({ ...n, read: true })));
-      setUnread(0);
+      setBox((b) => ({ ...b, items: b.items.map((n) => ({ ...n, read: true })) }));
+      loadCounts();
     } catch (e) {
       toast({ title: 'Gagal menandai semua.', variant: 'destructive' });
     }
   };
 
+  const go = (n) => {
+    const ok = navigateToNotification(n, (moduleId, params) => onNavigate?.(moduleId, params));
+    if (!ok) {
+      toast({ title: 'Layar tujuan notifikasi ini tidak tersedia.' });
+      setExpandedId(n.id);
+    }
+  };
+
   const activate = (n) => {
     if (!n.read) markRead(n.id);
-    if (n.link_module) {
-      const ok = navigateToNotification(n, (moduleId, params) => onNavigate?.(moduleId, params));
-      if (!ok) {
-        toast({ title: 'Layar tujuan notifikasi ini tidak tersedia.' });
-        setExpandedId(n.id);
-      }
-      return;
-    }
+    if (n.link_module || n.action?.target_menu) { go(n); return; }
     setExpandedId((cur) => (cur === n.id ? null : n.id));
   };
 
-  if (loading) return (
-    <div className="flex items-center justify-center py-24"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
-  );
+  const empty = !error && !loading && box.items.length === 0 && (box.groups || []).length === 0;
 
   return (
     <div className="p-4 sm:p-6 max-w-2xl mx-auto space-y-4">
@@ -97,15 +107,25 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
           <Bell className="w-5 h-5" /> Notifikasi Saya
         </h2>
         <div className="flex items-center gap-2">
-          {unread > 0 && (
-            <Badge className="bg-red-100 text-red-700 border-red-200" data-testid="portal-notif-unread">{unread} Belum Dibaca</Badge>
+          {counts.info > 0 && (
+            <Badge className="bg-red-100 text-red-700 border-red-200" data-testid="portal-notif-unread">{counts.info} Belum Dibaca</Badge>
           )}
-          {unread > 0 && (
+          {tab === 'info' && counts.info > 0 && (
             <Button variant="outline" size="sm" onClick={markAll} data-testid="portal-notif-mark-all">
               <CheckCheck className="w-4 h-4 mr-1" /> Tandai semua dibaca
             </Button>
           )}
         </div>
+      </div>
+
+      <div role="tablist" aria-label="Jenis notifikasi" className="flex border-b">
+        {INBOX_TABS.map((t) => (
+          <TabButton key={t.key} active={tab === t.key} label={t.label}
+                     count={t.key === 'action' ? counts.action : t.key === 'info' ? counts.info : 0}
+                     tone={t.key === 'action' ? 'action' : 'neutral'}
+                     onClick={() => { setExpandedId(null); setTab(t.key); }}
+                     testId={`portal-notif-tab-${t.key}`} />
+        ))}
       </div>
 
       {error && (
@@ -114,57 +134,37 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
         </div>
       )}
 
-      {!error && items.length === 0 && (
+      {loading && (
+        <div className="flex items-center justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+      )}
+
+      {empty && (
         <div className="text-center py-16 text-muted-foreground">
-          <BellOff className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p>Tidak ada notifikasi saat ini.</p>
+          {tab === 'history' ? <History className="w-12 h-12 mx-auto mb-3 opacity-30" />
+            : <BellOff className="w-12 h-12 mx-auto mb-3 opacity-30" />}
+          <p>{tab === 'action' ? 'Tidak ada yang perlu ditindaklanjuti.'
+            : tab === 'history' ? 'Belum ada tindakan yang selesai.' : 'Tidak ada notifikasi saat ini.'}</p>
         </div>
       )}
 
-      <div className="space-y-2">
-        {items.map((n) => {
-          const expanded = expandedId === n.id;
-          return (
-            <Card
-              key={n.id}
-              data-testid={`notif-${n.id}`}
-              className={`transition-all ${!n.read ? 'border-primary/30 bg-primary/5' : 'opacity-80'} ${expanded ? 'ring-1 ring-primary/40' : ''}`}
-            >
-              <CardContent className="pt-4 pb-3 flex items-start gap-3">
-                <div className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${!n.read ? 'bg-primary' : 'bg-muted'}`} />
-                <button type="button" className="flex-1 min-w-0 text-left" onClick={() => activate(n)}
-                        aria-expanded={n.link_module ? undefined : expanded}>
-                  <p className={`text-sm ${!n.read ? 'font-semibold' : 'font-medium'}`}>{n.title || n.body}</p>
-                  {n.body && (
-                    <p className={`text-xs text-muted-foreground mt-0.5 whitespace-pre-line ${expanded ? '' : 'line-clamp-2'}`}>{n.body}</p>
-                  )}
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {timeAgo(n.created_at)} · {formatWIB(n.created_at)}
-                    {n.link_module && (
-                      <span className="ml-2 inline-flex items-center gap-0.5 text-primary">Buka <ArrowRight className="w-3 h-3" /></span>
-                    )}
-                  </p>
-                </button>
-                {!n.read && (
-                  <Button
-                    data-testid={`btn-read-${n.id}`}
-                    variant="ghost" size="icon" className="h-7 w-7 text-primary"
-                    aria-label="Tandai dibaca" title="Tandai dibaca"
-                    onClick={() => markRead(n.id)}
-                  >
-                    <Check className="w-4 h-4" />
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+      {!loading && !empty && (
+        <Card className="overflow-hidden divide-y">
+          {tab === 'action' && (box.groups || []).map((g) => (
+            <GroupRow key={g.key} g={g} onOpen={(x) => navigateToGroup(x, (moduleId, params) => onNavigate?.(moduleId, params))} />
+          ))}
+          {box.items.map((n) => (
+            <InboxRow key={n.id} n={n} expanded={expandedId === n.id}
+                      onActivate={activate}
+                      onAction={(x) => { if (!x.read) markRead(x.id); go(x); }}
+                      onMarkRead={markRead} />
+          ))}
+        </Card>
+      )}
 
-      {hasMore && (
+      {box.hasMore && !loading && (
         <div className="text-center">
           <Button variant="outline" size="sm" disabled={loadingMore}
-                  onClick={() => load({ append: true, skip: items.length })} data-testid="portal-notif-more">
+                  onClick={() => load(tab, { append: true, skip: box.items.length })} data-testid="portal-notif-more">
             {loadingMore && <Loader2 className="w-4 h-4 mr-1 animate-spin" />} Muat lebih banyak
           </Button>
         </div>

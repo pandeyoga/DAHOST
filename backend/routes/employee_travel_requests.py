@@ -498,6 +498,8 @@ async def submit_travel_request(req_id: str, user: dict = Depends(require_auth))
             source_id=req_id,
             source_ref=doc.get('trip_number'),
             target_roles=list(APPROVER_ROLES),
+            # 2026-11-02: pemohon tidak menerima "Perlu Tindakan" atas perjalanan dinasnya sendiri
+            exclude_user_ids=[x for x in {user.get('id'), doc.get('employee_id')} if x],
             status='sent',
             meta={'link_module': 'hr-approval-inbox'},
         )
@@ -643,9 +645,13 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     now = _now()
     # 2026-11-02 (P5 butir 7): tanggal jurnal = tanggal bayar yang diisi; rekening = yang dipilih.
     je_date = parse_ymd(payload.payment_date, field='tanggal pembayaran uang muka')
+    # 2026-11-02 (S2-H butir 7): akun dari peran Profil Posting `employee_travel` (bawaan = konstanta)
+    from routes.rahaza_posting_profiles import role_code
+    advance_code = await role_code(db, 'employee_travel', 'debit_employee_advance', GL_EMPLOYEE_ADVANCE)
     acc = await resolve_payment_account(
         db, cash_account_id=payload.bank_account_id or payload.cash_account_id,
-        default_code=GL_BANK_DEFAULT, purpose='Pembayaran uang muka dinas')
+        default_code=await role_code(db, 'employee_travel', 'credit_bank_default', GL_BANK_DEFAULT),
+        purpose='Pembayaran uang muka dinas')
 
     # RC-05: posting WAJIB lewat engine rahaza_posting (validasi COA/saldo/periode).
     from routes.rahaza_posting import _create_posted_je
@@ -654,7 +660,7 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     memo = f"Uang Muka Perjalanan Dinas {doc.get('trip_number')} — {doc.get('employee_name', '')}"
     lines = [
         {
-            'account_code': GL_EMPLOYEE_ADVANCE,   # Dr: Uang Muka Karyawan (asset naik)
+            'account_code': advance_code,   # Dr: Uang Muka Karyawan (asset naik)
             'debit': amount, 'credit': 0,
             'description': memo, 'cost_center_id': '',
         },

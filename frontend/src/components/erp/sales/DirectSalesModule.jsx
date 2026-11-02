@@ -56,7 +56,7 @@ export default function DirectSalesModule() {
                 <td className="px-3 py-2">{r.customer_name}</td>
                 <td className="px-3 py-2">{r.payment_type === 'cash' ? 'Tunai' : `Tempo · JT ${r.due_date}`}</td>
                 <td className="px-3 py-2 text-right font-semibold">Rp {fmt(r.total)}</td>
-                <td className="px-3 py-2 text-right">{r.cogs_total != null ? `Rp ${fmt(r.cogs_total)}` : '-'}{r.cogs_basis && r.cogs_basis !== 'fifo_batch' && <div className="text-[10px] text-amber-300">{r.cogs_basis === 'hpp_master' ? 'perkiraan HPP master' : 'sebagian perkiraan'}</div>}{r.uncosted_qty > 0 && !r.cogs_estimated && <div className="text-[10px] text-amber-300">{r.uncosted_qty} pcs tanpa biaya</div>}</td>
+                <td className="px-3 py-2 text-right">{r.cogs_total != null ? `Rp ${fmt(r.cogs_total)}` : '-'}{r.cogs_basis && !['wac', 'fifo_batch', 'mixed'].includes(r.cogs_basis) && <div className="text-[10px] text-amber-300">{r.cogs_basis === 'hpp_master' ? 'perkiraan HPP master' : 'sebagian perkiraan'}</div>}{r.uncosted_qty > 0 && !r.cogs_estimated && <div className="text-[10px] text-amber-300">{r.uncosted_qty} pcs tanpa biaya</div>}</td>
                 <td className="px-3 py-2"><Badge s={r.status} /></td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => openDetail(r.id)} data-testid={`sale-view-${r.note_number}`}><Eye className="w-3.5 h-3.5" /></Button>

@@ -208,7 +208,11 @@ async def get_po_sewing(po_id: str, request: Request):
     for it in items:
         qty = int(_f(it.get("qty")))
         rate = _f(it.get("cmt_price_snapshot"))
-        cost = await fcl.compute_batch_unit_cost(db, po_item=it, qty=max(1, qty))
+        # 2026-11-02 (butir 10, F1b): pratinjau HPP memakai BOM WARNA varian SPK (sama dengan
+        # lapisan biaya) — dulu BOM warna lain: 47.175 vs lapisan nyata 106.396,10.
+        from core import product_costing as pc
+        with pc.bom_color_scope(pc.color_of(it)):
+            cost = await fcl.compute_batch_unit_cost(db, po_item=it, qty=max(1, qty))
         sku_ok = bool(it.get("sku")) and it.get("sku") in master_codes
         model_ok = bool(it.get("model_id")) and it.get("model_id") in master_models
         ssot_msgs = []

@@ -130,18 +130,17 @@ async def get_pos(request: Request):
         items_all = await db.po_items.find({'po_id': {'$in': po_ids}}, {'_id': 0}).to_list(None)
         accs_all = await db.po_accessories.find({'po_id': {'$in': po_ids}}, {'_id': 0}).to_list(None)
         item_ids = [i['id'] for i in items_all]
-        # Aggregate shipment totals per po_item_id in a single query each
-        buyer_agg = await db.buyer_shipment_items.aggregate([
-            {'$match': {'po_item_id': {'$in': item_ids}}},
-            {'$group': {'_id': '$po_item_id', 'qty': {'$sum': '$qty_shipped'},
-                        'recv': {'$sum': {'$ifNull': ['$qty_received', '$qty_shipped']}}}},
-        ]).to_list(None) if item_ids else []
+        # 2026-11-02 (K17 butir 1): angka kirim ke buyer dari SSOT `core.dispatch_capacity`
+        # — dulu agregasi ini tanpa saringan receiver_type sehingga deklarasi CMT→DA ikut
+        # dihitung "dikirim ke buyer" (w3 S1: 60 padahal 0; S7: 202 untuk 100 pcs).
+        from core import dispatch_capacity as dcap
+        qty_map = await dcap.po_item_quantities(db, item_ids) if item_ids else {}
         vendor_agg = await db.vendor_shipment_items.aggregate([
             {'$match': {'po_item_id': {'$in': item_ids}}},
             {'$group': {'_id': '$po_item_id', 'qty': {'$sum': '$qty_sent'}}},
         ]).to_list(None) if item_ids else []
     else:
-        items_all, accs_all, buyer_agg, vendor_agg = [], [], [], []
+        items_all, accs_all, vendor_agg, qty_map = [], [], [], {}
 
     # Build maps
     items_by_po = {}
@@ -150,8 +149,6 @@ async def get_pos(request: Request):
     accs_by_po = {}
     for a in accs_all:
         accs_by_po.setdefault(a['po_id'], []).append(a)
-    buyer_by_item = {b['_id']: b['qty'] for b in buyer_agg}
-    recv_by_item = {b['_id']: b['recv'] for b in buyer_agg}
     vendor_by_item = {v['_id']: v['qty'] for v in vendor_agg}
 
     result = []
@@ -169,12 +166,14 @@ async def get_pos(request: Request):
         composite_label = f"{po.get('po_number', '')} | {po.get('vendor_name', '')} | {date_str}"
 
         total_ordered = sum(i.get('qty', 0) for i in items)
-        total_shipped = sum(buyer_by_item.get(i['id'], 0) for i in items)
-        total_received = sum(recv_by_item.get(i['id'], 0) for i in items)
+        qt = dcap.sum_quantities([qty_map[i['id']] for i in items if i['id'] in qty_map])
+        # "dikirim ke buyer" = dokumen = kenyataan (qty diterima bila sudah dicatat)
+        total_shipped = qt['dispatched']
+        total_received = qt['received_confirmed']
         total_sent_to_vendor = sum(vendor_by_item.get(i['id'], 0) for i in items)
         # ─── H-1 FIX: clamp remaining at 0 (preserves dashboard semantics),
         # expose over_shipped_qty separately so overproduction shipping is visible.
-        remaining_qty_to_ship = max(0, total_ordered - total_received)
+        remaining_qty_to_ship = max(0, total_ordered - total_shipped)
         over_shipped_qty = max(0, total_shipped - total_ordered)
         # Phase 8.5: remaining qty the vendor still needs to receive (NORMAL shipment capacity)
         remaining_qty_to_vendor = max(0, total_ordered - total_sent_to_vendor)
@@ -183,6 +182,10 @@ async def get_pos(request: Request):
                        'total_qty': total_ordered,
                        'total_shipped_to_buyer': total_shipped,
                        'total_received_to_buyer': total_received,
+                       'pending_receipt_qty': qt['pending_receipt'],
+                       'total_accepted_qc': qt['accepted_total'],
+                       'shippable_qty': qt['shippable'],
+                       'ship_status': dcap.po_ship_status({**qt, 'ordered': total_ordered}),
                        'remaining_qty_to_ship': remaining_qty_to_ship,
                        'over_shipped_qty': over_shipped_qty,
                        'total_sent_to_vendor': total_sent_to_vendor,
@@ -985,12 +988,10 @@ async def get_po_items_produced(request: Request):
     for r in all_returns:
         poi = r.get('po_item_id')
         if poi: ret_by_poitem[poi] = ret_by_poitem.get(poi, 0) + r.get('return_qty', 0)
-    # 6. Batch buyer shipment items
-    all_buyer = await db.buyer_shipment_items.find({'po_item_id': {'$in': po_item_ids}}).to_list(None)
-    shipped_by_poitem: dict = {}
-    for b in all_buyer:
-        poi = b.get('po_item_id')
-        if poi: shipped_by_poitem[poi] = shipped_by_poitem.get(poi, 0) + b.get('qty_shipped', 0)
+    # 6. Kirim ke BUYER — SSOT (2026-11-02 K17 butir 1: deklarasi CMT→DA tidak ikut)
+    from core import dispatch_capacity as dcap
+    _qmap = await dcap.po_item_quantities(db, po_item_ids)
+    shipped_by_poitem: dict = {k: v['dispatched'] for k, v in _qmap.items()}
 
     enriched = []
     for item in po_items:
@@ -1409,7 +1410,10 @@ async def po_quantity_summary(po_id: str, request: Request):
     _s_ii_map   = {ii.get('shipment_item_id'): ii for ii in _s_ii_all}
     _s_defects  = await db.material_defect_reports.find({'po_item_id': {'$in': pdf_item_ids}}).to_list(None) if pdf_item_ids else []
     _s_ji_all   = await db.production_job_items.find({'po_item_id': {'$in': pdf_item_ids}}).to_list(None) if pdf_item_ids else []
-    _s_bi_all   = await db.buyer_shipment_items.find({'po_item_id': {'$in': pdf_item_ids}}).to_list(None) if pdf_item_ids else []
+    # 2026-11-02 (K17 butir 1): dikirim ke buyer & produksi dari SSOT — dulu Σ semua
+    # buyer_shipment_items (termasuk deklarasi CMT→DA) dan produksi job anak rework.
+    from core import dispatch_capacity as dcap
+    _s_qmap     = await dcap.po_item_quantities(db, pdf_item_ids)
     _s_ri_all   = await db.production_return_items.find({'po_item_id': {'$in': pdf_item_ids}}).to_list(None) if pdf_item_ids else []
     _s_vsi_by_poi: dict = {}
     for vsi in _s_vsi_all: _s_vsi_by_poi.setdefault(vsi.get('po_item_id'), []).append(vsi)
@@ -1417,8 +1421,6 @@ async def po_quantity_summary(po_id: str, request: Request):
     for d in _s_defects: _s_def_by_poi.setdefault(d.get('po_item_id'), []).append(d)
     _s_ji_by_poi: dict = {}
     for ji in _s_ji_all: _s_ji_by_poi.setdefault(ji.get('po_item_id'), []).append(ji)
-    _s_bi_by_poi: dict = {}
-    for bi in _s_bi_all: _s_bi_by_poi.setdefault(bi.get('po_item_id'), []).append(bi)
     _s_ri_by_poi: dict = {}
     for ri in _s_ri_all: _s_ri_by_poi.setdefault(ri.get('po_item_id'), []).append(ri)
     _is_internal_po = po.get('business_type') == 'internal'
@@ -1441,8 +1443,9 @@ async def po_quantity_summary(po_id: str, request: Request):
             # PO internal: material diserahkan gudang ke job (bukan kiriman vendor)
             received = sum(int(ji.get('available_qty', 0) or 0) for ji in _s_ji_by_poi.get(item['id'], []))
         available = max(0, received - total_defect)
-        produced = sum(ji.get('produced_qty', 0) for ji in _s_ji_by_poi.get(item['id'], []))
-        shipped  = sum(bi.get('qty_shipped', 0) for bi in _s_bi_by_poi.get(item['id'], []))
+        _q = _s_qmap.get(item['id']) or {}
+        produced = int(_q.get('produced_main', 0))
+        shipped  = int(_q.get('dispatched', 0))
         returned = sum(ri.get('return_qty', 0) for ri in _s_ri_by_poi.get(item['id'], []))
         ordered = item.get('qty', 0)
         over = max(0, produced - ordered); under = max(0, ordered - produced)
@@ -1450,13 +1453,18 @@ async def po_quantity_summary(po_id: str, request: Request):
             **serialize_doc(item),
             'ordered_qty': ordered, 'received_qty': received, 'missing_qty': missing,
             'defect_qty': total_defect, 'available_qty': available, 'produced_qty': produced,
+            'rework_produced_qty': int(_q.get('rework_produced', 0)),
             'shipped_qty': shipped, 'returned_qty': returned,
+            'accepted_total_qty': int(_q.get('accepted_total', 0)),
+            'shippable_qty': int(_q.get('shippable', 0)),
             'overproduction_qty': over, 'underproduction_qty': under
         })
         totals['ordered'] += ordered; totals['received'] += received
         totals['missing'] += missing; totals['defect'] += total_defect
         totals['available'] += available; totals['produced'] += produced
         totals['shipped'] += shipped; totals['returned'] += returned
+    totals['accepted_total'] = sum(si.get('accepted_total_qty', 0) for si in summary_items)
+    totals['shippable'] = sum(si.get('shippable_qty', 0) for si in summary_items)
     totals['overproduction'] = max(0, totals['produced'] - totals['ordered'])
     totals['underproduction'] = max(0, totals['ordered'] - totals['produced'])
 
@@ -1469,7 +1477,11 @@ async def po_quantity_summary(po_id: str, request: Request):
         led = await qty_ledger.po_ledger_totals(db, po_id)
         lt = led['totals']
         totals.update({
-            'declared': lt['declared'],
+            # 2026-11-02 (K17 butir 4): deklarasi "baru" — kiriman balik rework tidak dihitung
+            'declared': lt.get('declared_main', lt['declared']),
+            'declared_incl_rework': lt['declared'],
+            'repaired_cmt': lt.get('repaired_cmt', 0),
+            'rework_produced': lt.get('rework_produced', 0),
             'accepted': lt['accepted'],
             'reject': lt['reject'],
             'reject_open': lt['rework_open'],
@@ -1482,7 +1494,7 @@ async def po_quantity_summary(po_id: str, request: Request):
         for si in summary_items:
             p = per.get(si.get('id')) or {}
             si.update({
-                'declared_qty': p.get('declared', 0),
+                'declared_qty': max(0, p.get('declared', 0) - p.get('repaired_cmt', 0)),
                 'accepted_qty': p.get('accepted', 0),
                 'reject_qty_qc': p.get('reject', 0),
                 'rework_open_qty': p.get('rework_open', 0),

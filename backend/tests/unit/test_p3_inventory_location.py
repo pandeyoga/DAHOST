@@ -95,8 +95,8 @@ def test_restock_layer_linked_to_its_journal(monkeypatch):
     from core import fg_cost_layers as fcl
     import routes.rahaza_posting as rp
 
-    async def unit_cost(db, mid):
-        return 55497.25
+    async def unit_cost(db, mid, **kw):   # 2026-11-02 (S2-W, No.26a): nilai restock = WAC FG
+        return {"unit_cost": 55497.25, "components": {"material": 55497.25, "labor": 0.0, "overhead": 0.0}}
 
     async def push(db, **kw):
         await db.fg_cost_layers.insert_one({"id": "ly-r", "gl_je_id": None})
@@ -104,7 +104,7 @@ def test_restock_layer_linked_to_its_journal(monkeypatch):
 
     async def je(db, wh, qty, uc, actor):
         return {"ok": True, "je_id": "je-r", "je_number": "JE-R"}
-    monkeypatch.setattr(rb, "_unit_cost_for", unit_cost)
+    monkeypatch.setattr(fcl, "wac_state", unit_cost)
     monkeypatch.setattr(fcl, "push_layer", push)
     monkeypatch.setattr(rp, "post_marketplace_return_restock", je)
     db = FakeDB()
