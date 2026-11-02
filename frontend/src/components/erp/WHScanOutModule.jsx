@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { GlassCard } from '@/components/ui/glass';
 import { formatRupiah, formatNumber } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 import UniversalScanner from './scanner/UniversalScanner';
 import { scanFeedback } from './scanner/scanCode';
 
@@ -52,11 +53,6 @@ const fmtTime = (v) => {
   try { return new Date(v).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); }
   catch (_) { return ''; }
 };
-const yesterdayWib = () => {
-  const d = new Date(Date.now() + 7 * 3600 * 1000 - 24 * 3600 * 1000);
-  return d.toISOString().slice(0, 10);
-};
-const todayWib = () => new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
 
 function Tab({ active, onClick, icon: Icon, children, testId }) {
   return (
@@ -426,7 +422,7 @@ function Table({ head, rows, testId, empty = 'Tidak ada data.' }) {
 
 function ReportTab({ token }) {
   const authH = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
-  const [day, setDay] = useState(todayWib());
+  const [day, setDay] = useState(todayWIB);
   const [locations, setLocations] = useState([]);
   const [loc, setLoc] = useState('');
   const [rep, setRep] = useState(null);
@@ -530,7 +526,7 @@ function ReportTab({ token }) {
 function ControlTab({ token, canSupervise }) {
   const authH = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const jsonH = useMemo(() => ({ ...authH, 'Content-Type': 'application/json' }), [authH]);
-  const [day, setDay] = useState(yesterdayWib());
+  const [day, setDay] = useState(() => daysAgoWIB(1));
   const [ctl, setCtl] = useState(null);
   const [cfg, setCfg] = useState(null);
   const [msg, setMsg] = useState('');

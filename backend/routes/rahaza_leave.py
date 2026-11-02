@@ -29,7 +29,7 @@ import re
 import logging
 from datetime import datetime, timezone, date, timedelta
 from typing import Optional
-from utils.waktu import wib_year
+from utils.waktu import wib_year, today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-leave"])
@@ -1030,7 +1030,7 @@ async def cancel_leave(leave_id: str, request: Request):
         raise HTTPException(400, "Hanya leave Approved yang bisa dibatalkan.")
 
     # Cek apakah cuti sudah mulai (tanggal from_date sudah lewat)
-    today = date.today()
+    today = today_wib()
     try:
         d_from = date.fromisoformat(leave["from_date"])
         if d_from < today:

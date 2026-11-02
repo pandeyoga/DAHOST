@@ -9,6 +9,7 @@ from auth import hash_password, require_auth, serialize_doc, log_activity
 from routes.shared import require_perm  # T-01 2.3
 from routes.marketing_kol_shared import router, _uid, _now, _get_user, CreatorCreate, CreatorUpdate
 from collections import defaultdict as _dd
+from utils.waktu import fmt_wib
 
 
 @router.post('/kol/creators')
@@ -69,7 +70,7 @@ async def list_creators(
     creators = await db.marketing_kol_creators.find(
         query, {'_id': 0, 'login_password_hash': 0}
     ).sort('created_at', -1).skip(skip).limit(limit).to_list(500)
-    month = _now().strftime('%Y-%m')
+    month = fmt_wib('%Y-%m')
     date_from = f'{month}-01'
     year, mon = int(month.split('-')[0]), int(month.split('-')[1])
     next_month = datetime(year, mon, 1, tzinfo=timezone.utc) + timedelta(days=32)

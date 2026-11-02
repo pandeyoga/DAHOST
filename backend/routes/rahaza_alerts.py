@@ -27,6 +27,7 @@ import logging
 
 from routes.rahaza_notifications import publish_notification
 from utils.notif_unified import alert_roles_for_portal, real_target_roles
+from utils.waktu import today_wib
 
 # 2026-11-02 — peran yang boleh melihat DETAIL kontrak karyawan di pratinjau
 # (nama, kode, PKWT, tanggal akhir, divisi). Sama dengan pembaca inbox HR
@@ -86,7 +87,7 @@ async def _require_admin(request: Request):
 async def check_behind_target(db, settings: dict) -> list:
     """Evaluate behind-target for today's active line assignments."""
     threshold = float(settings.get("behind_target_pct") or 0.70)
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
 
     assignments = await db.rahaza_line_assignments.find(
         {"assign_date": today, "active": True, "target_qty": {"$gt": 0}},

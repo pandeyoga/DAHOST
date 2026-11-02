@@ -4,12 +4,14 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { PageHeader } from './moduleAtoms';
+import { todayWIB } from '@/lib/waktu';
 
 // ── Constants (mapped to marketing_* SSOT shape) ────────────────────────────
 const PLATFORM_OPTIONS = [
@@ -73,7 +75,6 @@ const REVIEW_STATUS_COLORS = {
   reviewed: 'bg-green-500/15 text-green-300 border-green-400/25',
 };
 
-const todayIso = () => new Date().toISOString().slice(0, 10);
 const fmtDate = (d) => (d ? new Date(d).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '-');
 const fmtRupiah = (n) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(n || 0));
 
@@ -104,7 +105,7 @@ export default function TokoCSReturnsModule({ token, defaultTab = 'cs' }) {
   const [reviewStatusFilter, setReviewStatusFilter] = useState('all');
 
   const emptyReturn = {
-    date: todayIso(),
+    date: todayWIB(),
     order_id: '',
     platform: 'shopee',
     product: '',
@@ -116,7 +117,7 @@ export default function TokoCSReturnsModule({ token, defaultTab = 'cs' }) {
     notes: '',
   };
   const emptyReview = {
-    date: todayIso(),
+    date: todayWIB(),
     order_id: '',
     platform: 'shopee',
     product: '',
@@ -778,10 +779,8 @@ export default function TokoCSReturnsModule({ token, defaultTab = 'cs' }) {
                 </div>
                 <div>
                   <Label className="text-xs">Harga (Rp)</Label>
-                  <Input
-                    type="number"
+                  <MoneyInput
                     className="mt-1"
-                    min={0}
                     value={returnDialog.price}
                     onChange={(e) => setReturnDialog((d) => ({ ...d, price: e.target.value }))}
                     data-testid="input-return-price"

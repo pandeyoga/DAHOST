@@ -4,6 +4,7 @@ import { Plus, AlertOctagon, X } from 'lucide-react';
 import { toast } from 'sonner';
 import Modal from './Modal';
 import { apiGet, apiPost } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 export default function VendorDefectReports({ token, user }) {
   const [reports, setReports] = useState([]);
@@ -15,7 +16,7 @@ export default function VendorDefectReports({ token, user }) {
   const [form, setForm] = useState({
     job_id: '', job_item_id: '', sku: '', product_name: '', size: '', color: '',
     defect_qty: '', defect_type: 'Material Cacat',
-    description: '', report_date: new Date().toISOString().split('T')[0],
+    description: '', report_date: todayWIB(),
     shipment_id: ''
   });
 

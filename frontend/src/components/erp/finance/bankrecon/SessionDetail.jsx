@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Loader2, ArrowLeft, Sparkles, Upload, CheckCircle2, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah as fmt } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 import { STATUS_CFG } from './SessionList';
 import { ReconSummary } from './ReconSummary';
 import { ImportPanel } from './ImportPanel';
@@ -100,7 +101,7 @@ export function SessionDetail({ sessionId, headers, onBack }) {
       {!readOnly && (
         <div className="flex items-center gap-2 text-xs">
           <span className="text-muted-foreground">Saldo akhir rekening koran:</span>
-          <input type="number" data-testid="recon-closing-input" className="border rounded px-2 py-1 w-44" value={closing} onChange={e => setClosing(e.target.value)} />
+          <MoneyInput unstyled decimals={2} allowNegative data-testid="recon-closing-input" className="border rounded px-2 py-1 w-44" value={closing} onChange={e => setClosing(e.target.value)} />
           <Button size="sm" variant="outline" data-testid="recon-closing-save" onClick={saveClosing} disabled={busy}>Simpan</Button>
         </div>
       )}

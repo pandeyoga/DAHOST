@@ -3,6 +3,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Plus, Search, Pencil, Trash2, X, Check } from 'lucide-react';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
+import { MoneyInput } from '@/components/ui/money-input';
 import RnDUnitSelect from './RnDUnitSelect';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { ColorMultiSelect, useColorOptions } from './RnDColorPicker';
@@ -180,8 +181,9 @@ export default function RnDMaterialsTab({ token }) {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Harga per Satuan (Rp)</label>
-                  <input
-                    type="number"
+                  <MoneyInput
+                    unstyled
+                    decimals={2}
                     value={form.price_per_unit}
                     onChange={(e) => setForm({ ...form, price_per_unit: parseFloat(e.target.value) || 0 })}
                     className="w-full px-3 py-2 bg-background border rounded-lg text-sm"

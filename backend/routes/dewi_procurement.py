@@ -31,11 +31,12 @@ from auth import require_auth
 from routes.shared import require_portal
 from core import uom as _uom          # SSOT konversi satuan (INV-UOM-1/2)
 from core import bom_uom as _bom_uom  # cakupan lebar: kemasan + global + kain
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 import uuid
 import math
 import logging
+from utils.waktu import today_wib, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/procurement", tags=["procurement"])
@@ -338,9 +339,13 @@ async def procurement_dashboard(request: Request):
         )
 
     # Total value approved this month
-    month_start = f"{date.today().strftime('%Y-%m')}-01"
+    # Awal bulan WIB dalam UTC. `submitted_at` disimpan sebagai datetime BSON (`_now()`); dulu
+    # dibandingkan dengan string 'YYYY-MM-01' ⇒ beda tipe ⇒ total selalu 0. String lama tetap diterima.
+    month_start = wib_day_bounds_utc(today_wib().replace(day=1))[0]
     agg = await db.dewi_procurement_requests.aggregate([
-        {"$match": {"status": {"$in": ["approved", "completed"]}, "submitted_at": {"$gte": month_start}}},
+        {"$match": {"status": {"$in": ["approved", "completed"]},
+                    "$or": [{"submitted_at": {"$gte": month_start}},
+                            {"submitted_at": {"$gte": month_start.isoformat()}}]}},
         {"$group": {"_id": None, "total": {"$sum": "$total_estimated"}}}
     ]).to_list(1)
     total_value_approved = agg[0]["total"] if agg else 0
@@ -1029,8 +1034,7 @@ async def delete_request(req_id: str, request: Request):
 # ─── Create PO from Approved PR ──────────────────────────────────────────────
 
 async def _gen_po_number_proc(db) -> str:
-    from datetime import date as _date
-    prefix = f"PO-{_date.today().strftime('%Y%m%d')}-"
+    prefix = f"PO-{today_wib().strftime('%Y%m%d')}-"
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1 -> dup/E11000; po_number is unique-indexed)
     return await gen_prefixed_number(db, "rahaza_purchase_orders", "po_number", prefix, 3)
 
@@ -1081,7 +1085,6 @@ async def create_po_from_pr(req_id: str, request: Request):
         if isinstance(ov, dict) and ov.get("item_id"):
             override[ov["item_id"]] = ov
 
-    from datetime import date as _date
     raw_items = []
     for it in (pr.get("items") or []):
         ov = override.get(it.get("id")) or {}
@@ -1119,7 +1122,7 @@ async def create_po_from_pr(req_id: str, request: Request):
         "from_pr_id": pr["id"],
         "from_pr_number": pr.get("request_number", ""),
         **sup_fields,
-        "po_date": _date.today().isoformat(),
+        "po_date": today_wib().isoformat(),
         "expected_delivery_date": body.get("expected_delivery_date") or pr.get("needed_by") or None,
         "items": po_items,
         "total_value": po_total,

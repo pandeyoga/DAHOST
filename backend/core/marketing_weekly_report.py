@@ -36,6 +36,7 @@ from typing import Any, Dict, List, Optional
 from core import marketing_sales_shape as _shape
 from core import marketing_daily_rollup as _rollup
 from core import marketing_returns as _ret
+from utils.waktu import today_wib
 
 DAILY = "marketing_sales_data"
 ORDERS = "marketing_orders"
@@ -70,7 +71,7 @@ def _num(v: Any) -> float:
 def monday_of(value: Any = None) -> date:
     """Tanggal apa pun → **Senin** minggu itu (default: minggu berjalan)."""
     if value is None:
-        d = _now().date()
+        d = today_wib()
     elif isinstance(value, datetime):
         d = value.date()
     elif isinstance(value, date):

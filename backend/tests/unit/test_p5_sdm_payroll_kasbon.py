@@ -479,13 +479,16 @@ class TestPrivasiKasbon:
 # ── Butir 11 ────────────────────────────────────────────────────────────────────
 class TestBulanLaluWIB:
     def test_last_month_period_tanpa_toisostring(self):
+        # 2026-11-02 (tahap 4): helper tanggal WIB dipindah ke SSOT `lib/waktu.js`;
+        # "Bulan lalu" payroll memakai lastMonthPeriodWIB (aritmetika kalender murni, tanpa toISOString).
         s = _src("frontend", "src", "components", "erp", "RahazaPayrollRunModule.jsx")
-        m = re.search(r"function lastMonthPeriod\(.*?\)\s*\{(.*?)\n\}", s, re.S)
-        assert m, "lastMonthPeriod tidak ditemukan"
-        body = m.group(1)
-        assert "toISOString" not in body and "wibDateParts" in body
-        sel = _src("frontend", "src", "components", "erp", "SdmCashAccountSelect.jsx")
-        assert "timeZone: 'Asia/Jakarta'" in sel
+        assert "lastMonthPeriodWIB" in s and "from '../../lib/waktu'" in s
+        assert "function lastMonthPeriod(" not in s
+        w = _src("frontend", "src", "lib", "waktu.js")
+        m = re.search(r"export function lastMonthPeriodWIB\(.*?\)\s*\{(.*?)\n\}", w, re.S)
+        assert m, "lastMonthPeriodWIB tidak ditemukan"
+        assert "toISOString" not in m.group(1)
+        assert "WIB_TZ = 'Asia/Jakarta'" in w and "timeZone: WIB_TZ" in w
 
     def test_tanggal_bawaan_backend_wib(self):
         from datetime import datetime

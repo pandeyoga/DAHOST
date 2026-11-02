@@ -16,6 +16,7 @@ from auth import require_auth, check_role, log_activity, serialize_doc
 from core.helpers import new_id, now
 from core import cmt_vendor_master
 from routes.production_rbac import PROD_ADMIN_ROLES, deny_klien
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["maklon-finance-bridge"])
@@ -200,7 +201,6 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
     ar_invoice_number = (existing or {}).get('ar_invoice_number')
     ar_created = False
     if mirror_status != 'draft' and not ar_invoice_id:
-        from datetime import date
         from routes.dewi_maklon_pos import _next_ar_invoice_number
         ar_invoice_number = await _next_ar_invoice_number(db)
         ar_invoice_id = new_id()
@@ -220,7 +220,7 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
             'linked_maklon_po_number': po.get('po_number', ''),
             'customer_id': po.get('buyer_id'),
             'customer_name': po.get('customer_name', ''),
-            'invoice_date': date.today().isoformat(),
+            'invoice_date': today_wib().isoformat(),
             'due_date': None,
             'lines': lines,
             'subtotal': total_value,

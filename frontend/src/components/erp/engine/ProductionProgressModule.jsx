@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import Modal from './Modal';
 import { MiniBar } from './VendorShared';
 import { apiGet, apiPost } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 /**
  * ProductionProgressModule — "Input Progress" (produksi INTERNAL).
@@ -29,7 +30,7 @@ export default function ProductionProgressModule() {
   const [childJobItems, setChildJobItems] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
-  const [form, setForm] = useState({ progress_date: new Date().toISOString().split('T')[0], completed_quantity: '', notes: '' });
+  const [form, setForm] = useState({ progress_date: todayWIB(), completed_quantity: '', notes: '' });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { fetchJobs(); }, []);
@@ -72,7 +73,7 @@ export default function ProductionProgressModule() {
 
   const openProgress = (item) => {
     setSelectedItem(item);
-    setForm({ progress_date: new Date().toISOString().split('T')[0], completed_quantity: '', notes: '' });
+    setForm({ progress_date: todayWIB(), completed_quantity: '', notes: '' });
     setShowModal(true);
   };
 

@@ -4,6 +4,7 @@ import axios from 'axios';
 import { Clock, Plus, RefreshCw, Users, Calendar, Edit2, Trash2, ChevronRight, Moon, Sun, Sunset, AlertCircle } from 'lucide-react';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { StatCard } from '@/components/ui/data-card';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const DAYS_ID = { Mon: 'Sen', Tue: 'Sel', Wed: 'Rab', Thu: 'Kam', Fri: 'Jum', Sat: 'Sab', Sun: 'Min' };
@@ -192,7 +193,7 @@ function ShiftForm({ initial, shifts, onSave, onCancel }) {
 }
 
 function AssignmentForm({ shifts, onSave, onCancel }) {
-  const [form, setForm] = useState({ employee_id: '', shift_id: '', effective_from: new Date().toISOString().slice(0, 10), effective_until: '', department: '', notes: '' });
+  const [form, setForm] = useState({ employee_id: '', shift_id: '', effective_from: todayWIB(), effective_until: '', department: '', notes: '' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 

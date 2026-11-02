@@ -4,9 +4,9 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 function AccountList({ title, accounts, total, testId, tone }) {
   const toneClass = tone === 'asset' ? 'text-sky-300' : tone === 'liab' ? 'text-amber-300' : 'text-emerald-300';
@@ -42,7 +42,7 @@ export default function RahazaBalanceSheetModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [asOf, setAsOf] = useState(todayISO());
+  const [asOf, setAsOf] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {

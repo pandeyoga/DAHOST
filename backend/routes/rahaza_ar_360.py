@@ -22,6 +22,7 @@ from database import get_db
 from auth import require_auth, serialize_doc
 import logging
 from core.roles import FINANCE_ROLES  # T-08
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/rahaza/ar-360', tags=['Rahaza-AR-360'])
@@ -34,7 +35,7 @@ TERMINAL_AR_STATUSES = ('paid', 'cancelled', 'void', 'draft', 'written_off')
 
 
 def _today() -> date:
-    return date.today()
+    return today_wib()
 
 
 def _parse_date(v) -> Optional[date]:

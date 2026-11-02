@@ -4,6 +4,7 @@ from database import get_db
 from auth import require_auth
 from routes.dewi_rnd_shared import router, now_utc, sid, serialize
 from routes.shared import assert_can_act
+from utils.waktu import fmt_wib
 
 # Yang boleh memutus dokumen RnD (di luar admin/owner yang selalu boleh).
 RND_APPROVER_ROLES = ('rnd_staff', 'manager_produksi', 'supervisor_produksi',
@@ -40,14 +41,13 @@ async def create_sample_request(body: dict, user: dict = Depends(require_auth)):
     if not style_id:
         raise HTTPException(400, 'style_id wajib diisi')
 
-    from datetime import datetime as _dt
     style = await db.dewi_rnd_styles.find_one({'id': style_id})
     if not style:
         raise HTTPException(404, 'Style tidak ditemukan')
 
     doc = {
         'id': sid(),
-        'sample_code': f"SR-{_dt.now().strftime('%Y%m%d')}-{sid()[:6].upper()}",
+        'sample_code': f"SR-{fmt_wib('%Y%m%d')}-{sid()[:6].upper()}",
         'style_id': style_id,
         'style_code': style.get('style_code', ''),
         'style_name': style.get('style_name', ''),

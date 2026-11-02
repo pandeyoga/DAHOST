@@ -31,6 +31,7 @@ import logging
 import uuid
 import csv
 import io
+from utils.waktu import wib_stamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/hr/expenses', tags=['Employee-Travel'])
@@ -380,7 +381,7 @@ async def export_travel_requests(
         ])
 
     output.seek(0)
-    filename = f"travel_requests_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"travel_requests_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -1388,21 +1389,21 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
               <div className="grid grid-cols-3 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">Harga Jual (Rp) *</Label>
-                  <Input type="number" min={0} value={form.harga_jual}
+                  <MoneyInput value={form.harga_jual}
                     data-testid="catalog-input-harga-jual"
                     onChange={e => setForm(f => ({ ...f, harga_jual: e.target.value, price: e.target.value }))} required />
                   <p className="text-[10px] text-muted-foreground">Harga final ke customer</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Harga Coret (Rp)</Label>
-                  <Input type="number" min={0} value={form.harga_coret}
+                  <MoneyInput value={form.harga_coret}
                     data-testid="catalog-input-harga-coret"
                     onChange={e => setForm(f => ({ ...f, harga_coret: e.target.value, original_price: e.target.value }))} />
                   <p className="text-[10px] text-muted-foreground">Dicoret utk promo (≥ jual)</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Harga Original / List (Rp)</Label>
-                  <Input type="number" min={0} value={form.harga_original}
+                  <MoneyInput value={form.harga_original}
                     data-testid="catalog-input-harga-original"
                     onChange={e => setForm(f => ({ ...f, harga_original: e.target.value }))} />
                   <p className="text-[10px] text-muted-foreground">Harga normal / list resmi</p>
@@ -1412,12 +1413,12 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <Label className="text-xs">Harga Platform (Rp)</Label>
-                  <Input type="number" min={0} value={form.platform_price} onChange={e => setForm(f => ({ ...f, platform_price: e.target.value }))} />
+                  <MoneyInput value={form.platform_price} onChange={e => setForm(f => ({ ...f, platform_price: e.target.value }))} />
                   <p className="text-[10px] text-muted-foreground">Harga tertera di marketplace</p>
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs flex items-center gap-1">HPP (Rp) <span className="text-muted-foreground">— dari RnD</span></Label>
-                  <Input type="number" value={form.hpp || 0} readOnly disabled
+                  <MoneyInput value={form.hpp || 0} readOnly disabled
                     data-testid="catalog-input-hpp"
                     className="bg-muted/40 cursor-not-allowed" />
                   <p className="text-[10px] text-muted-foreground">

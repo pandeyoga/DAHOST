@@ -47,6 +47,7 @@ from typing import Optional
 from pymongo.errors import DuplicateKeyError
 
 from core.stock_rbac import DISPOSE_ROLES
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -142,8 +143,7 @@ def _aware(dt):
 
 
 def today_str() -> str:
-    from utils.waktu import today_wib
-    return today_wib().isoformat()
+    return wib_date_str()   # tanggal kalender WIB (SSOT utils.waktu)
 
 
 def _truthy(v) -> bool:

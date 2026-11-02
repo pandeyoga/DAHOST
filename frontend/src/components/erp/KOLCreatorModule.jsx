@@ -8,6 +8,8 @@ import { Users, Video, ShoppingBag, Trophy, Plus, Edit2, Trash2, Check, X, Refre
   ChevronDown, Star, TrendingUp, Eye, Package, Search, Filter, Target, Award,
   UserPlus, Settings, ExternalLink, BarChart2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, thisMonthWIB } from '@/lib/waktu';
 import PaginationBar from './PaginationBar';
 import CreatorIncentivePanel from './marketing/CreatorIncentivePanel';
 import CreatorWeeklyReportPanel from './marketing/CreatorWeeklyReportPanel';
@@ -201,7 +203,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Revenue (Rp)</label>
-                <input type="number" value={form.kpi_targets.monthly_revenue} onChange={e => setKpi('monthly_revenue', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="50000000" />
+                <MoneyInput unstyled value={form.kpi_targets.monthly_revenue} onChange={e => setKpi('monthly_revenue', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="50.000.000" />
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Sesi Live</label>
@@ -252,7 +254,7 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
 // ─── Session Form Modal ───────────────────────────────────────────────────────
 function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
   const [form, setForm] = useState({
-    creator_id: '', account_id: '', date: new Date().toISOString().split('T')[0],
+    creator_id: '', account_id: '', date: todayWIB(),
     platform: 'tiktokshop', session_name: '', duration_minutes: 90,
     viewers: 0, peak_viewers: 0, revenue: 0, orders: 0, notes: '',
   });
@@ -354,7 +356,7 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-medium mb-1.5">Revenue (Rp)</label>
-              <input type="number" value={form.revenue} onChange={e => set('revenue', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
+              <MoneyInput unstyled value={form.revenue} onChange={e => set('revenue', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5">Orders</label>
@@ -482,7 +484,7 @@ function CatalogFormModal({ token, accounts, onClose, onSaved }) {
             </div>
             <div>
               <label className="block text-xs font-medium mb-1.5">Harga (Rp)</label>
-              <input type="number" value={form.unit_price} onChange={e => set('unit_price', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
+              <MoneyInput unstyled value={form.unit_price} onChange={e => set('unit_price', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
             </div>
           </div>
           <div className="flex gap-3 pt-1">
@@ -524,7 +526,7 @@ export default function KOLCreatorModule({ token }) {
   const [incentiveCreator, setIncentiveCreator] = useState(null);
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [showCatalogForm, setShowCatalogForm] = useState(false);
-  const [leaderMonth, setLeaderMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [leaderMonth, setLeaderMonth] = useState(() => thisMonthWIB());
   // Per-month creator targets: { creator_id → target doc }
   const [creatorTargets, setCreatorTargets] = useState({});
 
@@ -539,8 +541,7 @@ export default function KOLCreatorModule({ token }) {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const now = new Date();
-    const cy = now.getFullYear(), cm = now.getMonth() + 1;
+    const [cy, cm] = thisMonthWIB().split('-').map(Number);
     try {
       const [crRes, ac, sess, reqs, cat, lb, tgtsRaw] = await Promise.all([
         fetch(`${API}/api/marketing/kol/creators?page=${creatorPage}&limit=${ITEMS_PER_PAGE}`, { headers }).then(r => r.json()),

@@ -15,6 +15,8 @@ import { toast } from 'sonner';
 import { EmptyState } from './EmptyState';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const asset = (path, opts = {}) => fetch(`${API}/api/dewi/assets${path}`, { cache: 'no-store', ...opts });
@@ -380,7 +382,7 @@ export default function HRAssetModule({ token }) {
                     <td className="px-4 py-3 text-xs">{a.assigned_date}</td>
                     <td className="px-4 py-3 text-xs">
                       {a.expected_return_date
-                        ? <span className={new Date(a.expected_return_date) < new Date() ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}>
+                        ? <span className={toWIBDate(a.expected_return_date) < todayWIB() ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}>
                             {a.expected_return_date}
                           </span>
                         : '—'}
@@ -551,7 +553,7 @@ function AssetFormDialog({ initial, onSave, onClose }) {
             </div>
             <div className="space-y-1">
               <Label>Harga Beli (Rp)</Label>
-              <Input type="number" value={form.purchase_price} min={0}
+              <MoneyInput value={form.purchase_price}
                 onChange={e => setForm(f => ({ ...f, purchase_price: parseFloat(e.target.value) || 0 }))} />
             </div>
           </div>
@@ -577,9 +579,9 @@ function AssignDialog({ data, employees, onAssign, onReturn, onClose }) {
     asset_id: asset.asset_id,
     employee_id: '',
     employee_name: '',
-    assigned_date: new Date().toISOString().split('T')[0],
+    assigned_date: todayWIB(),
     expected_return_date: '',
-    return_date: new Date().toISOString().split('T')[0],
+    return_date: todayWIB(),
     condition: 'Baik',
     notes: '',
   });

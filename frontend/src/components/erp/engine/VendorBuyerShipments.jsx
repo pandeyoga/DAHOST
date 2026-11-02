@@ -4,6 +4,7 @@ import { Plus, Send, Download, Filter, Search, ChevronDown, ChevronRight, X, Che
 import { toast } from 'sonner';
 import Modal from './Modal';
 import { apiGet, apiPost } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 export default function VendorBuyerShipments({ user }) {
   const [shipments, setShipments] = useState([]);
@@ -15,7 +16,7 @@ export default function VendorBuyerShipments({ user }) {
   const [expandedShipment, setExpandedShipment] = useState(null);
   const [dispatches, setDispatches] = useState({});
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({ job_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] });
+  const [form, setForm] = useState({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] });
   const [searchJob, setSearchJob] = useState('');
   const [showAllJobs, setShowAllJobs] = useState(false);
 
@@ -133,7 +134,7 @@ export default function VendorBuyerShipments({ user }) {
     // Open modal pre-selected with this job
     const job = jobs.find(j => j.id === shipment.job_id);
     setSelectedJob(job || null);
-    setForm({ job_id: shipment.job_id || '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [], po_id: shipment.po_id || '' });
+    setForm({ job_id: shipment.job_id || '', shipment_date: todayWIB(), notes: '', items: [], po_id: shipment.po_id || '' });
     setJobItems([]);
     if (shipment.job_id) loadJobItems(shipment.job_id);
     setShowModal(true);
@@ -184,7 +185,7 @@ export default function VendorBuyerShipments({ user }) {
           <h1 className="text-2xl font-bold text-foreground">Deklarasi Pengiriman ke DA</h1>
           <p className="text-muted-foreground text-sm mt-1">Kirim produk jadi (FG) dari CMT ke Gudang DA. DA akan verifikasi qty aktual + reject, lalu baru dispatch ke buyer.</p>
         </div>
-        <button onClick={() => { setForm({ job_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
+        <button onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
           className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700"
           data-testid="btn-create-cmt-shipment">
           <Plus className="w-4 h-4" /> Deklarasi Kirim ke DA

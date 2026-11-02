@@ -24,6 +24,7 @@ import csv
 import logging
 from datetime import datetime, timezone, date, timedelta
 from typing import Optional
+from utils.waktu import fmt_wib
 
 log = logging.getLogger(__name__)
 
@@ -399,7 +400,7 @@ def _build_payslip_pdf(slip: dict, run: dict, profile: dict = None, doc_settings
         *([HRFlowable(width="100%", thickness=0.5, color=GREY, spaceAfter=4), sig_tbl] if show_sig else []),
         Spacer(1, 2 * mm),
         Paragraph(
-            f"<i>Slip ini dicetak secara otomatis oleh Sistem ERP CV. Dewi Aditya · {_now().strftime('%d/%m/%Y %H:%M')}</i>",
+            f"<i>Slip ini dicetak secara otomatis oleh Sistem ERP CV. Dewi Aditya · {fmt_wib('%d/%m/%Y %H:%M')}</i>",
             ParagraphStyle("foot", fontSize=5.5, fontName="Helvetica-Oblique", textColor=GREY, alignment=TA_CENTER, leading=7)
         ),
     ]

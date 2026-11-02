@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, RefreshCw, DollarSign, ArrowUpCircle, ArrowDo
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from './EmptyState';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, daysAgoWIB, monthStartWIB } from '@/lib/waktu';
 
 const FILTER_OPTIONS = [
   { label: 'Hari Ini', value: 'today' },
@@ -15,15 +16,13 @@ const FILTER_OPTIONS = [
   { label: 'Custom', value: 'custom' },
 ];
 
-// FIN-01: tanggal lokal (WIB), bukan toISOString() yang bergeser mundur sehari
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// FIN-01 / No.54(a): tanggal kalender WIB dari lib/waktu (bukan zona perangkat, bukan UTC).
 function getDateRange(filter) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (filter === 'today') return { date_from: ymd(today), date_to: ymd(today) };
-  if (filter === '7d') { const d = new Date(today); d.setDate(d.getDate() - 7); return { date_from: ymd(d), date_to: ymd(today) }; }
-  if (filter === '28d') { const d = new Date(today); d.setDate(d.getDate() - 28); return { date_from: ymd(d), date_to: ymd(today) }; }
-  if (filter === 'month') { const d = new Date(now.getFullYear(), now.getMonth(), 1); return { date_from: ymd(d), date_to: ymd(today) }; }
+  const today = todayWIB();
+  if (filter === 'today') return { date_from: today, date_to: today };
+  if (filter === '7d') return { date_from: daysAgoWIB(7), date_to: today };
+  if (filter === '28d') return { date_from: daysAgoWIB(28), date_to: today };
+  if (filter === 'month') return { date_from: monthStartWIB(), date_to: today };
   return {};
 }
 

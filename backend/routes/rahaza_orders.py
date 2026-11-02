@@ -15,6 +15,7 @@ import uuid
 from datetime import datetime, timezone, date
 from typing import Optional
 import logging
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,7 @@ async def create_order(request: Request):
     doc = {
         "id": _uid(),
         "order_number": await _gen_order_number(db, (body.get("order_number") or "").strip()),
-        "order_date": body.get("order_date") or date.today().isoformat(),
+        "order_date": body.get("order_date") or today_wib().isoformat(),
         "due_date": body.get("due_date") or None,
         "customer_id": customer_id,
         "customer_name_snapshot": customer_name_snapshot,

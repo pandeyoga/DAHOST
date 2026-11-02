@@ -36,11 +36,9 @@ import {
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
-
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const daysAgoISO = (n) => new Date(Date.now() - n * 86400000).toISOString().slice(0, 10);
 
 const fmtTime = (v) => {
   if (!v) return '—';
@@ -81,7 +79,7 @@ export default function HRAttendanceSessionsModule({ token }) {
   const [exporting, setExporting] = useState(false);
 
   const [filters, setFilters] = useState({
-    from_date: daysAgoISO(7), to_date: todayISO(),
+    from_date: daysAgoWIB(7), to_date: todayWIB(),
     employee_id: '', kind: '', status: '', q: '',
   });
 

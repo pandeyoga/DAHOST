@@ -3,6 +3,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Plus, Edit2, Trash2, Eye, ArrowRight, X, Factory, CheckCircle2, XCircle, Clock, ClipboardList, History, Package, BarChart3 } from 'lucide-react';
 import OnwardCTA from './OnwardCTA';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
 import { AuditHistoryDrawer } from './AuditHistoryDrawer';
@@ -42,7 +43,7 @@ export default function RahazaOrdersModule({ token, onNavigate }) {
   const [statuses, setStatuses] = useState([]);
 
   const [form, setForm] = useState({
-    order_date: new Date().toISOString().slice(0,10),
+    order_date: todayWIB(),
     due_date: '',
     customer_id: '',
     is_internal: false,
@@ -80,7 +81,7 @@ export default function RahazaOrdersModule({ token, onNavigate }) {
   const openCreate = () => {
     setEditing(null);
     setForm({
-      order_date: new Date().toISOString().slice(0,10),
+      order_date: todayWIB(),
       due_date: '', customer_id: '', is_internal: false, notes: '',
       items: [{ model_id: '', size_id: '', qty: 1 }],
     });
@@ -232,7 +233,7 @@ export default function RahazaOrdersModule({ token, onNavigate }) {
           </Button>
         }
         emptyHelp="Alur lengkap: Order → generate Work Order → Material Issue → produksi. Tanpa Order, tidak ada WO, dan produksi tidak tercatat."
-        exportFilename={`orders-${new Date().toISOString().slice(0,10)}.csv`}
+        exportFilename={`orders-${todayWIB()}.csv`}
         rowActions={(o) => (
           <div className="inline-flex items-center gap-1">
             <button onClick={() => openDetail(o)} className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" title="Detail" data-testid={`order-detail-${o.order_number}`}><Eye className="w-3.5 h-3.5" /></button>

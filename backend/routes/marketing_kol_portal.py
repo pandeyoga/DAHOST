@@ -11,6 +11,7 @@ from routes.marketing_kol_shared import (
     require_creator_auth, CreatorLoginIn, ItemRequestCreate, CreatorPortalSessionCreate,
 )
 from core import stock_service
+from utils.waktu import fmt_wib
 
 # Field yang BOLEH dilihat kreator. Ditulis sebagai DAFTAR PUTIH (bukan daftar
 # hitam) karena daftar hitam pasti bocor begitu ada field biaya baru: item
@@ -258,7 +259,7 @@ async def creator_my_performance(
     creator = await require_creator_auth(request)
     db = get_db()
     if not month:
-        month = _now().strftime('%Y-%m')
+        month = fmt_wib('%Y-%m')
     date_from = f'{month}-01'
     year, mon = int(month.split('-')[0]), int(month.split('-')[1])
     next_month = datetime(year, mon, 1, tzinfo=timezone.utc) + timedelta(days=32)
@@ -291,7 +292,7 @@ async def creator_my_performance(
 async def creator_my_kpi(request: Request):
     creator = await require_creator_auth(request)
     db = get_db()
-    month = _now().strftime('%Y-%m')
+    month = fmt_wib('%Y-%m')
     date_from = f'{month}-01'
     year, mon = int(month.split('-')[0]), int(month.split('-')[1])
     next_month = datetime(year, mon, 1, tzinfo=timezone.utc) + timedelta(days=32)

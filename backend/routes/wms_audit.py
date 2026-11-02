@@ -22,6 +22,7 @@ from fastapi import APIRouter, HTTPException, Request, Query
 from fastapi.responses import StreamingResponse
 from database import get_db
 from auth import require_auth, serialize_doc, verify_download_token
+from utils.waktu import wib_stamp
 
 router = APIRouter(prefix="/api/wms/audit", tags=["wms-audit"])
 
@@ -378,7 +379,7 @@ async def export_adjustments_csv(
         ])
 
     buf.seek(0)
-    filename = f"wms_audit_adjustments_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"wms_audit_adjustments_{wib_stamp()}.csv"
     return StreamingResponse(
         iter([buf.getvalue()]),
         media_type="text/csv",

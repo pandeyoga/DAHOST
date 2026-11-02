@@ -3,6 +3,7 @@ import { BarChart3, X, Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
@@ -110,10 +111,7 @@ export default function RecordPerformanceModal({ shift, authH, onClose, onSucces
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs font-semibold">Revenue (Rp)</Label>
-              <Input
-                type="number"
-                min="0"
-                step="1000"
+              <MoneyInput
                 value={form.revenue}
                 onChange={(e) => setForm((f) => ({ ...f, revenue: Number(e.target.value) }))}
                 className="mt-1 h-9"

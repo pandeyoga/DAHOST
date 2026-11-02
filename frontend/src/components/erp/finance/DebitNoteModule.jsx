@@ -17,6 +17,8 @@ import Modal from '../Modal';
 import { toast } from 'sonner';
 import { apiGet, apiPost, fmtDate, fmtNum, fmtRp } from '../procurement/procApi';
 import { StatusBadge, SETTLEMENT_OPTIONS } from '../procurement/PurchaseReturnModule';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const settlementLabel = (v) => (SETTLEMENT_OPTIONS.find((o) => o.value === v) || {}).label || v;
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -47,7 +49,7 @@ function printDebitNote(dn) {
 
 function IssueModal({ token, rtp, onClose, onDone }) {
   const [disc, setDisc] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayWIB());
   const [notes, setNotes] = useState('');
   const [locs, setLocs] = useState([]);
   const [locId, setLocId] = useState('');
@@ -83,7 +85,7 @@ function IssueModal({ token, rtp, onClose, onDone }) {
         {isDisc && (
           <div>
             <label className="text-xs text-muted-foreground block mb-1">Harga setelah diskon (per satuan) *</label>
-            <GlassInput type="number" min="0" step="any" value={disc} onChange={(e) => setDisc(e.target.value)} data-testid="dn-disc-price" />
+            <MoneyInput decimals={2} glass value={disc} onChange={(e) => setDisc(e.target.value)} data-testid="dn-disc-price" />
           </div>
         )}
         {needLoc && (
@@ -117,7 +119,7 @@ function IssueModal({ token, rtp, onClose, onDone }) {
 function RefundModal({ token, rtp, onClose, onDone }) {
   const [accs, setAccs] = useState([]);
   const [accId, setAccId] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayWIB());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   useEffect(() => { apiGet(token, '/api/rahaza/cash-accounts').then((r) => setAccs(Array.isArray(r) ? r : [])).catch(() => {}); }, [token]);

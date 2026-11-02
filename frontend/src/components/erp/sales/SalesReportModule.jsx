@@ -5,16 +5,15 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { PageHeader, StatTile } from '../moduleAtoms';
 import { apiGet, apiFetch } from '../../../lib/api';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 })}`;
 const GROUPS = [['customer', 'Per Pelanggan'], ['sku', 'Per SKU'], ['day', 'Per Hari'], ['month', 'Per Bulan']];
-const firstOfMonth = () => new Date().toISOString().slice(0, 8) + '01';
-const today = () => new Date().toISOString().slice(0, 10);
 
 export default function SalesReportModule() {
   const [group, setGroup] = useState('customer');
-  const [from, setFrom] = useState(firstOfMonth());
-  const [to, setTo] = useState(today());
+  const [from, setFrom] = useState(() => monthStartWIB());
+  const [to, setTo] = useState(() => todayWIB());
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const qs = `group_by=${group}&date_from=${from}&date_to=${to}`;

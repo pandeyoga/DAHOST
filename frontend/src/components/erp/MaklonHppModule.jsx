@@ -3,6 +3,7 @@ import { Target, Plus, Trash2, RefreshCw, Calculator } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -214,7 +215,7 @@ export default function MaklonHppModule({ token }) {
                     </div>
                     <div>
                       {i === 0 && <Label className="text-[10px]">Harga Satuan</Label>}
-                      <Input type="number" value={c.unit_cost} onChange={e => updateComp(i, 'unit_cost', e.target.value)} />
+                      <MoneyInput decimals={2} value={c.unit_cost} onChange={e => updateComp(i, 'unit_cost', e.target.value)} />
                     </div>
                     <div className="text-right font-semibold">
                       {i === 0 && <Label className="text-[10px]">Subtotal</Label>}

@@ -20,10 +20,11 @@ Admin Utility:
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
 from auth import require_auth, serialize_doc
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
 import logging
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-self"])
@@ -85,9 +86,9 @@ async def self_attendance(
 
     emp_id = emp["id"]
     if not from_:
-        from_ = (date.today() - timedelta(days=30)).isoformat()
+        from_ = (today_wib() - timedelta(days=30)).isoformat()
     if not to:
-        to = date.today().isoformat()
+        to = today_wib().isoformat()
 
     q = {
         "employee_id": emp_id,

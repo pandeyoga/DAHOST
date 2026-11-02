@@ -10,6 +10,7 @@ Endpoints:
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, check_role
+from utils.waktu import today_wib
 
 # P3 (kebijakan absen): endpoint clock-in/out LANGSUNG (source="operator", tanpa
 # verifikasi selfie/biometrik) hanya untuk HR/Supervisor/Admin sebagai FALLBACK
@@ -17,7 +18,7 @@ from auth import require_auth, serialize_doc, check_role
 # /attendance/webauthn/* (dipakai AbsenPage). Ini menutup celah self-service tanpa verifikasi.
 OPERATOR_ATTENDANCE_ROLES = ['admin', 'superadmin', 'hr', 'hr_manager', 'supervisor_produksi']
 import uuid
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-hr"])
@@ -25,7 +26,7 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-hr"])
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
-def _today_iso(): return date.today().isoformat()
+def _today_iso(): return today_wib().isoformat()
 def _parse_iso(s):
     try:
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -488,7 +489,7 @@ async def hr_dashboard(request: Request):
     await require_auth(request)
     db = get_db()
     today = _today_iso()
-    from_7d = (date.today() - timedelta(days=6)).isoformat()
+    from_7d = (today_wib() - timedelta(days=6)).isoformat()
 
     # ── Total active employees
     total_employees = await db.rahaza_employees.count_documents({"active": True})

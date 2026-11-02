@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -29,7 +30,8 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
-import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB } from '../../lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -172,19 +174,19 @@ function TravelForm({ token, onClose, onSaved }) {
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1">
           <label className="text-sm font-medium">Estimasi Transport (Rp)</label>
-          <Input type="number" placeholder="0" value={form.transport_estimate} onChange={e => set('transport_estimate', e.target.value)} />
+          <MoneyInput placeholder="0" value={form.transport_estimate} onChange={e => set('transport_estimate', e.target.value)} />
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Estimasi Akomodasi (Rp)</label>
-          <Input type="number" placeholder="0" value={form.accommodation_estimate} onChange={e => set('accommodation_estimate', e.target.value)} />
+          <MoneyInput placeholder="0" value={form.accommodation_estimate} onChange={e => set('accommodation_estimate', e.target.value)} />
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Biaya Lain (Rp)</label>
-          <Input type="number" placeholder="0" value={form.other_estimate} onChange={e => set('other_estimate', e.target.value)} />
+          <MoneyInput placeholder="0" value={form.other_estimate} onChange={e => set('other_estimate', e.target.value)} />
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Uang Muka Diminta (Rp)</label>
-          <Input type="number" placeholder="0" value={form.cash_advance_requested} onChange={e => set('cash_advance_requested', e.target.value)} />
+          <MoneyInput placeholder="0" value={form.cash_advance_requested} onChange={e => set('cash_advance_requested', e.target.value)} />
         </div>
       </div>
 
@@ -293,8 +295,7 @@ function TravelDetail({ req, token, onClose, onRefresh, role }) {
             <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="text-sm h-8" />
           </div>
           <div className="flex gap-2">
-            <Input
-              type="number"
+            <MoneyInput
               placeholder={`Jumlah (disetujui: ${fmt(req.cash_advance_approved)})`}
               value={advanceAmount}
               onChange={e => setAdvanceAmount(e.target.value)}

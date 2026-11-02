@@ -29,6 +29,7 @@ from services.mgmt_analytics import (
 )
 from utils.notif_unified import notif_insert
 from utils.data_quality import SkipTracker
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ async def scan_management_alerts(db, *, warn_days: int = None,
                else warn_days if warn_days is not None else cfg["po_warn_days"])
     ar_days = (ar_warn_days if ar_warn_days is not None
                else warn_days if warn_days is not None else cfg["ar_warn_days"])
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
     day = today.isoformat()
     user_ids = await _management_user_ids(db)
 
@@ -404,4 +405,4 @@ async def job_management_alerts():
 
 # Alat bantu uji manual (tidak dipakai produksi)
 def _tomorrow_iso() -> str:
-    return (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    return (today_wib() + timedelta(days=1)).isoformat()

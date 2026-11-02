@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -209,7 +210,7 @@ export default function PredictiveMaintenanceModule({ token }) {
                   </div>
                   <div>
                     <Label>Biaya (Rp)</Label>
-                    <Input type="number" value={logForm.cost} onChange={(e) => setLogForm({ ...logForm, cost: e.target.value })} />
+                    <MoneyInput value={logForm.cost} onChange={(e) => setLogForm({ ...logForm, cost: e.target.value })} />
                   </div>
                 </div>
                 <div>

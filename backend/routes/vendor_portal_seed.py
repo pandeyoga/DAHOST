@@ -11,10 +11,11 @@ Usage:
 """
 import logging
 import asyncio
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from database import get_db
 from auth import hash_password
 import uuid
+from utils.waktu import today_wib
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
@@ -146,7 +147,7 @@ async def seed_vendor_demo():
                     'qty_done': 40,
                     'qty_reject': 2,
                     'qty_pass': 38,
-                    'report_date': date.today().isoformat(),
+                    'report_date': today_wib().isoformat(),
                     'process_step': 'FINISHING',
                     'notes': 'Progress hari ini',
                     'submitted_by': vendor_user['id'] if not existing_user else existing_user['id'],

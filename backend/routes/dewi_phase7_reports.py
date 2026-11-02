@@ -46,13 +46,14 @@ from services.mgmt_analytics import (
     MAX_DOCS, as_iso_date, buyer_dispatch_map, domain_label, domain_scope,
     f as _f, i as _i, norm_domain,
 )
+from utils.waktu import today_wib, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dewi/reports", tags=["dewi-reports"])
 
 
 def _today_str() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _date_range(start: date, end: date):
@@ -172,8 +173,8 @@ async def daily_report(
     # 4. Penyesuaian stok hari itu — pembaca kanonik (buku besar stok)
     adj_count = 0
     try:
-        start = datetime.fromisoformat(f"{target}T00:00:00")
-        end = start + timedelta(days=1)
+        # batas hari WIB dalam UTC (No.54a) — dulu 00:00–24:00 UTC (= 07:00 WIB s/d 07:00 WIB besok)
+        start, end = wib_day_bounds_utc(date.fromisoformat(target))
         adj_count = await db.rahaza_stock_ledger.count_documents(
             {"op": "adjust", "created_at": {"$gte": start, "$lt": end}})
     except Exception as e:  # noqa: BLE001
@@ -568,7 +569,7 @@ async def production_trend(
 ):
     """Tren produksi N hari terakhir (untuk chart) — dari SSOT."""
     db = get_db()
-    end_date = date.today()
+    end_date = today_wib()
     start_date = end_date - timedelta(days=days - 1)
     domain = _dom(request)
     sc = await domain_scope(db, domain)

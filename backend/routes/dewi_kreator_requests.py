@@ -19,6 +19,7 @@ import uuid
 import re
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/kreator-requests", tags=["Marketing-Kreator-Requests"])
 
@@ -144,7 +145,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
     if not (body.get('product_concept') or '').strip():
         raise HTTPException(400, 'Konsep produk wajib diisi')
 
-    today = now_utc().strftime('%y%m%d')
+    today = fmt_wib('%y%m%d')
     # SESI #27 — SATU PINTU kebijakan penomoran (dulu: `body.get('request_code') or …`
     # menerima nomor ketikan tanpa pemeriksaan pola/kembar).
     from core.doc_number_policy import issue_number

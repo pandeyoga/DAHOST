@@ -27,6 +27,7 @@ from routes.production_rbac import deny_klien
 from routes.rahaza_bom import _is_kglike
 from core import bom_uom  # 2026-08-02: konversi satuan baris BOM → satuan dasar
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["production-internal-adapter"])
@@ -384,7 +385,7 @@ async def insert_wip_mirror(db, job, job_item, qty, ctx, user, progress_id=None)
     emp, proc = ctx['employee'], ctx['process']
     ev = {
         'id': new_id(),
-        'event_date': now().date().isoformat(),
+        'event_date': wib_date_str(),
         'timestamp': now(),
         'line_id': None, 'line_assignment_id': None,
         'process_id': proc['id'], 'process_code': proc.get('code'),

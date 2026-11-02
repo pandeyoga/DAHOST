@@ -27,6 +27,7 @@ from utils.notif_unified import (
     reshape_as_dewi,
 )
 import logging
+from utils.waktu import today_wib
 
 # ── RBAC outbox klien (2026-08-07) ───────────────────────────────────────────
 # Outbox berisi seluruh pesan WhatsApp/email ke KLIEN dan bisa dipakai mengirim
@@ -585,9 +586,8 @@ async def delete_notif(notif_id: str, user: dict = Depends(require_auth)):
 async def scan_overdue(user: dict = Depends(require_auth)):
     """Scan invoices overdue dan queue notifikasi."""
     _require_outbox_access(user, 'menjalankan pemindaian invoice jatuh tempo', manage=True)
-    from datetime import date
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     invoices = await db.dewi_maklon_invoices.find({
         'status': {'$in': ['issued', 'partial_paid', 'overdue']},
         'balance_amount': {'$gt': 0},

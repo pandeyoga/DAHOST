@@ -35,6 +35,7 @@ from core import stock_service
 from core import fulfillment_status as fstat
 from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_posting import post_cogs_shipment
+from utils.waktu import wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/fulfillment', tags=['fulfillment'])
@@ -119,9 +120,13 @@ async def fulfillment_summary(user: dict = Depends(require_auth)):
     allocated = await db.marketing_orders.count_documents({"fulfillment_status": "allocated"})
     picking = await db.marketing_orders.count_documents({"fulfillment_status": "picking"})
     packed = await db.marketing_orders.count_documents({"fulfillment_status": "packed_ready"})
+    # Awal hari WIB dalam UTC (No.54a). `dispatched_at` disimpan sebagai datetime BSON (`_now()`);
+    # dulu dibandingkan dengan STRING ⇒ beda tipe BSON tidak pernah cocok ⇒ selalu 0.
+    # Bentuk string tetap diterima untuk dokumen lama.
+    _day0 = wib_day_bounds_utc()[0]
     dispatched_today = await db.marketing_orders.count_documents({
         "fulfillment_status": "dispatched",
-        "dispatched_at": {"$gte": _now().date().isoformat()}
+        "$or": [{"dispatched_at": {"$gte": _day0}}, {"dispatched_at": {"$gte": _day0.isoformat()}}],
     })
 
     # Kesiapan tautan pada seluruh antrean (bukan hanya halaman yang tampil —

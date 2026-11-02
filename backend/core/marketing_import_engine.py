@@ -53,6 +53,7 @@ from datetime import datetime, timezone, date
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.marketing_import_schema import Field, SourceType
+from utils.waktu import now_wib
 
 logger = logging.getLogger(__name__)
 
@@ -383,7 +384,7 @@ def parse_date(raw: Any) -> Tuple[Optional[datetime], Optional[str]]:
     s = s.replace("Z", "").strip()
     for fmt in _DATE_FORMATS:
         try:
-            d = datetime.strptime(s[:len(datetime.now().strftime(fmt)) + 6], fmt)
+            d = datetime.strptime(s[:len(now_wib().strftime(fmt)) + 6], fmt)
             return d.replace(tzinfo=timezone.utc), None
         except Exception:
             pass

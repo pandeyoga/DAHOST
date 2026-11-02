@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
@@ -455,17 +455,17 @@ export default function AIUsageMonitorModule({ token }) {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Harian</label>
-                    <Input type="number" min="0" step="0.5" value={form.daily_budget_usd}
+                    <MoneyInput decimals={2} value={form.daily_budget_usd}
                       onChange={(e) => setField('daily_budget_usd', e.target.value)} data-testid="ai-set-daily" />
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Bulanan</label>
-                    <Input type="number" min="0" step="5" value={form.monthly_budget_usd}
+                    <MoneyInput decimals={2} value={form.monthly_budget_usd}
                       onChange={(e) => setField('monthly_budget_usd', e.target.value)} data-testid="ai-set-monthly" />
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Per Fitur / Hari</label>
-                    <Input type="number" min="0" step="0.5" value={form.per_feature_daily_usd}
+                    <MoneyInput decimals={2} value={form.per_feature_daily_usd}
                       onChange={(e) => setField('per_feature_daily_usd', e.target.value)} data-testid="ai-set-perfeature" />
                   </div>
                 </div>

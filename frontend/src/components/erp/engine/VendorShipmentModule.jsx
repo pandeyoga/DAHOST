@@ -14,6 +14,7 @@ import MaterialRequestTracker from './MaterialRequestTracker';
 import { useSortableTable, SortableHeader } from './useSortableTable';
 import { BizBadge, BizFilter, matchBiz } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
 
 const TABS = [
@@ -87,7 +88,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   const [matLoading, setMatLoading] = useState(false);
   const [form, setForm] = useState({
     shipment_number: '', delivery_note_number: '', vendor_id: '',
-    shipment_date: new Date().toISOString().split('T')[0], notes: '', items: []
+    shipment_date: todayWIB(), notes: '', items: []
   });
   // 2026-09-23 — nomor shipment mengikuti kebijakan Otomatis/Manual owner;
   // dibaca ulang tiap modal dibuka supaya pratinjau nomor berikutnya selalu segar.
@@ -445,7 +446,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
           {showBizFilter && <BizFilter value={bizFilter} onChange={setBizFilter} counts={bizCounts} />}
           <ImportExportPanel importType={null} exportType="vendor-shipments" />
           {canCreate && (
-            <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setPoAccessories([]); setShowModal(true); }}
+            <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setPoAccessories([]); setShowModal(true); }}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
               <Plus className="w-4 h-4" /> Buat Shipment Normal
             </button>

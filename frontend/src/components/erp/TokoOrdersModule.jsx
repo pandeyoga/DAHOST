@@ -4,6 +4,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -874,10 +875,8 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
                       </div>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Harga satuan (Rp)</Label>
-                        <Input
-                          type="number"
+                        <MoneyInput
                           className="w-32 h-8 mt-0.5"
-                          min={0}
                           value={item.price}
                           onChange={(e) => applyLine(idx, { price: Number(e.target.value) })}
                           data-testid={`order-line-price-${idx}`}
@@ -920,10 +919,8 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <Label className="text-xs">Total Pembayaran (Rp)</Label>
-                <Input
-                  type="number"
+                <MoneyInput
                   className="mt-1"
-                  min={0}
                   placeholder="otomatis"
                   value={orderForm.total_payment}
                   onChange={(e) => setOrderForm((f) => ({ ...f, total_payment: e.target.value }))}
@@ -935,20 +932,16 @@ export default function TokoOrdersModule({ token, defaultTab = 'orders' }) {
               </div>
               <div>
                 <Label className="text-xs">Fee Platform (Rp)</Label>
-                <Input
-                  type="number"
+                <MoneyInput
                   className="mt-1"
-                  min={0}
                   value={orderForm.fee_amount}
                   onChange={(e) => setOrderForm((f) => ({ ...f, fee_amount: e.target.value }))}
                 />
               </div>
               <div>
                 <Label className="text-xs">Ongkir (Rp)</Label>
-                <Input
-                  type="number"
+                <MoneyInput
                   className="mt-1"
-                  min={0}
                   value={orderForm.shipping_cost}
                   onChange={(e) => setOrderForm((f) => ({ ...f, shipping_cost: e.target.value }))}
                 />

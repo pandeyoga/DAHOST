@@ -25,6 +25,7 @@ from core import stock_service
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import PRODUCTION_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/production/material-returns", tags=["production-material-returns"])
@@ -93,7 +94,7 @@ def _ok(data=None, message="", **kwargs):
 
 
 async def _build_ref(db) -> str:
-    prefix = f"PMR/{datetime.now(timezone.utc).strftime('%Y/%m/')}"
+    prefix = f"PMR/{fmt_wib('%Y/%m/')}"
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1)
     # 2026-11-02 (K10): layar "Retur Material" hidup lagi (koreksi Surat Jalan material yang bahannya
     # sudah keluar) → jenis dokumen ini kembali terdaftar di katalog penomoran

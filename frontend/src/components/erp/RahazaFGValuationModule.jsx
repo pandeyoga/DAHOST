@@ -5,14 +5,14 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
 import CronJobCard from './CronJobCard';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function RahazaFGValuationModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [asOf, setAsOf] = useState(todayISO());
+  const [asOf, setAsOf] = useState(todayWIB());
   const [backfill, setBackfill] = useState(null);
   const [busy, setBusy] = useState(false);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };

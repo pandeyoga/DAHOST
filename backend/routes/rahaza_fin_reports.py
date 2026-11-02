@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from database import get_db
 from auth import require_auth, serialize_doc
-from datetime import date
 from typing import Optional
 import io
 
@@ -16,6 +15,7 @@ from core.fin_statements import (
     compute_trial_balance, compute_worksheet, compute_profit_loss_monthly, compute_balance_sheet_monthly,
     compute_cash_flow_by_account, xlsx_profit_loss_monthly, xlsx_balance_sheet_monthly, xlsx_worksheet, xlsx_cash_flow,
 )
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/finance/reports", tags=["rahaza-fin-reports"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # FIN-04: laporan keuangan hanya portal keuangan
@@ -36,7 +36,7 @@ async def trial_balance(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not to_date:
         to_date = as_of or today
     return await compute_trial_balance(db, from_date, to_date, show_zero)
@@ -51,7 +51,7 @@ async def worksheet(
 ):
     """Neraca lajur: saldo awal · mutasi · saldo akhir · kolom Laba Rugi · kolom Neraca + baris laba bersih penyeimbang."""
     await require_auth(request)
-    return await compute_worksheet(get_db(), from_date, to_date or date.today().isoformat(), show_zero)
+    return await compute_worksheet(get_db(), from_date, to_date or today_wib().isoformat(), show_zero)
 
 
 @router.get("/profit-loss-monthly")
@@ -80,7 +80,7 @@ async def export_xlsx(
     """Ekspor Excel memakai perhitungan yang SAMA dengan layar (core.fin_statements)."""
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if report in ("profit-loss-monthly", "balance-sheet-monthly"):
         y = year or int(today[:4])
         if report == "profit-loss-monthly":
@@ -108,7 +108,7 @@ async def general_ledger(
     """Return all lines for a specific account within a date range, with running balance."""
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not to_date:
         to_date = today
     acc = await db.rahaza_coa_accounts.find_one({"code": account_code}, {"_id": 0})
@@ -207,7 +207,7 @@ async def profit_loss(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not to_date:
         to_date = today
     if not from_date:
@@ -320,7 +320,7 @@ async def balance_sheet(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not as_of:
         as_of = today
 
@@ -495,7 +495,7 @@ async def cash_flow(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     return await _cash_flow_data(db, from_date or f"{today[:4]}-01-01", to_date or today)
 
 
@@ -627,7 +627,7 @@ async def fg_inventory_valuation(request: Request, as_of: Optional[str] = Query(
     berjurnal (WIP→FG belum diposting) dan stok tanpa biaya (WAC 0 / penerimaan Rp 0)."""
     await require_auth(request)
     db = get_db()
-    return await compute_fg_valuation(db, as_of or date.today().isoformat())
+    return await compute_fg_valuation(db, as_of or today_wib().isoformat())
 
 
 def fg_valuation_status(*, difference: float, unexplained: float, uncosted_qty: float) -> dict:

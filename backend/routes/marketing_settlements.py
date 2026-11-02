@@ -74,6 +74,7 @@ from core import platform_balance as _bal
 from core import settlement_import as _simport
 from database import get_db
 from routes.shared import require_portal
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/settlements", tags=["marketing-settlements"])
@@ -503,7 +504,7 @@ async def summary_by_account(request: Request, month: str = Query(default="")):
     months = [m["_id"] for m in months_raw if m.get("_id")]
     if month and not re.fullmatch(r"\d{4}-\d{2}", month):
         raise HTTPException(400, "Format bulan harus YYYY-MM")
-    month = month or (months[0] if months else date.today().strftime("%Y-%m"))
+    month = month or (months[0] if months else today_wib().strftime("%Y-%m"))
 
     rows = await db[COLL].aggregate([
         {"$match": {**q, "settlement_date": {"$regex": f"^{month}"}}},

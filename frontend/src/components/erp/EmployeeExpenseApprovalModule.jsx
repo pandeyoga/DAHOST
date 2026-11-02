@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
@@ -26,7 +27,8 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB } from '../../lib/waktu';
 
 /* F13 (sesi #11) — inbox UANG yang tidak bisa disempitkan maupun dibawa keluar.
    Layar ini dulu hanya punya 3 tab jenis: TIDAK ADA kotak pencarian sama sekali,
@@ -187,8 +189,7 @@ function ActionModal({ item, token, onClose, onRefresh }) {
         <div className="rounded-lg bg-teal-50 border border-teal-200 p-3 space-y-2">
           <p className="text-sm font-medium text-teal-800">Bayar Uang Muka Perjalanan Dinas</p>
           <div className="flex gap-2">
-            <Input
-              type="number"
+            <MoneyInput
               placeholder={`Jumlah (estimasi: ${fmt(item.amount)})`}
               value={advanceAmount}
               onChange={e => setAdvanceAmount(e.target.value)}

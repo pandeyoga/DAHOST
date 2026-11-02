@@ -22,7 +22,7 @@ Endpoints:
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from database import get_db
 from auth import serialize_doc, log_activity
 from utils.counters import gen_prefixed_number
@@ -30,6 +30,7 @@ from routes.rahaza_posting_profiles import get_mapping
 from core import purchase_returns as pr  # 2026-11-02 (K11): qty susulan & nota debit dibaca tagihan
 import uuid
 import logging
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/rahaza', tags=['rahaza-ap-from-gr'])
@@ -74,7 +75,7 @@ FINANCE_LEGACY_ROLES = (
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
-def _today_iso(): return date.today().isoformat()
+def _today_iso(): return today_wib().isoformat()
 
 
 async def _require_finance_view(request: Request):
@@ -109,7 +110,7 @@ async def _require_finance(request: Request):
 async def _gen_ap_number(db) -> str:
     """Nomor invoice hutang AP-YYMM-NNNN — race-safe & formatnya bisa diatur owner
     (kunci `rahaza_ap_invoices.invoice_number`)."""
-    yymm = date.today().strftime('%y%m')
+    yymm = today_wib().strftime('%y%m')
     return await gen_prefixed_number(db, 'rahaza_ap_invoices', 'invoice_number',
                                      f'AP-{yymm}-', 4)
 

@@ -68,6 +68,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, thisMonthWIB, wibDateParts } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -172,7 +173,7 @@ async function exportToPDF(elementRef, filename) {
 
 // ─── 1. DAILY REPORT ───────────────────────────────────────────────────────────
 function DailyReportTab({ headers, token }) {
-  const [reportDate, setReportDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reportDate, setReportDate] = useState(todayWIB());
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const printRef = useRef(null);
@@ -376,9 +377,9 @@ function DailyReportTab({ headers, token }) {
 
 // ─── 2. MONTHLY REPORT ─────────────────────────────────────────────────────────
 function MonthlyReportTab({ headers }) {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  const now = wibDateParts(); // tahun & bulan berjalan menurut WIB
+  const [year, setYear] = useState(now.y);
+  const [month, setMonth] = useState(now.m);
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const printRef = useRef(null);
@@ -425,7 +426,7 @@ function MonthlyReportTab({ headers }) {
             data-testid="monthly-year-input"
             type="number"
             value={year}
-            onChange={e => setYear(parseInt(e.target.value) || now.getFullYear())}
+            onChange={e => setYear(parseInt(e.target.value) || now.y)}
             className="bg-foreground/5 border-foreground/10 w-24"
           />
         </div>
@@ -803,8 +804,7 @@ function PerPOReportTab({ headers }) {
 
 // ─── 4. ACTUAL VS TARGET ───────────────────────────────────────────────────────
 function ActualVsTargetTab({ headers }) {
-  const now = new Date();
-  const [period, setPeriod] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+  const [period, setPeriod] = useState(thisMonthWIB());
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
 

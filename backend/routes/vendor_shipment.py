@@ -20,6 +20,7 @@ from core.enrichment import enrich_with_product_photos
 from core.cmt_override import (apply_scope, effective_vendor_id, resolve_override,
                                stamp as ov_stamp)
 import logging
+from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 
@@ -890,7 +891,7 @@ async def create_inspection(request: Request):
         try:
             from utils.counters import gen_prefixed_number as _gen
             code = await _gen(db, 'dewi_cmt_component_requests', 'request_code',
-                              f"REQ-KRG-{now().strftime('%y%m%d')}-", 3)
+                              f"REQ-KRG-{fmt_wib('%y%m%d')}-", 3)
             req_items = [{
                 'component_type': m.get('product_name') or m.get('sku', '') or 'material',
                 'size': m.get('size', ''), 'color': m.get('color', ''),

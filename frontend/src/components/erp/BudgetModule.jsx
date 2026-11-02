@@ -11,6 +11,8 @@ import Modal from './Modal';
 import PaginationBar from './PaginationBar';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { thisYearWIB } from '@/lib/waktu';
 
 const STATUS_MAP = {
   draft:    { label: 'Draft',    color: 'bg-secondary text-muted-foreground' },
@@ -38,7 +40,7 @@ export default function BudgetModule({ token }) {
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
-  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [filterYear, setFilterYear] = useState(thisYearWIB());
   const [filterStatus, setFilterStatus] = useState('');
 
   // Modals
@@ -50,7 +52,7 @@ export default function BudgetModule({ token }) {
   const [coa, setCoa] = useState([]);
 
   // Forms
-  const [budgetForm, setBudgetForm] = useState({ name: '', year: new Date().getFullYear(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
+  const [budgetForm, setBudgetForm] = useState({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
   const [itemForm, setItemForm] = useState({ account_id: '', month: '', amount_budgeted: '', notes: '' });
 
   const fetchBudgets = useCallback(async (p = 1) => {
@@ -112,7 +114,7 @@ export default function BudgetModule({ token }) {
       toast.success('Budget berhasil dibuat');
       setModalBudget(false);
       fetchBudgets(1);
-      setBudgetForm({ name: '', year: new Date().getFullYear(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
+      setBudgetForm({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
     } else {
       const e = await r.json();
       toast.error(e.detail || 'Gagal membuat budget');
@@ -339,7 +341,7 @@ export default function BudgetModule({ token }) {
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Jumlah Budget (Rp) *</label>
-                <GlassInput type="number" placeholder="0" value={itemForm.amount_budgeted} onChange={e => setItemForm(f => ({...f, amount_budgeted: e.target.value}))} />
+                <MoneyInput glass placeholder="0" value={itemForm.amount_budgeted} onChange={e => setItemForm(f => ({...f, amount_budgeted: e.target.value}))} />
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Catatan</label>

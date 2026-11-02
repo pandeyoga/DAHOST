@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Loader2, Save, Trash2, CheckCircle, AlertCircle, Send, Zap, Link2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { toWIBLocalInput, fromWIBLocalInput } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -71,7 +73,8 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
         description: data.description || '',
         priority: data.priority || 'medium',
         status: data.status || 'to_do',
-        due_date: data.due_date ? new Date(data.due_date).toISOString().slice(0, 16) : '',
+        // Instan → nilai datetime-local dalam jam WIB (dulu jam UTC: tiap simpan mundur 7 jam).
+        due_date: toWIBLocalInput(data.due_date),
         completion_notes: data.completion_notes || '',
         checklist: data.checklist || [],
       });
@@ -139,7 +142,7 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
         description: form.description,
         priority: form.priority,
         status: form.status,
-        due_date: form.due_date ? new Date(form.due_date).toISOString() : null,
+        due_date: fromWIBLocalInput(form.due_date),
         completion_notes: form.completion_notes,
         checklist: form.checklist,
       };
@@ -252,9 +255,8 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <Label className="text-xs">Revenue (Rp) *</Label>
-                        <GlassInput
-                          type="number"
-                          min={0}
+                        <MoneyInput
+                          className="h-10"
                           value={actionData.revenue ?? ''}
                           onChange={e => setActionData(d => ({ ...d, revenue: parseFloat(e.target.value) || 0 }))}
                           placeholder="0"

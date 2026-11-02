@@ -56,6 +56,7 @@ from core import stock_service
 from core import scan_resolver
 from core import uom as _uom
 from core import bom_uom as _bom_uom
+from utils.waktu import fmt_wib, wib_date_str
 
 log = logging.getLogger(__name__)
 
@@ -83,9 +84,6 @@ CONTRA_ROLES = {VARIANCE_EVENT: {"selisih": "adjustment_expense", "rusak": "debi
 # Gabungan role penyetuju lama opname3 + opname aksesoris (selama izin role belum diatur owner).
 APPROVE_ROLES = ["admin", "admin_gudang", "supervisor", "supervisor_produksi", "manajer", "manager",
                  "warehouse_manager", "superadmin", "owner"]
-
-WIB = timezone(timedelta(hours=7))
-
 
 def _uid() -> str:
     return str(uuid.uuid4())
@@ -115,9 +113,8 @@ def aware(dt) -> Optional[datetime]:
 
 
 def wib_date(dt) -> str:
-    """Tanggal kalender WIB 'YYYY-MM-DD' (kontrak `wh_scan_out_sheets.date`)."""
-    d = aware(dt) or _now()
-    return d.astimezone(WIB).strftime("%Y-%m-%d")
+    """Tanggal kalender WIB 'YYYY-MM-DD' (kontrak `wh_scan_out_sheets.date`) — delegasi ke SSOT utils.waktu."""
+    return wib_date_str(aware(dt) or _now())
 
 
 def effective_at(row: dict) -> Optional[datetime]:
@@ -510,7 +507,7 @@ async def create_session(db, user: dict, *, location_id: str, sub_type: str = ""
                 continue
             lines.append(await _new_line(db, mat, level=level, bin_id=p["id"], bin_label=_pos_label(p),
                                          snapshot_qty=float(p.get("qty") or 0)))
-    session_no = await gen_prefixed_number(db, SESS, "session_no", f"OPN-{_now().strftime('%Y%m')}-", 4)
+    session_no = await gen_prefixed_number(db, SESS, "session_no", f"OPN-{fmt_wib('%Y%m', _now())}-", 4)
     scope_label = f"{loc.get('code')} — {loc.get('name')}" + (f" · {sub['label']}" if sub else "")
     if kinds:
         scope_label += " · " + ", ".join(KIND_LABELS[k] for k in kinds)

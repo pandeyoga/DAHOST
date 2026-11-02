@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -80,6 +81,10 @@ export default function WMSFabricRollsModule({ token }) {
   }, [view]);
   const [viewDialog, setViewDialog] = useState(null); // {roll, movements}
   const [createDialog, setCreateDialog] = useState(false);
+  // Unit cost dialog Buat Roll = MoneyInput terkendali (teks tampilannya bertitik ribuan,
+  // jadi tidak dibaca lewat FormData). Kembali ke 0 setiap dialog dibuka.
+  const [createUnitCost, setCreateUnitCost] = useState('0');
+  useEffect(() => { if (createDialog) setCreateUnitCost('0'); }, [createDialog]);
   const [issueDialog, setIssueDialog] = useState(null); // {roll}
   const [putawayDialog, setPutawayDialog] = useState(null); // {roll}
   const [aiAnalysisDialog, setAiAnalysisDialog] = useState(null); // AI insights
@@ -227,7 +232,7 @@ export default function WMSFabricRollsModule({ token }) {
       length_m: parseFloat(fd.get('length_m')) || 0,
       weight_kg: parseFloat(fd.get('weight_kg')) || 0,
       po_no: fd.get('po_no') || '',
-      unit_cost: parseFloat(fd.get('unit_cost')) || 0,
+      unit_cost: parseFloat(createUnitCost) || 0,
       notes: fd.get('notes') || '',
     };
     try {
@@ -846,7 +851,7 @@ export default function WMSFabricRollsModule({ token }) {
               </div>
               <div>
                 <Label>Unit Cost</Label>
-                <Input name="unit_cost" type="number" step="0.01" defaultValue="0" className="bg-foreground/5 border-foreground/10" data-testid="input-unit-cost" />
+                <MoneyInput decimals={2} value={createUnitCost} onChange={(e) => setCreateUnitCost(e.target.value)} className="bg-foreground/5 border-foreground/10" data-testid="input-unit-cost" />
               </div>
               <div className="col-span-2">
                 <Label>Notes</Label>

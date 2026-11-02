@@ -4,6 +4,7 @@ import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 import { toast } from 'sonner';
 
 const fmt = formatRupiah;
@@ -177,7 +178,7 @@ function CAEditor({ value, onClose, onSave, headers }) {
             <div><label className="text-xs uppercase text-muted-foreground">Nama Bank</label><GlassInput value={s.bank_name || ''} onChange={e => upd('bank_name', e.target.value)} /></div>
             <div><label className="text-xs uppercase text-muted-foreground">Nomor Rekening</label><GlassInput value={s.account_number || ''} onChange={e => upd('account_number', e.target.value)} /></div>
           </>}
-          {!s.id && <div><label className="text-xs uppercase text-muted-foreground">Saldo Awal</label><GlassInput type="number" min={0} value={s.opening_balance || 0} onChange={e => upd('opening_balance', Number(e.target.value))} /></div>}
+          {!s.id && <div><label className="text-xs uppercase text-muted-foreground">Saldo Awal</label><MoneyInput glass value={s.opening_balance || 0} onChange={e => upd('opening_balance', Number(e.target.value))} /></div>}
         </div>
         <div className="flex gap-2 mt-6 justify-end"><Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button><Button onClick={() => onSave(s)} data-testid="ca-save">Simpan</Button></div>
       </GlassCard>

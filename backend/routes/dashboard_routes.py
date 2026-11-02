@@ -11,6 +11,7 @@ from core import product_master as pm  # T1: SATU definisi "model masih hidup"
 import logging
 from datetime import datetime, timezone, timedelta, date
 import re
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +83,7 @@ async def get_dashboard(request: Request):
     await require_auth(request)
     db = get_db()
     n = now()
-    today = date.today()
+    today = today_wib()
 
     # ── Rahaza orders (primary) ──
     total_orders = await db.rahaza_orders.count_documents({})
@@ -124,7 +125,6 @@ async def get_dashboard(request: Request):
     # Revenue now reads exclusively from rahaza_ar_invoices (SSOT).
     # See FORENSIC_04 Cluster 5 + FORENSIC_12 GAP-01.
     # 2026-11-02 (audit No.50): per tanggal faktur & hari WIB (dulu created_at, batas UTC).
-    from utils.waktu import today_wib
     _rev = revenue_windows(ar_invoices, today_wib())
     revenue_today, revenue_mtd, revenue_ytd = _rev['today'], _rev['mtd'], _rev['ytd']
 
@@ -199,7 +199,7 @@ async def get_dashboard(request: Request):
     ).sort('due_date', 1).limit(5).to_list(500)
     near_deadline_orders = await db.rahaza_orders.find(
         {'status': {'$in': ['confirmed', 'in_production']},
-         'due_date': {'$gte': today_iso, '$lt': (date.today() + timedelta(days=3)).isoformat()}},
+         'due_date': {'$gte': today_iso, '$lt': (today_wib() + timedelta(days=3)).isoformat()}},
         {'_id': 0},
     ).sort('due_date', 1).limit(5).to_list(500)
     unpaid_ars = await db.rahaza_ar_invoices.find(

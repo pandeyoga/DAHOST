@@ -22,6 +22,7 @@ import uuid
 import logging
 from datetime import datetime, timezone, date
 from typing import Optional
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ AP_STATUS = ["draft", "sent", "partial_paid", "paid", "overdue", "cancelled"]
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
-def _today_iso(): return date.today().isoformat()
+def _today_iso(): return today_wib().isoformat()
 
 
 def _to_amount(v):
@@ -184,7 +185,7 @@ async def _gen_number(db, coll, prefix, requested: str = ""):
     if key:
         from core.doc_number_policy import issue_number
         return await issue_number(db, key, requested=(requested or "").strip())
-    today = date.today().strftime("%Y%m%d")
+    today = today_wib().strftime("%Y%m%d")
     p = f"{prefix}-{today}-"
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1)
     field = "invoice_number" if "invoice" in coll else "number"
@@ -637,7 +638,7 @@ async def get_overdue_ar_report(request: Request, days: int = 30):
     await _require_fin(request)
     db = get_db()
     
-    today = date.today()
+    today = today_wib()
     
     # Get all sent/overdue/partial_paid invoices with balance > 0
     query = {
@@ -959,7 +960,7 @@ async def ap_aging(request: Request):
     """F2: AP Aging report (bucket 0, 1-30, 31-60, 61-90, 90+)."""
     await require_auth(request)
     db = get_db()
-    today = date.today()
+    today = today_wib()
     rows = await db.rahaza_ap_invoices.find(
         {"status": {"$in": ["sent", "partial_paid", "overdue"]}}, {"_id": 0}
     ).to_list(500)

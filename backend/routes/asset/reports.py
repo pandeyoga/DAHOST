@@ -2,7 +2,6 @@
 
 LITERAL paths under /reports/* — must register before /{asset_id} catch-all.
 """
-from datetime import date
 from typing import Optional
 from dateutil.relativedelta import relativedelta
 from fastapi import Request, HTTPException, Query, Response
@@ -13,6 +12,7 @@ from ._helpers import (
     router,
     _parse_date_yyyymmdd, _days_between, _intersect_days,
 )
+from utils.waktu import today_wib
 
 
 @router.get("/reports/utilization")
@@ -33,7 +33,7 @@ async def asset_utilization_report(
     await require_auth(request)
     db = get_db()
 
-    today = date.today()
+    today = today_wib()
     win_start = _parse_date_yyyymmdd(date_from, today - relativedelta(days=90))
     win_end = _parse_date_yyyymmdd(date_to, today)
     if win_end < win_start:

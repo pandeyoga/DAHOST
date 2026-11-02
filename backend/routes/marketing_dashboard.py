@@ -18,6 +18,7 @@ from auth import require_auth, serialize_doc, log_activity
 from core import marketing_account_scope as _scope
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, _recalculate_health_score
 from core import marketing_sales_shape as _shape
+from utils.waktu import today_wib, wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +46,9 @@ async def get_dashboard_overview(
     
     # Date range default: last 30 days
     if not date_to:
-        date_to = _now().strftime("%Y-%m-%d")
+        date_to = wib_date_str()
     if not date_from:
-        date_from = (_now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        date_from = (today_wib() - timedelta(days=30)).isoformat()
     
     # Bug #2 fix: Filter sales ONLY for active account_ids
     query = {
@@ -130,9 +131,9 @@ async def get_account_dashboard(
     
     # Date range default: last 30 days
     if not date_to:
-        date_to = _now().strftime("%Y-%m-%d")
+        date_to = wib_date_str()
     if not date_from:
-        date_from = (_now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        date_from = (today_wib() - timedelta(days=30)).isoformat()
     
     # Get sales data for this account
     query = {
@@ -266,9 +267,9 @@ async def get_comparison_dashboard(
     
     # Date range default: last 30 days
     if not date_to:
-        date_to = _now().strftime("%Y-%m-%d")
+        date_to = wib_date_str()
     if not date_from:
-        date_from = (_now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        date_from = (today_wib() - timedelta(days=30)).isoformat()
     
     comparison_data = []
 

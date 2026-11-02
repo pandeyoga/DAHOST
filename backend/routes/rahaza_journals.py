@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime, timezone, date
 from typing import Optional
 from core.roles import FINANCE_ROLES  # FIN-02
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/journals", tags=["rahaza-journals"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # RBAC: portal finance (BUG-RBAC-1)
@@ -133,7 +134,7 @@ async def create_journal(request: Request):
     user = await _require_fin(request)
     db = get_db()
     body = await request.json()
-    je_date_str = (body.get("date") or "").strip() or date.today().isoformat()
+    je_date_str = (body.get("date") or "").strip() or today_wib().isoformat()
     try:
         je_date = date.fromisoformat(je_date_str)
     except ValueError:

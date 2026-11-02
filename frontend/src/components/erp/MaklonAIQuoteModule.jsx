@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -300,7 +301,7 @@ export default function MaklonAIQuoteModule({ token }) {
                   </div>
                   <div>
                     <Label>Target Unit Price (Rp)</Label>
-                    <Input type="number" value={form.target_unit_price} onChange={(e) => setForm({ ...form, target_unit_price: e.target.value })} placeholder="opsional" />
+                    <MoneyInput value={form.target_unit_price} onChange={(e) => setForm({ ...form, target_unit_price: e.target.value })} placeholder="opsional" />
                   </div>
                   <div>
                     <Label>Margin (%)</Label>

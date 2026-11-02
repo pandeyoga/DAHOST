@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import OnwardCTA from './OnwardCTA';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 // F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
 import { tone } from '@/lib/tone';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
@@ -311,7 +312,7 @@ function CreateModal({ onClose, onSaved, token, defaultType }) {
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Nilai Order</label>
-              <input type="number" min="0" value={form.order_value} onChange={e => setForm({ ...form, order_value: +e.target.value })}
+              <MoneyInput unstyled value={form.order_value} onChange={e => setForm({ ...form, order_value: +e.target.value })}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="0" data-testid="ret-order-value" />
             </div>
           </div>

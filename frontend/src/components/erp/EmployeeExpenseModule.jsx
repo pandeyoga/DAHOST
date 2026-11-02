@@ -17,6 +17,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -30,7 +31,8 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
-import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB } from '../../lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -171,7 +173,7 @@ function ClaimForm({ token, onClose, onSaved }) {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-muted-foreground">Nominal (Rp)</label>
-                  <Input type="number" placeholder="0" value={it.amount} onChange={e => updateItem(i, 'amount', e.target.value)}
+                  <MoneyInput placeholder="0" value={it.amount} onChange={e => updateItem(i, 'amount', e.target.value)}
                     data-testid={`claim-item-${i}-amount`} className="h-8 text-sm" />
                 </div>
                 <div>

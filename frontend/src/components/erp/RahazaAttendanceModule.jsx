@@ -6,6 +6,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { todayWIB, addDaysISO } from '@/lib/waktu';
 
 const STATUS_OPTS = [
   { code: 'hadir', label: 'Hadir',  color: 'text-emerald-600 dark:text-emerald-400' },
@@ -16,14 +17,8 @@ const STATUS_OPTS = [
   { code: 'libur', label: 'Libur',  color: 'text-muted-foreground' },
 ];
 
-function addDays(dateStr, days) {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split('T')[0];
-}
-
 export default function RahazaAttendanceModule({ token }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayWIB();
   const [date, setDate] = useState(today);
   const [rows, setRows] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -80,7 +75,7 @@ export default function RahazaAttendanceModule({ token }) {
 
   /* Salin Kemarin — load yesterday's grid and pre-populate today's */
   const salinKemarin = async () => {
-    const yesterday = addDays(date, -1);
+    const yesterday = addDaysISO(date, -1);
     setCopying(true);
     try {
       const r = await fetch(`/api/rahaza/attendance/grid?date=${yesterday}`, { headers });
@@ -157,7 +152,7 @@ export default function RahazaAttendanceModule({ token }) {
             {/* ─── Navigasi Harian: ← tanggal → ─── */}
             <div className="flex items-center gap-1 border border-[var(--glass-border)] rounded-lg overflow-hidden bg-[var(--glass-bg)]">
               <button
-                onClick={() => changeDate(addDays(date, -1))}
+                onClick={() => changeDate(addDaysISO(date, -1))}
                 className="h-9 w-9 grid place-items-center text-foreground/60 hover:text-foreground hover:bg-[var(--glass-bg-hover)] transition-colors"
                 title="Hari sebelumnya"
                 data-testid="att-prev-day"
@@ -172,7 +167,7 @@ export default function RahazaAttendanceModule({ token }) {
                 data-testid="att-date"
               />
               <button
-                onClick={() => changeDate(addDays(date, 1))}
+                onClick={() => changeDate(addDaysISO(date, 1))}
                 disabled={date >= today}
                 className="h-9 w-9 grid place-items-center text-foreground/60 hover:text-foreground hover:bg-[var(--glass-bg-hover)] transition-colors disabled:opacity-40"
                 title="Hari berikutnya"

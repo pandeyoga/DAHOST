@@ -1,6 +1,7 @@
 
 import { useState, useRef } from 'react';
 import { Upload, Download, FileSpreadsheet, Loader2, CheckCircle, AlertCircle, X } from 'lucide-react';
+import { todayWIB } from '@/lib/waktu';
 
 export default function ImportExportPanel({ token, importType, exportType, exportFilters = {}, onImportSuccess }) {
   const [showImportModal, setShowImportModal] = useState(false);
@@ -76,7 +77,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `export_${exportType}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `export_${exportType}_${todayWIB()}.xlsx`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

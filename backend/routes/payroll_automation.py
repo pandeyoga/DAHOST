@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from auth import require_auth, serialize_doc
 from database import get_db
+from utils.waktu import today_wib, fmt_wib, wib_year
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/payroll/automation", tags=["payroll-automation"])
@@ -78,7 +79,7 @@ async def payroll_dashboard(request: Request):
     without_profile = max(0, total_employees - with_profile)
 
     # Payslips this month
-    this_month = _now().strftime("%Y-%m")
+    this_month = fmt_wib("%Y-%m")
     payslips_this_month = await db.rahaza_payslips.count_documents(
         {"period_from": {"$gte": f"{this_month}-01"}}
     )
@@ -87,7 +88,7 @@ async def payroll_dashboard(request: Request):
     schedule = await db.payroll_automation_config.find_one({}, {"_id": 0}) or {}
 
     # Total disbursed YTD (run yang sudah finalized ATAU paid = sudah dicairkan)
-    year_start = f"{_now().year}-01-01"
+    year_start = f"{wib_year()}-01-01"
     ytd_pipeline = [
         {"$match": {"status": {"$in": ["finalized", "paid"]},
                     "period_from": {"$gte": year_start}}},
@@ -210,7 +211,7 @@ async def trigger_payroll_run(body: TriggerBody, request: Request):
     now = _now()
     from utils.counters import gen_prefixed_number
     run_number = await gen_prefixed_number(
-        db, "rahaza_payroll_runs", "run_number", now.strftime("PAY-%Y%m-"), 3)
+        db, "rahaza_payroll_runs", "run_number", fmt_wib("PAY-%Y%m-", now), 3)
 
     # Create the run document
     run_doc = {
@@ -428,12 +429,12 @@ async def payroll_alerts(request: Request):
         })
 
     # Alert 3: current month not yet started
-    current_month = _now().strftime("%Y-%m")
+    current_month = fmt_wib("%Y-%m")
     this_month_run = await db.rahaza_payroll_runs.find_one(
         {"period.from": {"$gte": f"{current_month}-01"}},
         {"_id": 0, "id": 1},
     )
-    today = date.today()
+    today = today_wib()
     if not this_month_run and today.day >= 20:
         alerts.append({
             "type": "no_run_this_month",

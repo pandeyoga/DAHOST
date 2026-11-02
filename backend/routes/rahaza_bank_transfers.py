@@ -17,6 +17,7 @@ from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_posting import _create_posted_je, _find_existing_je, get_mapping
 import logging
 import uuid
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/finance/bank-transfers', tags=['Bank-Transfer'])
@@ -59,9 +60,9 @@ async def _post_bank_transfer(db, transfer: dict, user: dict) -> dict:
         to_code   = to_code   or mapping.get('debit_bank_target', '1-1202')
 
     try:
-        je_date = date.fromisoformat((transfer.get('transfer_date') or str(date.today()))[:10])
+        je_date = date.fromisoformat((transfer.get('transfer_date') or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = f"Transfer Bank: {transfer.get('ref_number', tf_id[:8])} | {transfer.get('memo') or transfer.get('from_account_name','?')} → {transfer.get('to_account_name','?')}"
     lines = [
@@ -149,7 +150,7 @@ async def create_transfer(body: TransferCreate, user: dict = Depends(require_aut
         'to_account_code':   body.to_account_code,
         'to_account_name':   body.to_account_name or body.to_account_code,
         'amount': body.amount,
-        'transfer_date': body.transfer_date or str(date.today()),
+        'transfer_date': body.transfer_date or str(today_wib()),
         'memo': body.memo or '',
         'ref_external': body.ref_external or '',
         'status': 'completed',
@@ -226,9 +227,9 @@ async def void_transfer(tf_id: str, user: dict = Depends(require_auth)):
     to_code   = original['to_account_code']
 
     try:
-        je_date = date.today()
+        je_date = today_wib()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = f"VOID {original.get('ref_number', tf_id[:8])}: Reversal Transfer Bank"
     lines = [

@@ -19,6 +19,7 @@ from auth import log_activity, require_auth, serialize_doc
 from database import get_db
 from routes.shared import require_portal_dep
 from utils.counters import gen_prefixed_number
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sales", tags=["sales-direct"],
@@ -206,7 +207,7 @@ async def create_direct_sale(request: Request):
     tax_pct = _num(body.get("tax_pct"), "tax_pct")
     discount = _num(body.get("discount_amount"), "discount_amount")
     subtotal, tax, total = _calc(items, tax_pct, discount)
-    sale_date = body.get("sale_date") or date.today().isoformat()
+    sale_date = body.get("sale_date") or today_wib().isoformat()
     if payment_type == "cash":
         if not body.get("cash_account_id"):
             raise HTTPException(400, "Rekening kas/bank wajib untuk penjualan tunai.")
@@ -394,7 +395,7 @@ async def pay_direct_sale(sid: str, request: Request):
         raise HTTPException(400, "amount harus > 0.")
     if not body.get("cash_account_id"):
         raise HTTPException(400, "Rekening kas wajib.")
-    res = await _apply_ar_payment(db, note["ar_invoice_id"], amount, body["cash_account_id"], body.get("date") or date.today().isoformat(), user,
+    res = await _apply_ar_payment(db, note["ar_invoice_id"], amount, body["cash_account_id"], body.get("date") or today_wib().isoformat(), user,
                                   notes=body.get("notes") or f"Pelunasan {note['note_number']}")
     inv = res["invoice"]
     await db[COLL].update_one({"id": sid}, {"$set": {"paid_amount": inv.get("paid_amount"), "status": "paid" if inv.get("status") == "paid" else "confirmed",
@@ -451,7 +452,7 @@ async def get_direct_sale(sid: str, request: Request):
 async def sales_dashboard(request: Request):
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     month = today[:7]
     rows = await db[COLL].find({"status": {"$in": ["confirmed", "paid"]}}, {"_id": 0, "sale_date": 1, "total": 1, "cogs_total": 1, "items": 1,
                                                                           "status": 1, "payment_type": 1, "ar_invoice_id": 1}).to_list(5000)
@@ -668,7 +669,7 @@ async def create_return(sid: str, request: Request):
     subtotal = round(sum(i["amount"] for i in items) * factor)
     tax = round(subtotal * float(note.get("tax_pct") or 0) / 100)
     total = subtotal + tax
-    ret_date = body.get("return_date") or date.today().isoformat()
+    ret_date = body.get("return_date") or today_wib().isoformat()
     refund_account = body.get("cash_account_id") if body.get("refund_method") == "cash" else None
     if body.get("refund_method") == "cash" and not refund_account:
         raise HTTPException(400, "Rekening kas wajib untuk refund tunai.")

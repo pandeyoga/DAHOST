@@ -12,6 +12,7 @@ import ImportExportPanel from './ImportExportPanel';
 import BuyerReceiptVarianceReport from './BuyerReceiptVarianceReport';
 import { BizBadge, BizFilter, matchBiz } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 export default function BuyerShipmentModule({ userRole, hasPerm = () => false, portalId }) {
   // Pemisahan data per proses bisnis: Portal Produksi = internal, Portal Maklon = maklon.
@@ -33,7 +34,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
   const [form, setForm] = useState({
     shipment_number: '',
     po_id: '',
-    shipment_date: new Date().toISOString().split('T')[0],
+    shipment_date: todayWIB(),
     notes: '',
     items: [],
     // Phase B: DA dispatch wajib pilih source_receipt_ids (approved cmt_receipts)
@@ -302,7 +303,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     setShowModal(true);
     setContinueShip(null);
     setConsolidate(false); setConsBuyer(''); setConsReceipts([]); setReceiptLinesCache({});
-    setForm({ shipment_number: '', po_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [], source_receipt_ids: [] });
+    setForm({ shipment_number: '', po_id: '', shipment_date: todayWIB(), notes: '', items: [], source_receipt_ids: [] });
     setAvailableReceipts([]); resetCapacity();
   };
 
@@ -316,7 +317,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     setContinueShip(row);
     setConsolidate(false); setConsBuyer(''); setConsReceipts([]); setReceiptLinesCache({});
     setForm({ shipment_number: row.shipment_number || '', po_id: '',
-      shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [], source_receipt_ids: [] });
+      shipment_date: todayWIB(), notes: '', items: [], source_receipt_ids: [] });
     setAvailableReceipts([]); resetCapacity();
     try {
       const det = await apiGet(`/buyer-shipments/${row.id}`);
@@ -447,7 +448,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `kekurangan-kirim-buyer-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `kekurangan-kirim-buyer-${todayWIB()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success(`${rows.length} baris diunduh`);

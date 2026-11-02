@@ -26,6 +26,7 @@ import logging
 from datetime import datetime, timezone, date, timedelta
 from typing import Optional
 import io
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/hr/reports", tags=["rahaza-hr-reports"])
@@ -70,7 +71,7 @@ async def get_attendance_summary(
     
     # Default to current month if no dates provided
     if not from_date or not to_date:
-        today = date.today()
+        today = today_wib()
         from_date = today.replace(day=1).isoformat()
         last_day = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         to_date = last_day.isoformat()
@@ -245,7 +246,7 @@ async def get_overtime_summary(
     db = get_db()
     
     if not from_date or not to_date:
-        today = date.today()
+        today = today_wib()
         from_date = today.replace(day=1).isoformat()
         last_day = (today.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
         to_date = last_day.isoformat()
@@ -487,7 +488,7 @@ async def get_turnover_report(
     db = get_db()
     
     if not from_date or not to_date:
-        today = date.today()
+        today = today_wib()
         from_date = today.replace(month=1, day=1).isoformat()
         to_date = today.isoformat()
     

@@ -27,6 +27,7 @@ from ai_cost_tracker import (
     DEFAULT_PER_FEATURE_DAILY_USD,
 )
 from database import get_db
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/ai/usage", tags=["ai-usage-monitor"])
 
@@ -79,7 +80,7 @@ async def get_budgets(request: Request):
 async def today_status(request: Request):
     await _check_admin(request)
     db = get_db()
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = today_wib().isoformat()
     settings = await get_ai_settings(db)
     daily_budget = float(settings.get("daily_budget_usd") or DEFAULT_DAILY_BUDGET_USD)
 

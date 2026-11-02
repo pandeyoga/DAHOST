@@ -11,7 +11,9 @@ import { PageHeader, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
-import CashAccountSelect, { todayWIB, wibDateParts, usePaymentCashAccounts } from './SdmCashAccountSelect';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB, lastMonthPeriodWIB } from '../../lib/waktu';
+import { MoneyInput } from '@/components/ui/money-input';
 
 // 2026-11-02 (K22): BPJS dibayar per LEMBAGA (karyawan + iuran perusahaan yang sudah dijurnal).
 const BPJS_AGENCIES = [['kes', 'BPJS Kesehatan'], ['tk', 'BPJS Ketenagakerjaan']];
@@ -73,18 +75,10 @@ function GLStatusBadge({ run, onNavigate }) {
    (usePaymentCashAccounts) — daftar hard-code lama memuat "Bank Umum (1-1200)" = akun header
    (jurnal ditolak) dan tidak memuat 15 rekening lain (BRI, GoPay, dll.). */
 
-/* Periode bulan lalu {from, to} menurut tanggal WIB.
+/* Periode bulan lalu {from, to} menurut tanggal WIB = `lastMonthPeriodWIB()` (lib/waktu).
    2026-11-02 (P5 butir 11): dulu tanggal lokal dibuat lalu diformat `toISOString()` (UTC) → di browser
    WIB tanggal mundur sehari: tombol pada 1 Nov menghasilkan 30 Sep → 31 Okt (32 hari) dan kasbon
-   periode Okt tidak terpotong. Sekarang dihitung dari bagian tanggal WIB, tanpa konversi zona. */
-function lastMonthPeriod(now = new Date()) {
-  const { y, m } = wibDateParts(now);
-  const py = m === 1 ? y - 1 : y;
-  const pm = m === 1 ? 12 : m - 1;
-  const lastDay = new Date(Date.UTC(py, pm, 0)).getUTCDate(); // hari terakhir bulan pm (1-12)
-  const mm = String(pm).padStart(2, '0');
-  return { from: `${py}-${mm}-01`, to: `${py}-${mm}-${String(lastDay).padStart(2, '0')}` };
-}
+   periode Okt tidak terpotong. Helper lokal dihapus; SSOT tanggal ada di lib/waktu. */
 
 /* Pesan galat backend (FastAPI `detail`) — supaya penolakan run ganda / jurnal gagal terbaca jelas. */
 async function errDetail(r, fallback) {
@@ -325,7 +319,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
 
   /* Salin Bulan Lalu — pre-fill modal dengan periode bulan lalu */
   const salinBulanLalu = () => {
-    setCreateInitial(lastMonthPeriod());
+    setCreateInitial(lastMonthPeriodWIB());
     setCreating(true);
   };
 
@@ -345,7 +339,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
               onClick={salinBulanLalu}
               className="h-9 border border-[var(--glass-border)] gap-1.5"
               data-testid="pr-copy-last-month"
-              title={`Buat run untuk periode bulan lalu (${lastMonthPeriod().from} → ${lastMonthPeriod().to})`}
+              title={`Buat run untuk periode bulan lalu (${lastMonthPeriodWIB().from} → ${lastMonthPeriodWIB().to})`}
             >
               <Copy className="w-3.5 h-3.5" />
               Salin Bulan Lalu
@@ -1061,13 +1055,13 @@ function AdjustCell({ slip, onSave }) {
           <div className="space-y-3 text-sm">
             <div>
               <Label className="text-xs">Penyesuaian pendapatan (Rp, minus = mengurangi)</Label>
-              <input type="number" value={earning} onChange={e => setEarning(Number(e.target.value))}
+              <MoneyInput unstyled allowNegative value={earning} onChange={e => setEarning(Number(e.target.value))}
                 className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
                 data-testid={`payslip-adjust-earning-${slipId}`} />
             </div>
             <div>
               <Label className="text-xs">Potongan tambahan (Rp, ≥ 0)</Label>
-              <input type="number" min="0" value={ded} onChange={e => setDed(Number(e.target.value))}
+              <MoneyInput unstyled value={ded} onChange={e => setDed(Number(e.target.value))}
                 className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
                 data-testid={`payslip-adjust-amount-${slipId}`} />
             </div>
@@ -1079,7 +1073,7 @@ function AdjustCell({ slip, onSave }) {
                     <span className="flex-1 truncate" title={l.label}>{l.label}</span>
                     {NON_EDITABLE(l.type)
                       ? <span className="font-mono text-muted-foreground">{fmtIDR(l.amount)} (wajib)</span>
-                      : <input type="number" min="0" max={l.original} value={l.amount}
+                      : <MoneyInput unstyled value={l.amount}
                           onChange={e => setLines(ls => ls.map(x => x.index === l.index ? { ...x, amount: Math.min(Number(e.target.value), x.original) } : x))}
                           className="w-28 h-7 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
                           data-testid={`payslip-adjust-line-${slipId}-${l.index}`} />}

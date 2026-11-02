@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { GlassCard } from '@/components/ui/glass';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtNum = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
@@ -33,12 +34,12 @@ const STATUS_LABEL = {
 export default function CreatorWeeklyReportPanel({ token }) {
   const authH = useMemo(
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }), [token]);
-  const [weekEnd, setWeekEnd] = useState(new Date().toISOString().slice(0, 10));
+  const [weekEnd, setWeekEnd] = useState(() => todayWIB());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState('');
 
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayWIB();
   // Atribut `max` hanya membatasi picker, bukan tanggal yang DIKETIK — pekan masa
   // depan selalu bernilai 0 dan terbaca sebagai "kreator tidak bekerja".
   const setWeek = (v) => setWeekEnd(v && v > todayStr ? todayStr : (v || todayStr));
@@ -84,7 +85,7 @@ export default function CreatorWeeklyReportPanel({ token }) {
       <div className="flex flex-wrap items-end gap-2">
         <div>
           <label className="text-[11px] text-muted-foreground block">Pekan berakhir</label>
-          <input type="date" value={weekEnd} max={new Date().toISOString().slice(0, 10)}
+          <input type="date" value={weekEnd} max={todayStr}
             onChange={(e) => setWeek(e.target.value)}
             data-testid="weekly-week-end"
             className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs" />

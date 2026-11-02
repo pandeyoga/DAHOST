@@ -17,6 +17,7 @@ from core import returns_bridge as _rb
 from routes.shared import require_portal
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/returns", tags=["marketing-returns"])
@@ -874,7 +875,7 @@ async def _issue_credit_note(db, ret: dict, user: dict) -> dict:
     customer = await db.rahaza_customers.find_one({"code": "MARKETPLACE"}, {"_id": 0})
     try:
         # RC-5: penomoran atomik (bukan count_documents()+1)
-        today = datetime.now(timezone.utc).date().strftime("%Y%m%d")
+        today = today_wib().strftime("%Y%m%d")
         cn_number = await gen_prefixed_number(db, "rahaza_credit_notes", "cn_number", f"CN-{today}-", 3)
         cn_doc = {
             "id": cn_id,
@@ -885,7 +886,7 @@ async def _issue_credit_note(db, ret: dict, user: dict) -> dict:
             "platform": ret.get("platform"),
             "account_id": ret.get("account_id"),
             "account_name": ret.get("account_name"),
-            "issue_date": datetime.now(timezone.utc).date().isoformat(),
+            "issue_date": today_wib().isoformat(),
             "return_date": ret.get("date"),
             "items": [{
                 "description": f"Retur: {ret.get('product')} - {ret.get('reason_label')}",

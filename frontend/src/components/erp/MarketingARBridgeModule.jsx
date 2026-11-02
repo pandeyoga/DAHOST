@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -448,7 +449,7 @@ export default function MarketingARBridgeModule({ token }) {
                       <span className={sg === '\u2212' ? 'text-red-600' : sg === '+' ? 'text-emerald-600' : 'text-muted-foreground'}>{sg}</span>
                       {label}
                     </Label>
-                    <Input type="number" className="mt-1 h-9 bg-background text-right"
+                    <MoneyInput allowNegative={f === 'adjustments'} className="mt-1 h-9 bg-background text-right"
                       value={form[f]} placeholder="0"
                       onChange={(e) => setForm((p) => ({ ...p, [f]: e.target.value }))}
                       data-testid={`settle-form-${f}`} />
@@ -468,7 +469,7 @@ export default function MarketingARBridgeModule({ token }) {
               : 'border-amber-300 bg-amber-50 dark:border-amber-700 dark:bg-amber-900/25'}`}>
               <div className="grid grid-cols-2 gap-3">
                 <div><Label className="text-xs">Net payout (dari mutasi bank) *</Label>
-                  <Input type="number" className="mt-1 h-9 bg-background text-right font-semibold"
+                  <MoneyInput className="mt-1 h-9 bg-background text-right font-semibold"
                     value={form.net_payout}
                     onChange={(e) => setForm((f) => ({ ...f, net_payout: e.target.value }))}
                     data-testid="settle-form-net" />

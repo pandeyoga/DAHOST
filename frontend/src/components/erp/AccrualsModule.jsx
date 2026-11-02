@@ -6,6 +6,8 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 
@@ -74,7 +76,7 @@ export default function AccrualsModule({ token }) {
       const r = await fetch(`/api/rahaza/finance/accruals/${id}/reverse`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ reversal_date: new Date().toISOString().split('T')[0] })
+        body: JSON.stringify({ reversal_date: todayWIB() })
       });
       if (r.ok) {
         toast({ title: 'Sukses', description: 'Akrual berhasil di-reverse' });
@@ -237,9 +239,8 @@ function AccrualEditor({ value, onClose, onSave }) {
           </div>
           <div>
             <label className="text-xs uppercase text-muted-foreground">Jumlah (Rp)</label>
-            <GlassInput
-              type="number"
-              min={0}
+            <MoneyInput
+              glass
               value={s.amount || 0}
               onChange={e => upd('amount', Number(e.target.value))}
               data-testid="accrual-amount"

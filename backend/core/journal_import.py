@@ -28,6 +28,7 @@ from uuid import uuid4
 
 import openpyxl
 from openpyxl.styles import Font, PatternFill
+from utils.waktu import now_utc
 
 SOURCE_MODULE = "journal_import"
 SHEET_MUTASI = "MUTASI_KAS_BANK"
@@ -299,7 +300,7 @@ async def post_journals(db, user: dict, journals: list, filename: str) -> dict:
             d = date.fromisoformat(j["date"])
             total_d, total_c = await _validate_lines(db, j["lines"])
             await _check_period_open(db, d)
-            now = datetime.utcnow()
+            now = now_utc()   # stempel simpan = UTC aware (dulu UTC naif)
             doc = {"id": str(uuid4()), "je_number": await _gen_je_number(db, d), "date": d.isoformat(),
                    "memo": j["memo"] + (f" [{j['reference']}]" if j.get("reference") else ""),
                    "source_module": SOURCE_MODULE, "source_ref": j["key"], "import_file": filename,

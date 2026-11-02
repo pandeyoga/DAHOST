@@ -21,6 +21,7 @@ from datetime import datetime, timezone, timedelta, date
 from database import get_db
 from auth import require_auth, serialize_doc
 import logging
+from utils.waktu import today_wib, wib_day_bounds_utc
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/prod', tags=['Production-Control-Tower'])
@@ -50,7 +51,7 @@ async def _load_active_wos(db, extra_filter: Optional[Dict[str, Any]] = None) ->
 
 
 def _today_iso() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _parse_date(s: Optional[str]) -> Optional[date]:
@@ -84,7 +85,7 @@ def _wo_days_until_deadline(wo: Dict[str, Any]) -> Optional[int]:
     dl = _parse_date(wo.get('deadline'))
     if not dl:
         return None
-    return (dl - date.today()).days
+    return (dl - today_wib()).days
 
 
 def _wo_risk_status(wo: Dict[str, Any]) -> str:
@@ -126,7 +127,7 @@ async def control_tower(
     Returns all KPIs + critical lists in one response.
     """
     db = get_db()
-    today = date.today()
+    today = today_wib()
     today_iso = today.isoformat()
     win_start = (today - timedelta(days=days_window)).isoformat()
 
@@ -201,7 +202,7 @@ async def control_tower(
         {'status': {'$in': ['submitted', 'pending_approval', 'in_review']}}
     )
     cmt_today = await db.cmt_receipts.count_documents({
-        'created_at': {'$gte': datetime.fromisoformat(f'{today_iso}T00:00:00')}
+        'created_at': {'$gte': wib_day_bounds_utc(today)[0]}   # awal hari WIB (No.54a), dulu 00:00 UTC
     })
 
     # ── Bundles: engine bundel sudah dihapus (FASE 4) — tidak ada yang perlu dicetak.

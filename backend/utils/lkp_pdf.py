@@ -24,7 +24,6 @@ Security patches:
 """
 import logging
 import io
-from datetime import datetime, timezone
 from xml.sax.saxutils import escape as _xml_escape  # H5
 
 from reportlab.lib import colors
@@ -37,6 +36,7 @@ from reportlab.platypus import (
     Image as RLImage,
 )
 from reportlab.lib.enums import TA_LEFT, TA_CENTER
+from utils.waktu import fmt_wib
 
 try:
     import qrcode
@@ -624,7 +624,7 @@ def build_lkp_pdf(content: dict, image_files=None, production_image_files=None) 
         "lkp_number": content.get("lkp_number", "-"),
         "version": content.get("version", 1),
         "status_label": content.get("status_label", "RELEASED"),
-        "print_date": content.get("print_date", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")),
+        "print_date": content.get("print_date", fmt_wib("%Y-%m-%d %H:%M WIB")),
         "printed_by": content.get("printed_by", "-"),
         "company_name": content.get("company_name", "PT RAHAZA GLOBAL INDONESIA"),
         "company_addr": content.get("company_addr", "Knit Garment Manufacturing — Production Work Sheet"),

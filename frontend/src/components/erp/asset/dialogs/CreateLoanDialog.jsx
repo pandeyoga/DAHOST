@@ -15,8 +15,7 @@ import { toast } from 'sonner';
 import { PackageSearch } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { apicall } from '../utils';
-
-const today = () => new Date().toISOString().slice(0, 10);
+import { todayWIB } from '@/lib/waktu';
 
 export function CreateLoanDialog({ open, onClose, token, onCreated }) {
   const [assets, setAssets] = useState([]);
@@ -26,7 +25,7 @@ export function CreateLoanDialog({ open, onClose, token, onCreated }) {
   const [err, setErr] = useState('');
   const [form, setForm] = useState({
     asset_id: '', borrower_id: '', borrower_name: '', borrower_divisi: '',
-    purpose: '', loan_date: today(), expected_return_date: '', notes: '',
+    purpose: '', loan_date: todayWIB(), expected_return_date: '', notes: '',
   });
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
@@ -50,7 +49,7 @@ export function CreateLoanDialog({ open, onClose, token, onCreated }) {
     setErr('');
     setForm({
       asset_id: '', borrower_id: '', borrower_name: '', borrower_divisi: '',
-      purpose: '', loan_date: today(), expected_return_date: '', notes: '',
+      purpose: '', loan_date: todayWIB(), expected_return_date: '', notes: '',
     });
     loadRef();
   }, [open, loadRef]);

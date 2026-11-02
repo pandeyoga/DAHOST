@@ -21,6 +21,8 @@ import {
 import { EmptyState } from '../EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import AccessoryValuationLedger from './AccessoryValuationLedger';
+import { MoneyInput } from '@/components/ui/money-input';
+import { thisMonthWIB } from '@/lib/waktu';
 // FASE 10: otomasi — ringkasan harian item belum dinilai + rapor bulanan via email
 import AccessoryValuationAutomation from './AccessoryValuationAutomation';
 
@@ -72,7 +74,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
   const [filter, setFilter] = useState('');
   const [saving, setSaving] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(thisMonthWIB);
   const [downloading, setDownloading] = useState('');
   const [costForm, setCostForm] = useState(null);   // {id, name, unit_cost, stock_qty}
   const [scrapForm, setScrapForm] = useState(null); // {id, name, unit, stock_qty, unit_cost}
@@ -368,7 +370,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Harga satuan (Rp) *</label>
-                <input type="number" min="0" step="0.01" value={costForm.unit_cost}
+                <MoneyInput unstyled decimals={2} value={costForm.unit_cost}
                   onChange={(e) => setCostForm({ ...costForm, unit_cost: e.target.value })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                   placeholder="0" data-testid="acc-set-cost-input" />

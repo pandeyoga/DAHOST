@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -649,12 +650,11 @@ function CreateManualDialog({ open, onClose, token, employees, onSuccess }) {
             </div>
             <div>
               <Label htmlFor="proposed-base">Gaji Usulan (Rp) *</Label>
-              <Input
+              <MoneyInput
                 id="proposed-base"
-                type="number"
                 value={proposedBase}
                 onChange={(e) => setProposedBase(e.target.value)}
-                placeholder="contoh: 5500000"
+                placeholder="contoh: 5.500.000"
                 data-testid="create-adj-proposed-base"
               />
               {proposedBase && currentBase > 0 && parseFloat(proposedBase) > currentBase && (

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ReceiptText, Plus, RefreshCw, Trash2, Printer, CheckCircle2, Eye, Wallet, XCircle, AlertTriangle, Undo2 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import Modal from '../Modal';
@@ -8,7 +10,6 @@ import { PageHeader } from '../moduleAtoms';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
-const today = () => new Date().toISOString().slice(0, 10);
 const STATUS = { draft: ['Draft', 'text-amber-300 bg-amber-400/10 border-amber-400/25'], confirmed: ['Belum Lunas', 'text-sky-300 bg-sky-400/10 border-sky-400/25'], paid: ['Lunas', 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25'], cancelled: ['Batal', 'text-red-300 bg-red-400/10 border-red-400/25'], confirming: ['Memproses', 'text-muted-foreground'] };
 const sel = 'w-full h-9 rounded-md border border-[var(--glass-border)] bg-transparent px-2 text-sm';
 
@@ -77,7 +78,7 @@ function CreateSaleModal({ onClose, onSaved }) {
   const [customers, setCustomers] = useState([]);
   const [stock, setStock] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [f, setF] = useState({ customer_id: '', payment_type: 'cash', cash_account_id: '', sale_date: today(), due_date: '', tax_pct: 0, discount_amount: 0, notes: '' });
+  const [f, setF] = useState({ customer_id: '', payment_type: 'cash', cash_account_id: '', sale_date: todayWIB(), due_date: '', tax_pct: 0, discount_amount: 0, notes: '' });
   const [items, setItems] = useState([{ material_id: '', qty: 1, price: 0 }]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -127,7 +128,7 @@ function CreateSaleModal({ onClose, onSaved }) {
           )}
           <label className="space-y-1"><span className="text-xs text-muted-foreground">PPN</span>
             <select className={sel} value={f.tax_pct} onChange={e => set('tax_pct', Number(e.target.value))} data-testid="sale-form-tax"><option value={0}>Tanpa PPN</option><option value={11}>PPN 11%</option><option value={12}>PPN 12%</option></select></label>
-          <label className="space-y-1"><span className="text-xs text-muted-foreground">Diskon (Rp)</span><GlassInput type="number" min="0" value={f.discount_amount} onChange={e => set('discount_amount', e.target.value)} data-testid="sale-form-discount" /></label>
+          <label className="space-y-1"><span className="text-xs text-muted-foreground">Diskon (Rp)</span><MoneyInput value={f.discount_amount} onChange={e => set('discount_amount', e.target.value)} className="h-10" data-testid="sale-form-discount" /></label>
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between"><span className="text-xs font-semibold">Item (stok FG tersedia: {stock.length} SKU)</span><Button size="sm" variant="ghost" onClick={() => setItems(a => [...a, { material_id: '', qty: 1, price: 0 }])} data-testid="sale-form-add-item"><Plus className="w-3.5 h-3.5 mr-1" />Tambah baris</Button></div>
@@ -137,7 +138,7 @@ function CreateSaleModal({ onClose, onSaved }) {
                 <td className="py-1 pr-2"><select className={sel} value={it.material_id} onChange={e => setItem(i, 'material_id', e.target.value)} data-testid={`sale-item-${i}-sku`}><option value="">— pilih SKU —</option>{stock.map(x => <option key={x.material_id} value={x.material_id}>{x.sku} · {x.name} (stok {x.available_qty})</option>)}</select></td>
                 <td className="text-right">{s ? s.available_qty : '-'}{s?.hpp > 0 && <div className="text-[10px] text-muted-foreground">HPP {fmt(s.hpp)}</div>}</td>
                 <td><GlassInput type="number" min="1" value={it.qty} onChange={e => setItem(i, 'qty', e.target.value)} className="h-8" data-testid={`sale-item-${i}-qty`} /></td>
-                <td><GlassInput type="number" min="0" value={it.price} onChange={e => setItem(i, 'price', e.target.value)} className="h-8" data-testid={`sale-item-${i}-price`} /></td>
+                <td><MoneyInput value={it.price} onChange={e => setItem(i, 'price', e.target.value)} className="h-8" data-testid={`sale-item-${i}-price`} /></td>
                 <td className="text-right font-semibold">{fmt((Number(it.qty) || 0) * (Number(it.price) || 0))}</td>
                 <td><Button size="sm" variant="ghost" onClick={() => setItems(a => a.filter((_, idx) => idx !== i))}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></td>
               </tr>); })}</tbody></table>
@@ -194,7 +195,7 @@ function SaleDetailModal({ note, onClose, onChanged }) {
             <Button size="sm" variant="ghost" onClick={() => openPdf(note.id, note.note_number)} data-testid="sale-detail-pdf"><Printer className="w-3.5 h-3.5 mr-1" />Cetak Nota</Button>
             {note.status === 'draft' && <Button size="sm" variant="ghost" onClick={cancel} disabled={busy} data-testid="sale-detail-cancel"><XCircle className="w-3.5 h-3.5 mr-1 text-red-400" />Batalkan</Button>}
             {note.status === 'draft' && <Button size="sm" onClick={confirm} disabled={busy} data-testid="sale-detail-confirm"><CheckCircle2 className="w-3.5 h-3.5 mr-1" />Konfirmasi</Button>}
-            {note.status === 'confirmed' && balance > 0 && <Button size="sm" onClick={() => setPay({ amount: balance, cash_account_id: accounts[0]?.id || '', date: today() })} disabled={busy} data-testid="sale-detail-pay"><Wallet className="w-3.5 h-3.5 mr-1" />Terima Pembayaran</Button>}
+            {note.status === 'confirmed' && balance > 0 && <Button size="sm" onClick={() => setPay({ amount: balance, cash_account_id: accounts[0]?.id || '', date: todayWIB() })} disabled={busy} data-testid="sale-detail-pay"><Wallet className="w-3.5 h-3.5 mr-1" />Terima Pembayaran</Button>}
             {canReturn && <Button size="sm" variant="ghost" onClick={openReturn} disabled={busy} data-testid="sale-detail-return"><Undo2 className="w-3.5 h-3.5 mr-1 text-amber-400" />Retur</Button>}
           </div>
         </div>
@@ -211,7 +212,7 @@ function SaleDetailModal({ note, onClose, onChanged }) {
         </div>
         {pay && (
           <GlassCard className="p-3 flex flex-wrap items-end gap-3" data-testid="sale-pay-form">
-            <label className="space-y-1"><span className="text-xs text-muted-foreground">Jumlah</span><GlassInput type="number" min="1" value={pay.amount} onChange={e => setPay(p => ({ ...p, amount: e.target.value }))} className="h-8 w-40" data-testid="sale-pay-amount" /></label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Jumlah</span><MoneyInput value={pay.amount} onChange={e => setPay(p => ({ ...p, amount: e.target.value }))} className="h-8 w-40" data-testid="sale-pay-amount" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Kas/Bank</span><select className={`${sel} h-8`} value={pay.cash_account_id} onChange={e => setPay(p => ({ ...p, cash_account_id: e.target.value }))} data-testid="sale-pay-account">{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Tanggal</span><GlassInput type="date" value={pay.date} onChange={e => setPay(p => ({ ...p, date: e.target.value }))} className="h-8" /></label>
             <Button size="sm" onClick={doPay} disabled={busy} data-testid="sale-pay-submit">Simpan Pembayaran</Button>

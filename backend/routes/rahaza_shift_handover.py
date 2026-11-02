@@ -26,12 +26,13 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from fastapi.responses import Response
 from database import get_db
 from auth import require_auth
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import PRODUCTION_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-shift-handover"])
@@ -95,7 +96,7 @@ async def get_today_handovers(request: Request):
     await require_auth(request)
     db = get_db()
     
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     handovers = await db.rahaza_shift_handovers.find(
         {"date": today},
         {"_id": 0}
@@ -121,7 +122,7 @@ async def get_latest_handover(
         q["shift_id"] = shift_id
     
     # Get latest from last 2 days
-    two_days_ago = (date.today() - timedelta(days=2)).isoformat()
+    two_days_ago = (today_wib() - timedelta(days=2)).isoformat()
     q["date"] = {"$gte": two_days_ago}
     
     handover = await db.rahaza_shift_handovers.find_one(
@@ -165,7 +166,7 @@ async def create_shift_handover(request: Request):
         raise HTTPException(400, "Invalid JSON body")
     
     shift_id = body.get("shift_id")
-    handover_date = body.get("date", date.today().isoformat())
+    handover_date = body.get("date", today_wib().isoformat())
     notes = body.get("notes", "")
     checklist = body.get("checklist", [])
     issues = body.get("issues", [])
@@ -457,7 +458,7 @@ async def download_shift_report_pdf(handover_id: str, request: Request):
     wo_summary = []
     # T-03 (FASE 3): SSOT production_jobs via core.wo_reader (job tidak punya line_id → filter tanggal saja).
     from core.wo_reader import load_wos
-    as_of = handover.get("date", date.today().isoformat())
+    as_of = handover.get("date", today_wib().isoformat())
     wos = [w for w in await load_wos(db, statuses=["released", "in_progress", "completed"], limit=200)
            if str(w.get("start_date") or "")[:10] <= as_of][:15]
     wo_summary = [{k: w.get(k) for k in ("wo_number", "model_code", "qty", "qty_produced", "qty_passed_qc", "status")}

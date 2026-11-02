@@ -6,6 +6,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { MessageCircle, X, Send, Bot, User, Loader2, RefreshCw, ChevronDown, Sparkles, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { IconButton } from './IconButton';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const FALLBACK_SUGGESTIONS = [
@@ -20,7 +21,7 @@ export default function AIChatbotWidget({ headers, user, portal, moduleId }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [ctx, setCtx] = useState(null);
-  const [sessionId] = useState(() => `asst-${(user?.id || 'u')?.slice(0, 8)}-${new Date().toISOString().slice(0, 10)}`);
+  const [sessionId] = useState(() => `asst-${(user?.id || 'u')?.slice(0, 8)}-${todayWIB()}`);
   const bottomRef = useRef(null);
 
   useEffect(() => { if (open) bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, open, loading]);

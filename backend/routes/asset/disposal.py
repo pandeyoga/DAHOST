@@ -3,12 +3,12 @@
 This module MUST be imported BEFORE `assets_core` so that the literal
 `/disposal-requests` paths are registered before the catch-all `/{asset_id}`.
 """
-from datetime import date
 from fastapi import Request, HTTPException
 
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _uid, _now, _ser
+from utils.waktu import today_wib
 
 
 def _can_decide_finance(user: dict) -> bool:
@@ -153,7 +153,7 @@ async def dispose_asset(asset_id: str, request: Request):
     if asset.get("status") == "disposed":
         raise HTTPException(400, "Aset sudah dilepas.")
     body = await request.json()
-    disposal_date = (body.get("disposal_date") or date.today().isoformat())[:10]
+    disposal_date = (body.get("disposal_date") or today_wib().isoformat())[:10]
     disposal_value = float(body.get("disposal_value") or 0)
     reason = (body.get("reason") or "").strip()
 
@@ -196,7 +196,7 @@ async def request_disposal(asset_id: str, request: Request):
         raise HTTPException(400, "Sudah ada permintaan disposal yang menunggu approval.")
 
     body = await request.json()
-    disposal_date = (body.get("disposal_date") or date.today().isoformat())[:10]
+    disposal_date = (body.get("disposal_date") or today_wib().isoformat())[:10]
     disposal_value = float(body.get("disposal_value") or 0)
     reason = (body.get("reason") or "").strip()
 

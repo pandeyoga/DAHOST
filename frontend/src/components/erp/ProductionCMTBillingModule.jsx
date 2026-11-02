@@ -25,6 +25,8 @@ import { apiGet, apiPost } from '../../lib/api';
 import { BizBadge } from './engine/BusinessTypeBadge';
 import StaffEntryBadge from './engine/StaffEntryBadge';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
@@ -91,7 +93,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
   const [posting, setPosting] = useState('');
   const [payOpen, setPayOpen] = useState(false);
   const [cashAccounts, setCashAccounts] = useState([]);
-  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: new Date().toISOString().slice(0, 10), reference_no: '' });
+  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: todayWIB(), reference_no: '' });
   const [disbursements, setDisbursements] = useState([]);
   useEffect(() => {
     apiGet('/rahaza/cash-accounts').then(d => setCashAccounts(Array.isArray(d) ? d : [])).catch(() => {});
@@ -553,7 +555,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                             {cashAccounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
                           </SmartNativeSelect>
                         </div>
-                        <Input type="number" placeholder="Jumlah (kosong = sisa)" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} data-testid="cmt-pay-amount" />
+                        <MoneyInput placeholder="Jumlah (kosong = sisa)" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} data-testid="cmt-pay-amount" />
                         <Input type="date" value={payForm.payment_date} onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))} data-testid="cmt-pay-date" />
                         <Input placeholder="No. referensi" value={payForm.reference_no} onChange={e => setPayForm(f => ({ ...f, reference_no: e.target.value }))} data-testid="cmt-pay-ref" />
                         <div className="flex gap-2 justify-end">

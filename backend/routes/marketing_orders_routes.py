@@ -13,6 +13,7 @@ from core import marketing_account_scope as _scope
 from auth import require_auth
 from routes.shared import require_perm  # T-01 2.3
 from utils.query_guards import q_date
+from utils.waktu import wib_date_str, now_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/orders", tags=["marketing-orders"])
@@ -40,12 +41,9 @@ def _now() -> datetime:
 # Karena `order_date` dokumen impor NAIVE (tanpa tzinfo), pintu manual memakai
 # bentuk yang sama: jam dinding WIB tanpa tzinfo. `created_at`/`updated_at` tetap
 # UTC ber-tz (itu jejak audit, bukan tanggal bisnis).
-WIB = timezone(timedelta(hours=7))
-
-
 def _now_wib_wall() -> datetime:
-    """Jam dinding WIB **tanpa tzinfo** — bentuk kanonik `order_date`."""
-    return datetime.now(WIB).replace(tzinfo=None)
+    """Jam dinding WIB **tanpa tzinfo** — bentuk kanonik `order_date` (delegasi ke SSOT utils.waktu)."""
+    return now_wib().replace(tzinfo=None)
 
 
 def _wib_day_start() -> datetime:
@@ -1027,7 +1025,7 @@ async def create_order(body: OrderCreateBody, request: Request):
     except Exception:
         logger.exception('[order] rekap harian gagal dihitung ulang setelah order '
                          'manual dibuat order_id=%s account_id=%s tanggal=%s',
-                         order_ref, doc.get('account_id'), now.date().isoformat())
+                         order_ref, doc.get('account_id'), wib_date_str(now))
     return serialize(doc)
 
 

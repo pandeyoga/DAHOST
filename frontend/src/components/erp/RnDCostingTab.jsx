@@ -3,6 +3,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Calculator, Plus, Trash2, Pencil, X, AlertTriangle } from 'lucide-react';
 import { toast } from '../ui/sonner';
@@ -204,7 +205,7 @@ export default function RnDCostingTab({ token }) {
         placeholder="Qty" className="text-sm" data-testid={`${testPrefix}-qty-${i}`} />
       <RnDUnitSelect value={it.unit} onChange={e => setRow(key, i, 'unit', e.target.value)}
         testId={`${testPrefix}-unit-${i}`} />
-      <Input type="number" value={it.unit_cost} onChange={e => setRow(key, i, 'unit_cost', e.target.value)}
+      <MoneyInput decimals={2} value={it.unit_cost} onChange={e => setRow(key, i, 'unit_cost', e.target.value)}
         placeholder="Harga" className="text-sm" data-testid={`${testPrefix}-price-${i}`} />
       <Button variant="ghost" size="sm" onClick={() => removeRow(key, i)}
         className="h-9 w-7 p-0 text-red-700 dark:text-red-500 hover:bg-red-100 dark:bg-red-500/10">
@@ -371,12 +372,12 @@ export default function RnDCostingTab({ token }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Ongkos Jahit (Rp)</Label>
-              <Input className="mt-1" type="number" value={form.labor_cost}
+              <MoneyInput className="mt-1" value={form.labor_cost}
                 onChange={e => f('labor_cost', Number(e.target.value))} data-testid="costing-labor-input" />
             </div>
             <div>
               <Label>Overhead (Rp)</Label>
-              <Input className="mt-1" type="number" value={form.overhead_cost}
+              <MoneyInput className="mt-1" value={form.overhead_cost}
                 onChange={e => f('overhead_cost', Number(e.target.value))} data-testid="costing-overhead-input" />
             </div>
           </div>

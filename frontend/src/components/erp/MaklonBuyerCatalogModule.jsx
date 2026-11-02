@@ -35,6 +35,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -730,9 +731,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
 
           <div>
             <Label className="text-xs">Harga CMT Default (Rp) *</Label>
-            <Input
-              type="number"
-              min={0}
+            <MoneyInput
               value={form.default_cmt_price}
               onChange={(e) => setForm({ ...form, default_cmt_price: e.target.value })}
               className="h-9"
@@ -742,9 +741,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
           </div>
           <div>
             <Label className="text-xs">Harga Jual Default (Rp)</Label>
-            <Input
-              type="number"
-              min={0}
+            <MoneyInput
               value={form.default_selling_price}
               onChange={(e) => setForm({ ...form, default_selling_price: e.target.value })}
               className="h-9"

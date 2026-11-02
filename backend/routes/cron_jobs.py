@@ -8,13 +8,14 @@ import hmac
 import logging
 import os
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 
 from auth import require_auth
 from database import get_db
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cron", tags=["cron"])
@@ -60,7 +61,7 @@ async def _finish_run(db, run_id: str, result: dict, error: str = None):
 
 # ── PEKERJAAN 1: status overdue otomatis (M-07) ───────────────────────────────
 async def run_mark_overdue(db) -> dict:
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     ar_q = {"status": {"$in": ["issued", "sent"]}, "due_date": {"$lt": today}, "$or": [{"amount_due": {"$gt": 0}}, {"balance": {"$gt": 0}}]}
     ar_rows = await db.rahaza_ar_invoices.find(ar_q, {"_id": 0, "id": 1, "invoice_number": 1, "balance": 1, "amount_due": 1, "customer_name": 1}).to_list(5000)
     if ar_rows:
@@ -87,7 +88,7 @@ async def run_mark_overdue(db) -> dict:
 # ── PEKERJAAN 2: rekonsiliasi Nilai Persediaan FG vs GL ──────────────────────
 async def run_fg_valuation_check(db) -> dict:
     from routes.rahaza_fin_reports import compute_fg_valuation
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     rep = await compute_fg_valuation(db, today)
     t = rep["totals"]
     res = {"date": today, "layer_value": t["layer_value"], "gl_balance": t["gl_balance"], "difference": t["difference"],

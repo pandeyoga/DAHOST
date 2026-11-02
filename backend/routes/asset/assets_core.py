@@ -5,7 +5,6 @@ The LITERAL `/{asset_id}` path MUST be registered AFTER all other literal endpoi
 reports/*, predictive-maintenance/*, bulk-import/*).
 The orchestrator `dewi_asset_management.py` enforces this load order.
 """
-from datetime import date
 import math
 from typing import Optional
 from fastapi import Request, HTTPException, Query
@@ -18,6 +17,7 @@ from ._helpers import (
     _ensure_default_categories, _gen_asset_number,
     load_finance_assets, apply_finance_overlay, validate_finance_link,
 )
+from utils.waktu import today_wib
 
 
 @router.get("")
@@ -91,7 +91,7 @@ async def create_asset(request: Request):
 
     asset_number = await _gen_asset_number(db, cat["code"],
                                            (body.get("asset_number") or "").strip())
-    purchase_date = (body.get("purchase_date") or date.today().isoformat())[:10]
+    purchase_date = (body.get("purchase_date") or today_wib().isoformat())[:10]
     monthly_depr = _calc_straight_line_monthly(purchase_cost, residual_value, useful_life_months)
 
     doc = {

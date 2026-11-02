@@ -25,15 +25,15 @@ FASE 15 (2026-07-26) — MESIN HITUNG SLIP DISATUKAN.
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from auth import require_auth
 from fastapi import HTTPException, Request
+from utils.waktu import today_wib, WIB
 
 log = logging.getLogger(__name__)
 
 # 2026-11-02 (P5): keputusan owner No.54(a) — tanggal bisnis = WIB, tidak bergantung TZ container.
-WIB = ZoneInfo("Asia/Jakarta")
+# `WIB` di-impor dari SSOT utils.waktu (tetap tersedia sebagai `rahaza_payroll_shared.WIB`).
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS
@@ -159,7 +159,7 @@ async def _require_hr(request: Request):
 async def _generate_run_number(db) -> str:
     """Generate unique run number: PR-YYYYMMDD-NNN (RC-5 fix: atomic counter)."""
     from utils.counters import gen_prefixed_number
-    today = date.today().strftime("%Y%m%d")
+    today = today_wib().strftime("%Y%m%d")
     return await gen_prefixed_number(db, "rahaza_payroll_runs", "run_number", f"PR-{today}-", 3)
 
 
@@ -668,8 +668,8 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _today_wib() -> date:
-    """Tanggal hari ini menurut WIB (No.54(a))."""
-    return datetime.now(WIB).date()
+    """Tanggal hari ini menurut WIB (No.54(a)) — delegasi ke SSOT utils.waktu.today_wib."""
+    return today_wib()
 
 
 def parse_ymd(value, *, field: str = "tanggal", default: date | None = None) -> date:
@@ -678,7 +678,7 @@ def parse_ymd(value, *, field: str = "tanggal", default: date | None = None) -> 
     2026-11-02: dulu tanggal transaksi yang diisi pengguna (tanggal cair/bayar) diabaikan dan
     jurnal selalu bertanggal hari ini — kasbon cair 15 Okt tercatat 1 Nov (laporan Okt meleset)."""
     if value in (None, ""):
-        return default or _today_wib()
+        return default or today_wib()
     try:
         return date.fromisoformat(str(value).strip()[:10])
     except ValueError:

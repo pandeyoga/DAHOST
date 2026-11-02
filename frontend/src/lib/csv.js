@@ -19,6 +19,7 @@
  *     sebagai tanggal. BOM `\uFEFF` disertakan supaya Excel Indonesia membaca
  *     UTF-8 dengan benar.
  */
+import { todayWIB } from './waktu';
 
 /** Ubah head + rows (array of array) menjadi teks CSV yang aman untuk Excel. */
 export function toCsv(head, rows) {
@@ -35,7 +36,7 @@ export function downloadCsv(filename, head, rows) {
   const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${filename}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `${filename}-${todayWIB()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
   return rows.length;

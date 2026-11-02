@@ -41,6 +41,7 @@ from auth import log_activity, require_auth, serialize_doc
 from core import label_render as lr
 from database import get_db
 from utils.counters import gen_prefixed_number
+from utils.waktu import fmt_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/barcode", tags=["wms-barcode"])
@@ -304,7 +305,7 @@ async def barcode_batch_pdf(data: BarcodeBatchIn, request: Request):
         "id": __import__("uuid").uuid4().hex,
         "job_number": await gen_prefixed_number(
             db, "wh_barcode_print_jobs", "job_number",
-            f"BC-{_now().strftime('%Y%m%d')}-", 3),
+            f"BC-{fmt_wib('%Y%m%d')}-", 3),
         "kind": kind, "source": data.source if data.source in ("manual", "produksi") else "manual",
         "po_id": data.po_id, "note": (data.note or "")[:500],
         "rows": resolved_rows, "item_count": len(resolved_rows), "total_labels": len(docs),

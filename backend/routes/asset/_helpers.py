@@ -9,6 +9,7 @@ from datetime import datetime, timezone, date
 import uuid
 import logging
 from typing import Optional  # noqa: F401  (re-exported for sub-modules)
+from utils.waktu import today_wib
 
 logger = logging.getLogger("asset_mgmt")
 
@@ -105,7 +106,7 @@ async def load_finance_assets(db, ids) -> dict:
         return {}
     from routes.rahaza_fixed_assets import _posted_depr_by_asset, accumulated_of
     fas = await db.rahaza_fixed_assets.find({"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids) + 5)
-    posted = await _posted_depr_by_asset(db, [f["id"] for f in fas], date.today().strftime("%Y-%m"))
+    posted = await _posted_depr_by_asset(db, [f["id"] for f in fas], today_wib().strftime("%Y-%m"))
     out = {}
     for f in fas:
         acc = accumulated_of(f, posted.get(f["id"], 0))

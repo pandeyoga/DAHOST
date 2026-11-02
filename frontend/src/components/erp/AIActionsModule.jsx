@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -112,7 +113,7 @@ export default function AIActionsModule({ token }) {
       : true
   );
 
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const today = todayWIB();
 
   return (
     <div className="space-y-6 p-6" data-testid="ai-actions-page">
@@ -187,7 +188,7 @@ export default function AIActionsModule({ token }) {
               <ActionCard
                 key={a.action_id}
                 action={a}
-                isOverdue={a.due_date && a.due_date < todayISO && !['done', 'dismissed'].includes(a.status)}
+                isOverdue={a.due_date && a.due_date < today && !['done', 'dismissed'].includes(a.status)}
                 onEdit={() => setEditDialog(a)}
                 onDelete={() => handleDelete(a.action_id)}
                 onStatusChange={(s) => handleStatusChange(a, s)}

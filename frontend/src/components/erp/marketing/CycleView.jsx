@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GlassCard } from '@/components/ui/glass';
@@ -152,7 +153,7 @@ function TargetDialog({ open, onOpenChange, row, period, token, onSaved }) {
         <div className="space-y-3">
           <div>
             <Label className="text-xs">Target Omzet (Rp)</Label>
-            <Input type="number" min={0} value={form.revenue_target} className="mt-1 h-9"
+            <MoneyInput value={form.revenue_target} className="mt-1 h-9"
               data-testid="cycle-target-revenue"
               onChange={(e) => setForm((f) => ({ ...f, revenue_target: e.target.value }))} />
           </div>
@@ -254,7 +255,7 @@ function BudgetDialog({ open, onOpenChange, row, period, token, onSaved, categor
             return (
               <div key={c} className="flex items-center gap-2">
                 <Label className="text-xs w-36">{CAT_LABEL[c] || c}</Label>
-                <Input type="number" min={0} value={form[c] ?? ''} className="h-8 text-right"
+                <MoneyInput value={form[c] ?? ''} className="h-8 text-right"
                   data-testid={`cycle-budget-input-${c}`}
                   onChange={(e) => setForm((f) => ({ ...f, [c]: e.target.value }))} />
                 <span className="text-[10px] text-muted-foreground w-40 text-right">

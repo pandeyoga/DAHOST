@@ -3,12 +3,13 @@ Session 12 — P1-8: Multi-metric KOL Leaderboard
 Leaderboard dengan metrics: viewers, orders/session, conversion rate
 """
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Query
 from database import get_db
 from auth import require_auth
 # F6 (sesi #9) — leaderboard KOL WAJIB berlingkup toko.
 from core import marketing_account_scope as _scope
+from utils.waktu import now_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/kol-leaderboard", tags=["marketing-kol-leaderboard"])
@@ -57,7 +58,7 @@ async def get_kol_leaderboard(
 
     # Calculate date range — RC-16: field `date` di marketing_creator_sessions
     # bertipe STRING "YYYY-MM-DD" → bandingkan sebagai string
-    end_date = datetime.now(timezone.utc)
+    end_date = now_wib()   # `date` sesi = tanggal kalender WIB (No.54a)
     start_date = end_date - timedelta(days=days)
     start_str = start_date.strftime("%Y-%m-%d")
     end_str = end_date.strftime("%Y-%m-%d")
@@ -159,7 +160,7 @@ async def get_kol_detail(
     await require_auth(request)
     db = get_db()
     
-    end_date = datetime.now(timezone.utc)
+    end_date = now_wib()   # `date` sesi = tanggal kalender WIB (No.54a)
     start_date = end_date - timedelta(days=days)
     
     # Get all sessions for this KOL — RC-16: SSOT marketing_creator_sessions

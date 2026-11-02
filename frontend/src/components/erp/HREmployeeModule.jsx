@@ -18,6 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -335,8 +337,8 @@ function EmployeeRow({ emp, onEdit, onDelete, onLinkUser, token }) {
   ];
   const complete = fields.filter(Boolean).length;
   const pct = Math.round(complete / fields.length * 100);
-  const contractEnd = emp.contract_end_date ? new Date(emp.contract_end_date) : null;
-  const daysUntilEnd = contractEnd ? Math.ceil((contractEnd - new Date()) / 86400000) : null;
+  // sisa hari kalender WIB (kontrak berakhir hari ini = 0, bukan sudah lewat sejak 07:00 WIB)
+  const daysUntilEnd = emp.contract_end_date ? daysBetweenISO(todayWIB(), toWIBDate(emp.contract_end_date)) : null;
   const isExpiring = daysUntilEnd !== null && daysUntilEnd >= 0 && daysUntilEnd <= 30;
 
   return (
@@ -582,7 +584,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                   <Sel value={form.wage_scheme} onChange={set('wage_scheme')} options={WAGE_SCHEMES} />
                 </Field>
                 <Field label="Rate / Base (Rp)" help="Borongan pcs=Rp/pcs, jam=Rp/jam, mingguan/bulanan=total">
-                  <Input type="number" min={0} value={form.base_rate} onChange={e => setForm(f => ({ ...f, base_rate: Number(e.target.value) }))} />
+                  <MoneyInput value={form.base_rate} onChange={e => setForm(f => ({ ...f, base_rate: Number(e.target.value) }))} />
                 </Field>
               </div>
             </TabsContent>

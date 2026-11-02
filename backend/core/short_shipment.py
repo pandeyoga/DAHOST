@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ async def record_cmt_short(db, *, receipt: dict, line: dict, claimed: int, arriv
     doc = {
         "id": _id(),
         "short_number": await _number(db, CMT_SHORT, "SEL-CMT-"),
-        "short_date": _now()[:10],
+        "short_date": wib_date_str(),
         "receipt_id": receipt.get("id"),
         "receipt_code": receipt.get("receipt_code"),
         "receipt_line_id": line["id"],
@@ -573,7 +574,7 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
     doc = {
         "id": _id(),
         "short_number": await _number(db, BUYER_SHORT, "SEL-BYR-"),
-        "short_date": _now()[:10],
+        "short_date": wib_date_str(),
         "shipment_id": shipment.get("id"),
         "shipment_number": shipment.get("shipment_number"),
         "shipment_item_id": item.get("id"),

@@ -26,6 +26,7 @@ from database import get_db
 from auth import require_auth
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/wms/picklist", tags=["wms-picklist"])
 
@@ -154,7 +155,7 @@ async def create_picklist(request: Request):
 
     doc = {
         "picklist_id": _uid(),
-        "ref_number": f"PL-{_now().strftime('%Y%m%d-%H%M%S')}",
+        "ref_number": f"PL-{fmt_wib('%Y%m%d-%H%M%S')}",
         "source_type": body.get("source_type") or "manual",
         "source_id": body.get("source_id") or "",
         "source_ref": body.get("source_ref") or "",

@@ -24,6 +24,7 @@ from typing import Optional
 import uuid
 import logging
 from routes.shared import require_portal_dep  # FIN-04
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/finance", tags=["rahaza-fixed-assets"],
@@ -85,11 +86,11 @@ def _generate_schedule(asset: dict) -> list:
     residual   = float(asset.get("residual_value") or 0)
     useful_life = int(asset.get("useful_life_months") or 0)
     method      = asset.get("depreciation_method", "straight_line")
-    start_date_str = asset.get("purchase_date") or date.today().isoformat()
+    start_date_str = asset.get("purchase_date") or today_wib().isoformat()
     try:
         start_date = date.fromisoformat(start_date_str[:10])
     except ValueError:
-        start_date = date.today()
+        start_date = today_wib()
     # Start depreciation from the month AFTER purchase (or first day of purchase month)
     depr_start = date(start_date.year, start_date.month, 1)
 
@@ -100,7 +101,7 @@ def _generate_schedule(asset: dict) -> list:
         try:
             golive = date.fromisoformat(str(asset.get("golive_date"))[:10])
         except ValueError:
-            golive = date.today()
+            golive = today_wib()
         elapsed = max(0, _months_between(depr_start, date(golive.year, golive.month, 1)))
         depr_start = date(golive.year, golive.month, 1)
         accumulated = round(float(asset.get("opening_accumulated_depr") or 0), 2)
@@ -213,7 +214,7 @@ def accumulated_of(asset: dict, posted_depr: float) -> float:
 async def _enrich_nbv(db, asset: dict):
     """Add current NBV and accumulated depreciation to asset dict."""
     aid = asset.get("id", "")
-    today = date.today().strftime("%Y-%m")
+    today = today_wib().strftime("%Y-%m")
     # Sum all posted depreciation up to today (+ akumulasi awal aset lama, K18)
     posted = (await _posted_depr_by_asset(db, [aid], today)).get(aid, 0)
     accum_depr = accumulated_of(asset, posted)
@@ -475,7 +476,7 @@ async def depreciation_due(request: Request):
     """Aset yang jadwal depresiasinya belum diposting untuk periode ini."""
     await require_auth(request)
     db = get_db()
-    cur_period = date.today().strftime("%Y-%m")
+    cur_period = today_wib().strftime("%Y-%m")
     due = await db.rahaza_depr_schedules.find(
         {"period": cur_period, "posted": False, "depr_amount": {"$gt": 0}},
         {"_id": 0}
@@ -511,7 +512,7 @@ async def fixed_assets_summary(request: Request):
     total_accum = round(sum(accumulated_of(a, posted.get(a["id"], 0)) for a in assets), 2)
     nbv = round(total_cost - total_accum, 2)
     # Count due this month
-    cur_period = date.today().strftime("%Y-%m")
+    cur_period = today_wib().strftime("%Y-%m")
     due_count = await db.rahaza_depr_schedules.count_documents({"period": cur_period, "posted": False, "depr_amount": {"$gt": 0}})
     by_category = {}
     for a in assets:
@@ -539,7 +540,7 @@ async def get_depreciation_summary(request: Request, period: Optional[str] = Non
     await require_auth(request)
     db = get_db()
     if not period:
-        period = date.today().strftime("%Y-%m")
+        period = today_wib().strftime("%Y-%m")
     pipe = [
         {"$match": {"period": period, "posted": True}},
         {"$group": {"_id": None, "total_depr": {"$sum": "$depr_amount"}, "count": {"$sum": 1}}}
@@ -655,7 +656,7 @@ async def dispose_fixed_asset(db, aid: str, body: dict, user: dict) -> dict:
         raise HTTPException(404, "Aset tidak ditemukan")
     if asset.get("status") == "disposed":
         raise HTTPException(409, "Aset sudah di-dispose sebelumnya")
-    disposal_date  = body.get("disposal_date") or date.today().isoformat()
+    disposal_date  = body.get("disposal_date") or today_wib().isoformat()
     disposal_value = float(body.get("disposal_value") or 0)
     disposal_notes = (body.get("notes") or body.get("reason") or "").strip()
     try:
@@ -734,7 +735,7 @@ async def run_batch_depreciation(request: Request):
     db = get_db()
     body = await request.json()
     
-    period = body.get("period", date.today().strftime("%Y-%m"))
+    period = body.get("period", today_wib().strftime("%Y-%m"))
     asset_ids = body.get("asset_ids", [])
     auto_post = body.get("auto_post", True)
     

@@ -4,10 +4,9 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const startOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
 
 const SOURCE_OPTIONS = [
   { value: '', label: 'Semua Sumber' },
@@ -45,8 +44,8 @@ export default function RahazaJournalListModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState(null);
-  const [from, setFrom] = useState(startOfMonth());
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(monthStartWIB());
+  const [to, setTo] = useState(todayWIB());
   const [source, setSource] = useState('');
   const [status, setStatus] = useState('');
   const [accountCode, setAccountCode] = useState('');

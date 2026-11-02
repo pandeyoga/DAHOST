@@ -5,11 +5,12 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah } from '@/lib/format';
+import { thisMonthWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 
 export default function AssetDepreciationModule({ token }) {
-  const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [period, setPeriod] = useState(thisMonthWIB());
   const [assets, setAssets] = useState([]);
   const [selectedAssets, setSelectedAssets] = useState([]);
   const [result, setResult] = useState(null);

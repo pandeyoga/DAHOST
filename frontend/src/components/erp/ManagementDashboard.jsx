@@ -16,6 +16,7 @@ import {
 } from './dashboardAtoms';
 import NextActionWidget from './NextActionWidget';
 import { PeriodPicker } from './PeriodPicker';
+import { thisYearWIB } from '@/lib/waktu';
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const fmtShortIDR = (n) => {
@@ -153,7 +154,7 @@ export default function ManagementDashboard({ token, onNavigate, onModuleChange 
           <div className="space-y-0.5" data-testid="kpi-revenue-ytd">
             <p className="text-xs text-muted-foreground">Revenue YTD</p>
             <p className="text-lg font-bold text-emerald-600">{fmtShortIDR(metrics?.revenueYTD)}</p>
-            <p className="text-xs text-muted-foreground">Tahun {new Date().getFullYear()}</p>
+            <p className="text-xs text-muted-foreground">Tahun {thisYearWIB()}</p>
           </div>
           {/* Attendance Today */}
           <div className="space-y-0.5" data-testid="kpi-attendance">

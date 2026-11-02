@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import ImportExportToolbar from './ImportExportToolbar';
+import { MoneyInput } from '@/components/ui/money-input';
 
 const SCHEMES = [
   { code: 'pcs', label: 'Borongan Pcs', color: 'text-emerald-300' },
@@ -232,11 +233,11 @@ function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">Tarif Dasar (Rp) — per {state.pay_scheme === 'pcs' ? 'pcs' : state.pay_scheme === 'hourly' ? 'jam' : state.pay_scheme === 'weekly' ? 'minggu' : 'bulan'}</label>
-              <GlassInput type="number" min={0} step="100" value={state.base_rate || 0} onChange={e => update('base_rate', e.target.value)} data-testid="pp-edit-base-rate" />
+              <MoneyInput glass value={state.base_rate || 0} onChange={e => update('base_rate', e.target.value)} data-testid="pp-edit-base-rate" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">Tarif Lembur (Rp/jam)</label>
-              <GlassInput type="number" min={0} step="100" value={state.overtime_rate || 0} onChange={e => update('overtime_rate', e.target.value)} data-testid="pp-edit-ot-rate" />
+              <MoneyInput glass value={state.overtime_rate || 0} onChange={e => update('overtime_rate', e.target.value)} data-testid="pp-edit-ot-rate" />
             </div>
           </div>
 
@@ -257,7 +258,7 @@ function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }
                       <option value="">— Pilih proses —</option>
                       {processes.map(p => <option key={p.id} value={p.id}>{`${p.code} · ${p.name}`}</option>)}
                     </SmartNativeSelect>
-                    <GlassInput type="number" min={0} step="50" placeholder="Rate/pcs" value={r.rate} onChange={e => updateProcRate(i, 'rate', Number(e.target.value))} className="w-28 h-9 text-xs" />
+                    <MoneyInput placeholder="Rate/pcs" value={r.rate} onChange={e => updateProcRate(i, 'rate', Number(e.target.value))} glass className="w-28 h-9 text-xs" />
                     <button onClick={() => removeProcRate(i)} className="h-9 w-9 text-red-300 hover:bg-red-400/10 rounded border border-[var(--glass-border)]"><Trash2 className="w-3.5 h-3.5 mx-auto" /></button>
                   </div>
                 ))}

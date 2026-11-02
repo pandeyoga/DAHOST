@@ -30,6 +30,7 @@ from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.production_rbac import PROD_ADMIN_ROLES, is_vendor, vendor_identity
 from routes.shared import can_act
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,7 @@ def _compute_h3_flag(doc: dict, grace_days: int) -> dict:
     if rd and doc.get("status") not in TERMINAL:
         try:
             d = datetime.strptime(str(rd)[:10], "%Y-%m-%d").date()
-            today = _now().date()
+            today = today_wib()
             delta = (d - today).days
             out["days_to_deadline"] = delta
             out["overdue"] = delta < 0

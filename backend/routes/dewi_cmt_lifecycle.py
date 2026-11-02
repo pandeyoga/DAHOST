@@ -24,6 +24,7 @@ from database import get_db
 from auth import require_auth, serialize_doc
 from core import cmt_vendor_master
 import logging
+from utils.waktu import today_wib, wib_date_of
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/dewi/cmt/lifecycle', tags=['Dewi-CMT-Lifecycle'])
@@ -35,7 +36,7 @@ PAYMENT_PENDING = ('draft', 'approved')
 
 
 def _today_iso() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _parse_date(v: Optional[str]) -> Optional[date]:
@@ -76,13 +77,8 @@ def _date_key(v) -> str:
     Helper ini menormalkan string / date / datetime / None menjadi satu bentuk
     yang aman dibandingkan (`>=`, `==`) dengan string ISO lain.
     """
-    if not v:
-        return ''
-    if isinstance(v, datetime):
-        return v.date().isoformat()
-    if isinstance(v, date):
-        return v.isoformat()
-    return str(v)[:10]
+    # 2026-11-02 (No.54a): instan UTC dibaca sebagai tanggal kalender WIB (SSOT utils.waktu).
+    return wib_date_of(v)
 
 
 def _to_iso(dt):
@@ -114,7 +110,7 @@ async def _compute_vendor_kpis(db, vendor: Dict[str, Any], deep: bool = False) -
     If `deep=True`, also includes job/payment lists (for detail view).
     """
     vid = vendor['id']
-    today = date.today()
+    today = today_wib()
     last_30 = (today - timedelta(days=30)).isoformat()
     last_90 = (today - timedelta(days=90)).isoformat()
 
@@ -373,7 +369,7 @@ async def lifecycle_summary(user: dict = Depends(require_auth)):
     """System-wide KPIs across ALL CMT vendors (for the header strip)."""
     db = get_db()
     today_iso = _today_iso()
-    last_30 = (date.today() - timedelta(days=30)).isoformat()
+    last_30 = (today_wib() - timedelta(days=30)).isoformat()
 
     total_vendors = await db.dewi_cmt_partners.count_documents({})
     active_vendors = await db.dewi_cmt_partners.count_documents({'status': 'active'})

@@ -17,6 +17,7 @@ from auth import require_auth
 from routes.shared import require_portal
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/discounts", tags=["marketing-discounts"])
@@ -56,7 +57,7 @@ def _get_user(request: Request) -> dict:
 def _compute_status(start_date: str, end_date: str) -> str:
     """Compute live status based on current date."""
     try:
-        today = _now().date()
+        today = today_wib()
         start = datetime.fromisoformat(start_date).date() if 'T' not in start_date else datetime.fromisoformat(start_date).date()
         end   = datetime.fromisoformat(end_date).date()   if 'T' not in end_date   else datetime.fromisoformat(end_date).date()
         if today < start:
@@ -195,7 +196,7 @@ async def get_summary(request: Request,
         by_platform[p] = by_platform.get(p, 0) + 1
 
     # Expiring in 3 days
-    today = _now().date()
+    today = today_wib()
     in_3  = today + timedelta(days=3)
     expiring_soon = 0
     for d in all_docs:
@@ -255,7 +256,7 @@ async def list_discounts(
         # Days left / ago
         try:
             end = datetime.fromisoformat(item["end_date"]).date()
-            diff = (end - _now().date()).days
+            diff = (end - today_wib()).days
             item["days_remaining"] = diff if diff >= 0 else None
         except Exception:
             item["days_remaining"] = None

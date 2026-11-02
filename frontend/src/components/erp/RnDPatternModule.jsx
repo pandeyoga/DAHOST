@@ -3,6 +3,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import {
   Ruler, Plus, Trash2, Pencil, Search, CheckCircle2, Clock,
@@ -439,7 +440,7 @@ export default function RnDPatternModule({ token }) {
             </div>
             <div>
               <Label>HPP Bahan/pcs (Rp)</Label>
-              <Input className="mt-1" type="number" value={form.hpp_fabric_per_pcs}
+              <MoneyInput className="mt-1" value={form.hpp_fabric_per_pcs}
                 onChange={e => f('hpp_fabric_per_pcs', Number(e.target.value))} />
             </div>
             <div>

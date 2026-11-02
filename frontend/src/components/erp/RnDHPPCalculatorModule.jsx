@@ -3,6 +3,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import {
   Calculator, Plus, Trash2, Pencil, RefreshCw, TrendingUp, PackageOpen,
@@ -689,7 +690,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                             </td>
                             <td className="px-1.5 py-1.5">
                               {isManual || l.override ? (
-                                <Input type="number" value={l.unit_cost_used ?? 0}
+                                <MoneyInput decimals={2} value={l.unit_cost_used ?? 0}
                                   onChange={e => setLine(i, { unit_cost_used: Number(e.target.value) })}
                                   className="h-7 text-xs text-right" data-testid={`hpp-line-price-${i}`} />
                               ) : (
@@ -768,7 +769,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                     </div>
                     <div>
                       <Label className="text-xs">Harga kain/meter (Rp)</Label>
-                      <Input className="mt-1" type="number" value={form.fabric_price_per_meter}
+                      <MoneyInput className="mt-1" decimals={2} value={form.fabric_price_per_meter}
                         onChange={e => { f('fabric_price_per_meter', Number(e.target.value)); f('fabric_source', 'manual'); }} />
                     </div>
                   </div>
@@ -809,7 +810,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                     <div key={i} className="grid grid-cols-[1fr_110px_70px_32px] gap-2 mb-2">
                       <Input value={acc.name} onChange={e => setAcc(i, 'name', e.target.value)}
                         placeholder="Nama item" className="text-sm" />
-                      <Input type="number" value={acc.unit_cost}
+                      <MoneyInput decimals={2} value={acc.unit_cost}
                         onChange={e => setAcc(i, 'unit_cost', e.target.value)}
                         placeholder="Harga/unit" className="text-sm" />
                       <Input type="number" value={acc.qty} min="1"
@@ -833,7 +834,7 @@ export default function RnDHPPCalculatorModule({ token }) {
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <Label className="text-xs">Ongkos CMT (Rp)</Label>
-                  <Input className="mt-1" type="number" value={form.cmt_cost_per_pcs}
+                  <MoneyInput className="mt-1" value={form.cmt_cost_per_pcs}
                     onChange={e => setForm(p => ({ ...p, cmt_cost_per_pcs: Number(e.target.value), cmt_cost_source: 'manual', cmt_cost_ref: '' }))}
                     data-testid="hpp-cmt-input" />
                   {cmtOpts.length > 0 && (
@@ -860,12 +861,12 @@ export default function RnDHPPCalculatorModule({ token }) {
                 </div>
                 <div>
                   <Label className="text-xs">Biaya Cutting (Rp)</Label>
-                  <Input className="mt-1" type="number" value={form.cutting_cost_per_pcs}
+                  <MoneyInput className="mt-1" value={form.cutting_cost_per_pcs}
                     onChange={e => f('cutting_cost_per_pcs', Number(e.target.value))} />
                 </div>
                 <div>
                   <Label className="text-xs">Packaging/pcs (Rp)</Label>
-                  <Input className="mt-1" type="number" value={form.packaging_cost_per_pcs}
+                  <MoneyInput className="mt-1" value={form.packaging_cost_per_pcs}
                     onChange={e => f('packaging_cost_per_pcs', Number(e.target.value))} />
                 </div>
               </div>

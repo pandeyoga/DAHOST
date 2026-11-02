@@ -52,6 +52,7 @@ from core import marketing_cycle as _cycle
 from core import marketing_account_scope as _scope
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/marketing/budget', tags=['Marketing-Budget'])
@@ -319,7 +320,7 @@ async def read_period_settings(request: Request):
     await require_auth(request)
     db = get_db()
     st = await get_period_settings(db)
-    today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    today = wib_date_str()
     st['current_period'] = (today if st['period_mode'] == 'weekly' else today[:7])
     a, b = period_bounds(st['current_period'], st['period_days'])
     st['current_range'] = {'start': a, 'end': b}

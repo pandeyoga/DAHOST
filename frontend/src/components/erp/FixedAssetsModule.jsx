@@ -10,8 +10,10 @@ import Modal from './Modal';
 import PaginationBar from './PaginationBar';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
-import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB, thisMonthWIB } from '../../lib/waktu';
 
 // 2026-11-02 (K18): form wajib memilih jenis perolehan. Pembelian baru → sumber dana → jurnal
 // perolehan otomatis ke akun kategori; Aset lama → akumulasi per go-live, tanpa jurnal perolehan.
@@ -208,7 +210,7 @@ export default function FixedAssetsModule({ token }) {
   };
 
   const fmtRp = formatRupiah;
-  const curPeriod = new Date().toISOString().slice(0, 7);
+  const curPeriod = thisMonthWIB();
 
   // ── DETAIL VIEW
   if (view === 'detail' && selected) {
@@ -242,7 +244,7 @@ export default function FixedAssetsModule({ token }) {
               }}>
                 <Printer className="w-3.5 h-3.5 mr-1" /> Label
               </Button>
-              <Button size="sm" variant="outline" onClick={() => { setDisposeOpen(true); setDisposeForm({ disposal_date: new Date().toISOString().slice(0,10), disposal_value: '', notes: '' }); }}>
+              <Button size="sm" variant="outline" onClick={() => { setDisposeOpen(true); setDisposeForm({ disposal_date: todayWIB(), disposal_value: '', notes: '' }); }}>
                 <Trash2 className="w-3.5 h-3.5 mr-1" /> Dispose
               </Button>
             </div>
@@ -324,7 +326,7 @@ export default function FixedAssetsModule({ token }) {
                 <GlassInput type="date" value={disposeForm.disposal_date} onChange={e => setDisposeForm(f => ({...f, disposal_date: e.target.value}))} />
               </div>
               <div><label className="block text-xs text-muted-foreground mb-1">Nilai Jual (Rp)</label>
-                <GlassInput type="number" placeholder="0" value={disposeForm.disposal_value} onChange={e => setDisposeForm(f => ({...f, disposal_value: e.target.value}))} />
+                <MoneyInput glass placeholder="0" value={disposeForm.disposal_value} onChange={e => setDisposeForm(f => ({...f, disposal_value: e.target.value}))} />
               </div>
               <div><label className="block text-xs text-muted-foreground mb-1">Keterangan</label>
                 <GlassInput placeholder="Alasan disposal" value={disposeForm.notes} onChange={e => setDisposeForm(f => ({...f, notes: e.target.value}))} />
@@ -503,7 +505,7 @@ export default function FixedAssetsModule({ token }) {
                   <GlassInput type="date" max={maxDate} value={form.golive_date} onChange={e => setForm(v => ({ ...v, golive_date: e.target.value }))} data-testid="asset-golive" />
                 </div>
                 <div><label className="block text-xs text-muted-foreground mb-1">Akumulasi Penyusutan per Go-Live (Rp)</label>
-                  <GlassInput type="number" min={0} placeholder="0" value={form.opening_accumulated_depr} onChange={e => setForm(v => ({ ...v, opening_accumulated_depr: e.target.value }))} data-testid="asset-opening-accum" />
+                  <MoneyInput glass placeholder="0" value={form.opening_accumulated_depr} onChange={e => setForm(v => ({ ...v, opening_accumulated_depr: e.target.value }))} data-testid="asset-opening-accum" />
                   <p className="text-[11px] text-muted-foreground mt-1">Sama dengan angka akumulasi di jurnal Saldo Awal (belum termasuk bulan go-live).</p>
                 </div>
               </>
@@ -532,10 +534,10 @@ export default function FixedAssetsModule({ token }) {
               <GlassInput type="date" max={maxDate} value={form.purchase_date} onChange={e => setForm(v => ({...v, purchase_date: e.target.value}))} data-testid="asset-purchase-date" />
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Harga Perolehan (Rp) *</label>
-              <GlassInput type="number" placeholder="0" value={form.purchase_cost} onChange={e => setForm(v => ({...v, purchase_cost: e.target.value}))} data-testid="asset-cost" />
+              <MoneyInput glass placeholder="0" value={form.purchase_cost} onChange={e => setForm(v => ({...v, purchase_cost: e.target.value}))} data-testid="asset-cost" />
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Nilai Sisa (Rp)</label>
-              <GlassInput type="number" placeholder="0" value={form.residual_value} onChange={e => setForm(v => ({...v, residual_value: e.target.value}))} />
+              <MoneyInput glass placeholder="0" value={form.residual_value} onChange={e => setForm(v => ({...v, residual_value: e.target.value}))} />
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Masa Manfaat (bulan) *</label>
               <GlassInput type="number" placeholder="60" value={form.useful_life_months} onChange={e => setForm(v => ({...v, useful_life_months: e.target.value}))} />

@@ -6,10 +6,9 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const startOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
 
 function ActivityGroup({ label, items, total, testId, tone }) {
   const toneClass = total >= 0 ? 'text-emerald-300' : 'text-rose-300';
@@ -94,8 +93,8 @@ export default function RahazaCashFlowModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [from, setFrom] = useState(startOfMonth());
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(monthStartWIB());
+  const [to, setTo] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {

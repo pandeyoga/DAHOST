@@ -28,6 +28,7 @@ from core import accessory_valuation, quarantine, stock_service
 from core import purchase_returns as pr
 from database import get_db
 from utils.counters import gen_prefixed_number
+from utils.waktu import today_wib, wib_date_str
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["rahaza-purchase-returns"])
@@ -52,7 +53,7 @@ def _actor(user: dict) -> dict:
 
 def _date(v) -> date:
     try:
-        return date.fromisoformat(str(v)[:10]) if v else date.today()
+        return date.fromisoformat(str(v)[:10]) if v else today_wib()
     except ValueError:
         raise HTTPException(400, "Format tanggal harus YYYY-MM-DD.")
 
@@ -397,7 +398,7 @@ async def send_purchase_return(rid: str, request: Request):
     new_status = "settled" if destroy_da else "awaiting_settlement"
     await db[pr.RTP_COLL].update_one({"id": rid}, {
         "$set": {"lines": out_lines, "status": new_status, "sent_at": _now(), "sent_by": user.get("name", ""),
-                 "ship_date": body.get("ship_date") or rtp.get("ship_date") or _now().date().isoformat(),
+                 "ship_date": body.get("ship_date") or rtp.get("ship_date") or wib_date_str(),
                  "total_claim_amount": round(sum(x["claim_amount"] for x in out_lines), 2),
                  "settled_at": _now() if destroy_da else None, "updated_at": _now()},
         "$push": {"history": _history("destroy" if settlement == "destroy" else "send", user, body.get("notes") or "")}})

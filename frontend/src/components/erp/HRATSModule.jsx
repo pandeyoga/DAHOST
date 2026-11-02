@@ -22,6 +22,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { MoneyInput } from '@/components/ui/money-input';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
@@ -209,9 +210,9 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Ditawarkan (Rp)</label>
-                    <input type="number" value={form.salary} onChange={e => setForm(p => ({...p, salary: e.target.value}))}
+                    <MoneyInput unstyled value={form.salary} onChange={e => setForm(p => ({...p, salary: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-                      placeholder="3000000" />
+                      placeholder="3.000.000" />
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Tipe Kontrak</label>
@@ -1372,10 +1373,10 @@ export default function HRATSModule({ token }) {
                       <option>Staff</option><option>Senior</option><option>Supervisor</option><option>Manager</option>
                     </select></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Min (Rp)</label>
-                    <input type="number" value={jobForm.salary_min} onChange={e => setJobForm(p => ({...p, salary_min: +e.target.value}))}
+                    <MoneyInput unstyled value={jobForm.salary_min} onChange={e => setJobForm(p => ({...p, salary_min: +e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Max (Rp)</label>
-                    <input type="number" value={jobForm.salary_max} onChange={e => setJobForm(p => ({...p, salary_max: +e.target.value}))}
+                    <MoneyInput unstyled value={jobForm.salary_max} onChange={e => setJobForm(p => ({...p, salary_max: +e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Headcount</label>
                     <input type="number" min={1} value={jobForm.headcount} onChange={e => setJobForm(p => ({...p, headcount: +e.target.value}))}

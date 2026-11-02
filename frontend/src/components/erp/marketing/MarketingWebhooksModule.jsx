@@ -23,6 +23,7 @@ import {
 } from '../../ui/select';
 import { Textarea } from '../../ui/textarea';
 import { useToast } from '../../../hooks/use-toast';
+import { daysAheadWIB } from '../../../lib/waktu';
 import WebhookSecurityPanel from './WebhookSecurityPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -154,7 +155,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
       buyer: { name: "Test Buyer" },
       total_amount: 150000,
       products: [{ product_id: "SKU-001", name: "Test Product", quantity: 1, subtotal: 150000 }],
-      est_start_delivery: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+      est_start_delivery: daysAheadWIB(2),
     },
   }, null, 2);
 
@@ -166,7 +167,7 @@ export default function MarketingWebhooksModule({ user, headers }) {
       status: "READY_TO_SHIP",
       buyer_username: "test_buyer",
       total_amount: 200000,
-      ship_by_date: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10),
+      ship_by_date: daysAheadWIB(2),
       item_list: [{ item_sku: "SKU-002", item_name: "Test Item", model_quantity_purchased: 2, model_discounted_price: 100000 }],
     },
   }, null, 2);

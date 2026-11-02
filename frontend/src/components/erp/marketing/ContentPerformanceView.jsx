@@ -24,6 +24,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 import ContentKpiDialog from './ContentKpiDialog';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -56,12 +57,10 @@ const CONTENT_HEADS = ['Tanggal', 'Konten', 'Jenis', 'Toko', 'Kreator', 'Status'
   'Views', 'Engagement', 'Eng. rate', 'CVR', 'Order', 'GMV (KPI)', 'KPI', ''];
 
 export default function ContentPerformanceView({ token }) {
-  const today = new Date();
   // 30 hari BERGULIR, bukan "awal bulan": dibuka tanggal 1, rentang awal-bulan
   // hanya memuat satu hari dan layar tampak kosong padahal data pekan lalu ada.
-  const start = new Date(today.getTime() - 29 * 86400000);
-  const [from, setFrom] = useState(start.toISOString().slice(0, 10));
-  const [to, setTo] = useState(today.toISOString().slice(0, 10));
+  const [from, setFrom] = useState(() => daysAgoWIB(29));
+  const [to, setTo] = useState(() => todayWIB());
   const [groupBy, setGroupBy] = useState('content');
   const [kpiState, setKpiState] = useState('all');
   const [sort, setSort] = useState('views');

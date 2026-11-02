@@ -23,6 +23,7 @@ import uuid
 import logging
 import os
 from datetime import datetime, timezone
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -572,7 +573,7 @@ async def expiring_contracts(request: Request, days: int = 30):
     await require_auth(request)
     db = get_db()
     from datetime import date
-    today = date.today()
+    today = today_wib()
     cutoff = (today + __import__('datetime').timedelta(days=days)).isoformat()
     today_str = today.isoformat()
 

@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import Modal from './Modal';
 import AdditionalRequestModal from './AdditionalRequestModal';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 export default function VendorMaterialInspection({ user }) {
   const [shipments, setShipments] = useState([]);
@@ -13,7 +14,7 @@ export default function VendorMaterialInspection({ user }) {
   const [selectedShipment, setSelectedShipment] = useState(null);
   const [detailData, setDetailData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({ inspection_date: new Date().toISOString().split('T')[0], overall_notes: '', items: [], accessory_items: [] });
+  const [form, setForm] = useState({ inspection_date: todayWIB(), overall_notes: '', items: [], accessory_items: [] });
   // Phase 16: state untuk modal Permintaan Tambahan
   const [showReqModal, setShowReqModal] = useState(false);
   const [reqModalData, setReqModalData] = useState(null);
@@ -83,7 +84,7 @@ export default function VendorMaterialInspection({ user }) {
       }));
     }
     
-    setForm({ inspection_date: new Date().toISOString().split('T')[0], overall_notes: '', items, accessory_items });
+    setForm({ inspection_date: todayWIB(), overall_notes: '', items, accessory_items });
     setShowModal(true);
   };
 

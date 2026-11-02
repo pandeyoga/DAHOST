@@ -41,6 +41,7 @@ import json
 import asyncio
 import logging
 from utils.query_guards import q_int
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
@@ -351,7 +352,7 @@ async def scan_wo_due(request: Request):
     """
     await require_auth(request)
     db = get_db()
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
     deadline = (today + timedelta(days=2)).isoformat()
 
     # T-03 (FASE 3): SSOT production_jobs via core.wo_reader (rahaza_work_orders diarsip).

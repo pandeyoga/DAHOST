@@ -40,6 +40,7 @@ from core import production_qty_ledger as qty_ledger
 from utils.counters import gen_prefixed_number
 from utils.variant_ssot import resolve_variant, ensure_fg_material
 from auth import require_auth, serialize_doc, check_role, log_activity
+from utils.waktu import wib_date_str, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,8 @@ async def receipt_summary(request: Request):
     cancelled = await db.cmt_receipts.count_documents({"status": _canon_status_filter(ST_CANCELLED)})
 
     # Total pcs diterima hari ini (selesai QC)
-    today = _now()[:10]
+    # qc_completed_at/approved_at = ISO UTC → awal hari WIB dalam UTC (No.54a); dulu 'YYYY-MM-DD' UTC
+    today = wib_day_bounds_utc()[0].isoformat()
     pipeline = [
         {"$match": {"status": _canon_status_filter(ST_DONE),
                     "$or": [{"qc_completed_at": {"$gte": today}},
@@ -404,7 +406,7 @@ async def create_receipt(request: Request):
         "po_id": body.get("po_id", ""),
         "po_number": body.get("po_number", ""),
         "business_type": body.get("business_type", "internal"),
-        "receipt_date": body.get("receipt_date", now_ts[:10]),
+        "receipt_date": body.get("receipt_date", wib_date_str()),
         "delivery_note": body.get("delivery_note", ""),
         "notes": body.get("notes", ""),
         "status": ST_QC,

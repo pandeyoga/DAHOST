@@ -16,6 +16,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Video, Loader2, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -27,6 +28,7 @@ import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import { MarketingAccountSelect, MarketingHostSelect } from './pickers/MarketingPickers';
 import LiveSessionProductsEditor from './LiveSessionProductsEditor';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const STATUS_LABEL = {
@@ -68,7 +70,7 @@ export default function LiveSessionDialog({ open, onClose, onSaved, token, sessi
         } catch (e) { setLines([]); }
       })();
     } else {
-      setForm({ ...EMPTY, session_date: new Date().toISOString().slice(0, 10) });
+      setForm({ ...EMPTY, session_date: todayWIB() });
       setLines([]);
     }
   }, [open, session, authH]);
@@ -168,16 +170,22 @@ export default function LiveSessionDialog({ open, onClose, onSaved, token, sessi
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
             {[['duration_minutes', 'Durasi (menit)'], ['peak_viewers', 'Penonton Puncak'],
               ['total_viewers', 'Total Penonton'], ['likes', 'Likes'],
               ['comments', 'Komentar'], ['shares', 'Shares'],
-              ['orders', 'Jumlah Order'], ['revenue', 'Revenue (Rp)'],
+              ['orders', 'Jumlah Order'], ['revenue', 'Revenue (Rp)', true],
               ['units_sold', 'Item Terjual'], ['products_featured', 'Produk Dibawakan']]
-              .map(([k, l]) => (
+              .map(([k, l, money]) => (
                 <div key={k}>
                   <label className="text-xs font-medium mb-1 block">{l}</label>
-                  <Input type="number" min="0" value={form[k]} onChange={set(k)}
-                    className="h-9 tabular-nums" data-testid={`live-${k}`} />
+                  {money ? (
+                    <MoneyInput value={form[k]} onChange={set(k)}
+                      className="h-9 tabular-nums" data-testid={`live-${k}`} />
+                  ) : (
+                    <Input type="number" min="0" value={form[k]} onChange={set(k)}
+                      className="h-9 tabular-nums" data-testid={`live-${k}`} />
+                  )}
                 </div>
               ))}
             <div>

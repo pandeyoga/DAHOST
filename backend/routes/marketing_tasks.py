@@ -22,6 +22,7 @@ from routes.marketing_shared import _uid, _now, _get_user, _sanitize, TaskCreate
 from core import marketing_sales_shape as _shape
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -401,7 +402,7 @@ async def complete_task_action(task_id: str, payload: TaskCompleteAction, reques
                 # satisfaction` selalu `{}` sehingga skor kesehatan berbeda).
                 sales_doc = _shape.build_daily_doc(
                     account=acc,
-                    date=merged.get("date") or _now().strftime("%Y-%m-%d"),
+                    date=merged.get("date") or wib_date_str(),
                     revenue_type=merged.get("revenue_type", "total"),
                     flat={k: v for k, v in merged.items()
                           if k not in ("account_id", "date", "revenue_type")},

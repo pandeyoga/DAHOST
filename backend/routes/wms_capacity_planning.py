@@ -24,6 +24,7 @@ from auth import require_auth
 from core.authz import only
 from core.roles import PRODUCTION_ROLES
 from database import get_db
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/capacity", tags=["capacity-planning"])
@@ -52,7 +53,7 @@ async def _get_config(db) -> dict:
 
 
 async def _active_wo_load(db) -> dict:
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     # T-03 (FASE 3): SSOT WO = production_jobs via core.wo_reader (rahaza_work_orders diarsip).
     from core.wo_reader import load_wos
     rows = await load_wos(db, statuses=["in_progress", "released"], limit=200)
@@ -70,7 +71,7 @@ async def _active_wo_load(db) -> dict:
         due = str(wo.get("target_date") or "")
         if due and due[:10] < today:
             overdue_count += 1
-        elif due and due[:10] <= (date.today() + timedelta(days=3)).isoformat():
+        elif due and due[:10] <= (today_wib() + timedelta(days=3)).isoformat():
             at_risk_count += 1
     return {
         "active_count": len(wos),
@@ -100,7 +101,7 @@ async def _employee_headcount(db) -> int:
 
 async def _recent_daily_output(db, days: int = 7) -> list:
     # RC-17: rahaza_wip_events TIDAK punya field created_at — pakai event_date (string "YYYY-MM-DD")
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_wib() - timedelta(days=days)).isoformat()
     pipeline = [
         {"$match": {"event_type": "output", "event_date": {"$gte": since}}},
         {"$project": {
@@ -116,7 +117,7 @@ async def _recent_daily_output(db, days: int = 7) -> list:
 
 
 async def _downtime_today(db) -> int:
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     pipeline = [
         {"$match": {"start_at": {"$gte": today}}},
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$duration_min", 0]}}}},
@@ -233,10 +234,10 @@ async def check_wo_capacity(body: WOCheckRequest, request: Request):
     elif body.priority == "high":
         buffer = 1
     feasible = days_needed <= (body.target_days - buffer)
-    recommended_start = date.today()
+    recommended_start = today_wib()
     if not feasible:
         excess = days_needed - body.target_days
-        recommended_start = date.today() + timedelta(days=max(0, excess))
+        recommended_start = today_wib() + timedelta(days=max(0, excess))
     warnings = []
     if new_util["status"] == "critical":
         warnings.append(f"Kapasitas akan over {round((new_util['utilization_ratio'] - 1) * 100, 0):.0f}% setelah WO ini.")
@@ -345,7 +346,7 @@ async def simulate_wo_schedule(body: SimulateRequest, request: Request):
     )
     effective_daily = max(1, int(avg))
     load = await _active_wo_load(db)
-    start = date.fromisoformat(body.start_date) if body.start_date else date.today()
+    start = date.fromisoformat(body.start_date) if body.start_date else today_wib()
     days_needed = (body.quantity + effective_daily - 1) // effective_daily
     est_completion = start + timedelta(days=days_needed + cfg["lead_time_buffer_days"])
     return {

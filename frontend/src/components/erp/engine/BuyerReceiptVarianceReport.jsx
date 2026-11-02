@@ -2,6 +2,7 @@ import { useState, useEffect, Fragment } from 'react';
 import { ChevronDown, ChevronRight, FileDown, FileSpreadsheet, RefreshCw, PackageCheck, AlertTriangle, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiGet } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 
@@ -57,7 +58,7 @@ export default function BuyerReceiptVarianceReport() {
       const ws = XLSX.utils.aoa_to_sheet(aoa);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Selisih Terima');
-      XLSX.writeFile(wb, `Laporan-Selisih-Terima-${new Date().toISOString().slice(0, 10)}.xlsx`);
+      XLSX.writeFile(wb, `Laporan-Selisih-Terima-${todayWIB()}.xlsx`);
     } catch (e) { toast.error('Gagal export Excel: ' + e.message); }
   };
 
@@ -85,7 +86,7 @@ export default function BuyerReceiptVarianceReport() {
         body,
         styles: { fontSize: 8 }, headStyles: { fillColor: [37, 99, 235] },
       });
-      doc.save(`Laporan-Selisih-Terima-${new Date().toISOString().slice(0, 10)}.pdf`);
+      doc.save(`Laporan-Selisih-Terima-${todayWIB()}.pdf`);
     } catch (e) { toast.error('Gagal export PDF: ' + e.message); }
   };
 

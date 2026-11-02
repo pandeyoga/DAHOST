@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GlassCard } from '@/components/ui/glass';
@@ -23,6 +24,7 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, addDaysISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
@@ -79,14 +81,11 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
   // Pilihan 8 periode 7-hari terakhir, dihitung dari tanggal mulai periode kini.
   const weekOptions = (() => {
     const days = pSettings?.period_days || 7;
-    const base = pSettings?.current_period || new Date().toISOString().slice(0, 10);
+    const base = pSettings?.current_period || todayWIB();
     const out = [];
     for (let i = 0; i < 8; i += 1) {
-      const d = new Date(`${base}T00:00:00Z`);
-      d.setUTCDate(d.getUTCDate() - i * days);
-      const start = d.toISOString().slice(0, 10);
-      const e = new Date(d); e.setUTCDate(e.getUTCDate() + days - 1);
-      out.push({ start, label: `${start} → ${e.toISOString().slice(0, 10)}` });
+      const start = addDaysISO(base, -i * days);
+      out.push({ start, label: `${start} → ${addDaysISO(start, days - 1)}` });
     }
     return out;
   })();
@@ -319,7 +318,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
                         <span className="text-[10px] text-muted-foreground ml-4">{c.hint}</span>
                       </td>
                       <td className="px-3 py-2.5 text-right">
-                        <Input type="number" min={0} value={budgetForm[c.key]}
+                        <MoneyInput value={budgetForm[c.key]}
                           data-testid={`budget-input-${c.key}`}
                           onChange={e => setBudgetForm(f => ({ ...f, [c.key]: e.target.value }))}
                           className="h-8 text-right w-32 ml-auto" placeholder="0" />
@@ -381,7 +380,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
             </div>
             <div className="w-40">
               <Label className="text-xs">Jumlah (Rp)</Label>
-              <Input type="number" min={0} value={newSpend.amount} data-testid="spend-amount-input"
+              <MoneyInput value={newSpend.amount} data-testid="spend-amount-input"
                 onChange={e => setNewSpend(s => ({ ...s, amount: e.target.value }))} className="h-9 mt-1" placeholder="0" />
             </div>
             <div className="flex-1 min-w-[180px]">
@@ -442,7 +441,7 @@ export default function BudgetAllocationTab({ token, accounts, period: periodPro
                           </Select>
                         </td>
                         <td className="px-3 py-2.5 text-right">
-                          <Input type="number" min={0} value={cfg.fixed_fee ?? ''} disabled={ft === 'none' || ft === 'commission'}
+                          <MoneyInput value={cfg.fixed_fee ?? ''} disabled={ft === 'none' || ft === 'commission'}
                             data-testid={`kol-fixedfee-${idx}`}
                             onChange={e => updKol(idx, { fixed_fee: e.target.value })} className="h-8 w-28 text-right ml-auto" placeholder="0" />
                         </td>

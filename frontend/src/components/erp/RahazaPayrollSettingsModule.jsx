@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
+import { MoneyInput } from '@/components/ui/money-input';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const inputCls = 'h-8 w-full px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm';
@@ -126,11 +127,11 @@ export default function RahazaPayrollSettingsModule({ token }) {
             </Row>
           ))}
           <Row label="Plafon Kesehatan (Rp)">
-            <input type="number" min="0" className={inputCls} value={bpjs.ceilings.kes}
+            <MoneyInput unstyled className={inputCls} value={bpjs.ceilings.kes}
               onChange={e => setBpjs(b => ({ ...b, ceilings: { ...b.ceilings, kes: Number(e.target.value) } }))} />
           </Row>
           <Row label="Plafon JP (Rp)">
-            <input type="number" min="0" className={inputCls} value={bpjs.ceilings.jp}
+            <MoneyInput unstyled className={inputCls} value={bpjs.ceilings.jp}
               onChange={e => setBpjs(b => ({ ...b, ceilings: { ...b.ceilings, jp: Number(e.target.value) } }))} />
           </Row>
           <Row label="Kelas risiko JKK" hint={`Tarif: ${pct(bpjs.jkk_rates[bpjs.jkk_risk_tier])}% (cek sertifikat kepesertaan)`}>
@@ -191,19 +192,24 @@ export default function RahazaPayrollSettingsModule({ token }) {
               <option value="per_minute">Per menit</option><option value="per_occurrence">Per kejadian</option><option value="tiered">Bertingkat</option>
             </select>
           </Row>
-          <Row label="Rp per menit"><input type="number" min="0" className={inputCls} value={late.amount_per_minute} onChange={num(setLate, 'amount_per_minute')} /></Row>
-          <Row label="Rp per kejadian"><input type="number" min="0" className={inputCls} value={late.amount_per_occurrence} onChange={num(setLate, 'amount_per_occurrence')} /></Row>
+          <Row label="Rp per menit"><MoneyInput unstyled className={inputCls} value={late.amount_per_minute} onChange={num(setLate, 'amount_per_minute')} /></Row>
+          <Row label="Rp per kejadian"><MoneyInput unstyled className={inputCls} value={late.amount_per_occurrence} onChange={num(setLate, 'amount_per_occurrence')} /></Row>
         </div>
         {late.mode === 'tiered' && (
           <div className="space-y-2">
             {late.tiers.map((t, i) => (
               <div key={i} className="grid grid-cols-4 gap-2 items-end">
-                {['from_minutes', 'to_minutes', 'amount'].map(k => (
-                  <Row key={k} label={{ from_minutes: 'Dari menit', to_minutes: 'Sampai menit (kosong = ∞)', amount: 'Rp' }[k]}>
-                    <input type="number" min="0" className={inputCls} value={t[k] ?? ''}
-                      onChange={e => setLate(l => ({ ...l, tiers: l.tiers.map((x, j) => j === i ? { ...x, [k]: e.target.value === '' ? null : Number(e.target.value) } : x) }))} />
-                  </Row>
-                ))}
+                {['from_minutes', 'to_minutes', 'amount'].map(k => {
+                  const onTier = e => setLate(l => ({ ...l, tiers: l.tiers.map((x, j) => j === i ? { ...x, [k]: e.target.value === '' ? null : Number(e.target.value) } : x) }));
+                  return (
+                    <Row key={k} label={{ from_minutes: 'Dari menit', to_minutes: 'Sampai menit (kosong = ∞)', amount: 'Rp' }[k]}>
+                      {/* menit tetap input angka; hanya kolom Rp yang MoneyInput (No.45) */}
+                      {k === 'amount'
+                        ? <MoneyInput unstyled className={inputCls} value={t[k] ?? ''} onChange={onTier} />
+                        : <input type="number" min="0" className={inputCls} value={t[k] ?? ''} onChange={onTier} />}
+                    </Row>
+                  );
+                })}
                 <Button variant="ghost" className="h-8 border border-[var(--glass-border)]" onClick={() => setLate(l => ({ ...l, tiers: l.tiers.filter((_, j) => j !== i) }))}>Hapus</Button>
               </div>
             ))}
@@ -218,7 +224,7 @@ export default function RahazaPayrollSettingsModule({ token }) {
         onSave={() => save('bonus', 'payroll-settings/attendance-bonus', bonus)}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <Row label="Aktif"><input type="checkbox" checked={!!bonus.enabled} onChange={e => setBonus(b => ({ ...b, enabled: e.target.checked }))} /></Row>
-          <Row label="Nominal (Rp)"><input type="number" min="0" className={inputCls} value={bonus.amount} onChange={num(setBonus, 'amount')} /></Row>
+          <Row label="Nominal (Rp)"><MoneyInput unstyled className={inputCls} value={bonus.amount} onChange={num(setBonus, 'amount')} /></Row>
           <Row label="Wajib hadir penuh"><input type="checkbox" checked={!!bonus.require_full_attendance} onChange={e => setBonus(b => ({ ...b, require_full_attendance: e.target.checked }))} /></Row>
           <Row label="Hangus bila terlambat"><input type="checkbox" checked={!!bonus.forfeit_if_late} onChange={e => setBonus(b => ({ ...b, forfeit_if_late: e.target.checked }))} /></Row>
           <Row label="Maks hari terlambat"><input type="number" min="0" className={inputCls} value={bonus.max_late_days_allowed} onChange={num(setBonus, 'max_late_days_allowed')} /></Row>

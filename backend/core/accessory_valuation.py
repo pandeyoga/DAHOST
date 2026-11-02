@@ -40,6 +40,7 @@ from utils.notif_recipients import (
     partition_recipients_by_dedup,
     resolve_role_recipients,
 )
+from utils.waktu import wib_date_str
 
 COST_HISTORY = "rahaza_material_cost_history"
 # Jenis material yang termasuk "aksesoris" bagi Portal Aksesoris. Dipakai untuk
@@ -467,19 +468,6 @@ async def notify_unvalued(db, *, material: dict, movement_type: str, qty: float,
 DIGEST_KIND = "unvalued_daily"
 DIGEST_WINDOW_HOURS = 24
 DIGEST_MAX_LINES = 15
-_JAKARTA = "Asia/Jakarta"
-
-
-def _jakarta_date_str(dt: datetime | None = None) -> str:
-    """Tanggal kalender Asia/Jakarta (YYYY-MM-DD) — penanda idempoten digest harian.
-
-    2026-08-07 (P3): implementasinya dipindah ke SSOT `utils/waktu.py` supaya hanya
-    ada SATU pengertian "tanggal WIB" di seluruh repo.
-    """
-    from utils.waktu import wib_date_str
-    return wib_date_str(dt or _now())
-
-
 async def unvalued_report(db, *, window_hours: int = DIGEST_WINDOW_HOURS) -> dict:
     """Daftar aksesoris ber-HPP 0 + konteks mutasi terakhir (untuk digest & panel FE).
 
@@ -575,7 +563,7 @@ async def send_unvalued_digest(db, *, force: bool = False, actor: dict | None = 
     Tidak ada item belum dinilai ⇒ TIDAK mengirim apa pun (tidak berisik).
     SELALU aman dipanggil: kegagalan dilaporkan lewat return value, tidak melempar.
     """
-    day = _jakarta_date_str()
+    day = wib_date_str()   # penanda idempoten digest harian = tanggal WIB (SSOT utils.waktu)
     try:
         report = await unvalued_report(db)
         if report["totals"]["items"] == 0:

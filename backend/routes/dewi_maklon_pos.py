@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from routes.production_rbac import deny_external_dep
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from utils.counters import gen_prefixed_number
@@ -29,6 +29,7 @@ from routes.dewi_maklon_buyer_catalog import (
 )
 import uuid
 import logging
+from utils.waktu import today_wib, wib_year
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/dewi/maklon', tags=['Dewi-Maklon-PO'], dependencies=[Depends(deny_external_dep)])
@@ -51,7 +52,7 @@ async def _next_po_number(db, client_code: str, requested: str = "") -> str:
 async def _next_dispatch_number(db, client_code: str) -> str:
     """Nomor pengiriman maklon ke klien — formatnya bisa diatur owner
     (kunci `dewi_maklon_dispatches.dispatch_number`, token {KLIEN})."""
-    today = date.today().strftime('%Y%m%d')
+    today = today_wib().strftime('%Y%m%d')
     return await gen_prefixed_number(db, 'dewi_maklon_dispatches', 'dispatch_number',
                                      f'DISP-{client_code}-{today}-', 3,
                                      ctx={'KLIEN': client_code})
@@ -65,7 +66,7 @@ async def _next_ar_invoice_number(db) -> str:
     """Invoice AR otomatis dari PO Maklon. Tersimpan di `rahaza_ar_invoices`
     (koleksi yang sama dengan AR Finance) sehingga konfigurasinya memakai kunci
     TERSENDIRI `dewi_maklon.ar_invoice_number` supaya tidak saling menimpa."""
-    year = datetime.now(timezone.utc).year
+    year = wib_year()   # nomor dokumen = tahun WIB (No.54a)
     return await gen_prefixed_number(db, 'rahaza_ar_invoices', 'invoice_number',
                                      f'INV-MKL-{year}-', 4,
                                      config_key='dewi_maklon.ar_invoice_number')
@@ -269,7 +270,7 @@ async def _create_engine_po_for_maklon(db, *, payload, client, po_number, items,
         'customer_name': client.get('name', ''),
         'vendor_id': getattr(payload, 'vendor_id', None),
         'status': 'Draft',
-        'po_date': payload.po_date or date.today().isoformat(),
+        'po_date': payload.po_date or today_wib().isoformat(),
         'deadline': payload.deadline,
         'notes': payload.notes or '',
         'items': [{
@@ -401,7 +402,7 @@ async def create_maklon_po(payload: MaklonPOIn, user: dict = Depends(require_aut
         'client_id': payload.client_id,
         'client_name': client.get('name', ''),
         'client_code': client_code,
-        'po_date': payload.po_date or date.today().isoformat(),
+        'po_date': payload.po_date or today_wib().isoformat(),
         'deadline': payload.deadline,
         'payment_terms': payload.payment_terms or 'net_30',
         'status': 'draft',  # draft|confirmed|in_production|partial_delivered|completed|invoiced|cancelled
@@ -718,7 +719,7 @@ async def confirm_maklon_po(po_id: str, user: dict = Depends(require_auth)):
         'linked_maklon_po_number': po['po_number'],
         'customer_id': po['client_id'],
         'customer_name': po['client_name'],
-        'invoice_date': date.today().isoformat(),
+        'invoice_date': today_wib().isoformat(),
         'due_date': None,
         'lines': lines,
         'subtotal': po['total_value'],
@@ -858,7 +859,7 @@ async def create_dispatch(payload: MaklonDispatchIn, user: dict = Depends(requir
         'po_number': po['po_number'],
         'client_id': po['client_id'],
         'client_name': po['client_name'],
-        'dispatch_date': payload.dispatch_date or date.today().isoformat(),
+        'dispatch_date': payload.dispatch_date or today_wib().isoformat(),
         'driver_name': payload.driver_name or '',
         'vehicle_no': payload.vehicle_no or '',
         'notes': payload.notes or '',
@@ -1030,7 +1031,7 @@ async def receive_material_from_client(payload: MaterialReceiveIn, user: dict = 
         'po_number': po['po_number'],
         'client_id': po['client_id'],
         'client_name': po['client_name'],
-        'receive_date': payload.receive_date or date.today().isoformat(),
+        'receive_date': payload.receive_date or today_wib().isoformat(),
         'items': [{
             'material_name': it.material_name,
             'material_category': it.material_category,

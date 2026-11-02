@@ -12,11 +12,12 @@ Storage: koleksi `rahaza_setup_state` = { user_id, status, completed_steps[], up
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 import uuid
 import logging
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
 from core import product_master as pm  # T1: SATU definisi "model masih hidup"
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/setup", tags=["Setup Wizard"])
@@ -211,7 +212,7 @@ async def seed_sample_data(request: Request):
             "name": e["name"],
             "role_hint": e["role_hint"],
             "phone": "",
-            "join_date": date.today().isoformat(),
+            "join_date": today_wib().isoformat(),
             "active": True,
             "created_at": _now(),
             "updated_at": _now(),
@@ -338,7 +339,7 @@ async def seed_sample_data(request: Request):
     if not existing_order:
         order_id = _uid()
         # Count orders hari ini untuk order_number
-        today_iso = date.today().strftime("%Y%m%d")
+        today_iso = today_wib().strftime("%Y%m%d")
         order_number = f"DEMO-{today_iso}-001"
         items = []
         for sz_code in ["S", "M", "L", "XL"]:
@@ -356,7 +357,7 @@ async def seed_sample_data(request: Request):
         await db.rahaza_orders.insert_one({
             "id": order_id,
             "order_number": order_number,
-            "order_date": date.today().isoformat(),
+            "order_date": today_wib().isoformat(),
             "due_date": None,
             "customer_id": None,
             "customer_name": "Produksi Internal (Demo)",

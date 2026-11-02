@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Contact, Plus, Pencil, Ban, RefreshCw, Search } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import Modal from '../Modal';
@@ -86,7 +87,7 @@ export default function SalesCustomersModule() {
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Telepon</span><GlassInput value={form.phone || ''} onChange={e => set('phone', e.target.value)} data-testid="cust-form-phone" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Email</span><GlassInput value={form.email || ''} onChange={e => set('email', e.target.value)} data-testid="cust-form-email" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">NPWP</span><GlassInput value={form.npwp || ''} onChange={e => set('npwp', e.target.value)} data-testid="cust-form-npwp" /></label>
-            <label className="space-y-1"><span className="text-xs text-muted-foreground">Limit Kredit (Rp)</span><GlassInput type="number" min="0" value={form.credit_limit ?? 0} onChange={e => set('credit_limit', e.target.value)} data-testid="cust-form-limit" /></label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Limit Kredit (Rp)</span><MoneyInput value={form.credit_limit ?? 0} onChange={e => set('credit_limit', e.target.value)} className="h-10" data-testid="cust-form-limit" /></label>
             <label className="space-y-1 md:col-span-2"><span className="text-xs text-muted-foreground">Alamat</span><GlassInput value={form.address || ''} onChange={e => set('address', e.target.value)} data-testid="cust-form-address" /></label>
             <label className="space-y-1 md:col-span-2"><span className="text-xs text-muted-foreground">Catatan</span><GlassInput value={form.notes || ''} onChange={e => set('notes', e.target.value)} data-testid="cust-form-notes" /></label>
           </div>

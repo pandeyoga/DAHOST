@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/select';
 import { Plus, X, Loader2, UserCheck, Zap } from 'lucide-react';
 import { toast } from 'sonner';
+import { todayWIB, fromWIBLocalInput } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -153,7 +154,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
       if (form.related_entity === 'sales_data' && form.account_id) {
         related_form_data = {
           account_id: form.account_id,
-          date: new Date().toISOString().split('T')[0],
+          date: todayWIB(),
         };
       }
 
@@ -164,7 +165,7 @@ export function CreateTaskDialog({ open, onOpenChange, onCreated, token, account
         priority: form.priority,
         assigned_to: form.assigned_to || null,
         account_id: form.account_id || null,
-        due_date: form.due_date ? new Date(form.due_date).toISOString() : null,
+        due_date: fromWIBLocalInput(form.due_date),
         checklist: form.checklist,
         recurrence: 'one-time',
         related_entity: form.related_entity || null,

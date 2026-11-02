@@ -10,6 +10,7 @@ from typing import Optional
 import uuid
 import logging
 from storage import put_object, generate_storage_path
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["portal-hr"])
@@ -103,14 +104,14 @@ async def get_dashboard(request: Request):
     u, emp = await _get_linked_employee(db, user["id"])
     uid = user["id"]
     emp_id = emp["id"] if emp else None
-    today_str = date.today().isoformat()
-    month_start = date.today().replace(day=1).isoformat()
+    today_str = today_wib().isoformat()
+    month_start = today_wib().replace(day=1).isoformat()
 
     # --- Leave balance ---
     leave_balance = []
     if emp_id:
         bals = await db.rahaza_leave_balances.find(
-            {"employee_id": emp_id, "year": date.today().year}, {"_id": 0}
+            {"employee_id": emp_id, "year": today_wib().year}, {"_id": 0}
         ).to_list(20)
         lt_ids = [b.get("leave_type_id") for b in bals]
         lts = await db.rahaza_leave_types.find({"id": {"$in": lt_ids}}, {"_id": 0}).to_list(500) if lt_ids else []
@@ -208,7 +209,7 @@ async def get_dashboard(request: Request):
     })
 
     # --- Upcoming reminders ---
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    tomorrow = (today_wib() + timedelta(days=1)).isoformat()
     upcoming_reminders = await db.portal_reminders.find(
         {"user_id": uid, "is_done": False, "remind_at": {"$lte": tomorrow + "T23:59:59"}},
         {"_id": 0}

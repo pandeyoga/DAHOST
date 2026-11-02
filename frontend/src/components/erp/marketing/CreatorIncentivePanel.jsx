@@ -14,6 +14,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Target, Plus, Trash2, RotateCcw, Save, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const rp = formatRupiah;
@@ -21,7 +23,7 @@ const rp = formatRupiah;
 export default function CreatorIncentivePanel({ token, creator, onClose }) {
   const [data, setData] = useState(null);
   const [cfg, setCfg] = useState(null);
-  const [entry, setEntry] = useState({ date: new Date().toISOString().slice(0, 10), pcs: '', note: '' });
+  const [entry, setEntry] = useState(() => ({ date: todayWIB(), pcs: '', note: '' }));
   const [busy, setBusy] = useState(false);
   const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -139,7 +141,7 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
                 </select>
               </Field>
               <Field label="Rp per pcs">
-                <input data-testid="incentive-rate-input" type="number" min="0" value={cfg.rate_per_pcs}
+                <MoneyInput unstyled data-testid="incentive-rate-input" value={cfg.rate_per_pcs}
                   onChange={(e) => setCfg({ ...cfg, rate_per_pcs: Number(e.target.value) })}
                   className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-2 py-1.5" />
               </Field>
@@ -149,7 +151,7 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
                   className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-2 py-1.5" />
               </Field>
               <Field label="Bonus target (Rp)">
-                <input data-testid="incentive-bonus-input" type="number" min="0" value={cfg.bonus_amount}
+                <MoneyInput unstyled data-testid="incentive-bonus-input" value={cfg.bonus_amount}
                   onChange={(e) => setCfg({ ...cfg, bonus_amount: Number(e.target.value) })}
                   className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-2 py-1.5" />
               </Field>

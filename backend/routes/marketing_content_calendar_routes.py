@@ -19,6 +19,7 @@ import json
 import calendar
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
+from utils.waktu import now_wib, wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/content-calendar", tags=["marketing-content-calendar"])
@@ -95,7 +96,7 @@ async def seed_content_calendar_if_empty():
     statuses = ["posted", "posted", "posted", "scheduled", "scheduled", "draft"]
 
     entries = []
-    base = _now().replace(day=1)
+    base = now_wib().replace(day=1)   # tanggal kalender WIB (No.54a)
     for i in range(30):
         day_offset = random.randint(-5, 25)
         post_date = (base + timedelta(days=day_offset)).date()
@@ -270,7 +271,7 @@ async def get_summary(request: Request,
     cancelled = await db.marketing_content_calendar.count_documents({**_sq, "status": "cancelled"})
 
     # This month
-    now = _now()
+    now = now_wib()   # bulan berjalan WIB — `date` entri = tanggal kalender (No.54a)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     now.strftime("%Y-%m")
     this_month = await db.marketing_content_calendar.count_documents(
@@ -309,7 +310,7 @@ async def get_monthly(
     # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y = year  or now.year
     m = month or now.month
 
@@ -578,7 +579,7 @@ async def set_content_kpi(entry_id: str, body: ContentKpiIn, request: Request):
         # Konten yang KPI-nya sudah ada jelas sudah terbit; status "draft" pada baris
         # yang punya angka nyata adalah kontradiksi yang membuat rekap salah hitung.
         upd["status"] = "posted"
-        upd["published_at"] = entry.get("published_at") or now.date().isoformat()
+        upd["published_at"] = entry.get("published_at") or wib_date_str(now)
     await db.marketing_content_calendar.update_one({"id": entry_id}, {"$set": upd})
     return {"success": True, "data": serialize({**entry, **upd})}
 

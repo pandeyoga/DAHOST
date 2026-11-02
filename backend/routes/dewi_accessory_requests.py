@@ -24,6 +24,7 @@ import uuid
 import re
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/accessory-requests", tags=["RnD-Accessory-Requests"])
 
@@ -147,7 +148,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
             style_name = style_name or st.get('style_name', '')
 
     # Generate code with type-specific prefix when none supplied
-    today = now_utc().strftime('%y%m%d')
+    today = fmt_wib('%y%m%d')
     prefix_map = {
         'rnd_sample':         'REQ-AKS',
         'internal_issuance':  'INT-REQ',

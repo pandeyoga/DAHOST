@@ -12,11 +12,12 @@ Employee extra fields (via PUT /api/rahaza/employees/{id}):
                  handover_done, notes }
 """
 import uuid
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/resignation", tags=["rahaza-resignation"])
 
@@ -60,7 +61,7 @@ async def submit_resignation(employee_id: str, request: Request):
 
     upd = {
         "employee_status": "resigning",  # pending HR acceptance
-        "resignation_date": body.get("resignation_date") or date.today().isoformat(),
+        "resignation_date": body.get("resignation_date") or today_wib().isoformat(),
         "last_working_date": body.get("last_working_date"),
         "reason_for_leaving": body.get("reason_for_leaving") or "",
         "resignation_notes": body.get("notes") or "",

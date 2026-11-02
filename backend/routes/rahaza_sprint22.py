@@ -25,7 +25,8 @@ from core.wo_reader import load_wos  # T-03: SSOT production_jobs
 from typing import Optional
 import uuid
 import logging
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +42,11 @@ def _now():
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _yesterday() -> str:
-    return (date.today() - timedelta(days=1)).isoformat()
+    return (today_wib() - timedelta(days=1)).isoformat()
 
 
 async def _require_supervisor(request: Request):

@@ -16,6 +16,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -33,11 +34,11 @@ const HEADS = ['Tanggal', 'Kanal', 'Sumber', 'GMV (dibuat)', 'GMV (siap kirim)',
   'Sesi live', 'Menit live', 'AOV'];
 
 export default function PlatformKpiView({ token, onNavigate }) {
-  const today = new Date();
-  const first = new Date(today.getFullYear(), today.getMonth(), 1);
   const [accountId, setAccountId] = useState('');
-  const [from, setFrom] = useState(first.toISOString().slice(0, 10));
-  const [to, setTo] = useState(today.toISOString().slice(0, 10));
+  // Awal bulan s/d hari ini menurut kalender WIB — `new Date(y, m, 1).toISOString()`
+  // di browser WIB mundur ke tanggal terakhir bulan lalu.
+  const [from, setFrom] = useState(() => monthStartWIB());
+  const [to, setTo] = useState(() => todayWIB());
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);

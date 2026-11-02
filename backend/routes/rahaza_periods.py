@@ -13,6 +13,7 @@ from auth import require_auth, serialize_doc, log_activity
 import uuid
 from datetime import datetime, timezone, date
 from core.roles import FINANCE_ROLES  # FIN-02
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/periods", tags=["rahaza-periods"])
 
@@ -73,7 +74,7 @@ async def ensure_year(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    year = int((body or {}).get("year") or date.today().year)
+    year = int((body or {}).get("year") or today_wib().year)
     from routes.rahaza_posting import ensure_year_periods
     created = await ensure_year_periods(db, year)
     # Iter 114: peringatan "periode belum dibuka" utk tahun ini otomatis selesai
@@ -89,7 +90,7 @@ async def period_policy(request: Request):
     """H-08: aturan tanggal posting yang berlaku (dibaca layar Periode Fiskal)."""
     await require_auth(request)
     from routes.rahaza_posting import POSTING_FUTURE_DAYS, PERIOD_AUTO_CREATE_YEARS
-    y = date.today().year
+    y = today_wib().year
     return {"future_days_max": POSTING_FUTURE_DAYS, "auto_create_years": PERIOD_AUTO_CREATE_YEARS,
             "auto_years": list(range(y - PERIOD_AUTO_CREATE_YEARS, y + PERIOD_AUTO_CREATE_YEARS + 1))}
 

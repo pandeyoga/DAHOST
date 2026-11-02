@@ -43,6 +43,7 @@ import logging
 import uuid
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from utils.waktu import today_wib, fmt_wib
 
 log = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def _now():
 
 
 def _today():
-    return datetime.now(timezone.utc).date()
+    return today_wib()
 
 
 async def _gen_shipment_number(db) -> str:
@@ -658,7 +659,7 @@ def _build_surat_jalan_pdf(shp: dict, company: dict) -> bytes:
 
     # Footer
     c.setFont("Helvetica-Oblique", 6)
-    c.drawRightString(w - 10 * mm, 6 * mm, f"Dicetak: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+    c.drawRightString(w - 10 * mm, 6 * mm, f"Dicetak: {fmt_wib('%Y-%m-%d %H:%M WIB')}")
 
     c.showPage()
     c.save()

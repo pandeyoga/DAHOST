@@ -4,12 +4,13 @@ Status & Configuration endpoints
 """
 import uuid
 import os
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc
 from dotenv import load_dotenv
+from utils.waktu import today_wib
 
 load_dotenv()
 
@@ -42,7 +43,7 @@ ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://fresh-context-1.preview.emer
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
-def _today_iso(): return date.today().isoformat()
+def _today_iso(): return today_wib().isoformat()
 
 
 

@@ -8,6 +8,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -33,18 +35,13 @@ import ExportCsvButton from '@/components/ui/export-csv-button';
 const SAMPLE_HEADS = ['Tanggal', 'Toko', 'Kreator', 'Produk', 'SKU', 'Qty', 'HPP',
   'Total HPP', 'Ongkir', 'Kurir', 'Resi', 'Status kirim', 'Progress', 'Video',
   'Umur (hari)', 'Aksi'];
-const fmtDate = (v) => {
-  if (!v) return '—';
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
-};
+// Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
+const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
+// Umur dalam HARI KALENDER WIB (dulu selisih jam dibulatkan → lewat 19.00 WIB sudah +1).
 const ageDays = (v) => {
-  if (!v) return '—';
-  const d = new Date(String(v).slice(0, 10));
-  if (Number.isNaN(d.getTime())) return '—';
-  return Math.max(0, Math.round((Date.now() - d.getTime()) / 86400000));
+  const d = v ? toWIBDate(v) : '';
+  if (!d) return '—';
+  return Math.max(0, daysBetweenISO(d, todayWIB()));
 };
 const SHIPMENT_STATUS_CONFIG = {
   pending:   { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
@@ -183,7 +180,7 @@ export default function SampleDeliveryModule({ token }) {
       });
     } else {
       setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, date: todayWIB() });
     }
     setShowForm(true);
   };
@@ -736,7 +733,7 @@ export default function SampleDeliveryModule({ token }) {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>HPP (per pcs)</Label>
-                <Input type="number" value={form.hpp} disabled={!!form.catalog_item_id}
+                <MoneyInput value={form.hpp} disabled={!!form.catalog_item_id}
                   onChange={e => setForm({ ...form, hpp: parseFloat(e.target.value) })}
                   data-testid="sample-hpp" />
                 {form.catalog_item_id && (
@@ -747,7 +744,7 @@ export default function SampleDeliveryModule({ token }) {
               </div>
               <div className="space-y-2">
                 <Label>Ongkir</Label>
-                <Input type="number" value={form.ongkir} onChange={e => setForm({ ...form, ongkir: parseFloat(e.target.value) })} />
+                <MoneyInput value={form.ongkir} onChange={e => setForm({ ...form, ongkir: parseFloat(e.target.value) })} />
               </div>
             </div>
             <div className="space-y-2">

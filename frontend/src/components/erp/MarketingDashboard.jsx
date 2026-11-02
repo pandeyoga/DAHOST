@@ -16,6 +16,7 @@ import { AccountDetailPage } from './marketing/AccountDetailPage';
 import { MarketingCycleStrip } from './marketing/MarketingCycleStrip';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, monthStartWIB, thisMonthWIB } from '@/lib/waktu';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL;
 
@@ -38,13 +39,10 @@ export default function MarketingDashboard({ token, onNavigate }) {
   // (30 hari terakhir dari backend) rentangnya selalu menyerempet dua bulan,
   // sehingga omzet di layar tidak pernah bisa disandingkan dengan targetnya —
   // dan itulah yang terbaca sebagai "angka dashboard tidak nyambung".
-  const [period, setPeriod] = useState(() => {
-    const d = new Date();
-    return {
-      date_from: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`,
-      date_to: d.toISOString().split('T')[0],
-    };
-  });
+  const [period, setPeriod] = useState(() => ({
+    date_from: monthStartWIB(),
+    date_to: todayWIB(),
+  }));
   const [chartAccountFilter, setChartAccountFilter] = useState('all');
   const [detailAccount, setDetailAccount] = useState(null); // null = dashboard, object = detail view
   const headers = useMemo(
@@ -54,7 +52,7 @@ export default function MarketingDashboard({ token, onNavigate }) {
   // Bulan yang dipakai untuk angka RESMI (target/anggaran/ROI) — diambil dari
   // tanggal akhir rentang supaya layar dan SSOT siklus bicara tentang bulan sama.
   const cyclePeriod = useMemo(
-    () => (period.date_to || new Date().toISOString().split('T')[0]).slice(0, 7),
+    () => (period.date_to ? period.date_to.slice(0, 7) : thisMonthWIB()),
     [period.date_to]
   );
 

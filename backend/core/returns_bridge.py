@@ -69,6 +69,7 @@ from datetime import datetime, timezone
 
 from core import stock_service
 from utils.counters import gen_prefixed_number
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -1010,7 +1011,6 @@ async def cancel_for_marketing_return(db, ret: dict, *, actor=None,
 
 async def _post_reversal_je(db, je_id: str, wh: dict, actor: dict, reason: str) -> dict:
     """Jurnal PEMBALIK satu jurnal retur (debit ⇄ kredit), idempoten per jurnal asal."""
-    from datetime import date
     from routes.rahaza_posting import _create_posted_je, _find_existing_je
     je = await db.rahaza_journal_entries.find_one({"id": je_id}, {"_id": 0})
     if not je:
@@ -1028,7 +1028,7 @@ async def _post_reversal_je(db, je_id: str, wh: dict, actor: dict, reason: str) 
               "debit": float(ln.get("credit") or 0), "credit": float(ln.get("debit") or 0),
               "description": f"Balik {je.get('je_number')} — retur {code}: {reason}"[:200]}
              for ln in (je.get("lines") or [])]
-    return await _create_posted_je(db, date.today(),
+    return await _create_posted_je(db, today_wib(),
                                    f"Pembalik keputusan retur {code} ({je.get('je_number')})",
                                    "wh_return_reversal", source_ref, lines, actor or {})
 

@@ -2,12 +2,13 @@
 
 These must be registered as LITERAL paths BEFORE the catch-all /{asset_id}.
 """
-from datetime import date, timedelta
+from datetime import timedelta
 from fastapi import Request
 
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _ser
+from utils.waktu import today_wib
 
 
 @router.get("/expiring-alerts")
@@ -15,8 +16,8 @@ async def get_expiring_alerts(request: Request, days: int = 30):
     """Aset dengan warranty atau insurance yang akan expired dalam N hari ke depan."""
     await require_auth(request)
     db = get_db()
-    today_str = date.today().isoformat()
-    future_str = (date.today() + timedelta(days=days)).isoformat()
+    today_str = today_wib().isoformat()
+    future_str = (today_wib() + timedelta(days=days)).isoformat()
 
     warranty_expiring = await db.dewi_assets.find(
         {"warranty_expiry_date": {"$gte": today_str, "$lte": future_str}, "status": {"$ne": "disposed"}},

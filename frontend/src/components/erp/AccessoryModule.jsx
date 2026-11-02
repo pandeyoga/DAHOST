@@ -28,6 +28,7 @@ import { UomSelect, UomConversionHint, baseUnitOf, toBaseQty } from './uom/UomPi
 import AccessoryValuationTab from './accessory/AccessoryValuationTab';
 // F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
 import { tone } from '@/lib/tone';
+import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 // 2026-11-02 (K9): tab Stok Opname = layar Sesi Opname bersama (mesin tunggal), terfilter aksesoris
 import WMSOpnameScanModule from './WMSOpnameScanModule';
@@ -383,7 +384,7 @@ function MasterTab({ token, onRefreshDash }) {
               {/* FASE G+: harga satuan — dasar nilai selisih opname & jurnal keuangan */}
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Harga Satuan / HPP (Rp)</label>
-                <input type="number" min="0" step="1" value={form.unit_cost}
+                <MoneyInput unstyled value={form.unit_cost}
                   onChange={e=>setForm({...form,unit_cost:e.target.value})}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                   placeholder="0" data-testid="acc-unit-cost-input" />
@@ -454,7 +455,7 @@ function MasterTab({ token, onRefreshDash }) {
                     <b className="text-foreground">{moveUnit || showMove.unit}</b>{' '}
                     — opsional
                   </label>
-                  <input type="number" min="0" step="0.01" value={moveForm.unit_cost}
+                  <MoneyInput unstyled decimals={2} value={moveForm.unit_cost}
                     onChange={e=>setMoveForm({...moveForm,unit_cost:e.target.value})}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                     placeholder="kosongkan bila harga tidak berubah" data-testid="move-unit-cost-input" />
@@ -1042,7 +1043,7 @@ function PurchaseRequestTab({ token, items }) {
                     </SmartNativeSelect>
                     <input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)} className="w-14 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Qty" />
                     <span className="text-xs text-muted-foreground">{ln.unit}</span>
-                    <input type="number" min="0" value={ln.estimated_price} onChange={e=>updateLine(i,'estimated_price',+e.target.value)} className="w-24 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Harga Est." />
+                    <MoneyInput unstyled value={ln.estimated_price} onChange={e=>updateLine(i,'estimated_price',+e.target.value)} className="w-24 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Harga Est." />
                     {lines.length>1 && <button onClick={()=>removeLine(i)}><X className="w-4 h-4 text-muted-foreground" /></button>}
                   </div>
                 ))}

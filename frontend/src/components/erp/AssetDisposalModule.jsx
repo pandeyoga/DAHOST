@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, PackageMinus, Trash2 } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, thisMonthWIB, toWIBDate } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 
@@ -48,7 +50,7 @@ export default function AssetDisposalModule({ token }) {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          disposal_date: disposalTarget.disposal_date || new Date().toISOString().split('T')[0],
+          disposal_date: disposalTarget.disposal_date || todayWIB(),
           disposal_value: Number(disposalTarget.disposal_value) || 0,
           notes: disposalTarget.notes
         })
@@ -88,11 +90,9 @@ export default function AssetDisposalModule({ token }) {
       />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <StatTile label="Total Aset Aktif" value={activeAssets.length} />
-        <StatTile label="Disposed Bulan Ini" value={disposedAssets.filter(a => {
-          const d = new Date(a.disposal_date || '');
-          const now = new Date();
-          return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-        }).length} accent="warning" />
+        <StatTile label="Disposed Bulan Ini" value={disposedAssets.filter(a => (
+          toWIBDate(a.disposal_date).slice(0, 7) === thisMonthWIB()
+        )).length} accent="warning" />
         <StatTile
           label="Avg Gain/Loss"
           value={disposedAssets.length > 0 ? fmt(disposedAssets.reduce((s, a) => s + (a.disposal_gain_loss || 0), 0) / disposedAssets.length) : 'Rp 0'}
@@ -220,9 +220,8 @@ export default function AssetDisposalModule({ token }) {
               </div>
               <div>
                 <label className="text-xs uppercase text-muted-foreground block mb-1">Disposal Value (Harga Jual/Scrap)</label>
-                <GlassInput
-                  type="number"
-                  min={0}
+                <MoneyInput
+                  glass
                   value={disposalTarget.disposal_value}
                   onChange={e => setDisposalTarget(d => ({ ...d, disposal_value: e.target.value }))}
                   data-testid="disposal-value"

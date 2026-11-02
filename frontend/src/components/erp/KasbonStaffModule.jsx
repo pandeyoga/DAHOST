@@ -10,6 +10,7 @@ import {
   Calendar, DollarSign, Paperclip, Table2, LayoutGrid, ArrowUpDown,
 } from 'lucide-react';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 // FASE G (sesi #18) — kolom nomor dokumen yang MENGIKUTI kebijakan Otomatis/Manual
@@ -230,7 +231,7 @@ function RequestForm({ onSuccess, onClose }) {
             <label className="text-xs font-medium text-muted-foreground block mb-1">Jumlah yang Diminta *</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">Rp</span>
-              <input type="number" min={0} value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))}
+              <MoneyInput unstyled value={form.amount} onChange={e => setForm(p => ({...p, amount: e.target.value}))}
                 placeholder="1.000.000"
                 className="w-full h-10 pl-10 pr-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
             </div>

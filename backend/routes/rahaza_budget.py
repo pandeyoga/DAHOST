@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File
 from database import get_db
 from auth import require_auth, serialize_doc
 from routes.shared import get_pagination_params, paginated_response
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 import uuid
 import logging
@@ -30,6 +30,7 @@ import io
 from core.authz import only  # T-01 2.3
 from core.roles import FINANCE_ROLES  # T-01 2.3
 from routes.shared import require_portal_dep  # FIN-04
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/finance", tags=["rahaza-budget"],
@@ -71,7 +72,7 @@ async def create_budget(request: Request):
     db = get_db()
     body = await request.json()
     name = (body.get("name") or "").strip()
-    year = int(body.get("year") or date.today().year)
+    year = int(body.get("year") or today_wib().year)
     if not name:
         raise HTTPException(400, "Nama budget wajib diisi")
     doc = {
@@ -339,7 +340,7 @@ async def budget_variance(bid: str, request: Request):
     budget = await db.rahaza_budgets.find_one({"id": bid}, {"_id": 0})
     if not budget:
         raise HTTPException(404, "Budget tidak ditemukan")
-    budget.get("year", date.today().year)
+    budget.get("year", today_wib().year)
     # Get all budget items
     items = await db.rahaza_budget_items.find({"budget_id": bid}, {"_id": 0}).sort("month", 1).to_list(length=10000)
     if not items:
@@ -494,7 +495,7 @@ async def import_budget_excel(bid: str, request: Request, file: UploadFile = Fil
 async def budget_summary(request: Request, year: Optional[int] = None):
     await require_auth(request)
     db = get_db()
-    cur_year = year or date.today().year
+    cur_year = year or today_wib().year
     budgets = await db.rahaza_budgets.find({"year": cur_year}, {"_id": 0}).to_list(50)
     result = []
     for b in budgets:

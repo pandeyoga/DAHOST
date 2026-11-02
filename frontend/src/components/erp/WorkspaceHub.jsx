@@ -14,6 +14,7 @@ import {
   Pin, PinOff, Star, Clock, AlertTriangle, Repeat, LayoutGrid, GripVertical
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { todayWIB, thisMonthWIB, monthEndISO, nowWIBLocalInput } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -285,7 +286,7 @@ function WorkspaceTodo({ headers }) {
     } catch (e) { toast({ title: 'Gagal.', variant: 'destructive' }); }
   };
 
-  const isOverdue = (t) => t.due_date && !t.done && t.due_date < new Date().toISOString().slice(0, 10);
+  const isOverdue = (t) => t.due_date && !t.done && t.due_date < todayWIB();
 
   return (
     <div className="space-y-3">
@@ -433,7 +434,8 @@ function WorkspaceReminder({ headers }) {
     } catch (e) { toast({ title: 'Gagal.', variant: 'destructive' }); }
   };
 
-  const isPast = (r) => r.remind_at && r.remind_at < new Date().toISOString();
+  // remind_at = nilai datetime-local (jam WIB tanpa zona) → bandingkan dengan jam WIB sekarang, bukan UTC
+  const isPast = (r) => r.remind_at && r.remind_at.slice(0, 16) < nowWIBLocalInput();
 
   const RECUR_LABEL = { once: 'Sekali', daily: 'Harian', weekly: 'Mingguan' };
 
@@ -564,8 +566,12 @@ function WorkspaceReminder({ headers }) {
 // ═══════════════════════════════════════════════════════════════════
 function WorkspaceCalendar({ headers }) {
   const { toast } = useToast();
-  const today = new Date();
-  const [currentDate, setCurrentDate] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  // Bulan awal = bulan berjalan menurut WIB; `currentDate` hanya dipakai sebagai penanda
+  // (tahun, bulan) untuk navigasi grid.
+  const [currentDate, setCurrentDate] = useState(() => {
+    const [y, m] = thisMonthWIB().split('-').map(Number);
+    return new Date(y, m - 1, 1);
+  });
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState(null);
@@ -579,9 +585,8 @@ function WorkspaceCalendar({ headers }) {
   const nextMonth = () => setCurrentDate(new Date(year, month + 1, 1));
 
   const getMonthBounds = () => {
-    const from = new Date(year, month, 1).toISOString().slice(0, 10);
-    const to = new Date(year, month + 1, 0).toISOString().slice(0, 10);
-    return { from, to };
+    const ym = `${year}-${String(month + 1).padStart(2, '0')}`;
+    return { from: `${ym}-01`, to: monthEndISO(ym) };
   };
 
   const load = useCallback(async () => {
@@ -629,7 +634,7 @@ function WorkspaceCalendar({ headers }) {
 
   const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
   const DAYS = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = todayWIB();
 
   const getDateStr = (d) => `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
 

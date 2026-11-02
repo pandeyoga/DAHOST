@@ -20,6 +20,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Package, AlertTriangle, CheckCircle2, Loader2, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -92,7 +93,7 @@ function Row({ items, line, onChange, onRemove, index, disabled }) {
           onChange={(e) => onChange({ ...line, units_sold: e.target.value })} />
       </td>
       <td className="px-2 py-2 w-[150px]">
-        <Input type="number" min="0" className="h-8 text-xs tabular-nums"
+        <MoneyInput className="h-8 text-xs tabular-nums"
           value={line.revenue ?? ''} disabled={disabled}
           data-testid={`lp-revenue-${index}`}
           onChange={(e) => onChange({ ...line, revenue: e.target.value })} />

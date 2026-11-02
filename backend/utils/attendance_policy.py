@@ -48,12 +48,13 @@ import base64
 import binascii
 import math
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
 
 import storage
+from utils.waktu import today_wib
 
 DEFAULT_GEOFENCE_RADIUS_M = 300
 DEFAULT_FACE_THRESHOLD = 0.65
@@ -168,7 +169,7 @@ def save_selfie(employee_id: str, photo_b64: str, kind: str = "in") -> Optional[
     if not photo_b64:
         return None
     blob = _decode_selfie(photo_b64)
-    path = (f"attendance/{employee_id}/{date.today().isoformat()}_{kind}_"
+    path = (f"attendance/{employee_id}/{today_wib().isoformat()}_{kind}_"
             f"{uuid.uuid4().hex[:8]}.jpg")
     return storage.put_object(path, blob, "image/jpeg")["url"]
 

@@ -39,6 +39,7 @@ from typing import Optional
 import logging
 import uuid
 import math
+from utils.waktu import fmt_wib, today_wib
 
 router = APIRouter(prefix="/api/dewi/kasbon", tags=["Kasbon"])
 
@@ -46,7 +47,7 @@ router = APIRouter(prefix="/api/dewi/kasbon", tags=["Kasbon"])
 from core.authz import only  # noqa: E402
 from core.roles import FINANCE_ROLES, HR_ROLES  # noqa: E402
 from routes.rahaza_payroll_shared import (  # noqa: E402 — 2026-11-02 (P5): helper bersama
-    _today_wib, ensure_not_self_approval, notify_requester, parse_ymd, resolve_payment_account,
+    ensure_not_self_approval, notify_requester, parse_ymd, resolve_payment_account,
 )
 _HR_OR_FIN = tuple(dict.fromkeys(HR_ROLES + FINANCE_ROLES))
 _PRIVILEGED_ROLES = {r.lower() for r in _HR_OR_FIN} | {"superadmin", "admin"}
@@ -184,12 +185,12 @@ async def _post_kasbon_gl(db, event_type: str, source_ref: str, memo: str, amoun
         else:
             return {"ok": False, "error": f"Unknown kasbon event_type: {event_type}"}
         if je_date is None:
-            je_date = _today_wib()
+            je_date = today_wib()
         elif isinstance(je_date, str):
             try:
                 je_date = date.fromisoformat(je_date[:10])
             except ValueError:
-                je_date = _today_wib()
+                je_date = today_wib()
         return await _create_posted_je(db, je_date, memo, event_type, source_ref, lines, user)
     except Exception as exc:
         # F13 — DULU kegagalan posting jurnal kasbon hanya dikembalikan sebagai
@@ -730,11 +731,18 @@ async def kasbon_stats(
     total_disbursed_all = sum(float(d.get("amount", 0)) for d in all_docs if d.get("status") in ("disbursed", "paid_off"))
 
     # This month (robust: created_at bisa str ISO ATAU datetime — data seed lama menyimpan datetime)
-    now_ym = _now().strftime("%Y-%m")
+    # 2026-11-02 (No.54a): "bulan ini" = bulan WIB, dan created_at (UTC) dibaca dalam WIB — dulu
+    # pengajuan tgl 1 pukul 00:00–06:59 WIB terhitung bulan LALU.
+    now_ym = fmt_wib("%Y-%m")
 
     def _ym(v):
+        if isinstance(v, str) and len(v) > 10:
+            try:
+                v = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                return v[:7]
         if isinstance(v, datetime):
-            return v.strftime("%Y-%m")
+            return fmt_wib("%Y-%m", v)
         return str(v or "")[:7]
 
     this_month = [d for d in all_docs if _ym(d.get("created_at")) == now_ym]
@@ -845,7 +853,7 @@ async def apply_payroll_deductions_core(db, period: str, deductions: list, user:
         repayment_entry = {
             "id": _sid(),
             "amount": actual,
-            "date": (str(je_date)[:10] if je_date else _today_wib().isoformat()),
+            "date": (str(je_date)[:10] if je_date else today_wib().isoformat()),
             "method": "payroll_deduction",
             "period": period,
             "run_id": run_id,

@@ -102,6 +102,32 @@ def wib_date_str(dt: datetime | None = None) -> str:
     return (to_wib(dt) or now_wib()).strftime("%Y-%m-%d")
 
 
+def wib_date_of(value) -> str:
+    """Tanggal kalender WIB 'YYYY-MM-DD' dari NILAI TERSIMPAN apa pun — '' bila kosong/tidak terbaca.
+
+    * `datetime` (naive dianggap UTC, sesuai aturan penyimpanan) → tanggal WIB-nya.
+    * `date` → apa adanya.
+    * string 'YYYY-MM-DD' → apa adanya (itu SUDAH tanggal kalender, bukan instan).
+    * string ISO instan ('2026-11-01T23:30:00+00:00', '...Z', naive) → tanggal WIB-nya.
+
+    Menggantikan pola `str(ts)[:10]` / `ts.date()` pada timestamp UTC — pola itu memberi
+    tanggal KEMARIN untuk kejadian 00:00–06:59 WIB (mis. tanggal jurnal, "pcs hari ini").
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, datetime):
+        return wib_date_str(value)
+    if isinstance(value, date):
+        return value.isoformat()
+    s = str(value).strip()
+    if len(s) == 10 and s[4] == "-" and s[7] == "-":
+        return s
+    try:
+        return wib_date_str(datetime.fromisoformat(s.replace("Z", "+00:00")))
+    except ValueError:
+        return s[:10] if len(s) >= 10 and s[4:5] == "-" else ""
+
+
 def fmt_wib(fmt: str, dt: datetime | None = None) -> str:
     """Format datetime dalam WIB. Selalu pakai ini bila teksnya menyebut 'WIB'."""
     return (to_wib(dt) or now_wib()).strftime(fmt)

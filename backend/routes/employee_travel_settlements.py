@@ -40,6 +40,7 @@ import logging
 import uuid
 import csv
 import io
+from utils.waktu import today_wib, wib_stamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/hr/expenses', tags=['Travel-Settlement'])
@@ -400,7 +401,7 @@ async def export_settlements(
         ])
 
     output.seek(0)
-    filename = f"travel_settlements_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"travel_settlements_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -462,7 +463,7 @@ async def export_outstanding_advances(user: dict = Depends(require_auth)):
         ])
 
     output.seek(0)
-    filename = f"outstanding_advances_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"outstanding_advances_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -669,7 +670,7 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
             bank_gl_code = ba.get('gl_account_code') or ba.get('code')
 
     now = _now()
-    je_date = date.today()
+    je_date = today_wib()
     memo = f"Settlement Dinas {doc.get('settlement_number')} — {doc.get('employee_name', '')} — {doc.get('destination', '')}"
 
     lines = []
@@ -821,7 +822,7 @@ async def outstanding_advances(user: dict = Depends(require_auth)):
                 'pending_settlement': pending_stl,
                 # Days since end_date
                 'days_since_return': (
-                    (date.today() - date.fromisoformat(tr['end_date'])).days
+                    (today_wib() - date.fromisoformat(tr['end_date'])).days
                     if tr.get('end_date') else None
                 ),
             })
@@ -956,7 +957,7 @@ async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = De
                 })
 
             je_res = await _create_posted_je(
-                db, date.today(), f'Settlement {doc.get("trip_number")} — {doc.get("destination")}',
+                db, today_wib(), f'Settlement {doc.get("trip_number")} — {doc.get("destination")}',
                 source_module='travel_settlement', source_ref=doc.get('settlement_number') or stl_id,
                 lines_raw=je_lines, user=user,
             )

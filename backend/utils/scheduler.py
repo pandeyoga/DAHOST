@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from database import get_db
+from utils.waktu import today_wib, fmt_wib, wib_date_str, wib_year, wib_stamp
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +40,8 @@ async def job_scan_overdue_invoices():
 
     try:
         from routes.dewi_notifications import queue_for_client
-        from datetime import date
 
-        today = date.today().isoformat()
+        today = today_wib().isoformat()
         invoices = await db.dewi_maklon_invoices.find({
             'status': {'$in': ['issued', 'partial_paid', 'overdue']},
             'balance_amount': {'$gt': 0},
@@ -116,8 +116,7 @@ async def job_birthday_anniversary_reminders():
     res = await db.dewi_scheduler_runs.insert_one(run_doc)
     run_id = res.inserted_id
     try:
-        from datetime import date
-        today = date.today()
+        today = today_wib()
         mm = f"{today.month:02d}"
         dd = f"{today.day:02d}"
         # Find employees born on this date
@@ -173,7 +172,7 @@ async def job_birthday_anniversary_reminders():
                         link_id=bd['code'],
                         target_user_ids=hr_user_ids,
                         target_roles=["superadmin", "admin", "owner", "hr", "manager"],
-                        dedup_key=f"birthday::{bd['code']}::{started.date().isoformat()}",
+                        dedup_key=f"birthday::{bd['code']}::{wib_date_str(started)}",
                     )
                     created += 1
             for av in annivs:
@@ -223,7 +222,7 @@ async def job_kpi_deadline_reminders():
     from datetime import date
 
     db = get_db()
-    today = date.today()
+    today = today_wib()
     started = datetime.now(timezone.utc)
 
     run_doc = {
@@ -345,7 +344,7 @@ async def job_auto_create_tasks_from_templates():
     })).inserted_id
 
     try:
-        today = datetime.now(timezone.utc).date()
+        today = today_wib()
         today_str = today.isoformat()
         weekday = today.weekday()      # 0=Monday, 6=Sunday
         day_of_month = today.day
@@ -560,7 +559,7 @@ async def job_auto_create_marketing_tasks():
     
     db = get_db()
     now = datetime.now(timezone.utc)
-    yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    yesterday = (today_wib() - timedelta(days=1)).isoformat()   # kemarin menurut WIB (No.54a)
     
     created_sales_tasks = 0
     created_health_tasks = 0
@@ -598,7 +597,7 @@ async def job_auto_create_marketing_tasks():
             # Create actionable task
             task_doc = {
                 "id": str(_uuid.uuid4()),
-                "task_code": f"TSK-{now.strftime('%Y%m%d')}-{_uuid.uuid4().hex[:6].upper()}",
+                "task_code": f"TSK-{fmt_wib('%Y%m%d', now)}-{_uuid.uuid4().hex[:6].upper()}",
                 "title": f"Input Sales Harian — {account_name} ({yesterday})",
                 "description": f"Sales data untuk {account_name} pada tanggal {yesterday} belum diinput. Mohon segera input revenue/orders/visitors.",
                 "task_type": "data_entry",
@@ -675,7 +674,7 @@ async def job_auto_create_marketing_tasks():
             
             task_doc = {
                 "id": str(_uuid.uuid4()),
-                "task_code": f"TSK-{now.strftime('%Y%m%d')}-{_uuid.uuid4().hex[:6].upper()}",
+                "task_code": f"TSK-{fmt_wib('%Y%m%d', now)}-{_uuid.uuid4().hex[:6].upper()}",
                 "title": f"⚠️ Health Score Drop — {account_name} ({health}/100)",
                 "description": f"Akun {account_name} memiliki health score kritis ({health}/100). Mohon investigasi:\n"
                                f"• Cek complaint/return rate\n• Cek response rate ke customer\n• Cek shipping performance",
@@ -725,7 +724,7 @@ async def job_auto_create_marketing_tasks():
                         message=f"Akun {account_name} health score turun ke {health}/100. Task investigasi sudah dibuat.",
                         link_module="marketing-tasks",
                         target_user_ids=[pic_id],
-                        dedup_key=f"health_alert_notif_{account_id}_{now.strftime('%Y-%m-%d')}",
+                        dedup_key=f"health_alert_notif_{account_id}_{wib_date_str(now)}",
                     )
                 except Exception as _ne:
                     logger.warning(f"[scheduler] Gagal kirim notif health alert: {_ne}")
@@ -753,7 +752,7 @@ async def job_scan_overdue_marketing_tasks():
     """
     db  = get_db()
     now = datetime.now(timezone.utc)
-    today_str = now.strftime("%Y-%m-%d")
+    today_str = wib_date_str(now)   # dedup harian = tanggal WIB (No.54a)
 
     try:
         overdue_tasks = await db.marketing_tasks.find(
@@ -833,7 +832,8 @@ async def job_leave_carry_forward():
     """
     db  = get_db()
     now = datetime.now(timezone.utc)
-    new_year = now.year
+    # 2026-11-02 (No.54a): job jalan 1 Jan 01:00 WIB = 31 Des 18:00 UTC — tahun UTC masih tahun LAMA.
+    new_year = wib_year()
     old_year = new_year - 1
 
     logger.info(f"[scheduler] job_leave_carry_forward: carry {old_year} → {new_year}")
@@ -924,7 +924,7 @@ async def job_auto_database_backup():
     
     db = get_db()
     started = datetime.now(timezone.utc)
-    backup_name = f"auto_{started.strftime('%Y%m%d_%H%M%S')}"
+    backup_name = f"auto_{wib_stamp(started)}"   # nama berkas dibaca manusia → WIB
     
     logger.info(f"[scheduler] job_auto_database_backup: Starting backup '{backup_name}'")
     

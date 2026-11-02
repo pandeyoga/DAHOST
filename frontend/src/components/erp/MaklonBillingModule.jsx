@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -15,6 +16,7 @@ import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import OnwardCTA from './OnwardCTA';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB } from '@/lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const STATUS_CONFIG = {
@@ -359,7 +361,7 @@ function PaymentDialog({ invoice, headers, onClose, onSuccess }) {
   const [amount, setAmount] = useState(invoice.balance_amount || 0);
   const [method, setMethod] = useState('transfer');
   const [ref, setRef] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayWIB);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [cashAccounts, setCashAccounts] = useState([]);
@@ -399,7 +401,7 @@ function PaymentDialog({ invoice, headers, onClose, onSuccess }) {
             <div className="col-span-2 text-amber-600 dark:text-amber-300">Outstanding: <span className="font-semibold">{fmt(invoice.balance_amount)}</span></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1"><Label>Jumlah *</Label><Input type="number" min="0" value={amount} onChange={e => setAmount(e.target.value)} data-testid="pay-amount-input" /></div>
+            <div className="space-y-1"><Label>Jumlah *</Label><MoneyInput value={amount} onChange={e => setAmount(e.target.value)} data-testid="pay-amount-input" /></div>
             <div className="space-y-1">
               <Label>Metode</Label>
               <Select value={method} onValueChange={setMethod}>

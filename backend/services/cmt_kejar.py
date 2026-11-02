@@ -32,12 +32,13 @@ Ditambah dua angka yang diminta pemilik dan dua sudut pandang PO:
   · `scope=running` (default) membuang PO Completed/Closed/Cancelled;
     `scope=all` menghitung semuanya.
 """
-from datetime import datetime, timezone, date
+from datetime import datetime, date
 from typing import Dict, List, Any, Optional
 import logging
 
 from core.cmt_receipt_status import (ST_DONE as _RC_DONE,
                                     canon_status_filter as _rc_filter)
+from utils.waktu import today_wib
 
 _log = logging.getLogger(__name__)
 
@@ -165,7 +166,7 @@ async def caps_for_pos(db, pos: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any
 
 async def compute_po_kejar(db, po: Dict[str, Any], cfg: Dict[str, int], today: date = None,
                            caps: Dict[str, Dict[str, Any]] | None = None) -> Dict[str, Any]:
-    today = today or datetime.now(timezone.utc).date()
+    today = today or today_wib()
     po_id = po["id"]
     items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(None)
     item_ids = [i["id"] for i in items]
@@ -318,7 +319,7 @@ async def list_kejar(db, bucket: Optional[str] = None, only_open: bool = True,
                      scope: Optional[str] = None) -> Dict[str, Any]:
     scope = _norm_scope(scope if scope is not None else (SCOPE_RUNNING if only_open else SCOPE_ALL))
     cfg = await get_buffer_config(db)
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
     pos = await _maklon_pos(db, scope)
     caps = await caps_for_pos(db, pos)
     rows = []
@@ -336,7 +337,7 @@ async def owner_dashboard(db, scope: Optional[str] = None) -> Dict[str, Any]:
     """M2 — KPI Dashboard Owner CMT (agregasi PO maklon menurut scope)."""
     scope = _norm_scope(scope)
     cfg = await get_buffer_config(db)
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
     pos = await _maklon_pos(db, scope)
     caps = await caps_for_pos(db, pos)
 

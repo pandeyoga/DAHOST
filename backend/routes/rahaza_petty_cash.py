@@ -36,6 +36,7 @@ from routes.rahaza_posting import (
 )
 import logging
 import uuid
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/finance/petty-cash', tags=['Petty-Cash'])
@@ -44,7 +45,6 @@ router = APIRouter(prefix='/api/finance/petty-cash', tags=['Petty-Cash'])
 # (bukan 'finance'). Sebelumnya akun finance@dewiaditya.id (role 'accounting') DITOLAK 403
 # saat membuat/replenish/close dana kas kecil. Selaraskan dgn employee_expense_claims.py.
 from core.roles import FINANCE_ROLES  # FIN-02: satu sumber peran keuangan
-from routes.rahaza_payroll_shared import _today_wib  # 2026-11-02: tanggal bisnis WIB
 ALL_ROLES     = tuple(FINANCE_ROLES) + ('cashier', 'staff')
 
 TXN_TYPES = ('expense', 'advance', 'return', 'replenish', 'opening')
@@ -197,9 +197,9 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
         return {'ok': True, 'je_id': existing['id'], 'je_number': existing['je_number'], 'already_posted': True}
 
     try:
-        je_date = date.fromisoformat((txn.get('txn_date') or str(date.today()))[:10])
+        je_date = date.fromisoformat((txn.get('txn_date') or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     # FIN-05(a): akun kas kecil dari Profil Posting (bawaan 1-1101), bukan konstanta legacy '1-110'
     _pc_map = await get_mapping(db, 'petty_cash_replenish')
@@ -358,7 +358,7 @@ async def create_fund(body: FundCreate, user: dict = Depends(require_auth)):
             'id': txn_id, 'fund_id': fund_id,
             'txn_type': 'opening',
             'amount': body.opening_balance,
-            'txn_date': str(date.today()),
+            'txn_date': str(today_wib()),
             'memo': f'Saldo awal dana {body.name}',
             'bank_account_code': source_code,
             'category': None, 'payee': None,
@@ -401,7 +401,7 @@ async def replenish_fund(fund_id: str, body: ReplenishIn, user: dict = Depends(r
         'id': _uid(), 'fund_id': fund_id,
         'txn_type': 'replenish',
         'amount': body.amount,
-        'txn_date': body.txn_date or str(date.today()),
+        'txn_date': body.txn_date or str(today_wib()),
         'memo': body.memo or 'Replenishment Kas Kecil',
         'bank_account_code': source_code,
         'category': None, 'payee': None,
@@ -446,7 +446,7 @@ async def close_fund(fund_id: str, user: dict = Depends(require_auth)):
             'id': _uid(), 'fund_id': fund_id,
             'txn_type': 'close_return',  # FIN-05(b)
             'amount': remaining,
-            'txn_date': str(date.today()),
+            'txn_date': str(today_wib()),
             'memo': f'Penutupan dana {fund["name"]} - sisa saldo dikembalikan ke bank',
             'bank_account_code': fund.get('bank_account_code', '1-1201'),
             'category': None, 'payee': None,
@@ -498,7 +498,7 @@ async def create_txn(body: TxnCreate, user: dict = Depends(require_auth)):
                                       'Sisa uang muka atas nama karyawan dikembalikan lewat Pertanggungjawaban.'))
 
     now = _now()
-    txn_date = (body.txn_date or str(_today_wib()))[:10]
+    txn_date = (body.txn_date or str(today_wib()))[:10]
     extra: dict = {}
     if body.txn_type == 'advance':
         # 2026-11-02 (K26): uang muka WAJIB atas nama karyawan (pilih dari master), dicatat ke 1-1610.
@@ -623,7 +623,7 @@ async def list_advances(
     rows = await db.rahaza_petty_cash_txns.find(q, {'_id': 0}).sort('txn_date', 1).to_list(2000)
     funds = await db.rahaza_petty_cash_funds.find({}, {'_id': 0, 'id': 1, 'advance_settle_days': 1}).to_list(200)
     fund_days = {f['id']: int(f.get('advance_settle_days') or 0) for f in funds}
-    today = _today_wib()
+    today = today_wib()
     items = [_advance_view(t, fund_days, today) for t in rows]
     groups: dict = {}
     for it in items:
@@ -666,7 +666,7 @@ async def settle_advance(txn_id: str, body: AdvanceSettleIn, user: dict = Depend
     fund = await _get_fund_or_404(db, adv['fund_id'])
     if returned > 0 and fund.get('status') != 'active':
         raise HTTPException(400, 'Dana kas kecil sudah tidak aktif — sisa uang tidak bisa dikembalikan ke dana ini.')
-    settle_date = (body.settle_date or str(_today_wib()))[:10]
+    settle_date = (body.settle_date or str(today_wib()))[:10]
     try:
         date.fromisoformat(settle_date)
     except ValueError:

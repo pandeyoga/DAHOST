@@ -8,11 +8,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { Settings2, RefreshCw, Plus, Edit2, Check, X, AlertCircle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
 import { PageHeader } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -99,7 +101,7 @@ function RateFormDialog({ rate, onClose, token, onSaved }) {
     daily_rate: rate.daily_rate || 0,
     meal_allowance: rate.meal_allowance || 0,
     transport_allowance: rate.transport_allowance || 0,
-    effective_date: rate.effective_date || new Date().toISOString().slice(0, 10),
+    effective_date: rate.effective_date || todayWIB(),
     notes: rate.notes || '',
   });
   const [saving, setSaving] = useState(false);
@@ -149,16 +151,16 @@ function RateFormDialog({ rate, onClose, token, onSaved }) {
       <div className="grid grid-cols-1 gap-4">
         <div className="space-y-1">
           <label className="text-sm font-medium">Uang Harian (Rp/hari) *</label>
-          <Input type="number" value={form.daily_rate} onChange={e => set('daily_rate', e.target.value)} placeholder="misal: 300000" />
+          <MoneyInput value={form.daily_rate} onChange={e => set('daily_rate', e.target.value)} placeholder="misal: 300.000" />
           <p className="text-xs text-muted-foreground">Biaya hidup harian karyawan selama dinas</p>
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Uang Makan (Rp/hari)</label>
-          <Input type="number" value={form.meal_allowance} onChange={e => set('meal_allowance', e.target.value)} placeholder="misal: 75000" />
+          <MoneyInput value={form.meal_allowance} onChange={e => set('meal_allowance', e.target.value)} placeholder="misal: 75.000" />
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Tunjangan Transport (Rp/hari)</label>
-          <Input type="number" value={form.transport_allowance} onChange={e => set('transport_allowance', e.target.value)} placeholder="misal: 100000" />
+          <MoneyInput value={form.transport_allowance} onChange={e => set('transport_allowance', e.target.value)} placeholder="misal: 100.000" />
         </div>
         <div className="space-y-1">
           <label className="text-sm font-medium">Berlaku Sejak</label>

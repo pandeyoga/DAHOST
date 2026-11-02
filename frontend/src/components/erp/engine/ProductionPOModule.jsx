@@ -14,6 +14,8 @@ import QuickCompleteModal from './QuickCompleteModal';
 import { BizBadge } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 const CLOSE_REASONS = ['Under Production', 'Over Production', 'Price Adjustment', 'Customer Agreement', 'Other'];
@@ -248,7 +250,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
   const openCreate = () => {
     setEditData(null);
     setFormError(null);
-    setForm({ po_number: '', customer_name: isInternal ? 'Gudang FG Sendiri' : '', buyer_id: '', vendor_id: '', po_date: new Date().toISOString().split('T')[0], deadline: '', delivery_deadline: '', notes: '', items: [], po_accessories: [] });
+    setForm({ po_number: '', customer_name: isInternal ? 'Gudang FG Sendiri' : '', buyer_id: '', vendor_id: '', po_date: todayWIB(), deadline: '', delivery_deadline: '', notes: '', items: [], po_accessories: [] });
     setShowModal(true);
   };
 
@@ -525,9 +527,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         customer_name: poData.customer_name || '',
         buyer_id: poData.buyer_id || '',
         vendor_id: poData.vendor_id || '',
-        po_date: poData.po_date ? new Date(poData.po_date).toISOString().split('T')[0] : '',
-        deadline: poData.deadline ? new Date(poData.deadline).toISOString().split('T')[0] : '',
-        delivery_deadline: poData.delivery_deadline ? new Date(poData.delivery_deadline).toISOString().split('T')[0] : '',
+        po_date: toWIBDate(poData.po_date),
+        deadline: toWIBDate(poData.deadline),
+        delivery_deadline: toWIBDate(poData.delivery_deadline),
         status: poData.status || 'Draft',
         notes: poData.notes || '',
         items: mappedItems,
@@ -618,12 +620,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     { key: 'total_qty', label: 'Total Qty', render: (v) => v?.toLocaleString('id-ID') },
     { key: 'deadline', label: 'Deadline Prod.', render: (v) => {
       if (!v) return '-';
-      const isOverdue = new Date(v) < new Date();
+      const isOverdue = toWIBDate(v) < todayWIB();
       return <span className={isOverdue ? 'text-red-600 font-medium' : ''}>{fmtDate(v)}</span>;
     }},
     { key: 'delivery_deadline', label: 'Deadline Kirim', render: (v) => {
       if (!v) return '-';
-      const isOverdue = new Date(v) < new Date();
+      const isOverdue = toWIBDate(v) < todayWIB();
       return <span className={isOverdue ? 'text-orange-600 font-medium' : 'text-muted-foreground'}>{fmtDate(v)}</span>;
     }},
     { key: 'status', label: 'Status / Workflow', render: (v, row) => (
@@ -1044,11 +1046,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       {!isInternal && (<>
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">Selling Price (Rp)</label>
-                        <input type="number" min="0" className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85000" data-testid={`po-item-${idx}-selling`} />
+                        <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85.000" data-testid={`po-item-${idx}-selling`} />
                       </div>
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">CMT Price (Rp)</label>
-                        <input type="number" min="0" className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35000" data-testid={`po-item-${idx}-rate`} />
+                        <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35.000" data-testid={`po-item-${idx}-rate`} />
                       </div>
                       </>)}
                     </div>

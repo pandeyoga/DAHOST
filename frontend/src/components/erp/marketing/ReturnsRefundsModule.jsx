@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -30,13 +32,8 @@ const PLATFORM_ICONS = { shopee: '🛍️', tiktok: '🎵', tokopedia: '🟢', i
 const RETURNS_VIEW_KEY = 'marketing_returns_view';
 const RETURN_HEADS = ['Tanggal', 'Platform', 'Order ID', 'Toko', 'Produk', 'Harga',
   'Alasan', 'Rincian alasan', 'Refund', 'Status', 'Hasil banding', 'Catatan', 'Aksi'];
-const fmtDate = (v) => {
-  if (!v) return '—';
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
-};
+// Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
+const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
 const STATUS_CONFIG = {
   pending:   { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
   approved:  { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: ThumbsUp },
@@ -185,7 +182,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       setRefundTouched(true);
     } else {
       setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, date: todayWIB() });
       setRefundTouched(false);
     }
     setShowForm(true);
@@ -672,7 +669,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Harga Satuan</Label>
-                <Input type="number" value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
+                <MoneyInput value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
               </div>
               <div className="space-y-2">
                 <Label>Tipe Refund</Label>
@@ -693,7 +690,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             {!refundNoMoney && (
               <div className="space-y-2">
                 <Label>Nominal Refund Aktual (Rp) *</Label>
-                <Input type="number" min={0} step="1" value={refundShown}
+                <MoneyInput value={refundShown}
                   onChange={e => { setRefundTouched(true); setForm({ ...form, refund_amount: e.target.value }); }}
                   placeholder={form.refund_type === 'partial_refund' ? 'isi sesuai keputusan platform' : ''}
                   data-testid="return-refund-amount-input" />

@@ -33,6 +33,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 from dataclasses import dataclass
 from database import get_db
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -466,7 +467,7 @@ async def sum_cost(db, match: dict) -> float:
 
 async def month_to_date_cost(db) -> float:
     """Biaya AI bulan berjalan (UTC, sama dengan kunci `date` di log)."""
-    month_start = datetime.now(timezone.utc).date().replace(day=1)
+    month_start = today_wib().replace(day=1)
     return await sum_cost(db, {"date": {"$gte": month_start.isoformat()}})
 
 
@@ -481,7 +482,7 @@ async def _check_budget(db, feature: str, *, daily_budget=None, monthly_budget=N
     monthly_budget = DEFAULT_MONTHLY_BUDGET_USD if monthly_budget is None else float(monthly_budget)
     per_feature_budget = DEFAULT_PER_FEATURE_DAILY_USD if per_feature_budget is None else float(per_feature_budget)
 
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
 
     daily_total = await sum_cost(db, {"date": today.isoformat()})
     if daily_total >= daily_budget:
@@ -542,7 +543,7 @@ async def log_usage(
             "error_code": error_code,
             "error_detail": (error_detail or None) and str(error_detail)[:300],
             "stop_reason": stop_reason,
-            "date": datetime.now(timezone.utc).date().isoformat(),
+            "date": today_wib().isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception as e:
@@ -800,7 +801,7 @@ async def ai_json(
 async def get_usage_summary(days: int = 7) -> dict:
     """Get aggregated usage stats for last N days."""
     db = get_db()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    cutoff = (today_wib() - timedelta(days=days)).isoformat()
 
     # Overall totals
     overall = await db.rahaza_ai_usage_logs.aggregate([
@@ -867,7 +868,7 @@ async def get_usage_summary(days: int = 7) -> dict:
     return {
         "period_days": days,
         "from_date": cutoff,
-        "to_date": datetime.now(timezone.utc).date().isoformat(),
+        "to_date": today_wib().isoformat(),
         "overall": {
             **overall_stats,
             "total_cost_usd": round(overall_stats.get("total_cost_usd", 0), 4),

@@ -30,6 +30,8 @@ import {
 } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -75,7 +77,7 @@ function TransferDialog({ open, onClose, onCreated }) {
     from_account_code: '1-1201',
     to_account_code: '1-1202',
     amount: '',
-    transfer_date: new Date().toISOString().slice(0, 10),
+    transfer_date: todayWIB(),
     memo: '',
     ref_external: '',
   });
@@ -95,7 +97,7 @@ function TransferDialog({ open, onClose, onCreated }) {
         from_account_code: '1-1201',
         to_account_code: '1-1202',
         amount: '',
-        transfer_date: new Date().toISOString().slice(0, 10),
+        transfer_date: todayWIB(),
         memo: '',
         ref_external: '',
       });
@@ -220,10 +222,9 @@ function TransferDialog({ open, onClose, onCreated }) {
 
             <div className="space-y-1">
               <Label>Jumlah (IDR) *</Label>
-              <Input
+              <MoneyInput
                 data-testid="transfer-amount"
-                type="number" min="1"
-                placeholder="5000000"
+                placeholder="5.000.000"
                 value={form.amount}
                 onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
               />

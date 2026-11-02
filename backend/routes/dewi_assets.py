@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pymongo import ReturnDocument
 from database import get_db
 from auth import require_auth
+from utils.waktu import wib_date_str
 
 router = APIRouter(prefix="/api/dewi/assets", tags=["dewi-assets"])
 
@@ -197,7 +198,7 @@ async def assign_asset(asset_id: str, request: Request):
         "employee_id": emp_id,
         "employee_name": emp.get("name"),
         "employee_code": emp.get("employee_code"),
-        "assigned_date": body.get("assigned_date") or _now().date().isoformat(),
+        "assigned_date": body.get("assigned_date") or wib_date_str(),
         "expected_return_date": body.get("expected_return_date") or "",
         "notes": body.get("notes") or "",
         "assigned_by": user["id"],
@@ -227,7 +228,7 @@ async def return_asset(asset_id: str, request: Request):
     if not active:
         raise HTTPException(404, "Tidak ada penugasan aktif untuk aset ini.")
 
-    return_date = body.get("return_date") or _now().date().isoformat()
+    return_date = body.get("return_date") or wib_date_str()
     condition = body.get("condition") or "Baik"
 
     # ── R10 concurrency hardening (TOCTOU-safe): atomically claim the ACTIVE

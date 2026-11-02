@@ -24,6 +24,8 @@ import {
   X, ArrowLeft, BadgeCheck, Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const TOKEN_KEY = 'livehost_portal_token';
@@ -53,8 +55,6 @@ const formatTimeOnly = (iso) => {
     return d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
   } catch { return '—'; }
 };
-
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 // ─── Session helpers ──────────────────────────────────────────────────────────
 const session = {
@@ -285,8 +285,8 @@ function SalesInputModal({ token, shift, onClose, onSaved }) {
         <div className="p-4 space-y-3">
           <div>
             <label className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Omzet / Revenue (Rp)</label>
-            <input
-              type="number" min="0" inputMode="numeric"
+            <MoneyInput
+              unstyled
               value={form.revenue}
               onChange={(e) => set('revenue', e.target.value)}
               data-testid="sales-input-revenue"
@@ -384,7 +384,7 @@ function ShiftsTab({ token, host, onRefreshNotif }) {
     } finally { setClockBusy(null); }
   }, [token, load, onRefreshNotif]);
 
-  const today = todayISO();
+  const today = todayWIB();
   const todayShifts = shifts.filter(s => s.date === today);
   const upcomingShifts = shifts.filter(s => s.date > today).slice(0, 5);
   const pastShifts = shifts.filter(s => s.date < today).slice(0, 10);

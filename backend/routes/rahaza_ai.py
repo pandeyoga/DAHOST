@@ -28,6 +28,7 @@ from utils.data_quality import SkipTracker
 from database import get_db
 from services.ai import SystemPrompts, call_claude, cached_call_claude, mask_pii
 from services.ai_aggregates import rahaza_aggregates as rh_agg
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-ai"])
@@ -115,7 +116,7 @@ async def daily_summary(
     user = await require_auth(request)
     db = get_db()
 
-    d = date.fromisoformat(target_date) if target_date else date.today()
+    d = date.fromisoformat(target_date) if target_date else today_wib()
     ctx = await _build_daily_context(db, d)
     user_prompt = _format_daily_user_prompt(ctx)
 
@@ -161,11 +162,11 @@ async def ai_chat(request: Request):
     db = get_db()
     body = await request.json()
     message = (body.get("message") or "").strip()
-    session_id = body.get("session_id") or f"chat-{user['id'][:8]}-{date.today().isoformat()}"
+    session_id = body.get("session_id") or f"chat-{user['id'][:8]}-{today_wib().isoformat()}"
     if not message:
         raise HTTPException(400, "message wajib diisi.")
 
-    ctx = await _build_daily_context(db, date.today())
+    ctx = await _build_daily_context(db, today_wib())
     system_msg = (
         f"{SystemPrompts.RAHAZA_CHAT}\n\n"
         "KONTEKS HARI INI:\n"
@@ -208,7 +209,7 @@ async def ai_history(request: Request, session_id: Optional[str] = None):
     user = await require_auth(request)
     db = get_db()
     if not session_id:
-        session_id = f"chat-{user['id'][:8]}-{date.today().isoformat()}"
+        session_id = f"chat-{user['id'][:8]}-{today_wib().isoformat()}"
     # 2026-11-02 (IDOR): riwayat HANYA milik user yang login. Dulu siapa pun yang tahu/
     # menebak `session_id` (pola `chat-<8 char user id>-<tanggal>`) bisa membaca chat orang lain.
     history = await db.rahaza_ai_chat_history.find(
@@ -226,8 +227,8 @@ async def ai_root_cause(request: Request):
     if not question:
         raise HTTPException(400, "question wajib diisi.")
 
-    from_ = (date.today() - timedelta(days=7)).isoformat()
-    to = date.today().isoformat()
+    from_ = (today_wib() - timedelta(days=7)).isoformat()
+    to = today_wib().isoformat()
     metrics = await rh_agg.weekly_qc_downtime(db, from_iso=from_, to_iso=to)
     fail_rate = round(metrics["qc_fail"] / max(metrics["qc_checked"], 1) * 100, 1)
 
@@ -290,7 +291,7 @@ async def predictive_delay(
     db = get_db()
 
     wos = await rh_agg.list_predictive_targets(db, wo_id=wo_id)
-    today = date.today()
+    today = today_wib()
 
     # Single aggregation for daily avg output (covers last 14 days).
     cutoff_iso = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()

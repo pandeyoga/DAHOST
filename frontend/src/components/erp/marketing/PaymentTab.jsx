@@ -9,13 +9,14 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import { thisMonthWIB, addMonthsYM } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
 
 export default function PaymentTab({ authH }) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => thisMonthWIB());
   const [paymentStatus, setPaymentStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [calculating, setCalculating] = useState(false);
@@ -88,11 +89,9 @@ export default function PaymentTab({ authH }) {
     }
   };
 
-  const changeMonth = (offset) => {
-    const [year, mon] = month.split('-').map(Number);
-    const date = new Date(year, mon - 1 + offset, 1);
-    setMonth(date.toISOString().slice(0, 7));
-  };
+  // Aritmetika bulan murni (lib/waktu) — `new Date(y, m, 1).toISOString()` di browser
+  // WIB mundur ke bulan sebelumnya.
+  const changeMonth = (offset) => setMonth(addMonthsYM(month, offset));
 
   return (
     <div className="space-y-6">

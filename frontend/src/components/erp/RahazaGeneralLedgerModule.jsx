@@ -4,17 +4,17 @@ import { RefreshCw, FileText, Download, BookOpen } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function RahazaGeneralLedgerModule({ token }) {
   const [accounts, setAccounts] = useState([]);
   const [code, setCode] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [from, setFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(() => monthStartWIB());
+  const [to, setTo] = useState(() => todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   useEffect(() => {

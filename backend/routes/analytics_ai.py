@@ -26,6 +26,7 @@ from utils.data_quality import SkipTracker
 import logging
 
 from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, require_ai
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +288,7 @@ async def qc_rca(data: RCAFilter, request: Request):
     # T-17 (FASE 3): SSOT QC = inspeksi penerimaan FG dari CMT (core.qc_reader); rahaza_qc_events tak pernah ditulis.
     # line_id = vendor CMT, model_id = PO produksi; nama sudah ikut di baris (tanpa lookup rahaza_lines/models/defect_codes).
     from core.qc_reader import qc_event_rows
-    rows = await qc_event_rows(db, d_start=since.isoformat()[:10], d_end=_now().isoformat()[:10],
+    rows = await qc_event_rows(db, d_start=wib_date_str(since), d_end=wib_date_str(),
                                vendor_id=data.line_id, po_id=data.model_id, limit=1000)
     if len(rows) < MIN_DATA_POINTS:
         raise HTTPException(400, f"Data QC belum cukup ({len(rows)} penerimaan terinspeksi, min {MIN_DATA_POINTS}).")

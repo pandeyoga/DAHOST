@@ -19,6 +19,7 @@ import uuid
 import re
 from core.authz import only  # T-01 2.3
 from core.roles import PRODUCTION_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 # PROD-02 (temuan 2026-09-23): tiga endpoint tulis hanya require_auth → gerbang peran produksi + maklon
 _WRITE_ROLES = tuple(dict.fromkeys(PRODUCTION_ROLES + ("admin_maklon", "ppic", "manager_produksi")))
 
@@ -136,7 +137,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
     if not items:
         raise HTTPException(400, 'Minimal 1 item harus diisi')
 
-    today = now_utc().strftime('%y%m%d')
+    today = fmt_wib('%y%m%d')
     prefix = 'REQ-CMP' if req_type == 'component' else 'REQ-AKS-CMT'
     # SESI #27 — SATU PINTU kebijakan penomoran. SEBELUM ini baris ini berbunyi
     # `body.get('request_code') or gen_prefixed_number(...)`: nomor ketikan staf

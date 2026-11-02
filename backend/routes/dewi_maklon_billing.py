@@ -21,6 +21,7 @@ from utils.data_quality import SkipTracker
 import uuid
 from core.authz import only  # T-01 2.3
 from core.roles import FINANCE_ROLES  # T-01 2.3
+from utils.waktu import today_wib, wib_date_str, wib_year
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +119,7 @@ async def _recalc_invoice(db, invoice_id: str) -> dict:
     status = inv.get('status', 'draft')
     if status != 'cancelled':
         if paid <= 0:
-            now = datetime.now(timezone.utc).date()
+            now = today_wib()
             due = inv.get('due_date')
             try:
                 due_d = date.fromisoformat(due) if due else None
@@ -213,7 +214,7 @@ async def _generate_from_engine_ar(db, mirror: dict, payload: 'InvoiceGenerateIn
     term_default = await get_config_value(db, 'maklon_payment_terms_default', 'net_30') or 'net_30'
     tax_pct = payload.tax_pct if payload.tax_pct is not None else tax_default
     term = payload.payment_terms or term_default
-    issue = payload.issue_date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    issue = payload.issue_date or wib_date_str()
     try:
         issue_d = date.fromisoformat(issue)
     except ValueError:
@@ -406,7 +407,7 @@ async def generate_invoice(payload: InvoiceGenerateIn, user: dict = Depends(requ
     tax_pct = payload.tax_pct if payload.tax_pct is not None else tax_default
     term = payload.payment_terms or term_default
 
-    issue = payload.issue_date or datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    issue = payload.issue_date or wib_date_str()
     try:
         issue_d = date.fromisoformat(issue)
     except ValueError:
@@ -581,7 +582,7 @@ async def record_payment(payload: PaymentIn, user: dict = Depends(require_auth))
         raise HTTPException(400, f'Pembayaran melebihi saldo tagihan (Rp {outstanding:,.0f})')
 
     now = datetime.now(timezone.utc)
-    pay_date = payload.payment_date or now.strftime('%Y-%m-%d')
+    pay_date = payload.payment_date or wib_date_str(now)
     doc = {
         'id': str(uuid.uuid4()),
         'invoice_id': payload.invoice_id,
@@ -802,7 +803,7 @@ async def billing_summary(
     #      None (key ada, isinya null — bentuk yang nyata di data lama),
     #      `date.fromisoformat(None)` melempar TypeError ⇒ endpoint 500, BUKAN
     #      "cuma satu baris dilewati". Ekspektasinya diperlebar.
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
     dq = SkipTracker("ringkasan tagihan maklon (jatuh tempo)")
     overdue_amount = 0.0
     overdue_count = 0
@@ -845,7 +846,7 @@ async def monthly_billing(
 ):
     """Monthly billing aggregation per client."""
     db = get_db()
-    target_year = year or datetime.now(timezone.utc).year
+    target_year = year or wib_year()
     query = {
         'status': {'$ne': 'cancelled'},
         'issue_date': {'$gte': f'{target_year}-01-01', '$lte': f'{target_year}-12-31'},

@@ -26,6 +26,7 @@ from typing import Optional
 from pymongo.errors import DuplicateKeyError
 
 from routes.rahaza_posting_profiles import get_mapping
+from utils.waktu import today_wib, wib_date_str, wib_date_of
 
 log = logging.getLogger(__name__)
 
@@ -86,7 +87,7 @@ async def _ensure_period_open(db, d: date, context: Optional[dict] = None) -> Op
     (3) periode belum terdaftar: tahun ini ±PERIOD_AUTO_CREATE_YEARS dibuka otomatis, selain itu ditolak
     (+ peringatan `rahaza_period_alerts` utk Finance)."""
     ym = d.strftime("%Y-%m")
-    today = date.today()
+    today = today_wib()
     if (d - today).days > POSTING_FUTURE_DAYS:
         return f"Tanggal jurnal {d.isoformat()} terlalu jauh di masa depan (maks {POSTING_FUTURE_DAYS} hari). Posting ditolak."
     per = await db.rahaza_periods.find_one({"period_code": ym})
@@ -450,9 +451,9 @@ async def post_ar_invoice(db, invoice: dict, user: dict) -> dict:
         return result
     
     try:
-        je_date = date.fromisoformat((invoice.get("issue_date") or str(date.today()))[:10])
+        je_date = date.fromisoformat((invoice.get("issue_date") or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = f"AR Invoice {invoice.get('invoice_number')} · {invoice.get('customer_name') or ''}".strip()
     desc = f"Invoice {invoice.get('invoice_number')}"
@@ -514,9 +515,9 @@ async def post_ar_payment(db, invoice: dict, amount: float, cash_account_id: Opt
         return result
 
     try:
-        je_date = date.fromisoformat((payment_date or str(date.today()))[:10])
+        je_date = date.fromisoformat((payment_date or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     memo = f"Pembayaran AR {invoice.get('invoice_number')} · {invoice.get('customer_name') or ''}".strip()
     desc = f"Payment {invoice.get('invoice_number')}"
     lines = [
@@ -556,7 +557,7 @@ async def post_cash_opening_balance(db, acc: dict, user: dict) -> dict:
     if not equity_code:
         return {"ok": False, "error": "Mapping 'cash_opening_balance' belum lengkap (credit_opening_equity)."}
     created = acc.get("created_at")
-    je_date = created.date() if isinstance(created, datetime) else date.today()
+    je_date = date.fromisoformat(wib_date_of(created) or wib_date_str())
     desc = f"Saldo awal {acc.get('code')} · {acc.get('name')}"
     lines = [
         {"account_code": cash_code, "debit": opening, "credit": 0, "description": desc},
@@ -762,7 +763,7 @@ async def post_return_damaged_loss(db, wh_ret: dict, qty: int, unit_cost: float,
         {"account_code": cogs_code, "debit": 0, "credit": total, "description": f"Retur {code} reklas HPP → kerugian"},
     ]
     memo = f"Kerugian retur {'dibuang' if disposed else 'rusak'} {code}"
-    return await _create_posted_je(db, date.today(), memo, "return_damaged_loss", source_ref, lines, user)
+    return await _create_posted_je(db, today_wib(), memo, "return_damaged_loss", source_ref, lines, user)
 
 
 # ───────────────────────── WAC FG — SELISIH NILAI (2026-11-02, owner No.26a) ───────
@@ -804,7 +805,7 @@ async def post_fg_wac_adjustment(db, *, material_id: str, amount: float, source_
     else:
         lines = [{"account_code": adj_code, "debit": amt, "credit": 0, "description": desc},
                  {"account_code": fg_code, "debit": 0, "credit": amt, "description": desc}]
-    return await _create_posted_je(db, date.today(), memo[:200], "fg_wac_adjust", source_ref, lines, user or {})
+    return await _create_posted_je(db, today_wib(), memo[:200], "fg_wac_adjust", source_ref, lines, user or {})
 
 
 # ───────────────────────── FG KELUAR NON-PENJUALAN (2026-11-02, owner No.26a) ───────
@@ -881,7 +882,7 @@ async def post_fg_issue_cogs(db, issue_doc: dict, user: dict) -> dict:
         lines = [{"account_code": debit, "debit": val["cogs"], "credit": 0, "description": label}]
     lines.append({"account_code": fg_code, "debit": 0, "credit": val["cogs"],
                   "description": f"{label} ({issue_doc.get('qty')} × WAC {val['unit_cost']:,.2f})"})
-    res = await _create_posted_je(db, date.today(), label[:200], "fg_issue", source_ref, lines, user)
+    res = await _create_posted_je(db, today_wib(), label[:200], "fg_issue", source_ref, lines, user)
     return {**out, **res}
 
 
@@ -906,7 +907,7 @@ async def post_marketplace_return_restock(db, wh_ret: dict, qty: int, unit_cost:
         {"account_code": fg_code, "debit": total, "credit": 0, "description": desc},
         {"account_code": cogs_code, "debit": 0, "credit": total, "description": f"Retur {code} balik HPP"},
     ]
-    return await _create_posted_je(db, date.today(), f"Balik HPP retur marketplace {code}",
+    return await _create_posted_je(db, today_wib(), f"Balik HPP retur marketplace {code}",
                                    "cogs_marketplace_return", source_ref, lines, user)
 
 
@@ -951,9 +952,9 @@ async def post_credit_note(db, credit_note: dict, user: dict) -> dict:
 
     total = float(credit_note.get("total") or 0)
     try:
-        je_date = date.fromisoformat((credit_note.get("issue_date") or str(date.today()))[:10])
+        je_date = date.fromisoformat((credit_note.get("issue_date") or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = f"Credit Note {credit_note.get('cn_number')} - {credit_note.get('platform', '')}".strip()
     desc = f"CN {credit_note.get('cn_number')}"
@@ -1025,9 +1026,9 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
     subtotal = float(invoice.get("subtotal") or 0)
     tax = float(invoice.get("tax_amount") or invoice.get("tax") or 0)
     try:
-        je_date = date.fromisoformat((invoice.get("issue_date") or str(date.today()))[:10])
+        je_date = date.fromisoformat((invoice.get("issue_date") or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = f"AP Invoice {invoice.get('invoice_number')} · {invoice.get('vendor_name') or ''}".strip()
     desc = f"AP {invoice.get('invoice_number')}"
@@ -1096,9 +1097,9 @@ async def post_ap_payment(db, invoice: dict, amount: float, cash_account_id: Opt
         return result
 
     try:
-        je_date = date.fromisoformat((payment_date or str(date.today()))[:10])
+        je_date = date.fromisoformat((payment_date or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     
     memo = f"Pembayaran AP {invoice.get('invoice_number')} · {invoice.get('vendor_name') or ''}".strip()
     desc = f"AP Payment {invoice.get('invoice_number')}"
@@ -1156,9 +1157,9 @@ async def post_expense(db, expense: dict, user: dict) -> dict:
     if amount <= 0:
         return {"ok": False, "error": "amount expense <= 0"}
     try:
-        je_date = date.fromisoformat((expense.get("date") or str(date.today()))[:10])
+        je_date = date.fromisoformat((expense.get("date") or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     memo = f"Expense: {expense.get('description') or expense.get('category') or ''}".strip()
     lines = [
         {"account_code": exp_code, "debit": amount, "credit": 0, "description": memo, "cost_center_id": expense.get("cost_center_id")},
@@ -1304,10 +1305,10 @@ async def post_payroll_run(db, run: dict, user: dict) -> dict:
     other_ded_code = mapping.get("credit_other_deduction") or PAYROLL_OTHER_DEDUCTION_DEFAULT
 
     try:
-        run_to = run.get("period_to") or str(date.today())
+        run_to = run.get("period_to") or str(today_wib())
         je_date = date.fromisoformat(str(run_to)[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     memo = f"Payroll Run {run.get('run_number')} · {run.get('period_from')}–{run.get('period_to')}".strip()
     desc = f"Payroll {run.get('run_number')}"
     expense = round(total_gross - other, 2)
@@ -1380,8 +1381,7 @@ async def reverse_journal_entry(db, je: dict, user: dict, reason: str, *, source
     except ValueError:
         d = None
     if d is None or await _period_is_closed(db, d):
-        from routes.rahaza_payroll_shared import _today_wib
-        d = _today_wib()
+        d = today_wib()
     lines = [{"account_code": ln.get("account_code"), "debit": float(ln.get("credit") or 0),
               "credit": float(ln.get("debit") or 0), "cost_center_id": ln.get("cost_center_id"),
               "description": f"Pembalik {je.get('je_number')}: {ln.get('description') or ''}".strip()}
@@ -1431,9 +1431,9 @@ async def post_payroll_payment(db, run: dict, payment_date: str, bank_code: str,
         return {"ok": False, "error": "Total net = 0, tidak ada yang perlu dibayar."}
 
     try:
-        je_date = date.fromisoformat((payment_date or str(date.today()))[:10])
+        je_date = date.fromisoformat((payment_date or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = (
         f"Pembayaran Gaji {run.get('run_number')} · "
@@ -1561,7 +1561,7 @@ async def post_inventory_receive(db, movement: dict, user: dict) -> dict:
     try:
         je_date = datetime.fromisoformat(str(movement.get("timestamp") or movement.get("created_at") or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     memo = f"Material Receive · {movement.get('material_name') or movement.get('material_id')}"
     desc = memo
     lines = [
@@ -1637,7 +1637,7 @@ async def post_inventory_issue(db, mi: dict, user: dict) -> dict:
     try:
         je_date = datetime.fromisoformat(str(mi.get("issued_at") or mi.get("created_at") or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     if maklon:
         memo = (f"Material Issue {mi.get('mi_number')} → aksesoris DA pesanan maklon "
                 f"{mi.get('po_number_snapshot') or '-'}")
@@ -1702,7 +1702,7 @@ async def post_accessory_issue(db, mv: dict, user: dict) -> dict:
         je_date = datetime.fromisoformat(
             str(mv.get("created_at") or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     memo = f"Pemakaian Aksesoris · {mv.get('material_name') or mv.get('material_id')} · {qty}"
     lines = [
         {"account_code": wip_code, "debit": total, "credit": 0, "description": memo},
@@ -1761,7 +1761,7 @@ async def post_inventory_adjust(db, movement: dict, user: dict) -> dict:
     try:
         je_date = datetime.fromisoformat(str(movement.get("timestamp") or movement.get("created_at") or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     
     # Phase 11C: Enhanced memo for scrap
     if is_scrap:
@@ -1792,7 +1792,7 @@ def _je_date_of(value) -> date:
     try:
         return datetime.fromisoformat(str(value or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        return date.today()
+        return today_wib()
 
 
 async def post_inventory_revaluation(db, reval: dict, user: dict) -> dict:
@@ -1899,7 +1899,7 @@ async def post_purchase_return(db, *, source_ref: str, memo: str, lines: list, u
                     "description": ln.get("description") or memo})
     if not out:
         return {"ok": True, "skipped": True, "reason": "nilai 0 — tidak ada jurnal"}
-    return await _create_posted_je(db, je_date or date.today(), memo, "purchase_return", source_ref, out, user)
+    return await _create_posted_je(db, je_date or today_wib(), memo, "purchase_return", source_ref, out, user)
 
 
 async def post_cogs_shipment(db, shipment: dict, user: dict) -> dict:
@@ -1959,7 +1959,7 @@ async def post_cogs_shipment(db, shipment: dict, user: dict) -> dict:
     try:
         je_date = datetime.fromisoformat(str(shipment.get("dispatched_at") or shipment.get("shipment_date") or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     basis_label = cogs_basis_label(basis)
     memo = f"COGS Shipment {shipment.get('shipment_number')} ({basis_label})"
     lines = []
@@ -2038,9 +2038,9 @@ async def post_production_variance(db, variance: dict, user: dict) -> dict:
         return result
 
     try:
-        je_date = date.fromisoformat((variance.get("created_at") or str(datetime.now(timezone.utc)))[:10])
+        je_date = date.fromisoformat(wib_date_of(variance.get("created_at")) or wib_date_str())
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     memo = f"Variance {variance_type} - Job {variance.get('job_number', '')} ({variance.get('total_variance_qty', 0)} pcs)".strip()
     desc = f"Variance {variance.get('job_number', '')}"
@@ -2086,9 +2086,9 @@ async def post_asset_acquisition(db, asset: dict, user: dict) -> dict:
         return result
 
     try:
-        je_date = date.fromisoformat((asset.get("purchase_date") or str(date.today()))[:10])
+        je_date = date.fromisoformat((asset.get("purchase_date") or str(today_wib()))[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     via = (f"GR {asset.get('grn_number')}" if asset.get("grn_number")
            else f"faktur {asset.get('ap_invoice_number')}" if asset.get("ap_invoice_number")
@@ -2177,7 +2177,7 @@ async def post_depreciation(db, schedule: dict, asset: dict, user: dict) -> dict
         last_day = monthrange(period_date.year, period_date.month)[1]
         je_date = date(period_date.year, period_date.month, last_day)
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     asset_name = asset.get("name", schedule.get("asset_name", "Unknown Asset"))
     asset_code = asset.get("code", schedule.get("asset_code", "N/A"))
@@ -2234,7 +2234,7 @@ async def post_accrual_expense(db, accrual: dict, user: dict) -> dict:
         last_day = monthrange(period_date.year, period_date.month)[1]
         je_date = date(period_date.year, period_date.month, last_day)
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     accrual_type = accrual.get("accrual_type", "other").upper()
     description = accrual.get("description", "Accrual")
@@ -2294,7 +2294,7 @@ async def post_accrual_reversal(db, accrual: dict, user: dict) -> dict:
         period_date = datetime.strptime(reversal_period, "%Y-%m").date()
         je_date = date(period_date.year, period_date.month, 1)  # First day of month
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     accrual_type = accrual.get("accrual_type", "other").upper()
     description = accrual.get("description", "Accrual")
@@ -2338,11 +2338,11 @@ async def post_bad_debt_writeoff(db, ar_invoice: dict, user: dict) -> dict:
         return result
 
     # JE date = write-off date
-    write_off_date = ar_invoice.get("write_off_date") or date.today().isoformat()
+    write_off_date = ar_invoice.get("write_off_date") or today_wib().isoformat()
     try:
         je_date = date.fromisoformat(write_off_date[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     invoice_number = ar_invoice.get("invoice_number", "N/A")
     reason = ar_invoice.get("write_off_reason", "Bad debt")
@@ -2434,11 +2434,11 @@ async def post_bank_recon_adjustment(db, adjustment: dict, user: dict) -> dict:
         return result
 
     # JE date = adjustment date
-    adjustment_date = adjustment.get("adjustment_date") or date.today().isoformat()
+    adjustment_date = adjustment.get("adjustment_date") or today_wib().isoformat()
     try:
         je_date = date.fromisoformat(adjustment_date[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     bank_name = adjustment.get("bank_account_name", "Bank")
     description = adjustment.get("description", adjustment_type.replace("_", " ").title())
@@ -2512,11 +2512,11 @@ async def post_asset_disposal(db, asset: dict, user: dict) -> dict:
         return result
 
     # JE date = disposal date
-    disposal_date = asset.get("disposal_date") or date.today().isoformat()
+    disposal_date = asset.get("disposal_date") or today_wib().isoformat()
     try:
         je_date = date.fromisoformat(disposal_date[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     asset_code = asset.get("code", "N/A")
     asset_name = asset.get("name", "Unknown Asset")
@@ -2596,11 +2596,11 @@ async def post_employee_loan_disbursement(db, loan: dict, user: dict) -> dict:
         result = {"ok": False, "error": "Loan amount harus > 0"}
         return result
 
-    disbursement_date = loan.get("disbursement_date") or date.today().isoformat()
+    disbursement_date = loan.get("disbursement_date") or today_wib().isoformat()
     try:
         je_date = date.fromisoformat(disbursement_date[:10])
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     loan_number = loan.get("loan_number", "N/A")
     employee_name = loan.get("employee_name", "Unknown")
@@ -2647,7 +2647,7 @@ async def post_employee_loan_repayment_payroll(db, loan: dict, repayment_amount:
         last_day = monthrange(period_date.year, period_date.month)[1]
         je_date = date(period_date.year, period_date.month, last_day)
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     loan_number = loan.get("loan_number", "N/A")
     employee_name = loan.get("employee_name", "Unknown")
@@ -2741,10 +2741,10 @@ async def post_wip_to_fg_on_job_complete(db, job: dict, user: dict) -> dict:
         await _save_source_posting_result(db, "production_jobs", job["id"], result, prefix="wip")
         return result
 
-    je_date = date.today()
+    je_date = today_wib()
     if job.get("completed_at"):
         try:
-            je_date = date.fromisoformat(str(job["completed_at"])[:10])
+            je_date = date.fromisoformat(wib_date_of(job["completed_at"]))
         except Exception:
             logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
@@ -2799,7 +2799,7 @@ async def post_wip_to_fg_on_cmt_receipt(db, receipt: dict, layer_ids: list, user
                                        + (f": {'; '.join(gaps)}" if gaps else
                                           " (harga bahan/upah PO belum terisi).")),
                             "layer_count": len(layers)})
-    je_date = date.today()
+    je_date = today_wib()
     # koreksi (suffix) dibukukan pada hari koreksinya, bukan tanggal QC lama (periode bisa sudah tutup)
     for k in (() if suffix else ("qc_completed_at", "approved_at", "received_at", "receipt_date")):
         if receipt.get(k):
@@ -2863,7 +2863,7 @@ async def post_fg_to_wip_on_cmt_koreksi(db, receipt: dict, amount: float, user: 
          "description": f"FG keluar — koreksi hasil QC turun {code}"},
     ]
     memo = f"Koreksi QC turun {code} · PO {receipt.get('po_number') or ''} — balik WIP→FG (internal)"
-    result = await _create_posted_je(db, date.today(), memo, "cmt_receipt", source_ref, lines, user)
+    result = await _create_posted_je(db, today_wib(), memo, "cmt_receipt", source_ref, lines, user)
     if result.get("ok"):
         await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$push": {"wip_fg_extra_jes": {
             "je_id": result["je_id"], "je_number": result.get("je_number"), "value": -amount,
@@ -3078,7 +3078,7 @@ async def post_cogs_on_buyer_dispatch(db, shipment: dict, dispatch_items: list,
     try:
         je_date = datetime.fromisoformat(str(shipment.get("dispatched_at") or shipment.get("shipment_date") or _now()).replace("Z", "+00:00")).date()
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
 
     basis_label = cogs_basis_label(basis)
     memo = (f"COGS fulfillment {shipment.get('shipment_number', '')} "

@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Wrench, Plus, Clock, AlertOctagon, CheckCircle, RefreshCw } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { todayWIB, daysAgoWIB, nowWIBLocalInput, toWIBLocalInput, fromWIBLocalInput } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -39,8 +40,8 @@ export default function RahazaDowntimeModule({ headers }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const from = new Date(Date.now() - parseInt(period) * 86400000).toISOString().slice(0, 10);
-      const to   = new Date().toISOString().slice(0, 10);
+      const from = daysAgoWIB(parseInt(period));
+      const to   = todayWIB();
       const [ev, sum] = await Promise.all([
         axios.get(`${API}/api/rahaza/downtime`, { headers, params: { from, to } }),
         axios.get(`${API}/api/rahaza/downtime/summary`, { headers, params: { from, to } }),
@@ -67,7 +68,7 @@ export default function RahazaDowntimeModule({ headers }) {
   const handleClose = async () => {
     if (!showClose) return;
     try {
-      await axios.put(`${API}/api/rahaza/downtime/${showClose.id}`, { end_at: closeEndAt || new Date().toISOString() }, { headers });
+      await axios.put(`${API}/api/rahaza/downtime/${showClose.id}`, { end_at: fromWIBLocalInput(closeEndAt) || new Date().toISOString() }, { headers });
       toast({ title: 'Downtime ditutup' });
       setShowClose(null);
       load();
@@ -136,7 +137,7 @@ export default function RahazaDowntimeModule({ headers }) {
                     <p>{e.reason_name}</p>
                     <p className="text-xs text-muted-foreground">{e.reason_code}</p>
                   </td>
-                  <td className="px-4 py-2 text-xs text-muted-foreground">{e.start_at?.slice(0, 16).replace('T', ' ')}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">{toWIBLocalInput(e.start_at).replace('T', ' ')}</td>
                   <td className="px-4 py-2">
                     {e.duration_min ? <span className="font-medium">{e.duration_min} menit</span> : <span className="text-muted-foreground text-xs">ongoing</span>}
                   </td>
@@ -147,7 +148,7 @@ export default function RahazaDowntimeModule({ headers }) {
                   </td>
                   <td className="px-4 py-2 text-right">
                     {e.status === 'open' && (
-                      <Button variant="outline" size="sm" onClick={() => { setShowClose(e); setCloseEndAt(new Date().toISOString().slice(0, 16)); }}>
+                      <Button variant="outline" size="sm" onClick={() => { setShowClose(e); setCloseEndAt(nowWIBLocalInput()); }}>
                         <CheckCircle className="w-3.5 h-3.5 mr-1" /> Tutup
                       </Button>
                     )}

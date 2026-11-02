@@ -4,7 +4,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
 import { PeriodAlerts, YearEndClose } from './RahazaPeriodsExtras';
-import { thisMonthWIB } from './SdmCashAccountSelect';
+import { thisMonthWIB } from '../../lib/waktu';
 
 // 2026-11-02 (audit No.34): backend kini menolak tutup/kunci periode yang BELUM berakhir (WIB)
 // — rahaza_periods.period_not_ended_error. Tombolnya dinonaktifkan di sini + alasan di tooltip,

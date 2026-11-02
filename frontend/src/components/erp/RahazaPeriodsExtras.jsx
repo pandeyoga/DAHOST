@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, BookLock, Undo2 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { todayWIB } from './SdmCashAccountSelect';
+import { todayWIB } from '../../lib/waktu';
 
 const fmt =(n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
 

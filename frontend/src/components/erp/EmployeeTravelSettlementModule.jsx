@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -243,7 +244,7 @@ function SettlementForm({ token, travel, onClose, onSaved }) {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs text-muted-foreground">Nominal (Rp)</label>
-                  <Input type="number" placeholder="0" value={it.amount} onChange={e => setItem(i,'amount',e.target.value)} className="h-8 text-sm" />
+                  <MoneyInput placeholder="0" value={it.amount} onChange={e => setItem(i,'amount',e.target.value)} className="h-8 text-sm" />
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground">Keterangan</label>

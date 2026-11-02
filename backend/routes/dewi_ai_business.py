@@ -33,6 +33,7 @@ from services.ai_aggregates import (
     wms_aggregates as wms_agg,
     hr_aggregates as hr_agg,
 )
+from utils.waktu import fmt_wib, today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/ai-business", tags=["ai-business"])
@@ -126,7 +127,7 @@ async def generate_daily_summary(
 
     metrics = {
         "periode": f"{days} hari terakhir",
-        "tanggal": _now().strftime("%d %B %Y"),
+        "tanggal": fmt_wib("%d %B %Y"),
         "produksi": prod,
         "keuangan": {
             "invoice_baru": fin["invoice_count"],
@@ -152,7 +153,7 @@ async def generate_daily_summary(
         system_message=SystemPrompts.DEWI_DAILY_SUMMARY,
         user_message=user_prompt,
         cache_namespace="daily_summary",
-        cache_key_extra=[str(days), str(_now().date())],
+        cache_key_extra=[str(days), str(today_wib())],
         ttl_seconds=3600,
         session_tag="daily-summary",
     )

@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import get_db  # noqa: E402
+from utils.waktu import now_wib  # noqa: E402
 
 MARK = "seed_creator_demo"          # penanda: hanya dokumen bertanda ini yang dibuang
 G, Y, X = "\033[92m", "\033[93m", "\033[0m"
@@ -112,7 +113,8 @@ async def main(cleanup: bool = False) -> int:
               "(POST /api/marketing/seed-sample-data). Seeder ini TIDAK membuat toko.")
         return 1
     now = _now()
-    y, m = now.year, now.month
+    wib = now_wib()   # periode target = bulan berjalan WIB (No.54a)
+    y, m = wib.year, wib.month
 
     made = {"creators": 0, "contents": 0, "sessions": 0, "targets": 0, "orders": 0}
     creator_ids: list[str] = []

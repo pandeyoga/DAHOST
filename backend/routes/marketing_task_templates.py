@@ -8,7 +8,7 @@ Endpoints: POST /task-templates, GET /task-templates, GET /task-templates/{id}, 
 """
 import uuid
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import date, datetime, timezone, timedelta
 from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
@@ -18,6 +18,7 @@ from utils.query_guards import q_date
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, TaskTemplateCreate, RecurrenceConfig
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import today_wib, wib_date_str, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 
@@ -184,9 +185,9 @@ async def get_tasks_stats(
     
     # Date range default: last 30 days
     if not date_to:
-        date_to = _now().strftime("%Y-%m-%d")
+        date_to = wib_date_str()
     if not date_from:
-        date_from = (_now() - timedelta(days=30)).strftime("%Y-%m-%d")
+        date_from = (today_wib() - timedelta(days=30)).isoformat()
 
     # BUG-R11-A: validasi dulu — tanggal sampah dulu bikin HTTP 500
     date_from = q_date(date_from, name="date_from").isoformat()
@@ -195,8 +196,9 @@ async def get_tasks_stats(
     # Get tasks in date range
     query = {
         "created_at": {
-            "$gte": datetime.fromisoformat(date_from + "T00:00:00+00:00"),
-            "$lte": datetime.fromisoformat(date_to + "T23:59:59+00:00")
+            # rentang tanggal kalender WIB dinyatakan dalam UTC (No.54a)
+            "$gte": wib_day_bounds_utc(date.fromisoformat(date_from))[0],
+            "$lt": wib_day_bounds_utc(date.fromisoformat(date_to))[1],
         }
     }
 

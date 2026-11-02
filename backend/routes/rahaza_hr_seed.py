@@ -14,10 +14,11 @@ Seeds realistic demo data for HRIS testing:
 """
 import uuid
 import random
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, require_demo_seed_allowed
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/hr-seed", tags=["rahaza-hr-seed"])
 
@@ -254,8 +255,8 @@ async def run_seed(request: Request):
             "phone": e["phone"],
             "email": e["email"],
             "contract_type": "PKWTT" if e["grade"] in senior_grades else "PKWT",
-            "contract_start_date": (date.today() - timedelta(days=730)).isoformat(),
-            "contract_end_date": None if e["grade"] in senior_grades else (date.today() + timedelta(days=180)).isoformat(),
+            "contract_start_date": (today_wib() - timedelta(days=730)).isoformat(),
+            "contract_end_date": None if e["grade"] in senior_grades else (today_wib() + timedelta(days=180)).isoformat(),
             "wage_scheme": e["wage_scheme"],
             "base_rate": e["base_rate"],
             "joined_at": (_now() - timedelta(days=730)).isoformat(),
@@ -316,7 +317,7 @@ async def run_seed(request: Request):
 
     # ─── 7) Sample Attendance (last 7 working days) ─────────────────────
     result["attendance"] = {"created": 0, "skipped": 0}
-    today = date.today()
+    today = today_wib()
     # Build last 7 working days (skip weekends)
     working_days = []
     d = today - timedelta(days=1)  # start from yesterday
@@ -396,7 +397,7 @@ async def seed_connected_demo_data(request: Request):
         raise HTTPException(403, "Admin only.")
     db = get_db()
     now = _now()
-    today = now.date()
+    today = today_wib()
     import calendar
 
     result = {"leave_types_seed": 0, "leave_balances": 0, "leave_requests": 0,

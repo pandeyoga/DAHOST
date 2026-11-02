@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 
@@ -47,7 +48,7 @@ export default function RahazaAPAgingModule({ token }) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `ap-aging-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.download = `ap-aging-${todayWIB()}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };

@@ -16,7 +16,7 @@ from routes.rahaza_payroll_shared import (
     _get_applicable_allowances,
     _require_hr, _to_date, _date_range_filter,
     _generate_run_number, _compute_payslip_for_employee,
-    _today_wib, employee_is_active, find_duplicate_run_conflicts,
+    employee_is_active, find_duplicate_run_conflicts,
     list_payment_cash_accounts, resolve_payment_account, parse_ymd,
 )
 from routes.rahaza_posting import post_payroll_run, payroll_deduction_totals
@@ -33,6 +33,7 @@ from openpyxl.styles import (
 from openpyxl.utils import get_column_letter
 from datetime import datetime, timezone, date, timedelta
 from typing import Optional
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 
@@ -386,7 +387,7 @@ async def pay_payroll_run(run_id: str, request: Request):
             f"({run.get('payment_gl_je_number')}). "
             "Gunakan void-payment untuk membatalkan.")
 
-    payment_date   = (body.get("payment_date") or str(_today_wib()))[:10]
+    payment_date   = (body.get("payment_date") or str(today_wib()))[:10]
     # L-03: default bank dari profil posting payroll_payment (bukan hard-code)
     from routes.rahaza_posting_profiles import get_mapping as _get_mapping
     _pp_map = await _get_mapping(db, "payroll_payment")
@@ -600,7 +601,7 @@ async def pay_pph21(run_id: str, request: Request):
     if run.get("pph21_payment_status") == "paid":
         raise HTTPException(400, "PPh21 run ini sudah dibayar.")
 
-    payment_date = (body.get("payment_date") or str(_today_wib()))[:10]
+    payment_date = (body.get("payment_date") or str(today_wib()))[:10]
     from routes.rahaza_posting_profiles import get_mapping
     fin_map = await get_mapping(db, "payroll_finalize")
     pay_map = await get_mapping(db, "payroll_payment")
@@ -625,7 +626,7 @@ async def pay_pph21(run_id: str, request: Request):
     try:
         je_date = date.fromisoformat(payment_date)
     except Exception:
-        je_date = date.today()
+        je_date = today_wib()
     memo  = f"Bayar PPh21 {run.get('run_number')} · {run.get('period_from')}–{run.get('period_to')}"
     lines = [
         {"account_code": liab_code, "debit": pph_total, "credit": 0, "description": memo},

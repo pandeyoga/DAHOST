@@ -23,6 +23,7 @@ from datetime import datetime, timezone, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import get_db
+from utils.waktu import now_wib, today_wib
 
 
 def utc_now():
@@ -217,7 +218,7 @@ async def seed_creator_sessions(db):
         {"assigned_account_ids": {"$exists": True, "$ne": []}}, {"_id": 0}
     ).to_list(None)
     inserted = 0
-    today = utc_now().date()
+    today = today_wib()   # tanggal kalender WIB (No.54a)
     for c in creators:
         acc_id = c["assigned_account_ids"][0]
         # 6 sessions spread over ~60 days (covers current + previous month)
@@ -256,7 +257,7 @@ async def seed_sales_data(db):
         return
 
     inserted = 0
-    today = utc_now().date()
+    today = today_wib()   # tanggal kalender WIB (No.54a)
     for day_offset in range(30):
         date = today - timedelta(days=day_offset)
         date_str = date.isoformat()
@@ -305,7 +306,7 @@ async def seed_targets(db):
         return
 
     inserted = 0
-    now = utc_now()
+    now = now_wib()   # periode = bulan berjalan WIB (No.54a)
     period = f"{now.year}-{now.month:02d}"
     for acc in accounts:
         exists = await db.marketing_targets.find_one({

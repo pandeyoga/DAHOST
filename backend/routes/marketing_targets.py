@@ -17,6 +17,7 @@ from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
 from core import marketing_returns as _ret
 from core import marketing_account_scope as _scope
+from utils.waktu import now_wib
 
 router = APIRouter(prefix="/api/marketing/targets", tags=["marketing-targets"])
 
@@ -137,7 +138,7 @@ async def list_targets(
     """List target. Default: bulan & tahun berjalan."""
     user = await require_auth(request)
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     # F6 (sesi #10) — daftar target adalah ANGKA per toko: staf pemegang satu toko
     # tidak boleh membaca target sembilan toko.
     q: dict = await _scope.scope_filter(db, user, {
@@ -163,7 +164,7 @@ async def monthly_summary(
     """
     await require_auth(request)
     db  = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y   = year  or now.year
     m   = month or now.month
 
@@ -360,7 +361,7 @@ async def list_creator_targets(
     """List target creator. Default: bulan & tahun berjalan."""
     user = await require_auth(request)
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     q: dict = {"year": year or now.year, "month": month or now.month}
     # F6 (sesi #10) — `marketing_creator_targets` tidak punya `account_id`; kreator
     # menempel ke toko lewat `assigned_account_ids`. Jadi lingkupnya dibaca dari
@@ -385,7 +386,7 @@ async def creator_monthly_summary(
     """Semua creator aktif + target vs aktual sessions bulan ini."""
     user = await require_auth(request)
     db  = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y   = year  or now.year
     m   = month or now.month
 
@@ -486,7 +487,7 @@ async def export_creator_targets_pdf(
     """Export PDF Target KOL/Creator untuk bulan tertentu."""
     await require_auth(request)
     db  = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y   = year  or now.year
     m   = month or now.month
 
@@ -593,7 +594,7 @@ async def creator_scorecard(
     """
     user = await require_auth(request)
     db   = get_db()
-    now  = _now()
+    now  = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y    = year  or now.year
     m    = month or now.month
 
@@ -828,7 +829,7 @@ async def creator_detail(
     """
     user = await require_auth(request)
     db   = get_db()
-    now  = _now()
+    now  = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y    = year  or now.year
     m    = month or now.month
     date_from = f"{y:04d}-{m:02d}-01"

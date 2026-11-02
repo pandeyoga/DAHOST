@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import Modal from '../Modal';
+import { MoneyInput } from '@/components/ui/money-input';
 import {
   costingApi, fmtRp, fmtNum, fmtPct, SOURCE_LABEL, COST_SOURCE_LABEL,
   STATUS_META, GAP_LABEL,
@@ -441,7 +442,7 @@ function CostDetailModal({ detail, token, onClose, onApply, onReload, onGoto }) 
               <Lock className="w-3.5 h-3.5 text-primary" /> Upah CMT / jahit per pcs
             </div>
             <div className="flex items-center gap-2">
-              <input type="number" min="0" step="100" value={cmt}
+              <MoneyInput unstyled value={cmt}
                 onChange={e => setCmt(e.target.value)} placeholder="kosong = ikut data nyata"
                 className={inputCls} data-testid="costing-input-cmt" />
             </div>
@@ -466,7 +467,7 @@ function CostDetailModal({ detail, token, onClose, onApply, onReload, onGoto }) 
             <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5 text-primary" /> Upah cutting / internal per pcs
             </div>
-            <input type="number" min="0" step="100" value={internal}
+            <MoneyInput unstyled value={internal}
               onChange={e => setInternal(e.target.value)} placeholder="kosong = ikut data produksi"
               className={inputCls} data-testid="costing-input-internal" />
             <div className="text-[11px] text-muted-foreground">
@@ -766,7 +767,7 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
                     </td>
                     <td className="py-2 font-mono text-xs text-muted-foreground">{r.code}</td>
                     <td className="py-2 text-right">
-                      <input type="number" min="0" step="100" value={r.rate_per_pcs || ''}
+                      <MoneyInput unstyled value={r.rate_per_pcs || ''}
                         onChange={e => setRate(r.process_id, e.target.value)}
                         disabled={r.is_cmt}
                         className={`${inputCls} w-28 text-right inline-block disabled:opacity-40`}
@@ -781,7 +782,7 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <label className="block">
               <span className="text-xs font-medium text-foreground/80">Overhead per pcs</span>
-              <input type="number" min="0" step="100" value={settings.overhead_rate_per_pcs}
+              <MoneyInput unstyled value={settings.overhead_rate_per_pcs}
                 onChange={e => setSettings({ ...settings, overhead_rate_per_pcs: e.target.value })}
                 className={`${inputCls} mt-1`} data-testid="costing-setting-overhead" />
             </label>
@@ -793,7 +794,7 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
             </label>
             <label className="block">
               <span className="text-xs font-medium text-foreground/80">Tarif cadangan upah/pcs</span>
-              <input type="number" min="0" step="100" value={settings.labor_rate_fallback_per_pcs}
+              <MoneyInput unstyled value={settings.labor_rate_fallback_per_pcs}
                 onChange={e => setSettings({ ...settings, labor_rate_fallback_per_pcs: e.target.value })}
                 className={`${inputCls} mt-1`} data-testid="costing-setting-fallback" />
             </label>

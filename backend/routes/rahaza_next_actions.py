@@ -32,10 +32,11 @@ Aturan dismiss/snooze tersimpan di localStorage client (backend stateless).
 from fastapi import APIRouter, Request
 from database import get_db
 from auth import require_auth
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import logging
 from utils.query_guards import q_int
+from utils.waktu import today_wib, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/next-actions", tags=["Next Actions"])
@@ -46,7 +47,7 @@ def _now() -> str:
 
 
 def _today_iso() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 async def _count(db, collection: str, filter_: dict) -> int:
@@ -213,7 +214,7 @@ async def rule_orders_due_soon(db, portal: str) -> Optional[dict]:
     """Order dengan due_date <= 3 hari & belum completed."""
     if portal not in ("production", "management"):
         return None
-    today = date.today()
+    today = today_wib()
     limit = (today + timedelta(days=3)).isoformat()
     orders = await db.rahaza_orders.find(
         {"status": {"$nin": ["completed", "closed", "cancelled"]},
@@ -244,7 +245,7 @@ async def rule_orders_overdue(db, portal: str) -> Optional[dict]:
     """Order overdue: due_date < today & belum completed."""
     if portal not in ("production", "management"):
         return None
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     orders = await db.rahaza_orders.find(
         {"status": {"$nin": ["completed", "closed", "cancelled"]},
          "due_date": {"$lt": today, "$nin": [None, ""]}},
@@ -336,9 +337,12 @@ async def rule_qc_fail_rate_today(db, portal: str) -> Optional[dict]:
     """QC fail-rate hari ini > 8%."""
     if portal not in ("production", "management"):
         return None
-    start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    # Awal hari WIB dalam UTC (No.54a) — dulu tengah malam UTC (= 07:00 WIB). `timestamp` disimpan
+    # sebagai datetime BSON; dulu dibandingkan dengan string ⇒ aturan ini tidak pernah menyala.
+    start = wib_day_bounds_utc()[0]
     events = await db.rahaza_wip_events.find(
-        {"event_type": {"$in": ["qc_pass", "qc_fail"]}, "timestamp": {"$gte": start}},
+        {"event_type": {"$in": ["qc_pass", "qc_fail"]},
+         "$or": [{"timestamp": {"$gte": start}}, {"timestamp": {"$gte": start.isoformat()}}]},
         {"_id": 0, "event_type": 1, "qty": 1}
     ).to_list(500)
     total_pass = sum(float(e.get("qty") or 0) for e in events if e["event_type"] == "qc_pass")

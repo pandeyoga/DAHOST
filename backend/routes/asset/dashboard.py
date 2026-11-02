@@ -1,12 +1,13 @@
 """GET /api/assets/dashboard — top-level KPIs, category breakdown, recent + expiring counts.
 GET /api/assets/finance-registry — daftar aset registri Keuangan untuk ditaut (K18, 2026-11-02)."""
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Optional
 from fastapi import Request
 
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _ser, _ensure_default_categories, load_finance_assets, apply_finance_overlay
+from utils.waktu import today_wib
 
 
 @router.get("/finance-registry")
@@ -69,7 +70,7 @@ async def get_asset_dashboard(request: Request):
              "purchase_cost": 1, "category_name": 1, "created_at": 1}
     ).sort("created_at", -1).limit(5).to_list(5)
 
-    current_period = date.today().strftime("%Y-%m")
+    current_period = today_wib().strftime("%Y-%m")
     # K18: penyusutan bulan ini = jadwal registri Keuangan yang sudah diposting (aset tertaut)
     depr_this_month = await db.rahaza_depr_schedules.aggregate([
         {"$match": {"period": current_period, "posted": True, "asset_id": {"$in": list(fin)}}},
@@ -77,8 +78,8 @@ async def get_asset_dashboard(request: Request):
     ]).to_list(1)
     depr_amount = depr_this_month[0]["total"] if depr_this_month else 0
 
-    today_str = date.today().isoformat()
-    in_30_days = (date.today() + timedelta(days=30)).isoformat()
+    today_str = today_wib().isoformat()
+    in_30_days = (today_wib() + timedelta(days=30)).isoformat()
     warranty_expiring_count = await db.dewi_assets.count_documents({
         "warranty_expiry_date": {"$gte": today_str, "$lte": in_30_days},
         "status": {"$ne": "disposed"},

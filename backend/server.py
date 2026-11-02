@@ -13,6 +13,7 @@ import os
 import logging
 from datetime import datetime, timezone
 import time
+from utils.waktu import today_wib
 
 app = FastAPI(
     title="CV. Dewi Aditya — ERP API",
@@ -1485,7 +1486,6 @@ app.include_router(data_transfer_router, dependencies=_DENY_MKT)
 
 # ─── Financial Recap Endpoint ────────────────────────────────────────────────
 # Re-implements the deleted /api/financial-recap for FinancialRecapModule.jsx
-from datetime import date as _date
 
 @app.get("/api/financial-recap", tags=["financial-recap"])
 async def financial_recap(
@@ -1500,7 +1500,7 @@ async def financial_recap(
     from routes.shared import require_portal
     await require_portal(request, "finance")  # RBAC: data keuangan wajib portal finance (BUG-RBAC-1)
     db = get_db()
-    today = _date.today()
+    today = today_wib()
 
     # FIN-01 (temuan 2026-09-23): baca kolom yang BENAR-BENAR ditulis penulisnya.
     #   pembayaran → `date` (fallback payment_date) · AP → `total` (fallback total_amount)

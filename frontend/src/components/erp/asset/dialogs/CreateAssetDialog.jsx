@@ -5,6 +5,8 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
@@ -13,7 +15,7 @@ import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../../docn
 
 export function CreateAssetDialog({ open, onClose, token, categories, onCreated }) {
   const [form, setForm] = useState({
-    name: '', category_id: '', purchase_date: new Date().toISOString().slice(0, 10),
+    name: '', category_id: '', purchase_date: todayWIB(),
     purchase_cost: '', residual_value: '', useful_life_months: '',
     serial_number: '', brand: '', model: '', location: '', department: '', notes: '',
     // Warranty
@@ -106,12 +108,12 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Harga Beli (Rp) *</label>
-            <Input type="number" placeholder="5000000" value={form.purchase_cost}
+            <MoneyInput placeholder="5.000.000" value={form.purchase_cost}
               onChange={e => set('purchase_cost', e.target.value)} className="mt-1" data-testid="asset-cost-input" />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Nilai Residu (Rp)</label>
-            <Input type="number" placeholder="Otomatis 5%" value={form.residual_value}
+            <MoneyInput placeholder="Otomatis 5%" value={form.residual_value}
               onChange={e => set('residual_value', e.target.value)} className="mt-1" />
           </div>
           <div>
@@ -191,7 +193,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Nilai Pertanggungan (Rp)</label>
-            <Input type="number" placeholder="50000000" value={form.insurance_value}
+            <MoneyInput placeholder="50.000.000" value={form.insurance_value}
               onChange={e => set('insurance_value', e.target.value)} className="mt-1" />
           </div>
         </div>

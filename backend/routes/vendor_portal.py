@@ -26,6 +26,7 @@ from database import get_db
 from auth import require_auth, serialize_doc, log_activity, hash_password, check_role, bump_rbac_cache
 from utils.counters import gen_prefixed_number
 import uuid
+from utils.waktu import wib_date_str
 
 # ── FASE 7 DEPRECATION (audit 2026-07-31, cacat CRIT CMT-1) ──────────────────
 # Modul ini adalah PORTAL VENDOR LAMA dengan model data SENDIRI
@@ -603,7 +604,7 @@ async def vendor_submit_progress(job_id: str, payload: ProgressIn, request: Requ
         raise HTTPException(400, "qty_done harus lebih dari 0.")
     if payload.qty_reject > payload.qty_done:
         raise HTTPException(400, "qty_reject tidak boleh melebihi qty_done.")
-    report_date = payload.report_date or _now().date().isoformat()
+    report_date = payload.report_date or wib_date_str()
     doc = {
         'id':           _uid(),
         'job_id':       job_id,
@@ -661,7 +662,7 @@ async def vendor_delete_progress(job_id: str, report_id: str, request: Request):
     if not report:
         raise HTTPException(404, "Progress tidak ditemukan.")
     # Hanya boleh hapus entry hari ini
-    today = _now().date().isoformat()
+    today = wib_date_str()
     if report.get('report_date') != today:
         raise HTTPException(400, "Hanya bisa menghapus progress yang diinput hari ini.")
     await db.vendor_progress_reports.delete_one({'id': report_id})

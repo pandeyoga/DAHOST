@@ -38,6 +38,7 @@ import uuid
 import logging
 import math
 from typing import Optional
+from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/grn-qc", tags=["grn-qc"])
@@ -344,7 +345,7 @@ async def submit_inspection(receipt_id: str, request: Request):
     # Create inspection record (RC-5 fix: atomic race-safe numbering, was count_documents()+1)
     inspection_no = await gen_prefixed_number(
         db, "rahaza_grn_inspections", "inspection_no",
-        f"INS-{_now().strftime('%Y%m')}-", 4)
+        f"INS-{fmt_wib('%Y%m')}-", 4)
     inspection_doc = {
         "id": _uid(),
         "inspection_no": inspection_no,

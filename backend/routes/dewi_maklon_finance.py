@@ -25,6 +25,7 @@ from routes.rahaza_posting import _create_posted_je, _find_existing_je
 from routes.rahaza_posting_profiles import get_mapping
 import uuid
 import logging
+from utils.waktu import today_wib, wib_date_of
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/dewi/maklon/finance', tags=['Dewi-Maklon-Finance'], dependencies=[Depends(deny_external_dep)])
@@ -101,11 +102,11 @@ async def post_maklon_ar_invoice(db, po: dict, user: dict) -> dict:
             'description': f'PPN Keluaran — {po.get("po_number","")}',
         })
 
-    je_date_s = (ar_doc.get('invoice_date') or ar_doc.get('issue_date') or po.get('po_date') or date.today().isoformat())
+    je_date_s = (ar_doc.get('invoice_date') or ar_doc.get('issue_date') or po.get('po_date') or today_wib().isoformat())
     try:
         je_date = date.fromisoformat(str(je_date_s)[:10])
     except ValueError:
-        je_date = date.today()
+        je_date = today_wib()
     result = await _create_posted_je(
         db,
         je_date=je_date,
@@ -301,11 +302,11 @@ async def post_cmt_ap_invoice(db, cmt_payment: dict, user: dict) -> dict:
 
     # B-09: tanggal JE = tanggal tagihan/penerimaan FG (akrual), bukan tanggal bayar
     _d = (cmt_payment.get('invoice_date') or cmt_payment.get('period_to') or cmt_payment.get('payment_date')
-          or str(cmt_payment.get('created_at') or '')[:10] or date.today().isoformat())
+          or wib_date_of(cmt_payment.get('created_at')) or today_wib().isoformat())
     try:
         je_date = date.fromisoformat(str(_d)[:10])
     except ValueError:
-        je_date = date.today()
+        je_date = today_wib()
     result = await _create_posted_je(
         db,
         je_date=je_date,
@@ -375,7 +376,7 @@ async def record_advance_payment(po_id: str, payload: AdvancePaymentIn, user: di
     if not po:
         raise HTTPException(404, 'PO tidak ditemukan')
 
-    payment_date = payload.payment_date or date.today().isoformat()
+    payment_date = payload.payment_date or today_wib().isoformat()
 
     # Finance GL: Dr Bank / Cr Uang Muka Diterima – Maklon (profil 'maklon_advance_payment';
     # tanpa fallback kode akun — mapping tidak lengkap = ditolak dgn pesan jelas).
@@ -511,7 +512,7 @@ async def pay_cmt_payment(payment_id: str, payload: CmtPayIn, user: dict = Depen
         if not ap.get('ok'):
             raise HTTPException(400, f"AP CMT belum bisa diposting ke GL: {ap.get('error')}")
         payment = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0})
-    pay_date = payload.payment_date or date.today().isoformat()
+    pay_date = payload.payment_date or today_wib().isoformat()
     did = _uid()
     await db.rahaza_cash_movements.insert_one({
         'id': did, 'account_id': acc['id'], 'account_name': acc.get('name'), 'direction': 'out', 'amount': round(amount),

@@ -21,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from auth import require_auth
 from database import get_db
+from utils.waktu import today_wib, now_wib
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +163,7 @@ async def _finance_kpis(db, year: int, month: int) -> dict:
     total_expenses = round(pl_totals["cogs"] + pl_totals["expense"] + pl_totals["other_expense"], 2)
 
     # AR overdue — SSOT rahaza_ar_invoices: belum lunas & due_date lewat
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     ar_overdue_pipeline = [
         {"$match": {"status": {"$in": ["sent", "issued", "partial", "partial_paid", "overdue"]}, "due_date": {"$lte": today}}},  # FIN-09
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$balance", 0]}}, "count": {"$sum": 1}}},
@@ -366,8 +367,9 @@ async def executive_summary(
     await require_exec_report(request)  # K33
     db = get_db()
     now = _now()
-    y = year or now.year
-    m = month or now.month
+    wib = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
+    y = year or wib.year
+    m = month or wib.month
 
     prev_y, prev_m = _prev_month(y, m)
     start, end = _month_range(y, m)
@@ -423,8 +425,9 @@ async def executive_ai_narrative(
     await require_exec_report(request)  # K33
     db = get_db()
     now = _now()
-    y = year or now.year
-    m = month or now.month
+    wib = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
+    y = year or wib.year
+    m = month or wib.month
     prev_y, prev_m = _prev_month(y, m)
 
     import asyncio
@@ -518,7 +521,7 @@ async def kpi_comparison(
     """Month-on-month KPI comparison across the last N months."""
     await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # bulan-bulan dihitung dari bulan berjalan WIB (No.54a)
     results = []
 
     for i in range(months - 1, -1, -1):
@@ -550,7 +553,7 @@ async def finance_snapshot(
 ):
     await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     data = await _finance_kpis(db, y, m)
     prev_y, prev_m = _prev_month(y, m)
@@ -576,7 +579,7 @@ async def production_snapshot(
 ):
     await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     data = await _production_kpis(db, y, m)
     prev_y, prev_m = _prev_month(y, m)
@@ -601,7 +604,7 @@ async def hr_snapshot(
 ):
     await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     data = await _hr_kpis(db, y, m)
     return {"ok": True, "period": f"{y}-{m:02d}", "data": data}
@@ -615,7 +618,7 @@ async def marketing_snapshot(
 ):
     await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     try:
         data = await _marketing_kpis(db, y, m)
@@ -632,7 +635,7 @@ async def executive_trend(
     """Multi-KPI revenue + production + HR trend for last N months."""
     await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # bulan-bulan dihitung dari bulan berjalan WIB (No.54a)
     data = []
     for i in range(months - 1, -1, -1):
         target = now - timedelta(days=i * 30)

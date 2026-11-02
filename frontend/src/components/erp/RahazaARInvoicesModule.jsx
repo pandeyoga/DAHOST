@@ -9,7 +9,11 @@ import { DataTable } from './DataTableV2';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+
+// Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
 const fmt = formatRupiah;
 
@@ -114,7 +118,7 @@ export default function RahazaARInvoicesModule({ token }) {
     const payload = {
       amount: inv.balance,
       account_id: accounts[0]?.id || '',
-      date: new Date().toISOString().split('T')[0],
+      date: todayWIB(),
       notes: 'Lunas - Bayar Sekarang',
     };
     const r = await fetch(`/api/rahaza/ar-invoices/${inv.id}/payment`, {
@@ -312,7 +316,7 @@ function isMarketplaceChannel(c) {
 }
 
 function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayWIB();
   const [form, setForm] = useState({ customer_id: '', issue_date: today, due_date: '', notes: '', sales_channel: '', tax_pct: 0, discount_amount: 0 });
   const [items, setItems] = useState([{ description: '', qty: 1, unit_price: 0 }]);
   const [saving, setSaving] = useState(false);
@@ -408,14 +412,14 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
             <div key={i} className="grid grid-cols-12 gap-2 items-center">
               <input value={item.description} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} placeholder="Deskripsi" className="col-span-6 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground" data-testid={`ar-item-desc-${i}`} />
               <input type="number" value={item.qty} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} className="col-span-2 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground text-right font-mono" data-testid={`ar-item-qty-${i}`} />
-              <input type="number" value={item.unit_price} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, unit_price: e.target.value } : x))} className="col-span-3 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground text-right font-mono" placeholder="Harga" data-testid={`ar-item-price-${i}`} />
+              <MoneyInput unstyled value={item.unit_price} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, unit_price: e.target.value } : x))} className="col-span-3 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground text-right font-mono" placeholder="Harga" data-testid={`ar-item-price-${i}`} />
               <button onClick={() => setItems(p => p.filter((_, j) => j !== i))} className="col-span-1 h-9 grid place-items-center text-red-400 hover:text-red-300 text-lg">×</button>
             </div>
           ))}
           <div className="grid grid-cols-2 gap-3 pt-2">
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">Diskon (Rp)</label>
-              <GlassInput type="number" min={0} step="1000" value={form.discount_amount} onChange={e => setForm({ ...form, discount_amount: e.target.value })} data-testid="ar-create-discount" />
+              <MoneyInput glass value={form.discount_amount} onChange={e => setForm({ ...form, discount_amount: e.target.value })} data-testid="ar-create-discount" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">PPN (%)</label>
@@ -450,7 +454,7 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
 function PaymentModal({ invoice, accounts, onClose, onPay }) {
   const [amount, setAmount] = useState(invoice.balance);
   const [account_id, setAccount] = useState(accounts[0]?.id || '');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(todayWIB);
   const [notes, setNotes] = useState('');
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -458,7 +462,7 @@ function PaymentModal({ invoice, accounts, onClose, onPay }) {
         <h2 className="text-xl font-bold text-foreground mb-2">Record Pembayaran</h2>
         <p className="text-xs text-muted-foreground mb-4">{invoice.invoice_number} · Balance: {fmt(invoice.balance)}</p>
         <div className="space-y-3">
-          <div><label className="text-xs uppercase text-muted-foreground">Jumlah</label><GlassInput type="number" min={0} step="1000" value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
+          <div><label className="text-xs uppercase text-muted-foreground">Jumlah</label><MoneyInput glass value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Rekening</label><SmartNativeSelect value={account_id} onChange={e => setAccount(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="ar-pay-account"><option value="">— Tidak link ke rekening —</option>{accounts.map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name} (${fmt(a.balance)})`}</option>)}</SmartNativeSelect></div>
           <div><label className="text-xs uppercase text-muted-foreground">Tanggal</label><GlassInput type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Catatan</label><GlassInput value={notes} onChange={e => setNotes(e.target.value)} /></div>
@@ -470,8 +474,8 @@ function PaymentModal({ invoice, accounts, onClose, onPay }) {
 }
 
 function CustomerStatementModal({ token, customers, onClose }) {
-  const today = new Date().toISOString().split('T')[0];
-  const firstOfMonth = today.slice(0, 7) + '-01';
+  const today = todayWIB();
+  const firstOfMonth = monthStartWIB();
   const [customer_id, setCustomerId] = useState(customers[0]?.id || '');
   const [date_from, setFrom] = useState(firstOfMonth);
   const [date_to, setTo] = useState(today);

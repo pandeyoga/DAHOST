@@ -16,6 +16,8 @@ import {
   Eye, Landmark, Pencil, Plus, RefreshCw, Search, Star, Tag, Trash2, Truck,
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import Modal from '../Modal';
@@ -24,6 +26,8 @@ import {
   CATEGORY_LABEL, EP, PAYMENT_TERM_LABEL, apiDelete, apiGet, apiPost, apiPut,
   fmtDate, fmtNum, fmtRp,
 } from './procApi';
+
+// Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
 const EMPTY_FORM = {
   name: '', code: '', npwp: '', tax_name: '', tax_type: 'ppn',
@@ -179,7 +183,7 @@ function SupplierForm({ token, meta, initial, onClose, onSaved }) {
           </div>
           <div>
             <label className="block text-xs font-medium mb-1">Minimum Order (Rp)</label>
-            <GlassInput type="number" min="0" value={f.min_order_value}
+            <MoneyInput glass value={f.min_order_value}
                         onChange={(e) => set('min_order_value', e.target.value)}
                         data-testid="supplier-form-minorder" />
           </div>
@@ -566,9 +570,9 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
                 </div>
                 <div className="col-span-4 md:col-span-2">
                   <label className="block text-[11px] font-medium mb-1">Harga / satuan</label>
-                  <GlassInput type="number" min="0" value={priceForm.price}
+                  <MoneyInput decimals={2} value={priceForm.price}
                               onChange={(e) => setPriceForm((p) => ({ ...p, price: e.target.value }))}
-                              className="text-right" data-testid="price-form-price" />
+                              glass className="text-right" data-testid="price-form-price" />
                 </div>
                 <div className="col-span-4 md:col-span-1">
                   <label className="block text-[11px] font-medium mb-1">MOQ</label>
@@ -882,7 +886,7 @@ export default function SupplierMasterModule({ token }) {
     const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `master-supplier-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `master-supplier-${todayWIB()}.csv`;
     a.click();
     toast.success('Master supplier diekspor ke CSV');
   };

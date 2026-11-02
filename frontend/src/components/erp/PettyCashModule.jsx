@@ -32,9 +32,11 @@ import {
 } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 // 2026-11-02: rekening sumber dari master Kas & Bank (bukan daftar hard-code yang memuat
 // 'Bank BRI (1-1203)' — tidak ada di bagan akun — dan 'Kas (1-1101)' = kas kecil itu sendiri).
-import CashAccountSelect, { usePaymentCashAccounts, todayWIB } from './SdmCashAccountSelect';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB } from '../../lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/finance/petty-cash`;
@@ -149,7 +151,7 @@ function CreateFundDialog({ open, onClose, onCreated, accounts, accountsLoaded }
           </div>
           <div className="space-y-1">
             <Label>Saldo Awal (IDR)</Label>
-            <Input data-testid="fund-opening" type="number" min="0" placeholder="0" value={form.opening_balance} onChange={e => setForm(p => ({ ...p, opening_balance: e.target.value }))} />
+            <MoneyInput data-testid="fund-opening" placeholder="0" value={form.opening_balance} onChange={e => setForm(p => ({ ...p, opening_balance: e.target.value }))} />
           </div>
           <div className="space-y-1">
             <Label>Rekening Sumber *</Label>
@@ -217,7 +219,7 @@ function ReplenishDialog({ open, fund, onClose, onDone, accounts, accountsLoaded
           {err && <div className="text-destructive text-sm bg-destructive/10 rounded px-3 py-2">{err}</div>}
           <div className="space-y-1">
             <Label>Jumlah Replenishment (IDR) *</Label>
-            <Input data-testid="replenish-amount" type="number" min="1" placeholder="500000" value={amount} onChange={e => setAmount(e.target.value)} />
+            <MoneyInput data-testid="replenish-amount" placeholder="500.000" value={amount} onChange={e => setAmount(e.target.value)} />
           </div>
           <div className="space-y-1">
             <Label>Rekening Sumber *</Label>
@@ -317,7 +319,7 @@ function AddTxnDialog({ open, fund, onClose, onDone }) {
           </div>
           <div className="space-y-1">
             <Label>Jumlah (IDR) *</Label>
-            <Input data-testid="txn-amount" type="number" min="1" placeholder="150000" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} />
+            <MoneyInput data-testid="txn-amount" placeholder="150.000" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} />
           </div>
           {form.txn_type === 'advance' ? (
             <div className="space-y-1">
@@ -425,7 +427,7 @@ function SettleAdvanceDialog({ advance, onClose, onDone }) {
                   <option value="">— Kategori nota —</option>
                   {refs.categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
                 </select>
-                <Input type="number" min="1" placeholder="Nominal nota" value={it.amount}
+                <MoneyInput placeholder="Nominal nota" value={it.amount}
                   onChange={e => setItem(i, { amount: e.target.value })} data-testid={`settle-amount-${i}`} />
               </div>
               <ExpenseAccountPicker category={it.category} value={it.account_code} refs={refs} testId={`settle-account-${i}`}
@@ -436,7 +438,7 @@ function SettleAdvanceDialog({ advance, onClose, onDone }) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label>Sisa uang dikembalikan (Rp)</Label>
-              <Input type="number" min="0" value={returned} onChange={e => setReturned(e.target.value)} data-testid="settle-returned" />
+              <MoneyInput value={returned} onChange={e => setReturned(e.target.value)} data-testid="settle-returned" />
             </div>
             <div className="space-y-1">
               <Label>Tanggal</Label>

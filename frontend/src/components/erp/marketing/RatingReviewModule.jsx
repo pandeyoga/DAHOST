@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -33,13 +34,8 @@ import ExportCsvButton from '@/components/ui/export-csv-button';
 
 const REVIEW_HEADS = ['Tanggal', 'Rating', 'Platform', 'Order ID', 'Toko', 'Produk',
   'Isi ulasan', 'Kategori', 'Status', 'Balasan', 'Aksi'];
-const fmtDate = (v) => {
-  if (!v) return '—';
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
-};
+// Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
+const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
 const STATUS_CONFIG = {
   pending:  { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertCircle },
   reviewed: { label: 'Direspon',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
@@ -187,7 +183,7 @@ export default function RatingReviewModule({ token }) {
       });
     } else {
       setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, date: todayWIB() });
     }
     setShowForm(true);
   };

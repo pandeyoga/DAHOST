@@ -27,6 +27,7 @@ import uuid
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import MAKLON_ROLES  # T-01 2.3
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -342,7 +343,7 @@ async def update_order_status(
 
     # Auto-set completion date
     if new_status == 'completed' and not order.get('completion_date'):
-        update_data['completion_date'] = _now().isoformat()[:10]
+        update_data['completion_date'] = wib_date_str()
 
     await _lmo(db).update_one({'id': order_id}, {'$set': update_data})
 

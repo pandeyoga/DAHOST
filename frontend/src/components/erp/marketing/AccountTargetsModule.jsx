@@ -15,6 +15,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { Target, RefreshCw, ChevronLeft, ChevronRight, Save, Loader2, Users, FileDown, Wallet, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
+import { thisMonthWIB } from '@/lib/waktu';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { GlassCard } from '@/components/ui/glass';
@@ -96,7 +98,7 @@ function TargetFormDialog({ open, onOpenChange, account, year, month, existingTa
         <div className="space-y-3 mt-2">
           {account && <AccountBadge account={account} size="sm" />}
           <div><Label className="text-xs">Target Revenue (Rp)</Label>
-            <Input type="number" min={0} value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50000000" className="mt-1 h-9" data-testid="target-revenue-input" /></div>
+            <MoneyInput value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50.000.000" className="mt-1 h-9" data-testid="target-revenue-input" /></div>
           <div><Label className="text-xs">Target Orders</Label>
             <Input type="number" min={0} value={form.orders_target} onChange={e=>setForm(f=>({...f,orders_target:e.target.value}))} placeholder="500" className="mt-1 h-9" data-testid="target-orders-input" /></div>
           <div><Label className="text-xs">Target Health Score (0–100)</Label>
@@ -166,7 +168,7 @@ function CreatorTargetFormDialog({ open, onOpenChange, creator, year, month, exi
         </DialogHeader>
         <div className="space-y-3 mt-2">
           <div><Label className="text-xs">Target Revenue (Rp)</Label>
-            <Input type="number" min={0} value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50000000" className="mt-1 h-9" data-testid="creator-target-revenue" /></div>
+            <MoneyInput value={form.revenue_target} onChange={e=>setForm(f=>({...f,revenue_target:e.target.value}))} placeholder="50.000.000" className="mt-1 h-9" data-testid="creator-target-revenue" /></div>
           <div><Label className="text-xs">Target Sessions (jumlah live)</Label>
             <Input type="number" min={0} value={form.sessions_target} onChange={e=>setForm(f=>({...f,sessions_target:e.target.value}))} placeholder="12" className="mt-1 h-9" data-testid="creator-target-sessions" /></div>
           <div><Label className="text-xs">Target Viewers (total)</Label>
@@ -189,9 +191,9 @@ function CreatorTargetFormDialog({ open, onOpenChange, creator, year, month, exi
 // MAIN MODULE
 // ══════════════════════════════════════════════════════════════════════════════
 export default function AccountTargetsModule({ token, scope = 'marketing', moduleId }) {
-  const now = new Date();
-  const [year, setYear]   = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  // Bulan berjalan menurut kalender WIB, bukan zona perangkat.
+  const [year, setYear]   = useState(() => Number(thisMonthWIB().slice(0, 4)));
+  const [month, setMonth] = useState(() => Number(thisMonthWIB().slice(5, 7)));
   // Tab awal ditentukan dari PROP (bukan sessionStorage): pelajaran sesi #5 —
   // petunjuk tab lewat sessionStorage bergantung urutan mount, sehingga deep-link
   // mendarat di tab pertama dan layar yang diminta seolah tidak ada.

@@ -13,6 +13,7 @@ from datetime import date, timedelta
 import logging
 
 from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, require_ai
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def _fmt(n: float) -> str:
 
 async def _build_context(db) -> dict:
     """Fetch & aggregate data for the LLM prompt."""
-    today = date.today()
+    today = today_wib()
     sixty_ago = (today - timedelta(days=60)).isoformat()
     today_iso = today.isoformat()
 

@@ -9,6 +9,7 @@ from datetime import datetime, timezone, date, timedelta
 from typing import Optional
 import uuid
 import logging
+from utils.waktu import today_wib, fmt_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["portal-workspace"])
@@ -251,9 +252,11 @@ async def get_due_reminders(request: Request):
     """Get reminders that are due (for notification polling)."""
     user = await require_auth(request)
     db = get_db()
-    now_iso = _now_iso()
+    # remind_at = nilai datetime-local dari form (jam dinding WIB tanpa zona, mis. '2026-11-02T06:30'),
+    # jadi dibandingkan dengan jam dinding WIB sekarang — dulu dengan ISO UTC ⇒ pengingat telat 7 jam.
+    now_wall = fmt_wib("%Y-%m-%dT%H:%M")
     rows = await db.portal_reminders.find(
-        {"user_id": user["id"], "is_done": False, "remind_at": {"$lte": now_iso}},
+        {"user_id": user["id"], "is_done": False, "remind_at": {"$lte": now_wall}},
         {"_id": 0}
     ).to_list(20)
     return {"items": rows}
@@ -434,7 +437,7 @@ async def combined_calendar(
     emp_id = emp["id"] if emp else None
 
     if not from_:
-        from_ = date.today().replace(day=1).isoformat()
+        from_ = today_wib().replace(day=1).isoformat()
     if not to:
         # last day of month
         m = date.fromisoformat(from_)

@@ -8,8 +8,8 @@ Kontrak SSOT (INVARIANTS MCS-01/05): TIDAK membuat koleksi/field truth baru.
 Semua = agregasi read-only di atas: production_pos/po_items · po_accessories ·
 dewi_maklon_bom_templates · vendor_partners · (beban) rantai vendor_shipments/cmt_receipts via services.cmt_kejar.
 """
-from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
+from utils.waktu import today_wib
 
 # Kategori/nama material yang dianggap AKSESORIS bila muncul di BOM (case-insensitive contains).
 ACC_HINTS = ("aksesoris", "accessor", "acc", "zipper", "resleting", "kancing",
@@ -218,7 +218,7 @@ async def capacity_overview(db) -> Dict[str, Any]:
     """Beban (outstanding di CMT) vs kapasitas (vendor_partners.capacity_pcs). READ-ONLY."""
     from services.cmt_kejar import compute_po_kejar, get_buffer_config
     cfg = await get_buffer_config(db)
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
 
     pos = await db.production_pos.find(
         {"business_type": "maklon", "status": {"$nin": ["Closed", "Cancelled", "Selesai", "closed", "cancelled"]}},

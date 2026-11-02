@@ -3,6 +3,7 @@ Kanonik: total_amount / amount_paid / amount_due, status issued|partial_paid|pai
 Field lama (total / paid_amount / balance, status 'sent') tetap DITULIS sebagai cermin agar pembaca lama tidak rusak."""
 import logging
 from datetime import date, datetime, timezone
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 OPEN_STATUSES = ["issued", "sent", "partial_paid", "overdue"]
@@ -56,7 +57,7 @@ def _bucket(days: int) -> str:
 
 async def compute_ar_aging(db, source: str = None) -> dict:
     """Aging piutang tunggal (internal + maklon). source='internal'|'maklon' untuk memfilter."""
-    today = date.today()
+    today = today_wib()
     q = {"status": {"$in": OPEN_STATUSES}}
     rows_db = await db.rahaza_ar_invoices.find(q, {"_id": 0}).to_list(5000)
     buckets = {"current": 0.0, "1_30": 0.0, "31_60": 0.0, "61_90": 0.0, "90_plus": 0.0, "tanpa_jatuh_tempo": 0.0}

@@ -22,6 +22,8 @@ import { GlassCard } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { monthEndISO } from '@/lib/waktu';
 import { SettlementImportPanel, computeValues } from './SettlementImportPanel';
 import { SettlementByStoreCards } from './SettlementByStoreCards';
 import { PlatformBalanceCards, usePlatformBalances } from './PlatformBalanceCards';
@@ -113,11 +115,7 @@ export default function FinanceSettlementModule() {
   // Filter periode: satu bulan (YYYY-MM) ATAU rentang tanggal bebas. Kosong = semua.
   const [period, setPeriod] = useState({ month: '', from: '', to: '' });
   const range = useMemo(() => {
-    if (period.month) {
-      const [y, m] = period.month.split('-').map(Number);
-      const last = new Date(y, m, 0).getDate();
-      return { from: `${period.month}-01`, to: `${period.month}-${String(last).padStart(2, '0')}` };
-    }
+    if (period.month) return { from: `${period.month}-01`, to: monthEndISO(period.month) };
     return { from: period.from, to: period.to };
   }, [period]);
 
@@ -467,7 +465,7 @@ export default function FinanceSettlementModule() {
                   {label} <span className={sign > 0 ? 'text-emerald-600' : 'text-red-500'}>
                     ({sign > 0 ? '+' : '−'})</span>
                 </span>
-                <input type="number" step="1" data-testid={`fin-settlement-input-${f}`}
+                <MoneyInput unstyled allowNegative={f === 'adjustments'} data-testid={`fin-settlement-input-${f}`}
                   value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })}
                   className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm text-right tabular-nums" />
               </label>
@@ -479,7 +477,7 @@ export default function FinanceSettlementModule() {
               <span className="text-foreground/60">
                 Dana bersih masuk saldo platform <b>menurut laporan platform</b>
               </span>
-              <input type="number" step="1" data-testid="fin-settlement-input-net-payout"
+              <MoneyInput unstyled data-testid="fin-settlement-input-net-payout"
                 value={form.net_payout}
                 onChange={(e) => setForm({ ...form, net_payout: e.target.value })}
                 className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm text-right tabular-nums font-semibold" />

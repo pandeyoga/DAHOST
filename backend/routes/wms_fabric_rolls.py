@@ -49,6 +49,7 @@ from core import fabric_roll_engine  # FASE H-5: satu pintu penerbitan & pemakai
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from utils.waktu import wib_date_str
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/fabric-rolls", tags=["wms-fabric-rolls"])
@@ -244,7 +245,7 @@ async def create_roll(data: RollIn, request: Request):
         "weight_kg": data.weight_kg,
         "remaining_m": data.length_m,
         "remaining_kg": data.weight_kg,
-        "received_date": data.received_date or now.date().isoformat(),
+        "received_date": data.received_date or wib_date_str(now),
         "po_no": data.po_no,
         "qc_status": data.qc_status,
         "status": "in_stock",
