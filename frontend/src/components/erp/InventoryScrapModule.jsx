@@ -6,6 +6,7 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import StorageLocationSelect from './StorageLocationSelect';
 
 const fmt = formatRupiah;
 
@@ -203,15 +204,16 @@ export default function InventoryScrapModule({ token }) {
                 />
               </div>
               <div>
-                <label className="text-xs uppercase text-muted-foreground">Location ID</label>
-                <GlassInput
+                {/* 2026-11-02 — No.18(a): lokasi DIPILIH dari daftar gudang, bukan UUID diketik. */}
+                <label className="text-xs uppercase text-muted-foreground">Lokasi <span className="text-red-400">*</span></label>
+                <StorageLocationSelect
+                  token={token}
                   value={adjustForm.location_id}
-                  onChange={e => {
-                    setAdjustForm(f => ({ ...f, location_id: e.target.value }));
-                    if (adjustForm.material_id && e.target.value) checkStock(adjustForm.material_id, e.target.value);
+                  onChange={(v) => {
+                    setAdjustForm(f => ({ ...f, location_id: v }));
+                    if (adjustForm.material_id && v) checkStock(adjustForm.material_id, v);
                   }}
-                  placeholder="UUID lokasi"
-                  data-testid="adj-location-id"
+                  testId="adj-location-id"
                 />
               </div>
               {stockInfo && (

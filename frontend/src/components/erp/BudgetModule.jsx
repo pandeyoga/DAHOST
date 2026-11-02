@@ -18,6 +18,12 @@ const STATUS_MAP = {
   locked:   { label: 'Terkunci', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
 };
 
+// 2026-11-02: status variance dari backend — pendapatan (above/below_target) vs biaya (under/over)
+const BUDGET_STATUS_LABEL = {
+  over: 'Over Budget', under: 'Under Budget', on_target: 'On Target',
+  above_target: 'Di Atas Target', below_target: 'Di Bawah Target',
+};
+
 const MONTHS = [
   '01','02','03','04','05','06','07','08','09','10','11','12'
 ];
@@ -228,11 +234,12 @@ export default function BudgetModule({ token }) {
                   <td className={`px-3 py-2 text-right font-medium ${r.variance < 0 ? 'text-red-700 dark:text-red-500' : 'text-emerald-500'}`}>{fmtRp(r.variance)}</td>
                   <td className={`px-3 py-2 text-right ${r.variance < 0 ? 'text-red-700 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{r.variance_pct}%</td>
                   <td className="px-3 py-2">
+                    {/* 2026-11-02 (audit No.53): baris pendapatan memakai label target (di atas = baik) */}
                     <span className={`px-1.5 py-0.5 rounded-full text-xs ${
-                      r.status === 'over' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
-                      r.status === 'under' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
+                      (r.status === 'over' || r.status === 'below_target') ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                      (r.status === 'under' || r.status === 'above_target') ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
                       'bg-secondary text-muted-foreground'
-                    }`}>{r.status === 'over' ? 'Over Budget' : r.status === 'under' ? 'Under Budget' : 'On Target'}</span>
+                    }`}>{BUDGET_STATUS_LABEL[r.status] || 'On Target'}</span>
                   </td>
                 </tr>
               ))}
@@ -326,7 +333,8 @@ export default function BudgetModule({ token }) {
                 <select value={itemForm.month} onChange={e => setItemForm(f => ({...f, month: e.target.value}))}
                   className="w-full border border-border rounded-md px-2.5 py-1.5 text-sm bg-[var(--card-surface)]">
                   <option value="">-- Pilih Bulan --</option>
-                  {MONTHS.map(m => <option key={m} value={`${budgetForm.year || selected.year}-${m}`}>{selected.year}-{m}</option>)}
+                  {/* 2026-11-02 (audit No.53): nilai bulan dulu memakai tahun form "Budget baru" (tahun berjalan) → item tersimpan ke tahun yang salah */}
+                  {MONTHS.map(m => <option key={m} value={`${selected.year}-${m}`}>{selected.year}-{m}</option>)}
                 </select>
               </div>
               <div>

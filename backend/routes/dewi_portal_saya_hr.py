@@ -128,9 +128,14 @@ async def get_dashboard(request: Request):
     # --- Last payslip ---
     last_payslip = None
     if emp_id:
-        slip = await db.rahaza_payslips.find_one(
-            {"employee_id": emp_id}, {"_id": 0}, sort=[("period_from", -1)]
-        )
+        # 2026-11-02 (audit T3) — slip terakhir = slip terakhir dari run final/dibayar,
+        # bukan run draft (take-home draft masih bisa berubah).
+        from routes.rahaza_payroll_payslips import only_published_slips
+        recent = await db.rahaza_payslips.find(
+            {"employee_id": emp_id}, {"_id": 0}
+        ).sort("period_from", -1).to_list(24)
+        published = await only_published_slips(db, recent)
+        slip = published[0] if published else None
         if slip:
             last_payslip = {
                 "period": slip.get("period_from", "")[:7],
@@ -398,7 +403,11 @@ async def my_payslips(request: Request):
         raise HTTPException(409, "Akun belum terhubung ke data karyawan.")
     slips = await db.rahaza_payslips.find(
         {"employee_id": emp["id"]}, {"_id": 0}
-    ).sort("period_from", -1).to_list(24)
+    ).sort("period_from", -1).to_list(100)
+    # 2026-11-02 (audit T3) — karyawan hanya melihat slip dari run final/dibayar;
+    # angka run draft masih bisa berubah sebelum difinalisasi HR.
+    from routes.rahaza_payroll_payslips import only_published_slips
+    slips = (await only_published_slips(db, slips))[:24]
     return {"employee": emp.get("name"), "items": slips}
 
 

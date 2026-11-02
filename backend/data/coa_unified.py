@@ -75,6 +75,9 @@ DA_UNIFIED_ACCOUNTS = [
     ("5-1100", "Pemakaian Bahan Baku (Kain / Potongan)", "COGS", False, "5-0000", None, None),
     ("5-1200", "Pemakaian Bahan Pembantu (Aksesori)", "COGS", False, "5-0000", None, None),
     ("5-1300", "Biaya Ekspedisi Bahan Baku", "COGS", False, "5-0000", None, None),
+    # 2026-11-02 (owner No.19a): akun baru selisih opname/penyesuaian/lepas karantina — dulu jatuh
+    # ke 6-2400 ATK. Di kelompok HPP sebelah 5-1900 PPV; induk 5-0000 karena 5-1000 tetap postable.
+    ("5-1950", "Selisih Persediaan", "COGS", False, "5-0000", None, None),
     ("5-2100", "Biaya Vendor CMT – Cutting", "COGS", False, "5-0000", None, None),
     ("5-2200", "Biaya Vendor CMT – Jahit", "COGS", False, "5-0000", None, None),
     ("5-3110", "Listrik – Unit Usaha Lain", "COGS", False, "5-3000", None, None),

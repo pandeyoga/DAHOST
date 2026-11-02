@@ -392,6 +392,21 @@ async def dispose_asset(aid: str, request: Request):
     disposal_date  = body.get("disposal_date") or date.today().isoformat()
     disposal_value = float(body.get("disposal_value") or 0)
     disposal_notes = (body.get("notes") or "").strip()
+    try:
+        date.fromisoformat(str(disposal_date)[:10])
+    except ValueError:
+        raise HTTPException(400, "Tanggal pelepasan tidak valid (format YYYY-MM-DD).")
+    # 2026-11-02 (audit No.36 opsi A): pelepasan bertanggal SEBELUM periode penyusutan terakhir
+    # yang sudah diposting meninggalkan akumulasi yatim & beban lebih saji. Tolak; Finance
+    # membatalkan dulu penyusutan sesudah tanggal itu.
+    last_posted = await db.rahaza_depr_schedules.find_one(
+        {"asset_id": aid, "posted": True, "depr_amount": {"$gt": 0}},
+        {"_id": 0, "period": 1}, sort=[("period", -1)])
+    if last_posted and str(disposal_date)[:7] < str(last_posted.get("period") or ""):
+        raise HTTPException(
+            400, f"Tanggal pelepasan {str(disposal_date)[:10]} sebelum periode penyusutan terakhir "
+                 f"yang sudah diposting ({last_posted['period']}). Batalkan dulu jurnal penyusutan "
+                 f"sesudah tanggal pelepasan, atau pakai tanggal pelepasan di/sesudah periode itu.")
     # FIN-06(c): NBV per TANGGAL PELEPASAN = harga perolehan − akumulasi jadwal yang sudah posted s.d. bulan pelepasan
     acc_agg = await db.rahaza_depr_schedules.aggregate([
         {"$match": {"asset_id": aid, "posted": True, "period": {"$lte": disposal_date[:7]}}},

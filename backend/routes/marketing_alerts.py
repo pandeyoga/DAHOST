@@ -51,7 +51,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 def _today() -> date:
-    return datetime.now(timezone.utc).date()
+    # 2026-11-02 — tanggal kalender WIB (dulu UTC: notifikasi 04:30 WIB tanggal
+    # 2 Nov berkunci "…_2026-11-01"). Kunci dedup per hari harus mengikuti hari
+    # kerja perusahaan.
+    from utils.waktu import today_wib
+    return today_wib()
+
+
+# 2026-11-02 — semua alert marketing terjadwal maksimal SEKALI PER HARI per kunci.
+# Kunci dedup sudah memuat tanggal, tetapi jendela cek bawaan `publish_notification`
+# hanya 10 menit sementara job berjalan tiap 30 menit ⇒ 48 salinan/hari per kunci
+# (audit 2026-11-02: sla_breach 139 judul identik, expiring_discount 120).
+DEDUP_MINUTES = 1440
 
 def serialize(obj):
     if isinstance(obj, list):
@@ -132,7 +143,8 @@ async def evaluate_marketing_alerts(db=None, settings_override: dict = None, dry
                         severity="warning" if days_left <= 1 else "info",
                         title=title, message=msg,
                         link_module="marketing-discounts", link_id=d["id"],
-                        target_roles=target_roles, dedup_key=dedup
+                        target_roles=target_roles, dedup_key=dedup,
+                        dedup_minutes=DEDUP_MINUTES
                     )
         except Exception as e:
             logger.warning(f"[marketing_alerts] discount scan error: {e}")
@@ -162,7 +174,8 @@ async def evaluate_marketing_alerts(db=None, settings_override: dict = None, dry
                         severity="error" if overdue > 0 else "warning",
                         title=title, message=msg,
                         link_module="marketing-complaints",
-                        target_roles=target_roles, dedup_key=dedup
+                        target_roles=target_roles, dedup_key=dedup,
+                        dedup_minutes=DEDUP_MINUTES
                     )
         except Exception as e:
             logger.warning(f"[marketing_alerts] sla scan error: {e}")
@@ -201,7 +214,8 @@ async def evaluate_marketing_alerts(db=None, settings_override: dict = None, dry
                                 severity="error" if days_left == 1 else ("warning" if days_left <= 3 else "info"),
                                 title=title, message=msg,
                                 link_module="marketing-product-launches", link_id=lch["id"],
-                                target_roles=target_roles, dedup_key=dedup
+                                target_roles=target_roles, dedup_key=dedup,
+                                dedup_minutes=DEDUP_MINUTES
                             )
                 except Exception:
                     logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
@@ -234,7 +248,8 @@ async def evaluate_marketing_alerts(db=None, settings_override: dict = None, dry
                         severity="info",
                         title=title, message=msg,
                         link_module="marketing-content-calendar",
-                        target_roles=target_roles, dedup_key=dedup
+                        target_roles=target_roles, dedup_key=dedup,
+                        dedup_minutes=DEDUP_MINUTES
                     )
         except Exception as e:
             logger.warning(f"[marketing_alerts] content today scan error: {e}")
@@ -279,7 +294,8 @@ async def evaluate_marketing_alerts(db=None, settings_override: dict = None, dry
                         await publish_notification(
                             db, type_=fl["code"], severity=sev, title=title, message=msg,
                             link_module="marketing-targets", link_id=acc.get("id"),
-                            target_roles=target_roles, dedup_key=dedup)
+                            target_roles=target_roles, dedup_key=dedup,
+                            dedup_minutes=DEDUP_MINUTES)
         except Exception as e:
             logger.warning(f"[marketing_alerts] cycle scan error: {e}")
 

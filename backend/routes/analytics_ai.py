@@ -10,11 +10,10 @@ Endpoints:
   POST /api/analytics/ai/qc/rca          — analisis pola QC failure (defect pattern, high-fail line/model)
   GET  /api/analytics/ai/history         — riwayat RCA 20 terakhir untuk user ini
 
-Requires: EMERGENT_LLM_KEY di environment.
+Requires: kunci Anthropic (layar Integrasi / env) — dicek terpusat oleh services.ai (2026-11-02).
 """
 # ruff: noqa: E741
 
-import os
 import json
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -25,6 +24,9 @@ from database import get_db
 from auth import require_auth, serialize_doc
 from utils.data_quality import SkipTracker
 import logging
+
+from services.ai import AIError, ai_http_error, ai_text, require_ai
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/analytics/ai", tags=["analytics-ai"])
@@ -49,40 +51,33 @@ class RCAFilter(BaseModel):
     process_code: Optional[str] = None
 
 
-# ── Helper: call Claude via Emergent LLM Key ────────────────────────────────
+# ── Helper: call Claude lewat lapisan tunggal services.ai (2026-11-02) ─────
+
+RISK_NOT_ASSESSED = "tidak dapat dinilai"
+
 
 async def _call_claude(system_msg: str, prompt: str, session_tag: str) -> dict:
-    key = os.environ.get("EMERGENT_LLM_KEY")
-    if not key:
-        raise HTTPException(503, "EMERGENT_LLM_KEY belum dikonfigurasi.")
+    await require_ai(session_tag, tier="executive")
     try:
-        from ai_llm import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=key,
-            session_id=session_tag,
-            system_message=system_msg,
-        ).with_model("executive")
-        resp = await chat.send_message(UserMessage(text=prompt))
-        raw = resp if isinstance(resp, str) else str(resp)
-        raw = raw.strip()
-        if raw.startswith("```"):
-            raw = raw.split("```", 2)[1]
-            if raw.lstrip().startswith("json"):
-                raw = raw.lstrip()[4:]
-        try:
-            return json.loads(raw.strip())
-        except Exception:
-            return {
-                "root_cause_hypothesis": "Parsing gagal",
-                "confidence": "rendah",
-                "reasoning": raw[:500],
-                "risk_level": "sedang",
-                "recommended_actions": ["Retry analisa", "Verifikasi data sumber"],
-            }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(500, f"AI RCA gagal: {e}")
+        raw = await ai_text(session_tag, system_msg, prompt, tier="executive")
+    except AIError as e:
+        raise ai_http_error(e)
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("```", 2)[1]
+        if raw.lstrip().startswith("json"):
+            raw = raw.lstrip()[4:]
+    try:
+        return json.loads(raw.strip())
+    except Exception:
+        # 2026-11-02: jangan mengarang "risiko sedang" bila jawaban tak terbaca.
+        return {
+            "root_cause_hypothesis": "Jawaban AI tidak dapat dibaca",
+            "confidence": RISK_NOT_ASSESSED,
+            "reasoning": "Analisis tidak dapat dinilai karena format jawaban AI tidak sesuai. Silakan jalankan ulang.",
+            "risk_level": RISK_NOT_ASSESSED,
+            "recommended_actions": ["Jalankan ulang analisa", "Verifikasi data sumber"],
+        }
 
 
 # ══════════════════════════════════════════════════════════════════════════════

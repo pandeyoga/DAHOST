@@ -70,14 +70,20 @@ async def create_fg_issue(request: Request):
     if mat.get("type") != "fg":
         raise HTTPException(400, "Material bukan produk jadi (type=fg)")
 
-    default_loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0})
-    loc_id = default_loc["id"] if default_loc else None
+    # 2026-11-02 — No.18(a): lokasi asal WAJIB dipilih pengguna. Dulu dipakai "lokasi aktif
+    # pertama" (di seed = KTR-PST Kantor Pusat) sehingga stok 36 pcs di GD-L1-RAK terbaca 0.
+    loc_id = (body.get("location_id") or "").strip()
+    if not loc_id:
+        raise HTTPException(400, "location_id wajib diisi — pilih lokasi asal barang jadi yang dikeluarkan.")
+    from core import location_resolver
+    if not await location_resolver.location_exists(db, loc_id):
+        raise HTTPException(400, "Lokasi asal tidak ditemukan di Struktur Gudang.")
     stock_doc = await db.rahaza_material_stock.find_one(
         {"material_id": material_id, "location_id": loc_id}, {"_id": 0}
     )
     available = float(stock_doc.get("qty", 0)) if stock_doc else 0
     if qty > available:
-        raise HTTPException(400, f"Stok tidak cukup. Tersedia: {available} pcs, diminta: {qty} pcs")
+        raise HTTPException(400, f"Stok tidak cukup di lokasi ini. Tersedia: {available} pcs, diminta: {qty} pcs")
 
     customer_name = None
     if customer_id:

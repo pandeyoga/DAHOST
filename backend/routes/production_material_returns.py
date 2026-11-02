@@ -67,6 +67,8 @@ class ReturnUpdateModel(BaseModel):
 
 class ActionModel(BaseModel):
     note: str = ""
+    # 2026-11-02 — No.18(a): lokasi penerimaan retur DIPILIH gudang (dipakai /receive).
+    location_id: Optional[str] = None
 
 
 # ─── Helper ───────────────────────────────────────────────────────────────────
@@ -331,8 +333,16 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
     now = _now()
     # Update stok: tambah kembali qty ke rahaza_material_stock
     items = doc.get("items", [])
-    default_loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0})
-    loc_id = default_loc["id"] if default_loc else None
+    # 2026-11-02 — No.18(a): lokasi WAJIB dipilih; dulu "lokasi aktif pertama" (KTR-PST).
+    loc_id = (body.location_id or "").strip() or None
+    needs_loc = any(it.get("material_id") and float(it.get("qty_returned", 0) or 0) > 0
+                    and it.get("condition", "good") == "good" for it in items)
+    if needs_loc:
+        if not loc_id:
+            raise HTTPException(400, "location_id wajib diisi — pilih lokasi gudang penerima retur material.")
+        from core import location_resolver
+        if not await location_resolver.location_exists(db, loc_id):
+            raise HTTPException(400, "Lokasi penerima retur tidak ditemukan di Struktur Gudang.")
     for item in items:
         mat_id = item.get("material_id")
         qty = float(item.get("qty_returned", 0))

@@ -31,6 +31,7 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -105,11 +106,15 @@ function ReconciliationCard({ settlement }) {
   );
 }
 
-function GLPreview({ settlement }) {
+// 2026-11-02: baris bank pratinjau memakai rekening YANG DIPILIH (dulu teks tetap "1-1201",
+// padahal backend menjurnal ke rekening settlement/pilihan — layar dan jurnal bisa berbeda).
+function GLPreview({ settlement, bankAccount }) {
   const advance = settlement.advance_received || 0;
   const actual  = settlement.total_actual || 0;
   const diff    = Math.abs(settlement.difference || 0);
   const stlType = settlement.settlement_type || 'exact';
+  const bankCode = bankAccount?.gl_account_code || '—';
+  const bankName = bankAccount?.name || 'Bank (pilih rekening)';
 
   return (
     <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
@@ -134,16 +139,16 @@ function GLPreview({ settlement }) {
         {stlType === 'return' && diff > 0 && (
           <div className="flex items-center gap-2">
             <span className="w-6 text-blue-600 font-bold">Dr</span>
-            <span className="w-20 text-muted-foreground">1-1201</span>
-            <span className="flex-1">Bank (terima kembalian)</span>
+            <span className="w-20 text-muted-foreground" data-testid="gl-preview-bank-code">{bankCode}</span>
+            <span className="flex-1">{bankName} (terima kembalian)</span>
             <span className="font-bold">{fmt(diff)}</span>
           </div>
         )}
         {stlType === 'additional' && diff > 0 && (
           <div className="flex items-center gap-2">
             <span className="w-6 text-purple-600 font-bold">Cr</span>
-            <span className="w-20 text-muted-foreground">1-1201</span>
-            <span className="flex-1">Bank (bayar tambahan)</span>
+            <span className="w-20 text-muted-foreground" data-testid="gl-preview-bank-code">{bankCode}</span>
+            <span className="flex-1">{bankName} (bayar tambahan)</span>
             <span className="font-bold">{fmt(diff)}</span>
           </div>
         )}
@@ -317,6 +322,21 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const isApprover = ['superadmin','admin','owner','hr','manager','finance'].includes(role?.toLowerCase());
   const isFinance  = isFinanceRole(role); // FIN-02
+  // 2026-11-02: rekening kas/bank untuk baris selisih dipilih pengguna & DIKIRIM saat posting
+  // (`bank_account_id`), bawaan = rekening yang tercatat di settlement bila masih aktif.
+  const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts(token);
+  const [bankAccountId, setBankAccountId] = useState('');
+  useEffect(() => {
+    if (bankAccountId || !cashAccounts.length) return;
+    if (stl.bank_account_id && cashAccounts.some(a => a.id === stl.bank_account_id)) setBankAccountId(stl.bank_account_id);
+  }, [cashAccounts, stl.bank_account_id, bankAccountId]);
+  // Settlement yang sudah diposting: tampilkan akun bank dari baris jurnal yang benar-benar dibuat.
+  const postedBankLine = stl.status === 'posted'
+    ? (stl.gl_je_lines || []).find(l => !['6-3400', '1-1610'].includes(l.account_code)) : null;
+  const chosenBank = cashAccounts.find(a => a.id === bankAccountId)
+    || (postedBankLine ? { gl_account_code: postedBankLine.account_code, name: 'Bank' } : null);
+  const needsBank = (stl.settlement_type === 'return' || stl.settlement_type === 'additional')
+    && Math.abs(stl.difference || 0) > 0.01;
 
   const doAction = async (endpoint, body = {}) => {
     setLoading(true);
@@ -345,7 +365,14 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
       <ReconciliationCard settlement={stl} />
 
       {/* GL Preview (hanya untuk finance) */}
-      {isFinance && <GLPreview settlement={stl} />}
+      {isFinance && stl.status === 'approved' && needsBank && (
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Rekening kas/bank untuk selisih *</p>
+          <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} value={bankAccountId}
+            onChange={setBankAccountId} valueKey="id" testId="stl-post-bank-account" />
+        </div>
+      )}
+      {isFinance && <GLPreview settlement={stl} bankAccount={chosenBank} />}
 
       {/* Actual items */}
       {(stl.actual_items || []).length > 0 && (
@@ -426,7 +453,10 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
         )}
         {isFinance && stl.status === 'approved' && (
           <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-foreground"
-            onClick={() => doAction('post', {})} disabled={loading}>
+            onClick={() => doAction('post', { bank_account_id: bankAccountId })}
+            disabled={loading || (needsBank && !bankAccountId)}
+            title={needsBank && !bankAccountId ? 'Pilih rekening kas/bank untuk selisih dulu' : undefined}
+            data-testid="stl-post-gl-btn">
             <Banknote className="w-3.5 h-3.5 mr-1" />Post GL
           </Button>
         )}

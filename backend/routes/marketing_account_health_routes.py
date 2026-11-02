@@ -5,7 +5,6 @@ Gap 1 (2026-05): OCR screenshot endpoint via GPT-4o Vision
 """
 import uuid
 import logging
-import os
 import base64
 import json
 from datetime import datetime, timezone, timedelta
@@ -17,10 +16,9 @@ from database import get_db
 # tidak boleh membaca skor & pelanggaran toko lain.
 from core import marketing_account_scope as _scope
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage, ImageContent
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 import random
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/health", tags=["marketing-health"])
@@ -138,7 +136,7 @@ async def seed_health_if_empty():
 async def health_summary(request: Request):
     user = await require_auth(request)
     db = get_db()
-    await seed_health_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     # Get latest snapshot per account — F6: hanya toko yang boleh dilihat pemakai
     pipeline = [
@@ -191,7 +189,7 @@ async def health_timeline(
 ):
     user = await require_auth(request)
     db = get_db()
-    await seed_health_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     query = await _scope.scope_filter(
         db, user, {"snapshot_date": {"$gte": _now() - timedelta(days=days)}})
@@ -217,35 +215,29 @@ async def ocr_account_health_screenshot(
 ):
     """
     Upload screenshot dari Shopee/TikTok Seller Center health page.
-    AI (GPT-4o vision) extract semua metric otomatis.
+    AI (Claude vision) extract semua metric otomatis.
     """
-    await require_auth(request)
-    get_db()
+    user = await require_auth(request)
+    db = get_db()
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi (EMERGENT_LLM_KEY missing)")
+    # 2026-11-02: gerbang tunggal services.ai (dulu "EMERGENT_LLM_KEY missing" tampil ke pengguna).
+    await require_ai("marketing-health-ocr", user_id=user.get("id"), db=db)
 
-    # Validate file type
-    if file.content_type not in ["image/png", "image/jpeg", "image/jpg", "image/webp"]:
-        raise HTTPException(400, "File harus berupa gambar (PNG/JPG/WEBP)")
+    # Validate file type — jenis sebenarnya dideteksi dari ISI berkas di ai_cost_tracker
+    if file.content_type not in ["image/png", "image/jpeg", "image/jpg"]:
+        raise HTTPException(400, "File harus berupa gambar JPG atau PNG")
 
     content = await file.read()
     if len(content) > 10 * 1024 * 1024:  # 10MB limit
         raise HTTPException(400, "Ukuran file maksimal 10MB")
 
-    # Convert to base64 for GPT-4o vision
+    # Base64 untuk Claude vision; media_type (JPEG/PNG) dideteksi dari isi, bukan dipatok.
     b64 = base64.b64encode(content).decode("utf-8")
-    mime = file.content_type or "image/jpeg"
-
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"health-ocr-{uuid.uuid4().hex[:8]}",
-        system_message=(
-            "Kamu adalah sistem OCR khusus untuk membaca screenshot dashboard kesehatan akun marketplace Indonesia "
-            "(Shopee Seller Center atau TikTok Seller Center). "
-            "Extract semua metric yang terlihat dengan akurat. Respond only with valid JSON."
-        )
-    ).with_model("openai", "gpt-4o")
+    system_message = (
+        "Kamu adalah sistem OCR khusus untuk membaca screenshot dashboard kesehatan akun marketplace Indonesia "
+        "(Shopee Seller Center atau TikTok Seller Center). "
+        "Extract semua metric yang terlihat dengan akurat. Respond only with valid JSON."
+    )
 
     prompt = (
         "Ini screenshot dari dashboard kesehatan akun marketplace Indonesia. "
@@ -262,18 +254,21 @@ async def ocr_account_health_screenshot(
     )
 
     try:
-        response = await chat.send_message(UserMessage(
-            text=prompt,
-            images=[ImageContent(data=b64, mime_type=mime)]
-        ))
+        # 2026-11-02: dulu ImageContent(data=..., mime_type=...) tidak cocok dengan kelas
+        # shim → OCR selalu gagal. Gambar kini dikirim lewat services.ai (image_base64).
+        response = await ai_text("marketing-health-ocr", system_message, prompt,
+                                 user_id=user.get("id"), image_base64=b64)
+    except AIError as e:
+        raise ai_http_error(e)
+    try:
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
             clean = "\n".join(lines[1:-1])
         extracted = json.loads(clean)
     except Exception as e:
-        logger.error(f"OCR error: {e}")
-        raise HTTPException(500, f"OCR gagal: {e}")
+        logger.error(f"OCR parse error: {e}")
+        raise HTTPException(502, "Hasil baca AI tidak dapat diproses. Silakan coba lagi atau isi manual.")
 
     # Use AI-detected values, fallback to form input
     det_platform = extracted.get("detected_platform") or platform
@@ -415,7 +410,7 @@ async def list_accounts(request: Request):
         account_names = [a["account_name"] for a in real_accounts]
         platforms = list(set(a["platform"] for a in real_accounts))
     else:
-        await seed_health_if_empty()
+        # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
         _sq = await _scope.scope_filter(db, user, {})
         account_names = await db.marketing_account_health.distinct("account_name", _sq)
         platforms = await db.marketing_account_health.distinct("platform", _sq)

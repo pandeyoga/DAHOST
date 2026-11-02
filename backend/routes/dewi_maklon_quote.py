@@ -2,7 +2,7 @@
 Session 18 — P2-19: AI Quote Generator (Maklon)
 
 Generate quotation/penawaran maklon (RFQ) berdasarkan input client requirement
-menggunakan Emergent LLM. Hasil:
+menggunakan Claude (Anthropic) lewat ai_cost_tracker. Hasil:
 - Estimated unit cost (HPP)
 - Recommended margin
 - Lead time estimasi
@@ -16,7 +16,6 @@ Endpoints (prefix: /api/maklon/ai-quote)
 - POST   /{id}/accept             — mark quote as accepted
 - DELETE /{id}                    — soft-delete quote
 """
-import os
 import re
 import json
 import uuid
@@ -34,8 +33,9 @@ from core.roles import MAKLON_ROLES  # T-01 2.3
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/maklon/ai-quote", tags=["maklon-ai-quote"], dependencies=[Depends(deny_external_dep)])
 QUOTE_COL = "rahaza_maklon_quotes"
-LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-LLM_MODEL = ("openai", "gpt-5.1")
+# 2026-11-02 (No.60): tuple ("openai","gpt-5.1") dihapus — dulu diteruskan apa adanya
+# ke Anthropic sehingga estimasi AI tidak pernah berhasil. Pakai tier Claude.
+LLM_TIER = "standard"
 
 
 def _now_iso():
@@ -167,11 +167,11 @@ def _heuristic_quote(payload: QuoteRequestIn) -> dict:
 async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = None) -> dict:
     """Use LLM to enrich the heuristic baseline."""
     base = _heuristic_quote(payload)
-    if not LLM_KEY:
+    from ai_cost_tracker import ai_available, friendly_error, tracked_llm_call
+    if not await ai_available():
         base["source"] = "heuristic"
         return base
     try:
-        from ai_cost_tracker import tracked_llm_call
         system = (
             "Anda adalah expert costing & quotation maklon garment Indonesia. "
             "Tugas: hitung quotation lengkap dengan HPP breakdown, margin, lead time, "
@@ -210,12 +210,11 @@ async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = N
         )
 
         tracked = await tracked_llm_call(
-            feature="maklon_ai_quote",
+            feature="maklon-ai-quote",
             user_id=user_id,
-            model=LLM_MODEL,
+            model=LLM_TIER,
             system_message=system,
             user_message=user_msg,
-            api_key=LLM_KEY,
         )
 
         if tracked.over_budget:
@@ -245,7 +244,7 @@ async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = N
     except Exception as e:
         logger.warning(f"AI quote generation failed: {e}")
         base["source"] = "heuristic_after_ai_error"
-        base["error"] = str(e)
+        base["error"] = friendly_error("internal")  # 2026-11-02: tanpa exception mentah
         return base
 
 

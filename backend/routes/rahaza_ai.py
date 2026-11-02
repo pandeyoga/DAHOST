@@ -126,7 +126,7 @@ async def daily_summary(
             cache_namespace="rahaza_daily_summary",
             cache_key_extra=[d.isoformat()],
             ttl_seconds=1800,  # 30m — production data evolves fast
-            session_tag=f"rahaza-daily-{d.isoformat()}",
+            session_tag="rahaza-daily-summary",  # 2026-11-02: label fitur stabil (bukan per tanggal)
         )
         summary_text = cached["text"]
         cache_hit = cached.get("cache_hit", False)
@@ -179,9 +179,14 @@ async def ai_chat(request: Request):
         reply = await call_claude(
             system_message=system_msg,
             user_message=message,
-            session_tag=session_id,
+            session_tag="rahaza-chat",  # 2026-11-02: label fitur stabil (bukan session id)
             db=db,
+            user_id=user.get("id"),
         )
+    except HTTPException as e:
+        # 2026-11-02: pesan ramah dari services.ai (tanpa detail teknis).
+        logger.warning("AI chat error: %s", e.status_code)
+        reply = f"Maaf, AI assistant sedang tidak tersedia. {e.detail}"
     except Exception as e:
         logger.error("AI chat error: %s", e)
         reply = "Maaf, AI assistant sedang tidak tersedia. Silakan coba lagi nanti."
@@ -203,8 +208,10 @@ async def ai_history(request: Request, session_id: Optional[str] = None):
     db = get_db()
     if not session_id:
         session_id = f"chat-{user['id'][:8]}-{date.today().isoformat()}"
+    # 2026-11-02 (IDOR): riwayat HANYA milik user yang login. Dulu siapa pun yang tahu/
+    # menebak `session_id` (pola `chat-<8 char user id>-<tanggal>`) bisa membaca chat orang lain.
     history = await db.rahaza_ai_chat_history.find(
-        {"session_id": session_id}, {"_id": 0},
+        {"session_id": session_id, "user_id": user["id"]}, {"_id": 0},
     ).sort("created_at", 1).to_list(500)
     return {"session_id": session_id, "messages": history}
 
@@ -246,7 +253,7 @@ async def ai_root_cause(request: Request):
         answer = await call_claude(
             system_message=SystemPrompts.RAHAZA_ROOT_CAUSE,
             user_message=user_prompt,
-            session_tag="root-cause",
+            session_tag="rahaza-root-cause",
             db=db,
         )
     except Exception as e:

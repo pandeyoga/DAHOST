@@ -1,9 +1,13 @@
 """
 Rahaza Auto-Attendance - Selfie Attendance
-Selfie + Geolocation + AI Face Recognition
+Selfie + Geolocation → review HR
+
+2026-11-02 (keputusan owner No.59a): verifikasi wajah via AI DIMATIKAN. Foto selfie
+TIDAK lagi dikirim ke LLM; setiap absen selfie masuk antrean review HR
+(`approval_status="pending"`, `approval_reason="menunggu review HR"`), disetujui/ditolak
+di SDM › Absensi › Approval Absen (`/api/rahaza/attendance/approvals`).
 """
 import uuid
-import json
 import os
 from datetime import datetime, timezone, date
 from fastapi import APIRouter, Request, HTTPException
@@ -30,16 +34,18 @@ except Exception:
     class InvalidAuthenticationResponse(Exception):
         pass
 
-# AI Face Compare
-from ai_llm import LlmChat, UserMessage, ImageContent  # noqa: E402
-
 router = APIRouter(tags=["rahaza-auto-attendance-selfie"])
 
 # Config
 RP_ID = os.environ.get("WEBAUTHN_RP_ID", "analytics-builds.preview.emergentagent.com")
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "Dewi Aditya ERP")
 ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://fresh-context-1.preview.emergentagent.com")
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+
+# 2026-11-02 (No.59a): pengganti face-match AI.
+SELFIE_REVIEW_STATUS = "pending"
+SELFIE_REVIEW_REASON = "menunggu review HR"
+FACE_MATCH_DISABLED = {"status": "disabled", "match": None, "confidence": 0,
+                       "reason": "Verifikasi wajah AI dimatikan (keputusan owner); identitas dicek HR."}
 
 
 def _uid(): return str(uuid.uuid4())
@@ -47,67 +53,11 @@ def _now(): return datetime.now(timezone.utc)
 def _today_iso(): return date.today().isoformat()
 
 
-async def _compare_faces(selfie_base64: str, reference_photo_url: str) -> dict:
-    if not EMERGENT_LLM_KEY:
-        return {"match": False, "confidence": 0, "status": "error", "error": "AI key tidak dikonfigurasi"}
-    if not reference_photo_url:
-        return {"match": False, "confidence": 0, "status": "no_reference", "error": "Foto profil karyawan belum diset"}
-    
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"face-compare-{_uid()}",
-            system_message=(
-                "Kamu adalah sistem verifikasi identitas. "
-                "Tugasmu membandingkan dua foto wajah dan menentukan apakah orang yang sama."
-                "Jawab HANYA dalam format JSON: {\"match\": true/false, \"confidence\": 0.0-1.0, \"reason\": \"...\"}"
-            )
-        ).with_model("openai", "gpt-4o")
-        
-        selfie_content = ImageContent(image_base64=selfie_base64)
-        
-        msg = UserMessage(
-            text=(
-                "Bandingkan dua foto ini:\n"
-                "- Foto 1 (lampiran): adalah SELFIE yang baru diambil karyawan\n"
-                f"- Foto 2 (URL): {reference_photo_url} — adalah FOTO PROFIL karyawan di sistem\n\n"
-                "Apakah kedua foto ini adalah orang yang SAMA? "
-                "Perhatikan fitur wajah: bentuk muka, mata, hidung, bibir. "
-                "Abaikan perbedaan pencahayaan/sudut kecil.\n"
-                "JAWAB HANYA JSON: {\"match\": true/false, \"confidence\": 0.0-1.0, \"reason\": \"alasan singkat\"}"
-            ),
-            file_contents=[selfie_content]
-        )
-        
-        response = await chat.send_message(msg)
-        
-        response_clean = response.strip()
-        if "```" in response_clean:
-            response_clean = response_clean.split("```")[1]
-            if response_clean.startswith("json"):
-                response_clean = response_clean[4:]
-        result = json.loads(response_clean)
-        
-        return {
-            "match": bool(result.get("match", False)),
-            "confidence": float(result.get("confidence", 0.0)),
-            "reason": result.get("reason", ""),
-            "status": "checked",
-        }
-    except Exception as e:
-        return {
-            "match": False,
-            "confidence": 0.0,
-            "status": "error",
-            "error": str(e)[:200],
-        }
-
-
 @router.post("/attendance/selfie/clock-in")
 async def selfie_clock_in(request: Request):
     """
-    Absen masuk via selfie + GPS + AI face recognition.
-    Body: { employee_id, lat, lng, photo_base64, do_face_check? }
+    Absen masuk via selfie + GPS → menunggu review HR (2026-11-02, No.59a).
+    Body: { employee_id, lat, lng, photo_base64 }  (`do_face_check` diabaikan)
     """
     user = await require_auth(request)
     db = get_db()
@@ -123,7 +73,6 @@ async def selfie_clock_in(request: Request):
     lat = body.get("lat")
     lng = body.get("lng")
     photo_b64 = body.get("photo_base64", "")
-    do_face = body.get("do_face_check", True)
 
     today = _today_iso()
     existing = await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": today})
@@ -133,22 +82,16 @@ async def selfie_clock_in(request: Request):
     # ── KEBIJAKAN WAJIB (FASE 16) ─────────────────────────────────────────
     # Keputusan user 2026-07-26: selfie + lokasi WAJIB. Penegakan ada di SSOT
     # `utils/attendance_policy.py` — jangan menyalin aturannya ke sini.
-    from utils.attendance_policy import (determine_approval,
-                                         enforce_attendance_policy, save_selfie)
+    from utils.attendance_policy import enforce_attendance_policy, save_selfie
     pol = await enforce_attendance_policy(db, photo_b64=photo_b64, lat=lat,
                                           lng=lng, action="masuk")
-    office, geo = pol["office"], pol["geo"]
+    geo = pol["geo"]
 
-    # ── Face Compare ──────────────────────────────────────────────────────
-    face = {"status": "not_checked", "match": None, "confidence": 0}
-    if do_face and photo_b64 and emp.get("photo_url"):
-        face = await _compare_faces(photo_b64, emp["photo_url"])
-    elif do_face and photo_b64 and not emp.get("photo_url"):
-        face = {"status": "no_reference", "match": None, "confidence": 0,
-                "error": "Foto profil karyawan belum ada"}
+    # ── Verifikasi wajah AI DIMATIKAN (No.59a) — foto tidak dikirim ke LLM ─
+    face = dict(FACE_MATCH_DISABLED)
 
-    # ── Determine approval ────────────────────────────────────────────────
-    approval_status = determine_approval(geo, face, office)
+    # ── Approval: SELALU antrean review HR (dulu bisa auto_approved) ──────
+    approval_status = SELFIE_REVIEW_STATUS
 
     # ── Bukti selfie DISIMPAN SUNGGUHAN (dulu hanya 20 karakter base64) ───
     selfie_url = save_selfie(emp_id, photo_b64, "in")
@@ -167,10 +110,11 @@ async def selfie_clock_in(request: Request):
         "geo_distance_m": geo.get("distance_m"),
         "clock_in_geo": {"lat": lat, "lng": lng, "status": geo.get("status"), "distance_m": geo.get("distance_m")},
         "face_match_score": face.get("confidence", 0),
-        "face_match_status": face.get("status", "not_checked"),
+        "face_match_status": face.get("status", "disabled"),
         "face_match_reason": face.get("reason", ""),
         "photo_selfie_url": selfie_url,
         "approval_status": approval_status,
+        "approval_reason": SELFIE_REVIEW_REASON,
         "approval_by": None, "approval_by_name": None, "approval_notes": None, "approval_at": None,
         "status": "hadir",
         "source": "selfie_geo_ai",
@@ -195,10 +139,10 @@ async def selfie_clock_in(request: Request):
         "ok": True,
         "attendance": serialize_doc(out),
         "geo": geo,
-        "face": {k: v for k, v in face.items() if k != "error"},
+        "face": face,
         "approval_status": approval_status,
-        "message": "Clock-in berhasil!" if approval_status == "auto_approved"
-                   else "Clock-in dicatat, menunggu persetujuan HR (lokasi/wajah tidak sesuai).",
+        "approval_reason": SELFIE_REVIEW_REASON,
+        "message": "Absen masuk tercatat — menunggu review HR.",
     }
 
 

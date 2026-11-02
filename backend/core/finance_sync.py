@@ -3,10 +3,14 @@
 Dijalankan saat start server dan lewat POST /api/rahaza/finance/sync-masters. Menjaga:
 1. Tiap akun kas/bank/dompet di CoA punya SATU rekening di Kas & Bank (kode rekening = kode akun) → tidak ada duplikat GL.
 2. Auto Akun: vendor CMT menunjuk SSOT `vendor_partners` dgn induk 2-1110 (Hutang Vendor CMT); klien maklon → 1-1305.
-3. Profil posting `cmt_ap_invoice.credit_ap` = 2-1110.
+3. Profil posting `cmt_ap_invoice.credit_ap` = 2-1110 — hanya bila kosong/bawaan lama (2026-11-02:
+   pilihan pengguna di layar Profil Posting tidak lagi ditimpa).
 4. Backfill sub-ledger untuk semua entitas yang belum punya (vendor CMT, supplier, pelanggan, toko, klien maklon, rekening).
-5. Toko online: akun pendapatan per toko (4-11xx) + sub-ledger piutang 1-1303-<toko> + baris Peta Akun Channel (kunci = kode toko);
+5. Toko online: akun pendapatan per toko (4-11xx) + sub-ledger piutang 1-1303-<toko>;
    akun pendapatan toko lama tanpa toko & tanpa jurnal dinonaktifkan.
+   2026-11-02 (D3) — TIDAK LAGI membuat/menghidupkan baris Peta Akun Channel untuk toko:
+   COA per toko sudah ada di master toko (`coa_revenue_code`, `ar_account_code`) dan
+   owner memutuskan "Peta Akun Channel seharusnya tidak ada" (peta COA kedua).
 """
 from __future__ import annotations
 
@@ -18,7 +22,22 @@ CMT_AP_PARENT = "2-1110"
 MAKLON_AR_PARENT = "1-1305"
 CHANNEL_AR_PARENT = "1-1303"
 REVENUE_GROUP = {"shopee": "4-1110", "tiktok": "4-1120", "tokopedia": "4-1130"}
+# 2026-11-02 (No.10) — kosakata platform terbelah: layar Kelola Akun menyimpan
+# `tiktokshop`, 3 toko seed memakai `tiktok`. Dulu toko `tiktokshop` DILEWATI
+# seluruhnya oleh sinkron ini (tanpa akun pendapatan sendiri & piutang tetap
+# 1-1303). Satu peta alias di sini; nilai yang tersimpan di master tidak diubah.
+PLATFORM_ALIASES = {"tiktokshop": "tiktok", "tiktok_shop": "tiktok", "tiktok shop": "tiktok"}
 NAME_ALIASES = {"ghs": "grosirhijabsragen"}
+
+
+def canonical_platform(platform: str) -> str:
+    p = (platform or "").strip().lower()
+    return PLATFORM_ALIASES.get(p, p)
+
+
+def revenue_group_for(platform: str) -> str | None:
+    """Kode kelompok akun pendapatan platform (4-1110/4-1120/4-1130) atau None."""
+    return REVENUE_GROUP.get(canonical_platform(platform))
 
 
 def _now():
@@ -69,10 +88,31 @@ async def _sync_auto_settings(db, report: dict):
     if changed:
         await db.rahaza_coa_auto_settings.update_one({"id": "default"}, {"$set": {"entity_types": et, "updated_at": _now()}})
     report["auto_settings_changed"] = changed
-    prof = await db.rahaza_posting_profiles.find_one({"event_type": "cmt_ap_invoice"}, {"_id": 0, "mapping": 1})
-    if prof and (prof.get("mapping") or {}).get("credit_ap") != CMT_AP_PARENT:
+    prof = await db.rahaza_posting_profiles.find_one(
+        {"event_type": "cmt_ap_invoice"},
+        {"_id": 0, "mapping": 1, "user_roles": 1, "user_removed_roles": 1, "updated_by": 1})
+    if prof and cmt_ap_credit_needs_fix(prof):
         await db.rahaza_posting_profiles.update_one({"event_type": "cmt_ap_invoice"}, {"$set": {"mapping.credit_ap": CMT_AP_PARENT, "updated_at": _now()}})
         report["posting_profile_fixed"] = {"cmt_ap_invoice.credit_ap": CMT_AP_PARENT}
+
+
+# 2026-11-02 (audit No.47 lanjutan): dulu `cmt_ap_invoice.credit_ap` DITIMPA 2-1110 setiap kali
+# backend menyala, jadi akun hutang yang dipilih Finance di layar Profil Posting hilang tiap
+# restart. Kini hanya diisi bila kosong, masih bawaan LAMA (2-1100 Hutang Usaha), atau profilnya
+# belum pernah disentuh pengguna — pola penanda `user_roles` yang sama dengan
+# `routes.rahaza_posting_profiles.upgrade_profile_mapping`.
+CMT_AP_OLD_DEFAULTS = {"2-1100"}
+
+
+def cmt_ap_credit_needs_fix(prof: dict) -> bool:
+    """Murni (tanpa DB): perlukah `credit_ap` profil cmt_ap_invoice diisi CMT_AP_PARENT?"""
+    from routes.rahaza_posting_profiles import profile_untouched
+    cur = (prof.get("mapping") or {}).get("credit_ap")
+    if cur == CMT_AP_PARENT:
+        return False
+    if "credit_ap" in (prof.get("user_roles") or []) or "credit_ap" in (prof.get("user_removed_roles") or []):
+        return False  # dipilih/dihapus pengguna lewat layar Profil Posting → jangan disentuh
+    return not cur or cur in CMT_AP_OLD_DEFAULTS or profile_untouched(prof)
 
 
 async def _backfill_subledgers(db, report: dict, user):
@@ -103,30 +143,71 @@ async def _next_code(db, group: str) -> str:
     return f"{group[:5]}{nxt}"
 
 
+async def _store_revenue_accounts(db) -> dict:
+    return {a["code"]: a async for a in db.rahaza_coa_accounts.find(
+        {"code": {"$regex": "^4-11[123]\\d$"}, "is_group": False}, {"_id": 0})}
+
+
+async def ensure_store_revenue_account(db, store: dict, *, rev_accounts: dict | None = None,
+                                       used: set | None = None) -> dict:
+    """Akun pendapatan SENDIRI untuk satu toko, di bawah kelompok platformnya.
+
+    2026-11-02 (No.10b) — keputusan owner: toko baru OTOMATIS dibuatkan akun
+    pendapatan sendiri (seperti piutang 1-1303-<kode toko> yang sudah otomatis),
+    BUKAN akun penampung "Lain-lain". Dipakai saat toko dibuat
+    (`routes.marketing_accounts`) dan oleh sinkron ini — satu aturan, satu tempat:
+      * akun lama bernama sama (mis. dinonaktifkan karena tokonya pernah dihapus)
+        & belum dipakai toko lain ⇒ dipakai lagi dan dihidupkan;
+      * selain itu ⇒ akun baru ``Penjualan – <nama toko>`` dengan nomor berikutnya
+        di kelompok (4-111x Shopee · 4-112x TikTok · 4-113x Tokopedia);
+      * akun penampung ("Lain-lain") TIDAK PERNAH dipakai sebagai akun toko.
+
+    → ``{"code", "created": bool}``. ``ValueError`` bila platform tak dikenal atau
+    kelompoknya penuh (maks. 9 akun per kelompok).
+    """
+    group = revenue_group_for(store.get("platform"))
+    if not group:
+        raise ValueError(f"platform '{store.get('platform')}' tidak punya kelompok akun pendapatan")
+    if rev_accounts is None:
+        rev_accounts = await _store_revenue_accounts(db)
+    if used is None:
+        used = {c for c in await db.marketing_platform_accounts.distinct("coa_revenue_code") if c}
+    key = _norm(store.get("account_name"))
+    match = next((c for c, a in rev_accounts.items()
+                  if c.startswith(group[:5]) and c[-1] != "0" and key and _norm(a["name"]) == key
+                  and "lain" not in (a.get("name") or "").lower() and c not in used), None)
+    flags = {"flags.store_account_code": store.get("account_code"), "flags.is_sales": True,
+             "flags.channel": canonical_platform(store.get("platform"))}
+    if match:
+        await db.rahaza_coa_accounts.update_one({"code": match}, {"$set": {"active": True, **flags, "updated_at": _now()}})
+        return {"code": match, "created": False}
+    code = await _next_code(db, group)
+    doc = {"id": str(uuid.uuid4()), "code": code, "name": f"Penjualan – {store.get('account_name')}", "type": "REVENUE",
+           "parent_code": group, "is_group": False, "normal_balance": "CREDIT",
+           "flags": {"store_account_code": store.get("account_code"), "is_sales": True,
+                     "channel": canonical_platform(store.get("platform"))},
+           "cash_flow_group": "OPR", "active": True, "created_at": _now(), "updated_at": _now(),
+           "created_by": "system", "created_by_name": "finance_sync"}
+    await db.rahaza_coa_accounts.insert_one(doc)
+    doc.pop("_id", None)
+    rev_accounts[code] = doc
+    return {"code": code, "created": True}
+
+
 async def _sync_stores(db, report: dict):
     stores = await db.marketing_platform_accounts.find({"active": {"$ne": False}}, {"_id": 0}).to_list(500)
-    rev_accounts = {a["code"]: a async for a in db.rahaza_coa_accounts.find({"code": {"$regex": "^4-11[123]\\d$"}, "is_group": False}, {"_id": 0})}
+    rev_accounts = await _store_revenue_accounts(db)
     used, created, mapped = set(), [], []
     for s in stores:
-        platform = (s.get("platform") or "").lower()
-        group = REVENUE_GROUP.get(platform)
+        group = revenue_group_for(s.get("platform"))   # 2026-11-02: `tiktokshop` dikenali
         if not group:
             continue
         code = s.get("coa_revenue_code")
         if not code or code not in rev_accounts:
-            key = _norm(s.get("account_name"))
-            match = next((c for c, a in rev_accounts.items() if c.startswith(group[:5]) and _norm(a["name"]) == key and c not in used), None)
-            if not match:
-                match = await _next_code(db, group)
-                doc = {"id": str(uuid.uuid4()), "code": match, "name": f"Penjualan – {s.get('account_name')}", "type": "REVENUE", "parent_code": group,
-                       "is_group": False, "normal_balance": "CREDIT", "flags": {"store_account_code": s.get("account_code")}, "cash_flow_group": "OPR",
-                       "active": True, "created_at": _now(), "updated_at": _now(), "created_by": "system", "created_by_name": "finance_sync"}
-                await db.rahaza_coa_accounts.insert_one(doc)
-                rev_accounts[match] = doc
-                created.append(match)
-            else:
-                await db.rahaza_coa_accounts.update_one({"code": match}, {"$set": {"active": True, "flags.store_account_code": s.get("account_code")}})
-            code = match
+            res = await ensure_store_revenue_account(db, s, rev_accounts=rev_accounts, used=used)
+            code = res["code"]
+            if res["created"]:
+                created.append(code)
             await db.marketing_platform_accounts.update_one({"id": s["id"]}, {"$set": {"coa_revenue_code": code, "updated_at": _now()}})
         used.add(code)
         ar = (await db.marketing_platform_accounts.find_one({"id": s["id"]}, {"_id": 0, "ar_account_code": 1}) or {}).get("ar_account_code") or CHANNEL_AR_PARENT
@@ -134,14 +215,10 @@ async def _sync_stores(db, report: dict):
         # Rekening pencairan default (1-1201) supaya penarikan saldo bisa dijurnal; owner boleh mengganti di Kelola Akun.
         if not (s.get("coa_cash_code") or "").strip() and await db.rahaza_coa_accounts.find_one({"code": "1-1201", "active": True}, {"_id": 0}):
             await db.marketing_platform_accounts.update_one({"id": s["id"]}, {"$set": {"coa_cash_code": "1-1201", "coa_cash_source": "default"}})
-        ck = s.get("account_code")
-        existing = await db.rahaza_channel_gl_mapping.find_one({"channel_key": ck}, {"_id": 0})
-        if existing:
-            await db.rahaza_channel_gl_mapping.update_one({"channel_key": ck}, {"$set": {"debit_ar": ar, "credit_revenue": code, "active": True, "updated_at": _now()}})
-        else:
-            await db.rahaza_channel_gl_mapping.insert_one({"id": str(uuid.uuid4()), "channel_key": ck, "channel_label": s.get("account_name"), "platform": platform,
-                                                           "debit_ar": ar, "credit_revenue": code, "active": True, "created_at": _now(), "updated_at": _now()})
-        mapped.append((ck, code, ar))
+        # 2026-11-02 (D3) — baris Peta Akun Channel untuk toko TIDAK lagi dibuat/
+        # dihidupkan/ditimpa di sini. `mapped` tetap dilaporkan (toko → akun) untuk
+        # jejak sinkron; sumber COA toko adalah master toko itu sendiri.
+        mapped.append((s.get("account_code"), code, ar))
     deactivated = []
     for c, a in rev_accounts.items():
         if c in used or not a.get("active", True) or c[-1] == "0" or "lain" in a["name"].lower():

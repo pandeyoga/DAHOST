@@ -104,6 +104,20 @@ def _calc_total(items: list) -> float:
     return sum(float(it.get('amount', 0) or 0) for it in items)
 
 
+async def _stale_advance_error(db, doc: dict):
+    """2026-11-02 (P5 butir 8): uang muka di settlement harus SAMA dengan uang muka yang benar-benar
+    dibayar pada dinasnya. Settlement lama yang dibuat sebelum uang muka dibayar (advance 0) akan
+    membayar biaya penuh dari bank padahal uang muka sudah keluar → tolak posting, minta dibuat ulang."""
+    tr = await db.employee_travel_requests.find_one({'id': doc.get('travel_request_id')}, {'_id': 0, 'cash_advance_paid': 1})
+    paid = float((tr or {}).get('cash_advance_paid') or 0)
+    recorded = float(doc.get('advance_received') or 0)
+    if abs(paid - recorded) > 0.01:
+        fmt = lambda v: f"{v:,.0f}".replace(',', '.')  # noqa: E731
+        return (f"Uang muka pada penyelesaian {doc.get('settlement_number')} (Rp {fmt(recorded)}) berbeda dengan "
+                f"uang muka yang sudah dibayar (Rp {fmt(paid)}). Tolak penyelesaian ini lalu buat ulang.")
+    return None
+
+
 def _settlement_type(advance: float, actual: float) -> str:
     diff = round(advance - actual, 2)
     if diff > 0:
@@ -169,6 +183,16 @@ async def create_settlement(req_id: str, body: SettlementCreate, user: dict = De
             f"Travel request status '{tr.get('status')}' belum bisa di-settle. "
             "Harus minimal 'approved' atau 'advance_paid'."
         )
+    # 2026-11-02 (P5 butir 8): uang muka yang SUDAH disetujui tetapi BELUM dibayar → tolak. Dulu
+    # settlement dibuat dgn uang muka 0 ("additional" penuh), lalu uang muka tetap dibayar → karyawan
+    # menerima 1.600.000 untuk biaya 800.000 dan 1-1610 tersangkut 800.000.
+    _adv_ok = float(tr.get('cash_advance_approved') or 0)
+    _adv_paid = float(tr.get('cash_advance_paid') or 0)
+    if _adv_ok > 0 and _adv_paid <= 0:
+        _rp = f"{_adv_ok:,.0f}".replace(',', '.')
+        raise HTTPException(400, (
+            f"Uang muka Rp {_rp} untuk {tr.get('trip_number')} sudah disetujui tetapi belum dibayar. "
+            "Keuangan harus membayar uang muka dulu, baru penyelesaian dinas dibuat."))
 
     # Cek apakah sudah ada settlement yang belum di-reject
     existing = await db.employee_travel_settlements.find_one(
@@ -606,6 +630,9 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'approved':
         raise HTTPException(400, f"Status '{doc.get('status')}' harus 'approved' sebelum di-post")
+    _stale = await _stale_advance_error(db, doc)
+    if _stale:
+        raise HTTPException(400, _stale)
 
     total_actual  = float(doc.get('total_actual', 0))
     advance       = float(doc.get('advance_received', 0))
@@ -873,6 +900,11 @@ async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = De
 
             if doc.get('gl_je_id'):
                 results['failed'].append({'id': stl_id, 'reason': 'Sudah di-post GL'})
+                continue
+
+            _stale = await _stale_advance_error(db, doc)  # 2026-11-02 (P5 butir 8)
+            if _stale:
+                results['failed'].append({'id': stl_id, 'reason': _stale})
                 continue
 
             # FIN-20b: fungsi _generate_je_number/_create_journal_entry tidak ada → pakai engine _create_posted_je

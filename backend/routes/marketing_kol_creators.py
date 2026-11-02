@@ -57,9 +57,8 @@ async def list_creators(
 ):
     await require_auth(request)
     db = get_db()
-    # F14 — lihat alasan yang sama pada master host live.
-    from core.marketing_master_seed import ensure_demo_creators
-    await ensure_demo_creators(db)
+    # 2026-11-02 — dulu (F14) kreator demo dibuat di sini, dan kreator TANPA login
+    # diberi kata sandi demo setiap daftar dibuka. Seeder demo tidak lagi dipanggil saat GET.
     query = {}
     if status:
         query['status'] = status

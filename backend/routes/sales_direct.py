@@ -233,18 +233,17 @@ async def _apply_ar_payment(db, inv_id: str, amount: float, cash_account_id: str
     acc = await db.rahaza_cash_accounts.find_one({"id": cash_account_id}, {"_id": 0})
     if not acc:
         raise HTTPException(404, "Rekening kas tidak ditemukan.")
+    # 2026-11-02 (audit No.49): rumus sisa yang sama dengan Keuangan — nota kredit retur
+    # (`credited_amount`) mengurangi yang terutang; lebih bayar ditolak.
+    from routes.rahaza_finance import ar_payment_guard_and_update, ar_remaining
+    _guard, _pipeline = ar_payment_guard_and_update(amount)
     updated = await db.rahaza_ar_invoices.find_one_and_update(
-        {"id": inv_id, "status": {"$nin": ["cancelled", "void", "written_off"]},
-         "$expr": {"$lte": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}, {"$add": [{"$ifNull": ["$total", 0]}, 0.01]}]}},
-        [{"$set": {
-            "paid_amount": {"$round": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}, 0]},
-            "balance": {"$max": [0, {"$round": [{"$subtract": [{"$ifNull": ["$total", 0]}, {"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}]}, 0]}]},
-            "status": {"$cond": [{"$gte": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}, {"$subtract": [{"$ifNull": ["$total", 0]}, 0.01]}]}, "paid", "partial_paid"]},
-            "updated_at": _now()}},
-         {"$set": {"total_amount": {"$ifNull": ["$total", 0]}, "amount_paid": "$paid_amount", "amount_due": "$balance"}}],
-        return_document=ReturnDocument.AFTER)
+        {"id": inv_id, "status": {"$nin": ["cancelled", "void", "written_off"]}, "$expr": _guard},
+        _pipeline, return_document=ReturnDocument.AFTER)
     if not updated:
-        raise HTTPException(400, "Pembayaran melebihi sisa tagihan atau invoice sudah ditutup.")
+        cur = await db.rahaza_ar_invoices.find_one({"id": inv_id}, {"_id": 0}) or {}
+        raise HTTPException(400, f"Pembayaran melebihi sisa tagihan (sisa setelah nota kredit: "
+                                 f"{ar_remaining(cur):.0f}) atau invoice sudah ditutup.")
     movement_id = _uid()
     await db.rahaza_cash_movements.insert_one({
         "id": movement_id, "account_id": cash_account_id, "account_name": acc.get("name"), "direction": "in",
@@ -700,9 +699,13 @@ async def create_return(sid: str, request: Request):
     # 3) terapkan ke invoice: kurangi sisa tagihan; kelebihan = kredit pelanggan (refund tunai bila diminta)
     applied, refund_amount, refund_je, refund_mv = 0.0, 0.0, None, None
     if inv:
-        applied = min(total, float(inv.get("balance") or 0))
+        # 2026-11-02 (audit No.49): sisa dihitung dengan rumus yang sama dengan pembayaran
+        # (total − dibayar − nota kredit), bukan dari field `balance` yang bisa basi.
+        from routes.rahaza_finance import ar_remaining
+        owed_before = ar_remaining(inv)
+        applied = min(total, owed_before)
         excess = round(total - applied)
-        new_bal = round(float(inv.get("balance") or 0) - applied)
+        new_bal = round(owed_before - applied)
         upd = {"balance": new_bal, "amount_due": new_bal, "credited_amount": round(float(inv.get("credited_amount") or 0) + total), "updated_at": _now()}
         if new_bal <= 0 and inv.get("status") not in ("paid", "cancelled"):
             upd["status"] = "paid"

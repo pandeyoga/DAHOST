@@ -30,7 +30,13 @@ router = APIRouter(prefix='/api/marketing', tags=['Marketing-Accounts'])
 # COA per toko. Aturan keras: kode COA tidak pernah dikarang — kalau tidak ada
 # di bagan akun, field dibiarkan kosong / permintaan ditolak 400.
 # ══════════════════════════════════════════════════════════════════════════════
-PLATFORM_TO_COA_CHANNEL = {"shopee": "shopee", "tiktokshop": "tiktok", "tokopedia": "tokopedia"}
+# 2026-11-02 (No.10) — `tiktok` (3 toko seed) dan `tiktokshop` (nilai layar) adalah
+# platform yang SAMA. Dulu endpoint menolak `tiktok` (400) dan toko `tiktok` tidak
+# mendapat saran akun pendapatan. Nilai yang tersimpan di master tidak diubah.
+PLATFORM_TO_COA_CHANNEL = {"shopee": "shopee", "tiktokshop": "tiktok", "tiktok": "tiktok",
+                           "tokopedia": "tokopedia"}
+VALID_PLATFORMS = ("shopee", "tiktokshop", "tiktok", "tokopedia")
+TIKTOK_ALIASES = ("tiktok", "tiktokshop")
 DEFAULT_CASH_CODE = "1-1201"         # Bank BCA (kanonik 4-digit)
 DEFAULT_RECEIVABLE_CODE = "1-1303"   # Piutang Platform Online Shop
 
@@ -112,7 +118,11 @@ async def _validate_coa_role(db, fname: str, code: str) -> dict:
 async def _fallback_revenue_code(db, platform: str) -> str:
     """Akun pendapatan penampung per platform (`4-114` Shopee · `4-126` TikTok ·
     `4-131` Tokopedia). Dipakai HANYA bila toko baru belum punya akun sendiri —
-    supaya tidak ada toko tanpa alamat jurnal (RENCANA_EKSEKUSI_MASTER §F0.7)."""
+    supaya tidak ada toko tanpa alamat jurnal (RENCANA_EKSEKUSI_MASTER §F0.7).
+
+    2026-11-02 (No.10b) — toko BARU tidak lagi diberi akun ini (lihat
+    `create_platform_account`); fungsi ini tinggal sebagai saran di layar untuk
+    toko LAMA yang belum bertaut akun pendapatan."""
     channel = PLATFORM_TO_COA_CHANNEL.get(platform or "")
     if not channel:
         return ""
@@ -160,10 +170,9 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
     await require_auth(request)
     db = get_db()
     
-    # Validate platform
-    valid_platforms = ["shopee", "tiktokshop", "tokopedia"]
-    if data.platform not in valid_platforms:
-        raise HTTPException(400, f"Platform harus salah satu dari: {', '.join(valid_platforms)}")
+    # Validate platform (2026-11-02: `tiktok` diterima sebagai alias `tiktokshop`)
+    if data.platform not in VALID_PLATFORMS:
+        raise HTTPException(400, f"Platform harus salah satu dari: {', '.join(VALID_PLATFORMS)}")
     
     # Check duplicate account_code
     existing = await db.marketing_platform_accounts.find_one({"account_code": data.account_code}, {"_id": 0})
@@ -180,21 +189,36 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
     for fname, code in coa_fields.items():
         if code:
             await _validate_coa_role(db, fname, code)
-    # Tidak boleh ada toko tanpa alamat jurnal: bila kosong, isi otomatis dari akun
-    # penampung platform + kas default + piutang platform (semua diverifikasi ada).
-    revenue_source = "input" if coa_fields["coa_revenue_code"] else "fallback_platform"
-    if not coa_fields["coa_revenue_code"]:
-        coa_fields["coa_revenue_code"] = await _fallback_revenue_code(db, data.platform)
-    if not coa_fields["coa_cash_code"]:
-        coa_fields["coa_cash_code"] = await _default_cash_code(db)
-    if not coa_fields["coa_receivable_code"]:
-        coa_fields["coa_receivable_code"] = (
-            DEFAULT_RECEIVABLE_CODE if await _coa_exists(db, DEFAULT_RECEIVABLE_CODE) else "")
+    # Validasi lain DULU (2026-11-02): permintaan yang ditolak tidak boleh sempat
+    # membuat akun COA toko yang tidak pernah punya toko.
     basis = data.revenue_basis or _shape.DEFAULT_BASIS
     if basis not in _shape.VALID_BASIS:
         raise HTTPException(400, "Basis omzet harus salah satu dari: "
                                  f"{', '.join(_shape.VALID_BASIS)}")
     pic_user_id, pic_user_name = await _resolve_pic(db, getattr(data, "pic_user_id", None))
+    # Tidak boleh ada toko tanpa alamat jurnal.
+    # 2026-11-02 (No.10b, D3) — bila akun pendapatan tidak dipilih, toko baru
+    # OTOMATIS dibuatkan akun pendapatan SENDIRI di kelompok platformnya
+    # (`core.finance_sync.ensure_store_revenue_account`), bukan lagi akun penampung
+    # "Lain-lain" yang membuat omzet beberapa toko tercampur di satu akun.
+    revenue_source = "input" if coa_fields["coa_revenue_code"] else "auto_store"
+    if not coa_fields["coa_revenue_code"]:
+        from core.finance_sync import ensure_store_revenue_account
+        try:
+            res = await ensure_store_revenue_account(db, {
+                "account_code": _sanitize(data.account_code, 100),
+                "account_name": _sanitize(data.account_name, 200),
+                "platform": data.platform})
+        except ValueError as e:
+            raise HTTPException(400, f"Akun pendapatan toko ini tidak bisa dibuat otomatis ({e}). "
+                                     "Minta Finance membuat akun pendapatan toko di Portal "
+                                     "Keuangan → COA, lalu pilih akun itu di form.")
+        coa_fields["coa_revenue_code"] = res["code"]
+    if not coa_fields["coa_cash_code"]:
+        coa_fields["coa_cash_code"] = await _default_cash_code(db)
+    if not coa_fields["coa_receivable_code"]:
+        coa_fields["coa_receivable_code"] = (
+            DEFAULT_RECEIVABLE_CODE if await _coa_exists(db, DEFAULT_RECEIVABLE_CODE) else "")
 
     account = {
         "id": _uid(),
@@ -220,7 +244,8 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
         "platform_warehouse_name": _sanitize(data.platform_warehouse_name or "", 200),
         "platform_shop_id": _sanitize(data.platform_shop_id or "", 100),
         "revenue_basis": basis,
-        "coa_revenue_source": revenue_source,   # 'input' | 'fallback_platform' (badge di UI)
+        # 'input' | 'auto_store' (2026-11-02) | 'fallback_platform' (data lama) — badge di UI
+        "coa_revenue_source": revenue_source,
         "pic_user_id": pic_user_id,
         "pic_user_name": pic_user_name,
         "created_at": _now(),
@@ -274,7 +299,9 @@ async def list_platform_accounts(
     
     # Build query filters
     if platform:
-        query["platform"] = platform
+        # 2026-11-02 (No.10) — filter TikTok menemukan toko `tiktok` MAUPUN `tiktokshop`.
+        query["platform"] = ({"$in": list(TIKTOK_ALIASES)} if platform in TIKTOK_ALIASES
+                             else platform)
     if status:
         query["status"] = status
     if group:

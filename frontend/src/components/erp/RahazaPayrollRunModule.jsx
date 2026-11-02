@@ -11,6 +11,7 @@ import { PageHeader, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, wibDateParts, usePaymentCashAccounts } from './SdmCashAccountSelect';
 
 const fmtIDR = formatRupiah;
 
@@ -60,23 +61,27 @@ function GLStatusBadge({ run, onNavigate }) {
   );
 }
 
-/** Bank account options for payment dialog */
-const BANK_OPTIONS = [
-  { code: '1-1201', label: 'Bank BCA (1-1201)' },
-  { code: '1-1202', label: 'Bank Mandiri (1-1202)' },
-  { code: '1-1200', label: 'Bank Umum (1-1200)' },
-  { code: '1-1102', label: 'Kas Besar (1-1102)' },
-  { code: '1-1101', label: 'Kas Kecil (1-1101)' },
-];
+/* 2026-11-02 (P5 butir 7): daftar rekening bayar gaji kini dari rekening kas/bank AKTIF yang nyata
+   (usePaymentCashAccounts) — daftar hard-code lama memuat "Bank Umum (1-1200)" = akun header
+   (jurnal ditolak) dan tidak memuat 15 rekening lain (BRI, GoPay, dll.). */
 
-/* Return last month period as {from, to} strings */
-function lastMonthPeriod() {
-  const now = new Date();
-  const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-  const lastOfLastMonth = new Date(firstOfThisMonth - 1);
-  const firstOfLastMonth = new Date(lastOfLastMonth.getFullYear(), lastOfLastMonth.getMonth(), 1);
-  const fmt = (d) => d.toISOString().split('T')[0];
-  return { from: fmt(firstOfLastMonth), to: fmt(lastOfLastMonth) };
+/* Periode bulan lalu {from, to} menurut tanggal WIB.
+   2026-11-02 (P5 butir 11): dulu tanggal lokal dibuat lalu diformat `toISOString()` (UTC) → di browser
+   WIB tanggal mundur sehari: tombol pada 1 Nov menghasilkan 30 Sep → 31 Okt (32 hari) dan kasbon
+   periode Okt tidak terpotong. Sekarang dihitung dari bagian tanggal WIB, tanpa konversi zona. */
+function lastMonthPeriod(now = new Date()) {
+  const { y, m } = wibDateParts(now);
+  const py = m === 1 ? y - 1 : y;
+  const pm = m === 1 ? 12 : m - 1;
+  const lastDay = new Date(Date.UTC(py, pm, 0)).getUTCDate(); // hari terakhir bulan pm (1-12)
+  const mm = String(pm).padStart(2, '0');
+  return { from: `${py}-${mm}-01`, to: `${py}-${mm}-${String(lastDay).padStart(2, '0')}` };
+}
+
+/* Pesan galat backend (FastAPI `detail`) — supaya penolakan run ganda / jurnal gagal terbaca jelas. */
+async function errDetail(r, fallback) {
+  try { const d = await r.json(); return (typeof d.detail === 'string' ? d.detail : d.detail?.message) || fallback; }
+  catch { return fallback; }
 }
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || '';
@@ -102,13 +107,21 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
   const [error, setError] = useState('');
   const [payDialog, setPayDialog] = useState(null);
   const [payForm, setPayForm] = useState({
-    payment_date: new Date().toISOString().slice(0, 10),
-    bank_account_code: '1-1201',
+    payment_date: todayWIB(),
+    bank_account_code: '',
     payment_method: 'bank_transfer',
     notes: '',
   });
   const [paying, setPaying] = useState(false);
   const [tick, setTick] = useState(0);
+  const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts(token);
+  // Rekening bawaan = BCA (1-1201) bila ada, selain itu rekening pertama yang aktif.
+  useEffect(() => {
+    if (!cashAccounts.length) return;
+    setPayForm(f => (f.bank_account_code ? f : {
+      ...f, bank_account_code: (cashAccounts.find(a => a.gl_account_code === '1-1201') || cashAccounts[0]).gl_account_code,
+    }));
+  }, [cashAccounts]);
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
   const refresh = useCallback(() => setTick(t => t + 1), []);
@@ -128,8 +141,9 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     setError('');
     const r = await fetch('/api/rahaza/payroll-runs', { method: 'POST', headers, body: JSON.stringify(payload) });
     if (!r.ok) {
+      // 2026-11-02: tampilkan alasan dari backend (mis. penolakan run ganda 409 + nomor run yang bentrok).
       const STATUS_MSG = { 400: 'Data tidak valid atau tidak ada profile aktif.', 403: 'Tidak ada akses.' };
-      setError(STATUS_MSG[r.status] || `Gagal buat run (HTTP ${r.status})`);
+      setError(await errDetail(r, STATUS_MSG[r.status] || `Gagal buat run (HTTP ${r.status})`));
       return;
     }
     setCreating(false);
@@ -141,7 +155,11 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     if (!window.confirm('Finalisasi penggajian? Setelah difinalisasi, potongan tidak bisa diubah lagi.')) return;
     const r = await fetch(`/api/rahaza/payroll-runs/${id}/finalize`, { method: 'POST', headers });
     if (r.ok) { toast.success('Run difinalisasi & jurnal GL dibuat'); refresh(); if (viewing?.run?.id === id) openRun(id); }
-    else setError(`Gagal finalisasi penggajian (HTTP ${r.status})`);
+    else {
+      // 2026-11-02 (P5 butir 3): jurnal gagal → run tetap draft; tampilkan penyebabnya apa adanya.
+      setError(await errDetail(r, `Gagal finalisasi penggajian (HTTP ${r.status})`));
+      refresh();
+    }
   };
 
   const retryPost = async (id) => {
@@ -195,7 +213,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
       const r = await fetch(`/api/rahaza/payroll-runs/${run.id}/pay-${type}`, {
         method: 'POST', headers,
         body: JSON.stringify({
-          payment_date: new Date().toISOString().slice(0, 10),
+          payment_date: todayWIB(),
           bank_account_code: bankCode,
           notes: `Bayar ${label} ${run.run_number}`,
         }),
@@ -375,7 +393,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
                       {/* Bayar Gaji — tampil jika sudah finalized + GL posted + belum dibayar */}
                       {r.status === 'finalized' && r.gl_je_number && r.payment_status !== 'paid' && (
                         <button
-                          onClick={() => { setPayDialog(r); setPayForm(f => ({ ...f, payment_date: new Date().toISOString().slice(0,10) })); }}
+                          onClick={() => { setPayDialog(r); setPayForm(f => ({ ...f, payment_date: todayWIB() })); }}
                           className="text-xs text-blue-600 dark:text-blue-300 hover:underline ml-1"
                           title="Bayar Gaji (buat payment JE)"
                           data-testid={`pay-btn-${r.run_number}`}
@@ -474,10 +492,12 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
               <Label className="text-xs">Rekening / Kas</Label>
               <Select value={payForm.bank_account_code}
                 onValueChange={v => setPayForm(f => ({ ...f, bank_account_code: v }))}>
-                <SelectTrigger className="mt-1 h-9 text-sm" data-testid="pay-bank-select"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="mt-1 h-9 text-sm" data-testid="pay-bank-select">
+                  <SelectValue placeholder={cashLoaded ? (cashAccounts.length ? 'Pilih rekening kas/bank' : 'Tidak ada rekening kas/bank aktif') : 'Memuat rekening…'} />
+                </SelectTrigger>
                 <SelectContent>
-                  {BANK_OPTIONS.map(b => (
-                    <SelectItem key={b.code} value={b.code}>{b.label}</SelectItem>
+                  {cashAccounts.map(a => (
+                    <SelectItem key={a.id || a.gl_account_code} value={a.gl_account_code}>{a.name} ({a.gl_account_code})</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -504,7 +524,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
             <Button variant="outline" onClick={() => setPayDialog(null)}>Batal</Button>
             <Button
               onClick={payGaji}
-              disabled={paying}
+              disabled={paying || !payForm.bank_account_code}
               className="bg-blue-600 hover:bg-blue-700"
               data-testid="pay-confirm-btn"
             >
@@ -518,7 +538,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
 }
 
 function CreateRunModal({ onClose, onCreate, token, initial }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayWIB(); // 2026-11-02: tanggal WIB (No.54(a)), bukan UTC
   const defaultFrom = initial?.from || (today.slice(0, 7) + '-01');
   const defaultTo = initial?.to || today;
   const [from, setFrom] = useState(defaultFrom);

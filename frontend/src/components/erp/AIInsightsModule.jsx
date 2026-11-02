@@ -40,6 +40,10 @@ function ConfidenceBadge({ level }) {
 }
 
 function RiskBadge({ level }) {
+  // 2026-11-02: "tidak dapat dinilai" tampil netral (dulu jatuh ke warna hijau/aman).
+  if (!level || level === 'tidak dapat dinilai') {
+    return <Badge cls="bg-muted text-muted-foreground border-border">risk: tidak dapat dinilai</Badge>;
+  }
   const cls = level === 'tinggi' ? 'bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-500 border-red-400 dark:border-red-500/30'
             : level === 'sedang' ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-500 border-amber-400 dark:border-amber-500/30'
             : 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-500 border-emerald-400 dark:border-emerald-500/30';
@@ -159,7 +163,7 @@ function AnalysisResult({ result, type }) {
       </div>
 
       <div className="text-[10px] text-foreground/40 text-right">
-        Generated {new Date(result.generated_at).toLocaleString('id-ID')} · Claude Sonnet 4.5
+        Generated {new Date(result.generated_at).toLocaleString('id-ID')} · Claude (Anthropic)
       </div>
     </div>
   );
@@ -223,7 +227,7 @@ function RCASection({ token, type, title, icon: Icon, description }) {
       {loading && (
         <div className="flex flex-col items-center justify-center py-8 text-xs text-foreground/60">
           <div className="w-10 h-10 rounded-full border-2 border-violet-500 border-t-transparent animate-spin mb-3"></div>
-          <p>Claude Sonnet menganalisis pola data... (5-15 detik)</p>
+          <p>Claude menganalisis pola data... (5-30 detik)</p>
         </div>
       )}
 
@@ -306,7 +310,7 @@ export default function AIInsightsModule({ token }) {
         </div>
         <div>
           <h2 className="text-lg font-bold text-foreground">AI Insights & Root-Cause Analysis</h2>
-          <p className="text-xs text-foreground/60">Analisis pola produksi dan QC dengan Claude Sonnet 4.5 — dapatkan rekomendasi actionable dalam hitungan detik.</p>
+          <p className="text-xs text-foreground/60">Analisis pola produksi dan QC dengan Claude (Anthropic) — dapatkan rekomendasi actionable dalam hitungan detik.</p>
         </div>
       </div>
 

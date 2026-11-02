@@ -308,10 +308,10 @@ def _uid_for_audit():
 async def hotspot_rca(position_barcode: str, request: Request):
     """
     AI Root-Cause Analysis untuk posisi hotspot.
-    Ambil N adjustment terakhir → Claude Sonnet analisis pola → rekomendasi action item.
-    Butuh EMERGENT_LLM_KEY.
+    Ambil N adjustment terakhir → Claude analisis pola → rekomendasi action item.
+    2026-11-02: kunci & model dikelola terpusat oleh services.ai (bukan env EMERGENT).
     """
-    import os
+    from services.ai import AIError, ai_http_error, ai_text, require_ai
     user = await require_auth(request)
     db = get_db()
 
@@ -355,10 +355,8 @@ async def hotspot_rca(position_barcode: str, request: Request):
             "session_ref": r.get("session_ref", ""),
         })
 
-    # Get LLM key
-    key = os.environ.get("EMERGENT_LLM_KEY")
-    if not key:
-        raise HTTPException(503, "EMERGENT_LLM_KEY belum dikonfigurasi.")
+    # 2026-11-02: gerbang tunggal services.ai (dulu 503 "EMERGENT_LLM_KEY belum dikonfigurasi.").
+    await require_ai("wms-audit-rca", user_id=user.get("id"), db=db, tier="standard")
 
     prompt = f"""Kamu adalah analis WMS (Warehouse Management System) yang sangat berpengalaman.
 Analisis pola adjustment stok di posisi berikut dan berikan root-cause analysis + rekomendasi action.
@@ -395,13 +393,11 @@ Berikan analisis Root-Cause (RCA) dengan format JSON berikut:
 Balas HANYA dengan JSON valid tanpa markdown code fence. Gunakan Bahasa Indonesia."""
 
     try:
-        from ai_llm import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=key,
-            session_id=f"wms-rca-{position_barcode}-{user['id'][:8]}",
-            system_message="Kamu adalah analis WMS yang memberikan RCA singkat, akurat, actionable dalam format JSON."
-        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
-        resp = await chat.send_message(UserMessage(text=prompt))
+        resp = await ai_text(
+            "wms-audit-rca",
+            "Kamu adalah analis WMS yang memberikan RCA singkat, akurat, actionable dalam format JSON.",
+            prompt, tier="standard", user_id=user.get("id"),
+        )
         raw = resp if isinstance(resp, str) else str(resp)
         # Strip any markdown fences just in case
         raw = raw.strip()
@@ -413,15 +409,16 @@ Balas HANYA dengan JSON valid tanpa markdown code fence. Gunakan Bahasa Indonesi
         try:
             analysis = _json.loads(raw.strip())
         except Exception:
+            # 2026-11-02: jangan mengarang "risiko sedang" bila jawaban tak terbaca.
             analysis = {
                 "root_cause_hypothesis": "Tidak terdeteksi — jawaban AI tidak valid JSON",
-                "confidence": "rendah",
-                "reasoning": raw[:500],
-                "risk_level": "sedang",
-                "recommended_actions": ["Retry analisa AI", "Review manual riwayat adjustment"],
+                "confidence": "tidak dapat dinilai",
+                "reasoning": "Analisis tidak dapat dinilai karena format jawaban AI tidak sesuai.",
+                "risk_level": "tidak dapat dinilai",
+                "recommended_actions": ["Jalankan ulang analisa AI", "Review manual riwayat adjustment"],
             }
-    except Exception as e:
-        raise HTTPException(500, f"AI RCA gagal: {e}")
+    except AIError as e:
+        raise ai_http_error(e)
 
     # Log audit
     await db.wh_rca_audit.insert_one({

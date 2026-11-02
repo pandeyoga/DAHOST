@@ -90,11 +90,8 @@ async def list_livehosts(
     """Admin lists all LiveHosts with filters"""
     user = await require_auth(request)
     db = get_db()
-    # F14 — master host tidak boleh kosong sementara data sesi live sudah ada:
-    # pemilih host yang kosong membuat staf menyimpulkan fiturnya rusak, dan
-    # sesi live jadi menyimpan nama host sebagai teks karangan.
-    from core.marketing_master_seed import ensure_demo_hosts
-    await ensure_demo_hosts(db)
+    # 2026-11-02 — dulu (F14) host demo dibuat di sini bila koleksi kosong — lengkap
+    # dengan kata sandi demo. Seeder demo tidak lagi dipanggil saat GET.
 
     # F6 (sesi #10) — host dipegang per toko (`assigned_account_ids`). Staf toko
     # hanya boleh melihat host yang bertugas di tokonya; daftar host lengkap

@@ -34,6 +34,7 @@ from utils.notif_unified import (
     rahaza_mark_read_by,
     rahaza_mark_read_by_many,
     rahaza_matches_user,
+    real_target_roles,
 )
 import jwt as _jwt
 import json
@@ -148,6 +149,30 @@ async def publish_notification(
     await _push_to_subscribers(notif_doc)
     logger.info(f"[notif] {severity.upper()} :: {title}")
     return notif_doc
+
+
+# ─── NOTIFIKASI PERSONAL SISTEM (backup/restore) ─────────────────────────────
+async def send_notification(*, user_id: str, title: str, message: str,
+                            type: str = "info", category: str = "system",
+                            link_module: str = None, db=None):
+    """Notifikasi in-app untuk SATU user (dipakai backup/restore).
+
+    2026-11-02 — `routes/admin_backup.py` dan `utils/scheduler.py` (backup
+    otomatis 02:00) mengimpor fungsi ini sejak lama, tetapi fungsinya tidak
+    pernah ada ⇒ ImportError ditelan diam-diam dan kabar "Backup Berhasil/Gagal"
+    TIDAK PERNAH sampai ke superadmin. Bentuk argumen mengikuti pemanggil itu.
+    """
+    if not user_id:
+        return None
+    db = db if db is not None else get_db()
+    sev = type if type in ("info", "warning", "error", "success") else "info"
+    # subtype `system_backup` → kategori "Sistem" di bel (token `backup`/`system`).
+    subtype = f"{category}_backup" if category else "system_backup"
+    return await notif_insert(
+        db, type='rahaza', subtype=subtype, severity=sev, title=title, body=message,
+        user_id=user_id,
+        meta={'link_module': link_module or 'mgmt-backup-restore', 'category': category},
+    )
 
 
 # ─── SSE SUBSCRIBER REGISTRY ─────────────────────────────────────────────────
@@ -350,8 +375,12 @@ async def scan_wo_due(request: Request):
                 message=f"Due {due} · progress {pct:.0f}% ({progress_qty:.0f}/{qty:.0f} pcs). Perlu percepatan.",
                 link_module="prod-work-orders",
                 link_id=d_id,
-                target_roles=["production_manager", "supervisor", "superadmin"],
+                # 2026-11-02 — dulu `production_manager` (peran fiktif) ⇒ hanya
+                # superadmin yang menerima. Kini peran nyata Portal Produksi.
+                target_roles=real_target_roles(
+                    ["production_manager", "supervisor", "superadmin"], "production"),
                 dedup_key=f"wo_due::{d_id}",
+                dedup_minutes=1440,   # 2026-11-02 — maks 1×/hari per WO (dulu 10 menit)
             )
             published += 1
 

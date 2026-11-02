@@ -846,6 +846,59 @@ async def approve_leave(leave_id: str, request: Request):
     return serialize_doc(out)
 
 
+# ── 2026-11-02 — KABAR KEPUTUSAN CUTI KE PEMOHON ────────────────────────────
+# Audit runtime 2026-11-02: cuti DITOLAK tidak mengabari pemohon sama sekali,
+# begitu pula persetujuan massal (bulk). Hanya persetujuan satu-per-satu yang
+# mengirim `leave_approved`. Helper ini satu pintu untuk kabar keputusan; juga
+# boleh dipanggil jalur lain yang memutus cuti (mis. routes/hr_approval_inbox.py).
+async def leave_requester_user_ids(db, leave: dict) -> list:
+    """User pemohon: akun yang tertaut ke karyawan cuti; cadangan = pengaju."""
+    from utils.notif_recipients import active_user_filter
+    ids = []
+    if leave.get("employee_id"):
+        rows = await db.users.find(active_user_filter({"employee_id": leave["employee_id"]}),
+                                   {"_id": 0, "id": 1}).to_list(5)
+        ids = [r["id"] for r in rows if r.get("id")]
+    if not ids:
+        fallback = leave.get("submitted_by") or leave.get("created_by")
+        if fallback:
+            ids = [fallback]
+    return ids
+
+
+async def notify_leave_decision(db, leave: dict, *, approved: bool, reason: str = "",
+                                saldo_txt: str = "") -> Optional[dict]:
+    """Kabari pemohon bahwa cutinya disetujui/ditolak (tautan: Portal Saya › Cuti)."""
+    try:
+        from routes.rahaza_notifications import publish_notification
+        uids = await leave_requester_user_ids(db, leave)
+        if not uids:
+            return None
+        lt = await db.rahaza_leave_types.find_one({"id": leave.get("leave_type_id")}, {"_id": 0, "name": 1})
+        lt_name = (lt or {}).get("name", "Cuti")
+        periode = (f"({leave.get('from_date')} s/d {leave.get('to_date')}, "
+                   f"{leave.get('duration_days')} hari)")
+        if approved:
+            title = f"Cuti Disetujui — {lt_name}"
+            msg = f"Pengajuan {lt_name} Anda {periode} telah DISETUJUI.{saldo_txt}"
+        else:
+            title = f"Cuti Ditolak — {lt_name}"
+            msg = f"Pengajuan {lt_name} Anda {periode} DITOLAK. Alasan: {reason or '-'}."
+        return await publish_notification(
+            db,
+            type_="leave_approved" if approved else "leave_rejected",
+            severity="success" if approved else "warning",
+            title=title, message=msg,
+            link_module="portal-cuti", link_id=leave.get("id"),
+            target_user_ids=uids,
+            dedup_key=f"leave_{'approved' if approved else 'rejected'}_{leave.get('id')}",
+            dedup_minutes=1440,
+        )
+    except Exception as ne:  # noqa: BLE001 — kabar tidak boleh menggagalkan keputusan
+        log.warning(f"[leave] notif keputusan ke pemohon gagal: {ne}")
+        return None
+
+
 @router.post("/leaves/{leave_id}/reject")
 async def reject_leave(leave_id: str, request: Request):
     """Reject leave request."""
@@ -874,6 +927,8 @@ async def reject_leave(leave_id: str, request: Request):
         }
     )
     await log_activity(user["id"], user.get("name", ""), f"reject:{reason}", "rahaza.leave", leave_id)
+    # 2026-11-02 — pemohon WAJIB tahu cutinya ditolak (dulu senyap).
+    await notify_leave_decision(db, leave, approved=False, reason=reason)
     out = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
     return serialize_doc(out)
 
@@ -928,6 +983,8 @@ async def bulk_approve_leaves(request: Request):
                 current += timedelta(days=1)
             approved_count += 1
             await log_activity(user["id"], user.get("name", ""), "bulk_approve", "rahaza.leave", leave["id"])
+            # 2026-11-02 — persetujuan massal juga mengabari tiap pemohon.
+            await notify_leave_decision(db, leave, approved=True)
         except Exception as e:
             log.error(f"bulk_approve: failed for {leave['id']}: {e}")
 

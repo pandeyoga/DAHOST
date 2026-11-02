@@ -57,6 +57,49 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# QTY BERNILAI (2026-11-02 — audit g.md No.20)
+# Dulu `valued` adalah bendera SELURUH item: lepas 4 dari 10 reject GR (belum bernilai)
+# mengkapitalisasi 4, lalu menandai ke-10-nya "bernilai" — scrap/retur 6 sisanya lalu
+# mengkredit 1-1401 sebesar 6 × HPP atas barang yang tidak pernah masuk nilai
+# persediaan. Sekarang yang dilacak adalah QTY: `valued_qty` = bagian sisa karantina
+# yang sudah ada di nilai persediaan. Akun & harga jurnal TIDAK diubah (menunggu owner).
+# ─────────────────────────────────────────────────────────────────────────────
+def split_valued(qty: float, valued_remaining: float) -> tuple[float, float]:
+    """(bagian bernilai, bagian belum bernilai) dari `qty` yang didisposisi (fungsi murni).
+    Bagian bernilai dipakai lebih dulu."""
+    q = max(0.0, float(qty or 0))
+    v = min(q, max(0.0, float(valued_remaining or 0)))
+    return round(v, 4), round(q - v, 4)
+
+
+def valued_remaining_of(item: dict, *, legacy_flipped: bool = False) -> float:
+    """Qty sisa karantina yang SUDAH bernilai (fungsi murni).
+
+    * item baru: `valued_qty` (dibatasi sisa);
+    * item lama tanpa `valued_qty`: `valued=True` → seluruh sisa, kecuali bendera itu
+      hasil bug lepas-sebagian (`legacy_flipped`) → 0.
+    """
+    remaining = max(0.0, float(item.get("remaining_qty") or 0))
+    if item.get("valued_qty") is not None:
+        return round(min(remaining, max(0.0, float(item.get("valued_qty") or 0))), 4)
+    if item.get("valued") and not legacy_flipped:
+        return round(remaining, 4)
+    return 0.0
+
+
+async def _valued_remaining(db, item: dict) -> float:
+    legacy_flipped = False
+    if item.get("valued_qty") is None and item.get("valued"):
+        # Item lama: bendera `valued=True` yang dipasang oleh "lepas" (bug lama) dikenali
+        # dari jurnal kapitalisasi lepasnya — barang yang sejak awal bernilai tidak pernah
+        # punya jurnal `quarantine_release`.
+        legacy_flipped = bool(await db.rahaza_material_movements.find_one(
+            {"reference_type": "quarantine", "reference_id": item["id"],
+             "adjustment_reason": "quarantine_release"}, {"_id": 0, "id": 1}))
+    return valued_remaining_of(item, legacy_flipped=legacy_flipped)
+
+
 async def _get_item_or_404(db, item_id: str) -> dict:
     item = await db[quarantine.QUARANTINE_COLL].find_one({"id": item_id}, {"_id": 0})
     if not item:
@@ -199,6 +242,7 @@ async def release_item(item_id: str, request: Request):
         raise HTTPException(404, "Lokasi tujuan tidak ditemukan")
 
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    valued_before = await _valued_remaining(db, item)
     try:
         res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_RELEASE,
                                              qty=qty, to_location_id=to_loc, actor=actor,
@@ -206,13 +250,17 @@ async def release_item(item_id: str, request: Request):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # JE: barang BELUM bernilai → kapitalisasi (+). Barang sudah bernilai → tanpa JE.
+    # JE: bagian BELUM bernilai → kapitalisasi (+). Bagian sudah bernilai → tanpa JE.
+    # 2026-11-02: hanya qty yang dilepas yang menjadi bernilai (barang itu keluar dari
+    # karantina); sisa karantina TETAP belum bernilai — tidak lagi menandai seluruh item.
+    valued_part, unvalued_part = split_valued(qty, valued_before)
     posting = {"ok": True, "skipped": True, "reason": "sudah bernilai — pindah lokasi tidak mengubah nilai"}
-    if not item.get("valued"):
-        posting = await _post_je(db, item=item, qty=qty, direction=+1,
+    if unvalued_part > 0:
+        posting = await _post_je(db, item=item, qty=unvalued_part, direction=+1,
                                 reason="quarantine_release", user=user)
-        if posting.get("ok"):
-            await db[quarantine.QUARANTINE_COLL].update_one({"id": item_id}, {"$set": {"valued": True}})
+    await db[quarantine.QUARANTINE_COLL].update_one({"id": item_id}, {
+        "$set": {"valued_qty": round(valued_before - valued_part, 4)},
+        "$inc": {"released_capitalized_qty": unvalued_part if posting.get("ok") and unvalued_part > 0 else 0}})
 
     await log_activity(user.get("id", ""), user.get("name", ""), "quarantine_release",
                        "wh_quarantine_items",
@@ -234,18 +282,22 @@ async def return_to_supplier(item_id: str, request: Request):
         raise HTTPException(400, "Item karantina sudah ditutup")
     qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    valued_before = await _valued_remaining(db, item)
     try:
         res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_RETURN,
                                               qty=qty, actor=actor, notes=body.get("notes", ""))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # JE hanya bila barang SUDAH bernilai (pernah masuk nilai persediaan)
+    # JE hanya untuk bagian yang SUDAH bernilai (pernah masuk nilai persediaan) — 2026-11-02
+    valued_part, _unvalued = split_valued(qty, valued_before)
     posting = {"ok": True, "skipped": True,
                "reason": "belum pernah masuk nilai persediaan (AP invoice pakai net qty)"}
-    if item.get("valued"):
-        posting = await _post_je(db, item=item, qty=qty, direction=-1,
+    if valued_part > 0:
+        posting = await _post_je(db, item=item, qty=valued_part, direction=-1,
                                  reason="return_supplier", user=user)
+    await db[quarantine.QUARANTINE_COLL].update_one(
+        {"id": item_id}, {"$set": {"valued_qty": round(valued_before - valued_part, 4)}})
 
     await log_activity(user.get("id", ""), user.get("name", ""), "quarantine_return_supplier",
                        "wh_quarantine_items",
@@ -268,16 +320,21 @@ async def scrap_item(item_id: str, request: Request):
         raise HTTPException(400, "Item karantina sudah ditutup")
     qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    valued_before = await _valued_remaining(db, item)
     try:
         res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_SCRAP,
                                               qty=qty, actor=actor, notes=body.get("notes", ""))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # write-off hanya untuk bagian yang SUDAH bernilai — 2026-11-02
+    valued_part, _unvalued = split_valued(qty, valued_before)
     posting = {"ok": True, "skipped": True,
                "reason": "belum pernah masuk nilai persediaan → tidak perlu write-off"}
-    if item.get("valued"):
-        posting = await _post_je(db, item=item, qty=qty, direction=-1, reason="scrap", user=user)
+    if valued_part > 0:
+        posting = await _post_je(db, item=item, qty=valued_part, direction=-1, reason="scrap", user=user)
+    await db[quarantine.QUARANTINE_COLL].update_one(
+        {"id": item_id}, {"$set": {"valued_qty": round(valued_before - valued_part, 4)}})
 
     await log_activity(user.get("id", ""), user.get("name", ""), "quarantine_scrap",
                        "wh_quarantine_items",

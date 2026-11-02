@@ -24,7 +24,9 @@ from core import payout_banks as _banks
 from core import platform_balance as _bal
 from core import withdrawal_import as _wimport
 from database import get_db
-from routes.marketing_settlements import _je_still_binding, _now, _require_finance, _rp, _ser
+from routes.marketing_settlements import (_je_still_binding, _now, _require_finance, _rp, _ser,
+                                          _doc_receivable_codes, assert_linked_je_owned, doc_je_ref,
+                                          find_doc_je)
 
 router = APIRouter(prefix="/api/marketing/withdrawals", tags=["marketing-withdrawals"])
 
@@ -74,9 +76,15 @@ async def _annotate_rows(db, account: dict, rows: list) -> list:
         {"account_id": account["id"], "reference": {"$in": refs}}, {"_id": 0, "reference": 1}).to_list(5000)} if refs else set()
     avail = await _bal.available_balance(db, account["id"])
     running = 0.0
+    seen = set()
     for r in rows:
         if r.get("reference") and r["reference"] in existing:
             r.update({"ok": False, "reason": "sudah tercatat (referensi sama)", "duplicate": True})
+        # 2026-11-02 (No.2a): referensi unik per toko juga DI DALAM satu berkas impor.
+        elif r.get("reference") and r["reference"] in seen and r.get("ok"):
+            r.update({"ok": False, "reason": "referensi sama muncul dua kali di berkas ini", "duplicate": True})
+        if r.get("reference") and r.get("ok"):
+            seen.add(r["reference"])
         if r.get("ok"):
             running += float(r.get("amount") or 0)
             if running - avail > 0.01:
@@ -289,6 +297,11 @@ async def update_withdrawal(wid: str, body: WithdrawalIn, request: Request):
         raise HTTPException(400, f"Nominal sudah TERTAUT ke mutasi bank tanggal {cur.get('bank_txn_date')} "
                                  f"({_rp(cur.get('amount'))}). Lepas tautannya di Rekonsiliasi Bank dulu.")
     account = await _scope.require_account(db, body.account_id)
+    # 2026-11-02 (No.2a): edit dulu tidak mengecek (toko, referensi) → dua dokumen bernomor sama.
+    new_ref = (body.reference or "").strip() or cur.get("reference")
+    if new_ref and await db[COLL].find_one(
+            {"account_id": body.account_id, "reference": new_ref, "id": {"$ne": wid}}, {"_id": 0, "id": 1}):
+        raise HTTPException(409, f"Penarikan '{new_ref}' untuk toko ini sudah pernah dicatat.")
     await _check_balance(db, account, body.amount, exclude_id=wid)
     upd = body.dict()
     upd.update({"amount": round(float(body.amount), 2), "reference": (body.reference or "").strip() or cur.get("reference"),
@@ -318,7 +331,7 @@ async def delete_withdrawal(wid: str, request: Request):
 
 @router.post("/{wid}/journal")
 async def create_draft_journal(wid: str, request: Request):
-    """Dr Bank toko / Cr Piutang Toko — DRAFT, idempoten per `reference`."""
+    """Dr Bank toko / Cr Piutang Toko — DRAFT, idempoten per DOKUMEN (referensi + id, 2026-11-02)."""
     user = await _require_finance(request)
     db = get_db()
     doc = await db[COLL].find_one({"id": wid}, {"_id": 0})
@@ -327,9 +340,11 @@ async def create_draft_journal(wid: str, request: Request):
     account = await _scope.require_account(db, doc["account_id"])
     coa = await _coa_for(db, account, doc.get("cash_code") or "")
 
-    from routes.rahaza_posting import _create_posted_je, _find_existing_je
+    from routes.rahaza_posting import _create_posted_je
 
-    existing = await _find_existing_je(db, SOURCE_MODULE, doc["reference"])
+    # 2026-11-02 (K-2): jurnal MILIK dokumen ini — referensi sama di toko lain bukan miliknya.
+    existing = await find_doc_je(db, SOURCE_MODULE, doc,
+                                 await _doc_receivable_codes(db, doc, (coa["receivable"],)))
     if existing:
         await db[COLL].update_one({"id": wid}, {"$set": {
             "je_id": existing["id"], "je_number": existing["je_number"],
@@ -348,7 +363,7 @@ async def create_draft_journal(wid: str, request: Request):
     res = await _create_posted_je(
         db, je_date=date.fromisoformat(str(doc["withdrawal_date"])[:10]),
         memo=f"Penarikan saldo {doc['platform']} — {doc.get('account_name') or ''} ({doc['reference']})",
-        source_module=SOURCE_MODULE, source_ref=doc["reference"],
+        source_module=SOURCE_MODULE, source_ref=doc_je_ref(doc["reference"], doc["id"]),  # 2026-11-02 K-2
         lines_raw=lines, user=user, status="draft")
     if not res.get("ok"):
         raise HTTPException(400, res.get("error") or "Gagal membuat jurnal.")
@@ -376,6 +391,7 @@ async def post_withdrawal_journal(wid: str, request: Request):
     je = await db.rahaza_journal_entries.find_one({"id": doc["je_id"]})
     if not je:
         raise HTTPException(404, f"Jurnal {doc.get('je_number')} sudah tidak ada.")
+    await assert_linked_je_owned(db, COLL, doc, je)  # 2026-11-02 (K-2): jangan posting jurnal toko lain
     if je.get("status") == "posted":
         await db[COLL].update_one({"id": wid}, {"$set": {"je_status": "posted"}})
         return {"ok": True, "already": True, "je_number": je["je_number"], "je_status": "posted",

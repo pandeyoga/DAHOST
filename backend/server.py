@@ -647,6 +647,52 @@ _DENY_EXTERNAL_AND_MKT = [_Depends(_deny_roles(*_EXT_ROLES, *_MKT_ROLES))]
 # Router yang sudah sadar-vendor/klien (menjaga peran eksternal sendiri) tetapi tidak untuk peran marketing.
 _DENY_MKT = [_Depends(_deny_roles(*_MKT_ROLES))]
 
+# ── 2026-11-02 (audit No.57) — gerbang portal pemilik data + penjaga per-path ──
+# Data HR AI / AI Business / Dashboard Eksekutif dulu terbuka untuk SEMUA peran
+# internal (hanya `require_auth`). Gerbangnya memakai SSOT `require_portal`
+# (PORTAL_ACCESS + roles.portals + izin; superadmin/admin/owner selalu lolos).
+from routes.shared import require_portal_dep as _require_portal_dep
+
+
+def _on_paths(dep, only=(), skip=()):
+    """Jalankan `dep` hanya untuk route tertentu pada router campuran.
+
+    Dipakai bila satu router memuat endpoint dengan pemilik berbeda (mis.
+    dashboard_router memuat /api/vendor/dashboard milik portal vendor CMT).
+    `only`/`skip` = path template route (persis seperti di dekorator).
+    """
+    only_set, skip_set = set(only), set(skip)
+
+    async def _dep(request: Request):
+        route = request.scope.get("route")
+        path = getattr(route, "path", None) or request.url.path
+        if path in skip_set or (only_set and path not in only_set):
+            return
+        await dep(request)
+    _dep.__name__ = f"on_paths[{getattr(dep, '__name__', 'dep')}]"
+    return _dep
+
+
+# dashboard_router: /api/vendor/dashboard SAH dipakai portal vendor CMT
+# (VendorDashboard.jsx) → dikecualikan dari tolak-eksternal; /api/dashboard
+# (Dashboard Eksekutif: revenue, AR, AP) khusus pemegang Portal Manajemen.
+_DASHBOARD_GUARD = [
+    _Depends(_on_paths(_deny_roles(*_EXT_ROLES), skip=("/api/vendor/dashboard",))),
+    _Depends(_on_paths(_require_portal_dep("management"), only=("/api/dashboard",))),
+]
+# rahaza_reports_router: ringkasan payroll (total bruto/potongan/neto run terakhir)
+# khusus pemegang portal Manajemen/SDM/Keuangan; endpoint lain cukup tolak-eksternal.
+_REPORTS_GUARD = _DENY_EXTERNAL + [
+    _Depends(_on_paths(_require_portal_dep("management", "hr", "finance"),
+                       only=("/api/rahaza/management/payroll-summary",))),
+]
+# rahaza_payroll_payslips_router: peran marketing (pic_toko/marketing_kol/cs_staff) tetap
+# ditolak untuk daftar/detail/bundel slip, KECUALI unduh PDF slip miliknya sendiri
+# (swalayan Portal Saya; handler memeriksa kepemilikan lewat employee_identity).
+_PAYSLIPS_GUARD = _DENY_EXTERNAL + [
+    _Depends(_on_paths(_deny_roles(*_MKT_ROLES), skip=("/api/rahaza/payslips/{pid}/pdf",))),
+]
+
 # Register all active routers
 app.include_router(auth_router)
 app.include_router(master_data_router, dependencies=_DENY_MKT)
@@ -666,7 +712,7 @@ app.include_router(admin_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.access_sync import router as access_sync_router
 app.include_router(access_sync_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(invoice_edit_requests_router, dependencies=_DENY_EXTERNAL_AND_MKT)
-app.include_router(dashboard_router)
+app.include_router(dashboard_router, dependencies=_DASHBOARD_GUARD)  # 2026-11-02 audit No.57
 # P2 Refactor: operations.py split — include all sub-routers (deprecated accessories omitted)
 # Sprint A.0: Re-enable operations_router for deprecated accessory NOOP endpoints
 app.include_router(operations_router, dependencies=_DENY_EXTERNAL)
@@ -706,12 +752,12 @@ app.include_router(rahaza_payroll_allowances_router, dependencies=_DENY_EXTERNAL
 app.include_router(rahaza_payroll_settings_router, dependencies=_DENY_EXTERNAL_AND_MKT)  # FASE 15: aturan potongan terlambat & bonus kehadiran
 app.include_router(rahaza_payroll_profiles_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(rahaza_payroll_runs_router, dependencies=_DENY_EXTERNAL_AND_MKT)
-app.include_router(rahaza_payroll_payslips_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+app.include_router(rahaza_payroll_payslips_router, dependencies=_PAYSLIPS_GUARD)  # 2026-11-02: PDF slip sendiri utk peran marketing
 app.include_router(rahaza_finance_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.rahaza_payment_receipt import router as rahaza_payment_receipt_router  # noqa: E402
 app.include_router(rahaza_payment_receipt_router, dependencies=_DENY_MKT)
 app.include_router(rahaza_hpp_router, dependencies=_DENY_MKT)
-app.include_router(rahaza_reports_router)
+app.include_router(rahaza_reports_router, dependencies=_REPORTS_GUARD)  # 2026-11-02 audit No.57: vendor CMT baca AR/payroll
 app.include_router(notifications_unified_router)  # Must come before rahaza_notifications to win path race
 app.include_router(rahaza_notifications_router)
 app.include_router(rahaza_audit_router, dependencies=_DENY_EXTERNAL_AND_MKT)
@@ -1011,7 +1057,7 @@ from routes.unified_inventory import router as unified_inventory_router
 app.include_router(unified_inventory_router, dependencies=_DENY_MKT)
 # Phase 7 — Reporting & Dashboard (Daily/Monthly/Per-PO/Actual-vs-Target)
 from routes.dewi_phase7_reports import router as dewi_phase7_reports_router
-app.include_router(dewi_phase7_reports_router)
+app.include_router(dewi_phase7_reports_router, dependencies=_DENY_EXTERNAL)  # 2026-11-02 audit No.57
 
 # Phase 3 Week 8-10: Content Calendar, Discounts, Product Launches
 from routes.marketing_content_calendar_routes import router as marketing_content_calendar_router
@@ -1280,12 +1326,15 @@ app.include_router(dewi_warehouse_smart_router, dependencies=_DENY_EXTERNAL_AND_
 
 # Session 14 — AI Business Intelligence
 from routes.dewi_ai_business import router as dewi_ai_business_router
-app.include_router(dewi_ai_business_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+# 2026-11-02 (audit No.57) — AI Business (ringkasan/prediksi omzet, fraud) milik Portal Manajemen.
+app.include_router(dewi_ai_business_router,
+                   dependencies=_DENY_EXTERNAL_AND_MKT + [_Depends(_require_portal_dep("management"))])
 
 # Session 15 — HR AI & Portal Saya Extensions
 from routes.dewi_hr_ai import router as dewi_hr_ai_router
 from routes.dewi_portal_saya_ext import router as dewi_portal_saya_ext_router
-app.include_router(dewi_hr_ai_router, dependencies=_DENY_EXTERNAL)
+# 2026-11-02 (audit No.57) — HR AI (daftar karyawan, risiko resign, coaching) milik portal SDM.
+app.include_router(dewi_hr_ai_router, dependencies=_DENY_EXTERNAL + [_Depends(_require_portal_dep("hr"))])
 app.include_router(dewi_portal_saya_ext_router, dependencies=_DENY_EXTERNAL)
 # RC-29: mount ganda dewi_portal_saya_hr_router (tanpa prefix /api) DIHAPUS —
 # mount kanonik sudah via routes/dewi_portal_saya.py (nested /api/portal/*).

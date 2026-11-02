@@ -26,36 +26,55 @@ async def _sum_field(db, collection, query: dict, field: str) -> float:
     return agg[0]['total'] if agg else 0.0
 
 
+# 2026-11-02 (audit No.50): status yang BUKAN faktur/tagihan nyata — draft belum terbit, batal/void
+# tidak pernah terjadi. Dulu dashboard menjumlah semua dokumen (pendapatan 3,4× faktur terbit).
+NOT_REAL_STATUSES = ('draft', 'cancelled', 'void')
+AR_OPEN_STATUSES = ('issued', 'sent', 'partial_paid', 'overdue')
+
+
+def ar_aging_buckets_from_canonical(aging: dict) -> dict:
+    """Bucket /api/rahaza/ar-aging (SATU sumber) → kunci yang dibaca layar Dashboard Eksekutif."""
+    b = (aging or {}).get('buckets') or {}
+    return {
+        'current': round(float(b.get('current') or 0) + float(b.get('tanpa_jatuh_tempo') or 0), 2),
+        'd30': round(float(b.get('1_30') or 0), 2),
+        'd60': round(float(b.get('31_60') or 0), 2),
+        'd90': round(float(b.get('61_90') or 0), 2),
+        'd90plus': round(float(b.get('90_plus') or 0), 2),
+        'noDueDate': round(float(b.get('tanpa_jatuh_tempo') or 0), 2),
+        'total': round(float((aging or {}).get('total') or 0), 2),
+    }
+
+
 async def _ar_aging(db) -> dict:
-    """Compute AR aging buckets from rahaza_ar_invoices."""
-    today = date.today()
-    unpaid = await db.rahaza_ar_invoices.find(
-        {'status': {'$in': ['sent', 'partial']}}, {'_id': 0, 'balance': 1, 'due_date': 1}
-    ).to_list(500)
-    buckets = {'current': 0, 'd30': 0, 'd60': 0, 'd90': 0, 'd90plus': 0}
-    for inv in unpaid:
-        bal = float(inv.get('balance', 0))
-        dd = inv.get('due_date')
-        if not dd:
-            buckets['current'] += bal
+    """2026-11-02: aging dari faktur nyata lewat fungsi yang SAMA dengan /api/rahaza/ar-aging
+    (status kanonik issued/partial_paid/overdue). Dulu memakai status 'sent'/'partial' yang
+    tidak lagi ditulis → selalu 0."""
+    from routes.rahaza_ar_canonical import compute_ar_aging
+    return ar_aging_buckets_from_canonical(await compute_ar_aging(db))
+
+
+def revenue_windows(ar_invoices: list, today: date) -> dict:
+    """Pendapatan hari ini / MTD / YTD per TANGGAL FAKTUR (`issue_date`, hari WIB) — bukan
+    `created_at` (tanggal input, batas hari UTC). Hanya faktur nyata."""
+    t = today.isoformat()
+    m0 = today.replace(day=1).isoformat()
+    y0 = today.replace(month=1, day=1).isoformat()
+    out = {'today': 0.0, 'mtd': 0.0, 'ytd': 0.0}
+    for i in ar_invoices:
+        if (i.get('status') or 'draft') in NOT_REAL_STATUSES:
             continue
-        try:
-            dd_d = date.fromisoformat(str(dd)[:10])
-            diff = (today - dd_d).days
-        except Exception:
-            buckets['current'] += bal
+        d = str(i.get('issue_date') or '')[:10]
+        if not d:
             continue
-        if diff <= 0:
-            buckets['current'] += bal
-        elif diff <= 30:
-            buckets['d30'] += bal
-        elif diff <= 60:
-            buckets['d60'] += bal
-        elif diff <= 90:
-            buckets['d90'] += bal
-        else:
-            buckets['d90plus'] += bal
-    return buckets
+        v = float(i.get('total') or 0)
+        if d == t:
+            out['today'] += v
+        if m0 <= d <= t:
+            out['mtd'] += v
+        if y0 <= d <= t:
+            out['ytd'] += v
+    return {k: round(v, 2) for k, v in out.items()}
 
 @router.get("/dashboard")
 async def get_dashboard(request: Request):
@@ -64,10 +83,6 @@ async def get_dashboard(request: Request):
     db = get_db()
     n = now()
     today = date.today()
-    today_start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
-    today_end = today_start + timedelta(days=1)
-    mtd_start = datetime(today.year, today.month, 1, tzinfo=timezone.utc)
-    ytd_start = datetime(today.year, 1, 1, tzinfo=timezone.utc)
 
     # ── Rahaza orders (primary) ──
     total_orders = await db.rahaza_orders.count_documents({})
@@ -81,11 +96,13 @@ async def get_dashboard(request: Request):
     wo_status_agg = [{'_id': k, 'count': v} for k, v in _wo_counts.items()]
 
     # ── AR / AP (Rahaza finance) ──
-    ar_invoices = await db.rahaza_ar_invoices.find({}, {'_id': 0}).to_list(500)
-    ap_invoices = await db.rahaza_ap_invoices.find({}, {'_id': 0}).to_list(500)
+    # 2026-11-02 (audit No.50): hanya faktur nyata (tanpa draft/batal/void).
+    _real = {'status': {'$nin': list(NOT_REAL_STATUSES)}}
+    ar_invoices = await db.rahaza_ar_invoices.find(_real, {'_id': 0}).to_list(500)
+    ap_invoices = await db.rahaza_ap_invoices.find(_real, {'_id': 0}).to_list(500)
     total_revenue = sum(i.get('total', 0) for i in ar_invoices)
     total_paid_ar = sum(i.get('paid_amount', 0) for i in ar_invoices)
-    outstanding_ar = sum(i.get('balance', 0) for i in ar_invoices if i.get('status') != 'paid')
+    outstanding_ar = sum(i.get('balance', 0) for i in ar_invoices if i.get('status') not in ('paid', 'written_off'))
     total_vendor_cost = sum(i.get('total', 0) for i in ap_invoices)
     total_paid_ap = sum(i.get('paid_amount', 0) for i in ap_invoices)
     outstanding_ap = sum(i.get('balance', 0) for i in ap_invoices if i.get('status') != 'paid')
@@ -106,12 +123,10 @@ async def get_dashboard(request: Request):
     # NOTE: legacy `invoices` collection was DROPPED in Session #11.16 Phase B.
     # Revenue now reads exclusively from rahaza_ar_invoices (SSOT).
     # See FORENSIC_04 Cluster 5 + FORENSIC_12 GAP-01.
-    revenue_today = sum(i.get('total', 0) for i in ar_invoices
-                        if i.get('created_at') and _in_range(i['created_at'], today_start, today_end))
-    revenue_mtd   = sum(i.get('total', 0) for i in ar_invoices
-                        if i.get('created_at') and _in_range(i['created_at'], mtd_start, today_end))
-    revenue_ytd   = sum(i.get('total', 0) for i in ar_invoices
-                        if i.get('created_at') and _in_range(i['created_at'], ytd_start, today_end))
+    # 2026-11-02 (audit No.50): per tanggal faktur & hari WIB (dulu created_at, batas UTC).
+    from utils.waktu import today_wib
+    _rev = revenue_windows(ar_invoices, today_wib())
+    revenue_today, revenue_mtd, revenue_ytd = _rev['today'], _rev['mtd'], _rev['ytd']
 
     # ── Employee count (active) ──
     active_employees = await db.rahaza_employees.count_documents({'status': {'$in': ['active', 'Active']}})
@@ -188,8 +203,8 @@ async def get_dashboard(request: Request):
         {'_id': 0},
     ).sort('due_date', 1).limit(5).to_list(500)
     unpaid_ars = await db.rahaza_ar_invoices.find(
-        {'status': {'$in': ['sent', 'partial']}}, {'_id': 0}
-    ).sort('due_date', 1).limit(5).to_list(500)
+        {'status': {'$in': list(AR_OPEN_STATUSES)}, 'balance': {'$gt': 0}}, {'_id': 0}
+    ).sort('due_date', 1).limit(5).to_list(500)  # 2026-11-02: status kanonik
 
     return {
         'totalPOs': total_orders, 'activePOs': active_orders,
@@ -221,8 +236,10 @@ async def get_dashboard(request: Request):
         'totalAccShipments': 0,
         'pendingAccInspections': 0,
         'pendingAccRequests': 0,
-        'unpaidInvoices': sum(1 for i in ar_invoices if i.get('status') == 'sent'),
-        'partialInvoices': sum(1 for i in ar_invoices if i.get('status') == 'partial'),
+        # 2026-11-02: status kanonik (dulu 'sent'/'partial' yang tidak lagi ditulis → selalu 0)
+        'unpaidInvoices': sum(1 for i in ar_invoices if i.get('status') in ('issued', 'sent', 'overdue')
+                              and float(i.get('balance') or 0) > 0),
+        'partialInvoices': sum(1 for i in ar_invoices if i.get('status') == 'partial_paid'),
         'delayedPOs': delayed_orders,
         'monthlyData': monthly_data,
         'woStatus': wo_status_agg,

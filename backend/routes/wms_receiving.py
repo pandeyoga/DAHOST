@@ -55,6 +55,7 @@ from auth import require_auth, serialize_doc, log_activity
 from utils.counters import next_counter
 from core.stock_schema import read_qty, set_all_qty
 from core import stock_service
+from core import location_resolver
 from core import uom as _uom  # SSOT konversi satuan
 from core import bom_uom as _bom_uom  # cakupan konversi lebar (kemasan + global + kain)
 
@@ -299,12 +300,28 @@ class ScanInIn(BaseModel):
     # 2026-08-05 — satuan hitung fisik operator (opsional). Bila kosong, dipakai
     # satuan pada dokumen movement seperti perilaku sebelumnya.
     input_uom: Optional[str] = Field(None, description="Satuan qty yang di-scan (mis. 'box'); default satuan movement")
+    # 2026-11-02 — No.18(a): lokasi tujuan WAJIB dipilih (dulu "lokasi aktif pertama").
+    location_id: Optional[str] = Field(None, description="Lokasi tujuan stok masuk (wajib)")
 
 
 class ScanOutIn(BaseModel):
     scanned_qty: float = Field(..., gt=0, description="Qty yang keluar")
     position_barcode: Optional[str] = Field(None, description="Barcode posisi asal (opsional)")
     notes: Optional[str] = None
+    # 2026-11-02 — No.18(a): lokasi asal WAJIB dipilih (dulu "lokasi aktif pertama").
+    location_id: Optional[str] = Field(None, description="Lokasi asal stok keluar (wajib, kecuali fulfillment ber-stock_id)")
+
+
+async def _require_scan_location(db, picked: Optional[str], movement: dict, *, direction: str) -> str:
+    """Lokasi scan: pilihan pengguna, atau lokasi yang sudah tertulis di dokumen antrean.
+    Tidak ada lagi tebakan "lokasi aktif pertama" (No.18a, 2026-11-02)."""
+    loc_id = (picked or movement.get("location_id") or "").strip()
+    if not loc_id:
+        what = "tujuan barang masuk" if direction == "in" else "asal barang keluar"
+        raise HTTPException(400, f"location_id wajib diisi — pilih lokasi {what}.")
+    if not await location_resolver.location_exists(db, loc_id):
+        raise HTTPException(400, "Lokasi yang dipilih tidak ditemukan di Struktur Gudang.")
+    return loc_id
 
 
 class ProductionPendingIn(BaseModel):
@@ -478,9 +495,8 @@ async def scan_in(movement_id: str, data: ScanInIn, request: Request):
             "base_unit": base_u, "factor": float(f_op), "source": st_op,
         }
 
-    # 1. Add to material stock
-    default_loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0})
-    loc_id = default_loc["id"] if default_loc else None
+    # 1. Add to material stock — lokasi dipilih pengguna (No.18a)
+    loc_id = await _require_scan_location(db, data.location_id, movement, direction="in")
 
     if loc_id and qty > 0:
         # SSOT: semua penambahan stok lewat stock_service (jaga qty+alias+available).
@@ -631,11 +647,10 @@ async def scan_out(movement_id: str, data: ScanOutIn, request: Request):
                                                   ref=_ref, actor=_actor, db=db)
             stock_remaining = read_qty(_srow)
         else:
-            default_loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0})
-            loc_id = default_loc["id"] if default_loc else None
-            if loc_id:
-                _srow = await stock_service.issue(material_id, loc_id, qty, ref=_ref, actor=_actor, db=db)
-                stock_remaining = read_qty(_srow)
+            # lokasi asal dipilih pengguna (No.18a) — dulu "lokasi aktif pertama"
+            loc_id = await _require_scan_location(db, data.location_id, movement, direction="out")
+            _srow = await stock_service.issue(material_id, loc_id, qty, ref=_ref, actor=_actor, db=db)
+            stock_remaining = read_qty(_srow)
     except stock_service.InsufficientStock as e:
         raise HTTPException(400, f"Stok tidak cukup: tersedia {e.available:.2f}{unit}, diminta {qty:.2f}{unit}")
 

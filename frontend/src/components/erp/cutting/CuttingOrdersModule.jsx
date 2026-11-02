@@ -386,6 +386,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     e.preventDefault();
     if (!form.input_material_id) return toast.error('Pilih material kain dulu.');
     if (!form.model_id) return toast.error('Pilih Model/Style dari Master Produk dulu.');
+    // 2026-11-02 — No.18(a): backend tidak lagi menebak gudang bila kosong.
+    if (!form.location_id) return toast.error('Pilih Gudang Sumber Kain dulu.');
     if (!(Number(form.planned_input_qty) > 0)) return toast.error('Rencana pemakaian kain harus > 0.');
     if (!(Number(form.planned_output_qty) > 0)) return toast.error('Target potongan harus > 0.');
     setSaving(true);

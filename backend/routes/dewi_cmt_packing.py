@@ -716,6 +716,7 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
 
     delta = new_actual - old_actual
     stock_note = None
+    wip_fg_koreksi = None
     fg_material_id = line.get("fg_material_id") or ""
     if delta != 0:
         mat = await qty_ledger.resolve_fg_material(
@@ -726,6 +727,14 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
                "receipt_code": receipt.get("receipt_code"), "receipt_line_id": line_id,
                "po_id": receipt.get("po_id"), "po_number": receipt.get("po_number"),
                "reason": reason}
+        # 2026-11-02 (F1): koreksi NAIK = barang dari batch yang sama → lapisan bernilai
+        # bahan BOM + jahit SPK (PO internal), lalu nilainya dipindah WIP→FG.
+        po_doc = await db.production_pos.find_one(
+            {"id": receipt.get("po_id")}, {"_id": 0, "business_type": 1}) if receipt.get("po_id") else None
+        is_internal = (po_doc or {}).get("business_type", receipt.get("business_type", "internal")) == "internal"
+        if is_internal:
+            ref.update({"po_item_id": line.get("po_item_id") or "",
+                        "job_item_id": line.get("job_item_id") or ""})
         try:
             if delta > 0:
                 posted = await qty_ledger.post_fg_accepted(
@@ -734,11 +743,30 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
                           "unit": "pcs", "type": "finished_goods"})
                 loc = posted["location_id"]
                 mv = "IN"
+                layer_id = (posted.get("cost_layer") or {}).get("id")
+                if is_internal and layer_id:
+                    try:
+                        from routes.rahaza_posting import post_wip_to_fg_on_cmt_receipt
+                        wip_fg_koreksi = await post_wip_to_fg_on_cmt_receipt(
+                            db, receipt, [layer_id], user, suffix=f"koreksi:{layer_id}")
+                    except Exception as e:  # noqa: BLE001
+                        logger.exception("posting WIP→FG koreksi gagal (line %s)", line_id)
+                        wip_fg_koreksi = {"ok": False, "error": str(e)}
             else:
-                await qty_ledger.issue_fg(db, material_id=mat["id"], qty=-delta,
-                                          sku=line.get("sku_code", ""), ref=ref, actor=user)
+                issued = await qty_ledger.issue_fg(db, material_id=mat["id"], qty=-delta,
+                                                   sku=line.get("sku_code", ""), ref=ref, actor=user)
                 loc = await qty_ledger.resolve_fg_location_id(db)
                 mv = "OUT"
+                # 2026-11-02 (F1): pasangan koreksi NAIK — nilai lapisan yang keluar dikembalikan
+                # ke WIP supaya GL 1-1404 tetap = lapisan (kebalikan jurnal penerimaan).
+                if is_internal and float((issued or {}).get("cogs") or 0) > 0:
+                    try:
+                        from routes.rahaza_posting import post_fg_to_wip_on_cmt_koreksi
+                        wip_fg_koreksi = await post_fg_to_wip_on_cmt_koreksi(
+                            db, receipt, issued["cogs"], user, suffix=f"koreksi-turun:{_id()}")
+                    except Exception as e:  # noqa: BLE001
+                        logger.exception("posting balik WIP→FG koreksi gagal (line %s)", line_id)
+                        wip_fg_koreksi = {"ok": False, "error": str(e)}
         except qty_ledger.FGStockShortfall as e:
             raise HTTPException(400, str(e))
         except Exception as e:  # noqa: BLE001
@@ -752,6 +780,8 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
             "notes": f"Koreksi hasil QC {old_actual} → {new_actual} pcs. Alasan: {reason}",
             "created_by": user["name"], "created_at": _now()})
         stock_note = {"delta": delta, "movement": mv}
+        if wip_fg_koreksi is not None:
+            stock_note["wip_fg_posting"] = serialize_doc(wip_fg_koreksi)
 
     entry = {"field": "qty_actual", "old": old_actual, "new": new_actual,
              "reject_old": old_reject, "reject_new": new_reject, "reason": reason,
@@ -985,6 +1015,12 @@ async def _finish_receipt(receipt_id: str, request: Request):
                 f"{ln.get('sku_code') or 'item'}: lolos ({qa}) + reject ({rj}) = {qa + rj} "
                 f"melebihi yang dikirim vendor ({declared}). Perbaiki angkanya.")
 
+    # 2026-11-02 (F1): jenis PO dibaca SEBELUM stok masuk — PO INTERNAL membawa
+    # `po_item_id` ke lapisan HPP (bahan BOM + jahit SPK). Maklon tidak diubah
+    # (barang klien; keputusan "FG maklon" masih menunggu owner).
+    po_doc = await db.production_pos.find_one({"id": doc.get("po_id")}, {"_id": 0, "business_type": 1}) if doc.get("po_id") else None
+    is_internal = (po_doc or {}).get("business_type", doc.get("business_type", "internal")) == "internal"
+
     # ── 1. Stok FG untuk qty lolos QC — lewat SSOT stok ──
     stock_result = []
     for ln in lines:
@@ -1004,13 +1040,18 @@ async def _finish_receipt(receipt_id: str, request: Request):
             {"id": ln["id"]}, {"$set": {"fg_material_id": material_id,
                                         "fg_material_code": fg.get("code", sku)}})
         ln["fg_material_id"] = material_id
+        ref = {"source": "cmt_receipt", "receipt_id": receipt_id,
+               "receipt_code": doc.get("receipt_code"),
+               "po_id": doc.get("po_id"), "po_number": doc.get("po_number"),
+               "vendor_id": doc.get("cmt_vendor_id"), "vendor_name": doc.get("cmt_name"),
+               "receipt_line_id": ln["id"]}
+        if is_internal:
+            ref.update({"po_item_id": ln.get("po_item_id") or "",
+                        "job_item_id": ln.get("job_item_id") or ""})
         try:
             posted = await qty_ledger.post_fg_accepted(
                 db, material_id=material_id, qty=qty,
-                ref={"source": "cmt_receipt", "receipt_id": receipt_id,
-                     "receipt_code": doc.get("receipt_code"),
-                     "po_id": doc.get("po_id"), "po_number": doc.get("po_number"),
-                     "vendor_id": doc.get("cmt_vendor_id"), "vendor_name": doc.get("cmt_name")},
+                ref=ref,
                 actor=user,
                 meta={"material_code": fg.get("code", sku),
                       "material_name": fg.get("name", ""),
@@ -1060,8 +1101,7 @@ async def _finish_receipt(receipt_id: str, request: Request):
 
     # ── 4b. Iter 115: PO INTERNAL → nilai WIP pindah ke Persediaan Barang Jadi (Dr 1-1404 / Cr 1-1403) ──
     wip_fg_result = None
-    po_doc = await db.production_pos.find_one({"id": doc.get("po_id")}, {"_id": 0, "business_type": 1}) if doc.get("po_id") else None
-    if (po_doc or {}).get("business_type", doc.get("business_type", "internal")) == "internal":
+    if is_internal:
         try:
             from routes.rahaza_posting import post_wip_to_fg_on_cmt_receipt
             layer_ids = [s.get("cost_layer_id") for s in stock_result if s.get("cost_layer_id")]

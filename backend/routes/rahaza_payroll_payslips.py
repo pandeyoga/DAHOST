@@ -437,18 +437,22 @@ async def export_payslip_pdf(pid: str, request: Request):
     """
     user = await require_auth(request)
     db = get_db()
-    role = (user.get("role") or "").lower()
     slip = await db.rahaza_payslips.find_one({"id": pid}, {"_id": 0})
     if not slip:
         raise HTTPException(404, "Payslip tidak ditemukan.")
 
-    can_download_all = role in ("superadmin", "admin", "owner", "hr", "manager")
-    if not can_download_all:
+    # 2026-11-02 (audit T3 lanjutan): aturan SAMA dengan GET /payslips — HR/Keuangan/Manajemen
+    # (`_can_view_all_payslips`) boleh semua slip termasuk draft (ber-watermark); karyawan hanya
+    # slip MILIKNYA dan hanya dari run final/dibayar. Dulu PDF slip run DRAFT tetap bisa diunduh
+    # karyawan padahal JSON-nya disembunyikan (angka draft masih bisa berubah).
+    if not await _can_view_all_payslips(request, user):
         from utils.employee_identity import resolve_my_employee
         emp = await resolve_my_employee(db, user)
         if not emp or emp.get("id") != slip.get("employee_id"):
             raise HTTPException(
                 403, "Anda hanya bisa mengunduh slip gaji milik Anda sendiri.")
+        if not await only_published_slips(db, [slip]):
+            raise HTTPException(404, "Slip gaji ini belum difinalisasi HR.")
 
     run = await db.rahaza_payroll_runs.find_one({"id": slip.get("run_id", "")}, {"_id": 0}) or {}
     profile = await get_company_profile(db)
@@ -472,7 +476,11 @@ async def export_payslip_pdf(pid: str, request: Request):
 @router.get("/payroll-runs/{run_id}/pdf")
 async def export_run_pdf(run_id: str, request: Request):
     """Download PDF bundle berisi SEMUA slip gaji dalam satu run (1 halaman per karyawan)."""
-    await require_auth(request)
+    user = await require_auth(request)
+    # 2026-11-02 (audit T3) — dulu hanya `require_auth`: operator mengunduh slip 25 karyawan.
+    # Kini hanya peran yang boleh melihat SEMUA slip (aturan sama dengan GET /payslips).
+    if not await _can_view_all_payslips(request, user):
+        raise HTTPException(403, "Forbidden: unduh slip satu run khusus HR/Keuangan/Manajemen.")
     db = get_db()
     run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
@@ -523,10 +531,69 @@ async def export_run_pdf(run_id: str, request: Request):
     )
 
 
+# ── AKSES BACA SLIP (2026-11-02, audit T3) ────────────────────────────────────
+# Dulu GET /payslips & /payslips/{pid} hanya `require_auth`: akun karyawan mana pun
+# (mis. tim_packing) membaca 50 slip milik 25 karyawan. Sekarang:
+#   · peran payroll `_require_hr` (sama dengan unduh PDF) dan pemegang portal
+#     SDM/Keuangan/Manajemen (SSOT `routes.shared.require_portal`, sama dengan
+#     gerbang router payroll-runs) → semua slip;
+#   · selain itu → hanya slip miliknya (karyawan tertaut, SSOT employee_identity)
+#     dan hanya dari run final/dibayar; akun tanpa karyawan tertaut → 403.
+_PAYSLIP_ALL_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+_PAYSLIP_ALL_PORTALS = ("hr", "finance", "management")
+# Status run yang slipnya boleh dilihat karyawan: "finalized" (VALID_RUN_STATUS)
+# + "paid" (dipakai payroll_automation). Draft masih bisa berubah; cancelled bukan gaji.
+PUBLISHED_RUN_STATUSES = ("finalized", "paid")
+
+
+async def only_published_slips(db, slips: list) -> list:
+    """Saring slip: hanya yang run-nya berstatus final/dibayar (dipakai juga Portal Saya)."""
+    run_ids = list({s.get("run_id") for s in slips if s.get("run_id")})
+    if not run_ids:
+        return []
+    runs = await db.rahaza_payroll_runs.find(
+        {"id": {"$in": run_ids}, "status": {"$in": list(PUBLISHED_RUN_STATUSES)}},
+        {"_id": 0, "id": 1},
+    ).to_list(len(run_ids))
+    ok = {r.get("id") for r in runs}
+    return [s for s in slips if s.get("run_id") in ok]
+
+
+async def _can_view_all_payslips(request: Request, user: dict) -> bool:
+    role = (user.get("role") or "").lower()
+    if role in _PAYSLIP_ALL_ROLES:
+        return True
+    perms = user.get("_permissions") or []
+    if "*" in perms or "hr.manage" in perms or "payroll.manage" in perms:
+        return True
+    from routes.shared import require_portal
+    try:
+        await require_portal(request, *_PAYSLIP_ALL_PORTALS, allow_perms=("payroll.manage",))
+        return True
+    except HTTPException as e:
+        if e.status_code == 403:
+            return False
+        raise
+
+
+async def _payslip_scope(request: Request):
+    """(user, emp). `emp` None = boleh semua slip; selain itu hanya slip karyawan `emp`."""
+    user = await require_auth(request)
+    if await _can_view_all_payslips(request, user):
+        return user, None
+    from utils.employee_identity import resolve_my_employee
+    emp = await resolve_my_employee(get_db(), user)
+    if not emp or not emp.get("id"):
+        raise HTTPException(
+            403, "Anda hanya bisa melihat slip gaji milik Anda sendiri, tetapi akun Anda "
+                 "belum tertaut ke data karyawan. Hubungi HR.")
+    return user, emp
+
+
 # ── PAYSLIPS ──────────────────────────────────────────────────────────────────
 @router.get("/payslips")
 async def list_payslips(request: Request, run_id: Optional[str] = None, employee_id: Optional[str] = None, employee_code: Optional[str] = None):
-    await require_auth(request)
+    _, my_emp = await _payslip_scope(request)
     db = get_db()
     q = {}
     if run_id:
@@ -535,17 +602,30 @@ async def list_payslips(request: Request, run_id: Optional[str] = None, employee
         q["employee_id"] = employee_id
     if employee_code:
         q["employee_code"] = employee_code
+    if my_emp is not None:
+        # 2026-11-02 — karyawan biasa: filter ke orang lain ditolak, bukan diam-diam diabaikan.
+        if (employee_id and employee_id != my_emp["id"]) or \
+                (employee_code and employee_code != my_emp.get("employee_code")):
+            raise HTTPException(403, "Anda hanya bisa melihat slip gaji milik Anda sendiri.")
+        q["employee_id"] = my_emp["id"]
     rows = await db.rahaza_payslips.find(q, {"_id": 0}).sort("employee_code", 1).to_list(500)
+    if my_emp is not None:
+        rows = await only_published_slips(db, rows)
     return serialize_doc(rows)
 
 
 @router.get("/payslips/{pid}")
 async def get_payslip(pid: str, request: Request):
-    await require_auth(request)
+    _, my_emp = await _payslip_scope(request)
     db = get_db()
     row = await db.rahaza_payslips.find_one({"id": pid}, {"_id": 0})
     if not row:
         raise HTTPException(404, "Payslip tidak ditemukan.")
+    if my_emp is not None:
+        if row.get("employee_id") != my_emp["id"]:
+            raise HTTPException(403, "Anda hanya bisa melihat slip gaji milik Anda sendiri.")
+        if not await only_published_slips(db, [row]):
+            raise HTTPException(404, "Slip gaji ini belum difinalisasi HR.")
     return serialize_doc(row)
 
 

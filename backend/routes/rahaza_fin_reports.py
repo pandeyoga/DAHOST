@@ -580,6 +580,26 @@ async def fg_inventory_valuation(request: Request, as_of: Optional[str] = Query(
     return await compute_fg_valuation(db, as_of or date.today().isoformat())
 
 
+def fg_valuation_status(*, difference: float, unexplained: float, uncosted_qty: float) -> dict:
+    """Status rekonsiliasi Nilai Persediaan FG (fungsi murni, 2026-11-02 / P-1).
+
+    Dulu `reconciled`/`explained` hanya melihat selisih rupiah. Barang FG yang stoknya
+    ada tetapi lapisannya Rp 0 (`uncosted_qty` > 0) membuat nilai lapisan DAN GL sama-sama
+    0 → selisih 0 → "aman", padahal nilainya macet di WIP dan HPP jualnya 0. Sekarang
+    stok tanpa biaya = TIDAK beres dan tidak terjelaskan, supaya alarm harian menyala.
+    """
+    issues = []
+    if uncosted_qty > 0:
+        issues.append(f"{uncosted_qty:g} pcs FG berlapisan biaya Rp 0 — nilainya belum pindah dari WIP "
+                      "dan HPP penjualannya akan 0. Periksa BOM & biaya jahit SPK batch tersebut.")
+    if abs(unexplained) >= 1:
+        issues.append(f"Selisih Rp {unexplained:,.0f} antara lapisan FIFO dan GL 1-1404 belum terjelaskan.")
+    no_uncosted = not (uncosted_qty > 0)
+    return {"reconciled": abs(difference) < 1 and no_uncosted,
+            "explained": abs(unexplained) < 1 and no_uncosted,
+            "issues": issues}
+
+
 async def compute_fg_valuation(db, as_of_date: str) -> dict:
     """Inti laporan M-01 — dipakai endpoint di atas DAN cron `fg-valuation-check`."""
     layers = await db.fg_cost_layers.find({}, {"_id": 0}).to_list(20000)
@@ -635,6 +655,7 @@ async def compute_fg_valuation(db, as_of_date: str) -> dict:
     layer_value = round(sum(r["layer_value"] for r in rows), 2)
     difference = round(layer_value - gl_balance, 2)
     explained = round(difference - unposted_value, 2)
+    status = fg_valuation_status(difference=difference, unexplained=explained, uncosted_qty=uncosted_qty)
     return {
         "as_of": as_of_date, "gl_account": FG_INVENTORY_ACCOUNT,
         "rows": rows,
@@ -642,8 +663,9 @@ async def compute_fg_valuation(db, as_of_date: str) -> dict:
                    "layer_value": layer_value, "gl_balance": gl_balance, "difference": difference,
                    "unposted_layers": unposted_layers, "unposted_value": round(unposted_value, 2),
                    "uncosted_qty": round(uncosted_qty, 2), "unexplained_difference": explained},
-        "reconciled": abs(difference) < 1,
-        "explained": abs(explained) < 1,
+        "reconciled": status["reconciled"],
+        "explained": status["explained"],
+        "issues": status["issues"],
         "notes": [
             "Nilai lapisan = Σ qty_remaining × unit_cost (FIFO, posisi saat ini).",
             "Saldo GL = Dr − Cr akun 1-1404 sampai tanggal as_of.",

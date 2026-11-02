@@ -25,6 +25,11 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+def year_end_allowed(year: int, today: date) -> bool:
+    """2026-11-02: True bila 31 Desember `year` sudah lewat menurut tanggal `today` (WIB)."""
+    return today > date(year, 12, 31)
+
+
 async def _preview(db, year: int) -> dict:
     periods = await db.rahaza_periods.find({"year": year}, {"_id": 0, "period_code": 1, "status": 1}).to_list(12)
     by_code = {p["period_code"]: p["status"] for p in periods}
@@ -75,8 +80,15 @@ async def close_year(request: Request):
     db = get_db()
     body = await request.json()
     year = int((body or {}).get("year") or 0)
-    if year < 2000 or year >= date.today().year + 1:
+    if year < 2000:
         raise HTTPException(400, "Tahun tidak valid.")
+    # 2026-11-02 (audit No.34): tutup tahun hanya SETELAH 31 Desember tahun itu (WIB). Dulu tahun
+    # berjalan diterima → jurnal penutup bertanggal masa depan dan laba ditahan salah bila ada
+    # transaksi susulan.
+    from utils.waktu import today_wib
+    if not year_end_allowed(year, today_wib()):
+        raise HTTPException(400, f"Tahun {year} belum berakhir. Tutup tahun hanya boleh setelah "
+                                 f"31 Desember {year} (hari ini {today_wib().isoformat()} WIB).")
     pv = await _preview(db, year)
     if pv["already_closed"]:
         raise HTTPException(400, f"Tahun {year} sudah ditutup (JE {pv['existing_je']['je_number']}).")

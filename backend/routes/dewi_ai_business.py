@@ -42,6 +42,10 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# 2026-11-02: nilai jujur saat AI tidak memberi penilaian yang bisa dibaca.
+RISK_NOT_ASSESSED = "tidak_dapat_dinilai"
+
+
 def ok(data=None, meta=None):
     r = {"success": True}
     if data is not None:
@@ -71,6 +75,33 @@ def _safe_parse_json(raw: str) -> dict | None:
     except Exception:
         return None
     return None
+
+
+_VALID_RISK = ("low", "medium", "high", "critical")
+
+
+def _fraud_result(parsed: dict | None, signals: dict) -> dict:
+    """Hasil fraud yang jujur (2026-11-02).
+
+    Dulu: JSON tak terbaca → `{"risk_level": "low", ...}` = rasa aman palsu.
+    Sekarang: risk_level hanya diterima bila salah satu nilai baku; selain itu
+    → `tidak_dapat_dinilai` + pesan "tidak dapat dinilai".
+    """
+    data = dict(parsed) if isinstance(parsed, dict) else {}
+    level = str(data.get("risk_level") or "").strip().lower()
+    if level not in _VALID_RISK:
+        data["risk_level"] = RISK_NOT_ASSESSED
+        data["risk_level_label"] = "Tidak dapat dinilai"
+        if not str(data.get("overall_assessment") or "").strip() or not parsed:
+            data["overall_assessment"] = (
+                "Tingkat risiko tidak dapat dinilai karena jawaban AI tidak lengkap atau "
+                "tidak terbaca. Silakan jalankan ulang analisis."
+            )
+    else:
+        data["risk_level"] = level
+    data.setdefault("anomalies_found", signals.get("top_invoice_outliers") or [])
+    data.setdefault("recommended_actions", [])
+    return data
 
 
 # ═══ P2-1: DAILY BUSINESS SUMMARY ════════════════════════════════════════════════
@@ -104,9 +135,11 @@ async def generate_daily_summary(
         },
         "maklon": maklon,
         "sdm": {"isu_kehadiran": att_issues},
-        "marketing": {
+        # 2026-11-02 (D1): omzet live = ESTIMASI marketing, bukan pendapatan akuntansi.
+        "marketing_estimasi": {
+            "keterangan": "ESTIMASI marketing (bukan angka akuntansi, tidak masuk GL)",
             "sesi_live": live["session_count"],
-            "revenue_live_rp": live["revenue_rp"],
+            "estimasi_omzet_live_rp": live["revenue_rp"],
         },
         "alert": {"stok_rendah": low_stock},
     }
@@ -177,7 +210,11 @@ async def revenue_forecast(
     user_prompt = (
         "Data pendapatan historis 6 bulan terakhir:\n"
         f"{json.dumps(monthly_summary, ensure_ascii=False, indent=2)}\n\n"
-        f"Buat prediksi untuk {months} bulan ke depan."
+        # 2026-11-02 (D1): live = estimasi & sudah dipisah dari total akuntansi.
+        "Catatan: `total_rp` = pendapatan akuntansi (faktur AR sah, tanpa draft/batal; "
+        "maklon sudah termasuk di dalamnya, `maklon_rp` hanya rincian). `live_estimasi_rp` = "
+        "ESTIMASI marketing, BUKAN pendapatan akuntansi dan TIDAK dijumlahkan ke total.\n"
+        f"Buat prediksi pendapatan akuntansi untuk {months} bulan ke depan."
     )
 
     raw_response = await call_claude(
@@ -240,12 +277,9 @@ async def fraud_detection(
         db=db,
     )
 
-    fraud_data = _safe_parse_json(raw_response) or {
-        "risk_level": "low",
-        "overall_assessment": raw_response,
-        "anomalies_found": signals["top_invoice_outliers"],
-        "recommended_actions": [],
-    }
+    # 2026-11-02: respons yang tidak bisa dibaca TIDAK boleh jatuh ke "low" (rasa aman
+    # palsu). Respons terpotong/ditolak sudah dihentikan di ai_cost_tracker (stop_reason).
+    fraud_data = _fraud_result(_safe_parse_json(raw_response), signals)
 
     return ok(data={
         "statistical_anomalies": signals["top_invoice_outliers"],
@@ -285,9 +319,10 @@ async def production_optimize(request: Request):
         db=db,
     )
 
+    # 2026-11-02: jangan mengarang "normal" bila jawaban AI tidak terbaca.
     opt_data = _safe_parse_json(raw_response) or {
-        "capacity_status": "normal",
-        "overall_assessment": raw_response,
+        "capacity_status": RISK_NOT_ASSESSED,
+        "overall_assessment": "Status kapasitas tidak dapat dinilai karena jawaban AI tidak terbaca. Silakan jalankan ulang.",
         "scheduling_suggestions": [],
     }
 

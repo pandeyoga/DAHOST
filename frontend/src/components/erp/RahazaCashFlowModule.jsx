@@ -88,7 +88,9 @@ function AccountGroup({ code, group }) {
 }
 
 export default function RahazaCashFlowModule({ token }) {
-  const [view, setView] = useState('category');
+  // 2026-11-02 (audit No.46): bawaan = "Per Akun" dari buku besar. Tampilan kategori mutasi
+  // tidak lengkap (tidak semua transaksi kas menulis mutasi) sehingga kas awal/akhir bisa salah.
+  const [view, setView] = useState('account');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -140,7 +142,7 @@ export default function RahazaCashFlowModule({ token }) {
         icon={Wallet}
         eyebrow="Accounting Core · F3"
         title="Laporan Arus Kas"
-        subtitle="Cash Flow Statement — metode direct dari ledger pergerakan kas. Grouping: Operasi / Investasi / Pendanaan."
+        subtitle="Cash Flow Statement — bawaan dari buku besar (Per Akun); tampilan kategori mutasi kas sebagai pembanding. Grouping: Operasi / Investasi / Pendanaan."
         actions={
           <>
             <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="cf-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
@@ -157,8 +159,8 @@ export default function RahazaCashFlowModule({ token }) {
           <span className="text-xs text-muted-foreground">s/d</span>
           <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-8 w-36" data-testid="cf-to" />
           <div className="flex gap-1 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-0.5 ml-auto">
-            <button onClick={() => setView('category')} className={view === 'category' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-category">Per Kategori Mutasi</button>
             <button onClick={() => setView('account')} className={view === 'account' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-account">Per Akun (OPR/INV/PND)</button>
+            <button onClick={() => setView('category')} className={view === 'category' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-category">Per Kategori Mutasi</button>
           </div>
         </div>
       </GlassCard>

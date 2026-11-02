@@ -9,7 +9,7 @@
  *  - History transaksi per fund + GL posting status
  *  - Retry posting jika gagal
  */
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { FINANCE_ROLES } from '../../lib/financeRoles'; // FIN-02
 import {
   Wallet, Plus, RefreshCw, ChevronRight, AlertCircle,
@@ -32,6 +32,9 @@ import {
 } from '@/components/ui/table';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+// 2026-11-02: rekening sumber dari master Kas & Bank (bukan daftar hard-code yang memuat
+// 'Bank BRI (1-1203)' — tidak ada di bagan akun — dan 'Kas (1-1101)' = kas kecil itu sendiri).
+import CashAccountSelect, { usePaymentCashAccounts, todayWIB } from './SdmCashAccountSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/finance/petty-cash`;
@@ -54,17 +57,18 @@ const TXN_CONFIG = {
 };
 
 // ── Create Fund Dialog ─────────────────────────────────────────────────────────
-function CreateFundDialog({ open, onClose, onCreated }) {
-  const [form, setForm] = useState({ name: '', custodian_name: '', opening_balance: '', bank_account_code: '1-1201' });
+function CreateFundDialog({ open, onClose, onCreated, accounts, accountsLoaded }) {
+  const [form, setForm] = useState({ name: '', custodian_name: '', opening_balance: '', bank_account_code: '' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => {
-    if (open) { setForm({ name: '', custodian_name: '', opening_balance: '', bank_account_code: '1-1201' }); setErr(''); }
+    if (open) { setForm({ name: '', custodian_name: '', opening_balance: '', bank_account_code: '' }); setErr(''); }
   }, [open]);
 
   const save = async () => {
     if (!form.name.trim()) return setErr('Nama dana wajib diisi.');
+    if (!form.bank_account_code) return setErr('Rekening sumber wajib dipilih.');
     setSaving(true); setErr('');
     try {
       const res = await fetch(`${BASE}/funds`, {
@@ -102,21 +106,17 @@ function CreateFundDialog({ open, onClose, onCreated }) {
             <Input data-testid="fund-opening" type="number" min="0" placeholder="0" value={form.opening_balance} onChange={e => setForm(p => ({ ...p, opening_balance: e.target.value }))} />
           </div>
           <div className="space-y-1">
-            <Label>Bank Sumber</Label>
-            <Select value={form.bank_account_code} onValueChange={v => setForm(p => ({ ...p, bank_account_code: v }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1-1201">Bank BCA (1-1201)</SelectItem>
-                <SelectItem value="1-1202">Bank Mandiri (1-1202)</SelectItem>
-                <SelectItem value="1-1203">Bank BRI (1-1203)</SelectItem>
-                <SelectItem value="1-1101">Kas (1-1101)</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label>Rekening Sumber *</Label>
+            <CashAccountSelect
+              accounts={accounts} loaded={accountsLoaded} valueKey="gl_account_code"
+              value={form.bank_account_code} onChange={v => setForm(p => ({ ...p, bank_account_code: v }))}
+              testId="fund-source-account"
+            />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
-          <Button data-testid="fund-save" onClick={save} disabled={saving}>
+          <Button data-testid="fund-save" onClick={save} disabled={saving || !form.bank_account_code}>
             {saving && <Loader2 size={13} className="mr-1 animate-spin" />}
             Buat Dana
           </Button>
@@ -127,17 +127,24 @@ function CreateFundDialog({ open, onClose, onCreated }) {
 }
 
 // ── Replenish Dialog ───────────────────────────────────────────────────────────
-function ReplenishDialog({ open, fund, onClose, onDone }) {
+function ReplenishDialog({ open, fund, onClose, onDone, accounts, accountsLoaded }) {
   const [amount, setAmount] = useState('');
   const [memo, setMemo]   = useState('');
-  const [bankCode, setBankCode] = useState('1-1201');
+  const [bankCode, setBankCode] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => { if (open) { setAmount(''); setMemo(''); setErr(''); } }, [open]);
+  useEffect(() => {
+    // bawaan = rekening sumber dana ini, bila masih rekening kas/bank aktif
+    if (!open) return;
+    const own = fund?.bank_account_code;
+    setBankCode(accounts.some(a => a.gl_account_code === own) ? own : '');
+  }, [open, fund?.bank_account_code, accounts]);
 
   const save = async () => {
     if (!amount || parseFloat(amount) <= 0) return setErr('Jumlah harus > 0.');
+    if (!bankCode) return setErr('Rekening sumber wajib dipilih.');
     setSaving(true); setErr('');
     try {
       const res = await fetch(`${BASE}/funds/${fund.id}/replenish`, {
@@ -167,15 +174,11 @@ function ReplenishDialog({ open, fund, onClose, onDone }) {
             <Input data-testid="replenish-amount" type="number" min="1" placeholder="500000" value={amount} onChange={e => setAmount(e.target.value)} />
           </div>
           <div className="space-y-1">
-            <Label>Bank Sumber</Label>
-            <Select value={bankCode} onValueChange={setBankCode}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1-1201">Bank BCA (1-1201)</SelectItem>
-                <SelectItem value="1-1202">Bank Mandiri (1-1202)</SelectItem>
-                <SelectItem value="1-1203">Bank BRI (1-1203)</SelectItem>
-              </SelectContent>
-            </Select>
+            <Label>Rekening Sumber *</Label>
+            <CashAccountSelect
+              accounts={accounts} loaded={accountsLoaded} valueKey="gl_account_code"
+              value={bankCode} onChange={setBankCode} testId="replenish-source-account"
+            />
           </div>
           <div className="space-y-1">
             <Label>Keterangan</Label>
@@ -184,7 +187,7 @@ function ReplenishDialog({ open, fund, onClose, onDone }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
-          <Button data-testid="replenish-confirm" onClick={save} disabled={saving}>
+          <Button data-testid="replenish-confirm" onClick={save} disabled={saving || !bankCode}>
             {saving && <Loader2 size={13} className="mr-1 animate-spin" />}
             Replenish
           </Button>
@@ -203,7 +206,7 @@ function AddTxnDialog({ open, fund, onClose, onDone }) {
 
   useEffect(() => {
     if (open) {
-      setForm({ txn_type: 'expense', amount: '', category: '', payee: '', memo: '', txn_date: new Date().toISOString().slice(0, 10) });
+      setForm({ txn_type: 'expense', amount: '', category: '', payee: '', memo: '', txn_date: todayWIB() }); // 2026-11-02: tanggal WIB, bukan UTC
       setErr('');
       // Fetch categories
       fetch(`${API}/api/hr/expenses/master-categories`, {
@@ -401,6 +404,11 @@ export default function PettyCashModule() {
 
   const role = userRole();
   const canManage = FINANCE_ROLES.includes(role);
+  // 2026-11-02: rekening sumber = rekening kas/bank aktif nyata, TANPA akun dana kas kecil itu sendiri
+  const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts();
+  const [pettyCode, setPettyCode] = useState('');
+  const sourceAccounts = useMemo(
+    () => cashAccounts.filter(a => a.gl_account_code !== pettyCode), [cashAccounts, pettyCode]);
 
   const fetchFunds = useCallback(async () => {
     setLoading(true);
@@ -408,6 +416,7 @@ export default function PettyCashModule() {
       const r = await fetch(`${BASE}/funds`, { headers: { Authorization: `Bearer ${token()}` } });
       const d = await r.json();
       const list = d.items || [];
+      setPettyCode(d.petty_cash_account_code || '');
       setFunds(list);
       setActiveFund(prev => {
         if (!prev) return list.length > 0 ? list[0] : null;
@@ -631,10 +640,12 @@ export default function PettyCashModule() {
       </div>
 
       {/* Dialogs */}
-      <CreateFundDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={afterAction} />
+      <CreateFundDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={afterAction}
+        accounts={sourceAccounts} accountsLoaded={cashLoaded} />
       {activeFund && (
         <>
-          <ReplenishDialog open={replenishOpen} fund={activeFund} onClose={() => setReplenishOpen(false)} onDone={afterAction} />
+          <ReplenishDialog open={replenishOpen} fund={activeFund} onClose={() => setReplenishOpen(false)} onDone={afterAction}
+            accounts={sourceAccounts} accountsLoaded={cashLoaded} />
           <AddTxnDialog open={addTxnOpen} fund={activeFund} onClose={() => setAddTxnOpen(false)} onDone={afterAction} />
         </>
       )}

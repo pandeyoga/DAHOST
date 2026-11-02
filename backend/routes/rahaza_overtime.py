@@ -199,6 +199,46 @@ async def create_request(request: Request):
     return {"ok": True, "overtime": _s(doc)}
 
 
+# ── 2026-11-02 — KABAR KEPUTUSAN LEMBUR KE PEMOHON ──────────────────────────
+# Audit runtime 2026-11-02: lembur disetujui/ditolak tanpa satu notifikasi pun;
+# pemohon harus membuka Portal Saya berkali-kali untuk tahu nasibnya. Lembur
+# karyawan diajukan & dipantau di Portal Saya › Cuti & Lembur (`portal-cuti`).
+# Helper ini juga boleh dipanggil jalur lain (mis. routes/hr_approval_inbox.py).
+async def notify_overtime_decision(db, ot: dict, *, approved: bool, reason: str = ""):
+    try:
+        from routes.rahaza_notifications import publish_notification
+        from utils.notif_recipients import active_user_filter
+        uids = []
+        if ot.get("employee_id"):
+            rows = await db.users.find(active_user_filter({"employee_id": ot["employee_id"]}),
+                                       {"_id": 0, "id": 1}).to_list(5)
+            uids = [r["id"] for r in rows if r.get("id")]
+        if not uids and ot.get("submitted_by"):
+            uids = [ot["submitted_by"]]
+        if not uids:
+            return None
+        when = f"{ot.get('date')} {ot.get('start_time')}–{ot.get('end_time')}, {ot.get('hours')} jam"
+        if approved:
+            title, msg = "Lembur Disetujui", f"Pengajuan lembur Anda ({when}) telah DISETUJUI."
+        else:
+            title = "Lembur Ditolak"
+            msg = f"Pengajuan lembur Anda ({when}) DITOLAK. Alasan: {reason or '-'}."
+        return await publish_notification(
+            db,
+            type_="overtime_approved" if approved else "overtime_rejected",
+            severity="success" if approved else "warning",
+            title=title, message=msg,
+            link_module="portal-cuti", link_id=ot.get("id"),
+            target_user_ids=uids,
+            dedup_key=f"overtime_{'approved' if approved else 'rejected'}_{ot.get('id')}",
+            dedup_minutes=1440,
+        )
+    except Exception as ne:  # noqa: BLE001 — kabar tidak boleh menggagalkan keputusan
+        import logging
+        logging.getLogger(__name__).warning("[overtime] notif keputusan gagal: %s", ne)
+        return None
+
+
 @router.put("/{ot_id}/approve")
 async def approve_request(ot_id: str, request: Request):
     user = await _require_approver(request)
@@ -220,6 +260,7 @@ async def approve_request(ot_id: str, request: Request):
         }}
     )
     out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
+    await notify_overtime_decision(db, out or doc, approved=True)  # 2026-11-02
     return {"ok": True, "overtime": _s(out)}
 
 
@@ -248,6 +289,7 @@ async def reject_request(ot_id: str, request: Request):
         }}
     )
     out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
+    await notify_overtime_decision(db, out or doc, approved=False, reason=reason)  # 2026-11-02
     return {"ok": True, "overtime": _s(out)}
 
 

@@ -54,6 +54,30 @@ def _delta_pct(curr: float, prev: float) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # Finance aggregations
 # ---------------------------------------------------------------------------
+# 2026-11-02 (audit No.51): status faktur yang benar-benar terbit. Draft & batal/void tidak pernah
+# menjadi pendapatan.
+REAL_AR_STATUSES = ["paid", "partial", "partial_paid", "sent", "issued", "overdue", "written_off"]
+
+
+async def _gl_revenue(db, start: str, end: str) -> float:
+    """2026-11-02 (audit No.51): pendapatan = saldo akun REVENUE buku besar periode itu
+    (kredit − debit, tanpa jurnal penutup tahun) — rumus yang SAMA dengan Laporan Laba/Rugi.
+    Artinya DPP tanpa PPN (PPN keluaran = hutang 2-1400), sudah dikurangi retur/diskon/potongan
+    platform, dan pendapatan pencairan marketplace (yang menurut D2 hanya ada di GL) ikut."""
+    codes = [a["code"] async for a in db.rahaza_coa_accounts.find(
+        {"type": "REVENUE", "is_group": False}, {"_id": 0, "code": 1})]
+    if not codes:
+        return 0.0
+    rows = await db.rahaza_journal_lines.aggregate([
+        {"$match": {"date": {"$gte": start, "$lte": end}, "source_module": {"$ne": "year_end_close"},
+                    "account_code": {"$in": codes}}},
+        {"$group": {"_id": None, "d": {"$sum": {"$ifNull": ["$debit", 0]}},
+                    "c": {"$sum": {"$ifNull": ["$credit", 0]}}}},
+    ]).to_list(1)
+    r = rows[0] if rows else {}
+    return round(float(r.get("c") or 0) - float(r.get("d") or 0), 2)
+
+
 async def _finance_kpis(db, year: int, month: int) -> dict:
     start, end = _month_range(year, month)
 
@@ -61,10 +85,13 @@ async def _finance_kpis(db, year: int, month: int) -> dict:
     rev_pipeline = [
         {"$match": {
             "issue_date": {"$gte": start, "$lte": end},
-            "status": {"$in": ["paid", "partial", "partial_paid", "sent", "issued", "overdue", "written_off"]},  # FIN-09: pendapatan diakui saat terbit (hapus-buku = beban, bukan pengurang pendapatan)
+            "status": {"$in": REAL_AR_STATUSES},  # FIN-09: pendapatan diakui saat terbit (hapus-buku = beban, bukan pengurang pendapatan)
         }},
         {"$group": {"_id": None,
                     "total_revenue": {"$sum": {"$ifNull": ["$total", 0]}},
+                    # 2026-11-02: DPP faktur = total − PPN (pembanding; angka utama dari GL)
+                    "total_dpp": {"$sum": {"$subtract": [{"$ifNull": ["$total", 0]},
+                                                         {"$ifNull": ["$tax_amount", 0]}]}},
                     "total_paid": {"$sum": {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": ["$balance", 0]}]}},
                     "invoice_count": {"$sum": 1}}},
     ]
@@ -89,11 +116,16 @@ async def _finance_kpis(db, year: int, month: int) -> dict:
     ar_rows = await db.rahaza_ar_invoices.aggregate(ar_overdue_pipeline).to_list(1)
     ar_data = ar_rows[0] if ar_rows else {}
 
-    revenue = float(rev_data.get("total_revenue") or 0)
+    # 2026-11-02 (audit No.51): dulu Σ `total` faktur (termasuk PPN 11%) dan pencairan marketplace
+    # tidak terbaca (revenue 0 untuk toko online). Kini dari akun pendapatan GL.
+    revenue = await _gl_revenue(db, start, end)
     net_income = revenue - total_expenses
 
     return {
         "revenue_rp": revenue,
+        "revenue_source": "gl_revenue_accounts",
+        "invoice_revenue_dpp_rp": round(float(rev_data.get("total_dpp") or 0), 2),
+        "invoice_revenue_gross_rp": round(float(rev_data.get("total_revenue") or 0), 2),
         "paid_revenue_rp": float(rev_data.get("total_paid") or 0),
         "invoice_count": int(rev_data.get("invoice_count") or 0),
         "total_expenses_rp": total_expenses,

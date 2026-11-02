@@ -13,6 +13,7 @@ import {
 import { formatRupiah } from '@/lib/format';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
 
 /* F13 (sesi #11) — layar UANG yang tidak bisa dibawa ke rapat.
    Kasbon & pinjaman karyawan dulu hanya bisa dibaca sebagai KARTU: tidak ada
@@ -47,12 +48,15 @@ function StatusBadge({ status }) {
 
 // ─── Disburse Modal ───────────────────────────────────────────────────────────
 function DisburseModal({ req, onClose, onDone }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const nowYM = new Date().toISOString().slice(0, 7);
-  const [form, setForm] = useState({ disbursement_date: today, deduction_start_period: nowYM, finance_notes: '' });
+  // 2026-11-02 (P5 butir 7): tanggal bawaan WIB; rekening sumber WAJIB dipilih dari rekening kas/bank
+  // aktif (dulu tidak ada pilihan → jurnal selalu Cr 1-1201 bertanggal hari ini).
+  const today = todayWIB();
+  const { accounts, loaded } = usePaymentCashAccounts();
+  const [form, setForm] = useState({ disbursement_date: today, deduction_start_period: today.slice(0, 7), finance_notes: '', cash_account_id: '' });
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async () => {
+    if (!form.cash_account_id) { toast.error('Pilih rekening sumber pencairan'); return; }
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/dewi/kasbon/requests/${req.id}/disburse`, {
@@ -87,6 +91,13 @@ function DisburseModal({ req, onClose, onDone }) {
             <label className="text-xs font-medium text-muted-foreground block mb-1">Tanggal Pencairan</label>
             <input type="date" value={form.disbursement_date} onChange={e => setForm(p => ({...p, disbursement_date: e.target.value}))}
               className="w-full h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
+            <p className="text-xs text-muted-foreground mt-1">Tanggal ini menjadi tanggal jurnal.</p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Dicairkan dari Rekening</label>
+            <CashAccountSelect accounts={accounts} loaded={loaded} value={form.cash_account_id}
+              onChange={v => setForm(p => ({...p, cash_account_id: v}))} testId="kasbon-disburse-account" />
           </div>
 
           <div>
@@ -105,7 +116,7 @@ function DisburseModal({ req, onClose, onDone }) {
         </div>
         <div className="p-5 border-t border-[var(--glass-border)] flex gap-3">
           <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-          <button onClick={handleSubmit} disabled={saving}
+          <button onClick={handleSubmit} disabled={saving || !form.cash_account_id}
             className="flex-1 h-10 rounded-xl bg-emerald-500 text-white text-sm font-semibold disabled:opacity-50">
             {saving ? 'Memproses...' : 'Cairkan Sekarang'}
           </button>
@@ -117,14 +128,18 @@ function DisburseModal({ req, onClose, onDone }) {
 
 // ─── Repay Modal ──────────────────────────────────────────────────────────────
 function RepayModal({ req, onClose, onDone }) {
-  const today = new Date().toISOString().slice(0, 10);
-  const nowYM = new Date().toISOString().slice(0, 7);
+  // 2026-11-02 (P5 butir 5): pilihan "Potong Gaji" DIHAPUS — dulu langsung melunasi kasbon lalu payroll
+  // melewati potongannya (gaji dibayar penuh, uang kasbon hilang). Potongan gaji kini HANYA tercatat
+  // otomatis saat run payroll difinalisasi; form ini khusus pembayaran uang nyata ke rekening yang dipilih.
+  const today = todayWIB();
+  const { accounts, loaded } = usePaymentCashAccounts();
   const suggested = req.type === 'kasbon' ? req.outstanding_balance : req.installment_amount;
-  const [form, setForm] = useState({ amount: String(suggested || ''), method: 'payroll_deduction', date: today, period: nowYM, notes: '' });
+  const [form, setForm] = useState({ amount: String(suggested || ''), method: 'manual', date: today, notes: '', cash_account_id: '' });
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async () => {
     if (!form.amount || Number(form.amount) <= 0) { toast.error('Jumlah harus > 0'); return; }
+    if (!form.cash_account_id) { toast.error('Pilih rekening penerima pembayaran'); return; }
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/dewi/kasbon/requests/${req.id}/repay`, {
@@ -153,13 +168,9 @@ function RepayModal({ req, onClose, onDone }) {
             {req.installment_amount > 0 && <div className="flex justify-between"><span className="text-muted-foreground">Cicilan Bulanan</span><span>{fmt(req.installment_amount)}</span></div>}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            {[['payroll_deduction','Potong Gaji'],['manual','Bayar Manual']].map(([v,l]) => (
-              <button key={v} onClick={() => setForm(p => ({...p, method: v}))}
-                className={`p-2.5 rounded-xl border-2 text-xs font-medium transition-all ${form.method===v ? 'border-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.05)] text-foreground' : 'border-[var(--glass-border)] text-muted-foreground'}`}>
-                {l}
-              </button>
-            ))}
+          <div className="p-2.5 rounded-xl border border-[var(--glass-border)] text-xs text-muted-foreground" data-testid="repay-payroll-note">
+            Bayar manual (tunai/transfer) oleh karyawan. Potongan gaji tidak dicatat di sini — tercatat
+            otomatis saat run payroll periode {req.deduction_start_period || 'berjalan'} difinalisasi.
           </div>
 
           <div>
@@ -173,14 +184,14 @@ function RepayModal({ req, onClose, onDone }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Tanggal</label>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Tanggal Bayar</label>
               <input type="date" value={form.date} onChange={e => setForm(p => ({...p, date: e.target.value}))}
                 className="w-full h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Periode Gaji</label>
-              <input type="month" value={form.period} onChange={e => setForm(p => ({...p, period: e.target.value}))}
-                className="w-full h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Diterima di Rekening</label>
+              <CashAccountSelect accounts={accounts} loaded={loaded} value={form.cash_account_id}
+                onChange={v => setForm(p => ({...p, cash_account_id: v}))} testId="kasbon-repay-account" />
             </div>
           </div>
 
@@ -193,7 +204,7 @@ function RepayModal({ req, onClose, onDone }) {
         </div>
         <div className="p-5 border-t border-[var(--glass-border)] flex gap-3">
           <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-          <button onClick={handleSubmit} disabled={saving || !form.amount}
+          <button onClick={handleSubmit} disabled={saving || !form.amount || !form.cash_account_id}
             className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-semibold disabled:opacity-50">
             {saving ? 'Menyimpan...' : 'Catat Pembayaran'}
           </button>

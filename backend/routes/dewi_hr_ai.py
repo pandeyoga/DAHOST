@@ -13,7 +13,6 @@ P2-10: Performance Coaching AI
 - POST /api/hr/ai/coaching/{employee_id}         — Generate coaching plan
 - GET  /api/hr/ai/coaching/history               — Coaching history
 """
-import os
 import uuid
 import json
 import logging
@@ -23,13 +22,13 @@ from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/ai", tags=["hr-ai"])
 
-LLM_KEY   = os.environ.get("EMERGENT_LLM_KEY", "")
-LLM_MODEL = ("openai", "gpt-5.1")
+# 2026-11-02 (No.60): tier, bukan tuple ("openai","gpt-5.1"); kunci dikelola services.ai.
+LLM_TIER = "executive"
 
 
 def _now():
@@ -53,14 +52,13 @@ def serialize(o):
     return o
 
 async def _call_ai(system_msg: str, user_msg: str, tag: str) -> str:
-    if not LLM_KEY:
-        raise HTTPException(500, "EMERGENT_LLM_KEY tidak dikonfigurasi")
-    chat = LlmChat(
-        api_key=LLM_KEY,
-        session_id=f"hr-ai-{tag}-{uuid.uuid4().hex[:8]}",
-        system_message=system_msg,
-    ).with_model(*LLM_MODEL)
-    return await chat.send_message(UserMessage(text=user_msg))
+    # 2026-11-02: gerbang & galat ramah dari services.ai (dulu 500 "EMERGENT_LLM_KEY ...").
+    feature = f"hr-ai-{tag}"
+    await require_ai(feature, tier=LLM_TIER)
+    try:
+        return await ai_text(feature, system_msg, user_msg, tier=LLM_TIER)
+    except AIError as e:
+        raise ai_http_error(e)
 
 def _parse_json_response(text: str) -> dict:
     try:
@@ -201,7 +199,8 @@ async def predict_attrition(
     await require_auth(request)
     db = get_db()
 
-    query = {"employment_status": "active"}
+    # 2026-11-02: karyawan aktif = `active: True` (field employment_status tidak ada → dulu 0).
+    query = {"active": True}
     if department:
         query["department"] = department
 
@@ -446,7 +445,7 @@ async def list_employees_for_ai(request: Request):
     await require_auth(request)
     db = get_db()
     emps = await db.rahaza_employees.find(
-        {"employment_status": "active"},
+        {"active": True},  # 2026-11-02: dulu employment_status (tidak ada di data) → daftar kosong
         {"_id": 0, "id": 1, "employee_code": 1, "name": 1, "department": 1, "job_title": 1, "grade": 1}
     ).sort("name", 1).to_list(200)
     return ok(data=serialize(emps))

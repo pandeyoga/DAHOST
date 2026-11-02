@@ -5,7 +5,6 @@ Gap 3 (2026-05): AI recommendations endpoint
 """
 import uuid
 import logging
-import os
 import json
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -14,12 +13,11 @@ from database import get_db
 from auth import require_auth
 # F6 (sesi #9) — daftar & ringkasan WAJIB berlingkup toko (core/marketing_account_scope).
 from core import marketing_account_scope as _scope
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 import random
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/ads", tags=["marketing-ads"])
@@ -283,12 +281,12 @@ async def get_ai_recommendations(request: Request):
     AI-generated recommendations untuk campaign optimization.
     Analisis ROAS, CTR, CPA dan berikan saran konkret per campaign.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     await seed_ads_if_empty()
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(500, "AI tidak dikonfigurasi")
+    # 2026-11-02: gerbang tunggal services.ai (pesan ramah; dulu 500 "AI tidak dikonfigurasi").
+    await require_ai("marketing-ads-rec", user_id=user.get("id"), db=db, tier="light")
 
     # Ambil data campaign terakhir (max 20)
     campaigns = await db.marketing_ads_data.find({}).sort("date", -1).limit(20).to_list(20)
@@ -324,15 +322,11 @@ async def get_ai_recommendations(request: Request):
         s = platform_stats[p]
         s["roas"] = round(s["revenue"] / s["spend"], 2) if s["spend"] > 0 else 0
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"ads-rec-{uuid.uuid4().hex[:8]}",
-        system_message=(
-            "Kamu adalah konsultan ads performance untuk brand fashion Indonesia. "
-            "Berikan rekomendasi yang spesifik dan actionable per campaign. "
-            "Respond only with valid JSON."
-        )
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = (
+        "Kamu adalah konsultan ads performance untuk brand fashion Indonesia. "
+        "Berikan rekomendasi yang spesifik dan actionable per campaign. "
+        "Respond only with valid JSON."
+    )
 
     prompt = (
         f"Data ads campaign CV Dewi Aditya (fashion brand Indonesia):\n"
@@ -355,16 +349,20 @@ async def get_ai_recommendations(request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-ads-rec", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
             clean = "\n".join(lines[1:-1])
         result = json.loads(clean)
         return success_response(data=result, metadata={"campaigns_analyzed": len(campaigns)})
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
+        # 2026-11-02: tanpa isi exception mentah ke pengguna.
         logger.error(f"Ads AI recommendations error: {e}")
-        raise HTTPException(500, f"Rekomendasi AI gagal: {e}")
+        raise HTTPException(502, "Rekomendasi AI tidak dapat dibaca. Silakan coba lagi.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

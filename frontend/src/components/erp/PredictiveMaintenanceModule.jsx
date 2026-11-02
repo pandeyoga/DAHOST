@@ -177,7 +177,7 @@ export default function PredictiveMaintenanceModule({ token }) {
             <Wrench className="w-6 h-6 text-orange-500" /> Predictive Maintenance
           </h1>
           <p className="text-sm text-muted-foreground">
-            Monitoring kesehatan mesin & prediksi maintenance berdasarkan log historis + AI advice (Emergent LLM).
+            Monitoring kesehatan mesin & prediksi maintenance berdasarkan log historis + saran AI (Claude, bila AI aktif).
           </p>
         </div>
         <div className="flex items-center gap-2">

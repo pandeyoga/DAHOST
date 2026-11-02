@@ -16,8 +16,12 @@ async def attendance_issues(db, *, since: datetime) -> int:
 
 
 async def production_employee_count(db) -> int:
-    """Active employees in production departments."""
+    """Active employees in production departments.
+
+    2026-11-02: karyawan aktif = `active: True` (SSOT data karyawan). Field
+    `employment_status` tidak ada di data sehingga hitungan dulu selalu 0.
+    """
     return await db.rahaza_employees.count_documents({
-        "employment_status": "active",
+        "active": True,
         "department": {"$in": ["Produksi", "Production", "Jahit"]},
     })

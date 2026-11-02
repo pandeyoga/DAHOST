@@ -290,6 +290,25 @@ async def _void_je_by_source(db, source_module: str, source_ref: str, user: dict
     return {"ok": True, "voided": True, "je_id": je["id"], "je_number": je["je_number"]}
 
 
+def posting_error_message(result: dict) -> str:
+    """Alasan gagal posting yang SEBENARNYA (2026-11-02).
+
+    Poster menulis alasan dengan dua konvensi: `error` (teks) atau `reason` (kode) +
+    `detail` (teks). Dulu hanya `error` yang dibaca, sehingga semua kegagalan ber-`reason`
+    (mis. `zero_wip_value`) tersimpan sebagai "Unknown posting error" dan staf mencari
+    masalah di tempat yang salah.
+    """
+    r = result or {}
+    err = str(r.get("error") or "").strip()
+    if err:
+        return err
+    detail = str(r.get("detail") or "").strip()
+    reason = str(r.get("reason") or "").strip()
+    if detail and reason:
+        return f"{detail} ({reason})"
+    return detail or reason or "Unknown posting error"
+
+
 async def _save_source_posting_result(db, collection: str, doc_id: str, result: dict, prefix: str = "gl"):
     """Persist posting outcome on the source document.
     With prefix='gl' (default): stores gl_posted_at, gl_je_id, gl_je_number, post_error.
@@ -306,7 +325,7 @@ async def _save_source_posting_result(db, collection: str, doc_id: str, result: 
             }
         else:
             upd = {
-                "post_error": result.get("error") or "Unknown posting error",
+                "post_error": posting_error_message(result),
                 "post_error_at": _now(),
             }
     else:
@@ -322,7 +341,7 @@ async def _save_source_posting_result(db, collection: str, doc_id: str, result: 
                 f"{prefix}_posted": False,
                 f"{prefix}_je_id": None,
                 f"{prefix}_je_number": None,
-                f"{prefix}_error": result.get("error") or "Unknown posting error",
+                f"{prefix}_error": posting_error_message(result),
                 f"{prefix}_error_at": _now(),
             }
     try:
@@ -913,10 +932,31 @@ async def void_ap_invoice_posting(db, invoice_id: str, user: dict, reason: str =
 
 
 # ───────────────────────── F3 STUBS ───────────────────────────────────────────
+# 2026-11-02 (audit payroll): potongan PENYESUAIAN MANUAL (`payslip.manual_deduction`, tombol "Adj")
+# disimpan TERPISAH dari array `deductions[]` tetapi ikut `deductions_total`. Agregator dulu hanya
+# membaca `deductions[]` → Σ komponen ≠ total_deductions → jurnal ditolak ("Komponen potongan tidak
+# konsisten") dan run ber-penyesuaian manual TIDAK BISA difinalisasi. Kini jadi komponen sendiri
+# (`manual`), disimpan di `deductions_by_type[MANUAL_DEDUCTION_KEY]` saat finalize.
+MANUAL_DEDUCTION_KEY = "manual_adjustment"
+# Akun kredit potongan manual: peran opsional `payroll_finalize.credit_other_deduction`; bila belum
+# diisi Finance, Pendapatan Lain-Lain 4-9000 (akun yang sudah dirujuk profil posting untuk pendapatan
+# lain-lain: cmt_ap_invoice.debit_penalty_income, variance_overproduction.credit_variance_income).
+PAYROLL_OTHER_DEDUCTION_DEFAULT = "4-9000"
+
+
+def _slip_manual_deduction(slip: dict) -> float:
+    """Nilai potongan manual satu slip — rumus SAMA dengan `_payslip_totals` (≥0, dibulatkan)."""
+    try:
+        return float(round(max(0.0, float(slip.get("manual_deduction") or 0))))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def payroll_deduction_totals(payslips: list) -> dict:
     """H-02: agregasi `payslips[].deductions[]` per komponen (SATU definisi utk finalize, posting, bayar BPJS/PPh21).
-    pph21 → type 'pph21'; bpjs → type 'bpjs_*'; kasbon → 'kasbon'; other → late/lwop/tak dikenal (mengurangi beban)."""
-    t = {"pph21": 0.0, "bpjs": 0.0, "kasbon": 0.0, "other": 0.0, "by_type": {}}
+    pph21 → type 'pph21'; bpjs → type 'bpjs_*'; kasbon → 'kasbon'; other → late/lwop/tak dikenal (mengurangi beban);
+    manual → `payslip.manual_deduction` (penyesuaian manual, 2026-11-02)."""
+    t = {"pph21": 0.0, "bpjs": 0.0, "kasbon": 0.0, "other": 0.0, "manual": 0.0, "by_type": {}}
     for s in payslips or []:
         for d in (s.get("deductions") or []):
             amt = float(d.get("amount") or 0)
@@ -930,14 +970,18 @@ def payroll_deduction_totals(payslips: list) -> dict:
                 t["kasbon"] += amt
             else:
                 t["other"] += amt
-    for k in ("pph21", "bpjs", "kasbon", "other"):
+        t["manual"] += _slip_manual_deduction(s)
+    for k in ("pph21", "bpjs", "kasbon", "other", "manual"):
         t[k] = round(t[k], 2)
+    if t["manual"]:
+        t["by_type"][MANUAL_DEDUCTION_KEY] = t["manual"]
     return t
 
 
 async def post_payroll_run(db, run: dict, user: dict) -> dict:
     """Payroll finalize → JE (H-02: per komponen potongan).
-    Dr Beban Gaji (gross − potongan late/LWOP) ; Cr Hutang Gaji (net + kasbon) ; Cr Hutang PPh21 ; Cr Hutang BPJS.
+    Dr Beban Gaji (gross − potongan late/LWOP) ; Cr Hutang Gaji (net + kasbon) ; Cr Hutang PPh21 ; Cr Hutang BPJS ;
+    Cr Pendapatan Lain-Lain (potongan penyesuaian manual, 2026-11-02).
     Kasbon dikredit ke Hutang Gaji lalu dipindah ke piutang kasbon oleh modul kasbon (employee_loan_repayment_payroll).
     Idempotent via source_ref = payroll:{run_id}."""
     run_id = run.get("id")
@@ -959,18 +1003,28 @@ async def post_payroll_run(db, run: dict, user: dict) -> dict:
     total_gross = float(run.get("total_gross") or 0)
     total_net = float(run.get("total_net") or 0)
     total_deductions = float(run.get("total_deductions") or 0)
-    if run.get("deductions_by_type") is None:
-        slips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0, "deductions": 1}).to_list(2000)
+    by_type = run.get("deductions_by_type")
+    if by_type is None:
+        slips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0, "deductions": 1, "manual_deduction": 1}).to_list(2000)
         comp = payroll_deduction_totals(slips)
     else:
         comp = {"pph21": float(run.get("total_pph21") or 0), "bpjs": float(run.get("total_bpjs_employee") or 0),
                 "kasbon": float(run.get("total_kasbon") or 0), "other": float(run.get("total_other_deductions") or 0)}
-    pph21, bpjs, kasbon, other = comp["pph21"], comp["bpjs"], comp["kasbon"], comp["other"]
-    if abs((pph21 + bpjs + kasbon + other) - total_deductions) > 0.01 or abs((total_gross - total_deductions) - total_net) > 0.01:
+        if MANUAL_DEDUCTION_KEY in by_type:
+            comp["manual"] = float(by_type.get(MANUAL_DEDUCTION_KEY) or 0)
+        else:
+            # 2026-11-02: header run lama (komponen disimpan sebelum potongan manual diagregasi) —
+            # baca langsung dari slip agar run itu juga bisa diposting ulang.
+            slips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0, "manual_deduction": 1}).to_list(2000)
+            comp["manual"] = round(sum(_slip_manual_deduction(s) for s in slips), 2)
+    pph21, bpjs, kasbon, other, manual = comp["pph21"], comp["bpjs"], comp["kasbon"], comp["other"], comp.get("manual", 0.0)
+    if abs((pph21 + bpjs + kasbon + other + manual) - total_deductions) > 0.01 or abs((total_gross - total_deductions) - total_net) > 0.01:
         result = {"ok": False, "error": (f"Komponen potongan tidak konsisten: pph21 {pph21} + bpjs {bpjs} + kasbon {kasbon} + lain {other} "
-                                         f"≠ total_deductions {total_deductions}, atau gross {total_gross} − potongan ≠ net {total_net}.")}
+                                         f"+ penyesuaian manual {manual} ≠ total_deductions {total_deductions}, "
+                                         f"atau gross {total_gross} − potongan ≠ net {total_net}.")}
         await _save_source_posting_result(db, "rahaza_payroll_runs", run_id, result)
         return result
+    other_ded_code = mapping.get("credit_other_deduction") or PAYROLL_OTHER_DEDUCTION_DEFAULT
 
     try:
         run_to = run.get("period_to") or str(date.today())
@@ -990,6 +1044,11 @@ async def post_payroll_run(db, run: dict, user: dict) -> dict:
         lines.append({"account_code": pph21_code, "debit": 0, "credit": pph21, "description": f"{desc} - PPh21"})
     if bpjs > 0:
         lines.append({"account_code": bpjs_code, "debit": 0, "credit": bpjs, "description": f"{desc} - BPJS karyawan"})
+    if manual > 0:
+        # 2026-11-02: beban gaji tetap BRUTO; potongan manual = uang yang ditahan perusahaan dari
+        # karyawan (denda/ganti rugi) → Cr Pendapatan Lain-Lain (atau peran credit_other_deduction).
+        lines.append({"account_code": other_ded_code, "debit": 0, "credit": manual,
+                      "description": f"{desc} - Potongan penyesuaian manual"})
 
     result = await _create_posted_je(db, je_date, memo, "payroll_finalize", source_ref, lines, user)
     await _save_source_posting_result(db, "rahaza_payroll_runs", run_id, result)
@@ -1499,6 +1558,37 @@ async def post_asset_acquisition(db, asset: dict, user: dict) -> dict:
 
 
 # ───────────────────────── DEPRECIATION POSTING (Phase 8B) ────────────────────
+async def _asset_own_account(db, asset: dict, field: str) -> Optional[str]:
+    """2026-11-02 (audit No.35): kode akun MILIK aset (`account_id_*`, berisi id COA) bila diisi,
+    aktif, dan bukan akun induk. None ⇒ pemanggil memakai akun profil posting."""
+    ref = (asset or {}).get(field)
+    if not ref:
+        return None
+    acc = await db.rahaza_coa_accounts.find_one(
+        {"$or": [{"id": ref}, {"code": ref}], "active": True}, {"_id": 0, "code": 1, "is_group": 1})
+    if acc and acc.get("code") and not acc.get("is_group"):
+        return acc["code"]
+    return None
+
+
+def split_accum_by_account(accumulated: float, credited: dict, fallback_code: str) -> list:
+    """2026-11-02 (audit No.35): pecah akumulasi yang dihapus saat pelepasan menurut akun yang
+    BENAR-BENAR dikredit jurnal penyusutan aset itu (`credited` = {kode: Σ kredit}); sisa yang
+    tidak tertelusur ke jurnal → `fallback_code`. Hasil: [(kode, nominal)], total = accumulated."""
+    remaining = round(float(accumulated or 0), 2)
+    out = []
+    for code, amt in sorted((credited or {}).items(), key=lambda kv: (-kv[1], kv[0])):
+        if remaining <= 0.005:
+            break
+        take = round(min(remaining, float(amt or 0)), 2)
+        if take > 0:
+            out.append((code, take))
+            remaining = round(remaining - take, 2)
+    if remaining > 0.005:
+        out.append((fallback_code, remaining))
+    return out
+
+
 async def post_depreciation(db, schedule: dict, asset: dict, user: dict) -> dict:
     """
     Post monthly depreciation. Dr. Depreciation Expense / Cr. Accumulated Depreciation.
@@ -1512,8 +1602,10 @@ async def post_depreciation(db, schedule: dict, asset: dict, user: dict) -> dict
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
 
     mapping = await get_mapping(db, "depreciation")
-    debit_code = mapping.get("debit_depr_expense")
-    credit_code = mapping.get("credit_accum_depr")
+    # 2026-11-02 (audit No.35): akun beban & akumulasi MILIK aset bila diisi di form aset;
+    # profil `depreciation` hanya cadangan. Dulu akun per aset diabaikan seluruhnya.
+    debit_code = await _asset_own_account(db, asset, "account_id_depr_expense") or mapping.get("debit_depr_expense")
+    credit_code = await _asset_own_account(db, asset, "account_id_accum_depr") or mapping.get("credit_accum_depr")
     
     if not debit_code or not credit_code:
         result = {"ok": False, "error": "Mapping 'depreciation' belum lengkap."}
@@ -1841,7 +1933,11 @@ async def post_asset_disposal(db, asset: dict, user: dict) -> dict:
         _own = await db.rahaza_coa_accounts.find_one({"id": asset["account_id_asset"], "active": True}, {"_id": 0, "code": 1})
         if _own and _own.get("code"):
             credit_asset_code = _own["code"]
-    debit_accum_code = mapping.get("debit_accum_depr")
+    # 2026-11-02 (audit No.35): akumulasi = akun yang sama dengan penyusutan (milik aset → profil
+    # `depreciation`), bukan profil `asset_disposal` yang bisa berbeda → akumulasi yatim di neraca.
+    _dep_map = await get_mapping(db, "depreciation")
+    debit_accum_code = (await _asset_own_account(db, asset, "account_id_accum_depr")
+                        or _dep_map.get("credit_accum_depr") or mapping.get("debit_accum_depr"))
     debit_cash_code = mapping.get("debit_cash")
     debit_loss_code = mapping.get("debit_loss_on_disposal")
     credit_gain_code = mapping.get("credit_gain_on_disposal")
@@ -1877,8 +1973,21 @@ async def post_asset_disposal(db, asset: dict, user: dict) -> dict:
     lines = []
     
     # Dr. Accumulated Depreciation (always)
+    # 2026-11-02: dipecah per akun yang benar-benar dikredit jurnal penyusutan aset ini
+    # (jurnal lama bisa memakai akun profil, jurnal baru akun milik aset).
     if accumulated_depr > 0:
-        lines.append({"account_code": debit_accum_code, "debit": accumulated_depr, "credit": 0, "description": desc})
+        import re  # lokal: header berkas ini dimiliki paket lain
+        credited = {}
+        async for r in db.rahaza_journal_lines.aggregate([
+            {"$match": {"source_module": "depreciation",
+                        "source_ref": {"$regex": f"^depreciation:{re.escape(str(asset_id))}:"},
+                        "credit": {"$gt": 0}}},
+            {"$group": {"_id": "$account_code", "amt": {"$sum": "$credit"}}},
+        ]):
+            if r.get("_id"):
+                credited[r["_id"]] = round(float(r.get("amt") or 0), 2)
+        for code, amt in split_accum_by_account(accumulated_depr, credited, debit_accum_code):
+            lines.append({"account_code": code, "debit": amt, "credit": 0, "description": desc})
     
     # Dr. Cash/Bank (proceeds, can be 0 for scrap/donation)
     if proceeds > 0:
@@ -2059,8 +2168,15 @@ async def post_wip_to_fg_on_job_complete(db, job: dict, user: dict) -> dict:
             basis = "hpp_snapshot"
 
     if total_wip <= 0:
-        result = {"ok": False, "reason": "zero_wip_value",
-                  "detail": "Tidak ada MI terposting maupun HPP snapshot utk job ini"}
+        # 2026-11-02: alasan yang BENAR. Job yang dijahit vendor CMT tidak punya MI ber-job_id
+        # (MI lahir di Kirim Material CMT, sebelum job ada); nilainya pindah WIP→FG saat
+        # Terima FG dari CMT selesai QC (`post_wip_to_fg_on_cmt_receipt`).
+        if job.get("vendor_id") or job.get("vendor_shipment_id"):
+            detail = ("Job CMT: nilai WIP→FG dibukukan saat Terima FG dari CMT selesai QC, "
+                      "bukan saat job selesai — belum ada lapisan HPP batch PO ini yang belum berjurnal.")
+        else:
+            detail = "Tidak ada MI terposting maupun HPP snapshot utk job ini"
+        result = {"ok": False, "reason": "zero_wip_value", "detail": detail}
         await _save_source_posting_result(db, "production_jobs", job["id"], result, prefix="wip")
         return result
 
@@ -2096,26 +2212,43 @@ async def post_wip_to_fg_on_job_complete(db, job: dict, user: dict) -> dict:
     return result
 
 
-async def post_wip_to_fg_on_cmt_receipt(db, receipt: dict, layer_ids: list, user: dict) -> dict:
+async def post_wip_to_fg_on_cmt_receipt(db, receipt: dict, layer_ids: list, user: dict,
+                                        suffix: str = "") -> dict:
     """Iter 115: PO INTERNAL dijahit vendor → saat Terima FG dari CMT di-approve, nilai WIP
     (bahan + upah jahit + overhead = Σ lapisan HPP batch yang lahir dari receipt ini) pindah ke
     Persediaan Barang Jadi: Dr 1-1404 / Cr 1-1403. Idempoten per receipt; lapisan ditandai
-    gl_je_id supaya JE job-complete tidak mengulanginya. Maklon TIDAK lewat sini (barang klien)."""
+    gl_je_id supaya JE job-complete tidak mengulanginya. Maklon TIDAK lewat sini (barang klien).
+
+    2026-11-02: `suffix` (mis. `koreksi:<layer_id>`) = JE tambahan untuk lapisan yang lahir
+    SESUDAH penerimaan (koreksi hasil QC naik) — idempoten per suffix, tidak menimpa
+    `wip_fg_je_id` utama. Kegagalan (termasuk lapisan bernilai 0) kini selalu disimpan di
+    `wip_fg_post_error` supaya terlihat di dokumen penerimaan."""
+    async def _fail(result: dict) -> dict:
+        await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$set": {
+            "wip_fg_post_error": posting_error_message(result), "wip_fg_post_error_at": _now()}})
+        return result
+
     mapping = await get_mapping(db, "wip_to_fg_on_wo_complete")
     fg_code, wip_code = mapping.get("debit_fg_inventory"), mapping.get("credit_wip")
     if not fg_code or not wip_code:
-        return {"ok": False, "reason": "mapping_incomplete"}
-    source_ref = f"wip_fg_receipt:{receipt['id']}"
+        return await _fail({"ok": False, "reason": "mapping_incomplete",
+                            "detail": "Mapping 'wip_to_fg_on_wo_complete' belum lengkap (debit_fg_inventory/credit_wip)."})
+    source_ref = f"wip_fg_receipt:{receipt['id']}" + (f":{suffix}" if suffix else "")
     existing = await _find_existing_je(db, "cmt_receipt", source_ref)
     if existing:
         return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"), "already_posted": True}
     layers = await db.fg_cost_layers.find({"id": {"$in": layer_ids or []}, "gl_je_id": None}, {"_id": 0}).to_list(500)
     total = round(sum(float(ly.get("total_cost") or 0) for ly in layers), 2)
     if total <= 0:
-        return {"ok": False, "reason": "zero_layer_value",
-                "detail": "Lapisan HPP batch receipt ini bernilai 0 (harga bahan/upah PO belum terisi)."}
+        gaps = sorted({g for ly in layers for g in (ly.get("gaps") or [])})
+        return await _fail({"ok": False, "reason": "zero_layer_value",
+                            "detail": ("Lapisan HPP batch receipt ini bernilai 0"
+                                       + (f": {'; '.join(gaps)}" if gaps else
+                                          " (harga bahan/upah PO belum terisi).")),
+                            "layer_count": len(layers)})
     je_date = date.today()
-    for k in ("qc_completed_at", "approved_at", "received_at", "receipt_date"):
+    # koreksi (suffix) dibukukan pada hari koreksinya, bukan tanggal QC lama (periode bisa sudah tutup)
+    for k in (() if suffix else ("qc_completed_at", "approved_at", "received_at", "receipt_date")):
         if receipt.get(k):
             try:
                 je_date = date.fromisoformat(str(receipt[k])[:10])
@@ -2129,15 +2262,59 @@ async def post_wip_to_fg_on_cmt_receipt(db, receipt: dict, layer_ids: list, user
         {"account_code": wip_code, "debit": 0, "credit": total,
          "description": f"WIP keluar — PO {receipt.get('po_number') or ''} ({code}, fg_cost_layers)"},
     ]
-    memo = f"WIP→FG Terima FG dari CMT {code} · PO {receipt.get('po_number') or ''} (internal)"
+    memo = (f"WIP→FG Terima FG dari CMT {code} · PO {receipt.get('po_number') or ''} (internal)"
+            + (" — koreksi hasil QC" if suffix else ""))
     result = await _create_posted_je(db, je_date, memo, "cmt_receipt", source_ref, lines, user)
     if result.get("ok"):
         await db.fg_cost_layers.update_many({"id": {"$in": [ly["id"] for ly in layers]}},
                                             {"$set": {"gl_je_id": result["je_id"], "gl_receipt_id": receipt["id"]}})
-        await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$set": {
-            "wip_fg_je_id": result["je_id"], "wip_fg_je_number": result.get("je_number"), "wip_fg_value": total}})
+        if suffix:
+            await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$push": {"wip_fg_extra_jes": {
+                "je_id": result["je_id"], "je_number": result.get("je_number"), "value": total,
+                "suffix": suffix}}})
+        else:
+            await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$set": {
+                "wip_fg_je_id": result["je_id"], "wip_fg_je_number": result.get("je_number"),
+                "wip_fg_value": total, "wip_fg_post_error": None}})
     else:
-        await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$set": {"wip_fg_post_error": result.get("error")}})
+        await _fail(result)
+    return result
+
+
+async def post_fg_to_wip_on_cmt_koreksi(db, receipt: dict, amount: float, user: dict,
+                                        suffix: str) -> dict:
+    """2026-11-02 — kebalikan persis WIP→FG untuk KOREKSI hasil QC TURUN (PO internal).
+
+    Barang yang ternyata tidak ada sudah dibukukan Dr 1-1404 / Cr 1-1403 saat penerimaan;
+    lapisannya dimakan `issue_fg` tanpa jurnal sehingga GL 1-1404 > lapisan. Nilainya
+    dikembalikan ke WIP (Dr 1-1403 / Cr 1-1404) — tujuan akhir selisihnya (vendor /
+    Selisih Persediaan / HPP) menunggu keputusan owner dan TIDAK diputuskan di sini.
+    Idempoten per `suffix`."""
+    amount = round(float(amount or 0), 2)
+    if amount <= 0:
+        return {"ok": False, "reason": "zero_value", "detail": "Nilai lapisan yang keluar 0 — tidak ada jurnal."}
+    mapping = await get_mapping(db, "wip_to_fg_on_wo_complete")
+    fg_code, wip_code = mapping.get("debit_fg_inventory"), mapping.get("credit_wip")
+    if not fg_code or not wip_code:
+        return {"ok": False, "reason": "mapping_incomplete",
+                "detail": "Mapping 'wip_to_fg_on_wo_complete' belum lengkap (debit_fg_inventory/credit_wip)."}
+    source_ref = f"wip_fg_receipt:{receipt['id']}:{suffix}"
+    existing = await _find_existing_je(db, "cmt_receipt", source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"), "already_posted": True}
+    code = receipt.get("receipt_code") or receipt["id"]
+    lines = [
+        {"account_code": wip_code, "debit": amount, "credit": 0,
+         "description": f"WIP kembali — koreksi hasil QC turun {code} · PO {receipt.get('po_number') or ''}"},
+        {"account_code": fg_code, "debit": 0, "credit": amount,
+         "description": f"FG keluar — koreksi hasil QC turun {code}"},
+    ]
+    memo = f"Koreksi QC turun {code} · PO {receipt.get('po_number') or ''} — balik WIP→FG (internal)"
+    result = await _create_posted_je(db, date.today(), memo, "cmt_receipt", source_ref, lines, user)
+    if result.get("ok"):
+        await db.cmt_receipts.update_one({"id": receipt["id"]}, {"$push": {"wip_fg_extra_jes": {
+            "je_id": result["je_id"], "je_number": result.get("je_number"), "value": -amount,
+            "suffix": suffix}}})
     return result
 
 

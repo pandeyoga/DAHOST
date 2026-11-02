@@ -12,16 +12,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl build-esse
 WORKDIR /app/backend
 
 COPY backend/requirements.txt .
-# emergentintegrations & litellm hanya ada di lingkungan Emergent → DIBUANG. Sisanya dipasang;
-# bila pemasangan massal gagal karena satu pin, jatuh ke pemasangan per paket (yang gagal dilewati).
+# 2026-11-02: emergentintegrations & litellm sudah DIHAPUS dari requirements (AI hanya Anthropic,
+# No.60); filter grep dipertahankan sebagai pengaman bila baris lama muncul lagi.
+# Bila pemasangan massal gagal karena satu pin, jatuh ke pemasangan per paket (yang gagal dilewati).
 RUN grep -viE '^(emergentintegrations|litellm)' requirements.txt > /tmp/req.txt \
     && (pip install --no-cache-dir -r /tmp/req.txt \
         || (echo "!! pemasangan massal gagal → per paket"; \
             while read -r p; do [ -z "$p" ] && continue; pip install --no-cache-dir "$p" || echo "SKIP: $p"; done < /tmp/req.txt))
 RUN python -c "import fastapi, motor, uvicorn, bcrypt, jwt, pandas, openpyxl, reportlab, fpdf" \
     && echo "dependensi inti OK"
+# 2026-11-02: SDK Anthropic WAJIB terpasang — tanpa ini semua fitur AI mati walau kunci diisi.
+# Build gagal di sini (bukan diam-diam saat runtime) bila pemasangan per-paket melewatinya.
+# Stub `emergentintegrations` (deploy/emergent_stub/) dihapus: tidak ada lagi impornya.
+RUN python -c "import anthropic; print('anthropic', anthropic.__version__)"
 
-COPY deploy/emergent_stub/ /usr/local/lib/python3.11/site-packages/
 COPY backend/ .
 COPY scripts/ /app/scripts/
 RUN rm -f .env && chmod +x /app/scripts/*.sh 2>/dev/null || true; mkdir -p /app/uploads /app/backups

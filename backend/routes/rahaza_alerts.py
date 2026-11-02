@@ -26,6 +26,12 @@ import asyncio
 import logging
 
 from routes.rahaza_notifications import publish_notification
+from utils.notif_unified import alert_roles_for_portal, real_target_roles
+
+# 2026-11-02 — peran yang boleh melihat DETAIL kontrak karyawan di pratinjau
+# (nama, kode, PKWT, tanggal akhir, divisi). Sama dengan pembaca inbox HR
+# (`routes/notifications_unified.ADMIN_VIEW_ROLES`).
+CONTRACT_VIEW_ROLES = {"superadmin", "admin", "owner", "hr", "hr_manager", "manager_hr", "staff_hr"}
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/alerts", tags=["Alerts"])
@@ -43,8 +49,17 @@ DEFAULT_SETTINGS = {
     "qc_spike_min_events": 5,            # need ≥5 QC submits to avoid noise
     "low_stock_pct_of_min": 0.20,        # warn if total < 20% of min_stock
     "check_interval_seconds": 300,       # background loop every 5 min
+    # 2026-11-02 — `manager_production` tidak pernah ada; diganti saat dipakai
+    # oleh `real_target_roles(..., "production")` (juga untuk nilai lama di DB).
     "alert_target_roles": ["superadmin", "manager_production", "supervisor"],
 }
+
+
+def _production_roles(settings: dict) -> list:
+    """Penerima behind_target/qc_fail_spike — peran fiktif diganti peran nyata."""
+    return real_target_roles(
+        settings.get("alert_target_roles") or DEFAULT_SETTINGS["alert_target_roles"],
+        "production")
 
 
 async def _get_settings(db) -> dict:
@@ -118,8 +133,9 @@ async def check_behind_target(db, settings: dict) -> list:
                 "message": f"Output hari ini {actual} pcs dari target {target} pcs (ambang {int(threshold * 100)}%). Cek blocker di line.",
                 "link_module": "prod-line-board",
                 "link_id": line_id,
-                "target_roles": settings.get("alert_target_roles") or DEFAULT_SETTINGS["alert_target_roles"],
+                "target_roles": _production_roles(settings),
                 "dedup_key": f"behind_target:{line_id}:{today}",
+                "dedup_minutes": 1440,  # 2026-11-02 — kunci per hari; dulu jendela 10 mnt ⇒ tiap 10 mnt
             })
     return alerts
 
@@ -181,8 +197,9 @@ async def check_qc_spike(db, settings: dict) -> list:
                 ),
                 "link_module": "prod-rework-board",
                 "link_id": line_id,
-                "target_roles": settings.get("alert_target_roles") or DEFAULT_SETTINGS["alert_target_roles"],
+                "target_roles": _production_roles(settings),
                 "dedup_key": f"qc_spike:{line_id}:{since_dt.strftime('%Y%m%d%H')}",  # hourly bucket
+                "dedup_minutes": 60,  # 2026-11-02 — kunci per jam ⇒ maks 1×/jam (dulu tiap 10 mnt)
             })
     return alerts
 
@@ -222,9 +239,15 @@ async def check_low_stock(db, settings: dict) -> list:
                 f"Total stok {r['onhand']:.1f} {r['unit']} — ambang "
                 f"{alert_at:.1f} (kritis {critical_cutoff:.1f}). Segera reorder."
             ),
-            "link_module": "prod-materials",
+            # 2026-11-02 — `prod-materials` tidak ada di registry FE (klik "Buka"
+            # diam). `wh-stock` = layar stok yang sama dengan penulis kembar
+            # low_stock di rahaza_inventory_shared.
+            "link_module": "wh-stock",
             "link_id": r["material_id"],
-            "target_roles": ["warehouse_manager", "manager_production", "superadmin"],
+            # 2026-11-02 — dulu warehouse_manager/manager_production (fiktif) ⇒
+            # hanya superadmin. Kini peran nyata Portal Gudang.
+            "target_roles": real_target_roles(
+                ["warehouse_manager", "manager_production", "superadmin"], "warehouse"),
             "dedup_key": f"low_stock:{r['material_id']}:{severity}",
             "dedup_minutes": 1440,  # 1× sehari per material — dulu 10 menit → ribuan notif "Stok kritis" (2026-09-12)
         })
@@ -236,8 +259,14 @@ async def check_expiring_contracts(db, settings: Optional[dict] = None) -> list:
     """
     Cek karyawan PKWT/Magang dengan kontrak mendekati berakhir.
     Kirim notifikasi pada H-30, H-14, H-7, H-1.
+
+    2026-11-02 — maksimal SEKALI PER HARI per karyawan. Dulu kuncinya per
+    `days_left` dengan jendela dedup bawaan 10 menit, sementara loop berjalan
+    tiap 5 menit ⇒ satu karyawan menerbitkan ±144 salinan/hari (audit: 28
+    salinan). Hari dihitung menurut WIB, bukan jam container.
     """
-    today = date.today()
+    from utils.waktu import today_wib
+    today = today_wib()
     alerts = []
 
     emps = await db.rahaza_employees.find(
@@ -288,8 +317,11 @@ async def check_expiring_contracts(db, settings: Optional[dict] = None) -> list:
             ),
             "link_module": "hr-employees",
             "link_id": emp["id"],
-            "target_roles": ["superadmin", "hr", "admin", "manager"],
-            "dedup_key": f"contract_expiry:{emp['id']}:{days_left}",
+            # 2026-11-02 — `manager` dibuang: tidak punya Portal SDM dan data
+            # kontrak bersifat SDM. Peran SDM diturunkan dari PORTAL_ACCESS["hr"].
+            "target_roles": sorted({"superadmin", "admin", *alert_roles_for_portal("hr")}),
+            "dedup_key": f"contract_expiry:{emp['id']}:{today.isoformat()}",
+            "dedup_minutes": 1440,
         })
 
     return alerts
@@ -327,7 +359,9 @@ async def evaluate_all_rules(db, settings: Optional[dict] = None, publish: bool 
                         link_id=e.get("link_id"),
                         target_roles=e.get("target_roles"),
                         dedup_key=e.get("dedup_key"),
-                        dedup_minutes=int(e.get("dedup_minutes") or 10),
+                        # 2026-11-02 — bawaan mesin alert terjadwal = 1×/hari per kunci
+                        # (dulu 10 menit ⇒ terbit ulang tiap 2 putaran loop 5 menit).
+                        dedup_minutes=int(e.get("dedup_minutes") or 1440),
                     )
                     if res:
                         counts["published"] += 1
@@ -448,9 +482,25 @@ async def manual_evaluate(request: Request):
 
 @router.get("/preview")
 async def preview_alerts(request: Request):
-    """Return what WOULD be alerted without publishing (handy for settings UI)."""
-    await require_auth(request)
+    """Return what WOULD be alerted without publishing (handy for settings UI).
+
+    2026-11-02 — dulu SEMUA peran internal (mis. tim_packing) bisa membaca nama,
+    kode, jenis kontrak (PKWT), tanggal akhir, dan divisi karyawan lewat sini.
+    Detail kontrak kini hanya untuk HR/admin; peran lain tetap melihat pratinjau
+    alert produksi/stok.
+    """
+    user = await require_auth(request)
     db = get_db()
     settings = await _get_settings(db)
     res = await evaluate_all_rules(db, settings=settings, publish=False)
-    return {"ok": True, **res}
+    return {"ok": True, **redact_preview(res, user)}
+
+
+def redact_preview(res: dict, user: dict) -> dict:
+    """Buang alert kontrak dari pratinjau untuk peran di luar CONTRACT_VIEW_ROLES."""
+    if (user.get("role") or "").lower() in CONTRACT_VIEW_ROLES:
+        return res
+    counts = dict(res.get("counts") or {})
+    counts.pop("contract_expiry", None)
+    preview = [p for p in (res.get("preview") or []) if p.get("type") != "contract_expiry"]
+    return {**res, "counts": counts, "preview": preview}

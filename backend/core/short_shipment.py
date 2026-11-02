@@ -519,17 +519,24 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
     try:
         mat = await qled.resolve_fg_material(db, sku=doc["sku"])
         if mat:
+            # 2026-11-02 (F1): barang yang belum sampai kembali ke stok dengan biaya saat ia
+            # keluar (jejak FIFO baris SJ ini), bukan lapisan Rp 0 yang menurunkan rata-rata HPP.
+            exit_cost = await qled.exit_cost_of(db, material_id=mat["id"],
+                                                shipment_item_id=item.get("id") or "",
+                                                sku=mat.get("code", doc["sku"]))
             posted = await qled.post_fg_accepted(
                 db, material_id=mat["id"], qty=short_qty,
                 ref={"source": "buyer_short_reopen", "short_id": doc["id"],
                      "short_number": doc["short_number"],
                      "shipment_id": doc["shipment_id"],
                      "shipment_number": doc["shipment_number"],
+                     "shipment_item_id": item.get("id") or "",
                      "po_id": po_id, "po_number": po_number},
                 actor=actor,
                 meta={"material_code": mat.get("code", doc["sku"]),
                       "material_name": mat.get("name", ""), "unit": "pcs",
-                      "type": "finished_goods"})
+                      "type": "finished_goods"},
+                exit_cost=exit_cost)
             await db.rahaza_fg_movements.insert_one({
                 "id": _id(), "sku_code": doc["sku"], "movement_type": "IN",
                 "qty": short_qty, "source": "buyer_short_reopen",

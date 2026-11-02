@@ -29,6 +29,7 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -214,6 +215,10 @@ function TravelDetail({ req, token, onClose, onRefresh, role }) {
   const [showReject, setShowReject] = useState(false);
   const [note, setNote] = useState('');
   const [advanceAmount, setAdvanceAmount] = useState('');
+  // 2026-11-02 (P5 butir 7): rekening sumber + tanggal bayar uang muka (WIB) dikirim ke backend.
+  const { accounts, loaded: accLoaded } = usePaymentCashAccounts(token);
+  const [payAccount, setPayAccount] = useState('');
+  const [payDate, setPayDate] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const doAction = async (endpoint, body = {}) => {
@@ -282,6 +287,11 @@ function TravelDetail({ req, token, onClose, onRefresh, role }) {
       {isFinance && req.status === 'approved' && (
         <div className="rounded-lg bg-teal-50 border border-teal-200 p-3 space-y-2">
           <p className="text-sm font-medium text-teal-800">Bayar Uang Muka</p>
+          <div className="grid grid-cols-2 gap-2">
+            <CashAccountSelect accounts={accounts} loaded={accLoaded} value={payAccount} onChange={setPayAccount}
+              className="w-full h-8 px-2 rounded-md border border-border bg-background text-sm" testId="travel-advance-account" />
+            <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="text-sm h-8" />
+          </div>
           <div className="flex gap-2">
             <Input
               type="number"
@@ -291,8 +301,8 @@ function TravelDetail({ req, token, onClose, onRefresh, role }) {
               className="text-sm h-8"
             />
             <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-foreground whitespace-nowrap"
-              onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || req.cash_advance_approved })}
-              disabled={actionLoading}>
+              onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || req.cash_advance_approved, bank_account_id: payAccount, payment_date: payDate })}
+              disabled={actionLoading || !payAccount}>
               <Banknote className="w-3.5 h-3.5 mr-1" />Bayar
             </Button>
           </div>

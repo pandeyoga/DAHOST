@@ -123,6 +123,14 @@ async def create_transfer(body: TransferCreate, user: dict = Depends(require_aut
         raise HTTPException(400, 'Akun sumber dan tujuan tidak boleh sama.')
 
     db = get_db()
+    # 2026-11-02 (audit No.44c): transfer bank hanya antar rekening kas/bank/e-wallet aktif (SSOT
+    # core.payout_banks). Dulu akun apa pun diterima → transfer 4-1100 → 1-1201 menambah pendapatan,
+    # 1-1201 → 6-2900 menambah beban, berstatus 'completed'.
+    from core.payout_banks import is_bank_code
+    for _label, _code in (('sumber', body.from_account_code), ('tujuan', body.to_account_code)):
+        if not await is_bank_code(db, (_code or '').strip()):
+            raise HTTPException(400, f"Akun {_label} '{_code}' bukan rekening kas/bank aktif. Transfer bank "
+                                     f"hanya antar rekening kas/bank milik sendiri (daftar Kas & Bank).")
     now = _now()
     tf_id = _uid()
     # Nomor referensi — SATU PINTU kebijakan penomoran (SESI #27, batch-3 Fase G).

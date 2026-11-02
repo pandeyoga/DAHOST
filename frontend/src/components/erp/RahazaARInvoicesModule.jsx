@@ -302,6 +302,15 @@ function ARStatTile({ label, value, accent }) {
   );
 }
 
+// 2026-11-02: sama dengan backend `marketplace_channel_reason` (rahaza_finance.py)
+const MARKETPLACE_PLATFORMS = ['shopee', 'tiktok', 'tiktokshop', 'tokopedia', 'lazada', 'blibli'];
+function isMarketplaceChannel(c) {
+  const platform = String(c?.platform || '').toLowerCase();
+  const head = String(c?.channel_key || '').toLowerCase().replace(/-/g, '_').split('_')[0];
+  return MARKETPLACE_PLATFORMS.includes(platform) || MARKETPLACE_PLATFORMS.includes(head)
+    || String(c?.debit_ar || '').startsWith('1-1303');
+}
+
 function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) {
   const today = new Date().toISOString().split('T')[0];
   const [form, setForm] = useState({ customer_id: '', issue_date: today, due_date: '', notes: '', sales_channel: '', tax_pct: 0, discount_amount: 0 });
@@ -334,9 +343,12 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
     } finally { setSaving(false); }
   };
 
+  // 2026-11-02 (D2): channel toko marketplace TIDAK ditawarkan — pendapatan marketplace hanya
+  // lewat pencairan (backend juga menolak). Yang tersisa: channel non-marketplace (mis. maklon).
+  const offlineChannels = channels.filter(c => !isMarketplaceChannel(c));
   // Group channels by platform
-  const platforms = [...new Set(channels.map(c => c.platform))].sort();
-  const selectedChannel = channels.find(c => c.channel_key === form.sales_channel);
+  const platforms = [...new Set(offlineChannels.map(c => c.platform))].sort();
+  const selectedChannel = offlineChannels.find(c => c.channel_key === form.sales_channel);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -365,7 +377,7 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
               <option value="">— Default (Maklon/Umum) —</option>
               {platforms.map(platform => (
                 <optgroup key={platform} label={platform.toUpperCase()}>
-                  {channels.filter(c => c.platform === platform).map(c => (
+                  {offlineChannels.filter(c => c.platform === platform).map(c => (
                     <option key={c.channel_key} value={c.channel_key}>{c.channel_label}</option>
                   ))}
                 </optgroup>

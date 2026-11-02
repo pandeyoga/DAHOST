@@ -1053,7 +1053,7 @@ async def ai_assist(session_id: str, request: Request):
     menimpa yang sudah pasti, satu jawaban model yang berubah cukup untuk
     memindahkan kolom uang ke kolom lain tanpa ada yang sadar.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     s = await _load_session(db, session_id)
     st = get_source_type(s["source_type"])
@@ -1063,12 +1063,14 @@ async def ai_assist(session_id: str, request: Request):
     if not unmapped:
         return {"ok": True, "suggestion": [], "message": "Semua kolom sudah terpetakan"}
 
-    key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not key:
-        raise HTTPException(503, "Bantuan AI tidak tersedia (EMERGENT_LLM_KEY belum "
-                                 "diatur). Pemetaan manual tetap bisa dipakai.")
+    # 2026-11-02: gerbang tunggal services.ai — pesan ramah tanpa nama variabel env.
+    from services.ai import AIError, LLMUnavailable, ai_status, ai_text
+    from ai_cost_tracker import record_ai_failure
+    _st = await ai_status(db)
+    if not _st["available"]:
+        await record_ai_failure("smart-import", _st["code"], user_id=user.get("id"), tier="light")
+        raise LLMUnavailable(f"{_st['message']} Pemetaan manual tetap bisa dipakai.")
     try:
-        from ai_llm import LlmChat, UserMessage
         fields_txt = "\n".join(
             f"- {f.name} :: {f.label} ({f.kind})" +
             (f" pilihan: {', '.join(f.choices)}" if f.choices else "")
@@ -1082,19 +1084,20 @@ async def ai_assist(session_id: str, request: Request):
             "Jawab HANYA JSON array: [{\"column\":\"...\",\"field\":\"nama_field_sistem_atau_null\","
             "\"confidence\":0.0-1.0,\"reason\":\"alasan singkat\"}]"
         )
-        chat = LlmChat(api_key=key, session_id=f"import-map-{session_id}",
-                       system_message="Kamu pemeta kolom berkas impor. Jawab JSON saja.")
-        chat.with_model("openai", "gpt-4o-mini")
-        reply = await chat.send_message(UserMessage(text=prompt))
+        reply = await ai_text("smart-import", "Kamu pemeta kolom berkas impor. Jawab JSON saja.",
+                              prompt, tier="light", user_id=user.get("id"))
         txt = (reply or "").strip()
         if txt.startswith("```"):
             txt = txt.split("```")[1]
             txt = txt[4:] if txt.lower().startswith("json") else txt
         suggestion = json.loads(txt)
+    except AIError as e:
+        logger.warning("ai_assist gagal untuk sesi %s: %s", session_id, e.code)
+        raise HTTPException(e.status_code, f"{e} Pemetaan manual tetap bisa dipakai.") from None
     except Exception as e:
         logger.warning("ai_assist gagal untuk sesi %s: %s", session_id, e)
-        raise HTTPException(502, f"Bantuan AI gagal: {e}. Pemetaan manual tetap "
-                                 f"bisa dipakai.") from None
+        raise HTTPException(502, "Usulan AI tidak dapat dibaca. Pemetaan manual tetap "
+                                 "bisa dipakai.") from None
 
     valid = {f.name for f in st.input_fields}
     taken = {m["field"] for m in mapping if m.get("field")

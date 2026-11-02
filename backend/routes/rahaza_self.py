@@ -137,6 +137,9 @@ async def self_payslips(
             q["period_from"]["$lte"] = to
 
     slips = await db.rahaza_payslips.find(q, {"_id": 0}).sort("period_from", -1).to_list(500)
+    # 2026-11-02 (audit T3) — hanya slip dari run final/dibayar (draft masih bisa berubah).
+    from routes.rahaza_payroll_payslips import only_published_slips
+    slips = await only_published_slips(db, slips)
 
     # Enrich with run info
     run_ids = list({s.get("run_id") for s in slips if s.get("run_id")})
@@ -169,6 +172,10 @@ async def self_payslip_detail(slip_id: str, request: Request):
     slip = await db.rahaza_payslips.find_one({"id": slip_id, "employee_id": emp["id"]}, {"_id": 0})
     if not slip:
         raise HTTPException(404, "Payslip tidak ditemukan atau bukan milik Anda.")
+    # 2026-11-02 (audit T3) — slip run draft belum boleh dilihat karyawan.
+    from routes.rahaza_payroll_payslips import only_published_slips
+    if not await only_published_slips(db, [slip]):
+        raise HTTPException(404, "Slip gaji ini belum difinalisasi HR.")
     return serialize_doc(slip)
 
 

@@ -69,7 +69,8 @@ class TxnCreate(BaseModel):
 
 class ReplenishIn(BaseModel):
     amount: float = Field(..., gt=0)
-    bank_account_code: Optional[str] = '1-1201'
+    # 2026-11-02: kosong ⇒ rekening sumber dana itu sendiri (bukan 1-1201 tetap); tetap divalidasi.
+    bank_account_code: Optional[str] = None
     memo: Optional[str] = None
     txn_date: Optional[str] = None
 
@@ -81,6 +82,26 @@ async def _get_fund_or_404(db, fund_id: str) -> dict:
     if not fund:
         raise HTTPException(404, 'Dana kas kecil tidak ditemukan.')
     return fund
+
+
+async def _petty_cash_account_code(db) -> str:
+    """Akun GL dana kas kecil (Profil Posting `petty_cash_replenish.debit_petty_cash`, bawaan 1-1101)."""
+    return (await get_mapping(db, 'petty_cash_replenish')).get('debit_petty_cash') or '1-1101'
+
+
+async def _resolve_source_account(db, code: Optional[str]) -> str:
+    """2026-11-02 (audit kas kecil): rekening SUMBER pengisian dana wajib akun kas/bank postable
+    yang ada di bagan akun, dan BUKAN akun kas kecil itu sendiri. Dulu layar menawarkan
+    'Bank BRI (1-1203)' (tidak ada di COA → jurnal gagal, saldo dana tetap naik) dan
+    'Kas (1-1101)' (= kas kecil → jurnal Dr 1-1101 / Cr 1-1101, tidak ada uang yang pindah).
+    Pemeriksaan kas/bank memakai satu pintu SDM↔Keuangan (`resolve_payment_account`)."""
+    from routes.rahaza_payroll_shared import resolve_payment_account
+    acc = await resolve_payment_account(db, gl_code=code, purpose='Kas kecil — rekening sumber')
+    petty = await _petty_cash_account_code(db)
+    if acc['gl_code'] == petty:
+        raise HTTPException(400, f"Kas kecil — rekening sumber: akun '{petty}' adalah akun dana kas kecil "
+                                 "itu sendiri. Pilih rekening bank/kas lain sebagai sumber dana.")
+    return acc['gl_code']
 
 
 async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
@@ -184,7 +205,9 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
 async def list_funds(user: dict = Depends(require_auth)):
     db = get_db()
     funds = await db.rahaza_petty_cash_funds.find({}, {'_id': 0}).sort('created_at', -1).to_list(100)
-    return {'items': [_ser(f) for f in funds], 'total': len(funds)}
+    # 2026-11-02: akun dana kas kecil dikirim agar layar tidak menawarkannya sebagai rekening sumber.
+    return {'items': [_ser(f) for f in funds], 'total': len(funds),
+            'petty_cash_account_code': await _petty_cash_account_code(db)}
 
 
 @router.post('/funds')
@@ -192,6 +215,7 @@ async def create_fund(body: FundCreate, user: dict = Depends(require_auth)):
     if user.get('role') not in FINANCE_ROLES:
         raise HTTPException(403, 'Hanya Finance/Admin yang bisa membuat dana kas kecil.')
     db = get_db()
+    source_code = await _resolve_source_account(db, body.bank_account_code)  # 2026-11-02
     fund_id = _uid()
     now = _now()
     doc = {
@@ -200,16 +224,16 @@ async def create_fund(body: FundCreate, user: dict = Depends(require_auth)):
         'custodian_name': body.custodian_name or '',
         'opening_balance': body.opening_balance,
         'current_balance': body.opening_balance,
-        'bank_account_code': body.bank_account_code or '1-1201',
+        'bank_account_code': source_code,
         'notes': body.notes or '',
         'status': 'active',
         'created_at': now,
         'updated_at': now,
         'created_by': user['id'],
     }
-    await db.rahaza_petty_cash_funds.insert_one(doc)
 
-    # Post opening entry jika ada saldo awal
+    # 2026-11-02 (audit kas kecil): saldo awal DIJURNAL DULU, dana baru dibuat bila jurnal
+    # berhasil. Dulu dana lahir dengan saldo penuh walau jurnal saldo awal gagal (saldo dana ≠ GL).
     if body.opening_balance > 0:
         txn_id = _uid()
         txn_doc = {
@@ -218,14 +242,19 @@ async def create_fund(body: FundCreate, user: dict = Depends(require_auth)):
             'amount': body.opening_balance,
             'txn_date': str(date.today()),
             'memo': f'Saldo awal dana {body.name}',
-            'bank_account_code': body.bank_account_code or '1-1201',
+            'bank_account_code': source_code,
             'category': None, 'payee': None,
             'gl_posted': False, 'gl_je_id': None, 'gl_error': None,
             'created_at': now, 'created_by': user['id'],
         }
         await db.rahaza_petty_cash_txns.insert_one(txn_doc)
-        await _post_petty_cash_txn(db, txn_doc, user)
+        posting_result = await _post_petty_cash_txn(db, txn_doc, user)
+        if not posting_result.get('ok'):
+            await db.rahaza_petty_cash_txns.delete_one({'id': txn_id})
+            raise HTTPException(400, f"Dana tidak dibuat: jurnal saldo awal gagal ({posting_result.get('error')}).")
 
+    await db.rahaza_petty_cash_funds.insert_one(doc)
+    doc.pop('_id', None)
     await log_activity(user['id'], user.get('name', ''), 'CREATE_PETTY_CASH_FUND', 'petty_cash_fund', fund_id)
     return _ser(doc)
 
@@ -248,6 +277,7 @@ async def replenish_fund(fund_id: str, body: ReplenishIn, user: dict = Depends(r
     fund = await _get_fund_or_404(db, fund_id)
     if fund.get('status') != 'active':
         raise HTTPException(400, 'Dana kas kecil tidak aktif.')
+    source_code = await _resolve_source_account(db, body.bank_account_code or fund.get('bank_account_code'))  # 2026-11-02
     now = _now()
     txn_doc = {
         'id': _uid(), 'fund_id': fund_id,
@@ -255,23 +285,28 @@ async def replenish_fund(fund_id: str, body: ReplenishIn, user: dict = Depends(r
         'amount': body.amount,
         'txn_date': body.txn_date or str(date.today()),
         'memo': body.memo or 'Replenishment Kas Kecil',
-        'bank_account_code': body.bank_account_code or '1-1201',
+        'bank_account_code': source_code,
         'category': None, 'payee': None,
         'gl_posted': False, 'gl_je_id': None, 'gl_error': None,
         'created_at': now, 'created_by': user['id'],
     }
     await db.rahaza_petty_cash_txns.insert_one(txn_doc)
-    # Update fund balance
+    # 2026-11-02 (audit kas kecil): JURNAL DULU, saldo dana bertambah HANYA bila jurnal berhasil
+    # (sama dengan create_txn/close_fund, FIN-05). Dulu saldo naik walau jurnal gagal → dana ≠ GL.
+    posting_result = await _post_petty_cash_txn(db, txn_doc, user)
+    if not posting_result.get('ok'):
+        await db.rahaza_petty_cash_txns.delete_one({'id': txn_doc['id']})
+        raise HTTPException(400, f"Pengisian dibatalkan: jurnal gagal ({posting_result.get('error')}).")
     await db.rahaza_petty_cash_funds.update_one(
         {'id': fund_id},
         {'$inc': {'current_balance': body.amount}, '$set': {'updated_at': now}}
     )
-    posting_result = await _post_petty_cash_txn(db, txn_doc, user)
+    fresh = await db.rahaza_petty_cash_funds.find_one({'id': fund_id}, {'_id': 0, 'current_balance': 1}) or {}
     await log_activity(user['id'], user.get('name', ''), 'REPLENISH_PETTY_CASH', 'petty_cash_fund', fund_id)
     return {
         'ok': True,
         'txn': _ser(txn_doc),
-        'new_balance': fund['current_balance'] + body.amount,
+        'new_balance': float(fresh.get('current_balance', float(fund.get('current_balance') or 0) + body.amount)),
         'gl_posting': posting_result,
     }
 

@@ -117,6 +117,35 @@ def _invoice_totals(subtotal: float, tax_pct: float, discount_amount: float) -> 
     return {"taxable_base": round(taxable), "tax_amount": tax, "total": round(taxable + tax)}
 
 
+def ar_payment_guard_and_update(amount: float) -> tuple:
+    """2026-11-02 (audit No.49): SATU rumus sisa piutang untuk semua jalur pembayaran AR
+    (Keuangan & Penjualan Langsung): terutang = total − nota kredit (`credited_amount`);
+    sisa = terutang − dibayar; lunas bila sisa ≤ 0; pembayaran melebihi sisa DITOLAK.
+    Dulu nota kredit diabaikan → faktur yang sudah dibayar penuh tetap `partial_paid` dan
+    pembayaran ganda diterima (lebih bayar tanpa dokumen).
+    Mengembalikan (ekspresi `$expr` penjaga, pipeline update) untuk find_one_and_update."""
+    new_paid = {"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}
+    owed = {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": ["$credited_amount", 0]}]}
+    guard = {"$lte": [new_paid, {"$add": [owed, 0.01]}]}
+    pipeline = [
+        {"$set": {
+            "paid_amount": {"$round": [new_paid, 0]},
+            "balance": {"$max": [0, {"$round": [{"$subtract": [owed, new_paid]}, 0]}]},
+            "status": {"$cond": [{"$gte": [new_paid, {"$subtract": [owed, 0.01]}]}, "paid", "partial_paid"]},
+            "updated_at": _now(),
+        }},
+        # cermin kanonik (H-01)
+        {"$set": {"total_amount": {"$ifNull": ["$total", 0]}, "amount_paid": "$paid_amount", "amount_due": "$balance"}},
+    ]
+    return guard, pipeline
+
+
+def ar_remaining(inv: dict) -> float:
+    """Sisa tagihan menurut rumus yang sama (untuk pesan galat)."""
+    return max(0.0, float(inv.get("total") or 0) - float(inv.get("credited_amount") or 0)
+               - float(inv.get("paid_amount") or 0))
+
+
 async def _record_payment_doc(db, coll: str, inv: dict, amount: float, account_id, movement_id, payment_date, notes, user):
     """Iter 119 (B-02): setiap pembayaran AR/AP punya ID unik sendiri → jurnal tidak pernah 'termakan' idempotensi
     walau nilai & tanggal sama dan tanpa rekening kas. Dokumen ini juga jadi riwayat pembayaran per invoice."""
@@ -244,6 +273,47 @@ async def list_ar(request: Request, status: Optional[str] = None, customer_id: O
     return serialize_doc(rows)
 
 
+# 2026-11-02 (D2, butir 15): pendapatan toko marketplace hanya masuk buku lewat PENCAIRAN
+# (marketing_settlements). Invoice AR manual ber-channel toko e-commerce menggandakan pendapatan
+# & piutang platform → ditolak. Penjualan non-marketplace (Portal Penjualan, AR biasa) tetap jalan.
+MARKETPLACE_PLATFORMS = {"shopee", "tiktok", "tiktokshop", "tokopedia", "lazada", "blibli"}
+
+
+def marketplace_channel_reason(channel: str, mapping: Optional[dict], store: Optional[dict]) -> Optional[str]:
+    """Murni: alasan bila `channel` = toko/channel marketplace; None bila bukan."""
+    ch = (channel or "").strip()
+    if not ch:
+        return None
+    if store and (store.get("platform") or "").lower() in MARKETPLACE_PLATFORMS:
+        return f"toko {store.get('platform')} '{store.get('account_name') or ch}'"
+    m = mapping or {}
+    if (m.get("platform") or "").lower() in MARKETPLACE_PLATFORMS:
+        return f"channel {m.get('platform')} '{m.get('channel_label') or ch}'"
+    if str(m.get("debit_ar") or "").startswith("1-1303"):
+        return f"channel '{m.get('channel_label') or ch}' (piutang platform online shop)"
+    head = ch.lower().replace("-", "_").split("_")[0]
+    if head in MARKETPLACE_PLATFORMS:
+        return f"channel '{ch}'"
+    return None
+
+
+async def _marketplace_channel_reason(db, channel: str) -> Optional[str]:
+    ch = (channel or "").strip()
+    if not ch:
+        return None
+    mapping = await db.rahaza_channel_gl_mapping.find_one({"channel_key": ch}, {"_id": 0})
+    store = await db.marketing_platform_accounts.find_one(
+        {"$or": [{"account_code": ch}, {"id": ch}]}, {"_id": 0, "platform": 1, "account_name": 1})
+    return marketplace_channel_reason(ch, mapping, store)
+
+
+async def _reject_marketplace_ar(db, inv: dict):
+    _mp = await _marketplace_channel_reason(db, inv.get("sales_channel") or "")
+    if _mp:
+        raise HTTPException(400, f"Invoice AR tidak boleh memakai {_mp}. Pendapatan marketplace hanya dicatat "
+                                 f"lewat pencairan (Portal Keuangan → Saldo & Pencairan Marketplace).")
+
+
 @router.post("/ar-invoices")
 async def create_ar(request: Request):
     user = await _require_fin(request)
@@ -255,6 +325,7 @@ async def create_ar(request: Request):
     customer = await db.rahaza_customers.find_one({"id": customer_id}, {"_id": 0})
     if not customer:
         raise HTTPException(404, "Customer tidak ditemukan.")
+    await _reject_marketplace_ar(db, {"sales_channel": body.get("sales_channel")})  # 2026-11-02 (D2)
     items = body.get("items") or []
     subtotal, norm_items = _norm_invoice_items(items, unit_default="pcs")
     tax_pct = _to_num(body.get("tax_pct"), "tax_pct")
@@ -299,6 +370,8 @@ async def change_ar_status(iid: str, request: Request):
     old_status = inv.get("status")
     if new_status == "sent":
         new_status = "issued"   # kanonik (H-01)
+    if new_status == "issued" and old_status not in ("issued", "sent"):
+        await _reject_marketplace_ar(db, inv)  # 2026-11-02 (D2): draft lama ber-channel marketplace
     await db.rahaza_ar_invoices.update_one({"id": iid}, {"$set": {"status": new_status, "updated_at": _now()}})
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
 
@@ -330,6 +403,8 @@ async def send_ar_invoice(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if inv.get("status") not in ("draft", "sent", "issued"):
         raise HTTPException(400, f"Hanya draft/issued yang bisa di-send. Status: {inv.get('status')}")
+    if inv.get("status") == "draft":
+        await _reject_marketplace_ar(db, inv)  # 2026-11-02 (D2)
     await db.rahaza_ar_invoices.update_one({"id": iid}, {"$set": {"status": "issued", "updated_at": _now()}})
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     posting_result = None
@@ -371,28 +446,10 @@ async def record_ar_payment(iid: str, request: Request):
     # ── R10 concurrency hardening (TOCTOU-safe): state-check + overpay guard live
     # INSIDE the filter; paid/balance/status recomputed atomically via aggregation
     # pipeline. Prevents lost-update & overpay under parallel requests (CC3).
+    _guard, _pipeline = ar_payment_guard_and_update(amount)  # 2026-11-02: nota kredit ikut dihitung
     updated = await db.rahaza_ar_invoices.find_one_and_update(
-        {
-            "id": iid,
-            "status": {"$nin": ["cancelled", "void", "written_off"]},
-            "$expr": {"$lte": [
-                {"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]},
-                {"$add": [{"$ifNull": ["$total", 0]}, 0.01]},
-            ]},
-        },
-        [{"$set": {
-            "paid_amount": {"$round": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}, 0]},
-            "balance": {"$max": [0, {"$round": [
-                {"$subtract": [{"$ifNull": ["$total", 0]},
-                               {"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]}]}, 0]}]},
-            "status": {"$cond": [
-                {"$gte": [{"$add": [{"$ifNull": ["$paid_amount", 0]}, amount]},
-                          {"$subtract": [{"$ifNull": ["$total", 0]}, 0.01]}]},
-                "paid", "partial_paid"]},
-            "updated_at": _now(),
-        }},
-         # cermin kanonik (H-01)
-         {"$set": {"total_amount": {"$ifNull": ["$total", 0]}, "amount_paid": "$paid_amount", "amount_due": "$balance"}}],
+        {"id": iid, "status": {"$nin": ["cancelled", "void", "written_off"]}, "$expr": _guard},
+        _pipeline,
         return_document=ReturnDocument.AFTER,
     )
     if not updated:
@@ -403,9 +460,8 @@ async def record_ar_payment(iid: str, request: Request):
         _st = (inv2.get("status") or "").lower()
         if _st in ("cancelled", "void", "written_off"):
             raise HTTPException(400, f"Tidak bisa mencatat pembayaran untuk invoice berstatus '{_st}'.")
-        _total = float(inv2.get("total") or 0)
-        _prev = float(inv2.get("paid_amount") or 0)
-        raise HTTPException(400, f"Pembayaran melebihi total invoice (balance: {_total - _prev:.0f})")
+        raise HTTPException(400, f"Pembayaran melebihi sisa tagihan (sisa setelah nota kredit: "
+                                 f"{ar_remaining(inv2):.0f})")
     inv = updated
     # Record cash movement
     account_id = body.get("account_id")
@@ -825,6 +881,12 @@ async def change_ap_status(iid: str, request: Request):
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
     old_status = inv.get("status")
+    # 2026-11-02 (audit No.44a): batal faktur yang sudah dibayar mem-void jurnal faktur tetapi jurnal
+    # pembayaran tetap → hutang 2-1100 bersaldo debit tanpa dokumen. Aturan sama dengan faktur maklon.
+    if new_status == "cancelled" and float(inv.get("paid_amount") or 0) > 0.009:
+        _paid = f"{float(inv.get('paid_amount') or 0):,.0f}".replace(",", ".")
+        raise HTTPException(400, f"Faktur {inv.get('invoice_number')} sudah dibayar Rp {_paid} — tidak bisa "
+                                 f"dibatalkan. Batalkan/void pembayarannya dulu atau buat nota debit/retur pemasok.")
     await db.rahaza_ap_invoices.update_one({"id": iid}, {"$set": {"status": new_status, "updated_at": _now()}})
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
 
@@ -1208,14 +1270,13 @@ async def customer_statement(customer_id: str, request: Request):
     if not cust:
         raise HTTPException(404, "Customer tidak ditemukan")
 
-    q = {"customer_id": customer_id}
+    # 2026-11-02 (audit No.49): dulu membaca field `paid` yang tidak pernah ditulis (total_paid
+    # selalu 0), memuat faktur draft/batal, dan mengabaikan nota kredit.
+    q = {"customer_id": customer_id, "status": {"$nin": list(STATEMENT_EXCLUDED)}}
     if date_from and date_to:
         q["issue_date"] = {"$gte": date_from, "$lte": date_to}
     invoices = await db.rahaza_ar_invoices.find(q, {"_id": 0}).sort("issue_date", 1).to_list(500)
-
-    total_billed = sum(float(i.get("total") or 0) for i in invoices)
-    total_paid = sum(float(i.get("paid") or 0) for i in invoices)
-    closing = total_billed - total_paid
+    summ = statement_summary(invoices)
 
     return {
         "customer": {
@@ -1227,10 +1288,28 @@ async def customer_statement(customer_id: str, request: Request):
         },
         "period": {"from": date_from, "to": date_to},
         "invoices": invoices,
-        "summary": {
-            "count": len(invoices),
-            "total_billed": total_billed,
-            "total_paid": total_paid,
-            "outstanding": closing,
-        },
+        "summary": summ,
     }
+
+
+STATEMENT_EXCLUDED = ("draft", "cancelled", "void")
+
+
+def statement_summary(invoices: list) -> dict:
+    """Ringkasan statement: tagihan, dibayar (`paid_amount`), nota kredit, dihapusbukukan, sisa."""
+    billed = paid = credited = written_off = outstanding = 0.0
+    for i in invoices:
+        t = float(i.get("total") or 0)
+        p = float(i.get("paid_amount") or 0)
+        c = float(i.get("credited_amount") or 0)
+        rest = max(0.0, t - p - c)
+        billed += t
+        paid += p
+        credited += c
+        if (i.get("status") or "") == "written_off":
+            written_off += rest
+        else:
+            outstanding += rest
+    return {"count": len(invoices), "total_billed": round(billed, 2), "total_paid": round(paid, 2),
+            "total_credited": round(credited, 2), "total_written_off": round(written_off, 2),
+            "outstanding": round(outstanding, 2)}

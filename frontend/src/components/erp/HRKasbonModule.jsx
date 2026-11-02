@@ -185,11 +185,8 @@ export default function HRKasbonModule() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleSeed = async () => {
-    const r = await fetch(`${API}/api/dewi/kasbon/seed`, { method: 'POST', headers: authH() });
-    const d = await r.json();
-    if (d.ok) { toast.success('Demo data berhasil dimuat'); load(); }
-  };
+  // 2026-11-02 (P5 butir 9): tombol "Muat Demo" (POST /api/dewi/kasbon/seed) DIHAPUS — membuat 5 kasbon
+  // palsu atas nama karyawan nyata di data produksi; payroll lalu ikut memotong gaji untuk pinjaman palsu.
 
   const filtered = requests.filter(r => {
     const matchStatus = !filterStatus || filterStatus === 'all' || r.status === filterStatus;
@@ -254,9 +251,6 @@ export default function HRKasbonModule() {
         <div className="flex gap-2">
           <button onClick={load} className="w-9 h-9 rounded-xl border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground">
             <RefreshCw className="w-4 h-4" />
-          </button>
-          <button onClick={handleSeed} className="h-9 px-3 rounded-xl border border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground">
-            Muat Demo
           </button>
         </div>
       </div>

@@ -6,7 +6,6 @@ C) A/B Testing (content experiments + AI winner conclusion)
 """
 import uuid
 import logging
-import os
 import json
 import math
 from datetime import datetime, timezone, timedelta
@@ -15,11 +14,10 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/advanced-ai", tags=["marketing-advanced-ai"])
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 
 def _now(): return datetime.now(timezone.utc)
@@ -117,15 +115,15 @@ async def update_pricing_settings(payload: PricingSettingsIn, request: Request):
 @router.post("/pricing/run")
 async def run_pricing_suggestions(request: Request):
     """Generate dynamic pricing suggestions berdasarkan data penjualan + AI analysis."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     settings = await _get_pricing_settings(db)
 
     if not settings.get("enabled"):
         raise HTTPException(400, "Dynamic Pricing sedang OFF. Aktifkan di Settings terlebih dahulu.")
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
+    # 2026-11-02: gerbang tunggal services.ai (pesan ramah).
+    await require_ai("marketing-pricing", user_id=user.get("id"), db=db, tier="light")
 
     # Rate limit check
     cooldown = settings.get("run_cooldown_minutes", 30)
@@ -208,16 +206,12 @@ async def run_pricing_suggestions(request: Request):
         "rounding": settings["rounding_rule"]
     }
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"pricing-{uuid.uuid4().hex[:8]}",
-        system_message=(
-            "Kamu adalah sistem dynamic pricing untuk brand fashion Indonesia CV Dewi Aditya. "
-            "Berikan rekomendasi harga yang cerdas, aman, dan realistis. "
-            "Pertimbangkan demand, review, complaint, dan guardrails. "
-            "Respond only with valid JSON."
-        )
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = (
+        "Kamu adalah sistem dynamic pricing untuk brand fashion Indonesia CV Dewi Aditya. "
+        "Berikan rekomendasi harga yang cerdas, aman, dan realistis. "
+        "Pertimbangkan demand, review, complaint, dan guardrails. "
+        "Respond only with valid JSON."
+    )
 
     prompt = (
         f"Data produk 30 hari terakhir:\n{json.dumps(products, ensure_ascii=False, indent=2)}\n\n"
@@ -242,7 +236,8 @@ async def run_pricing_suggestions(request: Request):
 
     suggestions_created = []
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-pricing", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = "\n".join(clean.split("\n")[1:-1])
@@ -273,9 +268,11 @@ async def run_pricing_suggestions(request: Request):
             doc.pop("_id", None)
             suggestions_created.append(doc)
 
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"Pricing AI error: {e}")
-        raise HTTPException(500, f"AI pricing gagal: {e}")
+        raise HTTPException(502, "Usulan harga dari AI tidak dapat dibaca. Silakan coba lagi.")
 
     # Log run event
     await db.marketing_dynamic_pricing_events.insert_one({
@@ -283,7 +280,8 @@ async def run_pricing_suggestions(request: Request):
         "event_type": "run",
         "suggestions_count": len(suggestions_created),
         "created_at": _now(),
-        "actor": "admin"
+        "actor": _actor_label(user),  # 2026-11-02: aktor sebenarnya, bukan "admin"
+        "actor_id": user.get("id"),
     })
 
     return ok(
@@ -317,29 +315,53 @@ async def list_pricing_suggestions(
     )
 
 
+# 2026-11-02 (audit A §4.2): Approve/Reject/Apply memakai SATU gerbang izin yang sama.
+# Dulu Apply hanya `require_auth` → cs_staff yang ditolak saat Approve bisa "Apply"
+# usulan pending, dan semua aksi tercatat sebagai "admin".
+_PRICING_APPROVE_KEYS = ('toko.approve', 'toko.manage', 'pricing.approve')
+_PRICING_APPROVE_ROLES = ('manager_marketing', 'pic_marketing', 'pic_toko',
+                          'manager', 'owner', 'admin', 'superadmin')
+
+# Apply TIDAK mengubah harga katalog (tidak ada kode yang menulis harga), maka
+# status "applied" tidak boleh ditulis — itu riwayat perubahan yang tidak pernah terjadi.
+PRICING_APPLY_NOT_CONNECTED_MSG = (
+    "Usulan sudah disetujui, tetapi sistem belum tersambung ke harga katalog/marketplace. "
+    "Ubah harga secara manual di Master Harga/Katalog; status usulan tidak diubah menjadi "
+    "\"diterapkan\" karena harga katalog tidak berubah."
+)
+
+
+def _actor_label(user: dict) -> str:
+    return (user or {}).get("name") or (user or {}).get("email") or (user or {}).get("id") or "-"
+
+
+async def _require_pricing_approver(request: Request, message: str) -> dict:
+    from routes.shared import require_perm
+    return await require_perm(request, *_PRICING_APPROVE_KEYS,
+                              legacy_roles=_PRICING_APPROVE_ROLES, message=message)
+
+
 @router.post("/pricing/suggestions/{suggestion_id}/approve")
 async def approve_suggestion(suggestion_id: str, request: Request):
-    from routes.shared import require_perm
-    await require_perm(
-        request, 'toko.approve', 'toko.manage', 'pricing.approve',
-        legacy_roles=('manager_marketing', 'pic_marketing', 'pic_toko',
-                      'manager', 'owner', 'admin', 'superadmin'),
-        message='Akses ditolak: Anda tidak berhak menyetujui usulan harga.')
+    user = await _require_pricing_approver(
+        request, 'Akses ditolak: Anda tidak berhak menyetujui usulan harga.')
     db = get_db()
     doc = await db.marketing_dynamic_pricing_suggestions.find_one({"id": suggestion_id})
     if not doc:
         raise HTTPException(404, "Suggestion tidak ditemukan")
     if doc["status"] != "pending":
         raise HTTPException(400, f"Status sudah {doc['status']}")
+    actor = _actor_label(user)
     await db.marketing_dynamic_pricing_suggestions.update_one(
         {"id": suggestion_id},
-        {"$set": {"status": "approved", "updated_at": _now(), "decided_by": "admin"}}
+        {"$set": {"status": "approved", "updated_at": _now(),
+                  "decided_by": actor, "decided_by_id": user.get("id")}}
     )
     await db.marketing_dynamic_pricing_events.insert_one({
         "id": str(uuid.uuid4()), "event_type": "approve",
         "suggestion_id": suggestion_id, "product": doc["product"],
         "current_price_rp": doc["current_price_rp"], "suggested_price_rp": doc["suggested_price_rp"],
-        "created_at": _now(), "actor": "admin"
+        "created_at": _now(), "actor": actor, "actor_id": user.get("id"),
     })
     return ok(data={"status": "approved"})
 
@@ -349,34 +371,40 @@ async def reject_suggestion(
     suggestion_id: str, request: Request,
     reason: Optional[str] = Query(None)
 ):
-    from routes.shared import require_perm
-    await require_perm(
-        request, 'toko.approve', 'toko.manage', 'pricing.approve',
-        legacy_roles=('manager_marketing', 'pic_marketing', 'pic_toko',
-                      'manager', 'owner', 'admin', 'superadmin'),
-        message='Akses ditolak: Anda tidak berhak menolak usulan harga.')
+    user = await _require_pricing_approver(
+        request, 'Akses ditolak: Anda tidak berhak menolak usulan harga.')
     db = get_db()
     doc = await db.marketing_dynamic_pricing_suggestions.find_one({"id": suggestion_id})
     if not doc:
         raise HTTPException(404, "Suggestion tidak ditemukan")
     if doc["status"] not in ["pending", "approved"]:
         raise HTTPException(400, f"Status sudah {doc['status']}")
+    actor = _actor_label(user)
     await db.marketing_dynamic_pricing_suggestions.update_one(
         {"id": suggestion_id},
-        {"$set": {"status": "rejected", "updated_at": _now(), "decided_by": "admin", "reject_reason": reason}}
+        {"$set": {"status": "rejected", "updated_at": _now(), "decided_by": actor,
+                  "decided_by_id": user.get("id"), "reject_reason": reason}}
     )
     await db.marketing_dynamic_pricing_events.insert_one({
         "id": str(uuid.uuid4()), "event_type": "reject",
         "suggestion_id": suggestion_id, "product": doc["product"],
-        "reason": reason, "created_at": _now(), "actor": "admin"
+        "reason": reason, "created_at": _now(), "actor": actor, "actor_id": user.get("id"),
     })
     return ok(data={"status": "rejected"})
 
 
 @router.post("/pricing/suggestions/{suggestion_id}/apply")
 async def apply_suggestion(suggestion_id: str, request: Request):
-    """Mark as applied (in real system would push to platform API)."""
-    await require_auth(request)
+    """Terapkan usulan harga — 2026-11-02.
+
+    Syarat: izin yang sama dengan Approve + status `approved`. Karena belum ada
+    penulisan ke harga katalog/marketplace, endpoint ini MENOLAK (409) dengan pesan
+    jelas dan TIDAK menulis status "applied" (dulu: status palsu + aktor "admin").
+    Yang seharusnya: tulis harga lewat endpoint harga katalog yang sudah ada (dengan
+    histori & aktor dari token), memetakan `product` (nama) → SKU/model katalog.
+    """
+    await _require_pricing_approver(
+        request, 'Akses ditolak: Anda tidak berhak menerapkan usulan harga.')
     db = get_db()
     settings = await _get_pricing_settings(db)
     if not settings.get("enabled"):
@@ -384,19 +412,9 @@ async def apply_suggestion(suggestion_id: str, request: Request):
     doc = await db.marketing_dynamic_pricing_suggestions.find_one({"id": suggestion_id})
     if not doc:
         raise HTTPException(404, "Suggestion tidak ditemukan")
-    if doc["status"] not in ["pending", "approved"]:
-        raise HTTPException(400, f"Tidak bisa apply status '{doc['status']}'")
-    await db.marketing_dynamic_pricing_suggestions.update_one(
-        {"id": suggestion_id},
-        {"$set": {"status": "applied", "applied_at": _now(), "updated_at": _now(), "decided_by": "admin"}}
-    )
-    await db.marketing_dynamic_pricing_events.insert_one({
-        "id": str(uuid.uuid4()), "event_type": "apply",
-        "suggestion_id": suggestion_id, "product": doc["product"],
-        "old_price_rp": doc["current_price_rp"], "new_price_rp": doc["suggested_price_rp"],
-        "change_pct": doc["change_pct"], "created_at": _now(), "actor": "admin"
-    })
-    return ok(data={"status": "applied", "new_price_rp": doc["suggested_price_rp"]})
+    if doc["status"] != "approved":
+        raise HTTPException(400, "Usulan harus disetujui (Approve) lebih dulu sebelum diterapkan.")
+    raise HTTPException(409, PRICING_APPLY_NOT_CONNECTED_MSG)
 
 
 @router.get("/pricing/events")
@@ -417,13 +435,26 @@ async def list_pricing_events(
 #  PHASE 5B — CHURN PREDICTION
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _empty_churn_result() -> dict:
+    """Hasil churn kosong yang jujur (tanpa pelanggan fiktif) — 2026-11-02."""
+    return {
+        "summary": {
+            "total_customers": 0,
+            "segments": {"low": 0, "medium": 0, "high": 0, "critical": 0},
+            "segment_insights": {},
+            "general_strategy": "",
+            "quick_wins": [],
+            "no_data": True,
+        },
+        "customers": [],
+    }
+
+
 @router.post("/churn/run")
 async def run_churn_analysis(request: Request):
     """RFM-based churn analysis + AI explanation & recommendations."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
 
     # Build customer profiles from orders
     now = _now()
@@ -484,25 +515,13 @@ async def run_churn_analysis(request: Request):
         })
 
     if not customers:
-        # Demo data
-        import random
-        random.seed(42)
-        names = ["Ayu Sari", "Budi Santoso", "Citra Dewi", "Deni Rahman", "Eka Putri",
-                 "Fani Lestari", "Gilang Pratama", "Hana Safitri", "Irwan Setiawan", "Joko Widodo",
-                 "Kartika Sari", "Lukman Hakim", "Maya Indah", "Nurul Hidayah", "Oscar Pratama"]
-        for name in names:
-            rec_days = random.choice([5, 15, 35, 55, 80, 120, 150, 200])
-            cnt = random.randint(1, 15)
-            spent = random.randint(100000, 3000000)
-            r = 5 if rec_days <= 14 else 4 if rec_days <= 30 else 3 if rec_days <= 60 else 2 if rec_days <= 90 else 1
-            f = 5 if cnt >= 10 else 4 if cnt >= 5 else 3 if cnt >= 3 else 2 if cnt >= 2 else 1
-            m = 5 if spent >= 2000000 else 4 if spent >= 1000000 else 3 if spent >= 500000 else 2 if spent >= 200000 else 1
-            rfm = r + f + m
-            risk = "low" if rfm >= 12 else "medium" if rfm >= 8 else "high" if rfm >= 5 else "critical"
-            customers.append({"customer": name, "recency_days": rec_days, "order_count": cnt,
-                              "total_spent_rp": spent, "freq_per_month": round(cnt / 3, 1),
-                              "r_score": r, "f_score": f, "m_score": m, "rfm_total": rfm,
-                              "churn_risk": risk, "platforms": ["shopee"]})
+        # 2026-11-02: DULU 15 pelanggan FIKTIF ("Ayu Sari", "Budi Santoso", …) dikarang
+        # dengan angka acak, dikirim ke AI, lalu DISIMPAN ke marketing_churn_scores.
+        # Sekarang: tanpa data order → hasil kosong yang jujur, tanpa panggilan AI.
+        return ok(data=_empty_churn_result(), meta={
+            "analyzed_at": _now().isoformat(),
+            "message": "Belum ada data order pelanggan untuk dianalisis.",
+        })
 
     # Summary
     segments = {"low": [], "medium": [], "high": [], "critical": []}
@@ -512,11 +531,10 @@ async def run_churn_analysis(request: Request):
     # AI explanation for high/critical customers
     high_risk = [c for c in customers if c["churn_risk"] in ["high", "critical"]][:10]
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"churn-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah customer retention specialist untuk brand fashion Indonesia. Berikan rekomendasi retensi yang praktis dan empati. Respond only with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    # 2026-11-02: gerbang tunggal services.ai (sesudah data dipastikan ada).
+    await require_ai("marketing-churn", user_id=user.get("id"), db=db, tier="light")
+    ai_system_msg = ("Kamu adalah customer retention specialist untuk brand fashion Indonesia. "
+                     "Berikan rekomendasi retensi yang praktis dan empati. Respond only with valid JSON.")
 
     prompt = (
         f"Data customer berisiko churn (high/critical) dari CV Dewi Aditya (fashion brand):\n"
@@ -538,14 +556,18 @@ async def run_churn_analysis(request: Request):
 
     ai_result = {}
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-churn", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = "\n".join(clean.split("\n")[1:-1])
         ai_result = json.loads(clean)
+    except AIError as e:
+        logger.warning(f"Churn AI error: {e.code}")
+        ai_result = {"general_strategy": f"{e} Skor RFM tetap tersedia.", "quick_wins": []}
     except Exception as e:
         logger.error(f"Churn AI error: {e}")
-        ai_result = {"general_strategy": "Error AI. Data RFM tersedia.", "quick_wins": []}
+        ai_result = {"general_strategy": "Penjelasan AI tidak dapat dibaca. Skor RFM tetap tersedia.", "quick_wins": []}
 
     # Build action map
     action_map = {a["customer"]: a for a in ai_result.get("customer_actions", [])}
@@ -744,23 +766,19 @@ async def record_ab_result(exp_id: str, payload: ABResultIn, request: Request):
 @router.post("/ab-tests/{exp_id}/conclude")
 async def conclude_ab_test(exp_id: str, request: Request):
     """AI decides winner based on goal metric and data."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     doc = await db.marketing_ab_experiments.find_one({"id": exp_id})
     if not doc:
         raise HTTPException(404, "Experiment tidak ditemukan")
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
+    await require_ai("marketing-ab-conclude", user_id=user.get("id"), db=db, tier="light")
 
     variants = doc.get("variants", [])
     if not any(v.get("views", 0) > 0 for v in variants):
         raise HTTPException(400, "Belum ada data hasil yang diinput. Gunakan tombol 'Input Hasil' terlebih dahulu.")
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"ab-conclude-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah analis marketing A/B testing untuk brand fashion Indonesia. Berikan kesimpulan yang jelas berdasarkan data. Respond only with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = ("Kamu adalah analis marketing A/B testing untuk brand fashion Indonesia. "
+                     "Berikan kesimpulan yang jelas berdasarkan data. Respond only with valid JSON.")
 
     prompt = (
         f"A/B Experiment: {doc['name']}\n"
@@ -782,14 +800,17 @@ async def conclude_ab_test(exp_id: str, request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-ab-conclude", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = "\n".join(clean.split("\n")[1:-1])
         result = json.loads(clean)
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"AB conclude error: {e}")
-        raise HTTPException(500, f"AI conclude gagal: {e}")
+        raise HTTPException(502, "Kesimpulan AI tidak dapat dibaca. Silakan coba lagi.")
 
     await db.marketing_ab_experiments.update_one(
         {"id": exp_id},

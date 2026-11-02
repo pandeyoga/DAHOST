@@ -9,9 +9,15 @@ Dua sheet yang dibaca (boleh salah satu saja):
     → jurnal 2 baris: pemasukan = D kas/bank, K akun lawan; pengeluaran = D akun lawan, K kas/bank.
   * JURNAL_UMUM — jurnal bebas banyak baris, dikelompokkan per `no_jurnal`:
       no_jurnal | tanggal | kode_akun | debit | kredit | keterangan | referensi
-Setiap baris punya `referensi` opsional; kunci anti-dobel = sha1(isi berkas) + nomor baris,
-disimpan di `source_ref` jurnal (`import:<sha8>:<sheet>:<baris>`) → impor ulang berkas yang sama
-DILEWATI, bukan digandakan.
+Setiap baris punya `referensi` opsional.
+
+2026-11-02 (audit No.52) — kunci anti-dobel = ISI baris/jurnal (tanggal + akun + debit + kredit +
+keterangan + referensi), BUKAN sidik berkas + nomor baris. Dulu berkas yang ditambah satu baris
+(atau sekadar dibuka & disimpan ulang) punya sidik baru → SEMUA baris lama terposting lagi.
+Baris kembar yang sah (isi identik, mis. dua parkir Rp5.000 di hari yang sama) dihitung per
+kemunculan: kemunculan ke-n hanya diposting bila di buku baru ada < n jurnal impor berisi sama.
+`source_ref` = `import:<hash isi>:<n>` (unik → indeks DB menolak dobel saat dua unggahan paralel).
+Jurnal impor lama (kunci format lama) tetap dikenali karena hash dihitung dari isi jurnalnya.
 """
 from __future__ import annotations
 
@@ -40,7 +46,8 @@ PETUNJUK = [
     "2. Sheet JURNAL_UMUM: untuk jurnal yang lebih dari 2 baris. Baris dengan no_jurnal yang sama menjadi satu jurnal; total debit harus = kredit.",
     "3. tanggal: YYYY-MM-DD atau sel bertipe tanggal Excel. referensi: nomor bukti/nota (opsional).",
     "4. Unggah di Portal Keuangan → Akuntansi → Impor Jurnal (Excel): PRATINJAU dulu (kesalahan ditampilkan per baris), baru Posting.",
-    "5. Mengunggah berkas yang sama dua kali AMAN — baris yang sudah masuk dilewati (kunci: isi berkas + nomor baris).",
+    "5. Mengunggah berkas yang sama dua kali AMAN — baris yang sudah masuk dilewati (kunci: isi baris = tanggal, akun, nominal,",
+    "   keterangan, referensi). Berkas boleh ditambah baris baru lalu diunggah ulang: hanya baris baru yang diposting.",
     "6. Kode akun hanya boleh akun DETAIL (bukan header) yang aktif — lihat sheet DAFTAR_AKUN.",
 ]
 
@@ -104,13 +111,70 @@ def _date(v) -> str:
     raise ValueError(f"tanggal '{s}' tidak dikenal (pakai YYYY-MM-DD)")
 
 
+def _norm_text(v) -> str:
+    return " ".join(str(v or "").split()).casefold()
+
+
+def content_hash(je_date: str, memo_full: str, lines) -> str:
+    """Hash ISI jurnal impor: tanggal + memo (keterangan + [referensi]) + baris (akun, debit, kredit,
+    keterangan) tanpa memandang urutan baris. Dipakai untuk baris berkas DAN jurnal yang sudah ada."""
+    norm = sorted(
+        (str((ln.get("account_code") if isinstance(ln, dict) else ln[0]) or "").strip(),
+         round(float((ln.get("debit") if isinstance(ln, dict) else ln[1]) or 0), 2),
+         round(float((ln.get("credit") if isinstance(ln, dict) else ln[2]) or 0), 2),
+         _norm_text(ln.get("description") if isinstance(ln, dict) else ln[3]))
+        for ln in lines or [])
+    raw = "|".join([str(je_date)[:10], _norm_text(memo_full)] + [f"{c}~{d:.2f}~{k:.2f}~{t}" for c, d, k, t in norm])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def memo_full(memo: str, reference: str) -> str:
+    return memo + (f" [{reference}]" if reference else "")
+
+
+def assign_import_keys(candidates: list, existing: dict) -> tuple:
+    """Murni: pilih kandidat yang BELUM ada di buku. `existing` = {hash: {"count": n, "used": {idx}}}.
+    Kemunculan ke-k suatu hash dilewati bila k ≤ jumlah jurnal aktif berisi sama; sisanya diberi
+    kunci `import:<hash>:<idx>` dengan idx terkecil yang belum dipakai. → (yang diposting, dilewati)."""
+    seen: dict = {}
+    fresh, skipped = [], 0
+    for c in candidates:
+        h = c["content_hash"]
+        seen[h] = seen.get(h, 0) + 1
+        ex = existing.setdefault(h, {"count": 0, "used": set()})
+        if seen[h] <= ex["count"]:
+            skipped += 1
+            continue
+        idx = 1
+        while idx in ex["used"]:
+            idx += 1
+        ex["used"].add(idx)
+        fresh.append({**c, "key": f"import:{h}:{idx}"})
+    return fresh, skipped
+
+
+async def _existing_content(db, dates) -> dict:
+    out: dict = {}
+    if not dates:
+        return out
+    async for je in db.rahaza_journal_entries.find(
+            {"source_module": SOURCE_MODULE, "status": {"$ne": "voided"}, "date": {"$in": sorted(dates)}},
+            {"_id": 0, "date": 1, "memo": 1, "lines": 1, "source_ref": 1, "import_content_hash": 1}):
+        h = je.get("import_content_hash") or content_hash(je.get("date"), je.get("memo") or "", je.get("lines") or [])
+        e = out.setdefault(h, {"count": 0, "used": set()})
+        e["count"] += 1
+        parts = str(je.get("source_ref") or "").split(":")
+        if len(parts) == 3 and parts[0] == "import" and parts[1] == h and parts[2].isdigit():
+            e["used"].add(int(parts[2]))
+    return out
+
+
 async def parse_workbook(db, data: bytes) -> dict:
     sha = hashlib.sha1(data).hexdigest()[:8]
     wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
     acc = {a["code"]: a async for a in db.rahaza_coa_accounts.find({"active": True}, {"_id": 0, "code": 1, "name": 1, "type": 1, "is_group": 1})}
-    done = {j["source_ref"] async for j in db.rahaza_journal_entries.find(
-        {"source_module": SOURCE_MODULE, "status": {"$ne": "voided"}, "source_ref": {"$regex": f"^import:{sha}:"}}, {"_id": 0, "source_ref": 1})}
-    journals, errors, skipped = [], [], 0
+    errors: list = []
+    cands: list = []   # kandidat jurnal (belum dicek akun) — urutan berkas dipertahankan
 
     def _acc(code, where):
         code = str(code or "").strip()
@@ -127,35 +191,32 @@ async def parse_workbook(db, data: bytes) -> dict:
         return {"account_code": a["code"], "account_name": a.get("name", ""), "account_type": a.get("type", ""),
                 "debit": round(float(d), 2), "credit": round(float(c), 2), "description": desc}
 
+    # ── Tahap 1: baca isi (tanggal, angka, kode) — tanpa cek akun ──────────────
     if SHEET_MUTASI in wb.sheetnames:
         ws = wb[SHEET_MUTASI]
         for i, r in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
             if not r or all(v in (None, "") for v in r[:6]):
                 continue
             where = f"{SHEET_MUTASI} baris {i}"
-            ref = f"import:{sha}:mutasi:{i}"
-            if ref in done:
-                skipped += 1
-                continue
             r = list(r) + [None] * (7 - len(r))
             try:
                 tgl = _date(r[0])
             except ValueError as e:
                 errors.append(f"{where}: {e}")
                 continue
-            bank, lawan = _acc(r[1], where), _acc(r[5], where)
             masuk, keluar = _num(r[3]), _num(r[4])
-            if not bank or not lawan:
-                continue
             if (masuk > 0) == (keluar > 0):
                 errors.append(f"{where}: isi SALAH SATU pemasukan atau pengeluaran (> 0)")
                 continue
             desc = str(r[2] or "").strip() or "Mutasi kas/bank"
             amt = masuk or keluar
-            lines = ([_line(bank, amt, 0, desc), _line(lawan, 0, amt, desc)] if masuk
-                     else [_line(lawan, amt, 0, desc), _line(bank, 0, amt, desc)])
-            journals.append({"key": ref, "sheet": SHEET_MUTASI, "row": i, "date": tgl, "memo": desc,
-                             "reference": str(r[6] or "").strip(), "lines": lines, "total": amt})
+            bank, lawan = str(r[1] or "").strip(), str(r[5] or "").strip()
+            raw = ([(bank, amt, 0, desc, where), (lawan, 0, amt, desc, where)] if masuk
+                   else [(lawan, amt, 0, desc, where), (bank, 0, amt, desc, where)])
+            ref = str(r[6] or "").strip()
+            cands.append({"sheet": SHEET_MUTASI, "row": i, "date": tgl, "memo": desc, "reference": ref,
+                          "raw": raw, "total": amt,
+                          "content_hash": content_hash(tgl, memo_full(desc, ref), raw)})
 
     if SHEET_UMUM in wb.sheetnames:
         ws = wb[SHEET_UMUM]
@@ -171,11 +232,7 @@ async def parse_workbook(db, data: bytes) -> dict:
             groups.setdefault(no, []).append((i, r))
         for no, rows in groups.items():
             first = rows[0][0]
-            ref = f"import:{sha}:umum:{first}:{no}"
-            if ref in done:
-                skipped += 1
-                continue
-            lines, memo, refno, tgl = [], "", "", None
+            raw, memo, refno, tgl = [], "", "", None
             ok = True
             for i, r in rows:
                 where = f"{SHEET_UMUM} baris {i} ({no})"
@@ -183,10 +240,6 @@ async def parse_workbook(db, data: bytes) -> dict:
                     tgl = tgl or _date(r[1])
                 except ValueError as e:
                     errors.append(f"{where}: {e}")
-                    ok = False
-                    continue
-                a = _acc(r[2], where)
-                if not a:
                     ok = False
                     continue
                 d, c = _num(r[3]), _num(r[4])
@@ -197,18 +250,40 @@ async def parse_workbook(db, data: bytes) -> dict:
                 desc = str(r[5] or "").strip()
                 memo = memo or desc
                 refno = refno or str(r[6] or "").strip()
-                lines.append(_line(a, d, c, desc))
+                raw.append((str(r[2] or "").strip(), d, c, desc, where))
             if not ok:
                 continue
-            td, tc = sum(l["debit"] for l in lines), sum(l["credit"] for l in lines)
+            td, tc = sum(x[1] for x in raw), sum(x[2] for x in raw)
             if abs(td - tc) > 0.5:
                 errors.append(f"{SHEET_UMUM} {no}: Debit Rp {td:,.0f} ≠ Kredit Rp {tc:,.0f}")
                 continue
-            if len(lines) < 2:
+            if len(raw) < 2:
                 errors.append(f"{SHEET_UMUM} {no}: minimal 2 baris")
                 continue
-            journals.append({"key": ref, "sheet": SHEET_UMUM, "row": first, "date": tgl, "memo": memo or no,
-                             "reference": refno, "lines": lines, "total": td, "no_jurnal": no})
+            memo = memo or no
+            cands.append({"sheet": SHEET_UMUM, "row": first, "date": tgl, "memo": memo, "reference": refno,
+                          "raw": raw, "total": td, "no_jurnal": no,
+                          "content_hash": content_hash(tgl, memo_full(memo, refno), raw)})
+
+    # ── Tahap 2: anti-dobel berdasarkan ISI terhadap jurnal impor yang sudah ada ─
+    existing = await _existing_content(db, {c["date"] for c in cands})
+    fresh, skipped = assign_import_keys(cands, existing)
+
+    # ── Tahap 3: cek akun hanya untuk yang akan diposting ───────────────────────
+    journals = []
+    for c in fresh:
+        lines, ok = [], True
+        for code, d, k, desc, where in c["raw"]:
+            a = _acc(code, where)
+            if not a:
+                ok = False
+                continue
+            lines.append(_line(a, d, k, desc))
+        if not ok:
+            continue
+        j = {k: v for k, v in c.items() if k != "raw"}
+        j["lines"] = lines
+        journals.append(j)
 
     if SHEET_MUTASI not in wb.sheetnames and SHEET_UMUM not in wb.sheetnames:
         errors.append(f"Berkas tidak punya sheet {SHEET_MUTASI} maupun {SHEET_UMUM} — unduh template dulu.")
@@ -228,6 +303,7 @@ async def post_journals(db, user: dict, journals: list, filename: str) -> dict:
             doc = {"id": str(uuid4()), "je_number": await _gen_je_number(db, d), "date": d.isoformat(),
                    "memo": j["memo"] + (f" [{j['reference']}]" if j.get("reference") else ""),
                    "source_module": SOURCE_MODULE, "source_ref": j["key"], "import_file": filename,
+                   "import_content_hash": j.get("content_hash"),  # 2026-11-02: kunci anti-dobel per isi
                    "status": "posted", "total_debit": total_d, "total_credit": total_c,
                    "created_at": now, "updated_at": now, "created_by": user["id"], "created_by_name": user.get("name", ""),
                    "posted_at": now, "posted_by": user["id"], "voided_at": None, "voided_by": None,

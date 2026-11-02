@@ -1152,13 +1152,18 @@ async def delete_buyer_shipment(bsid: str, request: Request):
         if not mat:
             continue
         try:
+            # 2026-11-02 (F1): barang kembali bernilai = biaya saat ia keluar (bukan lapisan Rp 0).
+            exit_cost = await qled.exit_cost_of(db, material_id=mat['id'],
+                                                shipment_item_id=it.get('id') or '',
+                                                sku=mat.get('code', ''))
             posted = await qled.post_fg_accepted(
                 db, material_id=mat['id'], qty=qty,
                 ref={'source': 'buyer_shipment_cancel', 'shipment_id': bsid,
                      'shipment_number': doc.get('shipment_number'),
                      'shipment_item_id': it.get('id')},
                 actor=user, meta={'material_code': mat.get('code', ''), 'unit': 'pcs',
-                                  'type': 'finished_goods'})
+                                  'type': 'finished_goods'},
+                exit_cost=exit_cost)
             await db.rahaza_fg_movements.insert_one({
                 'id': new_id(), 'sku_code': it.get('sku', ''), 'movement_type': 'IN',
                 'qty': qty, 'source': 'buyer_shipment_cancel', 'ref_id': bsid,
@@ -1254,10 +1259,15 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
                                             sku=item.get('sku', ''), ref=ref, actor=user)
                         mv = 'OUT'
                     else:
+                        # 2026-11-02 (F1): barang kembali bernilai = biaya saat ia keluar.
+                        exit_cost = await qled.exit_cost_of(db, material_id=mat['id'],
+                                                            shipment_item_id=item_id,
+                                                            sku=mat.get('code', ''))
                         await qled.post_fg_accepted(
                             db, material_id=mat['id'], qty=-delta, ref=ref, actor=user,
                             meta={'material_code': mat.get('code', ''), 'unit': 'pcs',
-                                  'type': 'finished_goods'})
+                                  'type': 'finished_goods'},
+                            exit_cost=exit_cost)
                         mv = 'IN'
                     await db.rahaza_fg_movements.insert_one({
                         'id': new_id(), 'sku_code': item.get('sku', ''), 'movement_type': mv,

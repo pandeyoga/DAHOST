@@ -510,6 +510,12 @@ async def _value_restock(db, wh_ret: dict, mid: str, qty: int, actor: dict) -> d
         out["cogs_je_id"] = je.get("je_id")
         out["cogs_je_number"] = je.get("je_number")
         out["cogs_post_error"] = None if je.get("ok") else je.get("error")
+        # 2026-11-02 — lapisan restock DITAUTKAN ke jurnalnya (Dr 1-1404). Dulu `gl_je_id`
+        # kosong sehingga Laporan Nilai FG menghitungnya "belum berjurnal" (palsu 110.994,50
+        # di uji audit g.md T5) walau nilainya sudah ada di GL.
+        if je.get("ok") and je.get("je_id") and out["hpp_layer_id"]:
+            await db[fcl.LAYERS].update_one({"id": out["hpp_layer_id"]}, {"$set": {
+                "gl_je_id": je["je_id"], "gl_basis": "wh_return_restock"}})
     except Exception as e:  # noqa: BLE001
         logger.error("[retur-jembatan] nilai HPP retur %s gagal: %s", wh_ret.get("return_code"), e)
         out["cogs_post_error"] = str(e)
@@ -547,19 +553,28 @@ async def restock(db, wh_ret: dict, *, condition=None, qty=None, actor=None,
                 "message": "Stok retur ini sudah pernah ditambahkan (tidak digandakan)."}
 
     snap = await _material_snapshot(db, mid)
+    # 2026-11-02 — kosakata kategori/kepemilikan SAMA dengan pembaca stok jual
+    # (`/api/sales/fg-stock` & Fulfillment menyaring `inventory_category=fg_internal`,
+    # Fulfillment juga `ownership=cv_da`) dan dengan penulis FG lain
+    # (`production_qty_ledger.post_fg_accepted`, `sales_direct` retur). Dulu
+    # `finished_goods/own` — kosakata yang tidak dibaca siapa pun.
+    # Barang RUSAK (karantina) sengaja TANPA `inventory_category`, sama seperti penulis
+    # karantina lain (`core/quarantine`), supaya tidak ikut terhitung stok jual.
+    stock_meta = {
+        "material_code": snap.get("material_code", ""),
+        "material_name": snap.get("material_name", ""),
+        "material_type": snap.get("material_type", "fg"),
+        "unit": snap.get("unit", "pcs"),
+        "category_name": snap.get("category_name", ""),
+        "location_code": loc["code"],
+        "ownership": "cv_da",
+    }
+    if loc["sellable"]:
+        stock_meta["inventory_category"] = "fg_internal"
     try:
         row = await stock_service.add(
             mid, loc["id"], n,
-            meta={
-                "material_code": snap.get("material_code", ""),
-                "material_name": snap.get("material_name", ""),
-                "material_type": snap.get("material_type", "fg"),
-                "unit": snap.get("unit", "pcs"),
-                "category_name": snap.get("category_name", ""),
-                "location_code": loc["code"],
-                "inventory_category": "finished_goods",
-                "ownership": "own",
-            },
+            meta=stock_meta,
             ref={
                 "type": "wh_return_restock",
                 "ref_id": wh_ret["id"],

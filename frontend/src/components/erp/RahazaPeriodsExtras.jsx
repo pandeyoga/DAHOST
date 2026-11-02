@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, BookLock, Undo2 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { todayWIB } from './SdmCashAccountSelect';
 
-const fmt = (n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
+const fmt =(n) => new Intl.NumberFormat('id-ID').format(Math.round(n || 0));
 
 export function PeriodAlerts({ headers, onOpened }) {
   const [alerts, setAlerts] = useState([]);
@@ -74,6 +75,11 @@ export function YearEndClose({ headers, year, onDone }) {
   };
   if (!preview) return null;
   const closed = preview.already_closed;
+  // 2026-11-02 (audit No.34): backend menolak tutup tahun sebelum 31 Desember lewat (WIB) —
+  // rahaza_year_end.year_end_allowed. Tombol dinonaktifkan + alasan di tooltip.
+  const yearNotEnded = Number(todayWIB().slice(0, 4)) <= Number(year);
+  const yearBlockReason = yearNotEnded
+    ? `Tahun ${year} belum berakhir. Tutup tahun hanya boleh setelah 31 Desember ${year} (WIB).` : '';
   return (
     <GlassCard className="p-4" data-testid="year-end-card">
       <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -83,7 +89,11 @@ export function YearEndClose({ headers, year, onDone }) {
           {closed ? `Sudah ditutup · ${preview.existing_je?.je_number}` : 'Belum ditutup'}
         </span>
         <div className="ml-auto flex gap-2">
-          {!closed && <Button size="sm" disabled={!preview.can_close || busy} onClick={doClose} data-testid="year-end-close-btn">Tutup Tahun {year}</Button>}
+          {!closed && (
+            <span title={yearBlockReason || undefined} className="inline-flex" data-testid="year-end-close-wrap">
+              <Button size="sm" disabled={!preview.can_close || busy || yearNotEnded} onClick={doClose} data-testid="year-end-close-btn">Tutup Tahun {year}</Button>
+            </span>
+          )}
           {closed && <Button size="sm" variant="ghost" onClick={doReverse} data-testid="year-end-reverse-btn"><Undo2 className="w-3.5 h-3.5 mr-1" />Batalkan penutupan</Button>}
         </div>
       </div>
@@ -103,9 +113,9 @@ export function YearEndClose({ headers, year, onDone }) {
           </div>
         </div>
       </div>
-      {!closed && !preview.can_close && (
-        <div className="mt-2 text-[11px] text-foreground/55">
-          Syarat: 12 periode closed/locked, ada saldo L/R, akun Laba Ditahan {preview.retained_earnings_account} aktif.
+      {!closed && (!preview.can_close || yearNotEnded) && (
+        <div className="mt-2 text-[11px] text-foreground/55" data-testid="year-end-requirements">
+          Syarat: tahun {year} sudah berakhir (setelah 31 Desember, WIB), 12 periode closed/locked, ada saldo L/R, akun Laba Ditahan {preview.retained_earnings_account} aktif.
         </div>
       )}
       {closings.length > 0 && (

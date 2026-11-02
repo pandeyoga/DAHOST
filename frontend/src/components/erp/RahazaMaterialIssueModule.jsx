@@ -109,12 +109,15 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
     const h = { Authorization: `Bearer ${token}` };
     Promise.all([
       Promise.resolve([]),  // FASE 5: WO engine lama diarsip — MI draft kini auto dari job internal
-      fetch('/api/rahaza/locations', { headers: h }).then(r => r.ok ? r.json() : []),
+      // 2026-11-02 — No.18(a): daftar lokasi = SSOT lokasi PENYIMPANAN (dulu semua
+      // rahaza_locations, termasuk KTR-PST/KTR-ADM/KTR-HRD/KTR-MKT → MI kain bisa
+      // mengambil dari "Ruang Admin" dan meninggalkan baris minus di sana).
+      fetch('/api/rahaza/storage-locations', { headers: h }).then(r => r.ok ? r.json() : []),
       fetch('/api/rahaza/materials', { headers: h }).then(r => r.ok ? r.json() : []),
       fetch(`${process.env.REACT_APP_BACKEND_URL}/api/wms/buildings`, { headers: h }).then(r => r.ok ? r.json() : []),
     ]).then(([w, l, m, b]) => {
       // lokasi karantina (QC) bukan tempat mengambil material produksi
-      setLocations((l || []).filter(x => x.active && x.storage_role !== 'karantina' && x.role !== 'karantina'));
+      setLocations((Array.isArray(l) ? l : []).filter(x => x.role !== 'karantina' && x.storage_role !== 'karantina'));
       setMaterials(m || []);
       setBuildings(Array.isArray(b) ? b : []);
     });
@@ -372,6 +375,11 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
       });
     if (items.length === 0) {
       setCreateErr('Minimal 1 baris dengan material dan jumlah lebih dari 0.');
+      return;
+    }
+    // 2026-11-02 — No.18(a): baris yang diketik pengguna WAJIB menunjuk lokasi ambil.
+    if (items.some(it => !it.location_id)) {
+      setCreateErr('Pilih lokasi ambil untuk setiap baris material.');
       return;
     }
     setCreating(true); setCreateErr('');

@@ -82,7 +82,8 @@ export default function IntegrationSettingsModule({ token, userRole }) {
   };
 
   const handleDelete = async (keyName) => {
-    if (!window.confirm(`Hapus kunci ${keyName}? Sistem akan fallback ke environment variable.`)) return;
+    // 2026-11-02: tanpa istilah teknis "environment variable" di layar.
+    if (!window.confirm(`Hapus kunci ${keyName} dari database? Bila kunci juga diatur di server, nilai server yang dipakai.`)) return;
     try {
       const res = await fetch(`/api/rahaza/integration-settings/${keyName}`, {
         method: 'DELETE',
@@ -148,7 +149,8 @@ export default function IntegrationSettingsModule({ token, userRole }) {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Integrasi & API Keys</h1>
           <p className="text-muted-foreground text-sm mt-1">
-            Kelola kunci API dan konfigurasi integrasi layanan eksternal. Kunci disimpan di database terenkripsi.
+            Kelola kunci API dan konfigurasi integrasi layanan eksternal. Nilai kunci tidak pernah ditampilkan utuh.
+            {' '}Fitur AI hanya memakai <span className="font-mono">ANTHROPIC_API_KEY</span>.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -183,8 +185,8 @@ export default function IntegrationSettingsModule({ token, userRole }) {
           <div className="text-sm text-blue-700 dark:text-blue-300">
             <p className="font-medium">Prioritas penggunaan kunci:</p>
             <p className="text-xs mt-1 text-blue-600 dark:text-blue-400">
-              1. Nilai yang dikonfigurasi di sini (database) — diutamakan<br />
-              2. Environment variable (.env) — fallback otomatis jika tidak ada di database
+              1. Nilai yang disimpan di layar ini — diutamakan<br />
+              2. Pengaturan server — dipakai bila belum diisi di sini
             </p>
           </div>
         </div>
@@ -213,20 +215,25 @@ export default function IntegrationSettingsModule({ token, userRole }) {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-sm font-semibold text-foreground">{key.key_name}</span>
+                            {key.deprecated && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                                Tidak dipakai lagi
+                              </span>
+                            )}
                             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                               key.is_configured
                                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400'
                                 : 'bg-[var(--glass-bg)] text-muted-foreground'
                             }`}>
                               {key.is_configured ? <CheckCircle className="w-2.5 h-2.5" /> : <XCircle className="w-2.5 h-2.5" />}
-                              {key.is_configured ? `Dikonfigurasi (${key.source})` : 'Belum dikonfigurasi'}
+                              {key.is_configured ? `Dikonfigurasi (${key.source === 'db' ? 'layar ini' : 'server'})` : 'Belum dikonfigurasi'}
                             </span>
                           </div>
                           <p className="text-xs text-muted-foreground mt-1">{key.description}</p>
                           {key.is_configured && (
                             <div className="flex items-center gap-2 mt-2">
                               <code className="text-xs font-mono bg-[var(--glass-bg)] px-2 py-0.5 rounded border border-border">
-                                {showValues[key.key_name] ? '(nilai tersembunyi — klik ikon mata untuk reveal)' : key.masked_value || '(env)'}
+                                {key.masked_value || '(server)'}
                               </code>
                               {key.updated_at && (
                                 <span className="text-[10px] text-muted-foreground">

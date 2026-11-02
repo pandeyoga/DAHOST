@@ -2,7 +2,6 @@
 Complaints Management Module — Backend Routes
 Phase 2 Week 5: Complaint tracking dengan SLA + AI classification
 """
-import os
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
@@ -14,13 +13,12 @@ from auth import require_auth
 # F6 (sesi #9) — ringkasan & daftar WAJIB berlingkup toko.
 from core import marketing_account_scope as _scope
 from utils.query_guards import q_date
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 import json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/complaints", tags=["marketing-complaints"])
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 COMPLAINT_CATEGORIES = [
     "missing_item", "wrong_item", "quality_defect",
@@ -225,7 +223,7 @@ async def seed_complaints_if_empty():
 async def complaints_summary(request: Request):
     user = await require_auth(request)
     db = get_db()
-    await seed_complaints_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     # F6 (sesi #9) — ringkasan komplain WAJIB berlingkup toko.
     _s = await _scope.scope_filter(db, user, None)
 
@@ -306,7 +304,7 @@ async def list_complaints(
 ):
     user = await require_auth(request)
     db = get_db()
-    await seed_complaints_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     q: dict = await _scope.scope_filter(db, user, None)
     if platform:
@@ -451,21 +449,17 @@ async def add_note(complaint_id: str, body: NoteBody, request: Request):
 
 @router.post("/{complaint_id}/ai-classify")
 async def ai_reclassify(complaint_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     c = await db.marketing_complaints.find_one({"id": complaint_id}, {"_id": 0})
     if not c:
         raise HTTPException(404, "Complaint not found")
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI not configured")
+    # 2026-11-02: gerbang tunggal services.ai (dulu 503 "AI not configured").
+    await require_ai("marketing-complaint-classify", user_id=user.get("id"), db=db, tier="light")
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"complaint-classify-{complaint_id[:8]}",
-        system_message="Kamu adalah sistem klasifikasi komplain pelanggan marketplace Indonesia. Respond only with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = "Kamu adalah sistem klasifikasi komplain pelanggan marketplace Indonesia. Respond only with valid JSON."
 
     cats = ", ".join(COMPLAINT_CATEGORIES)
     prompt = (
@@ -477,7 +471,7 @@ async def ai_reclassify(complaint_id: str, request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-complaint-classify", ai_system_msg, prompt, tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = clean.split("```")[1]
@@ -495,5 +489,8 @@ async def ai_reclassify(complaint_id: str, request: Request):
         }
         await db.marketing_complaints.update_one({"id": complaint_id}, {"$set": update})
         return {"ok": True, "result": result}
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
-        raise HTTPException(500, f"AI classification failed: {e}")
+        logger.warning(f"AI classify parse error: {e}")
+        raise HTTPException(502, "Hasil klasifikasi AI tidak dapat dibaca. Silakan coba lagi.")

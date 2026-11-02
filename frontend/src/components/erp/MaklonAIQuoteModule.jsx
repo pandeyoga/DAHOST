@@ -235,7 +235,7 @@ export default function MaklonAIQuoteModule({ token }) {
           <Calculator className="w-6 h-6 text-emerald-500" /> AI Quote Generator
         </h1>
         <p className="text-sm text-muted-foreground">
-          Generate quotation maklon AI dengan HPP breakdown, margin, lead time, dan rekomendasi (Emergent LLM).
+          Generate quotation maklon AI dengan HPP breakdown, margin, lead time, dan rekomendasi (Claude, bila AI aktif; selain itu estimasi heuristik).
         </p>
       </div>
 

@@ -73,6 +73,13 @@ function AccountEditor({ initial, onSave, onClose, accounts }) {
             Akun Group (header / non-postable)
           </label>
           <p className="text-[11px] text-muted-foreground mt-1">Akun group hanya sebagai header hierarchy, tidak bisa menerima jurnal.</p>
+          {/* 2026-11-02 (audit No.48): server menolak centang ini untuk akun yang sudah bertransaksi */}
+          {form.id && !initial?.is_group && form.is_group && (
+            <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1" data-testid="coa-isgroup-warning">
+              Akun yang sudah punya baris jurnal tidak bisa dijadikan group — saldonya akan hilang dari laporan.
+              Buat akun anak baru lalu pindahkan saldonya dengan jurnal reklasifikasi.
+            </p>
+          )}
         </div>
       </div>
       <div className="flex justify-end gap-2 mt-5">

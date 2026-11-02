@@ -30,6 +30,139 @@ def _now() -> datetime:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# WAKTU KE KLIEN — SELALU DENGAN ZONA (2026-11-02)
+#
+# Motor dibuka tanpa `tz_aware` (database.py), jadi `created_at` kembali sebagai
+# datetime NAIF bernilai UTC dan dulu dikirim "2026-11-01T21:33:43.861000".
+# Browser menafsirkan string tanpa offset sebagai waktu LOKAL ⇒ di WIB setiap
+# notifikasi tampil 7 jam lebih tua ("7 jam lalu" untuk notifikasi 1 menit) dan
+# Portal Saya menampilkan jam UTC mentah. Semua pembaca notifikasi kini memakai
+# `iso_utc` → "2026-11-01T21:33:43.861Z" (milidetik, aman untuk semua browser).
+# ─────────────────────────────────────────────────────────────────────────────
+
+def iso_utc(v: Any) -> Any:
+    """datetime → ISO UTC ber-'Z' (naif dianggap UTC, sesuai cara penyimpanan)."""
+    if isinstance(v, datetime):
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+        return v.astimezone(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+    return v
+
+
+_TIME_FIELDS = ('created_at', 'read_at', 'sent_at', 'updated_at')
+
+
+def notif_times_iso(doc: dict) -> dict:
+    """Salinan dokumen dengan field waktu notifikasi sudah ber-zona (lihat `iso_utc`)."""
+    out = dict(doc or {})
+    for k in _TIME_FIELDS:
+        if k in out:
+            out[k] = iso_utc(out[k])
+    return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TAUTAN MODUL — id yang tidak ada di registry frontend (2026-11-02)
+#
+# Audit 2026-11-02: 7 id `link_module` yang ditulis backend TIDAK ada di
+# MODULE_REGISTRY frontend, sehingga tombol "Buka" diam (ditandai dibaca, layar
+# tidak berubah). 258 notifikasi stok kritis (30% isi DB) terdampak. Peta ini
+# dipakai SAAT TULIS (`notif_insert`) dan SAAT BACA (bel/Portal Saya), jadi
+# notifikasi lama ikut sembuh dan penulis di berkas lain yang belum diperbaiki
+# tetap mendarat di layar yang hidup. Uji kontrak: tests/unit/test_notif_p7.py
+# memastikan setiap tujuan di peta ini ADA di frontend moduleRegistry.js.
+# ─────────────────────────────────────────────────────────────────────────────
+LINK_MODULE_ALIASES = {
+    # stok kritis (mesin alert) — penulis kembar `rahaza_inventory_shared` sudah memakai wh-stock
+    'prod-materials': 'wh-stock',
+    # klaim biaya / perjalanan dinas / settlement → tab "Approval Klaim & Dinas"
+    'hr-approval-inbox': 'hr-expense-approval',
+    # salah ejaan garis bawah vs tanda hubung
+    'hr_salary_adjustments': 'hr-salary-adjustments',
+    'kpi_portal': 'kpi-portal',
+    'hr_kpi': 'hr-kpi',
+    'hris_employees': 'hr-employees',
+    'my_profile': 'portal-profile',
+}
+
+
+def normalize_link_module(mod: Optional[str]) -> Optional[str]:
+    if not mod:
+        return mod
+    return LINK_MODULE_ALIASES.get(str(mod), mod)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERAN PENERIMA ALERT — HANYA PERAN NYATA (2026-11-02)
+#
+# Audit 2026-11-02 (N1): alert stok kritis/WO/kontrak ditarget ke peran yang
+# tidak pernah ada (`warehouse_manager`, `manager_production`,
+# `production_manager`) ⇒ hanya superadmin yang menerima; admin gudang tidak
+# pernah tahu stoknya kritis. Peran pengganti DITURUNKAN dari PORTAL_ACCESS
+# portal terkait (routes/shared.py), lalu dipersempit ke peran yang memegang
+# kewenangan domain itu (core/roles.py) supaya alert tindakan tidak menyiram
+# staf lini/operator. Keduanya SSOT repo — tidak ada daftar peran baru di sini.
+# ─────────────────────────────────────────────────────────────────────────────
+# Peran fiktif → portal asal tugasnya. `finance` = nama generik lama; peran
+# keuangan yang benar-benar ada: accounting/staff_keuangan/manager_keuangan
+# (core/roles.py). Dipakai `notif_insert` sehingga penulis di berkas LAIN yang
+# masih menulis peran fiktif (stok rendah mutasi, rak kritis, shipment) ikut
+# sampai ke orang nyata tanpa menunggu tiap berkas diperbaiki.
+PHANTOM_ROLE_PORTAL = {
+    'warehouse_manager': 'warehouse',
+    'manager_production': 'production',
+    'production_manager': 'production',
+    'finance': 'finance',
+}
+PHANTOM_ROLES = set(PHANTOM_ROLE_PORTAL)
+
+
+def _domain_roles(portal: str):
+    from core import roles as _r
+    return {
+        'warehouse': _r.WAREHOUSE_ROLES,
+        'production': _r.PRODUCTION_ROLES,
+        'hr': _r.HR_ROLES,
+        'finance': _r.FINANCE_ROLES,
+    }.get(portal)
+
+
+def alert_roles_for_portal(portal: str) -> List[str]:
+    """Peran nyata portal `portal` (PORTAL_ACCESS ∩ peran domain core/roles)."""
+    from routes.shared import PORTAL_ACCESS
+    base = list(PORTAL_ACCESS.get(portal) or [])
+    domain = _domain_roles(portal)
+    return sorted({r for r in base if domain is None or r in domain})
+
+
+def expand_phantom_roles(roles) -> List[str]:
+    """Setiap peran fiktif diganti peran nyata portalnya; peran lain tetap."""
+    out = set()
+    for r in roles or []:
+        r = str(r).lower()
+        portal = PHANTOM_ROLE_PORTAL.get(r)
+        if portal:
+            out |= set(alert_roles_for_portal(portal))
+        else:
+            out.add(r)
+    return sorted(out)
+
+
+def real_target_roles(roles, portal: str, *, keep=('superadmin',)) -> List[str]:
+    """Ganti peran fiktif di `roles` dengan peran nyata portal `portal`.
+
+    Dipakai juga untuk pengaturan yang tersimpan di DB (mis.
+    `rahaza_alert_settings.alert_target_roles` masih berisi `manager_production`).
+    """
+    roles = [str(r).lower() for r in (roles or [])]
+    out = {r for r in roles if r not in PHANTOM_ROLES}
+    if not roles or any(r in PHANTOM_ROLES for r in roles):
+        out |= set(alert_roles_for_portal(portal))
+    out |= set(keep or ())
+    return sorted(out)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CORE INSERT
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -92,11 +225,17 @@ async def notif_insert(
     # Target penerima kanonik di `meta` (dibaca `notif_audience_query`). Penulis
     # boleh mengirim lewat argumen ini ATAU lewat meta — keduanya digabung.
     meta = dict(meta or {})
+    # 2026-11-02 — id modul mati dipetakan ke id hidup (lihat LINK_MODULE_ALIASES).
+    if meta.get('link_module'):
+        meta['link_module'] = normalize_link_module(meta['link_module'])
     if target_roles:
         meta['target_roles'] = sorted({str(r).lower() for r in
                                        (list(meta.get('target_roles') or []) + list(target_roles))})
     elif meta.get('target_roles'):
         meta['target_roles'] = sorted({str(r).lower() for r in meta['target_roles']})
+    # 2026-11-02 — peran fiktif tidak punya user ⇒ ganti peran nyata portalnya.
+    if meta.get('target_roles') and PHANTOM_ROLES & set(meta['target_roles']):
+        meta['target_roles'] = expand_phantom_roles(meta['target_roles'])
     if target_user_ids:
         meta['target_user_ids'] = sorted({str(u) for u in
                                           (list(meta.get('target_user_ids') or [])
@@ -238,9 +377,9 @@ async def notif_mark_all_read_for(db, user: dict, *, type: Optional[str] = None)
     """Tandai semua notifikasi milik user (personal + bersama) sebagai dibaca."""
     uid = notif_user_id(user)
     extra = {'type': type} if type else None
+    # 2026-11-02 — tanpa batas 2000: "tandai semua" harus benar-benar semua.
     rows = await db.notifications.find(
-        notif_audience_query(user, extra), {'_id': 0, 'id': 1, 'user_id': 1, 'meta': 1,
-                                            'read': 1, 'read_by': 1}).to_list(2000)
+        notif_audience_query(user, extra), _UNREAD_PROJECTION).to_list(None)
     personal = [r['id'] for r in rows if r.get('user_id') and notif_is_unread_for(r, user)]
     shared = [r['id'] for r in rows if not r.get('user_id') and notif_is_unread_for(r, user)]
     n = 0
@@ -255,12 +394,24 @@ async def notif_mark_all_read_for(db, user: dict, *, type: Optional[str] = None)
     return n
 
 
+# Proyeksi minimum untuk menghitung status baca (tanpa body/judul).
+_UNREAD_PROJECTION = {'_id': 0, 'id': 1, 'user_id': 1, 'read': 1, 'read_by': 1,
+                      'meta.read_by': 1}
+
+
 async def notif_count_unread_for(db, user: dict, *, type: Optional[str] = None) -> int:
+    """Jumlah belum dibaca yang SEBENARNYA.
+
+    2026-11-02 — dulu `to_list(2000)` (dan bel memakai jendela 200 dokumen) ⇒
+    angka terpotong. Sekarang seluruh dokumen audiens dihitung dengan proyeksi
+    ringan, jadi angka bel = angka Portal Saya = jumlah nyata.
+    """
     extra = {'type': type} if type else None
-    rows = await db.notifications.find(
-        notif_audience_query(user, extra),
-        {'_id': 0, 'user_id': 1, 'read': 1, 'meta': 1, 'read_by': 1}).to_list(2000)
-    return sum(1 for r in rows if notif_is_unread_for(r, user))
+    n = 0
+    async for r in db.notifications.find(notif_audience_query(user, extra), _UNREAD_PROJECTION):
+        if notif_is_unread_for(r, user):
+            n += 1
+    return n
 
 
 async def notif_list_for(db, user: dict, *, type: Optional[str] = None,
@@ -375,7 +526,7 @@ def serialize_notif(doc: Any) -> dict:
     out.pop('_id', None)
     for k, v in out.items():
         if isinstance(v, datetime):
-            out[k] = v.isoformat()
+            out[k] = iso_utc(v)   # 2026-11-02 — selalu ber-zona (lihat iso_utc)
     return out
 
 
@@ -493,7 +644,7 @@ def _to_iso(v: Any) -> Optional[str]:
     if v is None:
         return None
     if isinstance(v, datetime):
-        return v.isoformat()
+        return iso_utc(v)   # 2026-11-02 — selalu ber-zona (lihat iso_utc)
     return v
 
 

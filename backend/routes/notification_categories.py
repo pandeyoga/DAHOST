@@ -47,7 +47,9 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from auth import require_auth, serialize_doc
 from database import get_db
 from routes.shared import PORTAL_ACCESS, SUPER_ROLES
-from utils.notif_unified import notif_is_unread_for, notif_user_id
+from utils.notif_unified import (
+    normalize_link_module, notif_is_unread_for, notif_times_iso, notif_user_id,
+)
 
 
 def _explicitly_addressed(notif: dict, user: dict) -> bool:
@@ -240,16 +242,62 @@ def _present(notif: dict, cat: str, unread: bool) -> dict:
     yang bisa berada di akar dokumen ATAU di dalam `meta`.
     """
     meta = notif.get("meta") or {}
+    # 2026-11-02 — `link_id` (id rekaman) & `hub_tab` ikut dikirim supaya bel bisa
+    # meneruskannya ke navigasi; id modul mati dipetakan ke id hidup; waktu
+    # dikirim ber-zona (lihat utils/notif_unified.iso_utc).
+    params = dict(notif.get("link_params") or meta.get("link_params") or {})
+    if meta.get("hub_tab") and not params.get("tab"):
+        params["tab"] = meta["hub_tab"]
     return {
-        **notif,
+        **notif_times_iso(notif),
         "category": cat,
         "category_label": CATEGORY_LABEL.get(cat, cat),
         "read": not unread,
         "message": notif.get("message") or notif.get("body") or "",
         "body": notif.get("body") or notif.get("message") or "",
-        "link_module": notif.get("link_module") or meta.get("link_module") or "",
-        "link_params": notif.get("link_params") or meta.get("link_params") or None,
+        "link_module": normalize_link_module(
+            notif.get("link_module") or meta.get("link_module") or "") or "",
+        "link_id": notif.get("link_id") or notif.get("source_id") or meta.get("link_id") or None,
+        "link_params": params or None,
     }
+
+
+# Field minimum untuk menentukan kategori, audiens, dan status baca — dipakai
+# untuk MENGHITUNG seluruh notifikasi tanpa memuat judul/isi (2026-11-02).
+_LIGHT = {"_id": 0, "id": 1, "type": 1, "subtype": 1, "user_id": 1, "read": 1,
+          "read_by": 1, "link_module": 1, "target_user_ids": 1, "target_roles": 1,
+          "meta.link_module": 1, "meta.target_user_ids": 1, "meta.target_roles": 1,
+          "meta.read_by": 1}
+
+
+async def _scan(db, user, scope, *, category=None, unread_only=False):
+    """SEMUA notifikasi audiens user (terbaru dulu) → [(id, kategori, belum_dibaca)].
+
+    2026-11-02 — dulu bel hanya membaca 200 dokumen terbaru (`_fetch`) ⇒ angka
+    bel superadmin 200 padahal 787 belum dibaca, dan popup tidak bisa melihat
+    lebih jauh. Pemindaian ringan ini menjadi dasar hitungan DAN paginasi, jadi
+    angka bel selalu = isi popup.
+    """
+    from utils.notif_unified import notif_audience_query
+    out = []
+    async for r in db.notifications.find(notif_audience_query(user), _LIGHT).sort("created_at", -1):
+        cat = effective_category(r, user, scope)
+        if cat is None or (category and cat != category):
+            continue
+        unread = notif_is_unread_for(r, user)
+        if unread_only and not unread:
+            continue
+        out.append((r["id"], cat, unread))
+    return out
+
+
+async def _load_full(db, ids):
+    """Dokumen lengkap untuk `ids`, urutan dipertahankan."""
+    if not ids:
+        return []
+    rows = await db.notifications.find({"id": {"$in": list(ids)}}, {"_id": 0}).to_list(len(ids))
+    by_id = {r["id"]: r for r in rows}
+    return [by_id[i] for i in ids if i in by_id]
 
 
 async def _fetch(db, user, limit=200):
@@ -275,19 +323,21 @@ async def list_categories(request: Request):
     db = get_db()
     scope = await category_scope(db, user)
     allowed = scope["allowed"]
-    rows = await _fetch(db, user)
+    # 2026-11-02 — hitungan dari SELURUH notifikasi (bukan 200 terbaru).
+    try:
+        n_latest = max(1, min(10, int(request.query_params.get("latest") or 3)))
+    except ValueError:
+        n_latest = 3
+    rows = await _scan(db, user, scope)
     counts = {k: {"total": 0, "unread": 0} for k in allowed}
-    latest = []
-    for r in rows:
-        cat = effective_category(r, user, scope)
-        if cat is None:
-            continue
-        unread = notif_is_unread_for(r, user)
+    for _id, cat, unread in rows:
         counts[cat]["total"] += 1
         if unread:
             counts[cat]["unread"] += 1
-        if len(latest) < 3:
-            latest.append(_present(r, cat, unread))
+    head = rows[:n_latest]
+    full = await _load_full(db, [r[0] for r in head])
+    meta_of = {r[0]: r for r in head}
+    latest = [_present(d, meta_of[d["id"]][1], meta_of[d["id"]][2]) for d in full]
     return serialize_doc({
         "categories": [
             {**c, **counts[c["key"]]} for c in CATEGORIES if c["key"] in counts
@@ -300,28 +350,29 @@ async def list_categories(request: Request):
 
 @router.get("/categorized")
 async def list_categorized(request: Request, category: Optional[str] = None,
-                           unread_only: bool = Query(False), limit: int = Query(100, ge=1, le=300)):
+                           unread_only: bool = Query(False), limit: int = Query(100, ge=1, le=300),
+                           skip: int = Query(0, ge=0)):
+    """Daftar untuk popup "Pusat Notifikasi".
+
+    2026-11-02 — paginasi sederhana (`skip` + `limit`, `has_more`, `total`).
+    Dulu hanya 300 dokumen terbaru yang dipindai ⇒ notifikasi lama tak terjangkau.
+    """
     user = await require_auth(request)
     db = get_db()
     scope = await category_scope(db, user)
     allowed = scope["allowed"]
     if category and category not in allowed:
         raise HTTPException(403, "Kategori ini tidak diaktifkan untuk peran Anda.")
-    rows = await _fetch(db, user, limit=300)
-    out = []
-    for r in rows:
-        cat = effective_category(r, user, scope)
-        if cat is None:
-            continue
-        if category and cat != category:
-            continue
-        unread = notif_is_unread_for(r, user)
-        if unread_only and not unread:
-            continue
-        out.append(_present(r, cat, unread))
-        if len(out) >= limit:
-            break
-    return serialize_doc({"items": out, "count": len(out), "allowed_categories": allowed,
+    rows = await _scan(db, user, scope, category=category, unread_only=unread_only)
+    page = rows[skip:skip + limit]
+    full = await _load_full(db, [r[0] for r in page])
+    meta_of = {r[0]: r for r in page}
+    out = [_present(d, meta_of[d["id"]][1], meta_of[d["id"]][2]) for d in full]
+    return serialize_doc({"items": out, "count": len(out), "total": len(rows),
+                          "unread": sum(1 for r in rows if r[2]),
+                          "skip": skip, "limit": limit,
+                          "has_more": skip + len(page) < len(rows),
+                          "allowed_categories": allowed,
                           "categories": [c for c in CATEGORIES if c["key"] in allowed]})
 
 

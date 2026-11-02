@@ -195,9 +195,11 @@ export default function PortalSayaAbsen({ token }) {
         ? `${API}/api/rahaza/attendance/selfie/clock-in`
         : `${API}/api/rahaza/attendance/selfie/clock-out`;
       // employee_id TIDAK dikirim → server memakai identitas token (anti titip absen)
+      // 2026-11-02 (No.59a): verifikasi wajah AI dimatikan — `do_face_check` tidak dikirim;
+      // absen selfie masuk antrean review HR (pesan dari server: "menunggu review HR").
       const r = await axios.post(url, {
         lat: geo?.lat ?? null, lng: geo?.lng ?? null,
-        photo_base64: shot, do_face_check: true,
+        photo_base64: shot,
       }, { headers });
       toast.success(r.data?.message || (action === 'in' ? 'Absen masuk tercatat' : 'Absen pulang tercatat'));
       closeCam();
@@ -418,6 +420,14 @@ export default function PortalSayaAbsen({ token }) {
               <img src={`${API}${today.photo_selfie_url}`} alt="Bukti selfie absen masuk"
                 className="w-16 h-16 rounded-lg object-cover border" data-testid="absen-selfie-proof" />
               <span className="text-xs text-muted-foreground">Bukti selfie absen masuk tersimpan.</span>
+            </div>
+          )}
+          {/* 2026-11-02 (No.59a): absen selfie diverifikasi HR, bukan AI wajah */}
+          {today?.approval_status === 'pending' && (
+            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs bg-amber-100 text-amber-800 border-amber-300"
+              data-testid="absen-hr-review-pending">
+              <AlertCircle className="w-3.5 h-3.5" />
+              {today?.approval_reason ? `Status: ${today.approval_reason}` : 'Status: menunggu review HR'}
             </div>
           )}
         </CardContent>

@@ -3,7 +3,7 @@ Session 18 — P2-7: Predictive Maintenance (Produksi)
 
 Features:
 - Machine health monitoring based on maintenance history + downtime
-- Predictive scoring using rule-based heuristics + AI advice (Emergent LLM)
+- Predictive scoring using rule-based heuristics + AI advice (Claude, opsional)
 - Maintenance log CRUD
 - Auto-generated maintenance schedule recommendation
 - Dashboard with machine health overview
@@ -18,7 +18,6 @@ Endpoints (prefix: /api/production/predictive-maintenance)
 - GET    /dashboard                        — high-level overview
 """
 # ruff: noqa: E741
-import os
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
@@ -37,8 +36,8 @@ LOG_COL = "rahaza_maintenance_logs"
 MACHINES_COL = "rahaza_machines"
 DOWNTIME_COL = "rahaza_downtime_events"
 
-LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-LLM_MODEL = ("openai", "gpt-5.1")
+# 2026-11-02 (No.60): tuple ("openai","gpt-5.1") dihapus; pakai tier Claude lewat ai_cost_tracker.
+LLM_TIER = "standard"
 
 
 def _now():
@@ -254,13 +253,13 @@ async def predict_with_ai(request: Request, machine_id: str):
     downtimes_s = [_serialize(d) for d in downtimes]
     health = _machine_health(machine, logs_s, downtimes_s)
 
-    # Try AI advice; if LLM_KEY missing or LLM fails, fall back to heuristic
+    # Try AI advice; if AI unavailable or LLM fails, fall back to heuristic
+    from ai_cost_tracker import ai_available, tracked_llm_call
     advice_text = None
     used_ai = False
     cost_usd = 0.0
-    if LLM_KEY:
+    if await ai_available():
         try:
-            from ai_cost_tracker import tracked_llm_call
             system = (
                 "Anda adalah expert maintenance engineer industri garment. "
                 "Berikan rekomendasi perawatan mesin yang spesifik, actionable, dalam Bahasa Indonesia. "
@@ -290,12 +289,11 @@ async def predict_with_ai(request: Request, machine_id: str):
                 "Berikan rekomendasi perawatan."
             )
             tracked = await tracked_llm_call(
-                feature="predictive_maintenance",
+                feature="predictive-maintenance",
                 user_id=getattr(request.state, "user", {}).get("id"),
-                model=LLM_MODEL,
+                model=LLM_TIER,
                 system_message=system,
                 user_message=user_msg,
-                api_key=LLM_KEY,
                 session_id=f"pm-predict-{machine_id}-{uuid.uuid4().hex[:6]}",
             )
             if tracked.over_budget:

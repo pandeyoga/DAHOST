@@ -26,3 +26,4 @@ deploy/backups
 backend/tests
 backend/backend_test*.py
 backend/test_*.py
+/.claude

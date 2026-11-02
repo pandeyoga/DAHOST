@@ -116,7 +116,9 @@ export default function ManagementDashboard({ token, onNavigate, onModuleChange 
             <PeriodPicker value={period} onChange={setPeriod} compareEnabled={true} testId="mgmt-dashboard-period" />
             {(onModuleChange || onNavigate) && (
               <button
-                onClick={drill('ai-business-dashboard')()}
+                // 2026-11-02: dulu `drill(...)()` → navigasi DIPANGGIL SAAT RENDER sehingga
+                // Dashboard Eksekutif langsung terlempar ke AI Business dan tak bisa dibuka.
+                onClick={drill('ai-business-dashboard')}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-600/80 hover:bg-purple-600 text-foreground rounded-lg shadow-sm transition-colors"
                 title="Buka AI Business Intelligence"
               >

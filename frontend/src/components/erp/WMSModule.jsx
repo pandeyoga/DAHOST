@@ -15,6 +15,7 @@ import { EmptyState } from './EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint } from './uom/UomPicker';
+import StorageLocationSelect from './StorageLocationSelect';
 // F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
 import { tone } from '@/lib/tone';
 
@@ -689,6 +690,14 @@ function UnitsTab({ token }) {
 // ──────────────────────────────────────────────────────────────────────────────
 // TAB: RECEIVING (Scan In / Scan Out)
 // ──────────────────────────────────────────────────────────────────────────────
+// Lokasi wajib dipilih, kecuali dokumen antrean sudah menunjuk lokasinya
+// (fulfillment ber-stock_id / location_id) — No.18(a), 2026-11-02.
+function needsScanLocation(scanModal) {
+  const m = scanModal?.movement || {};
+  if (scanModal?.mode === 'out' && m.source_type === 'fulfillment' && m.stock_id) return false;
+  return !m.location_id;
+}
+
 function ReceivingTab({ token }) {
   const [pending, setPending] = useState([]);
   const [filter, setFilter] = useState('all');
@@ -699,6 +708,9 @@ function ReceivingTab({ token }) {
   const [scanUom, setScanUom] = useState('');       // satuan hitung fisik operator (ROADMAP P1)
   const [positionBarcode, setPositionBarcode] = useState('');
   const [positionInfo, setPositionInfo] = useState(null);
+  // 2026-11-02 — No.18(a): lokasi stok masuk/keluar WAJIB dipilih (dulu backend memakai
+  // "lokasi aktif pertama"). Fulfillment ber-stock_id tidak perlu (barisnya sudah tertentu).
+  const [scanLocation, setScanLocation] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(false);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -740,11 +752,13 @@ function ReceivingTab({ token }) {
 
   async function handleScan() {
     if (!scanModal || !scanQty || +scanQty <= 0) { toast.error('Masukkan jumlah yang valid'); return; }
+    if (needsScanLocation(scanModal) && !scanLocation) { toast.error('Pilih lokasi terlebih dahulu'); return; }
     setSubmitting(true);
     try {
       const { movement, mode } = scanModal;
       const endpoint = mode === 'in' ? 'scan-in' : 'scan-out';
-      const body = { scanned_qty: +scanQty, position_barcode: positionBarcode || undefined };
+      const body = { scanned_qty: +scanQty, position_barcode: positionBarcode || undefined,
+                     location_id: scanLocation || undefined };
       // ROADMAP P1 — operator boleh menghitung dalam satuan lain (box/rol/gram);
       // backend menerjemahkannya ke satuan dokumen & satuan dasar.
       if (mode === 'in' && effScanUom && effScanUom !== docUnit) body.input_uom = effScanUom;
@@ -757,7 +771,7 @@ function ReceivingTab({ token }) {
       toast.success(
         `${mode === 'in' ? 'Scan-in' : 'Scan-out'} berhasil: ${d.ref_number} — ${d.status}`
         + (u ? ` · ${fmt(u.input_qty)} ${u.input_uom} = ${fmt(u.qty_base)} ${u.base_unit}` : ''));
-      setScanModal(null); setScanQty(''); setScanUom(''); setPositionBarcode(''); setPositionInfo(null);
+      setScanModal(null); setScanQty(''); setScanUom(''); setPositionBarcode(''); setPositionInfo(null); setScanLocation('');
       load();
     } catch (e) { toast.error(e.message); }
     finally { setSubmitting(false); }
@@ -822,7 +836,7 @@ function ReceivingTab({ token }) {
                   {m.type === 'inbound' && (
                     <button
                       data-testid="scan-in-btn"
-                      onClick={() => { setScanModal({ movement: m, mode: 'in' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); }}
+                      onClick={() => { setScanModal({ movement: m, mode: 'in' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); setScanLocation(''); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-400 dark:border-emerald-500/30 text-xs hover:bg-emerald-500/30 transition-colors"
                     >
                       <Scan size={13} /> Scan In
@@ -831,7 +845,7 @@ function ReceivingTab({ token }) {
                   {(m.type === 'outbound_rm' || m.type === 'outbound_fg') && (
                     <button
                       data-testid="scan-out-btn"
-                      onClick={() => { setScanModal({ movement: m, mode: 'out' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); }}
+                      onClick={() => { setScanModal({ movement: m, mode: 'out' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); setScanLocation(''); }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-400 dark:border-amber-500/30 text-xs hover:bg-amber-500/30 transition-colors"
                     >
                       <Scan size={13} /> Scan Out
@@ -882,6 +896,16 @@ function ReceivingTab({ token }) {
                   </p>
                 )}
               </div>
+              {needsScanLocation(scanModal) && (
+                <div>
+                  <label className="block text-xs text-muted-foreground/60 dark:text-zinc-400 mb-1.5">
+                    {scanModal.mode === 'in' ? 'Lokasi Tujuan *' : 'Lokasi Asal *'}
+                  </label>
+                  <StorageLocationSelect token={token} value={scanLocation} onChange={setScanLocation}
+                    testId="wms-scan-location-select"
+                    className="w-full bg-foreground/5 border border-foreground/10 rounded-xl px-4 py-3 text-sm text-foreground" />
+                </div>
+              )}
               <div>
                 <label className="block text-xs text-muted-foreground/60 dark:text-zinc-400 mb-1.5">
                   {scanModal.mode === 'in' ? 'Barcode Posisi Tujuan (Scan Rak)' : 'Barcode Posisi Asal (Scan Rak)'}
@@ -907,7 +931,7 @@ function ReceivingTab({ token }) {
               <button
                 data-testid="confirm-scan-btn"
                 onClick={handleScan}
-                disabled={submitting || !scanQty}
+                disabled={submitting || !scanQty || (needsScanLocation(scanModal) && !scanLocation)}
                 className={`flex-1 py-3 rounded-xl text-foreground text-sm font-medium disabled:opacity-50 transition-colors ${scanModal.mode === 'in' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}
               >
                 {submitting ? 'Memproses...' : scanModal.mode === 'in' ? 'Konfirmasi Terima' : 'Konfirmasi Keluar'}

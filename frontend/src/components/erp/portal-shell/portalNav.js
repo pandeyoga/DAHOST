@@ -483,10 +483,14 @@ export const PORTAL_NAV = {
       },
       {
         label: 'PENJUALAN & PENERIMAAN',
+        // 2026-11-02 (D3) — pintu 'Peta Akun Channel' (`fin-channel-gl`) DILEPAS dari
+        // menu atas keputusan owner: "Peta Akun Channel seharusnya tidak ada" (peta
+        // COA kedua). COA per toko ada di master toko (Marketing › Kelola Akun);
+        // penjualan non-marketplace lewat Portal Penjualan (profil `ar_invoice`).
+        // Modulnya tetap terdaftar (baca-saja) untuk deep-link lama.
         items: [
           { id: 'fin-marketplace-settlement', label: 'Saldo & Pencairan Marketplace', icon: Banknote },
           { id: 'fin-ar-360',                 label: 'Aging Piutang',         icon: Scale },
-          { id: 'fin-channel-gl',             label: 'Peta Akun Channel',     icon: Store },
         ],
       },
       {

@@ -273,6 +273,17 @@ async def create_account(request: Request):
     return serialize_doc(doc)
 
 
+async def account_journal_usage(db, code: str) -> int:
+    """2026-11-02 (audit No.48): jumlah baris jurnal yang memakai akun ini — baris buku besar
+    (jurnal posted) + jurnal draft yang memuatnya. Akun bertransaksi tidak boleh jadi header:
+    laporan hanya membaca akun non-group sehingga saldonya hilang & neraca saldo tak seimbang."""
+    if not code:
+        return 0
+    posted = await db.rahaza_journal_lines.count_documents({"account_code": code})
+    drafts = await db.rahaza_journal_entries.count_documents({"status": "draft", "lines.account_code": code})
+    return int(posted) + int(drafts)
+
+
 @router.put("/accounts/{aid}")
 async def update_account(aid: str, request: Request):
     user = await _require_fin(request)
@@ -287,7 +298,19 @@ async def update_account(aid: str, request: Request):
     if "parent_code" in body:
         update["parent_code"] = body["parent_code"] or None
     if "is_group" in body:
-        update["is_group"] = bool(body["is_group"])
+        want_group = bool(body["is_group"])
+        # 2026-11-02 (audit No.48): tolak centang "Akun Group" pada akun yang sudah bertransaksi.
+        if want_group and not acc.get("is_group"):
+            used = await account_journal_usage(db, acc.get("code"))
+            if used:
+                raise HTTPException(
+                    400, f"Akun {acc.get('code')} sudah punya {used} baris jurnal, jadi tidak bisa "
+                         f"dijadikan Akun Group (header): saldonya akan hilang dari laporan dan Neraca "
+                         f"Saldo tidak seimbang. Buat akun anak baru lalu pindahkan saldonya dengan "
+                         f"jurnal reklasifikasi.")
+        update["is_group"] = want_group
+        # 2026-11-02 (audit No.47): pilihan pengguna dicatat agar startup tidak mencentang ulang.
+        update["is_group_user_set"] = True
     if "flags" in body:
         update["flags"] = body["flags"] or {}
     if "active" in body:
@@ -754,6 +777,13 @@ async def seed_coa_accounts(db) -> dict:
         inserted += 1
     type_fixed = 0
     for gcode in UNIFIED_GROUP_CODES:
+        # 2026-11-02 (audit No.47/48): startup dulu mencentang ulang grup pada SETIAP restart —
+        # termasuk akun yang sengaja di-uncheck Finance dan sudah bertransaksi → neraca saldo tak
+        # seimbang. Kini hanya akun yang belum disentuh pengguna DAN belum punya baris jurnal.
+        acc = await db.rahaza_coa_accounts.find_one(
+            {"code": gcode, "is_group": {"$ne": True}}, {"_id": 0, "code": 1, "is_group_user_set": 1})
+        if not acc or acc.get("is_group_user_set") or await account_journal_usage(db, gcode):
+            continue
         r = await db.rahaza_coa_accounts.update_one({"code": gcode, "is_group": {"$ne": True}},
                                                     {"$set": {"is_group": True, "updated_at": _now()}})
         type_fixed += r.modified_count

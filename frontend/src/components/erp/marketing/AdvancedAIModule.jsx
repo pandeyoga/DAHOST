@@ -137,7 +137,16 @@ function DynamicPricingTab({ authH }) {
         toast({ title: `Suggestion ${action === 'approve' ? 'disetujui' : action === 'reject' ? 'ditolak' : 'diterapkan'} ✓` });
         fetchSuggestions();
       }
-    } catch (e) { toast({ title: 'Gagal', description: e.response?.data?.detail, variant: 'destructive' }); }
+    } catch (e) {
+      // 2026-11-02: Apply belum tersambung ke harga katalog → server menjawab 409 dengan
+      // penjelasan (status usulan TIDAK diubah menjadi "diterapkan").
+      const notConnected = action === 'apply' && e.response?.status === 409;
+      toast({
+        title: notConnected ? 'Belum bisa diterapkan otomatis' : 'Gagal',
+        description: e.response?.data?.detail,
+        variant: notConnected ? undefined : 'destructive',
+      });
+    }
     finally { setActionLoading(l => ({ ...l, [id + action]: false })); }
   };
 
@@ -298,10 +307,8 @@ function DynamicPricingTab({ authH }) {
                                 onClick={() => doAction(s.id, 'approve')} disabled={actionLoading[s.id + 'approve']}>
                                 {actionLoading[s.id + 'approve'] ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={13} />}
                               </Button>
-                              <Button size="sm" variant="ghost" className="h-7 px-2 text-blue-600 hover:bg-blue-50"
-                                onClick={() => doAction(s.id, 'apply')} disabled={actionLoading[s.id + 'apply']}>
-                                {actionLoading[s.id + 'apply'] ? <Loader2 size={11} className="animate-spin" /> : <Zap size={13} />}
-                              </Button>
+                              {/* 2026-11-02: tombol Apply (⚡) DIHAPUS dari baris pending — Apply
+                                  hanya untuk usulan yang sudah disetujui (izin sama dengan Approve). */}
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-red-500 hover:bg-red-50"
                                 onClick={() => doAction(s.id, 'reject')} disabled={actionLoading[s.id + 'reject']}>
                                 {actionLoading[s.id + 'reject'] ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={13} />}
@@ -495,7 +502,10 @@ function ChurnPredictionTab({ authH }) {
       const res = await axios.post(`${API}/api/marketing/advanced-ai/churn/run`, {}, { headers: authH });
       if (res.data.success) {
         setResult(res.data.data);
-        toast({ title: `✨ Analisis selesai! ${res.data.data.customers?.length || 0} customer dianalisis.` });
+        // 2026-11-02: tanpa data order → hasil kosong yang jujur (dulu 15 pelanggan fiktif).
+        toast({ title: res.data.data.summary?.no_data
+          ? (res.data.metadata?.message || 'Belum ada data order pelanggan untuk dianalisis.')
+          : `✨ Analisis selesai! ${res.data.data.customers?.length || 0} customer dianalisis.` });
         fetchSavedScores();
       }
     } catch (e) {

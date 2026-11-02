@@ -3,17 +3,23 @@ from __future__ import annotations
 
 
 async def low_stock_count(db) -> int:
-    """Active materials below reorder point."""
-    return await db.rahaza_materials.count_documents(
-        {"active": True, "$expr": {"$lt": ["$total_qty", "$reorder_point"]}}
-    )
+    """Material aktif yang stoknya RENDAH atau KRITIS (perlu tindakan).
+
+    2026-11-02: memakai SSOT `core.stock_thresholds` (ambang min_stock_qty →
+    min_stock → %, titik pesan ulang, on-hand kanonik). Dulu membandingkan field
+    `total_qty`/`reorder_point` yang tidak ada di data (hasil 0 / 1.726 palsu,
+    padahal yang benar 43).
+    """
+    from core import stock_thresholds
+    s = await stock_thresholds.summary(db)
+    return int(s.get("alerts") or 0)
 
 
 async def critical_materials_count(db) -> int:
-    """Active materials below min_stock (vs reorder_point)."""
-    return await db.rahaza_materials.count_documents(
-        {"active": True, "$expr": {"$lt": ["$total_qty", {"$ifNull": ["$min_stock", 0]}]}}
-    )
+    """Material aktif berstatus KRITIS menurut `core.stock_thresholds` (2026-11-02)."""
+    from core import stock_thresholds
+    s = await stock_thresholds.summary(db)
+    return int(s.get("critical") or 0)
 
 
 async def fabric_quality_breakdown(

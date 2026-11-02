@@ -136,7 +136,21 @@ async def seed_sample_data(request: Request):
     # ── Line ── (pakai location & process yang ada). Phase 17C: seed 1 line per
     # proses utama (non-rework) supaya operator bisa walk-through bundle sampai PACKING
     # tanpa perlu buat line manual dulu.
-    first_location = await db.rahaza_locations.find_one({"active": True}, sort=[("code", 1)])
+    # 2026-11-02 — No.18(a): line demo tidak lagi ditempel ke "lokasi aktif pertama".
+    # Lokasi line hanya dipakai bila pemanggil mengirim `location_id` yang valid; selain
+    # itu line dibuat TANPA lokasi (line tidak memegang stok — lengkapi di Master Line).
+    try:
+        _body = await request.json() if await request.body() else {}
+    except Exception:  # noqa: BLE001 — body opsional
+        _body = {}
+    first_location = None
+    _loc_id = str((_body or {}).get("location_id") or "").strip()
+    if _loc_id:
+        first_location = await db.rahaza_locations.find_one({"id": _loc_id, "active": True}, {"_id": 0})
+        if not first_location:
+            raise HTTPException(400, "location_id tidak ditemukan / tidak aktif di Master Lokasi.")
+    else:
+        out["messages"].append("Line demo dibuat tanpa lokasi — pilih lokasinya di Master Line bila perlu.")
     main_procs = await db.rahaza_processes.find(
         {"active": {"$ne": False}, "is_rework": {"$ne": True}},
         {"_id": 0},

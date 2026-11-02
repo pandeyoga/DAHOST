@@ -16,7 +16,7 @@ Seed defaults (garment manufacturing, PSAK):
   payroll_finalize  : Dr Salary Expense (6-2100), Cr Hutang Gaji (2-1200)
   inventory_receive : Dr Inventory RM (1-1401), Cr GRNI (2-1150)
   inventory_issue   : Dr WIP (1-1403), Cr Inventory RM (1-1401)
-  inventory_adjust  : Dr/Cr Inventory (1-1401) vs Expense (6-2400)
+  inventory_adjust  : Dr/Cr Inventory (1-1401) vs Selisih Persediaan (5-1950) — 2026-11-02, owner No.19a
   cogs_shipment     : Dr COGS Material (5-1000), Dr COGS Labor (5-2000), Dr COGS Overhead (5-3000), Cr FG Inventory (1-1404)
 """
 from fastapi import APIRouter, Request, HTTPException
@@ -133,10 +133,11 @@ DEFAULT_PROFILES = [
     },
     {
         "event_type": "inventory_adjust",
-        "description": "Material adjust → Dr/Cr Inventory vs Adjustment Expense",
+        "description": "Penyesuaian/opname/lepas karantina → Dr/Cr Persediaan vs Selisih Persediaan",
         "mapping": {
             "inventory_rm": "1-1401",
-            "adjustment_expense": "6-2400",
+            # 2026-11-02 (owner No.19a): dulu 6-2400 ATK & Supplies → beban ATK bisa minus karena opname.
+            "adjustment_expense": "5-1950",
         },
     },
     {
@@ -391,7 +392,50 @@ PROFILE_CODE_FIXES = {
     ("expense", "credit_cash_default"): "1-1201",
     ("employee_loan_disbursement", "credit_cash"): "1-1201",
     ("asset_disposal", "debit_cash"): "1-1201",
+    ("inventory_adjust", "adjustment_expense"): "5-1950",    # 2026-11-02 owner No.19a: dulu 6-2400 ATK
 }
+
+# 2026-11-02 (audit No.47): PROFILE_CODE_FIXES dulu DITIMPA setiap startup → pilihan Finance kembali
+# ke bawaan tiap restart. Kini perbaikan hanya dipasang bila (a) peran belum ada, (b) nilainya
+# masih nilai LAMA yang diketahui salah (daftar di bawah, dari catatan C-02/C-05/H-10/B-04), atau
+# (c) profilnya belum pernah disentuh pengguna. Peran yang diubah/dihapus pengguna lewat layar
+# Profil Posting dicatat (`user_roles` / `user_removed_roles`) dan tidak pernah disentuh startup.
+PROFILE_KNOWN_OLD_CODES = {
+    ("asset_disposal", "credit_fixed_asset"): {"1-1501"},
+    ("asset_disposal", "debit_accum_depr"): {"1-1502"},
+    ("ar_invoice", "debit_sales_discount"): {"6-1100"},
+    ("ap_invoice", "debit_expense_default"): {"6-2200"},
+    ("ar_payment", "debit_cash_default"): {"1-1101"},
+    ("ap_payment", "credit_cash_default"): {"1-1101"},
+    ("expense", "credit_cash_default"): {"1-1101"},
+    ("employee_loan_disbursement", "credit_cash"): {"1-1101"},
+    ("asset_disposal", "debit_cash"): {"1-1101"},
+    ("inventory_adjust", "adjustment_expense"): {"6-2400"},
+}
+SYSTEM_UPDATERS = {None, "", "system", "coa-canonical-migration"}
+
+
+def profile_untouched(doc: dict) -> bool:
+    return (not (doc.get("user_roles") or doc.get("user_removed_roles"))
+            and doc.get("updated_by") in SYSTEM_UPDATERS)
+
+
+def upgrade_profile_mapping(et: str, mapping: dict, doc: dict, default_mapping: dict) -> dict:
+    """Murni (tanpa DB): peta baru satu profil saat startup. `mapping` sudah di-remap legacy."""
+    new_map = dict(mapping)
+    user_roles = set(doc.get("user_roles") or [])
+    user_removed = set(doc.get("user_removed_roles") or [])
+    untouched = profile_untouched(doc)
+    for (fet, role), code in PROFILE_CODE_FIXES.items():
+        if fet != et or role in user_roles or role in user_removed:
+            continue
+        cur = new_map.get(role)
+        if cur is None or untouched or cur in PROFILE_KNOWN_OLD_CODES.get((fet, role), ()):
+            new_map[role] = code
+    for role, code in (default_mapping or {}).items():
+        if role not in user_removed:
+            new_map.setdefault(role, code)
+    return new_map
 # Kunci role legacy (dewi_kasbon) → kunci kanonik
 PROFILE_ROLE_RENAMES = {
     "employee_loan_disbursement": {"debit_loan_receivable": "debit_employee_loan_receivable"},
@@ -416,11 +460,7 @@ async def upgrade_posting_profiles(db) -> dict:
             role = renames.get(role, role)
             code = LEGACY_CODE_MAP.get(code, code)
             new_map[role] = code
-        for (fet, role), code in PROFILE_CODE_FIXES.items():
-            if fet == et:
-                new_map[role] = code
-        for role, code in (defaults.get(et, {}).get("mapping") or {}).items():
-            new_map.setdefault(role, code)
+        new_map = upgrade_profile_mapping(et, new_map, doc, defaults.get(et, {}).get("mapping") or {})
         if new_map != mapping:
             await db.rahaza_posting_profiles.update_one(
                 {"event_type": et},
@@ -480,6 +520,13 @@ async def update_profile(event_type: str, request: Request):
                 raise HTTPException(400, f"Role '{role}': akun '{code}' tidak aktif.")
             clean[role] = code
         upd["mapping"] = clean
+        # 2026-11-02 (audit No.47): catat peran yang DIUBAH/DIHAPUS pengguna agar startup
+        # (upgrade_posting_profiles) tidak mengembalikannya ke bawaan.
+        old_map = doc.get("mapping") or {}
+        changed = {r for r, c in clean.items() if old_map.get(r) != c}
+        removed = {r for r in old_map if r not in clean}
+        upd["user_roles"] = sorted((set(doc.get("user_roles") or []) | changed) - removed)
+        upd["user_removed_roles"] = sorted((set(doc.get("user_removed_roles") or []) | removed) - set(clean))
     if "description" in body:
         upd["description"] = (body.get("description") or "").strip()
     if "active" in body:

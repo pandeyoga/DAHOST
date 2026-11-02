@@ -35,7 +35,7 @@ from utils.notif_unified import (
     notif_count_unread, serialize_notif,
     notif_audience_query, notif_count_unread_for, notif_is_unread_for,
     notif_list_for, notif_mark_all_read_for, notif_mark_read_for,
-    VALID_TYPES, VALID_SEVERITIES,
+    normalize_link_module, VALID_TYPES, VALID_SEVERITIES,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,9 +93,17 @@ async def list_unified(
         effective_uid = uid
 
     return {
+        # 2026-11-02 — `link_module` (sudah dipetakan ke id hidup) & `link_id`
+        # diangkat ke akar supaya Portal Saya bisa membuka layar terkait seperti
+        # bel; waktu ber-zona lewat serialize_notif → iso_utc.
         'items': [{**serialize_notif(it),
-                   'read': not notif_is_unread_for(it, user)} for it in items],
+                   'read': not notif_is_unread_for(it, user),
+                   'link_module': normalize_link_module(
+                       it.get('link_module') or (it.get('meta') or {}).get('link_module')) or '',
+                   'link_id': it.get('source_id') or (it.get('meta') or {}).get('link_id')}
+                  for it in items],
         'count': len(items),
+        'has_more': len(items) >= limit,
         'limit': limit,
         'skip':  skip,
         'filter': {

@@ -238,6 +238,81 @@ async def _resolve_coa(db, account: dict) -> dict:
     return {"codes": eff, "sources": sources}
 
 
+# ── KUNCI JURNAL PER DOKUMEN (2026-11-02, audit K-1/K-2) ─────────────────────
+# Dulu `source_ref` jurnal = nomor platform SAJA. Nomor hanya unik PER TOKO (keputusan
+# owner No.1/No.2), jadi toko B dengan nomor yang sama "menemukan" jurnal toko A
+# (jawaban `already`), dananya tidak pernah masuk buku dan GL per toko salah (D3).
+# Kunci baru = nomor + id dokumen. Jurnal LAMA yang ber-kunci nomor mentah tetap dikenali,
+# tetapi HANYA oleh dokumen yang benar-benar dicatatnya (baris akun saldo toko itu +
+# nominal dokumen) — dipakai bersama `marketing_withdrawals.py`.
+def doc_je_ref(number: str, doc_id: str) -> str:
+    return f"{(number or '').strip()}@{doc_id}"
+
+
+def doc_je_identity(doc: dict) -> tuple:
+    """(nomor, nominal, sisi baris akun saldo toko) — pencairan: Dr saldo toko sebesar
+    net_payout; penarikan: Cr saldo toko sebesar amount."""
+    if "settlement_id" in doc:
+        return doc.get("settlement_id") or "", float(doc.get("net_payout") or 0), "debit"
+    return doc.get("reference") or "", float(doc.get("amount") or 0), "credit"
+
+
+def legacy_je_owned(je: dict, receivable_codes, amount: float, side: str,
+                    account_name: str = "") -> bool:
+    """Jurnal kunci-lama (nomor mentah) milik dokumen ini? Ya bila memuat baris akun saldo
+    toko dokumen ini dengan nominal dokumen di sisi yang benar."""
+    codes = {c for c in (receivable_codes or ()) if c}
+    amt = round(float(amount or 0), 2)
+    for ln in je.get("lines") or []:
+        if ln.get("account_code") in codes and abs(round(float(ln.get(side) or 0), 2) - amt) < 0.01:
+            return True
+    # Nominal 0 tidak menulis baris saldo toko → jatuh ke nama toko di memo.
+    return amt == 0 and bool(account_name) and f"— {account_name} (" in (je.get("memo") or "")
+
+
+def je_owned_by_doc(je: dict, doc: dict, receivable_codes) -> bool:
+    number, amount, side = doc_je_identity(doc)
+    ref = je.get("source_ref") or ""
+    if ref.endswith(f"@{doc.get('id')}"):
+        return True
+    if ref == number:
+        return legacy_je_owned(je, receivable_codes, amount, side, doc.get("account_name") or "")
+    return True  # kunci lain yang tidak dikenal: konservatif, tetap dianggap mengikat
+
+
+async def _doc_receivable_codes(db, doc: dict, extra=()) -> set:
+    acc = await db.marketing_platform_accounts.find_one(
+        {"id": doc.get("account_id")}, {"_id": 0, "ar_account_code": 1, "coa_receivable_code": 1}) or {}
+    return {c for c in (_bal.receivable_code(acc), ((doc.get("coa_used") or {}).get("receivable")), *extra) if c}
+
+
+async def find_doc_je(db, source_module: str, doc: dict, receivable_codes) -> Optional[dict]:
+    """Jurnal aktif MILIK dokumen ini (kunci baru, lalu kunci lama yang terbukti miliknya)."""
+    from routes.rahaza_posting import _find_existing_je
+    number, amount, side = doc_je_identity(doc)
+    je = await _find_existing_je(db, source_module, doc_je_ref(number, doc["id"]))
+    if je:
+        return je
+    legacy = await _find_existing_je(db, source_module, number)
+    if legacy and legacy_je_owned(legacy, receivable_codes, amount, side, doc.get("account_name") or ""):
+        return legacy
+    return None
+
+
+async def assert_linked_je_owned(db, coll: str, doc: dict, je: dict):
+    """Tautan `je_id` warisan K-1/K-2 bisa menunjuk jurnal TOKO LAIN. Jangan posting jurnal
+    itu atas nama dokumen ini: lepas tautannya dan minta 'Buat jurnal' lagi."""
+    if je_owned_by_doc(je, doc, await _doc_receivable_codes(db, doc)):
+        return
+    await db[coll].update_one({"id": doc["id"]}, {"$set": {
+        "je_id": None, "je_number": None, "je_status": None,
+        "je_mislinked_ref": je.get("je_number"), "updated_at": _now()}})
+    raise HTTPException(
+        409, f"Jurnal {je.get('je_number')} ternyata milik toko lain dengan nomor yang sama "
+             f"(bug lama: kunci jurnal hanya nomor). Tautannya sudah dilepas — tekan "
+             f"'Buat jurnal' untuk membuat jurnal dokumen ini sendiri.")
+
+
 def _with_math(doc: dict) -> dict:
     """Tambahkan hasil pemeriksaan aritmetika — SELALU, bukan hanya saat gagal."""
     expected = _expected_net(doc)
@@ -535,6 +610,10 @@ async def create_settlement(body: SettlementIn, request: Request):
     user = await _require_finance(request)
     db = get_db()
     account = await _scope.require_account(db, body.account_id)
+    # 2026-11-02: nomor dirapikan (spasi) supaya "PCR-1 " tidak lolos dari cek duplikat.
+    body.settlement_id = (body.settlement_id or "").strip()
+    if not body.settlement_id:
+        raise HTTPException(400, "Nomor pencairan wajib diisi.")
 
     # Kunci duplikat = (toko, nomor pencairan). SENGAJA TANPA `platform`:
     # `_scope.stamp_account()` menimpa `platform` dengan platform milik toko,
@@ -575,10 +654,15 @@ async def _je_still_binding(db, doc: dict) -> bool:
     je_id = doc.get("je_id")
     if not je_id:
         return False
-    je = await db.rahaza_journal_entries.find_one({"id": je_id}, {"_id": 0, "status": 1})
+    je = await db.rahaza_journal_entries.find_one(
+        {"id": je_id}, {"_id": 0, "status": 1, "source_ref": 1, "lines": 1, "memo": 1})
     if not je:
         return False          # jurnalnya sudah tidak ada (draft dihapus Finance)
-    return je.get("status") != "voided"
+    if je.get("status") == "voided":
+        return False
+    # 2026-11-02 (K-1/K-2): tautan warisan ke jurnal TOKO LAIN bernomor sama tidak mengikat
+    # dokumen ini — kalau mengikat, dokumen itu terkunci tanpa pernah punya jurnal sendiri.
+    return je_owned_by_doc(je, doc, await _doc_receivable_codes(db, doc))
 
 
 @router.put("/{sid}")
@@ -600,7 +684,22 @@ async def update_settlement(sid: str, body: SettlementIn, request: Request):
                  f"Batalkan/void jurnalnya dulu di Portal Finance sebelum "
                  f"mengubah angkanya — kalau tidak, jurnal dan sumbernya akan "
                  f"menyebut angka yang berbeda.")
+    # 2026-11-02 (audit No.1): edit dulu melewati cek duplikat (toko, nomor) dan bisa
+    # memindah toko tanpa memperbarui nama/platform. Aturannya sama dengan saat membuat.
+    account = await _scope.require_account(db, body.account_id)
+    body.settlement_id = (body.settlement_id or "").strip()
+    if not body.settlement_id:
+        raise HTTPException(400, "Nomor pencairan wajib diisi.")
+    dup = await db[COLL].find_one({
+        "account_id": body.account_id, "settlement_id": body.settlement_id, "id": {"$ne": sid},
+    }, {"_id": 0, "id": 1, "settlement_date": 1})
+    if dup:
+        raise HTTPException(
+            409, f"Pencairan '{body.settlement_id}' untuk toko ini sudah pernah dicatat "
+                 f"(tanggal {dup.get('settlement_date')}). Satu pencairan yang tercatat dua "
+                 f"kali akan menggandakan pendapatan.")
     upd = body.dict()
+    _scope.stamp_account(upd, account)
     # Dana dilepas yang sudah DITARIK sebagian tidak boleh dikecilkan di bawah penarikannya —
     # saldo platform akan negatif dan penarikan yang sudah tercatat kehilangan sumbernya.
     new_net = round(float(upd.get("net_payout") or 0), 2)
@@ -686,9 +785,11 @@ async def create_draft_journal(sid: str, request: Request):
             f"'Potongan lain' atau 'Penyesuaian' beserta keterangannya — supaya "
             f"biaya yang belum dikenal punya NAMA, bukan hilang.")
 
-    from routes.rahaza_posting import _create_posted_je, _find_existing_je
+    from routes.rahaza_posting import _create_posted_je
 
-    existing = await _find_existing_je(db, SOURCE_MODULE, doc["settlement_id"])
+    # 2026-11-02 (K-1): cari jurnal MILIK dokumen ini, bukan jurnal apa pun bernomor sama.
+    existing = await find_doc_je(db, SOURCE_MODULE, doc,
+                                 await _doc_receivable_codes(db, doc, (ACC["receivable"],)))
     if existing:
         await db[COLL].update_one({"id": sid}, {"$set": {
             "je_id": existing["id"], "je_number": existing["je_number"],
@@ -738,7 +839,7 @@ async def create_draft_journal(sid: str, request: Request):
         memo=f"Dana dilepas {doc['platform']} ke saldo toko — {doc.get('account_name') or ''} "
              f"({doc['settlement_id']})",
         source_module=SOURCE_MODULE,
-        source_ref=doc["settlement_id"],
+        source_ref=doc_je_ref(doc["settlement_id"], doc["id"]),  # 2026-11-02: unik per dokumen (K-1)
         lines_raw=lines,
         user=user,
         status="draft",
@@ -1001,6 +1102,7 @@ async def post_settlement_journal(sid: str, request: Request):
     je = await db.rahaza_journal_entries.find_one({"id": doc["je_id"]})
     if not je:
         raise HTTPException(404, f"Jurnal {doc.get('je_number')} sudah tidak ada.")
+    await assert_linked_je_owned(db, COLL, doc, je)  # 2026-11-02 (K-1): jangan posting jurnal toko lain
     if je.get("status") == "posted":
         await db[COLL].update_one({"id": sid}, {"$set": {"je_status": "posted"}})
         return {"ok": True, "already": True, "je_number": je["je_number"],
@@ -1076,6 +1178,6 @@ async def get_settlement(sid: str, request: Request):
             # (satu aturan, dipakai bersama PUT/DELETE lewat `_je_still_binding`).
             "edit": not binding,
             "journal": bool(doc.get("math_verified")) and not binding and coa_ready,
-            "post": doc.get("je_status") == "draft",
+            "post": binding and doc.get("je_status") == "draft",
         },
     }

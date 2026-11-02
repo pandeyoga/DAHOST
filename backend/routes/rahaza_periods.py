@@ -32,6 +32,27 @@ async def _require_fin_mgr(request: Request):
     raise HTTPException(403, "Forbidden: butuh role finance/accounting.")
 
 
+def period_end_date(period_code: str) -> date:
+    """Tanggal terakhir periode YYYY-MM."""
+    from calendar import monthrange
+    y, m = int(period_code[:4]), int(period_code[5:7])
+    return date(y, m, monthrange(y, m)[1])
+
+
+def period_not_ended_error(period_code: str, today: date, action: str) -> str | None:
+    """2026-11-02 (audit No.34): tutup/kunci periode yang BELUM berakhir (tanggal akhir ≥ hari ini
+    WIB) membuat semua jurnal otomatis bulan berjalan gagal diam-diam, dan kunci periode masa
+    depan tidak bisa dibuka lagi. Murni, agar bisa diuji tanpa DB."""
+    try:
+        end = period_end_date(period_code)
+    except (ValueError, IndexError):
+        return f"Kode periode '{period_code}' tidak valid."
+    if end >= today:
+        return (f"Periode {period_code} belum berakhir (tanggal akhir {end.isoformat()}, hari ini "
+                f"{today.isoformat()} WIB). {action} hanya boleh setelah periodenya selesai.")
+    return None
+
+
 @router.get("")
 async def list_periods(request: Request, year: int = 0):
     await require_auth(request)
@@ -104,6 +125,10 @@ async def close_period(period_code: str, request: Request):
         raise HTTPException(404, "Periode tidak ditemukan.")
     if per["status"] in ("closed", "locked"):
         raise HTTPException(400, f"Periode sudah {per['status']}.")
+    from utils.waktu import today_wib
+    err = period_not_ended_error(period_code, today_wib(), "Tutup periode")
+    if err:
+        raise HTTPException(400, err)
     # check draft journals in this period: warn but allow
     drafts = await db.rahaza_journal_entries.count_documents({"date": {"$regex": f"^{period_code}"}, "status": "draft"})
     await db.rahaza_periods.update_one(
@@ -147,6 +172,12 @@ async def lock_period(period_code: str, request: Request):
         raise HTTPException(400, "Periode sudah locked.")
     if per["status"] != "closed":
         raise HTTPException(400, "Hanya periode closed yang bisa di-lock.")
+    # 2026-11-02 (audit No.34): kunci periode masa depan = jalan buntu permanen (locked tidak bisa
+    # di-reopen, dan tutup tahun tidak bisa dibatalkan bila Desember terkunci).
+    from utils.waktu import today_wib
+    err = period_not_ended_error(period_code, today_wib(), "Kunci (lock) periode")
+    if err:
+        raise HTTPException(400, err)
     await db.rahaza_periods.update_one(
         {"period_code": period_code},
         {"$set": {"status": "locked", "locked_at": _now(), "locked_by": user["id"], "locked_by_name": user.get("name", "")}},

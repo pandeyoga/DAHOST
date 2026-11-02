@@ -2,9 +2,7 @@
 Marketing AI Insights Dashboard — Backend Routes
 Gap 2: AI-powered insights: sales forecast, sentiment analysis, actionable recommendations
 """
-import uuid
 import logging
-import os
 import json
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Request, HTTPException
@@ -13,13 +11,12 @@ from fastapi import APIRouter, Request, HTTPException
 from core import marketing_account_scope as _scope
 from database import get_db
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 from utils.waktu import now_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/ai-insights", tags=["marketing-ai-insights"])
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 
 def success_response(data=None, metadata=None):
@@ -191,11 +188,11 @@ async def get_overview(request: Request):
 @router.post("/forecast")
 async def sales_forecast(request: Request):
     """AI 7-day sales forecast based on recent orders trend."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi (EMERGENT_LLM_KEY missing)")
+    # 2026-11-02: gerbang tunggal services.ai (dulu "EMERGENT_LLM_KEY missing" tampil ke pengguna).
+    await require_ai("marketing-forecast", user_id=user.get("id"), db=db, tier="executive")
 
     orders = await _get_orders_context(db)
     daily_trend = orders["daily_trend"]
@@ -209,11 +206,7 @@ async def sales_forecast(request: Request):
 
     trend_text = "\n".join([f"  {d['date']}: {d['orders']} orders, Rp{d['revenue']:,.0f}" for d in daily_trend])
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"forecast-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah analis data e-commerce Indonesia. Berikan forecast yang realistis dan actionable. Respond only with valid JSON."
-    ).with_model("executive")
+    ai_system_msg = "Kamu adalah analis data e-commerce Indonesia. Berikan forecast yang realistis dan actionable. Respond only with valid JSON."
 
     prompt = (
         f"Data penjualan harian 14 hari terakhir (CV Dewi Aditya, fashion brand Indonesia):\n{trend_text}\n\n"
@@ -228,7 +221,7 @@ async def sales_forecast(request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-forecast", ai_system_msg, prompt, tier="executive", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
@@ -247,17 +240,18 @@ async def sales_forecast(request: Request):
                 day_date = (now_wib() + td(days=i)).strftime("%Y-%m-%d")
                 forecast.append({"day": i, "date": day_date, "predicted_orders": round(avg_orders), "predicted_revenue": round(avg_rev), "confidence": "low"})
             return success_response(data={"forecast": forecast, "trend": "stable", "confidence": "low", "summary": "Forecast menggunakan rata-rata 7 hari (AI tidak tersedia)", "key_factors": ["Data historis"]}, metadata={"fallback": True})
-        raise HTTPException(500, f"Forecast gagal: {e}")
+        if isinstance(e, AIError):
+            raise ai_http_error(e)
+        raise HTTPException(502, "Forecast AI tidak dapat dibaca. Silakan coba lagi.")
 
 
 @router.post("/sentiment")
 async def sentiment_analysis(request: Request):
     """AI sentiment analysis dari complaints + reviews."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
+    await require_ai("marketing-sentiment", user_id=user.get("id"), db=db, tier="executive")
 
     complaints = await _get_complaints_context(db)
     reviews = await _get_reviews_context(db)
@@ -282,11 +276,7 @@ async def sentiment_analysis(request: Request):
 
     texts_sample = "\n".join(all_texts[:25])
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"sentiment-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah analis sentimen customer untuk brand fashion Indonesia. Respond only with valid JSON."
-    ).with_model("executive")
+    ai_system_msg = "Kamu adalah analis sentimen customer untuk brand fashion Indonesia. Respond only with valid JSON."
 
     prompt = (
         f"Analisis sentimen customer dari {len(all_texts)} data komplain/review:\n\n{texts_sample}\n\n"
@@ -304,26 +294,27 @@ async def sentiment_analysis(request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-sentiment", ai_system_msg, prompt, tier="executive", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
             clean = "\n".join(lines[1:-1])
         result = json.loads(clean)
         return success_response(data=result, metadata={"texts_analyzed": len(all_texts)})
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"Sentiment error: {e}")
-        raise HTTPException(500, f"Analisis sentimen gagal: {e}")
+        raise HTTPException(502, "Hasil analisis sentimen AI tidak dapat dibaca. Silakan coba lagi.")
 
 
 @router.post("/recommendations")
 async def get_recommendations(request: Request):
     """AI-generated prioritized action items for marketing team."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
+    await require_ai("marketing-recommendations", user_id=user.get("id"), db=db, tier="executive")
 
     # Gather all context
     orders = await _get_orders_context(db)
@@ -355,11 +346,7 @@ async def get_recommendations(request: Request):
         "top_complaint_categories": dict(sorted(complaints.get("categories", {}).items(), key=lambda x: -x[1])[:3])
     }
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"recommend-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah konsultan marketing e-commerce Indonesia untuk brand fashion. Berikan rekomendasi praktis dan prioritas yang jelas. Respond only with valid JSON."
-    ).with_model("executive")
+    ai_system_msg = "Kamu adalah konsultan marketing e-commerce Indonesia untuk brand fashion. Berikan rekomendasi praktis dan prioritas yang jelas. Respond only with valid JSON."
 
     prompt = (
         f"Status marketing CV Dewi Aditya hari ini:\n{json.dumps(context, ensure_ascii=False, indent=2)}\n\n"
@@ -375,13 +362,15 @@ async def get_recommendations(request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-recommendations", ai_system_msg, prompt, tier="executive", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
             clean = "\n".join(lines[1:-1])
         result = json.loads(clean)
         return success_response(data=result, metadata={"context": context})
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"Recommendations error: {e}")
-        raise HTTPException(500, f"Rekomendasi gagal: {e}")
+        raise HTTPException(502, "Rekomendasi AI tidak dapat dibaca. Silakan coba lagi.")

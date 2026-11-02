@@ -31,12 +31,13 @@ const SOURCE_LABEL = {
   manual_issue:           { label: 'Issue Manual',       cls: 'text-orange-300 border-orange-300/30 bg-orange-400/10' },
 };
 
-const EMPTY_FORM = { material_id: '', qty: '', reason: 'surat_jalan_internal', customer_id: undefined, reference_number: '', notes: '' };
+const EMPTY_FORM = { material_id: '', location_id: '', qty: '', reason: 'surat_jalan_internal', customer_id: undefined, reference_number: '', notes: '' };
 
 export default function RahazaFGInventoryModule({ token }) {
   const { toast } = useToast();
   const [items,     setItems]     = useState([]);
   const [stocks,    setStocks]    = useState({});
+  const [stockRows, setStockRows] = useState([]);
   const [movements, setMovements] = useState([]);
   const [issues,    setIssues]    = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -73,10 +74,12 @@ export default function RahazaFGInventoryModule({ token }) {
       if (stockR.ok) {
         const sd = await stockR.json();
         const map = {};
-        (Array.isArray(sd) ? sd : (sd.rows || [])).forEach(s => {
+        const rows = Array.isArray(sd) ? sd : (sd.rows || []);
+        rows.forEach(s => {
           map[s.material_id] = (map[s.material_id] || 0) + (s.qty || 0);
         });
         setStocks(map);
+        setStockRows(rows);
       }
       setUpdatedAt(new Date().toLocaleTimeString('id-ID'));
     } finally { setLoading(false); }
@@ -94,10 +97,18 @@ export default function RahazaFGInventoryModule({ token }) {
 
   // Get current stock for selected FG in form
   const selectedMat   = items.find(m => m.id === form.material_id);
-  const availableStock = selectedMat ? (stocks[selectedMat.id] || 0) : 0;
+  // 2026-11-02 — No.18(a): lokasi asal WAJIB dipilih (dulu backend diam-diam membaca
+  // "lokasi aktif pertama" → stok 36 pcs di rak terbaca 0). Pilihan = lokasi yang
+  // benar-benar memegang stok FG ini; tidak ada pilihan bawaan.
+  const locOptions = selectedMat
+    ? stockRows.filter(r => r.material_id === selectedMat.id && Number(r.qty || 0) > 0)
+    : [];
+  const selectedLoc = locOptions.find(r => r.location_id === form.location_id);
+  const availableStock = selectedLoc ? Number(selectedLoc.qty || 0) : 0;
 
   const handleSubmitIssue = async () => {
     if (!form.material_id)  return toast({ title: 'Pilih produk jadi terlebih dahulu', variant: 'destructive' });
+    if (!form.location_id)  return toast({ title: 'Pilih lokasi asal barang terlebih dahulu', variant: 'destructive' });
     if (!form.qty || parseFloat(form.qty) <= 0) return toast({ title: 'Qty harus lebih dari 0', variant: 'destructive' });
     if (parseFloat(form.qty) > availableStock)  return toast({ title: `Stok tidak cukup. Tersedia: ${availableStock} pcs`, variant: 'destructive' });
     setSubmitting(true);
@@ -196,7 +207,7 @@ export default function RahazaFGInventoryModule({ token }) {
             {/* Pilih FG */}
             <div className="md:col-span-2">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Produk Jadi *</label>
-              <Select value={form.material_id} onValueChange={v => setForm(f=>({...f, material_id: v, qty: ''}))}>
+              <Select value={form.material_id} onValueChange={v => setForm(f=>({...f, material_id: v, location_id: '', qty: ''}))}>
                 <SelectTrigger data-testid="fg-issue-material">
                   <SelectValue placeholder="— Pilih Produk Jadi —" />
                 </SelectTrigger>
@@ -211,9 +222,32 @@ export default function RahazaFGInventoryModule({ token }) {
                   ))}
                 </SelectContent>
               </Select>
-              {form.material_id && (
+            </div>
+
+            {/* Lokasi asal — wajib dipilih (No.18a) */}
+            <div className="md:col-span-2">
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Lokasi Asal *</label>
+              <select
+                value={form.location_id}
+                onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
+                disabled={!form.material_id}
+                required
+                data-testid="fg-issue-location"
+                className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+              >
+                <option value="">{form.material_id ? '— Pilih lokasi —' : 'Pilih produk jadi dulu'}</option>
+                {locOptions.map(r => (
+                  <option key={r.location_id} value={r.location_id}>
+                    {(r.location_code ? `${r.location_code} · ` : '') + (r.location_name || r.location_id)} — {r.qty} pcs
+                  </option>
+                ))}
+              </select>
+              {form.material_id && locOptions.length === 0 && (
+                <div className="mt-1 text-xs text-rose-400">Produk ini tidak punya stok di lokasi mana pun.</div>
+              )}
+              {form.location_id && (
                 <div className="mt-1 text-xs text-muted-foreground">
-                  Stok tersedia: <span className="font-semibold text-foreground">{availableStock} pcs</span>
+                  Stok di lokasi ini: <span className="font-semibold text-foreground">{availableStock} pcs</span>
                 </div>
               )}
             </div>

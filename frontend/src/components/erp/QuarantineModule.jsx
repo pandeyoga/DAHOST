@@ -87,7 +87,8 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
   }[action];
 
   const [qty, setQty] = useState(item.remaining_qty);
-  const [toLoc, setToLoc] = useState((locations[0] && locations[0].id) || '');
+  // 2026-11-02 — No.18(a): tidak ada lokasi bawaan (dulu item pertama = zona uji "ZU").
+  const [toLoc, setToLoc] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -130,11 +131,12 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
 
           {CONF.needLoc && (
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Lokasi Tujuan</label>
+              <label className="text-xs text-muted-foreground block mb-1">Lokasi Tujuan *</label>
               <SmartNativeSelect value={toLoc} onChange={(e) => setToLoc(e.target.value)}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                 data-testid="quarantine-action-location">
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.name || l.code}</option>)}
+                <option value="">— Pilih lokasi tujuan —</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
               </SmartNativeSelect>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Lokasi karantina ({quarantineLoc?.name || 'Area Karantina QC'}) tidak bisa dipilih sebagai tujuan.

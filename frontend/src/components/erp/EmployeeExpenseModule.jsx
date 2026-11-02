@@ -30,6 +30,7 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import CashAccountSelect, { todayWIB, usePaymentCashAccounts } from './SdmCashAccountSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
@@ -215,6 +216,10 @@ function ClaimDetail({ claim, token, onClose, onRefresh, role }) {
   const [rejectReason, setRejectReason] = useState('');
   const [showReject, setShowReject] = useState(false);
   const [note, setNote] = useState('');
+  // 2026-11-02 (P5 butir 7): "Bayar & Post GL" mengirim rekening yang dipilih + tanggal cair (WIB).
+  const { accounts, loaded: accLoaded } = usePaymentCashAccounts(token);
+  const [payAccount, setPayAccount] = useState('');
+  const [payDate, setPayDate] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const doAction = async (endpoint, body = {}) => {
@@ -331,10 +336,16 @@ function ClaimDetail({ claim, token, onClose, onRefresh, role }) {
           </>
         )}
         {isFinance && claim.status === 'approved' && (
-          <Button size="sm" className="bg-green-600 hover:bg-green-700 text-foreground"
-            onClick={() => doAction('disburse', { payment_method: 'transfer' })} disabled={actionLoading}>
-            <Banknote className="w-3.5 h-3.5 mr-1" />Bayar & Post GL
-          </Button>
+          <div className="flex gap-2 items-center flex-wrap" data-testid="claim-pay-source">
+            <CashAccountSelect accounts={accounts} loaded={accLoaded} value={payAccount} onChange={setPayAccount}
+              className="h-8 px-2 rounded-md border border-border bg-background text-sm max-w-[14rem]" testId="claim-pay-account" />
+            <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="h-8 text-sm w-36" />
+            <Button size="sm" className="bg-green-600 hover:bg-green-700 text-foreground"
+              onClick={() => doAction('disburse', { payment_method: 'transfer', bank_account_id: payAccount, payment_date: payDate })}
+              disabled={actionLoading || !payAccount}>
+              <Banknote className="w-3.5 h-3.5 mr-1" />Bayar & Post GL
+            </Button>
+          </div>
         )}
         {claim.status === 'draft' && (
           <Button size="sm" onClick={() => doAction('submit')} disabled={actionLoading}>

@@ -2,16 +2,17 @@
 AI Cash Flow Prediction — CV. Dewi Aditya ERP
 Endpoint: GET /api/finance/ai-cashflow
 
-Aggregates AR aging + AP aging + 60-day cash movements, then calls LLM
-(via emergentintegrations) to generate a short-term cash flow prediction
-with risks & recommendations.
+Aggregates AR aging + AP aging + 60-day cash movements, then calls Claude
+(lewat lapisan tunggal `services.ai`, 2026-11-02) to generate a short-term
+cash flow prediction with risks & recommendations.
 """
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from database import get_db
 from auth import require_auth, serialize_doc
 from datetime import date, timedelta
-import os
 import logging
+
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 
 logger = logging.getLogger(__name__)
 
@@ -115,8 +116,10 @@ async def _build_context(db) -> dict:
 
     # ── Upcoming AP due in 30 days ──
     next_30 = (today + timedelta(days=30)).isoformat()
+    # 2026-11-02: dulu hanya 'sent'/'partial' → AP berstatus partial_paid & overdue
+    # (status kanonik) tidak pernah masuk daftar kewajiban 30 hari ke depan.
     upcoming_ap = await db.rahaza_ap_invoices.find(
-        {'status': {'$in': ['sent', 'partial']}, 'due_date': {'$gte': today_iso, '$lte': next_30}},
+        {'status': {'$in': ['sent', 'issued', 'partial', 'partial_paid', 'overdue']}, 'due_date': {'$gte': today_iso, '$lte': next_30}},
         {'_id': 0, 'vendor_name': 1, 'balance': 1, 'due_date': 1}
     ).sort('due_date', 1).to_list(10)
 
@@ -196,32 +199,28 @@ async def ai_cashflow_prediction(request: Request):
     """
     AI Cash Flow Prediction — analisis arus kas 30/60/90 hari ke depan.
     Menggunakan data AR/AP aging + arus kas historis untuk menghasilkan
-    prediksi dan rekomendasi berbasis LLM (GPT-4o).
+    prediksi dan rekomendasi berbasis Claude (tier executive).
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
-    llm_key = os.environ.get('EMERGENT_LLM_KEY')
-    if not llm_key:
-        raise HTTPException(503, "EMERGENT_LLM_KEY tidak tersedia di environment.")
+    # 2026-11-02: gerbang tunggal (kunci Anthropic + SDK); pesan ramah, tanpa nama env.
+    await require_ai("cashflow", user_id=user.get("id"), db=db, tier="executive")
 
     # ── Build context ──
     ctx = await _build_context(db)
 
     # ── Call LLM ──
     try:
-        from ai_llm import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=llm_key,
-            session_id=f"cashflow-{date.today().isoformat()}",
-            system_message="Kamu adalah CFO digital yang ahli keuangan garmen Indonesia.",
-        ).with_model("openai", "gpt-5.1")
-        prompt = _build_prompt(ctx)
-        response = await chat.send_message(UserMessage(text=prompt))
-        analysis = response.text if hasattr(response, 'text') else str(response)
-    except Exception as e:
-        logger.error(f"LLM cashflow error: {e}")
-        raise HTTPException(502, f"Gagal memanggil AI: {str(e)[:200]}")
+        analysis = await ai_text(
+            "cashflow",
+            "Kamu adalah CFO digital yang ahli keuangan garmen Indonesia.",
+            _build_prompt(ctx),
+            tier="executive",
+            user_id=user.get("id"),
+        )
+    except AIError as e:
+        raise ai_http_error(e)
 
     return {
         'analysis': analysis,

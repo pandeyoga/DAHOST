@@ -1,69 +1,120 @@
 """Unified LLM client (Claude via the official Anthropic SDK).
 
-Design goals:
-1. Single entry point for all AI route files (consistency).
-2. All calls funnel through `ai_cost_tracker.tracked_llm_call`, which speaks to
-   the Anthropic Messages API directly with the owner's `ANTHROPIC_API_KEY`.
-3. Application-level response cache (MongoDB) to avoid paying twice for the
-   same prompt.
-4. Graceful 503 when `ANTHROPIC_API_KEY` is absent.
+2026-11-02 (No.60): SATU lapisan provider untuk semua route AI:
 
-This module is intentionally small (<300 LOC). Keep additions inside
-specialized sub-modules (`prompt_templates.py`, `response_cache.py`).
+    routes → services.ai (ai_text / ai_json_call / call_claude / cached_call_claude)
+           → ai_cost_tracker.tracked_llm_call → Anthropic
+
+Aturan:
+1. Route TIDAK boleh membaca env kunci sendiri (gerbang lama `EMERGENT_LLM_KEY`
+   dihapus) — pakai `require_ai()` / `ai_available()`.
+2. Model dipilih lewat TIER (executive/standard/light), tidak pernah nama model.
+3. Galat ke pengguna selalu pesan ramah berbahasa Indonesia (`ai_http_error`);
+   nama variabel env dan isi exception mentah tidak pernah dikirim ke frontend.
+4. Cache respons tingkat aplikasi (MongoDB) agar prompt sama tidak dibayar dua kali.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
-import os
-import uuid
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import HTTPException
 
+import ai_cost_tracker as _tracker
+from ai_cost_tracker import AIError, ai_available, ai_status, friendly_error, http_status_for
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Standardized model: Claude (per project directive — all AI uses Claude)
-# ---------------------------------------------------------------------------
 DEFAULT_PROVIDER = "anthropic"
-DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = _tracker.TIER_MODELS[_tracker.DEFAULT_TIER][1]
+
+__all__ = [
+    "AIError", "LLMUnavailable", "ai_available", "ai_status", "require_ai",
+    "ai_http_error", "ai_text", "ai_json_call", "call_claude", "cached_call_claude",
+    "get_llm_key", "friendly_error",
+]
 
 
 class LLMUnavailable(HTTPException):
-    """503 response when ANTHROPIC_API_KEY is missing or AI library not loadable."""
+    """503 ramah saat AI belum bisa dipakai (kunci kosong / SDK tidak terpasang / dimatikan)."""
 
-    def __init__(self, detail: str = "AI belum aktif. ANTHROPIC_API_KEY belum dikonfigurasi."):
-        super().__init__(status_code=503, detail=detail)
+    def __init__(self, detail: Optional[str] = None):
+        super().__init__(status_code=503, detail=detail or friendly_error("not_configured"))
 
 
-# ---------------------------------------------------------------------------
-# Key resolution: DB first (integration settings), then env.
-# ---------------------------------------------------------------------------
-async def get_llm_key(db=None) -> str:
-    """Return the Anthropic API key or raise LLMUnavailable.
+def ai_http_error(err: Exception) -> HTTPException:
+    """Ubah galat AI apa pun menjadi HTTPException berpesan ramah (tanpa detail teknis)."""
+    if isinstance(err, HTTPException):
+        return err
+    code = getattr(err, "code", None) or "internal"
+    message = str(err) if isinstance(err, AIError) else friendly_error(code)
+    if code in _tracker.UNAVAILABLE_CODES:
+        return LLMUnavailable(message)
+    return HTTPException(status_code=http_status_for(code), detail=message)
 
-    Order of precedence:
-    1. `rahaza_integration_settings` collection (admin-managed, runtime override).
-    2. `ANTHROPIC_API_KEY` env var.
+
+async def require_ai(feature: str = "ai", *, user_id: Optional[str] = None, db=None,
+                     tier: str = _tracker.DEFAULT_TIER) -> None:
+    """Gerbang fitur AI: raise LLMUnavailable (503, ramah) bila AI belum siap.
+
+    Percobaan yang ditolak dicatat ke log pemakaian supaya Monitor AI
+    menampilkan "AI mati" + jumlah galat, bukan "healthy".
     """
-    if db is not None:
-        try:
-            from routes.rahaza_integrations import get_integration_key  # local import to avoid cycle
-            key = await get_integration_key("ANTHROPIC_API_KEY", db)
-            if key:
-                return key
-        except Exception as e:  # pragma: no cover
-            logger.warning("Failed reading ANTHROPIC_API_KEY from DB: %s", e)
-    key = os.environ.get("ANTHROPIC_API_KEY")
+    st = await ai_status(db)
+    if not st["available"]:
+        await _tracker.record_ai_failure(feature, st["code"], user_id=user_id, tier=tier)
+        raise LLMUnavailable(st["message"])
+
+
+async def get_llm_key(db=None) -> str:
+    """Kompatibilitas: kunci Anthropic (DB → env) atau LLMUnavailable."""
+    key, _src = await _tracker.resolve_api_key(db)
     if key:
         return key
     raise LLMUnavailable()
 
 
-# ---------------------------------------------------------------------------
-# Core call (no cache). Keep this tiny — formatting belongs to caller.
-# ---------------------------------------------------------------------------
+async def ai_text(
+    feature: str,
+    system_message: str,
+    user_message: str,
+    *,
+    tier: str = _tracker.DEFAULT_TIER,
+    user_id: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    image_base64: Optional[str] = None,
+) -> str:
+    """Panggil Claude, kembalikan teks. Raise AIError (pesan ramah + `.code`) bila gagal."""
+    res = await _tracker.tracked_llm_call(
+        feature=feature, user_id=user_id, model=tier,
+        system_message=system_message, user_message=user_message,
+        image_base64=image_base64, max_tokens=max_tokens,
+    )
+    if not res.success:
+        raise AIError(res.error, over_budget=res.over_budget, code=res.error_code)
+    return res.text
+
+
+async def ai_json_call(
+    feature: str,
+    system_message: str,
+    user_message: str,
+    *,
+    tier: str = _tracker.DEFAULT_TIER,
+    user_id: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    image_base64: Optional[str] = None,
+):
+    """Seperti `ai_text` tetapi mem-parse JSON. Gagal parse → AIError(code='bad_output')."""
+    text = await ai_text(feature, system_message, user_message, tier=tier, user_id=user_id,
+                         max_tokens=max_tokens, image_base64=image_base64)
+    try:
+        return _tracker.extract_json(text)
+    except Exception:
+        raise AIError(code="bad_output")
+
+
 async def call_claude(
     system_message: str,
     user_message: str,
@@ -71,59 +122,28 @@ async def call_claude(
     session_tag: str = "ai",
     db=None,
     tier: str = "standard",
+    user_id: Optional[str] = None,
 ) -> str:
-    """Single point of LLM invocation. Returns plain text response.
+    """Satu titik panggilan untuk route lama. Return teks.
 
-    WS-C: routes through the centralized `ai_cost_tracker` wrapper (via the
-    `ai_llm.LlmChat` shim) so EVERY call is logged (AI Usage Monitor), subject
-    to the daily/monthly/per-feature budget guardrails, and uses the canonical
-    Claude tier models (executive/standard/light) — no hardcoded model.
-
-    `session_tag` becomes the usage `feature` label. `tier` selects the model
-    complexity (defaults to 'standard' = sonnet).
+    `session_tag` menjadi label fitur di log pemakaian (sufiks id dibuang).
 
     Raises:
-        LLMUnavailable(503): when key/library missing.
-        HTTPException(429): when the AI budget is exceeded.
-        HTTPException(500): on any underlying LLM error.
+        LLMUnavailable(503): kunci kosong / SDK tidak terpasang / AI dimatikan admin.
+        HTTPException(429/502/504): anggaran habis / galat layanan AI (pesan ramah).
     """
-    key = await get_llm_key(db)
+    resolved_tier = tier if tier in _tracker.TIER_MODELS else "standard"
     try:
-        from ai_llm import LlmChat, UserMessage  # centralized shim (WS-C)
-        from ai_cost_tracker import AIError, TIER_MODELS
-    except ImportError as e:  # pragma: no cover
-        logger.error("AI wrapper import failed: %s", e)
-        raise LLMUnavailable("AI library (ai_cost_tracker/ai_llm) tidak terpasang.")
-
-    resolved_tier = tier if tier in TIER_MODELS else "standard"
-    try:
-        chat = (
-            LlmChat(
-                api_key=key,
-                session_id=f"{session_tag}-{uuid.uuid4().hex[:8]}",
-                system_message=system_message,
-            )
-            .with_model(resolved_tier)
-            .for_feature(session_tag, tier=resolved_tier)
-        )
-        response = await chat.send_message(UserMessage(text=user_message))
-        return response if isinstance(response, str) else str(response)
+        return await ai_text(session_tag, system_message, user_message,
+                             tier=resolved_tier, user_id=user_id)
     except AIError as e:
-        # Over-budget or centralized AI failure → surface a clear status.
-        if getattr(e, "over_budget", False):
-            raise HTTPException(status_code=429, detail=str(e) or "Budget AI harian/bulanan terlampaui.")
-        logger.error("AI call failed (%s): %s", session_tag, e)
-        raise HTTPException(status_code=500, detail=f"AI call failed: {e}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("LLM call failed (%s): %s", session_tag, e)
-        raise HTTPException(status_code=500, detail=f"AI call failed: {e}")
+        if e.code not in _tracker.UNAVAILABLE_CODES:
+            logger.warning("AI call gagal (%s): %s", session_tag, e.code)
+        raise ai_http_error(e)
 
 
 # ---------------------------------------------------------------------------
 # Cached call (app-level cache via MongoDB).
-# Substitutes Anthropic ephemeral cache (not accessible via emergentintegrations).
 # ---------------------------------------------------------------------------
 def _hash_cache_key(parts: list[str]) -> str:
     payload = "\u0001".join(p or "" for p in parts).encode("utf-8")
@@ -142,15 +162,6 @@ async def cached_call_claude(
     tier: str = "standard",
 ) -> dict[str, Any]:
     """LLM call with application-level cache (MongoDB).
-
-    Args:
-        db: motor Database (required for cache read/write).
-        system_message / user_message: prompt content.
-        cache_namespace: e.g. "daily_summary", "revenue_forecast".
-        cache_key_extra: extra invalidation parts (e.g. [date_str, period_str]).
-        ttl_seconds: cache lifetime (default 1h).
-        session_tag: for LLM session_id naming (also the usage feature label).
-        tier: model complexity tier ('executive'/'standard'/'light').
 
     Returns:
         dict with keys: text (str), cache_hit (bool), generated_at (iso str).

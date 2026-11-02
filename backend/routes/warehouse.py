@@ -270,7 +270,16 @@ async def update_receiving(receipt_id: str, request: Request):
     
     body = await request.json()
     updates = {}
-    
+
+    # 2026-11-02 (audit No.44b): GR 'received' sudah menambah stok, jurnal persediaan, aset tetap &
+    # qty diterima PO. Mundur ke draft/inspecting lalu 'received' lagi menggandakan semuanya
+    # (uji: stok 5→10, jurnal & aset dobel). Koreksi lewat retur ke pemasok / penyesuaian stok.
+    if existing.get("status") == "received" and "status" in body and body.get("status") != "received":
+        raise HTTPException(
+            400, f"GR {existing.get('receipt_number') or receipt_id} sudah diterima (received); status "
+                 f"tidak bisa dikembalikan ke '{body.get('status')}'. Koreksi lewat retur ke pemasok "
+                 f"atau penyesuaian stok.")
+
     if "status" in body:
         updates["status"] = body["status"]
     if "items" in body:

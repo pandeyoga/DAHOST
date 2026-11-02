@@ -270,7 +270,7 @@ class LaunchUpdate(BaseModel):
 @router.get("/summary")
 async def get_summary(request: Request):
     user = await require_auth(request)
-    await seed_product_launches_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     # F6 — peluncuran bisa LINTAS-TOKO, jadi "milik saya" = pemilik ATAU sasaran.
@@ -329,7 +329,7 @@ async def list_launches(
     date_to:   str = Query(default=""),
 ):
     user = await require_auth(request)
-    await seed_product_launches_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     q = {}

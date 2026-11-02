@@ -116,10 +116,12 @@ async def _try_ai(db, question, portal, module, session_id, user):
             session_tag="assistant-erp",
             db=db,
             tier="light",
+            user_id=(user or {}).get("id"),
         )
         return (reply or "").strip(), None
-    except LLMUnavailable:
-        return None, "Bantuan AI belum aktif — kunci Claude belum dipasang admin."
+    except LLMUnavailable as e:
+        # 2026-11-02: pesan ramah dari services.ai (kunci kosong / dimatikan admin).
+        return None, f"Bantuan AI belum aktif — {e.detail}"
     except HTTPException as e:
         log.warning("assistant AI gagal: %s", e.detail)
         return None, "Bantuan AI sedang tidak tersedia."

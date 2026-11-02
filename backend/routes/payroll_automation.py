@@ -179,6 +179,33 @@ async def trigger_payroll_run(body: TriggerBody, request: Request):
     if not profiles:
         raise HTTPException(422, "Tidak ada profil payroll aktif. Buat profil dulu.")
 
+    # 2026-11-02 (audit payroll): /trigger dulu membuat run TANPA cek run ganda — hanya mencocokkan
+    # `period.from/to` miliknya sendiri, sehingga run baru tetap lahir walau karyawan yang sama sudah
+    # digaji di run lain (POST /api/rahaza/payroll-runs) dengan periode beririsan. Kini memakai cek
+    # yang SAMA dengan pembuatan run biasa (`find_duplicate_run_conflicts`, per karyawan+skema,
+    # karyawan nonaktif dikecualikan seperti di create_run).
+    from routes.rahaza_payroll_shared import employee_is_active, find_duplicate_run_conflicts
+    try:
+        if date.fromisoformat(body.period_from[:10]) > date.fromisoformat(body.period_to[:10]):
+            raise HTTPException(400, "period_from tidak boleh > period_to.")
+    except ValueError:
+        raise HTTPException(400, "Format tanggal harus YYYY-MM-DD.")
+    emps = await db.rahaza_employees.find(
+        {"id": {"$in": [p["employee_id"] for p in profiles]}}, {"_id": 0}).to_list(500)
+    e_map = {e["id"]: e for e in emps}
+    profiles = [p for p in profiles if p["employee_id"] in e_map and employee_is_active(e_map[p["employee_id"]])]
+    if not profiles:
+        raise HTTPException(422, "Tidak ada karyawan AKTIF dengan profil payroll aktif.")
+    conflicts = await find_duplicate_run_conflicts(db, body.period_from, body.period_to, profiles)
+    if conflicts:
+        runs_txt = ", ".join(sorted({f"{c['run_number']} ({c['period_from']}–{c['period_to']}, {c['run_status']})"
+                                     for c in conflicts}))
+        names = sorted({c["employee_name"] or c["employee_id"] for c in conflicts})
+        raise HTTPException(409, (
+            f"Penggajian ganda ditolak: {len(names)} karyawan sudah masuk run lain dengan periode beririsan "
+            f"dan skema yang sama — {runs_txt}. Contoh: {', '.join(names[:5])}"
+            f"{' …' if len(names) > 5 else ''}. Hapus run draft tersebut (atau batalkan run-nya) dulu."))
+
     # Get run number — RC-5 fix: atomic race-safe numbering (was count_documents()+1)
     now = _now()
     from utils.counters import gen_prefixed_number

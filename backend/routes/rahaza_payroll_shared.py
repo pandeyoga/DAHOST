@@ -25,11 +25,15 @@ FASE 15 (2026-07-26) — MESIN HITUNG SLIP DISATUKAN.
 import logging
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from auth import require_auth
 from fastapi import HTTPException, Request
 
 log = logging.getLogger(__name__)
+
+# 2026-11-02 (P5): keputusan owner No.54(a) — tanggal bisnis = WIB, tidak bergantung TZ container.
+WIB = ZoneInfo("Asia/Jakarta")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS
@@ -560,3 +564,147 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "source_refs": source_refs,
         "notes": "",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPER BERSAMA SDM ↔ KEUANGAN (2026-11-02, paket P5)
+# Dipakai payroll, kasbon, uang muka dinas, penyelesaian dinas, dan klaim biaya
+# supaya aturan "tanggal WIB", "rekening = kas/bank nyata", "run tidak ganda", dan
+# "notifikasi ke pemohon" punya SATU definisi, bukan salinan per modul.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _today_wib() -> date:
+    """Tanggal hari ini menurut WIB (No.54(a))."""
+    return datetime.now(WIB).date()
+
+
+def parse_ymd(value, *, field: str = "tanggal", default: date | None = None) -> date:
+    """'YYYY-MM-DD' → date. Kosong → `default` (bawaan: hari ini WIB). Format salah → HTTP 400.
+
+    2026-11-02: dulu tanggal transaksi yang diisi pengguna (tanggal cair/bayar) diabaikan dan
+    jurnal selalu bertanggal hari ini — kasbon cair 15 Okt tercatat 1 Nov (laporan Okt meleset)."""
+    if value in (None, ""):
+        return default or _today_wib()
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        raise HTTPException(400, f"Format {field} harus YYYY-MM-DD (diterima: {value!r}).")
+
+
+def employee_is_active(emp: dict | None) -> bool:
+    """Karyawan dianggap aktif kecuali `active` eksplisit False (data master SDM)."""
+    return emp is not None and emp.get("active") is not False
+
+
+def periods_overlap(a_from: str, a_to: str, b_from: str, b_to: str) -> bool:
+    """Dua periode ISO (YYYY-MM-DD) beririsan (batas inklusif)."""
+    return str(a_from)[:10] <= str(b_to)[:10] and str(b_from)[:10] <= str(a_to)[:10]
+
+
+async def find_duplicate_run_conflicts(db, period_from: str, period_to: str, profiles: list,
+                                       exclude_run_id: str | None = None) -> list:
+    """Slip yang SUDAH ada di run lain (status ≠ cancelled) untuk karyawan + skema yang sama dan
+    periode beririsan.
+
+    2026-11-02 (P5 butir 1): dulu run kedua Okt dibuat & difinalisasi → 6-2100 = 2× 58.170.500.
+    Dicek per karyawan+skema (bukan sekadar tanggal header) supaya run parsial (mis. hanya Satria)
+    juga tidak bisa digaji dua kali, dan periode tumpang-tindih (30 Sep–31 Okt vs 1–31 Okt) ikut tertangkap."""
+    q = {"status": {"$ne": "cancelled"}, "period_from": {"$lte": period_to}, "period_to": {"$gte": period_from}}
+    if exclude_run_id:
+        q["id"] = {"$ne": exclude_run_id}
+    runs = await db.rahaza_payroll_runs.find(
+        q, {"_id": 0, "id": 1, "run_number": 1, "period_from": 1, "period_to": 1, "status": 1}).to_list(500)
+    runs = [r for r in runs if periods_overlap(period_from, period_to, r.get("period_from"), r.get("period_to"))]
+    if not runs or not profiles:
+        return []
+    scheme_of = {p["employee_id"]: p.get("pay_scheme") for p in profiles}
+    run_map = {r["id"]: r for r in runs}
+    slips = await db.rahaza_payslips.find(
+        {"run_id": {"$in": list(run_map)}, "employee_id": {"$in": list(scheme_of)}},
+        {"_id": 0, "run_id": 1, "employee_id": 1, "employee_name": 1, "pay_scheme": 1}).to_list(5000)
+    out = []
+    for s in slips:
+        want = scheme_of.get(s.get("employee_id"))
+        # slip lama tanpa pay_scheme dianggap skema yang sama (lebih aman menolak daripada gaji ganda)
+        if s.get("pay_scheme") in (None, "", want):
+            r = run_map[s["run_id"]]
+            out.append({"employee_id": s.get("employee_id"), "employee_name": s.get("employee_name") or "",
+                        "pay_scheme": want, "run_id": r["id"], "run_number": r.get("run_number"),
+                        "run_status": r.get("status"), "period_from": r.get("period_from"),
+                        "period_to": r.get("period_to")})
+    return out
+
+
+async def list_payment_cash_accounts(db) -> list:
+    """Rekening kas/bank AKTIF yang nyata (master Kas & Bank) dan akun GL-nya postable.
+
+    2026-11-02 (P5 butir 7): pengganti daftar hard-code di layar (berisi 1-1200 = akun header
+    dan 1-1203 = tidak ada di bagan akun)."""
+    from core.fin_statements import cash_account_codes
+    codes = await cash_account_codes(db)
+    postable = {a["code"]: a async for a in db.rahaza_coa_accounts.find(
+        {"code": {"$in": sorted(codes)}, "active": True, "is_group": {"$ne": True}}, {"_id": 0, "code": 1, "name": 1})}
+    rows = await db.rahaza_cash_accounts.find({"active": True}, {"_id": 0}).sort("code", 1).to_list(500)
+    return [{"id": r.get("id"), "code": r.get("code"), "name": r.get("name") or postable[r["gl_account_code"]].get("name"),
+             "gl_account_code": r.get("gl_account_code"), "type": r.get("type") or "",
+             "bank_name": r.get("bank_name") or "", "account_number": r.get("account_number") or ""}
+            for r in rows if r.get("gl_account_code") in postable]
+
+
+async def resolve_payment_account(db, *, cash_account_id: str | None = None, gl_code: str | None = None,
+                                  default_code: str | None = None, purpose: str = "Pembayaran") -> dict:
+    """SATU pintu memilih rekening uang keluar/masuk. Return {gl_code, name, cash_account_id}.
+
+    Urutan: rekening yang dipilih (`cash_account_id`) → kode akun yang dikirim → bawaan profil.
+    Ditolak (HTTP 400) bila bukan akun kas/bank postable — 2026-11-02 (P5 butir 4/7): dulu
+    pembayaran gaji ke 6-2900 (akun beban) diterima, dan rekening pilihan pengguna diabaikan."""
+    from core.fin_statements import cash_account_codes
+    acc_id = (cash_account_id or "").strip()
+    code = (gl_code or "").strip()
+    ca = None
+    if acc_id:
+        ca = await db.rahaza_cash_accounts.find_one({"id": acc_id}, {"_id": 0})
+        if not ca or ca.get("active") is False:
+            raise HTTPException(400, f"{purpose}: rekening yang dipilih tidak ditemukan atau tidak aktif.")
+        code = (ca.get("gl_account_code") or "").strip()
+        if not code:
+            raise HTTPException(400, f"{purpose}: rekening '{ca.get('name')}' belum tertaut ke akun GL "
+                                     "(sinkronkan di Keuangan → Kas & Bank).")
+    if not code:
+        code = (default_code or "").strip()
+    if not code:
+        raise HTTPException(400, f"{purpose}: rekening kas/bank wajib dipilih.")
+    coa = await db.rahaza_coa_accounts.find_one({"code": code, "active": True}, {"_id": 0, "name": 1, "is_group": 1})
+    if not coa:
+        raise HTTPException(400, f"{purpose}: akun GL '{code}' tidak ditemukan atau tidak aktif.")
+    if coa.get("is_group"):
+        raise HTTPException(400, f"{purpose}: akun '{code} {coa.get('name', '')}' adalah akun header — "
+                                 "pilih rekening kas/bank yang spesifik.")
+    if code not in await cash_account_codes(db):
+        raise HTTPException(400, f"{purpose}: akun '{code} {coa.get('name', '')}' bukan akun kas/bank. "
+                                 "Uang hanya boleh keluar/masuk lewat rekening kas atau bank.")
+    if not ca:
+        ca = await db.rahaza_cash_accounts.find_one({"gl_account_code": code, "active": {"$ne": False}},
+                                                    {"_id": 0, "id": 1, "name": 1})
+    return {"gl_code": code, "name": (ca or {}).get("name") or coa.get("name") or code,
+            "cash_account_id": (ca or {}).get("id")}
+
+
+async def notify_requester(db, *, user_id: str | None, subtype: str, title: str, body: str,
+                           link_module: str, source_type: str, source_id: str, source_ref: str | None = None,
+                           severity: str = "info") -> bool:
+    """Notifikasi personal ke user pemohon (kasbon/klaim/dinas disetujui/ditolak). Tidak pernah raise.
+
+    2026-11-02 (P5 butir 12): dulu hanya approver yang diberi tahu saat pengajuan masuk; pemohon
+    tidak pernah tahu hasilnya. `link_module` wajib id menu Portal Saya yang benar-benar ada."""
+    if not user_id:
+        return False
+    try:
+        from utils.notif_unified import notif_insert
+        await notif_insert(db, type="rahaza", subtype=subtype, severity=severity, user_id=str(user_id),
+                           title=title, body=body, source_type=source_type, source_id=source_id,
+                           source_ref=source_ref, status="sent", meta={"link_module": link_module})
+        return True
+    except Exception:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan transaksi
+        log.exception("[notif] gagal mengirim notifikasi %s ke user %s", subtype, user_id)
+        return False

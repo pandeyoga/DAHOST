@@ -85,10 +85,9 @@ async def resolve_fg_location_id(db) -> str | None:
     loc = await legacy_location_for_role(db, "fg")
     if loc:
         return loc["id"]
-    # fallback terakhir: lokasi storage aktif apa pun bertipe zona
-    loc = await db.rahaza_locations.find_one(
-        {"type": "zona", "active": True}, {"_id": 0, "id": 1})
-    return loc["id"] if loc else None
+    # 2026-11-02 — No.18(a): fallback "zona aktif apa pun" (= lokasi aktif pertama) dicabut.
+    # Tanpa lokasi berperan 'fg' pemanggil mendapat None dan memberi pesan yang jelas.
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -316,13 +315,22 @@ async def apply_receipt_result(db, receipt: dict, lines: list, actor: dict | Non
 # MUTASI 2 — STOK FG LOLOS QC (lewat SSOT stok, bukan tulis mentah)
 # ─────────────────────────────────────────────────────────────────────────────
 async def post_fg_accepted(db, *, material_id: str, qty: int, ref: dict,
-                           actor: dict | None = None, meta: dict | None = None) -> dict:
+                           actor: dict | None = None, meta: dict | None = None,
+                           exit_cost: dict | None = None) -> dict:
     """Tambah stok FG lewat `core/stock_service` supaya baris punya `location_id`
     kanonik, tercatat di ledger mutasi, dan terlihat opname/rekonsiliasi.
 
     SESI #34 — barang jadi yang masuk gudang juga MEMBAWA BIAYANYA: satu lapisan
     HPP batch (FIFO) dicatat lewat `core/fg_cost_layers`. Tanpa ini, upah jahit
     yang diisi di SPK dan ongkos permak tidak pernah sampai ke HPP.
+
+    2026-11-02 (F1) — dua sumber biaya, dipilih pemanggil:
+      * barang BARU dari produksi → `ref.po_item_id` WAJIB dibawa supaya lapisan =
+        bahan BOM (warna varian SPK) + jahit SPK. Dulu `ref` tidak membawanya sehingga
+        lapisan Rp 0, WIP→FG gagal, dan HPP master/katalog ditimpa 0.
+      * barang yang KEMBALI ke gudang (hapus/koreksi SJ, selisih buyer) → `exit_cost`
+        (hasil `exit_cost_of`) = biaya saat barang itu keluar. Barang yang kembali
+        tidak boleh menurunkan rata-rata HPP dengan lapisan Rp 0.
     """
     from core import stock_service
     loc = await resolve_fg_location_id(db)
@@ -336,17 +344,89 @@ async def post_fg_accepted(db, *, material_id: str, qty: int, ref: dict,
     layer = None
     try:
         from core import fg_cost_layers as fcl
-        po_item = None
-        poi_id = (ref or {}).get("po_item_id") or (meta or {}).get("po_item_id")
-        if poi_id:
-            po_item = await db.po_items.find_one({"id": poi_id}, {"_id": 0})
-        layer = await fcl.push_layer(db, material_id=material_id, qty=qty,
-                                     po_item=po_item or {}, ref=ref, actor=actor)
+        from core import product_costing as pc
+        if exit_cost is not None:
+            layer = await fcl.push_layer(
+                db, material_id=material_id, qty=qty, po_item={"sku": exit_cost.get("sku") or ""},
+                ref=ref, actor=actor, unit_cost=_f(exit_cost.get("unit_cost")),
+                breakdown=exit_cost_breakdown(exit_cost))
+            gl_je = exit_cost.get("gl_je_id")
+            if layer and gl_je:
+                # nilai barang ini tidak pernah keluar dari GL 1-1404 (keluarnya tanpa jurnal)
+                # → lapisan kembali mewarisi JE asalnya, bukan "belum berjurnal" palsu.
+                await db[fcl.LAYERS].update_one({"id": layer["id"]}, {"$set": {
+                    "gl_je_id": gl_je, "gl_basis": "inherited_from_exit"}})
+                layer["gl_je_id"] = gl_je
+        else:
+            po_item = None
+            poi_id = (ref or {}).get("po_item_id") or (meta or {}).get("po_item_id")
+            if poi_id:
+                po_item = await db.po_items.find_one({"id": poi_id}, {"_id": 0})
+            # BOM dipilih per WARNA varian SPK (F1b). `fg_cost_layers` belum meneruskan
+            # warna sendiri, jadi warnanya dititipkan lewat cakupan resolver BOM.
+            with pc.bom_color_scope(pc.color_of(po_item)):
+                layer = await fcl.push_layer(db, material_id=material_id, qty=qty,
+                                             po_item=po_item or {}, ref=ref, actor=actor)
     except Exception:  # noqa: BLE001
         # Stok fisik TIDAK boleh gagal karena biaya gagal dihitung — tetapi
         # kegagalannya harus terlihat di log, bukan hilang.
         logger.exception("lapisan HPP batch gagal dicatat (material=%s qty=%s)", material_id, qty)
     return {"location_id": loc, "row": row, "cost_layer": layer}
+
+
+def _f(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def exit_cost_breakdown(exit_cost: dict) -> dict:
+    """Rincian lapisan "barang kembali" (murni; dipakai `post_fg_accepted`)."""
+    gaps = []
+    if _f(exit_cost.get("uncosted_qty")) > 0:
+        gaps.append(f"{_f(exit_cost['uncosted_qty']):g} pcs keluar tanpa lapisan biaya — "
+                    "biaya rata-rata barang kembali ikut lebih rendah")
+    if not exit_cost.get("found"):
+        gaps.append("biaya saat barang ini keluar tidak tercatat — lapisan kembali bernilai Rp 0")
+    return {"source": "returned_at_exit_cost", "unit_cost": round(_f(exit_cost.get("unit_cost")), 2),
+            "exit_qty": _f(exit_cost.get("qty")), "gaps": gaps}
+
+
+def summarize_exit_consumptions(rows: list[dict]) -> dict:
+    """Σ konsumsi FIFO → biaya rata-rata per pcs saat keluar (fungsi murni)."""
+    qty = sum(_f(r.get("qty")) for r in rows)
+    cogs = sum(_f(r.get("cogs")) for r in rows)
+    uncosted = sum(_f(r.get("uncosted_qty")) for r in rows)
+    layer_ids = [lu.get("layer_id") for r in rows for lu in (r.get("layers_used") or [])
+                 if lu.get("layer_id")]
+    return {"found": qty > 0, "qty": qty, "cogs": round(cogs, 2), "uncosted_qty": uncosted,
+            "unit_cost": round(cogs / qty, 2) if qty > 0 else 0.0, "layer_ids": layer_ids}
+
+
+async def exit_cost_of(db, *, material_id: str, shipment_item_id: str, sku: str = "") -> dict:
+    """Biaya per pcs saat barang baris surat jalan ini KELUAR (jejak `fg_cost_consumptions`).
+
+    2026-11-02 (F1): dipakai jalur "barang kembali" supaya lapisan barunya bernilai
+    sama dengan nilai yang dulu keluar, bukan Rp 0. `gl_je_id` diisi bila SEMUA
+    lapisan asal sudah berjurnal (keluarnya lewat SJ buyer tidak menjurnal 1-1404,
+    jadi nilainya memang masih ada di GL).
+    """
+    rows = []
+    if material_id and shipment_item_id:
+        rows = await db.fg_cost_consumptions.find(
+            {"material_id": material_id, "ref.shipment_item_id": shipment_item_id},
+            {"_id": 0}).to_list(500)
+    out = summarize_exit_consumptions(rows)
+    out["sku"] = sku
+    out["gl_je_id"] = None
+    if out["layer_ids"] and not out["uncosted_qty"]:
+        src = await db.fg_cost_layers.find({"id": {"$in": out["layer_ids"]}},
+                                           {"_id": 0, "id": 1, "gl_je_id": 1}).to_list(500)
+        jes = [ly.get("gl_je_id") for ly in src]
+        if src and all(jes):
+            out["gl_je_id"] = jes[0]
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────

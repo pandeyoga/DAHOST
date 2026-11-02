@@ -10,13 +10,14 @@ Endpoints (prefix: /api/ai/usage)
 Access: superadmin / admin / manager / owner only.
 """
 from fastapi import APIRouter, Request, Query, HTTPException, Body
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from auth import require_auth
 from ai_cost_tracker import (
     get_usage_summary,
     get_recent_logs,
     get_ai_settings,
     invalidate_ai_settings_cache,
+    ai_status,
     TIER_MODELS,
     DEFAULT_DAILY_BUDGET_USD,
     DEFAULT_MONTHLY_BUDGET_USD,
@@ -40,6 +41,11 @@ AI_FEATURE_GROUPS = [
     {"key": "smart-import", "label": "Smart Import (mapping AI)"},
     {"key": "rahaza", "label": "Asisten AI Rahaza"},
     {"key": "career", "label": "Career Coach SDM"},
+    # 2026-11-02: grup yang dulu tidak bisa dimatikan dari layar ini.
+    {"key": "hr-ai", "label": "AI SDM (screening CV, attrition, coaching)"},
+    {"key": "assistant-erp", "label": "Asisten ERP"},
+    {"key": "analytics-ai", "label": "RCA Produksi/QC"},
+    {"key": "predictive-maintenance", "label": "Saran Perawatan Mesin"},
 ]
 
 
@@ -77,7 +83,7 @@ async def get_budgets(request: Request):
             "daily_usd": DEFAULT_DAILY_BUDGET_USD,
             "monthly_usd": DEFAULT_MONTHLY_BUDGET_USD,
             "per_feature_daily_usd": DEFAULT_PER_FEATURE_DAILY_USD,
-            "info": "Configurable via env vars: LLM_DAILY_BUDGET_USD / LLM_MONTHLY_BUDGET_USD / LLM_PER_FEATURE_DAILY_USD",
+            "info": "Atur batas anggaran di tab Pengaturan Monitor AI.",
         },
     }
 
@@ -125,11 +131,22 @@ async def today_status(request: Request):
     ]).to_list(length=10)
 
     pct_daily = (cost / daily_budget * 100) if daily_budget > 0 else 0
-    health = (
-        "critical" if pct_daily >= 100 else
-        "warning" if pct_daily >= 80 else
-        "monitor" if pct_daily >= 50 else
-        "healthy"
+
+    # 2026-11-02: status JUJUR — dulu "healthy" walau kunci kosong & SDM tidak terpasang,
+    # karena panggilan yang gagal sebelum ke Anthropic tidak pernah dicatat.
+    status = await ai_status(db)
+    since_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    recent_errors = await db.rahaza_ai_usage_logs.aggregate([
+        {"$match": {"success": False, "created_at": {"$gte": since_24h}}},
+        {"$group": {"_id": {"$ifNull": ["$error_code", "lainnya"]}, "n": {"$sum": 1},
+                    "last_at": {"$max": "$created_at"}, "message": {"$last": "$error"}}},
+        {"$sort": {"n": -1}},
+    ]).to_list(length=20)
+    recent_error_count = sum(int(r.get("n") or 0) for r in recent_errors)
+    health = _health_label(
+        ai_available=status["available"], ai_enabled=bool(settings.get("ai_enabled", True)),
+        pct_daily=pct_daily, successful=int(stats.get("successful", 0) or 0),
+        failed=int(stats.get("failed", 0) or 0),
     )
 
     return {
@@ -145,8 +162,47 @@ async def today_status(request: Request):
             "budget_used_pct": round(pct_daily, 1),
             "health": health,
             "top_features": top_features,
+            "ai_available": status["available"],
+            "ai_enabled": bool(settings.get("ai_enabled", True)),
+            "ai_status": {
+                "code": status["code"],
+                "message": status["message"],
+                "key_configured": status["key_configured"],
+                "key_source": status["key_source"],
+                "sdk_installed": status["sdk_installed"],
+                "sdk_version": status["sdk_version"],
+            },
+            "recent_error_count": recent_error_count,
+            "recent_errors": [
+                {"code": r["_id"], "count": r["n"], "last_at": r.get("last_at"), "message": r.get("message")}
+                for r in recent_errors
+            ],
         },
     }
+
+
+def _health_label(*, ai_available: bool, ai_enabled: bool, pct_daily: float,
+                  successful: int, failed: int) -> str:
+    """Status kesehatan AI hari ini (2026-11-02).
+
+    `offline`  : AI tidak bisa dipakai (kunci kosong / SDK tidak terpasang)
+    `disabled` : dimatikan admin (master switch)
+    `error`    : ada panggilan gagal dan tidak ada yang sukses / ≥50% gagal
+    selain itu berdasar pemakaian anggaran: critical/warning/monitor/healthy
+    """
+    if not ai_available:
+        return "offline"
+    if not ai_enabled:
+        return "disabled"
+    total = successful + failed
+    if failed > 0 and (successful == 0 or failed / max(total, 1) >= 0.5):
+        return "error"
+    return (
+        "critical" if pct_daily >= 100 else
+        "warning" if pct_daily >= 80 else
+        "monitor" if pct_daily >= 50 else
+        "healthy"
+    )
 
 
 # ── WS-B(d): AI Settings (Admin gear) ────────────────────────────────────────
@@ -163,6 +219,7 @@ async def get_settings(request: Request):
             "feature_groups": AI_FEATURE_GROUPS,
             "tiers": list(TIER_MODELS.keys()),
             "tier_models": {k: f"{v[0]}/{v[1]}" for k, v in TIER_MODELS.items()},
+            "ai_status": await ai_status(db),
             "env_defaults": {
                 "daily_budget_usd": DEFAULT_DAILY_BUDGET_USD,
                 "monthly_budget_usd": DEFAULT_MONTHLY_BUDGET_USD,
