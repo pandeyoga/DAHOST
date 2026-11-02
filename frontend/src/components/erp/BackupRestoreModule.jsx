@@ -410,7 +410,7 @@ export default function BackupRestoreModule({ token }) {
                 >
                   klik di sini untuk unduh manual
                 </a>{' '}
-                (tautan berlaku 15 menit).
+                (tautan berlaku 5 menit — tekan Download lagi bila kedaluwarsa).
               </div>
             </div>
             <Button size="sm" variant="ghost" onClick={() => setDownloadHint(null)}>Tutup</Button>
