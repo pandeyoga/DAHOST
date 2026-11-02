@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
-from auth import require_auth
+from auth import require_auth, create_download_token, verify_download_token, DOWNLOAD_TOKEN_TTL_SEC, _load_live_user
 from utils.waktu import now_wib
 
 router = APIRouter(prefix="/api/admin/backup", tags=["admin", "backup"])
@@ -46,8 +46,6 @@ RETENTION_DAYS = 30
 UPLOAD_TMP_DIR = Path(tempfile.gettempdir()) / "da_backup_uploads_tmp"
 DOWNLOAD_TMP_DIR = Path("/app/backups/.download_tmp")
 STREAM_CHUNK = 1024 * 1024          # 1 MB — aman untuk RAM 2 GB
-TICKET_TTL_SECONDS = 900            # tiket unduhan berlaku 15 menit
-_DOWNLOAD_TICKETS: dict = {}        # ticket -> {"backup_id":..., "exp": epoch}
 
 logger = logging.getLogger(__name__)
 
@@ -285,28 +283,6 @@ def _select_db_dir(backup_path: Path) -> Optional[Path]:
         if d.name == current:
             return d
     return pool[0]
-
-
-# ── TIKET UNDUHAN SEKALI-PAKAI ────────────────────────────────────────────────
-def _purge_tickets() -> None:
-    now = time.time()
-    for t in [k for k, v in _DOWNLOAD_TICKETS.items() if v["exp"] < now]:
-        _DOWNLOAD_TICKETS.pop(t, None)
-
-
-def _issue_ticket(backup_id: str) -> str:
-    _purge_tickets()
-    ticket = secrets.token_urlsafe(32)
-    _DOWNLOAD_TICKETS[ticket] = {"backup_id": backup_id, "exp": time.time() + TICKET_TTL_SECONDS}
-    return ticket
-
-
-def _resolve_ticket(ticket: str) -> Optional[str]:
-    """Tiket boleh dipakai berulang SELAMA masa berlaku (browser kadang
-    mengulang permintaan / memakai Range request saat mengunduh)."""
-    _purge_tickets()
-    rec = _DOWNLOAD_TICKETS.get(ticket or "")
-    return rec["backup_id"] if rec else None
 
 
 def _safe_backup_id(backup_id: str) -> str:
@@ -741,13 +717,16 @@ def _build_backup_zip(backup_path: Path) -> Path:
 
 @router.post("/download-ticket/{backup_id}")
 async def create_download_ticket(request: Request, backup_id: str):
-    """Terbitkan tiket unduhan sekali-pakai (berlaku 15 menit).
+    """Terbitkan tautan unduhan (berlaku DOWNLOAD_TOKEN_TTL_SEC = 5 menit) untuk dibuka di tab baru.
 
-    KENAPA ADA: preview aplikasi dibuka di dalam IFRAME, dan Chrome memblokir
-    unduhan `Blob`/`<a download>` dari iframe tanpa izin `allow-downloads` —
-    user melihat "sukses" tapi tidak ada berkas. Dengan tiket, frontend cukup
-    membuka URL biasa di tab baru (tanpa header Authorization) sehingga unduhan
-    ditangani sebagai navigasi normal oleh browser.
+    KENAPA ADA: unduhan `Blob`/`<a download>` dari dalam iframe diblokir browser, jadi frontend
+    membuka URL biasa di tab baru (tanpa header Authorization).
+
+    2026-11-02: dulu memakai tiket in-memory buatan modul ini (`?ticket=`). Router backup dipasang di
+    belakang penjaga peran `_DENY_EXTERNAL_AND_MKT` (server.py) yang hanya mengenal header Bearer atau
+    token unduh SSOT (`?token=`, aud=download) ⇒ setiap unduhan lewat tiket DITOLAK 401 sebelum sampai ke
+    handler — tombol Download tidak pernah bisa dipakai. Sekarang memakai SSOT `auth.create_download_token`
+    yang dikunci ke backup ini (`resource=backup:<id>`); tidak ada lagi mekanisme tiket kedua.
     """
     user = await require_auth(request)
     _require_superadmin(user)
@@ -757,33 +736,39 @@ async def create_download_ticket(request: Request, backup_id: str):
     if not backup_path.exists():
         raise HTTPException(status_code=404, detail=f"Backup '{backup_id}' not found")
 
-    ticket = _issue_ticket(backup_id)
+    token = create_download_token(user, f"backup:{backup_id}")
     return {
         "ok": True,
-        "ticket": ticket,
-        "expires_in": TICKET_TTL_SECONDS,
-        "url": f"/api/admin/backup/download/{backup_id}?ticket={ticket}",
+        "ticket": token,   # nama kunci lama dipertahankan untuk frontend
+        "expires_in": DOWNLOAD_TOKEN_TTL_SEC,
+        "url": f"/api/admin/backup/download/{backup_id}?token={token}",
         "filename": f"{backup_id}.zip",
     }
 
 
 @router.get("/download/{backup_id}")
-async def download_backup(request: Request, backup_id: str, ticket: Optional[str] = None):
+async def download_backup(request: Request, backup_id: str, token: Optional[str] = None):
     """Download backup as ZIP file.
 
     Dua cara autentikasi:
       • header `Authorization: Bearer <jwt>` (pemakaian lewat fetch/axios), atau
-      • query `?ticket=<tiket>` dari `POST /download-ticket/{id}` — dipakai saat
-        membuka URL langsung di tab baru (lolos blokir unduhan di iframe).
+      • query `?token=<token unduh>` dari `POST /download-ticket/{id}` — dipakai saat
+        membuka URL langsung di tab baru (lolos blokir unduhan di iframe). Token harus
+        untuk backup INI, dan pemiliknya harus MASIH superadmin aktif (dibaca live dari DB).
     """
     from fastapi.responses import FileResponse
     from starlette.background import BackgroundTask
 
     backup_id = _safe_backup_id(backup_id)
 
-    if ticket:
-        if _resolve_ticket(ticket) != backup_id:
-            raise HTTPException(status_code=403, detail="Tiket unduhan tidak valid atau kedaluwarsa")
+    if token:
+        payload = verify_download_token(token, resource=f"backup:{backup_id}")
+        if not payload:
+            raise HTTPException(status_code=403, detail="Tautan unduhan tidak valid atau kedaluwarsa — tekan Download lagi.")
+        live = await _load_live_user(payload.get("id"))
+        if not live or live.get("blocked"):
+            raise HTTPException(status_code=403, detail="Akun pemilik tautan tidak aktif.")
+        _require_superadmin({"role": live.get("role")})
     else:
         user = await require_auth(request)
         _require_superadmin(user)
