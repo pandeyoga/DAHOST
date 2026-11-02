@@ -38,7 +38,6 @@ router = APIRouter(tags=["rahaza-auto-attendance-approvals"])
 RP_ID = os.environ.get("WEBAUTHN_RP_ID", "analytics-builds.preview.emergentagent.com")
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "Dewi Aditya ERP")
 ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://fresh-context-1.preview.emergentagent.com")
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 
 def _uid(): return str(uuid.uuid4())

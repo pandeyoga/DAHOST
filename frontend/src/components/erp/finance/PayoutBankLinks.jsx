@@ -3,7 +3,7 @@
  * Daftar rekening = master Kas & Bank + COA kas/bank/e-wallet aktif (semua bank, bukan cuma yang ber-flag).
  */
 import { useEffect, useState } from 'react';
-import { Landmark, Loader2, CheckCircle2 } from 'lucide-react';
+import { Landmark, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { toast } from 'sonner';
 
@@ -34,6 +34,11 @@ export function BankSelect({ banks, value, onChange, testId, emptyLabel = '— p
   );
 }
 
+// 2026-11-02 (K4) — rekening yang dipilih Finance (layar ini / impor Excel master) vs bawaan
+// sistem. Bawaan (`coa_cash_source=default`, atau data lama tanpa sumber) ditandai
+// "belum diatur" supaya tidak terbaca seolah sudah dipilih (dulu centang hijau untuk keduanya).
+export const cashIsConfirmed = (a) => ['finance', 'excel_master'].includes(a?.coa_cash_source);
+
 export function PayoutBankLinks({ accounts, banks, onChanged }) {
   const [busy, setBusy] = useState('');
   const active = accounts.filter((a) => a.status !== 'archived' && a.status !== 'inactive');
@@ -61,7 +66,8 @@ export function PayoutBankLinks({ accounts, banks, onChanged }) {
           <span className="text-xs text-foreground/50 font-normal">— {banks.length} rekening terbaca dari Kas & Bank / COA</span>
         </h3>
         <p className="text-xs text-foreground/60 mt-0.5">
-          Rekening default tujuan penarikan saldo platform. Bisa diganti per penarikan di form di bawah.
+          Satu-satunya tempat mengatur rekening tujuan penarikan saldo platform per toko. Penarikan yang
+          belum dijurnal memakai rekening tautan TERBARU saat dijurnal (kecuali rekening dipilih khusus di form).
         </p>
       </div>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
@@ -71,10 +77,16 @@ export function PayoutBankLinks({ accounts, banks, onChanged }) {
               <span className="font-medium truncate" title={a.account_name}>{a.account_name}</span>
               <span className="uppercase text-[10px] text-foreground/50 flex items-center gap-1">
                 {busy === a.id ? <Loader2 className="w-3 h-3 animate-spin" />
-                  : a.coa_cash_code ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : null}
+                  : a.coa_cash_code && cashIsConfirmed(a) ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : null}
                 {a.platform}
               </span>
             </div>
+            {a.coa_cash_code && !cashIsConfirmed(a) && (
+              <div className="flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300"
+                data-testid={`payout-bank-default-${a.account_code}`}>
+                <AlertTriangle className="w-3 h-3" /> rekening bawaan {a.coa_cash_code} — belum diatur
+              </div>
+            )}
             <BankSelect banks={banks} value={a.coa_cash_code} onChange={(v) => save(a, v)}
               testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="h-8 text-xs" />
           </div>

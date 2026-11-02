@@ -21,6 +21,7 @@ import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import { ActiveAccountBar } from './ActiveAccountBar';
 import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
 import axios from 'axios';
+import AISuggestionPanel from '../AISuggestionPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -59,6 +60,13 @@ const CATEGORY_LABELS = {
 };
 
 const PLATFORM_ICONS = { shopee: '🛒', tiktok: '🎵', tokopedia: '🟢' };
+
+// K28 (2026-11-02): field usulan AI yang bisa Diterima/Diubah (daftar baku = enum server).
+const AI_SUGGESTION_FIELDS = [
+  { key: 'category', label: 'Kategori', options: Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label })) },
+  { key: 'severity', label: 'Severity', options: Object.entries(SEVERITY_CONFIG).map(([value, c]) => ({ value, label: c.label })) },
+  { key: 'response_template', label: 'Template respons' },
+];
 
 function fmtDate(d) {
   if (!d) return '-';
@@ -150,20 +158,16 @@ function ComplaintDetailModal({ complaint, open, onClose, onUpdate, token }) {
     } finally { setUpdating(false); }
   };
 
+  // K28 (2026-11-02): AI hanya membuat USULAN; kategori/severity resmi berubah saat
+  // pengguna menekan Terima/Ubah di panel usulan (server mencatat aktornya).
   const handleAiClassify = async () => {
     setAiLoading(true);
     try {
       const res = await axios.post(`${API}/api/marketing/complaints/${detail.id}/ai-classify`,
         {}, { headers: authH });
-      const r = res.data.result;
-      toast({ title: `AI: ${CATEGORY_LABELS[r.category] || r.category} (${((r.confidence||0)*100).toFixed(0)}% konfiden)` });
-      setDetail(prev => ({
-        ...prev,
-        category: r.category,
-        category_label: r.category,
-        severity: r.severity,
-        response_template: r.response_template || prev.response_template
-      }));
+      const s = res.data.ai_suggestion;
+      toast({ title: `Usulan AI: ${CATEGORY_LABELS[s?.values?.category] || s?.values?.category} — tinjau lalu Terima/Ubah/Tolak` });
+      setDetail(prev => ({ ...prev, ai_suggestion: s }));
     } catch (e) {
       toast({ title: 'AI gagal', description: e.response?.data?.detail, variant: 'destructive' });
     } finally { setAiLoading(false); }
@@ -207,6 +211,21 @@ function ComplaintDetailModal({ complaint, open, onClose, onUpdate, token }) {
               AI Classify
             </Button>
           </div>
+
+          {detail.ai_suggestion && (
+            <AISuggestionPanel
+              suggestion={detail.ai_suggestion}
+              fields={AI_SUGGESTION_FIELDS}
+              decideUrl={`${API}/api/marketing/complaints/${detail.id}/ai-suggestion`}
+              headers={authH}
+              testId="complaint-ai-suggestion"
+              onDecided={async () => {
+                const res = await axios.get(`${API}/api/marketing/complaints/${detail.id}`, { headers: authH });
+                setDetail(res.data);
+                onUpdate();
+              }}
+            />
+          )}
 
           {/* Complaint Text */}
           <div className="rounded-lg border border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-900/10 p-3">

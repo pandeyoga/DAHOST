@@ -891,8 +891,17 @@ async def reconcile(
             raise HTTPException(404, f"Pencairan '{settlement_id}' tidak ditemukan.")
         _with_math(focus)
         account_id = focus.get("account_id") or account_id
-        date_from = focus.get("period_from") or focus.get("settlement_date") or date_from
-        date_to = focus.get("period_to") or focus.get("settlement_date") or date_to
+        # 2026-11-02 (K5) — periode WAJIB. Dulu bila kosong dipakai tanggal dana dilepas
+        # (satu hari) dan selisihnya tidak berarti apa-apa (uji audit PCR-1004).
+        if not (focus.get("period_from") and focus.get("period_to")):
+            raise HTTPException(400, (
+                f"Periode pesanan pencairan {focus.get('settlement_id')} belum diisi. Ubah "
+                "pencairan ini dan isi 'Periode dari' & 'sampai' (tanggal pesanan yang dicairkan), "
+                "lalu cocokkan lagi."))
+        date_from = focus.get("period_from")
+        date_to = focus.get("period_to")
+    elif not (date_from and date_to):
+        raise HTTPException(400, "Periode wajib diisi: tanggal dari & sampai (K5).")
 
     sq: dict = {}
     vis = await _scope.visible_account_ids(db, user)
@@ -921,7 +930,8 @@ async def reconcile(
                     "gross": {"$sum": "$gross_sales"},
                     "net": {"$sum": "$net_payout"},
                     "ded": {"$sum": "$total_deductions"},
-                    "refunds": {"$sum": "$refunds"}}},
+                    "refunds": {"$sum": "$refunds"},
+                    "seller_discount": {"$sum": "$seller_discount"}}},
     ]).to_list(1)
     s = sagg[0] if sagg else {}
 
@@ -962,6 +972,16 @@ async def reconcile(
                     "revenue_product": {"$sum": "$revenue_product"}}},
     ]).to_list(1)
     o = oagg[0] if oagg else {}
+    # 2026-11-02 (K5) — omzet pesanan RETUR (tidak akan cair) dipisah, dan refund parsial
+    # retur modul atas pesanan periode ini (pesanan yang tidak berstatus retur/batal).
+    ragg = await db.marketing_orders.aggregate([
+        {"$match": {**oq, "status": "returned"}},
+        {"$group": {"_id": None, "n": {"$sum": 1},
+                    "revenue_product": {"$sum": "$revenue_product"}}},
+    ]).to_list(1)
+    r_ = ragg[0] if ragg else {}
+    returned_product = round(float(r_.get("revenue_product") or 0), 2)
+    partial = await _partial_refunds_for_orders(db, oq)
 
     gross = round(float(s.get("gross") or 0), 2)
     omzet_gross = round(float(o.get("revenue_gross") or 0), 2)
@@ -980,29 +1000,12 @@ async def reconcile(
     cancelled_count = await db.marketing_orders.count_documents(
         {**{k: v for k, v in oq.items() if k != "status"},
          "status": {"$in": list(CANCELLED_STATUSES)}})
-    named = []
-    if abs(gap_gross) < 0.01:
-        named.append({"name": "cocok", "amount": 0.0,
-                      "label": "Bruto pencairan sama dengan omzet bruto periode.",
-                      "action": "Tidak ada yang perlu ditelusuri."})
-    elif gap_gross < 0:
-        named.append({
-            "name": "pesanan_belum_cair", "amount": round(-gap_gross, 2),
-            "label": "Pesanan sudah tercatat tetapi uangnya belum ikut dicairkan "
-                     "di pencairan ini.",
-            "action": "Wajar bila pesanan akhir periode baru cair di pencairan "
-                      "berikutnya. Telusuri bila angkanya tidak menyusut pada "
-                      "pencairan sesudahnya.",
-        })
-    else:
-        named.append({
-            "name": "cair_tanpa_pesanan", "amount": round(gap_gross, 2),
-            "label": "Uang cair lebih besar daripada omzet pesanan yang tercatat "
-                     "pada periode ini.",
-            "action": "Biasanya karena pesanan periode itu BELUM diimpor ke "
-                      "Marketing, atau pencairan memuat lebih dari satu periode. "
-                      "Impor dulu pesanannya sebelum menyimpulkan selisih.",
-        })
+    # 2026-11-02 (K5) — PEMBANDING UTAMA: omzet SETELAH diskon penjual (Σ SKU Subtotal
+    # After Discount) vs (bruto pencairan − diskon penjual). Selisihnya dipecah & dinamai.
+    seller_discount = round(float(s.get("seller_discount") or 0), 2)
+    paid_basis = round(gross - seller_discount, 2)
+    breakdown = breakdown_gap(paid_basis, omzet_product, returned_product, partial["total"])
+    named = list(breakdown["named"])
     if cancelled_count:
         named.append({
             "name": "pesanan_batal_dikecualikan", "amount": 0.0,
@@ -1060,9 +1063,26 @@ async def reconcile(
                 "order_amount": "nilai yang dibayar pembeli",
             },
         },
+        "primary": {
+            # 2026-11-02 (K5) — angka yang dibandingkan (keputusan owner).
+            "label": ("Omzet pesanan SETELAH diskon penjual vs (bruto pencairan − diskon penjual)"),
+            "omzet_after_discount": omzet_product,
+            "settlement_gross": gross,
+            "settlement_seller_discount": seller_discount,
+            "settlement_basis": paid_basis,
+            "gap": breakdown["gap"],
+            "returned_orders": int(r_.get("n") or 0),
+            "returned_revenue_product": returned_product,
+            "partial_refund_count": partial["count"],
+            "partial_refund_total": partial["total"],
+            "settlement_refunds_reported": round(float(s.get("refunds") or 0), 2),
+            "components": breakdown["components"],
+        },
         "gap": {
-            # Pembanding yang paling setara: bruto platform vs bruto marketing.
+            # Pembanding lama (bruto vs bruto) tetap dilaporkan untuk jejak.
             "gross_vs_revenue_gross": round(gross - omzet_gross, 2),
+            # 2026-11-02 (K5) — pembanding utama
+            "after_discount_vs_basis": breakdown["gap"],
             "net_vs_revenue_product": round(
                 float(s.get("net") or 0) - omzet_product, 2),
             # Selisih yang SUDAH DIBERI NAMA — inilah yang dibaca layar Finance.
@@ -1070,7 +1090,8 @@ async def reconcile(
             "cancelled_orders_excluded": cancelled_count,
             "why": ("Selisih WAJAR terjadi karena: (1) pencairan tertinggal "
                     "beberapa hari dari tanggal pesanan, (2) pesanan yang "
-                    "dibatalkan/retur tidak ikut dicairkan, dan (3) satu "
+                    "dibatalkan tidak dihitung dan pesanan retur/refund parsial "
+                    "tidak akan cair (dipecah sendiri di atas), dan (3) satu "
                     "pencairan bisa memuat beberapa periode. Yang perlu "
                     "ditelusuri adalah selisih yang TIDAK bisa dijelaskan oleh "
                     "ketiga hal itu. Angka omzet ditampilkan dalam tiga definisi "
@@ -1078,6 +1099,76 @@ async def reconcile(
                     "satunya dipilih agar 'cocok'."),
         },
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K5) — PECAHAN SELISIH REKONSILIASI (murni, diuji tanpa DB)
+# ══════════════════════════════════════════════════════════════════════════════
+def breakdown_gap(settlement_basis: float, omzet_after_discount: float,
+                  returned_product: float, partial_refunds: float) -> dict:
+    """Pecah selisih (bruto pencairan − diskon penjual) − omzet setelah diskon menjadi:
+
+      * ``retur_tidak_cair``   — omzet pesanan berstatus retur (tidak akan pernah cair);
+      * ``refund_parsial``     — refund sebagian atas pesanan periode ini;
+      * ``belum_cair``         — sisa kekurangan (wajar bila tertinggal ke pencairan berikutnya);
+      * ``cair_tanpa_pesanan`` — kelebihan uang cair tanpa pesanan tercatat.
+
+    Identitas yang selalu berlaku:
+      basis = omzet − retur − refund_parsial − belum_cair + cair_tanpa_pesanan
+    """
+    basis = round(float(settlement_basis or 0), 2)
+    omzet = round(float(omzet_after_discount or 0), 2)
+    ret = round(max(float(returned_product or 0), 0.0), 2)
+    ref = round(max(float(partial_refunds or 0), 0.0), 2)
+    gap = round(basis - omzet, 2)
+    residual = round(omzet - ret - ref - basis, 2)
+    comp = {"retur_tidak_cair": ret, "refund_parsial": ref,
+            "belum_cair": max(0.0, residual), "cair_tanpa_pesanan": max(0.0, -residual)}
+    named = []
+    if abs(gap) < 0.01 and not ret and not ref:
+        named.append({"name": "cocok", "amount": 0.0,
+                      "label": "Bruto pencairan − diskon penjual sama dengan omzet setelah diskon periode.",
+                      "action": "Tidak ada yang perlu ditelusuri."})
+    if ret:
+        named.append({"name": "retur_tidak_cair", "amount": ret,
+                      "label": "Omzet pesanan yang DIRETUR — uangnya tidak akan pernah cair.",
+                      "action": "Bukan keterlambatan platform; jangan ditunggu di pencairan berikutnya."})
+    if ref:
+        named.append({"name": "refund_parsial", "amount": ref,
+                      "label": "Refund sebagian (nominal aktual retur modul) atas pesanan periode ini.",
+                      "action": "Cocokkan dengan baris 'Refund' di laporan platform."})
+    if comp["belum_cair"] >= 0.01:
+        named.append({"name": "belum_cair", "amount": comp["belum_cair"],
+                      "label": "Pesanan sudah tercatat tetapi uangnya belum ikut dicairkan di pencairan ini.",
+                      "action": "Wajar bila pesanan akhir periode baru cair di pencairan berikutnya. "
+                                "Telusuri bila angkanya tidak menyusut pada pencairan sesudahnya."})
+    if comp["cair_tanpa_pesanan"] >= 0.01:
+        named.append({"name": "cair_tanpa_pesanan", "amount": comp["cair_tanpa_pesanan"],
+                      "label": "Uang cair lebih besar daripada omzet pesanan yang tercatat pada periode ini.",
+                      "action": "Biasanya pesanan periode itu BELUM diimpor ke Marketing, atau pencairan "
+                                "memuat lebih dari satu periode. Impor dulu pesanannya."})
+    return {"gap": gap, "components": comp, "named": named}
+
+
+async def _partial_refunds_for_orders(db, order_query: dict) -> dict:
+    """Σ refund parsial (nominal aktual, No.14a) retur modul atas pesanan periode ini yang
+    TIDAK berstatus retur/batal (anti-dobel dengan `retur_tidak_cair`)."""
+    q = {**{k: v for k, v in order_query.items() if k != "status"},
+         "status": {"$nin": list(CANCELLED_STATUSES) + ["returned"]}}
+    orders = await db.marketing_orders.find(q, {"_id": 0, "id": 1, "order_id": 1,
+                                                "account_id": 1}).to_list(50000)
+    if not orders:
+        return {"count": 0, "total": 0.0}
+    oids = sorted({o.get("order_id") for o in orders if o.get("order_id")})
+    ids = sorted({o.get("id") for o in orders if o.get("id")})
+    accs = sorted({o.get("account_id") for o in orders if o.get("account_id")})
+    ors = ([{"order_id": {"$in": oids}}] if oids else []) + ([{"order_ref_id": {"$in": ids}}] if ids else [])
+    rows = await db.marketing_returns.find(
+        {"account_id": {"$in": accs}, "refund_type": "partial_refund",
+         "status": {"$nin": ["rejected", "cancelled"]}, "$or": ors},
+        {"_id": 0, "refund_amount": 1}).to_list(50000) if ors else []
+    return {"count": len(rows),
+            "total": round(sum(max(float(r.get("refund_amount") or 0), 0.0) for r in rows), 2)}
 
 
 # ── POSTING JURNAL DRAF (sesi #37) ───────────────────────────────────────────

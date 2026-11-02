@@ -830,19 +830,28 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
     2. Create fixed asset record di rahaza_fixed_assets
     3. Auto-post GL: Dr. Fixed Asset / Cr. AP Clearing
     4. Link GRN item dengan asset_id
+
+    2026-11-02 (K18): pendaftaran lewat SATU pintu registri Keuangan
+    (`routes.rahaza_fixed_assets.register_fixed_asset`) — validasi, akun kategori, jadwal penyusutan,
+    dan jurnal perolehan (Dr akun aset kategori / Cr Hutang Belum Ditagih) sama dengan form Aset Tetap.
+    Dulu aset GR tanpa jadwal penyusutan & selalu Dr 1-2500. Idempoten per baris GR (`grn_item_id`).
     """
-    from routes.rahaza_posting import post_asset_acquisition
-    
+    from routes.rahaza_fixed_assets import register_fixed_asset
+    from utils.waktu import today_wib
+
     assets_created = []
-    
+
     for item in items:
         # Check if this is an asset item
         if item.get("item_type", "material") != "asset":
             continue
-        
+
         net_qty = float(item.get("received_qty", 0)) - float(item.get("rejected_qty", 0))
         if net_qty <= 0:
             continue
+        if item.get("id") and await db.rahaza_fixed_assets.find_one(
+                {"grn_id": receipt_id, "grn_item_id": item.get("id")}, {"_id": 1}):
+            continue  # sudah dikapitalisasi (penerimaan ulang tidak menggandakan aset/jurnal)
         
         # Get asset parameters
         unit_price = float(item.get("unit_price", 0))
@@ -874,22 +883,25 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
             "lain-lain": 60,  # 5 years default
         }
         useful_life = useful_life_map.get(asset_category, 60)
-        
-        # Create fixed asset
-        asset_doc = {
-            "id": new_id(),
-            "code": asset_code,
+
+        # Create fixed asset — registri yang SAMA dengan form Keuangan (K18)
+        payload = {
             "name": item.get("product_name", "Unnamed Asset"),
             "category": asset_category,
+            "acquisition_type": "purchase",
+            "funding_source": "grni",
+            "_system_gr": True,
             "serial_number": item.get("serial_number", ""),
-            "purchase_date": now().date().isoformat(),
+            "purchase_date": today_wib().isoformat(),
             "purchase_cost": total_cost,
             "residual_value": 0,  # Default: no residual
             "useful_life_months": useful_life,
             "depreciation_method": "straight_line" if useful_life > 0 else "none",
-            "status": "active",
             "location": grn.get("location_name", ""),
+            "supplier": grn.get("supplier_name", ""),
             "notes": f"Auto-created from GR {grn.get('receipt_number', '')} - {item.get('product_name', '')}",
+        }
+        extra = {
             "grn_id": receipt_id,
             "grn_number": grn.get("receipt_number", ""),
             "grn_item_id": item.get("id", ""),
@@ -898,25 +910,24 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
             "supplier_name": grn.get("supplier_name", ""),
             "qty_received": net_qty,
             "unit": item.get("unit", "pcs"),
-            "created_at": now(),
             "updated_at": now(),
-            "created_by": user.get("id", "system"),
             "created_by_name": user.get("name", "system"),
         }
-        
-        await db.rahaza_fixed_assets.insert_one(asset_doc)
-        logger.info(f"✅ Fixed asset created: {asset_code} - {asset_doc['name']} (Rp {total_cost:,.0f})")
-        
-        # Auto-post GL: Dr. Fixed Asset / Cr. AP Clearing
-        posting_result = None
         try:
-            asset_refresh = await db.rahaza_fixed_assets.find_one({"id": asset_doc["id"]}, {"_id": 0})
-            posting_result = await post_asset_acquisition(db, asset_refresh, user)
-            logger.info(f"✅ Asset GL posted: {asset_code} - JE {posting_result.get('je_number', 'N/A')}")
-        except Exception as e:
-            logger.exception(f"Asset GL posting failed for {asset_code}")
-            posting_result = {"ok": False, "error": str(e)}
-        
+            asset_doc = await register_fixed_asset(db, payload, user, code=asset_code, extra=extra)
+        except HTTPException as e:
+            # Penerimaan stok tetap jalan; kapitalisasi ditandai gagal supaya Keuangan menindaklanjuti.
+            logger.warning(f"Kapitalisasi aset GR {grn.get('receipt_number', '')} gagal: {e.detail}")
+            await db.warehouse_receiving.update_one(
+                {"id": receipt_id, "items.id": item.get("id")},
+                {"$set": {"items.$.capitalize_error": str(e.detail), "items.$.capitalized": False}})
+            assets_created.append({"asset_id": None, "asset_code": asset_code, "asset_name": payload["name"],
+                                   "total_cost": total_cost, "posting_result": {"ok": False, "error": str(e.detail)}})
+            continue
+        posting_result = asset_doc.get("_posting_result")
+        logger.info(f"✅ Fixed asset created: {asset_code} - {asset_doc['name']} (Rp {total_cost:,.0f}) "
+                    f"JE {(posting_result or {}).get('je_number', 'N/A')}")
+
         # Update GRN item dengan asset_id
         await db.warehouse_receiving.update_one(
             {"id": receipt_id, "items.id": item.get("id")},
@@ -925,9 +936,10 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
                 "items.$.asset_code": asset_code,
                 "items.$.capitalized": True,
                 "items.$.capitalized_at": now(),
+                "items.$.capitalize_error": None,
             }}
         )
-        
+
         assets_created.append({
             "asset_id": asset_doc["id"],
             "asset_code": asset_code,

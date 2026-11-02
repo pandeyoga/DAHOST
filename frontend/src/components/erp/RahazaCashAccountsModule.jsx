@@ -41,9 +41,15 @@ export default function RahazaCashAccountsModule({ token }) {
     } finally { setSyncing(false); }
   };
 
+  // 2026-11-02 (K19): daftar mutasi DITURUNKAN DARI BUKU BESAR (baris jurnal akun rekening) — transfer,
+  // kasbon, gaji, jurnal manual & impor jurnal ikut muncul. Mutasi tercatat lama hanya metadata.
+  const [mutInfo, setMutInfo] = useState(null);
   const fetchMovements = async (account_id) => {
-    const r = await fetch(`/api/rahaza/cash-movements?account_id=${account_id}`, { headers });
-    if (r.ok) setMovements(await r.json());
+    setMovements([]); setMutInfo(null);
+    const r = await fetch(`/api/rahaza/finance/reports/cash-mutations?account_id=${account_id}`, { headers });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast.error(d.detail || `Gagal memuat mutasi (HTTP ${r.status})`); return; }
+    setMovements(d.rows || []); setMutInfo(d);
   };
 
   const save = async (body) => {
@@ -69,7 +75,7 @@ export default function RahazaCashAccountsModule({ token }) {
         icon={Wallet}
         eyebrow="Portal Finance · Rahaza Finance"
         title="Cash & Bank Accounts"
-        subtitle="Saldo kartu dibaca langsung dari Buku Besar (akun GL rekening) sehingga kas, GL, dan mutasi bank selalu satu angka."
+        subtitle="Saldo kartu dan daftar mutasi dibaca langsung dari Buku Besar (akun GL rekening) sehingga kas, GL, dan mutasi selalu satu angka."
         actions={
           <>
             <Button variant="ghost" onClick={syncGl} disabled={syncing} className="h-9 border border-[var(--glass-border)]" data-testid="ca-sync-gl"><BookOpen className="w-3.5 h-3.5 mr-1.5" />{syncing ? 'Sinkron…' : 'Sinkron Bagan Akun & GL'}</Button>
@@ -105,8 +111,9 @@ export default function RahazaCashAccountsModule({ token }) {
                 {a.balance_source === 'gl' ? 'Saldo Buku Besar' : 'Belum tertaut GL · saldo dari mutasi'}
               </span>
               {a.balance_source === 'gl' && (
-                <span className={a.balance_diff === 0 ? 'text-muted-foreground' : 'text-amber-400'} data-testid={`ca-diff-${a.code}`}>
-                  Mutasi {fmt(a.balance_mutasi)}{a.balance_diff !== 0 && ` · selisih ${fmt(a.balance_diff)}`}
+                <span className={a.balance_diff === 0 ? 'text-muted-foreground' : 'text-amber-400'} data-testid={`ca-diff-${a.code}`}
+                      title="Σ mutasi dari buku besar akun rekening ini">
+                  Mutasi {fmt(a.balance_mutasi)}{a.mutation_count != null && ` · ${a.mutation_count} baris GL`}{a.balance_diff !== 0 && ` · selisih ${fmt(a.balance_diff)}`}
                 </span>
               )}
             </div>
@@ -116,12 +123,17 @@ export default function RahazaCashAccountsModule({ token }) {
       </div>
       {selected && (
         <GlassCard className="p-4" data-testid="ca-movements-panel">
-          <div className="flex items-center justify-between mb-3"><h3 className="font-semibold text-foreground">Mutasi: {selected.code} · {selected.name}</h3><button onClick={() => setSelected(null)} className="text-muted-foreground">×</button></div>
+          <div className="flex items-center justify-between mb-1"><h3 className="font-semibold text-foreground">Mutasi: {selected.code} · {selected.name}</h3><button onClick={() => setSelected(null)} className="text-muted-foreground">×</button></div>
+          <p className="text-[11px] text-muted-foreground mb-3" data-testid="ca-mutations-source">
+            Dari buku besar akun {mutInfo?.gl_account_code || selected.gl_account_code || '-'} · masuk {fmt(mutInfo?.total_in)} · keluar {fmt(mutInfo?.total_out)} · saldo {fmt(mutInfo?.closing)}{mutInfo?.truncated ? ' · (dipotong — persempit periode)' : ''}
+          </p>
           {movements.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">Belum ada mutasi.</div> : (
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-muted-foreground"><th className="pb-2">Tanggal</th><th className="pb-2">Kategori</th><th className="pb-2">Ref</th><th className="pb-2 text-right">Masuk</th><th className="pb-2 text-right">Keluar</th></tr></thead>
-              <tbody>{movements.map(m => (<tr key={m.id} className="border-t border-[var(--glass-border)]"><td className="py-2 text-xs">{m.date}</td><td className="py-2 text-xs">{m.category}</td><td className="py-2 text-xs font-mono">{m.ref_label || '-'}</td><td className="py-2 text-right font-mono text-emerald-300 text-xs">{m.direction === 'in' ? fmt(m.amount) : ''}</td><td className="py-2 text-right font-mono text-red-300 text-xs">{m.direction === 'out' ? fmt(m.amount) : ''}</td></tr>))}</tbody>
+              <thead><tr className="text-left text-xs text-muted-foreground"><th className="pb-2">Tanggal</th><th className="pb-2">Jurnal</th><th className="pb-2">Kategori</th><th className="pb-2">Keterangan</th><th className="pb-2 text-right">Masuk</th><th className="pb-2 text-right">Keluar</th><th className="pb-2 text-right">Saldo</th></tr></thead>
+              <tbody>{movements.map(m => (<tr key={m.id} className="border-t border-[var(--glass-border)]" data-testid={`ca-mut-${m.source_module}`}><td className="py-2 text-xs whitespace-nowrap">{m.date}</td><td className="py-2 text-xs font-mono whitespace-nowrap">{m.je_number || '-'}</td><td className="py-2 text-xs" title={m.source_module}>{m.category_label || m.category}</td><td className="py-2 text-xs">{m.ref_label || m.description || '-'}</td><td className="py-2 text-right font-mono text-emerald-300 text-xs">{m.direction === 'in' ? fmt(m.amount) : ''}</td><td className="py-2 text-right font-mono text-red-300 text-xs">{m.direction === 'out' ? fmt(m.amount) : ''}</td><td className="py-2 text-right font-mono text-xs">{fmt(m.running_balance)}</td></tr>))}</tbody>
             </table>
+            </div>
           )}
         </GlassCard>
       )}

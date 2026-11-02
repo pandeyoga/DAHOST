@@ -17,9 +17,10 @@ from routes.rahaza_payroll_shared import (
     _require_hr, _to_date, _date_range_filter,
     _generate_run_number, _compute_payslip_for_employee,
     _today_wib, employee_is_active, find_duplicate_run_conflicts,
-    list_payment_cash_accounts, resolve_payment_account,
+    list_payment_cash_accounts, resolve_payment_account, parse_ymd,
 )
 from routes.rahaza_posting import post_payroll_run, payroll_deduction_totals
+from core.roles import FINANCE_ROLES, HR_ROLES
 from utils.saga import SagaExecutor
 import uuid
 import io
@@ -131,6 +132,10 @@ async def create_run(request: Request):
     total_gross = sum(s["gross_pay"] for s in payslips)
     total_ded = sum(s["deductions_total"] for s in payslips)
     total_net = sum(s["net_pay"] for s in payslips)
+    # 2026-11-02 (K24): peringatan di layar run gaji — lembur disetujui/tercatat tetapi tarif 0.
+    warnings = [{"type": "overtime_rate_zero", "employee_id": s.get("employee_id"),
+                 "employee_name": s.get("employee_name") or "", "message": s["overtime_warning"]}
+                for s in payslips if s.get("overtime_warning")]
 
     run_doc = {
         "id": run_id,
@@ -143,6 +148,7 @@ async def create_run(request: Request):
         "total_deductions": total_ded,
         "total_net": total_net,
         "excluded_employees": excluded,  # 2026-11-02: jejak siapa yang tidak digaji & kenapa
+        "warnings": warnings,
         "notes": body.get("notes") or "",
         "created_at": now,
         "created_by": user["id"],
@@ -253,6 +259,13 @@ async def finalize_run(run_id: str, request: Request):
         "total_other_deductions": comp["other"],
         "deductions_by_type": comp["by_type"],
     }
+    # 2026-11-02 (K22): iuran BPJS perusahaan dari slip + status saklar owner SAAT finalisasi.
+    from routes.rahaza_payroll_settings import get_bpjs_settings
+    bpjs_cfg = await get_bpjs_settings(db)
+    er_kes = round(sum(float((s.get("bpjs_employer") or {}).get("kes_total") or 0) for s in payslips), 2)
+    er_tk = round(sum(float((s.get("bpjs_employer") or {}).get("tk_total") or 0) for s in payslips), 2)
+    totals["bpjs_employer_totals"] = {"kes": er_kes, "tk": er_tk, "total": round(er_kes + er_tk, 2)}
+    totals["bpjs_employer_journal"] = bool(bpjs_cfg.get("employer_contribution_journal"))
 
     # ── 2026-11-02 (P5 butir 3): JURNAL DULU, status final SESUDAH jurnal sukses.
     # Dulu status 'finalized' ditulis lebih dulu lalu jurnal dicoba; bila jurnal ditolak (mis. tanggal
@@ -451,76 +464,119 @@ async def delete_run(run_id: str, request: Request):
     run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
         raise HTTPException(404, "Payroll run tidak ditemukan.")
-    if run.get("status") == "finalized":
-        raise HTTPException(400, "Run yang sudah finalized tidak bisa dihapus. Gunakan cancel atau buat run baru.")
+    if run.get("status") != "draft":
+        # 2026-11-02 (K34): run FINAL dibatalkan lewat POST /payroll-runs/{id}/cancel (jurnal pembalik);
+        # run yang sudah dibatalkan disimpan sebagai jejak audit.
+        raise HTTPException(400, f"Run berstatus '{run.get('status')}' tidak bisa dihapus. Run FINAL dibatalkan "
+                                 "lewat tombol Batalkan Run (jurnal pembalik); hanya run DRAFT yang bisa dihapus.")
     await db.rahaza_payslips.delete_many({"run_id": run_id})
     await db.rahaza_payroll_runs.delete_one({"id": run_id})
     return {"status": "deleted"}
 
 
+BPJS_AGENCY_LABELS = {"kes": "BPJS Kesehatan", "tk": "BPJS Ketenagakerjaan"}
+
+
+async def _run_bpjs_breakdown(db, run: dict) -> dict:
+    """Rincian hutang BPJS per lembaga untuk satu run FINAL.
+
+    Run baru: `bpjs_breakdown` yang disimpan saat jurnal finalisasi dibuat (akun & nilai = jurnal).
+    Run lama (sebelum 2026-11-02): potongan per tipe dari slip, akun = `credit_bpjs_payable` (2-1500)
+    karena jurnal finalisasinya dulu mengkredit satu akun itu; iuran perusahaan = 0 (tidak dijurnal)."""
+    if run.get("bpjs_breakdown"):
+        return run["bpjs_breakdown"]
+    from routes.rahaza_posting import payroll_bpjs_breakdown
+    from routes.rahaza_posting_profiles import get_mapping
+    fin_map = await get_mapping(db, "payroll_finalize")
+    by_type = run.get("deductions_by_type")
+    if by_type is None:
+        slips = await db.rahaza_payslips.find({"run_id": run["id"]}, {"_id": 0, "deductions": 1}).to_list(2000)
+        by_type = payroll_deduction_totals(slips)["by_type"]
+    return payroll_bpjs_breakdown(by_type, None, {"credit_bpjs_payable": fin_map.get("credit_bpjs_payable")}, False)
+
+
 @router.post("/payroll-runs/{run_id}/pay-bpjs")
 async def pay_bpjs(run_id: str, request: Request):
     """
-    Bayar BPJS dari payroll run ini.
-    Dr 2-1500 Hutang BPJS / Cr [bank_code].
-    Body: { payment_date, bank_account_code, notes }
+    Bayar BPJS dari payroll run ini — PER LEMBAGA (K22, 2026-11-02).
+    Nilai = potongan karyawan + iuran perusahaan yang sudah dijurnal untuk lembaga itu.
+    Dr Hutang BPJS lembaga (2-1501 Kes / 2-1502 TK; run lama 2-1500) / Cr rekening kas/bank dipilih.
+    Body: { agency: 'kes'|'tk', cash_account_id | bank_account_code, payment_date (YYYY-MM-DD), notes }
     """
     user = await _require_hr(request)
     db   = get_db()
     body = await request.json()
+    agency = (body.get("agency") or "").strip().lower()
+    if agency not in BPJS_AGENCY_LABELS:
+        raise HTTPException(400, "Pilih lembaga BPJS: 'kes' (BPJS Kesehatan) atau 'tk' (BPJS Ketenagakerjaan).")
+    label = BPJS_AGENCY_LABELS[agency]
     run  = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
         raise HTTPException(404, "Run tidak ditemukan.")
     if run.get("status") != "finalized":
         raise HTTPException(400, "Hanya run FINALIZED.")
-    if run.get("bpjs_payment_status") == "paid":
-        raise HTTPException(400, "BPJS run ini sudah dibayar.")
+    pays = dict(run.get("bpjs_payments") or {})
+    if run.get("bpjs_payment_status") == "paid" and not pays:
+        raise HTTPException(400, "BPJS run ini sudah dibayar (pembayaran gabungan versi lama).")
+    if (pays.get(agency) or {}).get("status") == "paid":
+        raise HTTPException(400, f"{label} run ini sudah dibayar ({pays[agency].get('je_number')}).")
 
-    payment_date = (body.get("payment_date") or str(_today_wib()))[:10]
-    from routes.rahaza_posting_profiles import get_mapping
-    fin_map = await get_mapping(db, "payroll_finalize")
-    pay_map = await get_mapping(db, "payroll_payment")
-    liab_code = fin_map.get("credit_bpjs_payable")
+    bk = await _run_bpjs_breakdown(db, run)
+    part = bk.get(agency) or {}
+    employee_amt = float(part.get("employee") or 0)
+    employer_amt = float(part.get("employer") or 0)
+    amount = round(employee_amt + employer_amt, 2)
+    if amount <= 0:
+        raise HTTPException(400, f"Tidak ada hutang {label} di run ini.")
+    liab_code = part.get("payable_code")
     if not liab_code:
-        raise HTTPException(400, "Mapping payroll_finalize.credit_bpjs_payable belum lengkap.")
-    body.get("notes") or ""
+        raise HTTPException(400, f"Akun hutang {label} belum diatur di Profil Posting payroll_finalize.")
 
-    # H-02: komponen BPJS dari SATU agregator (type bpjs_*) — sama dgn JE finalize
-    slips  = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0, "deductions": 1}).to_list(500)
-    bpjs_total = payroll_deduction_totals(slips)["bpjs"]
-
-    if bpjs_total <= 0:
-        raise HTTPException(400, "Tidak ada potongan BPJS di run ini.")
-
-    # Build JE: Dr Hutang BPJS / Cr Bank — 2026-11-02 (P5 butir 4): rekening wajib kas/bank postable.
+    pay_date = parse_ymd(body.get("payment_date"), field="tanggal pembayaran BPJS")
+    from routes.rahaza_posting_profiles import get_mapping
+    pay_map = await get_mapping(db, "payroll_payment")
+    # 2026-11-02 (P5 butir 4): rekening wajib kas/bank postable.
     _acc = await resolve_payment_account(
         db, cash_account_id=body.get("cash_account_id"), gl_code=body.get("bank_account_code"),
-        default_code=pay_map.get("credit_bank_default"), purpose="Pembayaran BPJS")
+        default_code=pay_map.get("credit_bank_default"), purpose=f"Pembayaran {label}")
     bank_code = _acc["gl_code"]
 
     from routes.rahaza_posting import _create_posted_je
-    run_id_ref = f"bpjspay:{run_id}"
-    try:
-        je_date = date.fromisoformat(payment_date)
-    except Exception:
-        je_date = date.today()
-    memo  = f"Bayar BPJS {run.get('run_number')} · {run.get('period_from')}–{run.get('period_to')}"
+    memo  = f"Bayar {label} {run.get('run_number')} · {run.get('period_from')}–{run.get('period_to')}"
+    detail = f"karyawan {employee_amt:,.0f} + perusahaan {employer_amt:,.0f}".replace(",", ".")
     lines = [
-        {"account_code": liab_code, "debit": bpjs_total, "credit": 0, "description": memo},
-        {"account_code": bank_code, "debit": 0, "credit": bpjs_total, "description": memo},
+        {"account_code": liab_code, "debit": amount, "credit": 0, "description": f"{memo} ({detail})"},
+        {"account_code": bank_code, "debit": 0, "credit": amount, "description": memo},
     ]
-    result = await _create_posted_je(db, je_date, memo, "bpjs_payment", run_id_ref, lines, user)
+    result = await _create_posted_je(db, pay_date, memo, "bpjs_payment", f"bpjspay:{run_id}:{agency}", lines, user)
+    if not result.get("ok"):
+        await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {
+            "bpjs_payment_error": result.get("error"), "updated_at": _now()}})
+        raise HTTPException(400, f"Pembayaran {label} TIDAK dicatat — jurnal gagal: {result.get('error')}")
+
+    pays[agency] = {
+        "status": "paid", "date": pay_date.isoformat(), "amount": amount,
+        "employee": employee_amt, "employer": employer_amt,
+        "je_id": result.get("je_id"), "je_number": result.get("je_number"),
+        "account_code": bank_code, "account_name": _acc.get("name"), "cash_account_id": _acc.get("cash_account_id"),
+        "notes": (body.get("notes") or "").strip(), "paid_by": user["id"], "paid_by_name": user.get("name", ""),
+    }
+    due = [a for a in BPJS_AGENCY_LABELS
+           if float((bk.get(a) or {}).get("employee") or 0) + float((bk.get(a) or {}).get("employer") or 0) > 0]
+    all_paid = all((pays.get(a) or {}).get("status") == "paid" for a in due)
     update = {
-        "bpjs_payment_status":  "paid" if result.get("ok") else "error",
-        "bpjs_payment_date":    payment_date,
-        "bpjs_payment_amount":  bpjs_total,
+        "bpjs_payments":        pays,
+        "bpjs_payment_status":  "paid" if all_paid else "partial",
+        "bpjs_payment_date":    pay_date.isoformat(),
+        "bpjs_payment_amount":  round(sum(float(p.get("amount") or 0) for p in pays.values()
+                                          if p.get("status") == "paid"), 2),
         "bpjs_payment_je":      result.get("je_number"),
-        "bpjs_payment_error":   result.get("error"),
+        "bpjs_payment_error":   None,
         "updated_at":           _now(),
     }
     await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": update})
     await log_activity(user["id"], user.get("name",""), "pay_bpjs", "rahaza.payroll_run",
-                       f"{run.get('run_number')} BPJS Rp {bpjs_total:,.0f}")
+                       f"{run.get('run_number')} {label} Rp {amount:,.0f}")
     out = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     out["_payment_result"] = result
     return serialize_doc(out)
@@ -589,6 +645,194 @@ async def pay_pph21(run_id: str, request: Request):
                        f"{run.get('run_number')} PPh21 Rp {pph_total:,.0f}")
     out = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     out["_payment_result"] = result
+    return serialize_doc(out)
+
+
+@router.post("/payroll-runs/{run_id}/void-obligation-payment")
+async def void_obligation_payment(run_id: str, request: Request):
+    """2026-11-02 (K34): batalkan jurnal pembayaran BPJS (per lembaga) atau PPh21 — pola yang SAMA dengan
+    void-payment gaji. Diperlukan sebelum run FINAL boleh dibatalkan.
+    Body: { type: 'bpjs'|'pph21', agency: 'kes'|'tk' (untuk bpjs), reason }"""
+    user = await _require_hr(request)
+    db = get_db()
+    body = await request.json()
+    kind = (body.get("type") or "").strip().lower()
+    reason = (body.get("reason") or "").strip() or "Pembatalan pembayaran"
+    run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
+    if not run:
+        raise HTTPException(404, "Payroll run tidak ditemukan.")
+    from routes.rahaza_posting import _void_je_by_source
+    if kind == "pph21":
+        if run.get("pph21_payment_status") != "paid":
+            raise HTTPException(400, "Tidak ada pembayaran PPh21 aktif.")
+        res = await _void_je_by_source(db, "pph21_payment", f"pph21pay:{run_id}", user, reason)
+        if not res.get("ok"):
+            raise HTTPException(400, f"Void gagal: {res.get('error')}")
+        await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {
+            "pph21_payment_status": "void", "pph21_payment_je": None, "updated_at": _now()}})
+    elif kind == "bpjs":
+        pays = dict(run.get("bpjs_payments") or {})
+        agency = (body.get("agency") or "").strip().lower()
+        if not pays and run.get("bpjs_payment_status") == "paid":   # pembayaran gabungan versi lama
+            res = await _void_je_by_source(db, "bpjs_payment", f"bpjspay:{run_id}", user, reason)
+            if not res.get("ok"):
+                raise HTTPException(400, f"Void gagal: {res.get('error')}")
+            await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {
+                "bpjs_payment_status": "void", "bpjs_payment_je": None, "updated_at": _now()}})
+        else:
+            if (pays.get(agency) or {}).get("status") != "paid":
+                raise HTTPException(400, f"Tidak ada pembayaran {BPJS_AGENCY_LABELS.get(agency, 'BPJS')} aktif.")
+            res = await _void_je_by_source(db, "bpjs_payment", f"bpjspay:{run_id}:{agency}", user, reason)
+            if not res.get("ok"):
+                raise HTTPException(400, f"Void gagal: {res.get('error')}")
+            pays[agency] = {**pays[agency], "status": "void", "voided_at": _now(), "void_reason": reason}
+            still = any((p or {}).get("status") == "paid" for p in pays.values())
+            await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {
+                "bpjs_payments": pays, "bpjs_payment_status": "partial" if still else "void", "updated_at": _now()}})
+    else:
+        raise HTTPException(400, "type harus 'bpjs' atau 'pph21'.")
+    await log_activity(user["id"], user.get("name", ""), "void_obligation_payment", "rahaza.payroll_run",
+                       f"{run.get('run_number')} {kind} {body.get('agency') or ''} — {reason}")
+    return serialize_doc(await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0}))
+
+
+# ─── PEMBATALAN RUN FINAL (K34, 2026-11-02) ──────────────────────────────────
+# Keputusan owner: run final boleh dibatalkan oleh HR + Keuangan (dua langkah: diajukan HR, disetujui
+# Keuangan — orang yang berbeda) atau satu langkah oleh owner/superadmin. Hasil: jurnal PEMBALIK untuk
+# semua jurnal run (finalisasi + potongan kasbon), potongan kasbon dikembalikan, status 'cancelled'
+# sehingga periode bisa dibuat ulang (find_duplicate_run_conflicts mengabaikan run cancelled).
+# Ditolak bila gaji/BPJS/PPh21 run itu sudah dibayar — batalkan pembayarannya dulu.
+CANCEL_ONE_STEP_ROLES = ("owner", "superadmin")
+
+
+def _is_hr_actor(user: dict) -> bool:
+    role = (user.get("role") or "").lower()
+    perms = set(user.get("_permissions") or [])
+    return role in HR_ROLES or bool(perms & {"*", "hr.manage", "payroll.manage"})
+
+
+def _is_finance_actor(user: dict) -> bool:
+    return (user.get("role") or "").lower() in FINANCE_ROLES
+
+
+def run_cancel_blockers(run: dict) -> list:
+    """Alasan run belum boleh dibatalkan (murni)."""
+    out = []
+    if run.get("payment_status") == "paid":
+        out.append(f"gaji sudah dibayar ({run.get('payment_gl_je_number') or 'JE pembayaran'}) — void pembayaran gaji dulu")
+    pays = run.get("bpjs_payments") or {}
+    paid_bpjs = [BPJS_AGENCY_LABELS.get(a, a) for a, p in pays.items() if (p or {}).get("status") == "paid"]
+    if paid_bpjs or (not pays and run.get("bpjs_payment_status") == "paid"):
+        out.append(f"{', '.join(paid_bpjs) or 'BPJS'} sudah dibayar — batalkan pembayaran BPJS dulu")
+    if run.get("pph21_payment_status") == "paid":
+        out.append("PPh21 sudah dibayar — batalkan pembayaran PPh21 dulu")
+    return out
+
+
+async def _execute_run_cancel(db, run: dict, user: dict, reason: str) -> dict:
+    run_id = run["id"]
+    from routes.rahaza_posting import payroll_run_journals, reverse_journal_entry
+    reversed_rows, errors = [], []
+    for je in await payroll_run_journals(db, run_id):
+        res = await reverse_journal_entry(db, je, user, f"Batal run {run.get('run_number')}: {reason}")
+        (reversed_rows if res.get("ok") else errors).append(
+            {"original": je.get("je_number"), "reversal": res.get("je_number"), "date": res.get("date"),
+             "error": res.get("error")})
+    if errors:
+        await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {
+            "cancel_error": "; ".join(f"{e['original']}: {e['error']}" for e in errors), "updated_at": _now()}})
+        raise HTTPException(400, (
+            "Pembatalan TERHENTI — jurnal pembalik gagal: "
+            + "; ".join(f"{e['original']}: {e['error']}" for e in errors)
+            + ". Run tetap FINAL; jurnal pembalik yang sudah terbentuk dipakai ulang saat diulang."))
+    from routes.dewi_kasbon import restore_payroll_deductions_core
+    kasbon = await restore_payroll_deductions_core(db, run_id, user, reason=reason)
+    now = _now()
+    cr = dict(run.get("cancel_request") or {})
+    if cr:
+        cr.update(status="approved", approved_by=user["id"], approved_by_name=user.get("name", ""), approved_at=now)
+    await db.rahaza_payroll_runs.update_one({"id": run_id, "status": "finalized"}, {"$set": {
+        "status": "cancelled", "cancelled_at": now, "cancelled_by": user["id"],
+        "cancelled_by_name": user.get("name", ""), "cancel_reason": reason, "cancel_request": cr or None,
+        "cancel_reversal_jes": reversed_rows, "cancel_kasbon_restored": kasbon.get("results"),
+        "cancel_error": None, "updated_at": now}})
+    await log_activity(user["id"], user.get("name", ""), "cancel", "rahaza.payroll_run",
+                       f"{run.get('run_number')} — {reason} — pembalik "
+                       + ", ".join(r["reversal"] or "-" for r in reversed_rows))
+    return {"reversals": reversed_rows, "kasbon": kasbon}
+
+
+@router.post("/payroll-runs/{run_id}/cancel")
+async def cancel_run(run_id: str, request: Request):
+    """Batalkan run FINAL (K34). Body: { action: 'request'|'approve'|'reject' (opsional), reason }.
+
+    - HR: action 'request' (alasan wajib) → menunggu persetujuan Keuangan.
+    - Keuangan (orang lain dari pengaju): 'approve' → eksekusi; 'reject' → tolak pengajuan.
+    - owner/superadmin: satu langkah (tanpa pengajuan) atau menyetujui pengajuan."""
+    user = await require_auth(request)
+    db = get_db()
+    body = await request.json()
+    action = (body.get("action") or "").strip().lower()
+    reason = (body.get("reason") or "").strip()
+    run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
+    if not run:
+        raise HTTPException(404, "Payroll run tidak ditemukan.")
+    if run.get("status") == "cancelled":
+        raise HTTPException(400, "Run ini sudah dibatalkan.")
+    if run.get("status") != "finalized":
+        raise HTTPException(400, "Hanya run FINAL yang dibatalkan; run DRAFT cukup dihapus.")
+    role = (user.get("role") or "").lower()
+    one_step = role in CANCEL_ONE_STEP_ROLES
+    fin = _is_finance_actor(user)
+    pending = run.get("cancel_request") if (run.get("cancel_request") or {}).get("status") == "pending" else None
+    if not action:
+        action = "approve" if (one_step or (fin and pending)) else "request"
+
+    if action == "request":
+        if not (_is_hr_actor(user) or one_step):
+            raise HTTPException(403, "Pengajuan pembatalan run gaji dilakukan oleh HR.")
+        if pending:
+            raise HTTPException(400, f"Sudah ada pengajuan pembatalan oleh {pending.get('requested_by_name')} — menunggu Keuangan.")
+        if not reason:
+            raise HTTPException(400, "Alasan pembatalan wajib diisi.")
+        blockers = run_cancel_blockers(run)
+        if blockers:
+            raise HTTPException(400, "Run belum bisa dibatalkan: " + "; ".join(blockers) + ".")
+        cr = {"status": "pending", "reason": reason, "requested_by": user["id"],
+              "requested_by_name": user.get("name", ""), "requested_at": _now()}
+        await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {"cancel_request": cr, "updated_at": _now()}})
+        await log_activity(user["id"], user.get("name", ""), "cancel_request", "rahaza.payroll_run",
+                           f"{run.get('run_number')} — {reason}")
+        return serialize_doc(await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0}))
+
+    if action == "reject":
+        if not pending:
+            raise HTTPException(400, "Tidak ada pengajuan pembatalan yang menunggu.")
+        if not (fin or one_step or user["id"] == pending.get("requested_by")):
+            raise HTTPException(403, "Hanya Keuangan/owner (atau pengaju sendiri) yang boleh menolak pengajuan ini.")
+        cr = {**pending, "status": "rejected", "rejected_by": user["id"], "rejected_by_name": user.get("name", ""),
+              "rejected_at": _now(), "reject_reason": reason}
+        await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {"cancel_request": cr, "updated_at": _now()}})
+        return serialize_doc(await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0}))
+
+    if action != "approve":
+        raise HTTPException(400, "action harus 'request', 'approve', atau 'reject'.")
+    if not one_step:
+        if not fin:
+            raise HTTPException(403, "Persetujuan pembatalan run gaji oleh Keuangan (atau owner).")
+        if not pending:
+            raise HTTPException(400, "Belum ada pengajuan pembatalan dari HR untuk run ini.")
+        if user["id"] == pending.get("requested_by"):
+            raise HTTPException(403, "Pemisahan tugas: pengaju pembatalan tidak boleh menyetujuinya sendiri.")
+    reason = reason or (pending or {}).get("reason") or ""
+    if not reason:
+        raise HTTPException(400, "Alasan pembatalan wajib diisi.")
+    blockers = run_cancel_blockers(run)
+    if blockers:
+        raise HTTPException(400, "Run belum bisa dibatalkan: " + "; ".join(blockers) + ".")
+    result = await _execute_run_cancel(db, run, user, reason)
+    out = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
+    out["_cancel_result"] = result
     return serialize_doc(out)
 
 
@@ -828,6 +1072,8 @@ async def export_run_excel(run_id: str, request: Request):
             left_items.append((nm, a.get("amount") or 0))
         if ot_amt:
             left_items.append((f"Lembur ({float(ot_hrs):.1f} jam)", ot_amt))
+        if round(float(slip.get("manual_addition") or 0)):   # 2026-11-02 (K34)
+            left_items.append((f"Penyesuaian ({slip.get('adjustment_notes') or '-'})", slip.get("manual_addition")))
         if not left_items:
             left_items = [("Gaji Pokok", slip.get("earnings_total", 0) or 0)]
 
@@ -837,6 +1083,8 @@ async def export_run_excel(run_id: str, request: Request):
             (d.get("label") or d.get("type") or "Potongan", d.get("amount") or 0)
             for d in (slip.get("deductions") or [])
         ]
+        if round(float(slip.get("manual_deduction") or 0)):  # 2026-11-02 (K34): dulu tidak tercetak
+            right_items.append((f"Potongan penyesuaian ({slip.get('adjustment_notes') or '-'})", slip.get("manual_deduction")))
 
         r = current_row
         # Header slip

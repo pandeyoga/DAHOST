@@ -11,11 +11,14 @@ from fastapi import APIRouter, Request, HTTPException
 from core import marketing_account_scope as _scope
 from database import get_db
 from auth import require_auth
-from services.ai import AIError, ai_http_error, ai_text, require_ai
+from services.ai import AIError, ai_http_error, ai_text, redact, require_ai, with_untrusted_rule, wrap_untrusted
 from utils.waktu import now_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/ai-insights", tags=["marketing-ai-insights"])
+
+# 2026-11-02 (K29): Opus hanya untuk Laporan Eksekutif → AI Marketing memakai standard.
+LLM_TIER = "standard"
 
 
 
@@ -91,12 +94,15 @@ async def _get_complaints_context(db, sq: dict | None = None) -> dict:
     # Sample recent texts for AI
     samples = await db.marketing_complaints.find(
         {"created_at": {"$gte": since}},
-        {"complaint_text": 1, "category": 1, "sla_status": 1}
+        {"complaint_text": 1, "category": 1, "sla_status": 1, "customer_name": 1}
     ).limit(20).to_list(20)
 
+    # K27 (2026-11-02): contoh teks dibersihkan dari nama pelanggan & kontak (HP/email)
+    # sebelum dipakai di mana pun (ringkasan maupun prompt AI).
     return {"total": total, "recent_30d": recent, "overdue": overdue,
             "categories": categories, "sample_texts": [
-                {"text": s.get("complaint_text", ""), "category": s.get("category", "")}
+                {"text": redact(s.get("complaint_text", ""), [s.get("customer_name")], "[PELANGGAN]"),
+                 "category": s.get("category", "")}
                 for s in samples
             ]}
 
@@ -123,7 +129,7 @@ async def _get_reviews_context(db, sq: dict | None = None) -> dict:
     return {"total": total, "avg_rating": round(avg_rating, 2),
             "rating_distribution": rating_dist,
             "recent_low_reviews": [
-                {"text": r.get("review_text", ""), "product": r.get("product_name", ""), "rating": r.get("rating", 0)}
+                {"text": redact(r.get("review_text", "")), "product": r.get("product_name", ""), "rating": r.get("rating", 0)}
                 for r in low_reviews
             ]}
 
@@ -192,7 +198,7 @@ async def sales_forecast(request: Request):
     db = get_db()
 
     # 2026-11-02: gerbang tunggal services.ai (dulu "EMERGENT_LLM_KEY missing" tampil ke pengguna).
-    await require_ai("marketing-forecast", user_id=user.get("id"), db=db, tier="executive")
+    await require_ai("marketing-forecast", user_id=user.get("id"), db=db, tier=LLM_TIER)
 
     orders = await _get_orders_context(db)
     daily_trend = orders["daily_trend"]
@@ -221,7 +227,7 @@ async def sales_forecast(request: Request):
     )
 
     try:
-        response = await ai_text("marketing-forecast", ai_system_msg, prompt, tier="executive", user_id=user.get("id"))
+        response = await ai_text("marketing-forecast", ai_system_msg, prompt, tier=LLM_TIER, user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
@@ -251,7 +257,7 @@ async def sentiment_analysis(request: Request):
     user = await require_auth(request)
     db = get_db()
 
-    await require_ai("marketing-sentiment", user_id=user.get("id"), db=db, tier="executive")
+    await require_ai("marketing-sentiment", user_id=user.get("id"), db=db, tier=LLM_TIER)
 
     complaints = await _get_complaints_context(db)
     reviews = await _get_reviews_context(db)
@@ -274,9 +280,11 @@ async def sentiment_analysis(request: Request):
             "recommendations": []
         })
 
-    texts_sample = "\n".join(all_texts[:25])
+    # K28 (2026-11-02): teks pelanggan = data pihak luar → dibungkus pembatas.
+    texts_sample = wrap_untrusted("\n".join(all_texts[:25]), "komplain_ulasan", max_chars=8000)
 
-    ai_system_msg = "Kamu adalah analis sentimen customer untuk brand fashion Indonesia. Respond only with valid JSON."
+    ai_system_msg = with_untrusted_rule(
+        "Kamu adalah analis sentimen customer untuk brand fashion Indonesia. Respond only with valid JSON.")
 
     prompt = (
         f"Analisis sentimen customer dari {len(all_texts)} data komplain/review:\n\n{texts_sample}\n\n"
@@ -294,7 +302,7 @@ async def sentiment_analysis(request: Request):
     )
 
     try:
-        response = await ai_text("marketing-sentiment", ai_system_msg, prompt, tier="executive", user_id=user.get("id"))
+        response = await ai_text("marketing-sentiment", ai_system_msg, prompt, tier=LLM_TIER, user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")
@@ -314,7 +322,7 @@ async def get_recommendations(request: Request):
     user = await require_auth(request)
     db = get_db()
 
-    await require_ai("marketing-recommendations", user_id=user.get("id"), db=db, tier="executive")
+    await require_ai("marketing-recommendations", user_id=user.get("id"), db=db, tier=LLM_TIER)
 
     # Gather all context
     orders = await _get_orders_context(db)
@@ -362,7 +370,7 @@ async def get_recommendations(request: Request):
     )
 
     try:
-        response = await ai_text("marketing-recommendations", ai_system_msg, prompt, tier="executive", user_id=user.get("id"))
+        response = await ai_text("marketing-recommendations", ai_system_msg, prompt, tier=LLM_TIER, user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             lines = clean.split("\n")

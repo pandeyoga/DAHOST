@@ -34,6 +34,39 @@ def _now(): return datetime.now(timezone.utc)
 
 ASSET_CATEGORIES = ["tanah", "bangunan", "mesin", "kendaraan", "peralatan", "it", "furnitur", "lain-lain"]
 DEPR_METHODS    = ["straight_line", "double_declining", "none", "manual"]  # Phase 8B: added "none" & "manual"
+DEPRECIATING_METHODS = ("straight_line", "double_declining")
+
+# 2026-11-02 (K18, keputusan owner): SATU registri induk aset tetap = koleksi ini (Keuangan).
+# Portal Aset (`dewi_assets`, routes/asset/*) hanya tampilan operasional yang menaut `fixed_asset_id`;
+# jalur GR aset (warehouse.py) mendaftar lewat `register_fixed_asset` yang sama. Form wajib memilih:
+#   · "purchase" (Pembelian baru) → sumber dana wajib → jurnal perolehan otomatis ke akun kategori;
+#   · "opening"  (Aset lama/saldo awal) → akumulasi per tanggal go-live, TANPA jurnal perolehan
+#     (nilainya sudah masuk jurnal Saldo Awal), jadwal penyusutan mulai bulan go-live.
+ACQUISITION_TYPES = ("purchase", "opening")
+FUNDING_SOURCES = {
+    "cash": "Rekening kas/bank",
+    "payable": "Hutang pemasok — faktur menyusul (Hutang Belum Ditagih)",
+    "ap_invoice": "Faktur pemasok yang sudah dicatat",
+    "grni": "Penerimaan barang (GR) — Hutang Belum Ditagih",   # hanya jalur GR (warehouse.py)
+}
+# Akun bawaan per kategori (kode COA seed DA: aset, akumulasi, beban penyusutan). Dipakai bila akun di
+# form dikosongkan; None / kode tidak aktif → profil posting (`asset_acquisition` / `depreciation`).
+CATEGORY_ACCOUNTS = {
+    "tanah":     ("1-2100", None, None),
+    "bangunan":  ("1-2200", "1-2201", "6-2710"),
+    "mesin":     ("1-2300", "1-2301", None),
+    "kendaraan": ("1-2400", "1-2401", "6-2720"),
+    "peralatan": ("1-2500", "1-2501", "6-2730"),
+    "it":        ("1-2500", "1-2501", "6-2730"),
+    "furnitur":  ("1-2500", "1-2501", "6-2730"),
+    "lain-lain": ("1-2500", "1-2501", None),
+}
+_ACCOUNT_FIELDS = ("account_id_asset", "account_id_accum_depr", "account_id_depr_expense")
+
+
+def _months_between(a: date, b: date) -> int:
+    """Jumlah bulan kalender dari bulan `a` ke bulan `b` (b − a), bisa negatif."""
+    return (b.year - a.year) * 12 + (b.month - a.month)
 
 
 # ─── HELPER: generate depreciation schedule ────────────────────────────────
@@ -42,10 +75,15 @@ def _generate_schedule(asset: dict) -> list:
     """
     Generate monthly depreciation schedule for the asset.
     Returns list of {period, depr_amount, accumulated_depr, book_value_start, book_value_end}
+
+    2026-11-02 (K18): aset lama (`acquisition_type=opening`) — jadwal MULAI bulan go-live dengan
+    nilai buku awal = harga − akumulasi per go-live, sisa umur = umur − bulan yang sudah lewat
+    (bulan beli s.d. sebelum bulan go-live). `accumulated_depr` jadwal = akumulasi kumulatif TERMASUK
+    akumulasi awal. Umur 0 tidak lagi diam-diam menjadi 12/60 bulan (jadwal kosong).
     """
     cost       = float(asset.get("purchase_cost") or 0)
     residual   = float(asset.get("residual_value") or 0)
-    useful_life = int(asset.get("useful_life_months") or 12)
+    useful_life = int(asset.get("useful_life_months") or 0)
     method      = asset.get("depreciation_method", "straight_line")
     start_date_str = asset.get("purchase_date") or date.today().isoformat()
     try:
@@ -54,11 +92,36 @@ def _generate_schedule(asset: dict) -> list:
         start_date = date.today()
     # Start depreciation from the month AFTER purchase (or first day of purchase month)
     depr_start = date(start_date.year, start_date.month, 1)
-    depr_start + relativedelta(months=useful_life)
 
     schedule = []
     book_value = cost
     accumulated = 0.0
+    if asset.get("acquisition_type") == "opening":
+        try:
+            golive = date.fromisoformat(str(asset.get("golive_date"))[:10])
+        except ValueError:
+            golive = date.today()
+        elapsed = max(0, _months_between(depr_start, date(golive.year, golive.month, 1)))
+        depr_start = date(golive.year, golive.month, 1)
+        accumulated = round(float(asset.get("opening_accumulated_depr") or 0), 2)
+        book_value = round(cost - accumulated, 2)
+        remaining = useful_life - elapsed
+        if remaining <= 0 or book_value <= residual:
+            return []
+        if method == "straight_line":
+            monthly = round((book_value - residual) / remaining, 2)
+            for i in range(remaining):
+                bv_start = round(book_value, 2)
+                depr_amt = round(min(monthly, max(0, book_value - residual)), 2)
+                if i == remaining - 1:  # bulan terakhir: tutup ke nilai residu (sisa pembulatan)
+                    depr_amt = max(0, round(book_value - residual, 2))
+                accumulated = round(accumulated + depr_amt, 2)
+                book_value = round(book_value - depr_amt, 2)
+                schedule.append({"period": (depr_start + relativedelta(months=i)).strftime("%Y-%m"),
+                                 "book_value_start": bv_start, "depr_amount": depr_amt,
+                                 "accumulated_depr": accumulated, "book_value_end": book_value})
+            return schedule
+        useful_life = remaining  # double_declining: tarif 2/umur sisa dari nilai buku go-live
     if method == "straight_line":
         monthly_depr = round((cost - residual) / useful_life, 2) if useful_life > 0 else 0
         for i in range(useful_life):
@@ -130,18 +193,272 @@ async def list_fixed_assets(request: Request, category: Optional[str] = None,
     return serialize_doc(rows)
 
 
+async def _posted_depr_by_asset(db, asset_ids: list, upto_period: Optional[str] = None) -> dict:
+    """Σ penyusutan yang SUDAH diposting per aset (opsional s.d. periode YYYY-MM)."""
+    if not asset_ids:
+        return {}
+    match = {"asset_id": {"$in": asset_ids}, "posted": True}
+    if upto_period:
+        match["period"] = {"$lte": upto_period}
+    rows = await db.rahaza_depr_schedules.aggregate([
+        {"$match": match}, {"$group": {"_id": "$asset_id", "total": {"$sum": "$depr_amount"}}}]).to_list(len(asset_ids) + 5)
+    return {r["_id"]: round(float(r.get("total") or 0), 2) for r in rows}
+
+
+def accumulated_of(asset: dict, posted_depr: float) -> float:
+    """K18: akumulasi = akumulasi awal per go-live (aset lama) + penyusutan yang sudah diposting."""
+    return round(float(asset.get("opening_accumulated_depr") or 0) + float(posted_depr or 0), 2)
+
+
 async def _enrich_nbv(db, asset: dict):
     """Add current NBV and accumulated depreciation to asset dict."""
     aid = asset.get("id", "")
     today = date.today().strftime("%Y-%m")
-    # Sum all posted depreciation up to today
-    pipe = [{"$match": {"asset_id": aid, "period": {"$lte": today}, "posted": True}},
-            {"$group": {"_id": None, "total_depr": {"$sum": "$depr_amount"}}}]
-    agg = await db.rahaza_depr_schedules.aggregate(pipe).to_list(1)
-    accum_depr = round((agg[0]["total_depr"] if agg else 0), 2)
+    # Sum all posted depreciation up to today (+ akumulasi awal aset lama, K18)
+    posted = (await _posted_depr_by_asset(db, [aid], today)).get(aid, 0)
+    accum_depr = accumulated_of(asset, posted)
     cost = float(asset.get("purchase_cost") or 0)
     asset["accumulated_depreciation"] = accum_depr
     asset["book_value_current"]       = round(cost - accum_depr, 2)
+
+
+def _bad(msg: str):
+    raise HTTPException(400, msg)
+
+
+def _parse_amount(v, label: str) -> float:
+    import math
+    try:
+        x = float(v if v not in (None, "") else 0)
+    except (TypeError, ValueError):
+        _bad(f"{label} harus angka.")
+    if not math.isfinite(x):
+        _bad(f"{label} tidak valid.")
+    return x
+
+
+async def _coa_ref(db, ref) -> Optional[dict]:
+    """Akun COA aktif & postable dari id ATAU kode (form mengirim id, kategori bawaan memakai kode)."""
+    if not ref:
+        return None
+    acc = await db.rahaza_coa_accounts.find_one({"$or": [{"id": ref}, {"code": ref}], "active": True},
+                                                {"_id": 0, "id": 1, "code": 1, "name": 1, "is_group": 1})
+    return acc if acc and acc.get("code") and not acc.get("is_group") else None
+
+
+async def resolve_asset_accounts(db, category: str, body: dict) -> dict:
+    """K18: akun aset/akumulasi/beban = pilihan form (bila sah) → bawaan kategori → (kosong = profil posting).
+    Disimpan sebagai id COA (dibaca post_depreciation/post_asset_disposal/post_asset_acquisition)."""
+    defaults = dict(zip(_ACCOUNT_FIELDS, CATEGORY_ACCOUNTS.get(category, (None, None, None))))
+    out = {}
+    for f in _ACCOUNT_FIELDS:
+        chosen = body.get(f)
+        acc = await _coa_ref(db, chosen) if chosen else None
+        if chosen and not acc:
+            _bad(f"Akun '{chosen}' ({f}) tidak ditemukan, tidak aktif, atau akun induk (header).")
+        acc = acc or await _coa_ref(db, defaults.get(f))
+        out[f] = (acc or {}).get("id") or (acc or {}).get("code")
+    return out
+
+
+async def _funding_credit_code(db, body: dict, cost: float) -> tuple[str, dict]:
+    """K18 Pembelian baru: akun KREDIT jurnal perolehan dari sumber dana + metadata tautan."""
+    src = (body.get("funding_source") or "").strip()
+    if src not in FUNDING_SOURCES or src == "grni" and not body.get("_system_gr"):
+        _bad("Pembelian baru wajib memilih sumber dana: rekening kas/bank, hutang pemasok (faktur menyusul), "
+             "atau faktur pemasok yang sudah dicatat.")
+    from routes.rahaza_posting_profiles import get_mapping
+    if src == "cash":
+        acc = await db.rahaza_cash_accounts.find_one({"id": body.get("cash_account_id"), "active": True}, {"_id": 0})
+        if not acc:
+            _bad("Pilih rekening kas/bank aktif untuk pembelian tunai.")
+        if not acc.get("gl_account_code"):
+            _bad(f"Rekening '{acc.get('name')}' belum tertaut akun GL (Kas & Bank › Sinkron GL).")
+        return acc["gl_account_code"], {"cash_account_id": acc["id"], "cash_account_name": acc.get("name")}
+    if src in ("payable", "grni"):
+        code = (await get_mapping(db, "asset_acquisition")).get("credit_ap_clearing")
+        if not code:
+            _bad("Profil posting 'asset_acquisition.credit_ap_clearing' (Hutang Belum Ditagih) belum diisi.")
+        return code, {"supplier": (body.get("supplier") or "").strip()}
+    # ap_invoice — faktur pemasok sudah menjurnal hutang (Dr akun debit faktur / Cr Hutang). Jurnal perolehan
+    # MEREKLAS akun debit faktur itu ke akun aset, jadi hutang tidak tercatat dua kali.
+    inv = await db.rahaza_ap_invoices.find_one({"id": body.get("ap_invoice_id")}, {"_id": 0})
+    if not inv:
+        _bad("Faktur pemasok tidak ditemukan.")
+    if (inv.get("status") or "").lower() in ("draft", "cancelled", "void"):
+        _bad(f"Faktur {inv.get('invoice_number')} berstatus '{inv.get('status')}' — terbitkan dulu.")
+    from routes.rahaza_posting import _account_from_issuance_je
+    code = await _account_from_issuance_je(db, ["ap_invoice"], f"ap:{inv['id']}", "debit")
+    if not code:
+        _bad(f"Faktur {inv.get('invoice_number')} belum berjurnal — posting faktur dulu.")
+    base = float(inv.get("subtotal") or inv.get("total") or 0)
+    used = 0.0
+    async for a in db.rahaza_fixed_assets.find({"ap_invoice_id": inv["id"], "status": {"$ne": "deleted"}},
+                                               {"_id": 0, "purchase_cost": 1}):
+        used += float(a.get("purchase_cost") or 0)
+    if cost > round(base - used, 2) + 0.01:
+        _bad(f"Harga aset {cost:,.0f} melebihi sisa nilai faktur {inv.get('invoice_number')} "
+             f"(DPP {base:,.0f}, sudah dikapitalisasi {used:,.0f}).")
+    return code, {"ap_invoice_id": inv["id"], "ap_invoice_number": inv.get("invoice_number"),
+                  "supplier": inv.get("vendor_name") or (body.get("supplier") or "").strip()}
+
+
+async def _golive_default(db) -> Optional[str]:
+    """Tanggal go-live = tanggal jurnal Saldo Awal (opening_balance) aktif, bila ada."""
+    je = await db.rahaza_journal_entries.find_one({"source_module": "opening_balance", "status": {"$ne": "voided"}},
+                                                  {"_id": 0, "date": 1})
+    return str(je["date"])[:10] if je and je.get("date") else None
+
+
+async def register_fixed_asset(db, body: dict, user: dict, *, code: Optional[str] = None, extra: Optional[dict] = None) -> dict:
+    """SATU pintu pendaftaran aset tetap (form Keuangan, jalur GR, skrip migrasi). K18 2026-11-02.
+
+    Validasi: harga > 0, umur > 0 (metode menyusut), tanggal beli ≤ hari ini (WIB), jenis perolehan wajib.
+    Pembelian baru → jurnal perolehan Dr akun aset (kategori) / Cr sumber dana; gagal jurnal = batal daftar.
+    Aset lama → akumulasi per go-live, tanpa jurnal perolehan, jadwal mulai bulan go-live."""
+    from utils.waktu import today_wib
+    name = (body.get("name") or "").strip()
+    if not name:
+        _bad("Nama aset wajib diisi")
+    cat = body.get("category") or "peralatan"
+    if cat not in ASSET_CATEGORIES:
+        _bad(f"Kategori harus salah satu dari: {ASSET_CATEGORIES}")
+    method = body.get("depreciation_method") or "straight_line"
+    if method not in DEPR_METHODS:
+        _bad(f"Metode depresiasi: {DEPR_METHODS}")
+    acq = (body.get("acquisition_type") or "").strip()
+    if acq not in ACQUISITION_TYPES:
+        _bad("Pilih jenis perolehan: 'Pembelian baru' (purchase) atau 'Aset lama — saldo awal' (opening).")
+    cost = round(_parse_amount(body.get("purchase_cost"), "Harga perolehan"), 2)
+    if cost <= 0:
+        _bad("Harga perolehan harus lebih dari 0.")
+    residual = round(_parse_amount(body.get("residual_value"), "Nilai sisa"), 2)
+    if residual < 0 or residual >= cost:
+        _bad("Nilai sisa harus ≥ 0 dan lebih kecil dari harga perolehan.")
+    try:
+        life = int(body.get("useful_life_months") or 0)
+    except (TypeError, ValueError):
+        _bad("Masa manfaat (bulan) harus bilangan bulat.")
+    if method in DEPRECIATING_METHODS and life <= 0:
+        _bad("Masa manfaat (bulan) harus lebih dari 0.")
+    today = today_wib()
+    pdate_raw = (body.get("purchase_date") or today.isoformat())
+    try:
+        pdate = date.fromisoformat(str(pdate_raw)[:10])
+    except ValueError:
+        _bad("Tanggal pembelian tidak valid (format YYYY-MM-DD).")
+    if pdate > today:
+        _bad(f"Tanggal pembelian {pdate.isoformat()} melewati hari ini ({today.isoformat()} WIB).")
+
+    doc_extra: dict = {}
+    credit_code = None
+    if acq == "opening":
+        golive_raw = body.get("golive_date") or await _golive_default(db)
+        if not golive_raw:
+            _bad("Aset lama wajib mengisi tanggal go-live (atau posting Saldo Awal dulu).")
+        try:
+            golive = date.fromisoformat(str(golive_raw)[:10])
+        except ValueError:
+            _bad("Tanggal go-live tidak valid (format YYYY-MM-DD).")
+        if pdate > golive:
+            _bad("Aset lama: tanggal beli harus sebelum/sama dengan tanggal go-live. Aset yang dibeli "
+                 "sesudah go-live didaftarkan sebagai 'Pembelian baru'.")
+        opening_acc = round(_parse_amount(body.get("opening_accumulated_depr"), "Akumulasi penyusutan awal"), 2)
+        if opening_acc < 0 or opening_acc > round(cost - residual, 2):
+            _bad("Akumulasi penyusutan awal harus antara 0 dan (harga − nilai sisa).")
+        doc_extra.update({"golive_date": golive.isoformat(), "opening_accumulated_depr": opening_acc})
+    else:
+        credit_code, link = await _funding_credit_code(db, body, cost)
+        doc_extra.update({"funding_source": body.get("funding_source"), "acquisition_credit_code": credit_code, **link})
+
+    accounts = await resolve_asset_accounts(db, cat, body)
+    if code is None:
+        # SESI #27 — kode aset lewat SATU PINTU kebijakan penomoran (Otomatis/Manual).
+        from core.doc_number_policy import issue_number
+        code = await issue_number(db, "rahaza_fixed_assets.code", requested=(body.get("code") or "").strip())
+    if await db.rahaza_fixed_assets.find_one({"code": code}):
+        raise HTTPException(409, f"Kode aset '{code}' sudah digunakan")
+    doc = {
+        "id":                     _uid(),
+        "code":                   code,
+        "name":                   name,
+        "category":               cat,
+        "acquisition_type":       acq,
+        "purchase_date":          pdate.isoformat(),
+        "purchase_cost":          cost,
+        "residual_value":         residual,
+        "useful_life_months":     life,
+        "depreciation_method":    method,
+        **accounts,
+        "location":               (body.get("location") or "").strip(),
+        "supplier":               (body.get("supplier") or doc_extra.get("supplier") or "").strip(),
+        "serial_number":          (body.get("serial_number") or "").strip(),
+        "notes":                  (body.get("notes") or "").strip(),
+        "status":                 "active",
+        "created_at":             _now(),
+        "created_by":             user.get("email") or user.get("id"),
+        "disposed_at":            None,
+        "disposal_notes":         None,
+        **{k: v for k, v in doc_extra.items() if k != "supplier"},
+        **(extra or {}),
+    }
+    await db.rahaza_fixed_assets.insert_one(doc)
+    # Auto-generate depreciation schedule
+    schedule = _generate_schedule(doc)
+    depr_docs = [{
+        "id":              _uid(),
+        "asset_id":        doc["id"],
+        "asset_code":      doc["code"],
+        "period":          s["period"],
+        "book_value_start":s["book_value_start"],
+        "depr_amount":     s["depr_amount"],
+        "accumulated_depr":s["accumulated_depr"],
+        "book_value_end":  s["book_value_end"],
+        "posted":          False,
+        "journal_entry_id":None,
+        "posted_at":       None,
+    } for s in schedule]
+    if depr_docs:
+        await db.rahaza_depr_schedules.insert_many(depr_docs)
+
+    posting = None
+    if acq == "purchase":
+        from routes.rahaza_posting import post_asset_acquisition
+        try:
+            posting = await post_asset_acquisition(db, doc, user)
+        except Exception as e:  # noqa: BLE001 — dikembalikan sebagai 400 dengan alasan
+            logger.exception("Jurnal perolehan aset gagal")
+            posting = {"ok": False, "error": str(e)}
+        if not posting.get("ok"):
+            # Pembelian baru TANPA jurnal = aset di luar neraca (audit No.37) → batalkan pendaftaran.
+            await db.rahaza_depr_schedules.delete_many({"asset_id": doc["id"]})
+            await db.rahaza_fixed_assets.delete_one({"id": doc["id"]})
+            from routes.rahaza_posting import posting_error_message
+            _bad(f"Aset tidak didaftarkan: jurnal perolehan gagal — {posting_error_message(posting)}")
+    out = await db.rahaza_fixed_assets.find_one({"id": doc["id"]}, {"_id": 0}) or doc
+    out["_posting_result"] = posting
+    out["_schedule_periods"] = len(depr_docs)
+    return out
+
+
+@router.get("/fixed-assets/acquisition-options")
+async def acquisition_options(request: Request):
+    """Pilihan form Daftar Aset (K18): jenis perolehan, sumber dana, akun bawaan kategori, go-live bawaan."""
+    await require_auth(request)
+    db = get_db()
+    cats = {}
+    for cat in ASSET_CATEGORIES:
+        row = {}
+        for f, code in zip(_ACCOUNT_FIELDS, CATEGORY_ACCOUNTS.get(cat, (None, None, None))):
+            acc = await _coa_ref(db, code)
+            row[f] = {"id": acc.get("id"), "code": acc.get("code"), "name": acc.get("name")} if acc else None
+        cats[cat] = row
+    from utils.waktu import today_wib
+    return {"acquisition_types": [{"value": "purchase", "label": "Pembelian baru"},
+                                  {"value": "opening", "label": "Aset lama (saldo awal)"}],
+            "funding_sources": [{"value": k, "label": v} for k, v in FUNDING_SOURCES.items() if k != "grni"],
+            "category_accounts": cats, "golive_default": await _golive_default(db),
+            "today_wib": today_wib().isoformat()}
 
 
 @router.post("/fixed-assets")
@@ -149,72 +466,8 @@ async def create_fixed_asset(request: Request):
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
-    name = (body.get("name") or "").strip()
-    if not name:
-        raise HTTPException(400, "Nama aset wajib diisi")
-    code = (body.get("code") or "").strip()
-    # SESI #27 — kode aset lewat SATU PINTU kebijakan penomoran (Otomatis/Manual).
-    # DUA cacat sekaligus yang diperbaiki di sini:
-    #   1. dulu kode WAJIB diketik staf tanpa satu pun aturan bentuk ⇒ "FA1",
-    #      "asset-baru", "AC RUANG QC" hidup berdampingan dan tak bisa diurutkan;
-    #   2. jalur kapitalisasi otomatis dari penerimaan barang (warehouse.py)
-    #      memanggil generator dengan nama field `asset_code` padahal field
-    #      dokumennya `code` ⇒ penyemaian counter membaca field yang salah.
-    from core.doc_number_policy import issue_number
-    code = await issue_number(db, "rahaza_fixed_assets.code", requested=code)
-    if await db.rahaza_fixed_assets.find_one({"code": code}):
-        raise HTTPException(409, f"Kode aset '{code}' sudah digunakan")
-    cat = body.get("category", "peralatan")
-    if cat not in ASSET_CATEGORIES:
-        raise HTTPException(400, f"Kategori harus salah satu dari: {ASSET_CATEGORIES}")
-    method = body.get("depreciation_method", "straight_line")
-    if method not in DEPR_METHODS:
-        raise HTTPException(400, f"Metode depresiasi: {DEPR_METHODS}")
-    doc = {
-        "id":                     _uid(),
-        "code":                   code,
-        "name":                   name,
-        "category":               cat,
-        "purchase_date":          body.get("purchase_date") or date.today().isoformat(),
-        "purchase_cost":          float(body.get("purchase_cost") or 0),
-        "residual_value":         float(body.get("residual_value") or 0),
-        "useful_life_months":     int(body.get("useful_life_months") or 60),
-        "depreciation_method":    method,
-        "account_id_asset":       body.get("account_id_asset"),
-        "account_id_accum_depr": body.get("account_id_accum_depr"),
-        "account_id_depr_expense": body.get("account_id_depr_expense"),
-        "location":               (body.get("location") or "").strip(),
-        "supplier":               (body.get("supplier") or "").strip(),
-        "serial_number":          (body.get("serial_number") or "").strip(),
-        "notes":                  (body.get("notes") or "").strip(),
-        "status":                 "active",
-        "created_at":             _now(),
-        "created_by":             user.get("email"),
-        "disposed_at":            None,
-        "disposal_notes":         None,
-    }
-    await db.rahaza_fixed_assets.insert_one(doc)
-    # Auto-generate depreciation schedule
-    schedule = _generate_schedule(doc)
-    if schedule:
-        depr_docs = []
-        for s in schedule:
-            depr_docs.append({
-                "id":              _uid(),
-                "asset_id":        doc["id"],
-                "asset_code":      doc["code"],
-                "period":          s["period"],
-                "book_value_start":s["book_value_start"],
-                "depr_amount":     s["depr_amount"],
-                "accumulated_depr":s["accumulated_depr"],
-                "book_value_end":  s["book_value_end"],
-                "posted":          False,
-                "journal_entry_id":None,
-                "posted_at":       None,
-            })
-        if depr_docs:
-            await db.rahaza_depr_schedules.insert_many(depr_docs)
-    return serialize_doc(doc)
+    body.pop("_system_gr", None)  # penanda internal jalur GR, tidak boleh dari klien
+    return serialize_doc(await register_fixed_asset(db, body, user))
 
 
 @router.get("/fixed-assets/depreciation-due")
@@ -243,11 +496,10 @@ async def fixed_assets_summary(request: Request):
     db = get_db()
     assets = await db.rahaza_fixed_assets.find({"status": {"$ne": "disposed"}}, {"_id": 0}).to_list(500)
     total_cost = round(sum(float(a.get("purchase_cost") or 0) for a in assets), 2)
-    # Accumulated depreciation from all posted schedule entries
-    pipe = [{"$match": {"posted": True}},
-            {"$group": {"_id": None, "total": {"$sum": "$depr_amount"}}}]
-    agg = await db.rahaza_depr_schedules.aggregate(pipe).to_list(1)
-    total_accum = round((agg[0]["total"] if agg else 0), 2)
+    # 2026-11-02 (K18): akumulasi HANYA aset yang masih aktif (dulu ikut jadwal aset yang sudah dilepas →
+    # nilai buku ringkasan bisa negatif, audit No.36) + akumulasi awal aset lama per go-live.
+    posted = await _posted_depr_by_asset(db, [a["id"] for a in assets])
+    total_accum = round(sum(accumulated_of(a, posted.get(a["id"], 0)) for a in assets), 2)
     nbv = round(total_cost - total_accum, 2)
     # Count due this month
     cur_period = date.today().strftime("%Y-%m")
@@ -383,15 +635,20 @@ async def dispose_asset(aid: str, request: Request):
     """Disposal aset — tandai sebagai disposed."""
     user = await require_auth(request)
     db = get_db()
+    body = await request.json()
+    return await dispose_fixed_asset(db, aid, body, user)
+
+
+async def dispose_fixed_asset(db, aid: str, body: dict, user: dict) -> dict:
+    """SATU jalur pelepasan aset tetap + jurnal (Keuangan & Portal Aset untuk aset tertaut, K18)."""
     asset = await db.rahaza_fixed_assets.find_one({"id": aid}, {"_id": 0})
     if not asset:
         raise HTTPException(404, "Aset tidak ditemukan")
     if asset.get("status") == "disposed":
         raise HTTPException(409, "Aset sudah di-dispose sebelumnya")
-    body = await request.json()
     disposal_date  = body.get("disposal_date") or date.today().isoformat()
     disposal_value = float(body.get("disposal_value") or 0)
-    disposal_notes = (body.get("notes") or "").strip()
+    disposal_notes = (body.get("notes") or body.get("reason") or "").strip()
     try:
         date.fromisoformat(str(disposal_date)[:10])
     except ValueError:
@@ -412,7 +669,7 @@ async def dispose_asset(aid: str, request: Request):
         {"$match": {"asset_id": aid, "posted": True, "period": {"$lte": disposal_date[:7]}}},
         {"$group": {"_id": None, "total": {"$sum": "$depr_amount"}}},
     ]).to_list(1)
-    accumulated_depr = round(float(acc_agg[0]["total"]) if acc_agg else 0.0, 2)
+    accumulated_depr = accumulated_of(asset, float(acc_agg[0]["total"]) if acc_agg else 0.0)  # + akumulasi awal (K18)
     cost = float(asset.get("purchase_cost") or 0)
     nbv = round(cost - accumulated_depr, 2)
     gain_loss = round(disposal_value - nbv, 2)

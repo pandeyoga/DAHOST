@@ -308,7 +308,8 @@ export default function FinanceSettlementModule() {
   const reconcile = async (r) => {
     setBusy(`recon:${r.id}`);
     try {
-      const d = await call(`/reconcile?settlement_id=${encodeURIComponent(r.settlement_id)}`);
+      // 2026-11-02 — pakai id dokumen (nomor platform bisa sama di toko lain, K-1).
+      const d = await call(`/reconcile?settlement_id=${encodeURIComponent(r.id)}`);
       setRecon(d); setReconFor(r.settlement_id);
     } catch (e) {
       toast.error(e.message);
@@ -444,13 +445,14 @@ export default function FinanceSettlementModule() {
             </label>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-xs space-y-1">
-                <span className="text-foreground/60">Periode dari</span>
+                <span className="text-foreground/60">Periode pesanan dari <span className="text-amber-600">*</span></span>
                 <input type="date" data-testid="fin-settlement-input-period-from" value={form.period_from}
                   onChange={(e) => setForm({ ...form, period_from: e.target.value })}
                   className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
               </label>
               <label className="text-xs space-y-1">
-                <span className="text-foreground/60">sampai</span>
+                <span className="text-foreground/60">sampai <span className="text-amber-600">*</span>
+                  <span className="text-foreground/40"> (wajib untuk Cocokkan)</span></span>
                 <input type="date" data-testid="fin-settlement-input-period-to" value={form.period_to}
                   onChange={(e) => setForm({ ...form, period_to: e.target.value })}
                   className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
@@ -549,13 +551,20 @@ export default function FinanceSettlementModule() {
               <div>setelah diskon <b>{rp(recon.marketing?.revenue_product || 0)}</b></div>
               <div>dibayar pembeli <b>{rp(recon.marketing?.order_amount || 0)}</b></div>
             </div>
-            <div className="rounded-lg bg-foreground/5 p-3">
-              <div className="text-foreground/50 uppercase tracking-wide">Selisih bruto</div>
+            <div className="rounded-lg bg-foreground/5 p-3" data-testid="fin-settlement-recon-primary">
+              {/* 2026-11-02 (K5) — pembanding utama keputusan owner */}
+              <div className="text-foreground/50 uppercase tracking-wide">Selisih (setelah diskon penjual)</div>
               <div className="mt-1 text-lg font-semibold">
-                {rp(recon.gap?.gross_vs_revenue_gross || 0)}
+                {rp(recon.primary?.gap ?? recon.gap?.gross_vs_revenue_gross ?? 0)}
+              </div>
+              <div className="text-foreground/60">
+                (bruto {rp(recon.primary?.settlement_gross || 0)} − diskon penjual{' '}
+                {rp(recon.primary?.settlement_seller_discount || 0)}) vs omzet setelah diskon{' '}
+                {rp(recon.primary?.omzet_after_discount || 0)}
               </div>
               <div className="text-foreground/50">
-                {recon.gap?.cancelled_orders_excluded || 0} pesanan batal dikecualikan
+                {recon.gap?.cancelled_orders_excluded || 0} pesanan batal dikecualikan · selisih bruto vs bruto{' '}
+                {rp(recon.gap?.gross_vs_revenue_gross || 0)}
               </div>
             </div>
           </div>

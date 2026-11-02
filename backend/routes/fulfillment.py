@@ -63,6 +63,23 @@ class DispatchIn(BaseModel):
 
 FULFILLMENT_STATUSES = list(fstat.FULFILLMENT_STATUSES)
 
+# 2026-11-02 (K6) — pesanan hasil IMPOR Seller Center dikirim lewat Seller Center
+# (D4), bukan lewat gudang. Dulu pesanan impor "Selesai" pun tetap nongkrong di
+# antrean Fulfillment internal (audit m.md No.12) dan mengundang pengiriman ganda.
+# Pesanan impor kini TIDAK masuk antrean, termasuk data lama yang statusnya masih
+# `pending_fulfillment`/`unallocated`.
+NOT_IMPORTED = {"_import_session_id": {"$in": [None, ""]}}
+
+
+def is_imported_order(order: dict) -> bool:
+    return bool((order or {}).get("_import_session_id"))
+
+
+def queue_query(status: Optional[str] = None) -> dict:
+    """Penyaring antrean gudang = kosakata kanonik ∩ BUKAN pesanan impor (K6)."""
+    base = fstat.queue_filter(status) if status else fstat.queue_filter()
+    return {"$and": [base, NOT_IMPORTED]}
+
 async def _get_order(db, order_id: str):
     """Get marketing order by ID."""
     order = await db.marketing_orders.find_one({"id": order_id}, {"_id": 0})
@@ -98,7 +115,7 @@ async def fulfillment_summary(user: dict = Depends(require_auth)):
     db = get_db()
 
     pending = await db.marketing_orders.count_documents(
-        fstat.queue_filter(fstat.PENDING))
+        queue_query(fstat.PENDING))
     allocated = await db.marketing_orders.count_documents({"fulfillment_status": "allocated"})
     picking = await db.marketing_orders.count_documents({"fulfillment_status": "picking"})
     packed = await db.marketing_orders.count_documents({"fulfillment_status": "packed_ready"})
@@ -111,7 +128,7 @@ async def fulfillment_summary(user: dict = Depends(require_auth)):
     # banner kesehatan yang hanya jujur untuk 1 halaman adalah kebohongan sopan).
     queue_total = ready = blocked = 0
     unmapped_skus = set()
-    async for o in db.marketing_orders.find(fstat.queue_filter(),
+    async for o in db.marketing_orders.find(queue_query(),
                                             {"_id": 0, "items": 1, "fg_material_id": 1,
                                              "quantity": 1, "sku_id": 1}):
         queue_total += 1
@@ -163,7 +180,7 @@ async def get_fulfillment_queue(
     """
     db = get_db()
 
-    query = fstat.queue_filter(status) if status else fstat.queue_filter()
+    query = queue_query(status)   # 2026-11-02 (K6) — tanpa pesanan impor
 
     cursor = db.marketing_orders.find(query, {"_id": 0}).sort("created_at", 1)
     rows = []
@@ -345,6 +362,10 @@ async def allocate_inventory(
     db = get_db()
     order = await _get_order(db, order_id)
     
+    # 2026-11-02 (K6) — pesanan impor dikirim lewat Seller Center, bukan dialokasikan gudang.
+    if is_imported_order(order):
+        raise HTTPException(400, "Pesanan hasil impor Seller Center dikirim lewat Seller "
+                                 "Center — tidak dialokasikan/dipotong stok lewat Fulfillment.")
     # Check status: harus pending_fulfillment
     await _check_fulfillment_status(order, ["pending_fulfillment"])
 

@@ -332,16 +332,17 @@ def _travel(db, tid="t1", approved=1000000.0, paid=0.0, status="approved"):
 
 
 class TestKeuanganBayarUangMuka:
-    @pytest.mark.parametrize("who", [FIN, ACC, HR])
-    def test_peran_keuangan_dan_hr_boleh(self, env, who):
+    @pytest.mark.parametrize("who", [FIN, ACC])
+    def test_peran_keuangan_boleh(self, env, who):
         _travel(env.db)
         out = run(etr.mark_advance_paid("t1", etr.AdvancePaidPayload(amount_paid=1000000, bank_account_id="ca-mdr",
                                                                      payment_date="2026-10-20"), user=who))
         assert out["new_status"] == "advance_paid"
 
-    def test_peran_lain_ditolak(self, env):
+    @pytest.mark.parametrize("who", [ANI, HR])  # 2026-11-02 (K25): HR tidak lagi membayar uang muka
+    def test_peran_lain_ditolak(self, env, who):
         _travel(env.db)
-        e = _err(etr.mark_advance_paid("t1", etr.AdvancePaidPayload(amount_paid=1000000), user=ANI))
+        e = _err(etr.mark_advance_paid("t1", etr.AdvancePaidPayload(amount_paid=1000000), user=who))
         assert e.status_code == 403
 
     def test_penyetuju_tidak_berubah(self):

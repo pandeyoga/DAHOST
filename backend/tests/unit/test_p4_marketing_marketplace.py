@@ -311,8 +311,11 @@ def _order(oid, status, rev, amount, date="2026-10-15", qty=1, acc="A1"):
 
 
 def _ret(rid, date, refund, order_id="", status="pending", qty=1, acc="A1", ref=None):
+    # 2026-11-02 (K36) — retur di uji No.16 ini dianggap SUDAH diputuskan gudang;
+    # perilaku "belum diputuskan ⇒ tidak dihitung" diuji di test_w2a_retur_marketplace.py.
     d = {"id": rid, "account_id": acc, "date": date, "order_id": order_id, "status": status,
-         "refund_amount": refund, "qty": qty}
+         "refund_amount": refund, "qty": qty,
+         "wh_return_status": "Resolved", "wh_action_taken": "Restock ke Gudang"}
     if ref:
         d["order_ref_id"] = ref
     return d

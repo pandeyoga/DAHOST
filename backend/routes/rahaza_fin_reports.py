@@ -212,8 +212,21 @@ async def profit_loss(
         to_date = today
     if not from_date:
         from_date = f"{today[:4]}-01-01"
+    return await compute_profit_loss(db, from_date, to_date)
 
-    match = {"date": {"$gte": from_date, "$lte": to_date}, "source_module": {"$ne": "year_end_close"}}  # M-09: jurnal penutup bukan L/R
+
+async def compute_profit_loss(db, from_date: Optional[str], to_date: Optional[str]) -> dict:
+    """SATU rumus Laba/Rugi buku besar (2026-11-02, K20/K33): dipakai layar L/R, kartu
+    "Laba kotor (buku besar)" di Rekap Keuangan, dan laba bersih Laporan Eksekutif supaya
+    ketiganya tidak pernah beda angka. `from_date`/`to_date` None = tanpa batas sisi itu."""
+    rng = {}
+    if from_date:
+        rng["$gte"] = from_date
+    if to_date:
+        rng["$lte"] = to_date
+    match = {"source_module": {"$ne": "year_end_close"}}  # M-09: jurnal penutup bukan L/R
+    if rng:
+        match["date"] = rng
     per_acc = await _aggregate_by_account(db, match)
 
     # Get all leaf accounts for types of interest
@@ -476,9 +489,9 @@ async def cash_flow(
     to_date: Optional[str] = Query(None, alias="to"),
 ):
     """F3: Cash Flow Statement (metode direct).
-    Sumber utama: rahaza_cash_movements (category-based grouping ke Operating/Investing/Financing) —
-    agregasi di Mongo (tanpa batas 500 baris). Ditambah `by_account`: arus kas dari akun lawan jurnal
-    yang menyentuh akun kas/bank, dikelompokkan lewat tag OPR/INV/PND akun (ala sheet Arus-K).
+    2026-11-02 (K19): kedua tampilan dari buku besar — `activities` per kategori `source_module` jurnal
+    yang menyentuh akun kas/bank (Operating/Investing/Financing), `by_account` per akun lawan dengan tag
+    OPR/INV/PND akun (ala sheet Arus-K). Kas awal & akhir keduanya = saldo GL akun kas/bank.
     """
     await require_auth(request)
     db = get_db()
@@ -486,8 +499,35 @@ async def cash_flow(
     return await _cash_flow_data(db, from_date or f"{today[:4]}-01-01", to_date or today)
 
 
+@router.get("/cash-mutations")
+async def cash_mutations(
+    request: Request,
+    account_id: Optional[str] = Query(None),
+    gl_account_code: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
+):
+    """2026-11-02 (K19): daftar mutasi rekening Kas & Bank DITURUNKAN DARI GL (baris jurnal akun
+    rekening) — dipakai panel "Mutasi" di layar Kas & Bank. `rahaza_cash_movements` hanya metadata."""
+    await require_auth(request)
+    db = get_db()
+    acc = None
+    if account_id:
+        acc = await db.rahaza_cash_accounts.find_one({"id": account_id}, {"_id": 0})
+        if not acc:
+            raise HTTPException(404, "Rekening tidak ditemukan.")
+    code = (acc or {}).get("gl_account_code") or gl_account_code
+    if not code:
+        raise HTTPException(400, "Rekening belum tertaut akun GL — tekan 'Sinkron Bagan Akun & GL' dulu.")
+    from routes.rahaza_posting import cash_mutations_from_gl
+    out = await cash_mutations_from_gl(db, code, from_date, to_date, account_id=(acc or {}).get("id"))
+    out["account"] = {"id": (acc or {}).get("id"), "code": (acc or {}).get("code") or code,
+                      "name": (acc or {}).get("name")}
+    return serialize_doc(out)
+
+
 INVESTING_CATS = {"asset_purchase", "asset_sale", "investment"}
-FINANCING_CATS = {"loan_proceeds", "loan_repayment", "owner_investment", "owner_withdrawal", "dividend"}
+FINANCING_CATS = {"loan_proceeds", "loan_repayment", "owner_investment", "owner_withdrawal", "dividend", "opening_balance"}
 
 
 def _bucket(cat: str) -> str:
@@ -500,48 +540,57 @@ def _bucket(cat: str) -> str:
 
 
 async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
-    # 1) Agregasi kategori × arah langsung di Mongo — dulu to_list(500) memotong data pada volume nyata
-    pipe = [{"$match": {"date": {"$gte": from_date, "$lte": to_date}}},
-            {"$group": {"_id": {"cat": {"$ifNull": ["$category", "other_operating"]}, "dir": "$direction"},
-                        "amount": {"$sum": {"$ifNull": ["$amount", 0]}}, "count": {"$sum": 1}}}]
+    """2026-11-02 (K19): tampilan "Per Kategori" DITURUNKAN DARI GL — baris buku besar akun kas/bank
+    (`core.fin_statements.cash_account_codes`, sama dengan tampilan Per Akun), kategori dari
+    `source_module` jurnal (routes.rahaza_posting.cash_category). Dulu Σ `rahaza_cash_movements`:
+    transfer/kasbon/payroll/jurnal manual/impor tidak ada, kas awal = saldo GL HARI INI − Σ mutasi
+    (audit No.46: kas awal 1.700.000 padahal riil 0). Kini kas awal/akhir = saldo GL per tanggal.
+    Jurnal `opening_balance` (saldo awal go-live) = kas awal, bukan arus periode (sama dgn Per Akun)."""
+    from core.fin_statements import cash_account_codes
+    from routes.rahaza_posting import cash_accounts_with_gl, cash_category, cash_category_label
+    codes = sorted(await cash_account_codes(db))
     activities = {"operating": {}, "investing": {}, "financing": {}}
-    async for r in db.rahaza_cash_movements.aggregate(pipe):
-        cat = r["_id"]["cat"] or "other_operating"
-        slot = activities[_bucket(cat)].setdefault(cat, {"inflow": 0.0, "outflow": 0.0, "net": 0.0, "count": 0})
-        amt = float(r.get("amount") or 0)
-        if r["_id"]["dir"] == "out":
-            slot["outflow"] += amt
-            slot["net"] -= amt
-        else:
-            slot["inflow"] += amt
-            slot["net"] += amt
-        slot["count"] += int(r.get("count") or 0)
+    if codes:
+        pipe = [{"$match": {"account_code": {"$in": codes}, "date": {"$gte": from_date, "$lte": to_date},
+                            "source_module": {"$ne": "opening_balance"}}},
+                {"$group": {"_id": {"$ifNull": ["$source_module", "other"]}, "debit": {"$sum": "$debit"},
+                            "credit": {"$sum": "$credit"}, "count": {"$sum": 1}}}]
+        async for r in db.rahaza_journal_lines.aggregate(pipe):
+            cat = cash_category(r.get("_id"))
+            slot = activities[_bucket(cat)].setdefault(cat, {"inflow": 0.0, "outflow": 0.0, "net": 0.0, "count": 0,
+                                                              "sources": set()})
+            d, c = float(r.get("debit") or 0), float(r.get("credit") or 0)
+            slot["inflow"] += d
+            slot["outflow"] += c
+            slot["net"] += d - c
+            slot["count"] += int(r.get("count") or 0)
+            slot["sources"].add(r.get("_id") or "other")
 
     def _format_bucket(b):
-        rows = [{"category": cat, "label": cat.replace("_", " ").title(), "inflow": round(s["inflow"], 2),
-                 "outflow": round(s["outflow"], 2), "net": round(s["net"], 2), "count": s["count"]} for cat, s in b.items()]
+        rows = [{"category": cat, "label": cash_category_label(cat), "inflow": round(s["inflow"], 2),
+                 "outflow": round(s["outflow"], 2), "net": round(s["net"], 2), "count": s["count"],
+                 "source_modules": sorted(s["sources"])} for cat, s in b.items()]
         rows.sort(key=lambda r: r["category"])
         return {"items": rows, "total": round(sum(r["net"] for r in rows), 2)}
 
     operating, investing, financing = (_format_bucket(activities[k]) for k in ("operating", "investing", "financing"))
     net_change = round(operating["total"] + investing["total"] + financing["total"], 2)
 
-    # 2) Kas awal & akhir — saldo dari Buku Besar (Iter 122); opening = saldo kini − Σ mutasi sejak from_date
-    from routes.rahaza_posting import cash_accounts_with_gl
-    cash_accs = await cash_accounts_with_gl(db, {})
-    closing_cash_now = sum(float(a.get("balance") or 0) for a in cash_accs)
-    delta_since_from = 0.0
-    async for r in db.rahaza_cash_movements.aggregate([
-        {"$match": {"date": {"$gte": from_date}}},
-        {"$group": {"_id": "$direction", "amount": {"$sum": {"$ifNull": ["$amount", 0]}}}}]):
-        delta_since_from += -float(r["amount"] or 0) if r["_id"] == "out" else float(r["amount"] or 0)
-    opening_cash = closing_cash_now - delta_since_from
+    # Kas awal = saldo GL akun kas sebelum from_date + jurnal saldo awal go-live s.d. to_date (rumus Per Akun)
+    opening_cash = 0.0
+    if codes:
+        async for r in db.rahaza_journal_lines.aggregate([
+            {"$match": {"account_code": {"$in": codes},
+                        "$or": [{"date": {"$lt": from_date}}, {"source_module": "opening_balance", "date": {"$lte": to_date}}]}},
+                {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
+            opening_cash = round(float(r.get("d") or 0) - float(r.get("c") or 0), 2)
     closing_cash = round(opening_cash + net_change, 2)
+    cash_accs = await cash_accounts_with_gl(db, {})
 
     by_account = await compute_cash_flow_by_account(db, from_date, to_date)
 
     return {
-        "meta": {"from": from_date, "to": to_date, "method": "direct"},
+        "meta": {"from": from_date, "to": to_date, "method": "direct", "category_source": "gl_source_module"},
         "activities": {
             "operating": {"label": "Aktivitas Operasi", **operating},
             "investing": {"label": "Aktivitas Investasi", **investing},

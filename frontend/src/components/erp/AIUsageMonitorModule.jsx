@@ -207,6 +207,16 @@ export default function AIUsageMonitorModule({ token }) {
                   <span className="font-semibold">{today.budget_used_pct}% terpakai</span>
                 </div>
                 <Progress value={Math.min(today.budget_used_pct, 100)} className="h-2" />
+                {/* K29 (2026-11-02): batas bulanan dari tab Pengaturan ikut dipantau */}
+                {today.monthly_budget_usd != null && (
+                  <>
+                    <div className="mt-3 mb-1 flex items-center justify-between text-xs" data-testid="ai-usage-monthly">
+                      <span>Budget Bulanan: {fmtUSD(today.month_cost_usd)} / {fmtUSD(today.monthly_budget_usd)}</span>
+                      <span className="font-semibold">{today.monthly_used_pct}% terpakai</span>
+                    </div>
+                    <Progress value={Math.min(today.monthly_used_pct || 0, 100)} className="h-2" />
+                  </>
+                )}
                 {today.ai_available === false && (
                   <div className="mt-3 p-2 rounded bg-slate-500/10 border border-slate-500/30 text-xs flex items-start gap-1.5" data-testid="ai-usage-offline">
                     <Power className="w-4 h-4 mt-0.5" />
@@ -216,7 +226,7 @@ export default function AIUsageMonitorModule({ token }) {
                 {today.health === 'critical' && (
                   <div className="mt-3 p-2 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-600 dark:text-red-400 flex items-start gap-1.5">
                     <AlertTriangle className="w-4 h-4 mt-0.5" />
-                    <span>Budget harian terlampaui. Fitur AI akan menolak panggilan baru. Naikkan batas di tab Pengaturan.</span>
+                    <span>Budget harian/bulanan terlampaui. Fitur AI akan menolak panggilan baru. Naikkan batas di tab Pengaturan.</span>
                   </div>
                 )}
                 {today.recent_error_count > 0 && (
@@ -286,7 +296,7 @@ export default function AIUsageMonitorModule({ token }) {
               <div className="ml-auto flex gap-2 text-xs text-muted-foreground">
                 <span>Daily: {fmtUSD(budgets.daily_usd)}</span>
                 <span>·</span>
-                <span>Monthly: {fmtUSD(budgets.monthly_usd)}</span>
+                <span>Monthly: {budgets.month_cost_usd != null ? `${fmtUSD(budgets.month_cost_usd)} / ` : ''}{fmtUSD(budgets.monthly_usd)}</span>
               </div>
             )}
           </GlassCard>
@@ -478,7 +488,7 @@ export default function AIUsageMonitorModule({ token }) {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-2">executive = analisis berat (Opus), standard = umum (Sonnet), light = ringan/murah (Haiku).</p>
+                <p className="text-xs text-muted-foreground mt-2">standard = umum (Sonnet), light = klasifikasi/asisten (Sonnet, effort rendah). Opus (executive) dipakai KHUSUS narasi Laporan Eksekutif dan tidak bisa dijadikan default.</p>
               </GlassCard>
 
               {/* Feature toggles */}

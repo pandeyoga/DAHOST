@@ -8,19 +8,22 @@ const RahazaPayrollProfilesModule  = lazyRetry(() => import('../RahazaPayrollPro
 const RahazaPayrollAllowancesModule = lazyRetry(() => import('../RahazaPayrollAllowancesModule'));
 const RahazaSalaryAdjustmentModule = lazyRetry(() => import('../RahazaSalaryAdjustmentModule'));
 const RahazaPayrollRunModule       = lazyRetry(() => import('../RahazaPayrollRunModule'));
+// 2026-11-02 (K22/K24/K25): SATU layar untuk seluruh rahaza_payroll_settings (API sudah ada, dulu tanpa UI).
+const RahazaPayrollSettingsModule  = lazyRetry(() => import('../RahazaPayrollSettingsModule'));
 
 export default function HRPayrollHub(props) {
   return (
     <HubTabs
       hubId="hr-payroll-hub"
       title="Penggajian"
-      subtitle="Satu pintu payroll: Dashboard, Profil Gaji, Tunjangan, Penyesuaian, Proses Gaji."
+      subtitle="Satu pintu payroll: Dashboard, Profil Gaji, Tunjangan, Penyesuaian, Proses Gaji, Pengaturan."
       tabs={[
         { key: 'dashboard', label: 'Dashboard', Component: PayrollDashboardModule },
         { key: 'profiles', label: 'Profil Gaji', Component: RahazaPayrollProfilesModule },
         { key: 'allowances', label: 'Tunjangan', Component: RahazaPayrollAllowancesModule },
         { key: 'adjustments', label: 'Penyesuaian', Component: RahazaSalaryAdjustmentModule },
         { key: 'run', label: 'Proses Gaji', Component: RahazaPayrollRunModule },
+        { key: 'settings', label: 'Pengaturan Payroll', Component: RahazaPayrollSettingsModule },
       ]}
       {...props}
     />

@@ -65,10 +65,9 @@ const EMPTY_FORM = {
   catalog_item_id: '', sku: '',
   account_id: '', account_name: '',
   date: '', order_id: '', platform: 'shopee', product: '', price: 0,
-  // W4 (sesi #29) — KONDISI & JUMLAH barang yang kembali. Dua kolom inilah yang
-  // membuat retur langsung menggerakkan stok gudang tanpa menebak:
-  //   Baik  → masuk Area Produk Jadi (ikut stok jual)
-  //   Rusak → masuk Area Karantina (TIDAK dijual)
+  // W4 (sesi #29) — KONDISI & JUMLAH barang yang DILAPORKAN kembali.
+  // 2026-11-02 (K1) — keduanya hanya PETUNJUK untuk gudang: stok baru bergerak saat
+  // gudang menerima paket (qty aktual), memeriksa, lalu memutuskan.
   item_condition: 'Baik', qty: 1,
   reason: 'ukuran_salah', reason_detail: '', courier: 'jnt', refund_type: 'full_refund', notes: '',
   // 2026-11-02 (No.14a) — nominal refund AKTUAL dari platform (dulu parsial dipatok 70%).
@@ -250,14 +249,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       } else {
         const res = await axios.post(`${API}/api/marketing/returns`, payload, { headers: authH });
         // W4 — beri tahu APA YANG TERJADI PADA STOK, bukan cuma "tersimpan".
+        // 2026-11-02 (K1) — stok TIDAK lagi bertambah saat retur dibuat.
         const wh = res?.data?.warehouse || {};
         const desc = wh.wh_return_code
-          ? `Retur tersimpan. Retur fisik ${wh.wh_return_code} otomatis dibuat di Gudang`
-            + (wh.restocked
-              ? ` · ${wh.stock_effect === 'sellable'
-                  ? `stok jual bertambah (${wh.location})`
-                  : `barang ditahan di karantina (${wh.location})`}`
-              : ' · stok BELUM bertambah (perlu dipilih produknya di Gudang)')
+          ? `Retur tersimpan. Retur fisik ${wh.wh_return_code} dibuat di Gudang (menunggu paket) · `
+            + 'stok & omzet setelah retur berubah setelah Gudang menerima dan memutuskan.'
           : 'Retur tersimpan (pekerjaan gudang belum terbuat — cek menu Gudang › Retur Fisik)';
         toast({ title: 'Berhasil', description: desc });
       }
@@ -373,7 +369,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           : `Retur fisik dibuat di Gudang: ${code}.`)
           + (restocked
             ? ` Stok sudah diperbarui (${effect === 'sellable' ? 'masuk stok jual' : 'ditahan di karantina'}).`
-            : ` ${res?.data?.message || 'Stok belum bertambah — buka menu Gudang › Retur Fisik.'}`),
+            : ' Menunggu Gudang menerima paket & memutuskan (stok belum bergerak).'),
       });
       // refresh list & detail
       const refreshed = await axios.get(`${API}/api/marketing/returns/${id}`, { headers: authH });
@@ -731,23 +727,23 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                 })}
                 testId="return-item-select" />
             </div>
-            {/* ── W4 (sesi #29) — KONDISI & JUMLAH BARANG YANG KEMBALI ─────────
-                Retur yang dibuat di sini LANGSUNG membuat pekerjaan Retur Fisik di
-                Gudang dan langsung menggerakkan stok. Kondisi menentukan lokasinya:
-                Baik → stok jual, Rusak → karantina (tidak boleh dijual). */}
+            {/* ── KONDISI & JUMLAH BARANG YANG DILAPORKAN KEMBALI ──────────────
+                2026-11-02 (K1) — retur di sini membuat pekerjaan Retur Fisik PENDING di
+                Gudang. Gudang mengisi qty AKTUAL & kondisi, lalu memutuskan:
+                Terima → stok jual · Rusak → karantina · Tolak → kembali ke pembeli · Dibuang. */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Kondisi Barang *</Label>
                 <Select value={form.item_condition || 'Baik'} onValueChange={v => setForm({ ...form, item_condition: v })}>
                   <SelectTrigger data-testid="return-condition-select"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Baik">Baik — masuk stok jual</SelectItem>
-                    <SelectItem value="Rusak">Rusak — ditahan di karantina</SelectItem>
+                    <SelectItem value="Baik">Baik (laporan pembeli)</SelectItem>
+                    <SelectItem value="Rusak">Rusak (laporan pembeli)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Qty Barang Kembali *</Label>
+                <Label>Qty Diajukan Kembali *</Label>
                 <Input type="number" min={1} value={form.qty || 1}
                   onChange={e => setForm({ ...form, qty: Math.max(1, parseInt(e.target.value || '1', 10)) })}
                   data-testid="return-qty-input" />
@@ -756,9 +752,10 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-3 py-2 text-xs text-sky-900 dark:text-sky-200 flex items-start gap-2">
               <Warehouse size={14} className="mt-0.5 shrink-0" />
               <span>
-                Setelah disimpan, <strong>Retur Fisik di Gudang dibuat otomatis</strong> dan stok
-                langsung disesuaikan: kondisi <strong>Baik</strong> masuk Area Produk Jadi (ikut stok jual),
-                kondisi <strong>Rusak</strong> masuk Area Karantina (tidak dijual).
+                Setelah disimpan, <strong>Retur Fisik di Gudang dibuat otomatis (menunggu paket)</strong>.
+                Stok <strong>belum</strong> bergerak: Gudang menerima paket &amp; mengisi qty aktual, memeriksa
+                kondisinya, lalu memutuskan (Terima → stok jual, Rusak → karantina, Tolak → dikembalikan ke
+                pembeli, Dibuang). Omzet setelah retur di rekap juga baru berkurang setelah keputusan itu.
               </span>
             </div>
             <div className="space-y-2">
@@ -821,7 +818,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                           : `+${showDetail.wh_restock_qty || 0} karantina (${showDetail.wh_restock_location_code || 'ZNA-KARANTINA'})`}
                       </Badge>
                     ) : (
-                      <Badge variant="outline">belum masuk stok</Badge>
+                      <Badge variant="outline">
+                        {showDetail.wh_return_status === 'Resolved'
+                          ? `diputuskan: ${showDetail.wh_action_taken || '-'}`
+                          : `menunggu keputusan gudang (${showDetail.wh_return_status || 'Pending'})`}
+                      </Badge>
                     )}
                     {showDetail.wh_link_status && showDetail.wh_link_status !== 'linked' && (
                       <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">{showDetail.wh_link_reason}</p>
@@ -844,7 +845,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                     <div className="text-amber-900 dark:text-amber-200">
                       <strong className="block mb-0.5">Barang belum diterima Gudang</strong>
                       <span className="text-xs">
-                        Retur disetujui {Math.floor(hours)} jam lalu, tapi belum ada entry Retur Fisik di Gudang. Stok FG tidak akan otomatis bertambah. Klik <em>Buat Retur Fisik di Gudang</em> untuk melanjutkan.
+                        Retur disetujui {Math.floor(hours)} jam lalu, tapi belum ada entry Retur Fisik di Gudang. Stok FG hanya bertambah setelah Gudang menerima &amp; memutuskan. Klik <em>Kirim ke Gudang</em> untuk melanjutkan.
                       </span>
                     </div>
                   </div>
@@ -866,7 +867,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                   {actionLoading === showDetail.id
                     ? <Loader2 className="animate-spin mr-1" size={14} />
                     : <Warehouse size={14} className="mr-1" />}
-                  Kirim ke Gudang &amp; Masukkan Stok
+                  Kirim ke Gudang (menunggu paket)
                 </Button>
               )}
 

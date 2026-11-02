@@ -138,11 +138,11 @@ function DynamicPricingTab({ authH }) {
         fetchSuggestions();
       }
     } catch (e) {
-      // 2026-11-02: Apply belum tersambung ke harga katalog → server menjawab 409 dengan
-      // penjelasan (status usulan TIDAK diubah menjadi "diterapkan").
+      // K28 (2026-11-02): Apply menulis harga katalog sungguhan; 409 = produk belum
+      // terpetakan ke SKU/item katalog, guardrail/margin terlampaui (status tidak diubah).
       const notConnected = action === 'apply' && e.response?.status === 409;
       toast({
-        title: notConnected ? 'Belum bisa diterapkan otomatis' : 'Gagal',
+        title: notConnected ? 'Harga katalog tidak diubah' : 'Gagal',
         description: e.response?.data?.detail,
         variant: notConnected ? undefined : 'destructive',
       });
@@ -399,8 +399,8 @@ function DynamicPricingTab({ authH }) {
                 <Select value={draft.mode || 'suggest_only'} onValueChange={v => setDraft(d => ({ ...d, mode: v }))}>
                   <SelectTrigger className="mt-1 h-9"><SelectValue /></SelectTrigger>
                   <SelectContent>
+                    {/* K28 (2026-11-02): harga dinamis WAJIB disetujui — opsi Auto Apply dicabut. */}
                     <SelectItem value="suggest_only">Suggest Only (wajib approval manual)</SelectItem>
-                    <SelectItem value="auto_apply">Auto Apply (terapkan otomatis setelah approved)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

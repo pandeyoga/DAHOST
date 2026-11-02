@@ -87,56 +87,67 @@ def _calc_nbv(asset: dict) -> float:
     )
 
 
-async def _create_finance_journal(db, user_id: str, user_name: str, date_str: str,
-                                   memo: str, lines: list,
-                                   source_module: str = "asset_management",
-                                   source_ref: Optional[str] = None) -> Optional[str]:
-    """Create a draft journal entry in rahaza_journal_entries. Returns je_id (or None on failure)."""
-    try:
-        year_prefix = date_str[:7].replace("-", "")
-        # RC-5 fix: atomic race-safe numbering (was count_documents()+1 -> dup/E11000 under concurrency)
-        from utils.counters import gen_prefixed_number
-        je_number = await gen_prefixed_number(
-            db, "rahaza_journal_entries", "je_number", f"JE-{year_prefix}-", 5)
-        je_id = _uid()
-        total_debit = sum(float(ln.get("debit", 0)) for ln in lines)
-        total_credit = sum(float(ln.get("credit", 0)) for ln in lines)
-        doc = {
-            "id": je_id,
-            "je_number": je_number,
-            "date": date_str,
-            "memo": memo,
-            "source_module": source_module,
-            "source_ref": source_ref,
-            "status": "draft",
-            "total_debit": total_debit,
-            "total_credit": total_credit,
-            "created_at": _now(),
-            "updated_at": _now(),
-            "created_by": user_id,
-            "created_by_name": user_name,
-            "posted_at": None,
-            "posted_by": None,
-            "voided_at": None,
-            "voided_by": None,
-            "lines": [
-                {
-                    "line_id": _uid(),
-                    "account_code": ln.get("account_code", ""),
-                    "account_name": ln.get("account_name", ""),
-                    "account_type": ln.get("account_type", "asset"),
-                    "debit": float(ln.get("debit", 0)),
-                    "credit": float(ln.get("credit", 0)),
-                    "description": ln.get("description", ""),
-                    "cost_center_id": None,
-                } for ln in lines
-            ],
-        }
-        await db.rahaza_journal_entries.insert_one(doc)
-        return je_id
-    except Exception as e:
-        logger.warning(f"[AssetMgmt] Journal creation failed: {e}")
-        return None
+# ─── K18 (2026-11-02): Portal Aset = TAMPILAN OPERASIONAL registri Keuangan ──────
+# Keputusan owner: satu registri induk aset tetap = `rahaza_fixed_assets` (Keuangan › Aset Tetap).
+# Portal Aset (`dewi_assets`) mencatat lokasi, pemegang, perawatan, peminjaman, dan MENAUT id aset
+# Keuangan (`fixed_asset_id`). SEMUA jurnal dari Portal Aset dimatikan — dulu pembelian membuat jurnal
+# draft Dr 1-2500 / Cr 1-1201 (selalu dianggap tunai BCA) dan penyusutan memakai akun hantu 6200/1590
+# yang gagal E11000 diam-diam. Nilai buku, penyusutan, dan jurnal pelepasan hanya dari registri Keuangan.
+DEPRECIATION_MOVED_MSG = ("Penyusutan hanya dari registri Keuangan › Aset Tetap (keputusan owner K18). "
+                          "Portal Aset tidak lagi membuat jurnal; tautkan aset ini ke aset Keuangan untuk melihat "
+                          "nilai buku & jadwal penyusutannya.")
+
+
+async def load_finance_assets(db, ids) -> dict:
+    """{fixed_asset_id: ringkasan nilai dari registri Keuangan} (harga, akumulasi, nilai buku, status)."""
+    ids = [i for i in set(ids or []) if i]
+    if not ids:
+        return {}
+    from routes.rahaza_fixed_assets import _posted_depr_by_asset, accumulated_of
+    fas = await db.rahaza_fixed_assets.find({"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids) + 5)
+    posted = await _posted_depr_by_asset(db, [f["id"] for f in fas], date.today().strftime("%Y-%m"))
+    out = {}
+    for f in fas:
+        acc = accumulated_of(f, posted.get(f["id"], 0))
+        cost = float(f.get("purchase_cost") or 0)
+        out[f["id"]] = {"id": f["id"], "code": f.get("code"), "name": f.get("name"), "category": f.get("category"),
+                        "status": f.get("status"), "purchase_date": f.get("purchase_date"),
+                        "purchase_cost": cost, "accumulated_depreciation": acc,
+                        "book_value": round(cost - acc, 2), "acquisition_type": f.get("acquisition_type")}
+    return out
+
+
+def apply_finance_overlay(asset: dict, fin: Optional[dict]) -> dict:
+    """Nilai keuangan aset tertaut DIAMBIL dari registri Keuangan (bukan angka Portal Aset)."""
+    if not asset:
+        return asset
+    if fin:
+        asset["finance_asset"] = fin
+        asset["purchase_cost"] = fin["purchase_cost"]
+        asset["accumulated_depreciation"] = fin["accumulated_depreciation"]
+        asset["nbv"] = fin["book_value"]
+        asset["value_source"] = "finance_registry"
+    else:
+        asset["finance_asset"] = None
+        asset["value_source"] = "unlinked" if not asset.get("fixed_asset_id") else "finance_missing"
+    return asset
+
+
+async def validate_finance_link(db, fixed_asset_id: str, own_asset_id: Optional[str] = None) -> dict:
+    """Aset Keuangan yang akan ditaut: wajib ada, belum dilepas, dan belum ditaut aset Portal Aset lain."""
+    from fastapi import HTTPException
+    fa = await db.rahaza_fixed_assets.find_one({"id": fixed_asset_id}, {"_id": 0})
+    if not fa:
+        raise HTTPException(400, "Aset Keuangan (registri Aset Tetap) tidak ditemukan.")
+    if fa.get("status") == "disposed":
+        raise HTTPException(400, f"Aset Keuangan {fa.get('code')} sudah dilepas.")
+    q = {"fixed_asset_id": fixed_asset_id}
+    if own_asset_id:
+        q["id"] = {"$ne": own_asset_id}
+    other = await db.dewi_assets.find_one(q, {"_id": 0, "asset_number": 1})
+    if other:
+        raise HTTPException(409, f"Aset Keuangan {fa.get('code')} sudah ditaut ke {other.get('asset_number')}.")
+    return fa
 
 
 # ─── Utilization-report date helpers ──────────────────────────────────────

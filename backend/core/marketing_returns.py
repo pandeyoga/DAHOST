@@ -66,8 +66,9 @@ DEFAULT_RETURN_THRESHOLDS = {
 LABEL_GROSS = ("Omzet BRUTO — definisi lama yang dipakai target, capaian, dan "
                "ROAS: semua pesanan KECUALI yang dibatalkan (pesanan retur IKUT).")
 LABEL_NET = ("Omzet SETELAH RETUR — bruto dikurangi nilai pesanan berstatus "
-             "retur DAN nominal refund retur yang dicatat di modul Retur (per "
-             "tanggal retur). Angka analisis; target & capaian TIDAK memakainya "
+             "retur DAN nominal refund retur modul Retur yang SUDAH DIPUTUSKAN "
+             "GUDANG (per tanggal retur; retur yang masih menunggu paket belum "
+             "dihitung). Angka analisis; target & capaian TIDAK memakainya "
              "supaya angka rapat yang sudah beredar tidak berubah arti.")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -86,6 +87,19 @@ LABEL_NET = ("Omzet SETELAH RETUR — bruto dikurangi nilai pesanan berstatus "
 #     (sudah keluar dari bruto) TIDAK dihitung lagi.
 MODULE_RETURN_EXCLUDED_STATUSES: Tuple[str, ...] = ("rejected", "cancelled")
 ORDER_STATUSES_ALREADY_REFLECTED: Tuple[str, ...] = ("returned", "cancelled")
+
+# ── 2026-11-02 (K36) — retur mengurangi omzet rekap HANYA SETELAH DIPUTUSKAN GUDANG ──
+# Keputusan owner K36 (bersama K1): retur yang baru DIAJUKAN (pekerjaan Retur Fisik
+# Pending/Received/Inspected) belum mengurangi apa pun. Yang dihitung hanya retur
+# yang keputusan gudangnya berlaku (`wh_return_status = Resolved`, dibalikkan ke
+# retur Marketing oleh `core.returns_bridge._stamp_marketing`). Keputusan "Ditolak —
+# Dikembalikan ke Pembeli" = barang kembali ke pembeli ⇒ penjualan tetap berdiri ⇒
+# TIDAK dihitung. Keputusan yang DIBALIK (`Reversed`) / dibatalkan juga tidak.
+WH_DECIDED_STATUS = "Resolved"
+# Harus sama persis dengan `core.returns_bridge.ACTION_REJECT_TO_BUYER` (dijaga uji).
+WH_NOT_COUNTED_ACTIONS: Tuple[str, ...] = ("Ditolak — Dikembalikan ke Pembeli",)
+# Field retur Marketing yang dibutuhkan pembaca rekap (proyeksi kueri).
+DECISION_FIELDS: Tuple[str, ...] = ("wh_return_status", "wh_action_taken")
 
 
 def _r(v: Any, nd: int = 2) -> float:
@@ -130,10 +144,20 @@ def _key(v: Any) -> str:
     return str(v or "").strip()
 
 
+def is_warehouse_decided(ret: dict) -> bool:
+    """2026-11-02 (K36) — sudah ada keputusan gudang yang berlaku dan menerima barangnya?"""
+    r = ret or {}
+    if str(r.get("wh_return_status") or "").strip() != WH_DECIDED_STATUS:
+        return False
+    return str(r.get("wh_action_taken") or "").strip() not in WH_NOT_COUNTED_ACTIONS
+
+
 def is_module_return_counted(ret: dict) -> bool:
-    """Retur modul yang ikut mengurangi omzet: semua status KECUALI ditolak/batal."""
+    """Retur modul yang ikut mengurangi omzet: tidak ditolak/batal di Marketing DAN
+    sudah diputuskan gudang (K36, 2026-11-02 — sebelumnya: semua status kecuali
+    ditolak/batal, termasuk yang masih menunggu paket)."""
     return (str((ret or {}).get("status") or "").strip().lower()
-            not in MODULE_RETURN_EXCLUDED_STATUSES)
+            not in MODULE_RETURN_EXCLUDED_STATUSES) and is_warehouse_decided(ret)
 
 
 def module_return_value(ret: dict) -> float:
@@ -184,6 +208,40 @@ def split_module_returns(returns: Iterable[dict]) -> Dict[str, Any]:
         "module_returns_value": _r(sum(module_return_value(r) for r in rows)),
         "module_returns_units": sum(module_return_units(r) for r in rows),
     }
+
+
+async def refresh_rekap_for_docs(db, *docs, actor: str = "system") -> dict:
+    """Hitung ulang rekap harian (toko, TANGGAL RETUR) untuk dokumen retur ini.
+
+    Satu pintu untuk modul Retur Marketing, keputusan Retur Fisik gudang (K36), dan
+    impor "Retur & Refund" (2026-11-02). Gagal hitung ulang dicatat pemanggil."""
+    pairs = set()
+    for d in docs:
+        aid = (d or {}).get("account_id")
+        dt = str((d or {}).get("date") or "")[:10]
+        if aid and len(dt) == 10:
+            pairs.add((aid, dt))
+    if not pairs:
+        return {"pairs": 0}
+    res = await _rollup.recompute_pairs(db, pairs, actor=actor)
+    return {"pairs": len(pairs), **{k: v for k, v in (res or {}).items() if k != "details"}}
+
+
+async def refresh_rekap_for_return_ids(db, return_ids: Iterable[str], *,
+                                       actor: str = "system") -> dict:
+    """Seperti :func:`refresh_rekap_for_docs`, tetapi dari id retur Marketing.
+    Tidak pernah melempar — kegagalan rekap tidak boleh membatalkan keputusan gudang."""
+    import logging
+    ids = sorted({i for i in (return_ids or []) if i})
+    if not ids:
+        return {"pairs": 0}
+    try:
+        docs = await db.marketing_returns.find(
+            {"id": {"$in": ids}}, {"_id": 0, "account_id": 1, "date": 1}).to_list(5000)
+        return await refresh_rekap_for_docs(db, *docs, actor=actor)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).error("[retur] rekap harian gagal dihitung ulang (%s): %s", ids, e)
+        return {"pairs": 0, "error": str(e)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -657,6 +657,9 @@ async def create_employee(request: Request):
         "tax_ptkp": body.get("tax_ptkp") or "TK/0",               # TK/0 | K/0 | K/1 | K/2 | K/3
         "bpjs_kesehatan_number": body.get("bpjs_kesehatan_number") or "",
         "bpjs_ketenagakerjaan_number": body.get("bpjs_ketenagakerjaan_number") or "",
+        # 2026-11-02 (K23): kepesertaan BPJS per program (centang Kes/JHT/JP/JKK-JKM). Tidak dikirim →
+        # field tidak ditulis dan payroll menurunkannya dari nomor kartu (resolve_bpjs_programs).
+        **_bpjs_programs_field(body),
         # ─── Bank
         "bank_name": body.get("bank_name") or "",                 # BCA | BRI | Mandiri | BNI | BSI | dll
         "bank_account_number": body.get("bank_account_number") or "",
@@ -674,6 +677,16 @@ async def create_employee(request: Request):
     return serialize_doc(doc)
 
 
+def _bpjs_programs_field(body: dict) -> dict:
+    """{'bpjs_programs': {...}} bila dikirim, {} bila tidak (2026-11-02, K23)."""
+    from routes.rahaza_payroll_tax import normalize_bpjs_programs
+    try:
+        progs = normalize_bpjs_programs(body.get("bpjs_programs"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"bpjs_programs": progs} if progs is not None else {}
+
+
 @router.put("/employees/{eid}")
 async def update_employee(eid: str, request: Request):
     user = await _require_admin(request)
@@ -685,7 +698,12 @@ async def update_employee(eid: str, request: Request):
     body["updated_at"] = _now()
     if "employee_code" in body:
         body["employee_code"] = body["employee_code"].strip().upper()
-    
+    if "bpjs_programs" in body:  # 2026-11-02 (K23): simpan hanya bentuk bersih {kes, jht, jp, jkk_jkm}
+        if body["bpjs_programs"] is None:
+            body.pop("bpjs_programs")
+        else:
+            body.update(_bpjs_programs_field(body))
+
     # Validate manager_id (Atasan) if being updated (Sprint 42)
     if "manager_id" in body:
         new_manager_id = body.get("manager_id")

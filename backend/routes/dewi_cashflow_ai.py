@@ -12,7 +12,7 @@ from auth import require_auth, serialize_doc
 from datetime import date, timedelta
 import logging
 
-from services.ai import AIError, ai_http_error, ai_text, require_ai
+from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, require_ai
 
 logger = logging.getLogger(__name__)
 
@@ -142,11 +142,17 @@ async def _build_context(db) -> dict:
     }
 
 
-def _build_prompt(ctx: dict) -> str:
+def _build_prompt(ctx: dict, ps: Pseudonymizer | None = None) -> str:
+    """K27 (2026-11-02): nama pelanggan/vendor → kode samaran PLG-xxx / VND-xxx.
+
+    Pemetaan balik dilakukan di server (`ps.restore`) pada jawaban AI.
+    """
+    ps = ps or Pseudonymizer()
     ar = ctx['ar_buckets']
     ap = ctx['ap_buckets']
-    upar = ctx['upcoming_ar']
-    upap = ctx['upcoming_ap']
+    upar = [{**i, '_ref': ps.code(i.get('customer_name') or i.get('buyer_name') or '?', 'pelanggan')}
+            for i in ctx['upcoming_ar']]
+    upap = [{**i, '_ref': ps.code(i.get('vendor_name') or '?', 'vendor')} for i in ctx['upcoming_ap']]
     prompt = f"""Anda adalah CFO digital untuk CV. Dewi Aditya, perusahaan garmen di Indonesia.
 Tanggal hari ini: {ctx['today']}.
 
@@ -172,10 +178,12 @@ Arus Kas 60 hari terakhir:
 - Net 60 hari: {_fmt(ctx['cash_in_60'] - ctx['cash_out_60'])}
 
 Tagihan AR yang jatuh tempo 30 hari ke depan:
-{chr(10).join(f"- {i.get('customer_name') or i.get('buyer_name','?')}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upar) or '- Tidak ada'}
+{chr(10).join(f"- {i['_ref']}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upar) or '- Tidak ada'}
 
 Kewajiban AP yang jatuh tempo 30 hari ke depan:
-{chr(10).join(f"- {i.get('vendor_name','?')}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upap) or '- Tidak ada'}
+{chr(10).join(f"- {i['_ref']}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upap) or '- Tidak ada'}
+
+(Nama pelanggan/vendor disamarkan dengan kode PLG-xxx / VND-xxx; pakai kode itu apa adanya.)
 
 Order produksi aktif: {ctx['active_orders']} order
 
@@ -199,26 +207,28 @@ async def ai_cashflow_prediction(request: Request):
     """
     AI Cash Flow Prediction — analisis arus kas 30/60/90 hari ke depan.
     Menggunakan data AR/AP aging + arus kas historis untuk menghasilkan
-    prediksi dan rekomendasi berbasis Claude (tier executive).
+    prediksi dan rekomendasi berbasis Claude (tier standard — K29: Opus khusus
+    Laporan Eksekutif).
     """
     user = await require_auth(request)
     db = get_db()
 
     # 2026-11-02: gerbang tunggal (kunci Anthropic + SDK); pesan ramah, tanpa nama env.
-    await require_ai("cashflow", user_id=user.get("id"), db=db, tier="executive")
+    await require_ai("cashflow", user_id=user.get("id"), db=db, tier="standard")
 
     # ── Build context ──
     ctx = await _build_context(db)
 
-    # ── Call LLM ──
+    # ── Call LLM ── (K27: nama disamarkan, dipetakan balik di server)
+    ps = Pseudonymizer()
     try:
-        analysis = await ai_text(
+        analysis = ps.restore(await ai_text(
             "cashflow",
             "Kamu adalah CFO digital yang ahli keuangan garmen Indonesia.",
-            _build_prompt(ctx),
-            tier="executive",
+            _build_prompt(ctx, ps),
+            tier="standard",
             user_id=user.get("id"),
-        )
+        ))
     except AIError as e:
         raise ai_http_error(e)
 

@@ -11,7 +11,15 @@ import { PageHeader, StatusBadge } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
-import { todayWIB, wibDateParts, usePaymentCashAccounts } from './SdmCashAccountSelect';
+import CashAccountSelect, { todayWIB, wibDateParts, usePaymentCashAccounts } from './SdmCashAccountSelect';
+
+// 2026-11-02 (K22): BPJS dibayar per LEMBAGA (karyawan + iuran perusahaan yang sudah dijurnal).
+const BPJS_AGENCIES = [['kes', 'BPJS Kesehatan'], ['tk', 'BPJS Ketenagakerjaan']];
+const bpjsDue = (run, agency) => {
+  const b = (run.bpjs_breakdown || {})[agency];
+  return b ? Number(b.employee || 0) + Number(b.employer || 0) : null;
+};
+const bpjsPaid = (run, agency) => (run.bpjs_payments || {})[agency]?.status === 'paid';
 
 const fmtIDR = formatRupiah;
 
@@ -113,6 +121,12 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     notes: '',
   });
   const [paying, setPaying] = useState(false);
+  // 2026-11-02 (K22): dialog Bayar BPJS/PPh21 — rekening + tanggal (dulu window.prompt kode akun & tanggal hari ini).
+  const [oblDialog, setOblDialog] = useState(null);   // { run, type: 'bpjs'|'pph21', agency }
+  const [oblForm, setOblForm] = useState({ payment_date: todayWIB(), cash_account_id: '' });
+  // 2026-11-02 (K34): dialog pembatalan run final (ajukan HR → setujui Keuangan, atau owner satu langkah).
+  const [cancelDialog, setCancelDialog] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
   const [tick, setTick] = useState(0);
   const { accounts: cashAccounts, loaded: cashLoaded } = usePaymentCashAccounts(token);
   // Rekening bawaan = BCA (1-1201) bila ada, selain itu rekening pertama yang aktif.
@@ -205,24 +219,56 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     } catch (e) { toast.error(e.message); }
   };
 
-  const payObligation = async (run, type) => {
-    const label = type === 'bpjs' ? 'BPJS' : 'PPh21 ke DJP';
-    const bankCode = prompt(`Kode akun bank untuk bayar ${label}:`, '1-1201');
-    if (!bankCode) return;
+  const openObligation = (run, type, agency = '') => {
+    const bca = cashAccounts.find(a => a.gl_account_code === '1-1201') || cashAccounts[0];
+    setOblForm({ payment_date: todayWIB(), cash_account_id: bca?.id || '' });
+    setOblDialog({ run, type, agency });
+  };
+
+  const payObligation = async () => {
+    if (!oblDialog) return;
+    const { run, type, agency } = oblDialog;
+    const label = type === 'bpjs' ? (BPJS_AGENCIES.find(([k]) => k === agency)?.[1] || 'BPJS') : 'PPh21 ke DJP';
+    setPaying(true);
     try {
       const r = await fetch(`/api/rahaza/payroll-runs/${run.id}/pay-${type}`, {
         method: 'POST', headers,
-        body: JSON.stringify({
-          payment_date: todayWIB(),
-          bank_account_code: bankCode,
-          notes: `Bayar ${label} ${run.run_number}`,
-        }),
+        body: JSON.stringify({ ...oblForm, agency: type === 'bpjs' ? agency : undefined, notes: `Bayar ${label} ${run.run_number}` }),
       });
+      if (!r.ok) throw new Error(await errDetail(r, `HTTP ${r.status}`));
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-      toast.success(`${label} berhasil dibayar! JE: ${d._payment_result?.je_number || d[`${type}_payment_je`]}`);
+      toast.success(`${label} dibayar. JE: ${d._payment_result?.je_number || ''}`);
+      setOblDialog(null);
       refresh();
     } catch (e) { toast.error(e.message); }
+    finally { setPaying(false); }
+  };
+
+  const voidObligation = async (run, type, agency = '') => {
+    if (!window.confirm(`Batalkan pembayaran ${type === 'bpjs' ? agency.toUpperCase() : 'PPh21'} ${run.run_number}? Jurnal pembayarannya di-void.`)) return;
+    const r = await fetch(`/api/rahaza/payroll-runs/${run.id}/void-obligation-payment`, {
+      method: 'POST', headers, body: JSON.stringify({ type, agency, reason: 'Void oleh pengguna' }),
+    });
+    if (r.ok) { toast.success('Pembayaran dibatalkan'); refresh(); if (viewing?.run?.id === run.id) openRun(run.id); }
+    else toast.error(await errDetail(r, `HTTP ${r.status}`));
+  };
+
+  const submitCancel = async (action) => {
+    if (!cancelDialog) return;
+    setPaying(true);
+    try {
+      const r = await fetch(`/api/rahaza/payroll-runs/${cancelDialog.id}/cancel`, {
+        method: 'POST', headers, body: JSON.stringify({ action, reason: cancelReason }),
+      });
+      if (!r.ok) throw new Error(await errDetail(r, `HTTP ${r.status}`));
+      const d = await r.json();
+      toast.success(d.status === 'cancelled'
+        ? `Run ${d.run_number} dibatalkan — ${(d.cancel_reversal_jes || []).length} jurnal pembalik dibuat`
+        : (action === 'reject' ? 'Pengajuan pembatalan ditolak' : 'Pengajuan pembatalan dikirim ke Keuangan'));
+      setCancelDialog(null);
+      refresh();
+    } catch (e) { toast.error(e.message); }
+    finally { setPaying(false); }
   };
 
   const delRun = async (id) => {
@@ -411,26 +457,42 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
                           <X className="w-3 h-3 inline" />
                         </button>
                       )}
-                      {/* BPJS + PPh21 payment buttons */}
+                      {/* BPJS (per lembaga) + PPh21 payment buttons — 2026-11-02 (K22) */}
                       {r.status === 'finalized' && r.gl_je_number && (
                         <>
-                          {r.bpjs_payment_status !== 'paid' && (
-                            <button
-                              onClick={() => payObligation(r, 'bpjs')}
-                              className="text-xs text-teal-600 dark:text-teal-300 hover:underline ml-1"
-                              title="Bayar BPJS"
-                              data-testid={`bpjs-btn-${r.run_number}`}
-                            >B</button>
-                          )}
+                          {r.bpjs_payment_status !== 'paid' && BPJS_AGENCIES.map(([ag, lbl]) => (
+                            !bpjsPaid(r, ag) && bpjsDue(r, ag) !== 0 && (
+                              <button
+                                key={ag}
+                                onClick={() => openObligation(r, 'bpjs', ag)}
+                                className="text-xs text-teal-600 dark:text-teal-300 hover:underline ml-1"
+                                title={`Bayar ${lbl}`}
+                                data-testid={`bpjs-${ag}-btn-${r.run_number}`}
+                              >{ag === 'kes' ? 'BK' : 'BT'}</button>
+                            )
+                          ))}
                           {r.pph21_payment_status !== 'paid' && (
                             <button
-                              onClick={() => payObligation(r, 'pph21')}
+                              onClick={() => openObligation(r, 'pph21')}
                               className="text-xs text-purple-600 dark:text-purple-300 hover:underline ml-1"
                               title="Bayar PPh21 ke DJP"
                               data-testid={`pph21-btn-${r.run_number}`}
                             >P</button>
                           )}
                         </>
+                      )}
+                      {/* 2026-11-02 (K34): batalkan run final (jurnal pembalik) */}
+                      {r.status === 'finalized' && (
+                        <button
+                          onClick={() => { setCancelReason(r.cancel_request?.reason || ''); setCancelDialog(r); }}
+                          className={`text-xs ml-1 hover:underline ${r.cancel_request?.status === 'pending' ? 'text-amber-600 dark:text-amber-300 font-semibold' : 'text-red-600 dark:text-red-300'}`}
+                          title={r.cancel_request?.status === 'pending' ? 'Pengajuan pembatalan menunggu Keuangan' : 'Batalkan run (jurnal pembalik)'}
+                          data-testid={`cancel-run-btn-${r.run_number}`}
+                        ><X className="w-3 h-3 inline" />{r.cancel_request?.status === 'pending' ? '?' : ''}</button>
+                      )}
+                      {(r.warnings || []).length > 0 && (
+                        <span className="ml-1 text-amber-600 dark:text-amber-300" title={(r.warnings || []).map(w => `${w.employee_name}: ${w.message}`).join('\n')}
+                          data-testid={`run-warn-${r.run_number}`}><AlertTriangle className="w-3 h-3 inline" /></span>
                       )}
                     </td>
                   </tr>
@@ -455,8 +517,9 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
           data={viewing}
           token={token}
           onClose={() => setViewing(null)}
-          onRefresh={() => openRun(viewing.run.id)}
+          onRefresh={() => { openRun(viewing.run.id); refresh(); }}
           onDownloadExcel={downloadRunExcel}
+          onVoidObligation={voidObligation}
         />
       )}
 
@@ -530,6 +593,90 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
             >
               {paying ? '💸 Memproses...' : '💸 Bayar Gaji'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Bayar BPJS per lembaga / PPh21 — 2026-11-02 (K22): rekening + tanggal, bukan window.prompt ── */}
+      <Dialog open={!!oblDialog} onOpenChange={o => !o && setOblDialog(null)}>
+        <DialogContent className="max-w-sm" data-testid="obligation-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              {oblDialog?.type === 'bpjs'
+                ? `Bayar ${BPJS_AGENCIES.find(([k]) => k === oblDialog?.agency)?.[1] || 'BPJS'}`
+                : 'Bayar PPh21 ke DJP'} — {oblDialog?.run?.run_number}
+            </DialogTitle>
+          </DialogHeader>
+          {oblDialog?.type === 'bpjs' && (() => {
+            const b = (oblDialog.run.bpjs_breakdown || {})[oblDialog.agency];
+            return b ? (
+              <div className="rounded-lg bg-teal-50 dark:bg-teal-500/10 border border-teal-300 dark:border-teal-500/30 px-3 py-2 text-xs space-y-0.5">
+                <div>Potongan karyawan: <strong>{fmtIDR(b.employee)}</strong></div>
+                <div>Iuran perusahaan (sudah dijurnal): <strong>{fmtIDR(b.employer)}</strong></div>
+                <div className="text-sm">Total dibayar: <strong>{fmtIDR(Number(b.employee || 0) + Number(b.employer || 0))}</strong> · Dr {b.payable_code}</div>
+              </div>
+            ) : <p className="text-xs text-muted-foreground">Run lama: nilai = potongan karyawan lembaga ini (akun hutang BPJS lama).</p>;
+          })()}
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Tanggal Pembayaran</Label>
+              <input type="date" className="mt-1 w-full h-9 rounded border border-border bg-background px-3 text-sm"
+                value={oblForm.payment_date} onChange={e => setOblForm(f => ({ ...f, payment_date: e.target.value }))}
+                data-testid="obligation-date" />
+            </div>
+            <div>
+              <Label className="text-xs">Rekening / Kas</Label>
+              <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} value={oblForm.cash_account_id}
+                onChange={v => setOblForm(f => ({ ...f, cash_account_id: v }))} testId="obligation-account" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOblDialog(null)}>Batal</Button>
+            <Button onClick={payObligation} disabled={paying || !oblForm.cash_account_id || !oblForm.payment_date}
+              data-testid="obligation-confirm">{paying ? 'Memproses…' : 'Bayar'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Batalkan run final — 2026-11-02 (K34) ── */}
+      <Dialog open={!!cancelDialog} onOpenChange={o => !o && setCancelDialog(null)}>
+        <DialogContent className="max-w-md" data-testid="cancel-run-dialog">
+          <DialogHeader>
+            <DialogTitle>Batalkan Run {cancelDialog?.run_number}</DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Semua jurnal run ini (gaji + potongan kasbon) dibalik dengan jurnal pembalik, potongan kasbon dikembalikan,
+              dan status menjadi DIBATALKAN sehingga periode bisa dibuat ulang. Gaji/BPJS/PPh21 yang sudah dibayar harus
+              di-void dulu. Alur: HR mengajukan → Keuangan (orang lain) menyetujui; owner bisa satu langkah.
+            </p>
+          </DialogHeader>
+          {cancelDialog?.cancel_request?.status === 'pending' && (
+            <div className="rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs">
+              Diajukan oleh <strong>{cancelDialog.cancel_request.requested_by_name}</strong>: {cancelDialog.cancel_request.reason}
+            </div>
+          )}
+          <div>
+            <Label className="text-xs">Alasan</Label>
+            <textarea value={cancelReason} onChange={e => setCancelReason(e.target.value)} rows={3}
+              className="mt-1 w-full rounded border border-border bg-background px-3 py-2 text-sm" data-testid="cancel-run-reason" />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setCancelDialog(null)}>Tutup</Button>
+            {cancelDialog?.cancel_request?.status === 'pending' ? (
+              <>
+                <Button variant="outline" onClick={() => submitCancel('reject')} disabled={paying} data-testid="cancel-run-reject">Tolak Pengajuan</Button>
+                <Button className="bg-red-600 hover:bg-red-700" onClick={() => submitCancel('approve')} disabled={paying} data-testid="cancel-run-approve">
+                  Setujui & Batalkan Run
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => submitCancel('request')} disabled={paying || !cancelReason.trim()} data-testid="cancel-run-request">
+                  Ajukan (HR)
+                </Button>
+                <Button className="bg-red-600 hover:bg-red-700" onClick={() => submitCancel('approve')} disabled={paying || !cancelReason.trim()}
+                  title="Hanya owner/superadmin (satu langkah)" data-testid="cancel-run-owner">Batalkan Sekarang (owner)</Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -645,7 +792,7 @@ function CreateRunModal({ onClose, onCreate, token, initial }) {
   );
 }
 
-function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel }) {
+function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVoidObligation }) {
   const run = data.run;
   const payslips = data.payslips || [];
   const locked = run.status !== 'draft';
@@ -653,23 +800,28 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel }) {
   const [dlSlipId, setDlSlipId] = useState(null);
   const [dlAllLoading, setDlAllLoading] = useState(false);
 
-  const saveAdjustment = async (slipId, deduction, notes) => {
+  // 2026-11-02 (K34): payload = { earning_adjustment, deduction, deduction_overrides, notes } — alasan wajib.
+  const saveAdjustment = async (slipId, payload) => {
     // FASE 20 — dulu hasil `fetch` TIDAK diperiksa sama sekali, jadi ketika
     // endpoint-nya belum ada (404) UI tetap memanggil `onRefresh()` dan tampak
     // "berhasil" padahal tidak ada yang tersimpan. Sekarang error dimunculkan.
     try {
       const r = await fetch(`/api/rahaza/payroll-runs/${run.id}/payslips/${slipId}/adjust`, {
-        method: 'POST', headers, body: JSON.stringify({ deduction, notes }),
+        method: 'POST', headers, body: JSON.stringify(payload),
       });
       if (!r.ok) {
         let detail = '';
         try { detail = (await r.json()).detail || ''; } catch { /* noop */ }
         throw new Error(detail || `HTTP ${r.status}`);
       }
+      const d = await r.json();
       toast.success('Penyesuaian tersimpan.');
+      if (d.warning) toast.warning(d.warning);
       onRefresh();
+      return true;
     } catch (e) {
       toast.error(`Gagal menyimpan penyesuaian: ${e.message}`);
+      return false;
     }
   };
 
@@ -745,6 +897,42 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel }) {
           <GlassPanel className="px-3 py-2"><div className="text-[10px] uppercase text-muted-foreground">Net</div><div className="text-lg font-bold text-emerald-600 dark:text-emerald-300">{fmtIDR(run.total_net)}</div></GlassPanel>
         </div>
 
+        {/* 2026-11-02 (K24): peringatan lembur bertarif 0 */}
+        {(run.warnings || []).length > 0 && (
+          <div className="mb-4 rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs space-y-1" data-testid="run-warnings">
+            <div className="font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> {run.warnings.length} karyawan punya jam lembur tetapi tarif lembur 0</div>
+            {run.warnings.map(w => <div key={w.employee_id}><strong>{w.employee_name}</strong> — {w.message}</div>)}
+          </div>
+        )}
+
+        {/* 2026-11-02 (K22/K34): status pembayaran BPJS per lembaga & PPh21 (void diperlukan sebelum batal run) */}
+        {run.status !== 'draft' && (
+          <div className="mb-4 flex flex-wrap gap-2 text-xs" data-testid="run-obligations">
+            {run.bpjs_employer_totals && (
+              <span className="px-2 py-1 rounded border border-[var(--glass-border)]">
+                Iuran BPJS perusahaan: {fmtIDR(run.bpjs_employer_totals.total)} {run.bpjs_employer_journal ? '(dijurnal)' : '(tidak dijurnal — saklar mati)'}
+              </span>
+            )}
+            {BPJS_AGENCIES.map(([ag, lbl]) => bpjsPaid(run, ag) && (
+              <span key={ag} className="px-2 py-1 rounded border border-teal-400 text-teal-700 dark:text-teal-300">
+                {lbl} dibayar {run.bpjs_payments[ag].je_number}
+                {run.status === 'finalized' && <button className="ml-1 underline" onClick={() => onVoidObligation(run, 'bpjs', ag)}>void</button>}
+              </span>
+            ))}
+            {run.pph21_payment_status === 'paid' && (
+              <span className="px-2 py-1 rounded border border-purple-400 text-purple-700 dark:text-purple-300">
+                PPh21 dibayar {run.pph21_payment_je}
+                {run.status === 'finalized' && <button className="ml-1 underline" onClick={() => onVoidObligation(run, 'pph21')}>void</button>}
+              </span>
+            )}
+            {run.status === 'cancelled' && (
+              <span className="px-2 py-1 rounded border border-red-400 text-red-700 dark:text-red-300">
+                Dibatalkan {run.cancelled_by_name}: {run.cancel_reason} · pembalik {(run.cancel_reversal_jes || []).map(j => j.reversal).join(', ')}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Payslips table
             FASE 20 — kolom di sini DULU membaca skema payslip LAMA
             (`base_salary`, `transport_allowance`, `meal_allowance`,
@@ -803,7 +991,7 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel }) {
                 </td>
                 {!locked && (
                   <td className="px-3 py-2">
-                    <AdjustCell slipId={s.id} current={s.manual_deduction || 0} notes={s.adjustment_notes || ''} onSave={saveAdjustment} />
+                    <AdjustCell slip={s} onSave={saveAdjustment} />
                   </td>
                 )}
               </tr>
@@ -820,55 +1008,98 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel }) {
   );
 }
 
-function AdjustCell({ slipId, current, notes, onSave }) {
-  const [open, setOpen] = useState(false);
-  const [val, setVal] = useState(current);
-  const [n, setN] = useState(notes);
-  const [busy, setBusy] = useState(false);
+/* 2026-11-02 (K34): penyesuaian slip sebelum finalisasi — tambah/kurangi PENDAPATAN, potongan tambahan,
+   dan KURANGI baris potongan sistem (terlambat/LWOP/kasbon). BPJS & PPh21 tidak diubah manual. Alasan wajib. */
+const NON_EDITABLE = (t) => /^(bpjs|pph21)/.test(String(t || '').toLowerCase());
 
-  // FASE 20 — `setN` sebelumnya tak pernah dipakai: kolom catatan dikirim ke
-  // backend tapi TIDAK BISA diisi user. Karena backend kini benar-benar menyimpan
-  // `adjustment_notes` (dan ikut di export CSV), inputnya dimunculkan.
-  if (!open) return (
-    <button
-      onClick={() => { setVal(current); setN(notes); setOpen(true); }}
-      className="text-xs text-primary hover:underline"
-      title={notes ? `Catatan: ${notes}` : 'Penyesuaian manual'}
-      data-testid={`payslip-adjust-open-${slipId}`}
-    >
-      {Number(current) > 0 ? `Adj: ${Number(current).toLocaleString('id-ID')}` : 'Adj'}
-    </button>
-  );
+function AdjustCell({ slip, onSave }) {
+  const slipId = slip.id;
+  const [open, setOpen] = useState(false);
+  const [earning, setEarning] = useState(0);
+  const [ded, setDed] = useState(0);
+  const [lines, setLines] = useState([]);
+  const [n, setN] = useState('');
+  const [busy, setBusy] = useState(false);
+  const curDed = Number(slip.manual_deduction || 0);
+  const curAdd = Number(slip.manual_addition || 0);
+
+  const start = () => {
+    setEarning(curAdd); setDed(curDed); setN(slip.adjustment_notes || '');
+    setLines((slip.deductions || []).map((d, index) => ({
+      index, label: d.label || d.type, type: d.type, amount: Number(d.amount || 0),
+      original: Number(d.original_amount ?? d.amount ?? 0),
+    })));
+    setOpen(true);
+  };
   const submit = async () => {
     setBusy(true);
-    try { await onSave(slipId, val, n); setOpen(false); } finally { setBusy(false); }
+    try {
+      const overrides = lines.filter(l => !NON_EDITABLE(l.type) && l.amount !== l.original)
+        .map(l => ({ index: l.index, amount: l.amount }));
+      const ok = await onSave(slipId, { earning_adjustment: earning, deduction: ded, deduction_overrides: overrides, notes: n });
+      if (ok) setOpen(false);
+    } finally { setBusy(false); }
   };
+  const summary = [curAdd ? `+${curAdd.toLocaleString('id-ID')}` : '', curDed ? `−${curDed.toLocaleString('id-ID')}` : '']
+    .filter(Boolean).join(' / ');
   return (
-    <div className="flex items-center gap-1">
-      <input
-        type="number" min="0" value={val}
-        onChange={e => setVal(Number(e.target.value))}
-        placeholder="Potongan"
-        className="w-24 h-7 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs font-mono"
-        data-testid={`payslip-adjust-amount-${slipId}`}
-      />
-      <input
-        type="text" value={n}
-        onChange={e => setN(e.target.value)}
-        placeholder="Catatan"
-        className="w-32 h-7 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs"
-        data-testid={`payslip-adjust-notes-${slipId}`}
-      />
-      <button
-        onClick={submit} disabled={busy}
-        className="text-xs px-2 h-7 rounded border border-emerald-400 dark:border-emerald-400/30 bg-emerald-50 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 disabled:opacity-50"
-        data-testid={`payslip-adjust-save-${slipId}`}
-      >{busy ? '…' : '✓'}</button>
-      <button
-        onClick={() => setOpen(false)} disabled={busy}
-        className="text-xs px-2 h-7 rounded border border-[var(--glass-border)] text-muted-foreground disabled:opacity-50"
-        data-testid={`payslip-adjust-cancel-${slipId}`}
-      >✕</button>
-    </div>
+    <>
+      <button onClick={start} className="text-xs text-primary hover:underline"
+        title={slip.adjustment_notes ? `Alasan: ${slip.adjustment_notes}` : 'Penyesuaian pendapatan/potongan'}
+        data-testid={`payslip-adjust-open-${slipId}`}>
+        {summary ? `Adj: ${summary}` : 'Adj'}
+      </button>
+      <Dialog open={open} onOpenChange={o => !o && !busy && setOpen(false)}>
+        <DialogContent className="max-w-md" data-testid={`payslip-adjust-dialog-${slipId}`}>
+          <DialogHeader>
+            <DialogTitle>Penyesuaian slip — {slip.employee_name}</DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Bruto sistem {fmtIDR(slip.gross_before_adjustment ?? (Number(slip.gross_pay || 0) - curAdd))}.
+              BPJS &amp; PPh21 tidak dihitung ulang.
+            </p>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div>
+              <Label className="text-xs">Penyesuaian pendapatan (Rp, minus = mengurangi)</Label>
+              <input type="number" value={earning} onChange={e => setEarning(Number(e.target.value))}
+                className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
+                data-testid={`payslip-adjust-earning-${slipId}`} />
+            </div>
+            <div>
+              <Label className="text-xs">Potongan tambahan (Rp, ≥ 0)</Label>
+              <input type="number" min="0" value={ded} onChange={e => setDed(Number(e.target.value))}
+                className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
+                data-testid={`payslip-adjust-amount-${slipId}`} />
+            </div>
+            {lines.length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-xs">Kurangi potongan sistem (maks nilai asli)</Label>
+                {lines.map(l => (
+                  <div key={l.index} className="flex items-center gap-2 text-xs">
+                    <span className="flex-1 truncate" title={l.label}>{l.label}</span>
+                    {NON_EDITABLE(l.type)
+                      ? <span className="font-mono text-muted-foreground">{fmtIDR(l.amount)} (wajib)</span>
+                      : <input type="number" min="0" max={l.original} value={l.amount}
+                          onChange={e => setLines(ls => ls.map(x => x.index === l.index ? { ...x, amount: Math.min(Number(e.target.value), x.original) } : x))}
+                          className="w-28 h-7 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] font-mono"
+                          data-testid={`payslip-adjust-line-${slipId}-${l.index}`} />}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div>
+              <Label className="text-xs">Alasan *</Label>
+              <input type="text" value={n} onChange={e => setN(e.target.value)} placeholder="Wajib bila ada penyesuaian"
+                className="mt-1 w-full h-9 px-2 rounded border border-[var(--glass-border)] bg-[var(--input-surface)]"
+                data-testid={`payslip-adjust-notes-${slipId}`} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={busy} data-testid={`payslip-adjust-cancel-${slipId}`}>Batal</Button>
+            <Button onClick={submit} disabled={busy} data-testid={`payslip-adjust-save-${slipId}`}>{busy ? 'Menyimpan…' : 'Simpan'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

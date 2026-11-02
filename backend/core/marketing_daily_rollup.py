@@ -269,10 +269,13 @@ async def module_returns_for_day(db, account_id: str, date: str) -> List[dict]:
     """2026-11-02 (No.16) — retur modul toko ini bertanggal ``date`` yang BELUM
     tercermin di status pesanan (anti-dobel, lihat `core.marketing_returns`)."""
     from core import marketing_returns as _ret
+    # 2026-11-02 (K36) — `wh_return_status`/`wh_action_taken` ikut dibaca: retur dihitung
+    # HANYA setelah diputuskan gudang (`core.marketing_returns.is_module_return_counted`).
     rows = await db[RETURNS].find(
         {"account_id": account_id, **_date_query("date", date)},
         {"_id": 0, "id": 1, "date": 1, "status": 1, "order_id": 1, "order_ref_id": 1,
-         "refund_amount": 1, "qty": 1, "quantity": 1}).to_list(5000)
+         "refund_amount": 1, "qty": 1, "quantity": 1,
+         **{f: 1 for f in _ret.DECISION_FIELDS}}).to_list(5000)
     rows = [r for r in rows
             if order_date_key(r.get("date")) == date and _ret.is_module_return_counted(r)]
     if not rows:

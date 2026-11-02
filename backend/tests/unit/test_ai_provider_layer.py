@@ -122,7 +122,8 @@ def test_kunci_dari_layar_integrasi_diutamakan(monkeypatch):
 # ── tracked_llm_call ─────────────────────────────────────────────────────────
 def test_panggilan_sukses_parameter_dan_teks(env):
     env["fake"].messages.responses = [fake_message("Ringkasan OK")]
-    res = run(t.tracked_llm_call("daily-summary-1a2b3c4d", "u1", "executive", "sys", "isi", max_tokens=400))
+    # K29 (2026-11-02): Opus hanya untuk Laporan Eksekutif → pakai label fitur itu.
+    res = run(t.tracked_llm_call("executive-narrative-1a2b3c4d", "u1", "executive", "sys", "isi", max_tokens=400))
     assert res.success and res.text == "Ringkasan OK" and res.error is None
     kw = env["fake"].messages.calls[0]
     assert kw["model"] == "claude-opus-5-5"
@@ -132,7 +133,7 @@ def test_panggilan_sukses_parameter_dan_teks(env):
     assert kw["max_tokens"] >= t.MIN_OUTPUT_TOKENS
     assert "temperature" not in kw and "thinking" not in kw
     log = _logs(env["db"])[-1]
-    assert log["success"] is True and log["feature"] == "daily-summary"
+    assert log["success"] is True and log["feature"] == "executive-narrative"
     assert log["model_name"] == "claude-opus-5-5"
     assert log["cost_usd"] == pytest.approx((120 * 4 + 40 * 20) / 1_000_000)
 

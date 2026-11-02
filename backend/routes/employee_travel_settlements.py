@@ -50,6 +50,9 @@ GL_EMPLOYEE_ADVANCE  = '1-1610'   # Uang Muka Karyawan
 GL_BANK_DEFAULT      = '1-1201'   # Bank BCA (default)
 
 from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08 · FIN-02
+from routes.rahaza_payroll_shared import (  # 2026-11-02 (K25): pemisahan tugas
+    ensure_not_self_approval, merge_own_failures, split_own_requests,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -560,10 +563,12 @@ async def approve_settlement(stl_id: str, payload: ApprovePayload, user: dict = 
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'submitted':
         raise HTTPException(400, f"Status '{doc.get('status')}' harus submitted")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju.
+    ensure_not_self_approval(doc, user, what='penyelesaian dinas')
 
     now = _now()
     await db.employee_travel_settlements.update_one(
-        {'id': stl_id},
+        {'id': stl_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
             'approved_by': user.get('id'),
@@ -624,8 +629,10 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     """
     db = get_db()
     role = (user.get('role') or '').lower()
-    if role not in FINANCE_ROLES + ('hr',):  # FIN-02
-        raise HTTPException(403, 'Hanya Finance yang dapat melakukan posting GL')
+    # 2026-11-02 (K25): posting penyelesaian = uang keluar/masuk (bayar tambahan / terima kembalian) →
+    # hanya peran Keuangan; HR tidak lagi (dulu FINANCE_ROLES + 'hr').
+    if role not in FINANCE_ROLES:  # FIN-02
+        raise HTTPException(403, 'Hanya Keuangan yang dapat memposting penyelesaian dinas (pemisahan tugas).')
 
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'approved':
@@ -869,8 +876,11 @@ class BulkApproveSettlementRequest(BaseModel):
 async def bulk_approve_settlements(body: BulkApproveSettlementRequest, user: dict = Depends(require_auth)):
     """Bulk approve (Finance/HR/Manager) — FASE 5 (T-20): satu implementasi di core.bulk_approve."""
     from core.bulk_approve import bulk_approve
-    return await bulk_approve(get_db(), user, body.settlement_ids, collection="employee_travel_settlements", number_field="settlement_number",
-                              module="travel_settlement", approval_note=body.approval_note or "")
+    db = get_db()
+    ids, own = await split_own_requests(db, "employee_travel_settlements", body.settlement_ids, user)  # K25
+    res = await bulk_approve(db, user, ids, collection="employee_travel_settlements", number_field="settlement_number",
+                             module="travel_settlement", approval_note=body.approval_note or "")
+    return merge_own_failures(res, own, len(body.settlement_ids))
 
 
 class BulkPostSettlementRequest(BaseModel):

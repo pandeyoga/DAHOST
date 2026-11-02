@@ -71,6 +71,48 @@ TIER_MODELS = {
 TIER_EFFORT = {"executive": "medium", "standard": "medium", "light": "low"}
 DEFAULT_TIER = "standard"
 
+# 2026-11-02 (keputusan owner K29): Opus HANYA untuk narasi Laporan Eksekutif.
+# Fitur lain yang (masih/keliru) meminta tier executive DITURUNKAN ke standard
+# (Sonnet) di sini — satu gerbang, sehingga pemanggil baru tidak bisa diam-diam
+# memakai Opus. Fitur ringan (asisten ERP, klasifikasi) memakai tier light = effort low.
+EXECUTIVE_FEATURES = ("executive-narrative",)
+
+# 2026-11-02 (K29): SSOT grup fitur yang bisa di-on/off di Monitor AI (dulu hanya di
+# routes/ai_usage_monitor.py). Label fitur di log dicocokkan per prefiks ke grup ini
+# sehingga biaya per fitur selalu cocok dengan toggle-nya (`feature_group` di log).
+AI_FEATURE_GROUPS = [
+    {"key": "executive-narrative", "label": "Analisis Eksekutif AI (Opus)"},
+    {"key": "daily-summary", "label": "Ringkasan Bisnis Harian"},
+    {"key": "revenue-forecast", "label": "Prediksi Pendapatan"},
+    {"key": "cashflow", "label": "Prediksi Arus Kas"},
+    {"key": "fraud-detect", "label": "Deteksi Anomali / Fraud"},
+    {"key": "prod-optimize", "label": "Optimasi Produksi"},
+    {"key": "marketing", "label": "AI Marketing & Insights"},
+    {"key": "maklon", "label": "Estimasi Harga Maklon"},
+    {"key": "wms", "label": "AI Gudang (WMS)"},
+    {"key": "smart-import", "label": "Smart Import (mapping AI)"},
+    {"key": "rahaza", "label": "Asisten AI Rahaza"},
+    {"key": "career", "label": "Career Coach SDM"},
+    {"key": "hr-ai", "label": "AI SDM (screening CV, attrition, coaching)"},
+    {"key": "assistant-erp", "label": "Asisten ERP"},
+    {"key": "analytics-ai", "label": "RCA Produksi/QC"},
+    {"key": "predictive-maintenance", "label": "Saran Perawatan Mesin"},
+]
+
+
+def feature_group(feature: Optional[str]) -> Optional[str]:
+    """Kunci grup Monitor AI untuk label fitur (exact / prefiks), atau None."""
+    f = (feature or "").lower().strip().replace("_", "-")
+    for g in sorted(AI_FEATURE_GROUPS, key=lambda g: -len(g["key"])):
+        if f == g["key"] or f.startswith(g["key"] + "-"):
+            return g["key"]
+    return None
+
+
+def executive_allowed(feature: Optional[str]) -> bool:
+    f = (feature or "").lower().strip().replace("_", "-")
+    return any(f == k or f.startswith(k + "-") for k in EXECUTIVE_FEATURES)
+
 # max_tokens: thinking ikut memakai token output, jadi batas kecil (mis. 400) dari
 # pemanggil lama akan memotong jawaban. Skill: non-streaming ≈16000.
 MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "16000"))
@@ -413,6 +455,21 @@ def _classify_exception(e: Exception) -> str:
     return "internal"
 
 
+async def sum_cost(db, match: dict) -> float:
+    """Total `cost_usd` log pemakaian untuk filter `match` (satu agregasi)."""
+    rows = await db.rahaza_ai_usage_logs.aggregate([
+        {"$match": match},
+        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
+    ]).to_list(length=1)
+    return float(rows[0].get("total") or 0.0) if rows else 0.0
+
+
+async def month_to_date_cost(db) -> float:
+    """Biaya AI bulan berjalan (UTC, sama dengan kunci `date` di log)."""
+    month_start = datetime.now(timezone.utc).date().replace(day=1)
+    return await sum_cost(db, {"date": {"$gte": month_start.isoformat()}})
+
+
 async def _check_budget(db, feature: str, *, daily_budget=None, monthly_budget=None, per_feature_budget=None) -> Tuple[bool, Optional[str]]:
     """Check if we're approaching budget. Returns (over_budget, warning_message).
 
@@ -425,36 +482,17 @@ async def _check_budget(db, feature: str, *, daily_budget=None, monthly_budget=N
     per_feature_budget = DEFAULT_PER_FEATURE_DAILY_USD if per_feature_budget is None else float(per_feature_budget)
 
     today = datetime.now(timezone.utc).date()
-    month_start = today.replace(day=1)
 
-    # Daily total
-    daily_pipeline = [
-        {"$match": {"date": today.isoformat()}},
-        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-    ]
-    daily_total_doc = await db.rahaza_ai_usage_logs.aggregate(daily_pipeline).to_list(length=1)
-    daily_total = daily_total_doc[0]["total"] if daily_total_doc else 0.0
-
+    daily_total = await sum_cost(db, {"date": today.isoformat()})
     if daily_total >= daily_budget:
         return True, f"Batas anggaran AI harian tercapai (${daily_total:.4f} dari ${daily_budget})."
 
-    # Feature daily
-    feat_pipeline = [
-        {"$match": {"date": today.isoformat(), "feature": feature}},
-        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-    ]
-    feat_total_doc = await db.rahaza_ai_usage_logs.aggregate(feat_pipeline).to_list(length=1)
-    feat_total = feat_total_doc[0]["total"] if feat_total_doc else 0.0
+    feat_total = await sum_cost(db, {"date": today.isoformat(), "feature": feature})
     if feat_total >= per_feature_budget:
         return True, f"Batas anggaran harian fitur AI ini tercapai (${feat_total:.4f} dari ${per_feature_budget})."
 
-    # Monthly total
-    monthly_pipeline = [
-        {"$match": {"date": {"$gte": month_start.isoformat()}}},
-        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-    ]
-    monthly_total_doc = await db.rahaza_ai_usage_logs.aggregate(monthly_pipeline).to_list(length=1)
-    monthly_total = monthly_total_doc[0]["total"] if monthly_total_doc else 0.0
+    # Bulanan — batas diatur di Monitor AI › Pengaturan (`ai_config.monthly_budget_usd`, K29).
+    monthly_total = await month_to_date_cost(db)
     if monthly_total >= monthly_budget:
         return True, f"Batas anggaran AI bulanan tercapai (${monthly_total:.4f} dari ${monthly_budget})."
 
@@ -490,6 +528,7 @@ async def log_usage(
         await db.rahaza_ai_usage_logs.insert_one({
             "id": str(uuid.uuid4()),
             "feature": feature,
+            "feature_group": feature_group(feature),  # K29: cocok dengan toggle Monitor AI
             "user_id": user_id,
             "model_provider": model[0] if isinstance(model, (tuple, list)) else "unknown",
             "model_name": model[1] if isinstance(model, (tuple, list)) else str(model),
@@ -513,7 +552,10 @@ async def log_usage(
 async def record_ai_failure(feature: str, code: str, *, user_id: Optional[str] = None,
                             tier: str = DEFAULT_TIER, detail: Optional[str] = None) -> None:
     """Catat percobaan AI yang gagal sebelum sampai ke Anthropic (mis. kunci kosong)."""
-    model = TIER_MODELS.get(_tier_name(tier), TIER_MODELS[DEFAULT_TIER])
+    t_name = _tier_name(tier)
+    if t_name == "executive" and not executive_allowed(_normalize_feature(feature)):
+        t_name = "standard"  # K29: log menampilkan model yang SEBENARNYA akan dipakai
+    model = TIER_MODELS.get(t_name, TIER_MODELS[DEFAULT_TIER])
     await log_usage(_normalize_feature(feature), user_id, model, 0, 0, 0.0, 0.0, False,
                     friendly_error(code), error_code=code, error_detail=detail)
 
@@ -544,6 +586,10 @@ async def tracked_llm_call(
     """
     feature = _normalize_feature(feature)
     tier = _tier_name(model)
+    if tier == "executive" and not executive_allowed(feature):
+        # K29 (2026-11-02): Opus hanya untuk Laporan Eksekutif → selain itu Sonnet.
+        logger.info("AI tier executive diturunkan ke standard untuk fitur %s (K29)", feature)
+        tier = model = "standard"
     try:
         resolved = resolve_model(model)
     except ValueError as e:
@@ -814,6 +860,10 @@ async def get_usage_summary(days: int = 7) -> dict:
         {"$sort": {"date": 1}},
     ]).to_list(length=days + 5)
 
+    # 2026-11-02 (K29): grup Monitor AI per fitur + anggaran EFEKTIF dari setelan
+    # (dulu angka env bawaan → "Monthly $100" tetap tampil walau admin mengubahnya).
+    for row in by_feature:
+        row["group"] = feature_group(row.get("feature"))
     return {
         "period_days": days,
         "from_date": cutoff,
@@ -825,11 +875,22 @@ async def get_usage_summary(days: int = 7) -> dict:
         },
         "by_feature": by_feature,
         "by_day": by_day,
-        "budgets": {
-            "daily_usd": DEFAULT_DAILY_BUDGET_USD,
-            "monthly_usd": DEFAULT_MONTHLY_BUDGET_USD,
-            "per_feature_daily_usd": DEFAULT_PER_FEATURE_DAILY_USD,
-        },
+        "budgets": await effective_budgets(db),
+    }
+
+
+async def effective_budgets(db=None) -> dict:
+    """Anggaran yang BENAR-BENAR dipakai `_check_budget` (setelan DB → env) + pemakaian bulan ini."""
+    db = db if db is not None else get_db()
+    s = await get_ai_settings(db)
+    month_cost = await month_to_date_cost(db)
+    monthly = float(s.get("monthly_budget_usd") or 0)
+    return {
+        "daily_usd": float(s.get("daily_budget_usd") or 0),
+        "monthly_usd": monthly,
+        "per_feature_daily_usd": float(s.get("per_feature_daily_usd") or 0),
+        "month_cost_usd": round(month_cost, 4),
+        "monthly_used_pct": round(month_cost / monthly * 100, 1) if monthly > 0 else 0.0,
     }
 
 

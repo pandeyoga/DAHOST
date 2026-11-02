@@ -360,8 +360,19 @@ async def apply_fill(db, parsed: dict, user: dict | None, scope: str = "all") ->
         if a.get("bank_name"):
             p["bank_name"] = a["bank_name"]
         await db.rahaza_cash_accounts.update_one({"gl_account_code": a["gl_account_code"]}, {"$set": p})
+    # 2026-11-02 (K4) — rekening pencairan toko lewat SATU fungsi yang sama dengan layar
+    # Finance "Tautan Rekening Bank per Toko", dengan penanda sumber `excel_master`
+    # (dulu menulis `coa_cash_code` tanpa sumber/pengubah → tak terbedakan dari bawaan).
+    from core.finance_sync import set_store_cash_code
     for s in parsed["stores"]:
-        await db.marketing_platform_accounts.update_one({"account_code": s["account_code"]}, {"$set": {"coa_cash_code": s["coa_cash_code"], "updated_at": _now()}})
+        store = await db.marketing_platform_accounts.find_one({"account_code": s["account_code"]}, {"_id": 0})
+        if store:
+            try:
+                await set_store_cash_code(db, store, s["coa_cash_code"], user=user, source="excel_master")
+            except ValueError as e:   # rekening tidak lolos daftar Kas & Bank → lewati baris itu
+                import logging
+                logging.getLogger(__name__).warning("[impor master] rekening toko %s dilewati: %s",
+                                                    s["account_code"], e)
     from core.bom_fill import apply_bom_groups
     bom_res = await apply_bom_groups(db, parsed.get("bom_groups") or [], user)
     for m in parsed.get("models") or []:

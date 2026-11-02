@@ -50,8 +50,11 @@ STATUS_LABELS = {
     'posted': 'Sudah di-Post GL',
 }
 
-from core.roles import APPROVER_ROLES  # T-08: satu konstanta
-from routes.rahaza_payroll_shared import notify_requester, parse_ymd, resolve_payment_account  # 2026-11-02 (P5)
+from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5) · K25 pemisahan tugas
+    ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
+    split_own_requests,
+)
 
 # Portal Saya belum punya menu Klaim → tautan notifikasi ke Dashboard Portal Saya (id menu nyata).
 SELF_LINK_MODULE = 'portal-dashboard'
@@ -446,10 +449,12 @@ async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Dep
     doc = await _get_claim_or_404(db, claim_id)
     if doc.get('status') != 'submitted':
         raise HTTPException(400, f"Status klaim saat ini: {doc.get('status')}. Harus submitted untuk di-approve.")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju.
+    ensure_not_self_approval(doc, user, what='klaim biaya')
 
     now = _now()
     await db.rahaza_expense_claims.update_one(
-        {'id': claim_id},
+        {'id': claim_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
             'approved_by': user.get('id'),
@@ -500,8 +505,10 @@ async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = D
     """Finance disburse klaim — bayar ke karyawan + post GL."""
     db = get_db()
     role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:  # FIN-02
-        raise HTTPException(403, 'Hanya Finance yang dapat melakukan disbursement')
+    # 2026-11-02 (K25): pencairan klaim = uang keluar → hanya peran Keuangan. Dulu APPROVER_ROLES
+    # (termasuk hr/manager) sehingga HR bisa menyetujui sekaligus mencairkan.
+    if role not in FINANCE_ROLES:  # FIN-02
+        raise HTTPException(403, 'Hanya Keuangan yang dapat mencairkan klaim (pemisahan tugas: HR tidak membayar).')
 
     doc = await _get_claim_or_404(db, claim_id)
     if doc.get('status') != 'approved':
@@ -597,8 +604,10 @@ async def bulk_approve_claims(body: BulkApproveRequest, user: dict = Depends(req
     """Bulk approve (Finance/HR/Manager) — FASE 5 (T-20): satu implementasi di core.bulk_approve."""
     from core.bulk_approve import bulk_approve
     db = get_db()
-    res = await bulk_approve(db, user, body.claim_ids, collection="rahaza_expense_claims", number_field="claim_number",
+    ids, own = await split_own_requests(db, "rahaza_expense_claims", body.claim_ids, user)  # K25
+    res = await bulk_approve(db, user, ids, collection="rahaza_expense_claims", number_field="claim_number",
                              module="expense_claim", approval_note=body.approval_note or "")
+    merge_own_failures(res, own, len(body.claim_ids))
     # 2026-11-02 (P5 butir 12): persetujuan massal juga memberi tahu tiap pemohon.
     for cid in ((res.get('results') or {}).get('success') or []):
         doc = await db.rahaza_expense_claims.find_one({'id': cid}, {'_id': 0})

@@ -71,6 +71,15 @@ const defaultEmployee = {
   emergency_contact_name: '', emergency_phone: '', emergency_relation: 'Orang Tua',
 };
 
+// 2026-11-02 (K23): kepesertaan BPJS per program. Cermin backend resolve_bpjs_programs().
+const BPJS_PROGRAMS = [['kes', 'BPJS Kesehatan'], ['jht', 'JHT'], ['jp', 'JP'], ['jkk_jkm', 'JKK & JKM']];
+function bpjsProgramsOf(emp) {
+  if (emp?.bpjs_programs && typeof emp.bpjs_programs === 'object') return emp.bpjs_programs;
+  const kes = !!String(emp?.bpjs_kesehatan_number || '').trim();
+  const tk = !!String(emp?.bpjs_ketenagakerjaan_number || '').trim();
+  return { kes, jht: tk, jp: tk, jkk_jkm: tk };
+}
+
 export default function HREmployeeModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const [employees, setEmployees] = useState([]);
@@ -677,6 +686,28 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                   <Input value={form.bpjs_ketenagakerjaan_number} onChange={set('bpjs_ketenagakerjaan_number')}
                     placeholder="11 digit" />
                 </Field>
+                {/* 2026-11-02 (K23): kepesertaan per program — potongan payroll HANYA untuk program yang dicentang.
+                    Belum pernah dicentang → diturunkan dari nomor kartu (Kes ← no. Kes; JHT/JP/JKK-JKM ← no. TK). */}
+                <div className="col-span-2 rounded-lg border border-[var(--glass-border)] p-3" data-testid="emp-bpjs-programs">
+                  <div className="text-xs font-semibold mb-2">Kepesertaan BPJS (potongan & iuran hanya untuk yang dicentang)</div>
+                  <div className="flex flex-wrap gap-4">
+                    {BPJS_PROGRAMS.map(([k, label]) => {
+                      const progs = bpjsProgramsOf(form);
+                      return (
+                        <label key={k} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                          <input type="checkbox" checked={!!progs[k]} data-testid={`emp-bpjs-${k}`}
+                            onChange={() => setForm(f => ({ ...f, bpjs_programs: { ...bpjsProgramsOf(f), [k]: !bpjsProgramsOf(f)[k] } }))} />
+                          {label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {!form.bpjs_programs && (
+                    <div className="text-[10px] text-muted-foreground mt-1.5">
+                      Belum diatur — sementara mengikuti nomor kartu di atas. Centang/hapus centang untuk menetapkan.
+                    </div>
+                  )}
+                </div>
               </div>
             </TabsContent>
 

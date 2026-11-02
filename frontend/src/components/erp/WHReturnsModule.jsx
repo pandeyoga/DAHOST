@@ -37,7 +37,11 @@ const CHANNELS   = ['Shopee', 'Tokopedia', 'TikTok Shop', 'Lazada', 'Instagram',
 // W4 — kondisi 'Rusak' ditambah supaya pilihan pemilik (Baik/Rusak) ada apa adanya.
 const CONDITIONS = ['Baik', 'Rusak', 'Rusak Ringan', 'Rusak Berat', 'Tidak Layak Jual'];
 const CAUSES     = ['Kesalahan Gudang', 'Kesalahan Customer', 'Kesalahan Ekspedisi', 'Lainnya'];
-const ACTIONS    = ['Restock ke Gudang', 'Karantina (Rusak)', 'Reshipment', 'Appeal Platform', 'Dibuang / Dispose', 'Donasi'];
+// 2026-11-02 (K1) — keputusan gudang: Terima → stok jual · Rusak → karantina ·
+// Tolak → dikembalikan ke pembeli (tanpa stok/jurnal) · Dibuang.
+const REJECT_TO_BUYER = 'Ditolak — Dikembalikan ke Pembeli';
+const ACTIONS    = ['Restock ke Gudang', 'Karantina (Rusak)', REJECT_TO_BUYER, 'Reshipment', 'Appeal Platform', 'Dibuang / Dispose', 'Donasi'];
+const QTY_ACTIONS = ['Restock ke Gudang', 'Karantina (Rusak)'];
 const APPEAL_STATUSES = ['Pending', 'Success', 'Fail'];
 // Kondisi yang boleh masuk stok JUAL. Sisanya ditahan di karantina (K-6a).
 const SELLABLE_CONDITIONS = ['Baik'];
@@ -56,6 +60,7 @@ const STATUS_COLORS = {
   Inspected: 'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10',
   Resolved:  'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
   Cancelled: 'text-muted-foreground bg-muted dark:bg-slate-500/10',
+  Reversed:  'text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-500/10',
 };
 const CONDITION_COLORS = {
   'Baik':              'text-emerald-600 dark:text-emerald-400',
@@ -162,7 +167,8 @@ function WorkflowBar({ status }) {
 
 // ─── RETURN CARD (list row) ───────────────────────────────────────────────────
 function ReturnRow({ ret, onView, onDelete, onQuickRestock }) {
-  const canQuick = !ret.restocked && ret.status !== 'Cancelled'
+  // 2026-11-02 (K1) — hanya pekerjaan yang BELUM diputuskan
+  const canQuick = !ret.restocked && ['Pending', 'Received', 'Inspected'].includes(ret.status)
     && (ret.material_id || ret.fg_material_id);
   return (
     <tr className="border-b border-border hover:bg-foreground/[0.02] cursor-pointer" onClick={() => onView(ret)} data-testid={`ret-row-${ret.id}`}>
@@ -182,8 +188,8 @@ function ReturnRow({ ret, onView, onDelete, onQuickRestock }) {
           {canQuick && onQuickRestock && (
             <button onClick={e => { e.stopPropagation(); onQuickRestock(ret); }}
               className="px-2 py-1 rounded-lg text-xs font-medium bg-emerald-600/10 border border-emerald-400 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-600/20 inline-flex items-center gap-1"
-              data-testid={`quick-restock-${ret.id}`} title="Terima & masukkan ke stok">
-              <Zap className="w-3 h-3" /> Terima &amp; Restock
+              data-testid={`quick-restock-${ret.id}`} title="Terima (qty aktual) & putuskan masuk stok">
+              <Zap className="w-3 h-3" /> Terima &amp; Putuskan
             </button>
           )}
           <button onClick={e => { e.stopPropagation(); onView(ret); }} className="p-1 hover:bg-foreground/5 rounded" data-testid={`view-ret-${ret.id}`}>
@@ -381,6 +387,21 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
     finally { setSaving(false); }
   };
 
+  // 2026-11-02 (K1) — keputusan yang SUDAH dibukukan hanya bisa dibalik: stok keluar
+  // berjejak + jurnal pembalik; pekerjaan baru dibuka untuk diputuskan ulang.
+  const doReverse = async () => {
+    const reason = window.prompt('Alasan membalik keputusan (wajib) — mis. "Marketing menolak retur, barang dikembalikan ke pembeli":');
+    if (!reason || !reason.trim()) return;
+    setSaving(true); setErr('');
+    try {
+      const res = await api('POST', `/api/wh/returns/${data.id}/reverse-decision`, token, { reason, reopen: true });
+      setData(res.reopened || res.data || data);
+      setInfo(res.message || 'Keputusan dibalik');
+      onRefresh();
+    } catch (e) { setErr(e.message); }
+    finally { setSaving(false); }
+  };
+
   const doCancel = async () => {
     if (!window.confirm('Batalkan return ini?')) return;
     setSaving(true);
@@ -400,7 +421,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
     try {
       const res = await api('POST', `/api/wh/returns/${data.id}/quick-restock`, token, {
         condition: form.condition || 'Baik',
-        qty: form.restock_qty ?? data.qty,
+        qty: form.restock_qty ?? data.received_qty ?? data.qty,
         note: form.action_notes || '',
       });
       setData(res.data || data);
@@ -425,7 +446,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
   const linked = !!(data.material_id || data.fg_material_id);
 
-  const isEditable = !['Resolved', 'Cancelled'].includes(data.status);
+  const isEditable = !['Resolved', 'Cancelled', 'Reversed'].includes(data.status);
 
   return (
     <div className="fixed inset-0 bg-foreground/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
@@ -580,7 +601,21 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                 <div><span className="text-muted-foreground">Aksi:</span> <span className="ml-1 font-medium">{data.action_taken}</span></div>
                 {data.reshipment_resi && <div><span className="text-muted-foreground">Resi Reshipment:</span> <span className="ml-1 font-mono">{data.reshipment_resi}</span></div>}
                 {data.appeal_status && <div><span className="text-muted-foreground">Status Appeal:</span> <span className="ml-1">{data.appeal_status}</span></div>}
+                {data.received_qty != null && <div><span className="text-muted-foreground">Qty Diterima:</span> <span className="ml-1">{data.received_qty} pcs</span></div>}
                 {data.restock_qty > 0 && <div><span className="text-muted-foreground">Qty Restock:</span> <span className="ml-1">{data.restock_qty} pcs</span></div>}
+                {data.marketing_rejected_after_decision && (
+                  <div className="sm:col-span-2 text-xs text-amber-700 dark:text-amber-300" data-testid="wh-mkt-rejected-after">
+                    Marketing menolak/menghapus retur ini SETELAH keputusan gudang. Bila barang harus keluar lagi,
+                    tekan <b>Balik Keputusan</b> (stok keluar berjejak + jurnal pembalik).
+                  </div>
+                )}
+                <div className="sm:col-span-2 pt-1">
+                  <button onClick={doReverse} disabled={saving}
+                    className="px-3 py-1.5 border border-amber-500/50 text-amber-700 dark:text-amber-300 rounded-lg text-xs hover:bg-amber-500/10 disabled:opacity-50"
+                    data-testid="btn-reverse-decision">
+                    Balik Keputusan (jurnal pembalik + stok keluar)
+                  </button>
+                </div>
                 {data.action_notes && <div className="sm:col-span-2"><span className="text-muted-foreground">Catatan:</span> <span className="ml-1">{data.action_notes}</span></div>}
                 {data.source_marketing_return_id && (
                   <div className="sm:col-span-2 pt-1">
@@ -648,7 +683,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               <div className="flex flex-wrap gap-2">
                 {!data.restocked && linked && (
                   <button onClick={() => openStep('quick')} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:brightness-110" data-testid="btn-quick-restock">
-                    <Zap className="w-4 h-4" /> Terima &amp; Restock (1 klik)
+                    <Zap className="w-4 h-4" /> Terima &amp; Putuskan (1 klik)
                   </button>
                 )}
                 {data.status === 'Pending' && (
@@ -680,9 +715,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                 <Zap className="w-4 h-4" /> Terima &amp; Masukkan ke Stok
               </h4>
               <p className="text-xs text-muted-foreground">
-                Satu langkah: barang dinyatakan diterima, diinspeksi, lalu stoknya bertambah.
+                Keputusan gudang dalam satu langkah: barang diterima (qty AKTUAL), diperiksa, lalu diputuskan.
                 Kondisi <strong>Baik</strong> masuk <strong>Area Produk Jadi</strong> (ikut stok jual);
                 kondisi <strong>Rusak</strong> masuk <strong>Area Karantina</strong> (tidak dijual).
+                Untuk menolak (kembalikan ke pembeli) atau membuang, pakai alur Terima → Inspeksi → Selesaikan.
               </p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -693,8 +729,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Qty Masuk *</label>
-                  <input type="number" min="1" value={form.restock_qty ?? data.qty}
+                  <label className="text-xs text-muted-foreground block mb-1">Qty Aktual Masuk * (pengajuan {data.qty})</label>
+                  <input type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty}
                     onChange={e => setForm({ ...form, restock_qty: +e.target.value })}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quick-qty" />
                 </div>
@@ -720,6 +756,13 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
           {step === 'receive' && (
             <div className="bg-sky-100 dark:bg-sky-500/5 border border-sky-300 dark:border-sky-500/20 rounded-xl p-4 space-y-3">
               <h4 className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-2"><PackageOpen className="w-4 h-4" /> Terima & Unboxing</h4>
+              <div>
+                {/* 2026-11-02 (K1) — qty AKTUAL di paket = batas qty keputusan */}
+                <label className="text-xs text-muted-foreground block mb-1">Qty Aktual Diterima * (pengajuan {data.qty})</label>
+                <input type="number" min="0" value={form.received_qty ?? data.qty}
+                  onChange={e => setForm({ ...form, received_qty: Math.max(0, parseInt(e.target.value || '0', 10)) })}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="receive-qty" />
+              </div>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Kondisi Kemasan Luar</label>
                 <input value={form.package_condition || ''} onChange={e => setForm({ ...form, package_condition: e.target.value })}
@@ -822,10 +865,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                   </select>
                 </div>
               )}
-              {(form.action_taken || data.recommended_action) === 'Restock ke Gudang' && (
+              {QTY_ACTIONS.includes(form.action_taken || data.recommended_action) && (
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Qty Restock</label>
-                  <input type="number" min="1" value={form.restock_qty ?? data.qty} onChange={e => setForm({ ...form, restock_qty: +e.target.value })}
+                  <label className="text-xs text-muted-foreground block mb-1">Qty Restock/Karantina (maks. diterima {data.received_qty ?? data.qty})</label>
+                  <input type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty} onChange={e => setForm({ ...form, restock_qty: +e.target.value })}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="restock-qty" />
                 </div>
               )}
@@ -1067,10 +1110,11 @@ export default function WHReturnsModule({ token, onNavigate }) {
     setPulling(true); setPullMsg('');
     try {
       const res = await api('POST', '/api/wh/returns/sync-marketing', token,
-        { dry_run: false, auto_restock: true });
+        { dry_run: false });
       const d = res.data || {};
-      setPullMsg(`Diperiksa ${d.scanned} retur Marketing · ${d.created} pekerjaan baru dibuat · `
-        + `${d.restocked} langsung masuk stok · ${d.skipped} perlu dipilih produknya`
+      // 2026-11-02 (K1) — tarik HANYA membuat pekerjaan Pending; stok menunggu keputusan.
+      setPullMsg(`Diperiksa ${d.scanned} retur Marketing · ${d.created} pekerjaan baru (menunggu paket) · `
+        + `${d.skipped} perlu dipilih produknya`
         + (d.failed ? ` · ${d.failed} gagal` : ''));
       refreshCurrent();
     } catch (e) { setPullMsg(`Gagal menarik retur: ${e.message}`); }
@@ -1177,7 +1221,7 @@ export default function WHReturnsModule({ token, onNavigate }) {
           </div>
           <SmartNativeSelect value={statusF} onChange={e => setStatusF(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm" data-testid="wh-ret-status-filter">
             <option value="">Semua Status</option>
-            {['Pending', 'Received', 'Inspected', 'Resolved', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}
+            {['Pending', 'Received', 'Inspected', 'Resolved', 'Cancelled', 'Reversed'].map(s => <option key={s} value={s}>{s}</option>)}
           </SmartNativeSelect>
           <button onClick={refreshCurrent} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
         </div>

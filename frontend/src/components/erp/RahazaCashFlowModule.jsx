@@ -26,7 +26,7 @@ function ActivityGroup({ label, items, total, testId, tone }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-              <th className="py-2 px-5 text-left">Kategori</th>
+              <th className="py-2 px-5 text-left">Kategori (sumber jurnal)</th>
               <th className="py-2 px-3 text-right">Masuk</th>
               <th className="py-2 px-3 text-right">Keluar</th>
               <th className="py-2 px-5 text-right">Net</th>
@@ -35,7 +35,7 @@ function ActivityGroup({ label, items, total, testId, tone }) {
           <tbody>
             {items.map(r => (
               <tr key={r.category} className="border-b border-[var(--glass-border)] last:border-0" data-testid={`${testId}-row-${r.category}`}>
-                <td className="py-2 px-5 text-sm">{r.label} <span className="text-[10px] text-muted-foreground">({r.count})</span></td>
+                <td className="py-2 px-5 text-sm" title={(r.source_modules || []).join(', ')}>{r.label} <span className="text-[10px] text-muted-foreground">({r.count})</span></td>
                 <td className="py-2 px-3 text-right font-mono text-xs text-emerald-300">{r.inflow > 0 ? fmt(r.inflow) : ''}</td>
                 <td className="py-2 px-3 text-right font-mono text-xs text-rose-300">{r.outflow > 0 ? fmt(r.outflow) : ''}</td>
                 <td className={`py-2 px-5 text-right font-mono text-sm ${r.net >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{fmt(r.net)}</td>
@@ -88,8 +88,8 @@ function AccountGroup({ code, group }) {
 }
 
 export default function RahazaCashFlowModule({ token }) {
-  // 2026-11-02 (audit No.46): bawaan = "Per Akun" dari buku besar. Tampilan kategori mutasi
-  // tidak lengkap (tidak semua transaksi kas menulis mutasi) sehingga kas awal/akhir bisa salah.
+  // 2026-11-02 (audit No.46): bawaan = "Per Akun" dari buku besar. K19: tampilan kategori kini juga
+  // dari buku besar (kategori = sumber jurnal), jadi kas awal/akhir kedua tampilan sama dengan GL.
   const [view, setView] = useState('account');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -142,7 +142,7 @@ export default function RahazaCashFlowModule({ token }) {
         icon={Wallet}
         eyebrow="Accounting Core · F3"
         title="Laporan Arus Kas"
-        subtitle="Cash Flow Statement — bawaan dari buku besar (Per Akun); tampilan kategori mutasi kas sebagai pembanding. Grouping: Operasi / Investasi / Pendanaan."
+        subtitle="Cash Flow Statement — kedua tampilan dari buku besar: Per Akun (akun lawan) dan Per Kategori (sumber jurnal yang menyentuh kas/bank). Grouping: Operasi / Investasi / Pendanaan."
         actions={
           <>
             <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="cf-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>

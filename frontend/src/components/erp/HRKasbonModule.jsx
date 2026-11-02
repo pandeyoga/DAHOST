@@ -50,13 +50,18 @@ function ReviewModal({ req, onClose, onDone }) {
   const [action, setAction] = useState('approve');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  // 2026-11-02 (K25): nilai disetujui ≤ nilai diminta (backend juga menegakkan batas kasbon & pengaju ≠ penyetuju).
+  const [approvedAmount, setApprovedAmount] = useState(req.amount);
+  const tooHigh = Number(approvedAmount) > Number(req.amount);
 
   const handleSubmit = async () => {
     setSaving(true);
     try {
+      const body = { action, notes };
+      if (action === 'approve' && Number(approvedAmount) !== Number(req.amount)) body.approved_amount = Number(approvedAmount);
       const r = await fetch(`${API}/api/dewi/kasbon/requests/${req.id}/hr-review`, {
         method: 'PATCH', headers: authH(),
-        body: JSON.stringify({ action, notes }),
+        body: JSON.stringify(body),
       });
       const d = await r.json();
       if (d.ok) {
@@ -100,6 +105,21 @@ function ReviewModal({ req, onClose, onDone }) {
             </button>
           </div>
 
+          {(req.limit_warnings || []).length > 0 && (
+            <div className="text-[11px] rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 px-2 py-1.5">
+              {req.limit_warnings.join(' ')}
+            </div>
+          )}
+          {action === 'approve' && (
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Nilai disetujui (maks {fmt(req.amount)})</label>
+              <input type="number" min="1" max={req.amount} value={approvedAmount}
+                onChange={e => setApprovedAmount(e.target.value)} data-testid="kasbon-approved-amount"
+                className="w-full h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
+              {tooHigh && <div className="text-[10px] text-red-600 mt-1">Tidak boleh melebihi nilai yang diminta.</div>}
+            </div>
+          )}
+
           <div>
             <label className="text-xs font-medium text-muted-foreground block mb-1">
               {action === 'reject' ? 'Alasan Penolakan *' : 'Catatan (opsional)'}
@@ -111,7 +131,7 @@ function ReviewModal({ req, onClose, onDone }) {
         </div>
         <div className="p-5 border-t border-[var(--glass-border)] flex gap-3">
           <button onClick={onClose} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-          <button onClick={handleSubmit} disabled={saving || (action === 'reject' && !notes.trim())}
+          <button onClick={handleSubmit} disabled={saving || (action === 'reject' && !notes.trim()) || (action === 'approve' && (tooHigh || !(Number(approvedAmount) > 0)))}
             className={`flex-1 h-10 rounded-xl text-sm font-semibold disabled:opacity-50 ${action==='approve' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
             {saving ? 'Menyimpan...' : action === 'approve' ? 'Setujui' : 'Tolak'}
           </button>

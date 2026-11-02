@@ -383,7 +383,7 @@ class TestPayrollPotonganManual:
         assert ("2-1900", 0, 100_000) in {(x["account_code"], x["debit"], x["credit"]) for x in pay.jes[0]["lines"]}
 
     def test_header_lama_tanpa_kunci_manual_tetap_bisa_diposting(self, pay):
-        run(slips_mod.adjust_payslip("r1", "s1", FakeRequest({"deduction": 100_000})))
+        run(slips_mod.adjust_payslip("r1", "s1", FakeRequest({"deduction": 100_000, "notes": "ganti rugi"})))  # K34: alasan wajib
         r = dict(pay.db.rahaza_payroll_runs.docs[0], total_pph21=25_000, total_bpjs_employee=50_000, total_kasbon=0,
                  total_other_deductions=0, deductions_by_type={"pph21": 25_000, "bpjs_kesehatan": 50_000})
         res = run(rp.post_payroll_run(pay.db, r, dict(HR)))

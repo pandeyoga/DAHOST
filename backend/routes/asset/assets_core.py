@@ -12,11 +12,11 @@ from fastapi import Request, HTTPException, Query
 
 from database import get_db
 from auth import require_auth
-from ._accounts import line as _acc_line, resolve_asset_accounts
 from ._helpers import (
     router, _uid, _now, _ser,
-    _calc_straight_line_monthly, _create_finance_journal,
+    _calc_straight_line_monthly,
     _ensure_default_categories, _gen_asset_number,
+    load_finance_assets, apply_finance_overlay, validate_finance_link,
 )
 
 
@@ -49,8 +49,10 @@ async def list_assets(
     total = await db.dewi_assets.count_documents(query)
     skip = (page - 1) * limit
     assets = await db.dewi_assets.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    # K18: nilai keuangan aset tertaut dari registri Keuangan
+    fin = await load_finance_assets(db, [a.get("fixed_asset_id") for a in assets])
     return {
-        "items": [_ser(a) for a in assets],
+        "items": [_ser(apply_finance_overlay(a, fin.get(a.get("fixed_asset_id")))) for a in assets],
         "pagination": {
             "page": page, "page_size": limit, "total": total,
             "total_pages": math.ceil(total / limit) if total else 1,
@@ -67,9 +69,14 @@ async def create_asset(request: Request):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nama aset wajib diisi.")
-    purchase_cost = float(body.get("purchase_cost") or 0)
+    # K18: tautan ke registri Keuangan (opsional saat ini; nilai keuangan diambil dari sana)
+    fixed_asset_id = (body.get("fixed_asset_id") or "").strip() or None
+    fa = await validate_finance_link(db, fixed_asset_id) if fixed_asset_id else None
+    purchase_cost = float((fa or {}).get("purchase_cost") or body.get("purchase_cost") or 0)
     if purchase_cost <= 0:
         raise HTTPException(400, "Harga beli harus lebih dari 0.")
+    if fa and not body.get("purchase_date"):
+        body["purchase_date"] = fa.get("purchase_date")
 
     cat = None
     if body.get("category_id"):
@@ -123,27 +130,16 @@ async def create_asset(request: Request):
         "insurance_provider":      (body.get("insurance_provider") or "").strip(),
         "insurance_expiry_date":   (body.get("insurance_expiry_date") or "")[:10] or None,
         "insurance_value":         float(body.get("insurance_value") or 0),
+        "fixed_asset_id":          fixed_asset_id,
+        "fixed_asset_code":        (fa or {}).get("code"),
     }
 
-    # BUG-5 (FASE 11): kode akun DULU di-hardcode "1500"/"1100" — tidak ada di CoA
-    # (CoA proyek ini berformat "1-2500"/"1-1101"). Sekarang diambil dari posting
-    # profile `asset_acquisition` lewat resolver bersama.
-    _acc = await resolve_asset_accounts(db)
-    je_id = await _create_finance_journal(
-        db, user["id"], user.get("name", ""),
-        purchase_date,
-        f"Pembelian Aset: {name} ({asset_number})",
-        [
-            _acc_line(_acc["fixed_asset"], debit=purchase_cost,
-                      description=f"Pembelian {name}"),
-            _acc_line(_acc["cash"], credit=purchase_cost,
-                      description=f"Pembayaran {name}"),
-        ],
-        source_ref=asset_number,
-    )
-    doc["journal_purchase_id"] = je_id
+    # 2026-11-02 (K18): TANPA jurnal. Dulu jurnal draft Dr 1-2500 / Cr 1-1201 (selalu dianggap
+    # tunai BCA) — bila diposting, saldo BCA turun walau aset dibeli kredit. Jurnal perolehan kini
+    # hanya dari Keuangan › Aset Tetap (pilihan sumber dana) atau jalur GR.
     await db.dewi_assets.insert_one(doc)
-    return _ser(doc)
+    fin = await load_finance_assets(db, [fixed_asset_id])
+    return _ser(apply_finance_overlay(doc, fin.get(fixed_asset_id)))
 
 
 @router.get("/{asset_id}")
@@ -159,14 +155,19 @@ async def get_asset(asset_id: str, request: Request):
     accum = float(asset.get("accumulated_depreciation", 0))
     nbv = cost - accum
 
-    depr_history = await db.dewi_asset_depreciation.find(
-        {"asset_id": asset_id}, {"_id": 0}
-    ).sort("period", -1).limit(12).to_list(12)
+    # K18: Portal Aset tidak lagi menyusutkan (koleksi riwayat lamanya tidak ditulis lagi);
+    # riwayat penyusutan aset tertaut diambil dari jadwal registri Keuangan di bawah.
+    depr_history = []
 
     asset_out = _ser(asset)
     asset_out["nbv"] = round(nbv, 2)
     asset_out["depreciation_history"] = [_ser(d) for d in depr_history]
-    asset_out["fully_depreciated"] = nbv <= residual
+    fin = (await load_finance_assets(db, [asset.get("fixed_asset_id")])).get(asset.get("fixed_asset_id"))
+    apply_finance_overlay(asset_out, fin)  # K18: nilai buku dari registri Keuangan bila tertaut
+    if fin:
+        asset_out["depreciation_history"] = [_ser(d) for d in await db.rahaza_depr_schedules.find(
+            {"asset_id": fin["id"], "posted": True}, {"_id": 0}).sort("period", -1).limit(12).to_list(12)]
+    asset_out["fully_depreciated"] = asset_out["nbv"] <= residual
     return asset_out
 
 
@@ -186,6 +187,14 @@ async def update_asset(asset_id: str, request: Request):
         "insurance_expiry_date", "insurance_value",
     ]
     update = {k: body[k] for k in allowed if k in body}
+    # K18: menaut / melepas tautan aset Keuangan (registri induk)
+    if "fixed_asset_id" in body:
+        fid = (body.get("fixed_asset_id") or "").strip() or None
+        fa = await validate_finance_link(db, fid, own_asset_id=asset_id) if fid else None
+        update["fixed_asset_id"] = fid
+        update["fixed_asset_code"] = (fa or {}).get("code")
+        if fa:
+            update["purchase_cost"] = float(fa.get("purchase_cost") or 0)
     if update:
         update["updated_at"] = _now()
         await db.dewi_assets.update_one({"id": asset_id}, {"$set": update})

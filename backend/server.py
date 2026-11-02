@@ -1482,8 +1482,7 @@ app.include_router(data_transfer_router, dependencies=_DENY_MKT)
 
 # ─── Financial Recap Endpoint ────────────────────────────────────────────────
 # Re-implements the deleted /api/financial-recap for FinancialRecapModule.jsx
-from datetime import date as _date, timedelta
-from dateutil.relativedelta import relativedelta
+from datetime import date as _date
 
 @app.get("/api/financial-recap", tags=["financial-recap"])
 async def financial_recap(
@@ -1504,73 +1503,11 @@ async def financial_recap(
     #   pembayaran → `date` (fallback payment_date) · AP → `total` (fallback total_amount)
     #   beredar → status kanonik OPEN_STATUSES, kolom `balance`/`amount_due` · penjualan tanpa draft/void/written_off
     #   tanpa tanggal ("Semua") → seluruh periode, bukan 30 hari terakhir.
+    # 2026-11-02 (K20): isi dipindah ke core.recap_finance.compute_financial_recap (bisa diuji tanpa server):
+    #   label AR−AP "bukan laba", kartu laba kotor buku besar, kas masuk + Penjualan Langsung.
     from routes.rahaza_ar_canonical import OPEN_STATUSES
-    from core.recap_finance import open_balance_expr, recap_open_statuses, sum_invoices, sum_payments
-
-    date_filter = {}
-    if date_from:
-        date_filter["$gte"] = date_from
-    if date_to:
-        date_filter["$lte"] = date_to
-    excluded = ["cancelled", "draft", "void", "written_off"]
-
-    total_sales, total_ar_invoices = await sum_invoices(db.rahaza_ar_invoices, date_filter, excluded)
-    total_vendor, total_ap_invoices = await sum_invoices(db.rahaza_ap_invoices, date_filter, excluded)
-    total_cash_in = await sum_payments(db.rahaza_ar_payments, date_filter)
-    total_cash_out = await sum_payments(db.rahaza_ap_payments, date_filter)
-
-    open_statuses = recap_open_statuses(OPEN_STATUSES)
-    ar_out_agg = await db.rahaza_ar_invoices.aggregate([
-        {"$match": {"status": {"$in": open_statuses}}},
-        {"$group": {"_id": None, "total": {"$sum": open_balance_expr()}}},
-    ]).to_list(1)
-    ar_outstanding = ar_out_agg[0]["total"] if ar_out_agg else 0
-    ap_out_agg = await db.rahaza_ap_invoices.aggregate([
-        {"$match": {"status": {"$in": open_statuses}}},
-        {"$group": {"_id": None, "total": {"$sum": open_balance_expr()}}},
-    ]).to_list(1)
-    ap_outstanding = ap_out_agg[0]["total"] if ap_out_agg else 0
-
-    # Gross margin
-    gross_margin = total_sales - total_vendor
-    gross_margin_pct = round((gross_margin / total_sales * 100), 1) if total_sales > 0 else 0
-
-    # Monthly trend (last 6 months)
-    monthly_trend = []
-    for i in range(5, -1, -1):
-        m_date = today - relativedelta(months=i)
-        m_str = m_date.strftime("%Y-%m")
-        m_label = m_date.strftime("%b %Y")
-        m_start = f"{m_str}-01"
-        m_end = (m_date + relativedelta(months=1) - timedelta(days=1)).strftime("%Y-%m-%d")
-        m_filter = {"$gte": m_start, "$lte": m_end}
-        ms, _ = await sum_invoices(db.rahaza_ar_invoices, m_filter, excluded)
-        mc, _ = await sum_invoices(db.rahaza_ap_invoices, m_filter, excluded)
-        monthly_trend.append({
-            "month": m_label,
-            "sales": ms,
-            "cost": mc,
-            "margin": ms - mc,
-            "cash_in": await sum_payments(db.rahaza_ar_payments, m_filter),
-            "cash_out": await sum_payments(db.rahaza_ap_payments, m_filter),
-        })
-    return {
-        "total_sales_value": total_sales,
-        "total_vendor_cost": total_vendor,
-        "total_buyer_invoices": total_ar_invoices,
-        "total_vendor_invoices": total_ap_invoices,
-        "total_cash_in": total_cash_in,
-        "total_cash_out": total_cash_out,
-        "total_adjustments": 0,
-        "accounts_receivable_outstanding": ar_outstanding,
-        "accounts_payable_outstanding": ap_outstanding,
-        "gross_margin": gross_margin,
-        "gross_margin_pct": gross_margin_pct,
-        "monthly_trend": monthly_trend,
-        "garment_summary": [],
-        "date_from": date_from,
-        "date_to": date_to,
-    }
+    from core.recap_finance import compute_financial_recap
+    return await compute_financial_recap(db, date_from, date_to, today, OPEN_STATUSES)
 
 # ─── API v1 PATH REWRITER MIDDLEWARE ────────────────────────────────────────
 # E-6/E-7: Provides /api/v1/* aliases for the legacy per-module paths.

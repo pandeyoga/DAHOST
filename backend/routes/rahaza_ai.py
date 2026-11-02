@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from auth import require_auth
 from utils.data_quality import SkipTracker
 from database import get_db
-from services.ai import SystemPrompts, call_claude, cached_call_claude
+from services.ai import SystemPrompts, call_claude, cached_call_claude, mask_pii
 from services.ai_aggregates import rahaza_aggregates as rh_agg
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,8 @@ async def _build_daily_context(db, target_date: date) -> dict:
         "fail_rate_pct": fail_rate,
         "downtime_menit": total_downtime,
         "alert_aktif": len(alerts),
-        "alert_sample": [a.get("message", "") for a in alerts[:3]],
+        # K27 (2026-11-02): teks notifikasi bisa memuat kontak → disamarkan sebelum ke AI.
+        "alert_sample": [mask_pii(a.get("message", "")) for a in alerts[:3]],
         "wo_aktif": wo["active"],
         "wo_overdue": wo["overdue"],
     }
@@ -237,7 +238,7 @@ async def ai_root_cause(request: Request):
         f"- Downtime total: {metrics['downtime_minutes']} menit dari "
         f"{metrics['downtime_event_count']} kejadian\n"
         f"- Alert aktif: {metrics['alerts_active']} "
-        f"({', '.join((m or '')[:50] for m in metrics['alert_messages'])})\n"
+        f"({', '.join(mask_pii(m or '')[:50] for m in metrics['alert_messages'])})\n"
         f"- Jumlah event QC: {metrics['qc_event_count']}"
     )
     user_prompt = (

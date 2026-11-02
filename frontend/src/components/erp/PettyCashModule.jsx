@@ -54,7 +54,53 @@ const TXN_CONFIG = {
   return:    { label: 'Pengembalian',    color: 'text-emerald-500', icon: ArrowDownCircle, sign: '+' },
   replenish: { label: 'Replenishment',   color: 'text-blue-500',    icon: ArrowDownCircle, sign: '+' },
   opening:   { label: 'Saldo Awal',      color: 'text-blue-400',    icon: ArrowDownCircle, sign: '+' },
+  advance_settlement: { label: 'Pertanggungjawaban', color: 'text-emerald-600', icon: ArrowDownCircle, sign: '' },
 };
+
+/* 2026-11-02 (K26): data acuan form kas kecil — karyawan (uang muka WAJIB atas nama karyawan), kategori
+   + pemetaan GL (akun beban dari pemetaan; kategori belum terpetakan → akun WAJIB dipilih, tidak ada lagi
+   bawaan 6-2400 ATK), dan daftar akun beban. */
+function usePettyRefs(open) {
+  const [refs, setRefs] = useState({ employees: [], categories: [], mapped: {}, expenseAccounts: [] });
+  useEffect(() => {
+    if (!open) return undefined;
+    let off = false;
+    const h = { headers: { Authorization: `Bearer ${token()}` } };
+    const get = (url) => fetch(url, h).then(r => (r.ok ? r.json() : null)).catch(() => null);
+    Promise.all([
+      get(`${API}/api/rahaza/employees?active_only=true&limit=1000`),
+      get(`${API}/api/hr/expenses/master-categories`),
+      get(`${API}/api/hr/expenses/gl-mappings?is_active=true`),
+      get(`${API}/api/rahaza/coa/accounts?active_only=true&type=EXPENSE`),
+    ]).then(([emps, cats, maps, accs]) => {
+      if (off) return;
+      const list = (x) => (Array.isArray(x) ? x : (x?.items || x?.employees || []));
+      setRefs({
+        employees: list(emps).filter(e => e.active !== false),
+        categories: list(cats),
+        mapped: Object.fromEntries(list(maps).map(m => [m.category, m.gl_account_code])),
+        expenseAccounts: list(accs).filter(a => !a.is_group),
+      });
+    });
+    return () => { off = true; };
+  }, [open]);
+  return refs;
+}
+
+function ExpenseAccountPicker({ category, value, onChange, refs, testId }) {
+  const mappedCode = category ? refs.mapped[category] : null;
+  if (mappedCode) return <p className="text-[11px] text-muted-foreground">Akun beban dari pemetaan kategori: <strong>{mappedCode}</strong></p>;
+  return (
+    <div className="space-y-1">
+      <Label>Akun Beban * <span className="text-[10px] text-muted-foreground">(kategori belum dipetakan)</span></Label>
+      <select value={value || ''} onChange={e => onChange(e.target.value)} data-testid={testId}
+        className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm">
+        <option value="">— Pilih akun beban —</option>
+        {refs.expenseAccounts.map(a => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+      </select>
+    </div>
+  );
+}
 
 // ── Create Fund Dialog ─────────────────────────────────────────────────────────
 function CreateFundDialog({ open, onClose, onCreated, accounts, accountsLoaded }) {
@@ -199,24 +245,27 @@ function ReplenishDialog({ open, fund, onClose, onDone, accounts, accountsLoaded
 
 // ── Add Expense Dialog ────────────────────────────────────────────────────────
 function AddTxnDialog({ open, fund, onClose, onDone }) {
-  const [form, setForm] = useState({ txn_type: 'expense', amount: '', category: '', payee: '', memo: '', txn_date: '' });
+  const empty = { txn_type: 'expense', amount: '', category: '', payee: '', memo: '', txn_date: '', employee_id: '', account_code: '' };
+  const [form, setForm] = useState(empty);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
-  const [categories, setCategories] = useState([]);
+  const refs = usePettyRefs(open);
+  const categories = refs.categories;
 
   useEffect(() => {
     if (open) {
-      setForm({ txn_type: 'expense', amount: '', category: '', payee: '', memo: '', txn_date: todayWIB() }); // 2026-11-02: tanggal WIB, bukan UTC
+      setForm({ ...empty, txn_type: 'expense', txn_date: todayWIB() }); // 2026-11-02: tanggal WIB, bukan UTC
       setErr('');
-      // Fetch categories
-      fetch(`${API}/api/hr/expenses/master-categories`, {
-        headers: { Authorization: `Bearer ${token()}` }
-      }).then(r => r.json()).then(d => setCategories(d.items || [])).catch(() => {});
     }
-  }, [open]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = async () => {
     if (!form.amount || parseFloat(form.amount) <= 0) return setErr('Jumlah harus > 0.');
+    // 2026-11-02 (K26)
+    if (form.txn_type === 'advance' && !form.employee_id) return setErr('Uang muka wajib memilih karyawan penerima.');
+    if (form.txn_type === 'expense' && !(form.category && refs.mapped[form.category]) && !form.account_code) {
+      return setErr('Kategori belum dipetakan ke akun beban — pilih akun beban.');
+    }
     setSaving(true); setErr('');
     try {
       const res = await fetch(`${BASE}/transactions`, {
@@ -236,8 +285,10 @@ function AddTxnDialog({ open, fund, onClose, onDone }) {
 
   const TXN_TYPES = [
     { value: 'expense', label: 'Pengeluaran (Expense)' },
-    { value: 'advance', label: 'Uang Muka (Advance)' },
-    { value: 'return',  label: 'Pengembalian (Return)' },
+    { value: 'advance', label: 'Uang Muka Karyawan (Advance)' },
+    // 2026-11-02 (K26): sisa uang muka KARYAWAN dikembalikan lewat "Pertanggungjawaban";
+    // 'return' hanya untuk uang muka lama (sebelum 2 Nov 2026, tanpa karyawan).
+    { value: 'return',  label: 'Pengembalian uang muka LAMA' },
   ];
 
   return (
@@ -268,20 +319,38 @@ function AddTxnDialog({ open, fund, onClose, onDone }) {
             <Label>Jumlah (IDR) *</Label>
             <Input data-testid="txn-amount" type="number" min="1" placeholder="150000" value={form.amount} onChange={e => setForm(p => ({ ...p, amount: e.target.value }))} />
           </div>
-          <div className="space-y-1">
-            <Label>Kategori Biaya</Label>
-            <Select value={form.category} onValueChange={v => setForm(p => ({ ...p, category: v }))}>
-              <SelectTrigger data-testid="txn-category"><SelectValue placeholder="Pilih kategori..." /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">-- Tanpa Kategori --</SelectItem>
-                {categories.map(c => <SelectItem key={c.name} value={c.name}>{c.code ? `${c.code} - ${c.name}` : c.name}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label>Dibayarkan Ke (Payee)</Label>
-            <Input data-testid="txn-payee" placeholder="Nama toko / vendor" value={form.payee} onChange={e => setForm(p => ({ ...p, payee: e.target.value }))} />
-          </div>
+          {form.txn_type === 'advance' ? (
+            <div className="space-y-1">
+              <Label>Karyawan Penerima *</Label>
+              <select value={form.employee_id} onChange={e => setForm(p => ({ ...p, employee_id: e.target.value }))}
+                data-testid="txn-employee" className="w-full h-9 px-2 rounded-md border border-input bg-background text-sm">
+                <option value="">— Pilih karyawan —</option>
+                {refs.employees.map(e => <option key={e.id} value={e.id}>{e.employee_code ? `${e.employee_code} · ` : ''}{e.name}</option>)}
+              </select>
+              <p className="text-[11px] text-muted-foreground">Dicatat Dr 1-1610 Uang Muka Karyawan; dibebankan saat Pertanggungjawaban.</p>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-1">
+                <Label>Kategori Biaya</Label>
+                <Select value={form.category} onValueChange={v => setForm(p => ({ ...p, category: v }))}>
+                  <SelectTrigger data-testid="txn-category"><SelectValue placeholder="Pilih kategori..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">-- Tanpa Kategori --</SelectItem>
+                    {categories.map(c => <SelectItem key={c.name} value={c.name}>{c.code ? `${c.code} - ${c.name}` : c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              {form.txn_type === 'expense' && (
+                <ExpenseAccountPicker category={form.category} value={form.account_code} refs={refs} testId="txn-account"
+                  onChange={v => setForm(p => ({ ...p, account_code: v }))} />
+              )}
+              <div className="space-y-1">
+                <Label>Dibayarkan Ke (Payee)</Label>
+                <Input data-testid="txn-payee" placeholder="Nama toko / vendor" value={form.payee} onChange={e => setForm(p => ({ ...p, payee: e.target.value }))} />
+              </div>
+            </>
+          )}
           <div className="space-y-1">
             <Label>Keterangan</Label>
             <Input data-testid="txn-memo" placeholder="Deskripsi singkat transaksi" value={form.memo} onChange={e => setForm(p => ({ ...p, memo: e.target.value }))} />
@@ -296,6 +365,146 @@ function AddTxnDialog({ open, fund, onClose, onDone }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Pertanggungjawaban uang muka (K26, 2026-11-02) ───────────────────────────
+// Nota per kategori → Dr beban (pemetaan / akun dipilih); sisa uang kembali → Dr kas kecil; Cr 1-1610.
+function SettleAdvanceDialog({ advance, onClose, onDone }) {
+  const open = !!advance;
+  const refs = usePettyRefs(open);
+  const [items, setItems] = useState([]);
+  const [returned, setReturned] = useState('');
+  const [date, setDate] = useState(todayWIB());
+  const [memo, setMemo] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (open) { setItems([{ category: '', account_code: '', amount: '', memo: '' }]); setReturned(''); setDate(todayWIB()); setMemo(''); setErr(''); }
+  }, [open]);
+  const total = items.reduce((s, it) => s + (parseFloat(it.amount) || 0), 0) + (parseFloat(returned) || 0);
+  const setItem = (i, patch) => setItems(xs => xs.map((x, j) => (j === i ? { ...x, ...patch } : x)));
+
+  const save = async () => {
+    const rows = items.filter(it => parseFloat(it.amount) > 0);
+    if (rows.some(it => !(it.category && refs.mapped[it.category]) && !it.account_code)) {
+      return setErr('Ada nota dengan kategori yang belum dipetakan — pilih akun bebannya.');
+    }
+    if (total <= 0) return setErr('Isi minimal satu nota atau sisa uang yang dikembalikan.');
+    if (total > (advance.open_amount || 0) + 0.01) return setErr(`Total ${fmt(total)} melebihi uang muka terbuka ${fmt(advance.open_amount)}.`);
+    setSaving(true); setErr('');
+    try {
+      const r = await fetch(`${BASE}/advances/${advance.id}/settle`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ items: rows.map(it => ({ ...it, amount: parseFloat(it.amount) })),
+                               returned_amount: parseFloat(returned) || 0, settle_date: date, memo }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Gagal menyimpan');
+      toast.success(`Pertanggungjawaban tercatat. JE ${d.gl_posting?.je_number || ''}`);
+      onDone(); onClose();
+    } catch (e) { setErr(e.message); } finally { setSaving(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-lg" data-testid="settle-advance-dialog">
+        <DialogHeader>
+          <DialogTitle>Pertanggungjawaban Uang Muka</DialogTitle>
+          <DialogDescription>
+            {advance?.employee_name} · uang muka {fmt(advance?.amount)} · terbuka <strong>{fmt(advance?.open_amount)}</strong>
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          {err && <div className="text-destructive text-sm bg-destructive/10 rounded px-3 py-2">{err}</div>}
+          {items.map((it, i) => (
+            <div key={i} className="rounded-lg border border-border p-2 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <select value={it.category} onChange={e => setItem(i, { category: e.target.value })}
+                  className="h-9 px-2 rounded-md border border-input bg-background text-sm" data-testid={`settle-cat-${i}`}>
+                  <option value="">— Kategori nota —</option>
+                  {refs.categories.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                </select>
+                <Input type="number" min="1" placeholder="Nominal nota" value={it.amount}
+                  onChange={e => setItem(i, { amount: e.target.value })} data-testid={`settle-amount-${i}`} />
+              </div>
+              <ExpenseAccountPicker category={it.category} value={it.account_code} refs={refs} testId={`settle-account-${i}`}
+                onChange={v => setItem(i, { account_code: v })} />
+            </div>
+          ))}
+          <Button variant="outline" size="sm" onClick={() => setItems(xs => [...xs, { category: '', account_code: '', amount: '', memo: '' }])}>+ Nota</Button>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Sisa uang dikembalikan (Rp)</Label>
+              <Input type="number" min="0" value={returned} onChange={e => setReturned(e.target.value)} data-testid="settle-returned" />
+            </div>
+            <div className="space-y-1">
+              <Label>Tanggal</Label>
+              <Input type="date" value={date} onChange={e => setDate(e.target.value)} />
+            </div>
+          </div>
+          <Input placeholder="Keterangan" value={memo} onChange={e => setMemo(e.target.value)} />
+          <p className="text-xs text-muted-foreground">Total nota + sisa: <strong>{fmt(total)}</strong> (boleh bertahap; maks {fmt(advance?.open_amount)})</p>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
+          <Button onClick={save} disabled={saving} data-testid="settle-save">
+            {saving && <Loader2 size={13} className="mr-1 animate-spin" />} Simpan & Post GL
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function OpenAdvancesCard({ fund, refreshKey, onSettle }) {
+  const [data, setData] = useState({ items: [], by_employee: [], total_open: 0 });
+  useEffect(() => {
+    if (!fund?.id) return undefined;
+    let off = false;
+    fetch(`${BASE}/advances?status=open&fund_id=${fund.id}`, { headers: { Authorization: `Bearer ${token()}` } })
+      .then(r => (r.ok ? r.json() : null)).then(d => { if (!off && d) setData(d); }).catch(() => {});
+    return () => { off = true; };
+  }, [fund?.id, refreshKey]);
+  if (!data.items.length) return null;
+  return (
+    <Card className="shadow-[var(--shadow-card)]" data-testid="open-advances">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base">Uang Muka Terbuka — {fmt(data.total_open)}</CardTitle>
+        <CardDescription>
+          Per karyawan: {data.by_employee.map(g => `${g.employee_name} ${fmt(g.total_open)}${g.overdue_count ? ` (${g.overdue_count} terlambat)` : ''}`).join(' · ')}
+          {!fund.advance_settle_days && ' · Batas hari pertanggungjawaban belum diatur.'}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Table>
+          <TableHeader>
+            <TableRow className="bg-muted/30">
+              <TableHead className="text-xs">Tanggal</TableHead>
+              <TableHead className="text-xs">Karyawan</TableHead>
+              <TableHead className="text-xs text-right">Terbuka</TableHead>
+              <TableHead className="text-xs">Batas</TableHead>
+              <TableHead className="w-28" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {data.items.map(a => (
+              <TableRow key={a.id} className={a.overdue ? 'bg-rose-50 dark:bg-rose-500/10' : ''}>
+                <TableCell className="text-xs">{fmtDate(a.txn_date)} <span className="text-muted-foreground">({a.age_days} hr)</span></TableCell>
+                <TableCell className="text-xs">{a.employee_name}</TableCell>
+                <TableCell className="text-xs text-right font-mono">{fmt(a.open_amount)}</TableCell>
+                <TableCell className="text-xs">{a.due_date ? `${fmtDate(a.due_date)}${a.overdue ? ' · TERLAMBAT' : ''}` : '—'}</TableCell>
+                <TableCell>
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => onSettle(a)} data-testid={`settle-btn-${a.id}`}>
+                    Pertanggungjawaban
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -401,6 +610,10 @@ export default function PettyCashModule() {
   const [createOpen, setCreateOpen] = useState(false);
   const [replenishOpen, setReplenishOpen] = useState(false);
   const [addTxnOpen, setAddTxnOpen] = useState(false);
+  // 2026-11-02 (K26): uang muka terbuka + pertanggungjawaban + batas hari per dana
+  const [settleAdv, setSettleAdv] = useState(null);
+  const [advKey, setAdvKey] = useState(0);
+  const [settleDays, setSettleDays] = useState('');
 
   const role = userRole();
   const canManage = FINANCE_ROLES.includes(role);
@@ -468,7 +681,21 @@ export default function PettyCashModule() {
     } catch { toast.error('Koneksi bermasalah'); }
   };
 
-  const afterAction = () => { fetchFunds(); if (activeFund) fetchTxns(activeFund.id); };
+  const afterAction = () => { fetchFunds(); if (activeFund) fetchTxns(activeFund.id); setAdvKey(k => k + 1); };
+
+  useEffect(() => { setSettleDays(activeFund?.advance_settle_days ?? 0); }, [activeFund?.id, activeFund?.advance_settle_days]);
+  const saveSettleDays = async () => {
+    try {
+      const r = await fetch(`${BASE}/funds/${activeFund.id}/settings`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
+        body: JSON.stringify({ advance_settle_days: Number(settleDays) || 0 }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Gagal');
+      toast.success('Batas hari pertanggungjawaban disimpan.');
+      afterAction();
+    } catch (e) { toast.error(e.message); }
+  };
 
   const totalBalance = funds.filter(f => f.status === 'active').reduce((s, f) => s + (f.current_balance || 0), 0);
   const unpostedCount = txns.filter(t => !t.gl_posted).length;
@@ -582,8 +809,20 @@ export default function PettyCashModule() {
                       )}
                     </div>
                   </div>
+                  {canManage && (
+                    <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>Batas pertanggungjawaban uang muka:</span>
+                      <Input type="number" min="0" max="365" value={settleDays} onChange={e => setSettleDays(e.target.value)}
+                        className="h-7 w-20 text-xs" data-testid="fund-settle-days" />
+                      <span>hari (0 = belum diatur)</span>
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={saveSettleDays}>Simpan</Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
+
+              {/* 2026-11-02 (K26): uang muka karyawan yang belum dipertanggungjawabkan */}
+              <OpenAdvancesCard fund={activeFund} refreshKey={advKey} onSettle={setSettleAdv} />
 
               {/* Transaction History */}
               <Card className="shadow-[var(--shadow-card)]">
@@ -647,6 +886,7 @@ export default function PettyCashModule() {
           <ReplenishDialog open={replenishOpen} fund={activeFund} onClose={() => setReplenishOpen(false)} onDone={afterAction}
             accounts={sourceAccounts} accountsLoaded={cashLoaded} />
           <AddTxnDialog open={addTxnOpen} fund={activeFund} onClose={() => setAddTxnOpen(false)} onDone={afterAction} />
+          <SettleAdvanceDialog advance={settleAdv} onClose={() => setSettleAdv(null)} onDone={afterAction} />
         </>
       )}
     </div>

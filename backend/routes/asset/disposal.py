@@ -8,8 +8,42 @@ from fastapi import Request, HTTPException
 
 from database import get_db
 from auth import require_auth
-from ._accounts import line as _acc_line, resolve_asset_accounts
-from ._helpers import router, _uid, _now, _ser, _create_finance_journal
+from ._helpers import router, _uid, _now, _ser
+
+
+def _can_decide_finance(user: dict) -> bool:
+    """Admin/owner, peran yang bisa membuka Portal Keuangan, atau peran lama finance/manager.
+    2026-11-02: dulu hanya ("admin","superadmin","finance","manager") — peran `finance` tidak ada di
+    sistem sehingga Keuangan (accounting/staff_keuangan) tidak bisa menyetujui pelepasan."""
+    from routes.shared import SUPER_ROLES, check_portal_access
+    role = (user.get("role") or "").lower()
+    return role in SUPER_ROLES or role in ("superadmin", "finance", "manager") or check_portal_access(user, "finance")
+
+
+async def _execute_disposal(db, asset: dict, disposal_date: str, disposal_value: float, reason: str, user: dict) -> dict:
+    """2026-11-02 (K18): Portal Aset TIDAK lagi membuat jurnal pelepasan sendiri.
+
+    Aset tertaut registri Keuangan → pelepasan & jurnal lewat SATU jalur Keuangan
+    (`routes.rahaza_fixed_assets.dispose_fixed_asset`: NBV per tanggal pelepasan, akun milik aset,
+    tolak tanggal sebelum penyusutan terakhir). Aset belum tertaut → status operasional saja, tanpa jurnal
+    (nilai bukunya memang tidak ada di neraca). Dulu: jurnal draft akun profil + Dr 1-1201 tetap."""
+    fid = asset.get("fixed_asset_id")
+    if fid:
+        if not _can_decide_finance(user):
+            raise HTTPException(403, "Aset ini tertaut registri Keuangan: pelepasan (dan jurnalnya) hanya oleh Keuangan "
+                                     "— ajukan 'Permintaan Pelepasan' agar disetujui Keuangan.")
+        from routes.rahaza_fixed_assets import dispose_fixed_asset
+        res = await dispose_fixed_asset(db, fid, {"disposal_date": disposal_date, "disposal_value": disposal_value,
+                                                  "notes": reason}, user)
+        return {"gain_loss": res.get("gain_loss"), "nbv": res.get("nbv_at_disposal"),
+                "journal_id": ((res.get("posting_result") or {}).get("je_id")),
+                "journal_number": ((res.get("posting_result") or {}).get("je_number")),
+                "posting_result": res.get("posting_result"), "value_source": "finance_registry"}
+    cost = float(asset.get("purchase_cost") or 0)
+    accum = float(asset.get("accumulated_depreciation") or 0)
+    return {"gain_loss": round(disposal_value - (cost - accum), 2), "nbv": round(cost - accum, 2),
+            "journal_id": None, "journal_number": None, "posting_result": None, "value_source": "unlinked",
+            "note": "Aset belum tertaut ke registri Keuangan — dilepas secara operasional tanpa jurnal."}
 
 
 # ─── List + approve + reject (LITERAL paths → must register early) ──────────────────
@@ -30,8 +64,8 @@ async def list_disposal_requests(request: Request, status: str = "pending"):
 async def approve_disposal_request(req_id: str, request: Request):
     """Approve permintaan disposal → eksekusi dispose + jurnal Finance."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "superadmin", "finance", "manager"):
-        raise HTTPException(403, "Hanya admin/finance/manager yang bisa approve disposal.")
+    if not _can_decide_finance(user):
+        raise HTTPException(403, "Hanya admin/Keuangan/manager yang bisa approve disposal.")
     db = get_db()
     req = await db.dewi_asset_disposal_requests.find_one({"id": req_id})
     if not req:
@@ -46,38 +80,10 @@ async def approve_disposal_request(req_id: str, request: Request):
     if not asset:
         raise HTTPException(404, "Aset tidak ditemukan.")
 
-    cost = float(asset["purchase_cost"])
-    accum = float(asset.get("accumulated_depreciation", 0))
-    nbv = cost - accum
     disposal_value = float(req.get("disposal_value", 0))
-    gain_loss = disposal_value - nbv
-
-    # BUG-5 (FASE 11): kode akun DULU di-hardcode ("1590"/"1500"/"1100"/"8100"/"6300")
-    # dan TIDAK ADA satupun di CoA. Sekarang diambil dari posting profile
-    # `asset_disposal` (SSOT) lewat resolver bersama.
-    _acc = await resolve_asset_accounts(db)
-    lines = [
-        _acc_line(_acc["accum_depr"], debit=accum,
-                  description=f"Hapus akumulasi {asset['asset_number']}"),
-        _acc_line(_acc["fixed_asset"], credit=cost,
-                  description=f"Hapus aset {asset['asset_number']}"),
-    ]
-    if disposal_value > 0:
-        lines.append(_acc_line(_acc["cash"], debit=disposal_value,
-                               description="Penerimaan disposal"))
-    if gain_loss > 0:
-        lines.append(_acc_line(_acc["gain_on_disposal"], credit=gain_loss,
-                               description="Keuntungan disposal"))
-    elif gain_loss < 0:
-        lines.append(_acc_line(_acc["loss_on_disposal"], debit=abs(gain_loss),
-                               description="Kerugian disposal"))
-
-    je_id = await _create_finance_journal(
-        db, user["id"], user.get("name", ""),
-        req["disposal_date"],
-        f"Disposal Aset (Approved): {asset['name']} ({asset['asset_number']})",
-        lines, source_ref=asset["asset_number"],
-    )
+    res = await _execute_disposal(db, asset, req["disposal_date"], disposal_value, req.get("reason", ""), user)
+    gain_loss = float(res.get("gain_loss") or 0)
+    je_id = res.get("journal_id")
 
     now = _now()
     await db.dewi_assets.update_one(
@@ -98,15 +104,15 @@ async def approve_disposal_request(req_id: str, request: Request):
             "reviewed_at": now, "review_notes": notes, "journal_id": je_id,
         }},
     )
-    return {"ok": True, "gain_loss": round(gain_loss, 2), "journal_id": je_id}
+    return {"ok": True, "gain_loss": round(gain_loss, 2), "journal_id": je_id, "disposal": res}
 
 
 @router.patch("/disposal-requests/{req_id}/reject")
 async def reject_disposal_request(req_id: str, request: Request):
     """Reject permintaan disposal → kembalikan status aset ke active."""
     user = await require_auth(request)
-    if user.get("role") not in ("admin", "superadmin", "finance", "manager"):
-        raise HTTPException(403, "Hanya admin/finance/manager yang bisa reject disposal.")
+    if not _can_decide_finance(user):
+        raise HTTPException(403, "Hanya admin/Keuangan/manager yang bisa reject disposal.")
     db = get_db()
     req = await db.dewi_asset_disposal_requests.find_one({"id": req_id})
     if not req:
@@ -151,37 +157,9 @@ async def dispose_asset(asset_id: str, request: Request):
     disposal_value = float(body.get("disposal_value") or 0)
     reason = (body.get("reason") or "").strip()
 
-    cost = float(asset["purchase_cost"])
-    accum = float(asset.get("accumulated_depreciation", 0))
-    nbv = cost - accum
-    gain_loss = disposal_value - nbv
-
-    # BUG-5 (FASE 11): kode akun DULU di-hardcode ("1590"/"1500"/"1100"/"8100"/"6300")
-    # dan TIDAK ADA satupun di CoA. Sekarang diambil dari posting profile
-    # `asset_disposal` (SSOT) lewat resolver bersama.
-    _acc = await resolve_asset_accounts(db)
-    lines = [
-        _acc_line(_acc["accum_depr"], debit=accum,
-                  description=f"Hapus akumulasi {asset['asset_number']}"),
-        _acc_line(_acc["fixed_asset"], credit=cost,
-                  description=f"Hapus aset {asset['asset_number']}"),
-    ]
-    if disposal_value > 0:
-        lines.append(_acc_line(_acc["cash"], debit=disposal_value,
-                               description="Penerimaan disposal"))
-    if gain_loss > 0:
-        lines.append(_acc_line(_acc["gain_on_disposal"], credit=gain_loss,
-                               description="Keuntungan disposal"))
-    elif gain_loss < 0:
-        lines.append(_acc_line(_acc["loss_on_disposal"], debit=abs(gain_loss),
-                               description="Kerugian disposal"))
-
-    je_id = await _create_finance_journal(
-        db, user["id"], user.get("name", ""),
-        disposal_date,
-        f"Disposal Aset: {asset['name']} ({asset['asset_number']})",
-        lines, source_ref=asset["asset_number"],
-    )
+    res = await _execute_disposal(db, asset, disposal_date, disposal_value, reason, user)
+    gain_loss = res.get("gain_loss")
+    je_id = res.get("journal_id")
     await db.dewi_assets.update_one(
         {"id": asset_id},
         {"$set": {
@@ -193,7 +171,7 @@ async def dispose_asset(asset_id: str, request: Request):
             "updated_at": _now(),
         }},
     )
-    return {"ok": True, "gain_loss": gain_loss, "journal_id": je_id}
+    return {"ok": True, "gain_loss": gain_loss, "journal_id": je_id, "disposal": res}
 
 
 @router.post("/{asset_id}/request-disposal")

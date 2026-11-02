@@ -105,6 +105,21 @@ DEFAULT_ENTITY_TYPES = {
         "target_field": "gl_account_code",
         "name_prefix": "Bank",
     },
+    # 2026-11-02 (K35) — PENOMORAN akun pendapatan per toko (bukan subledger biasa).
+    # Dibaca `core.finance_sync.ensure_store_revenue_account`. `collection` sengaja
+    # kosong ⇒ backfill subledger generik melewatinya (akun pendapatan toko dibuat
+    # saat toko dibuat / sinkron master, bukan lewat tombol backfill).
+    "store_revenue": {
+        "enabled": True,
+        "kind": "store_revenue",
+        "parent_code": "",
+        "parent_by_platform": {"shopee": "4-1110", "tiktok": "4-1120", "tokopedia": "4-1130"},
+        "code_format": "{prefix}{seq}",   # pola lama 4-111x (maks. 9 per platform)
+        "label": "Toko Online — Akun Pendapatan per Toko (penomoran)",
+        "collection": "",
+        "target_field": "coa_revenue_code",
+        "name_prefix": "Penjualan –",
+    },
 }
 
 # Kunci lookup entitas per koleksi (id selalu didukung; ini utk lookup by code).
@@ -141,8 +156,9 @@ async def get_auto_settings(db) -> dict:
                 changed = True
             else:
                 # pastikan field meta (collection/target_field/name_prefix) selalu ada
-                for meta in ("collection", "target_field", "name_prefix", "label"):
-                    if meta not in et[k]:
+                for meta in ("collection", "target_field", "name_prefix", "label",
+                             "kind", "parent_by_platform", "code_format"):
+                    if meta in v and meta not in et[k]:
                         et[k][meta] = v[meta]
                         changed = True
         if changed:
@@ -382,6 +398,10 @@ async def update_settings(request: Request):
     for key, patch in incoming.items():
         if key not in et:
             continue
+        if key == "store_revenue":
+            # 2026-11-02 (K35) — penomoran akun pendapatan toko: format + kelompok per platform.
+            et[key] = await _patch_store_revenue(db, et[key], patch or {})
+            continue
         if "enabled" in patch:
             et[key]["enabled"] = bool(patch["enabled"])
         if patch.get("parent_code"):
@@ -396,6 +416,57 @@ async def update_settings(request: Request):
     )
     await log_activity(user.get("id", ""), user.get("name", ""), "update_coa_auto_settings", "coa_auto", "settings")
     return {"ok": True, "entity_types": et}
+
+
+async def _patch_store_revenue(db, cur: dict, patch: dict) -> dict:
+    """Validasi & terapkan setelan penomoran akun pendapatan toko (K35). Toko LAMA tidak
+    disentuh — format hanya berlaku untuk akun pendapatan toko BARU."""
+    from core import finance_sync as _fs
+    out = dict(cur or {})
+    if "code_format" in patch:
+        try:
+            out["code_format"] = _fs.validate_code_format(str(patch.get("code_format") or ""))
+        except ValueError as e:
+            raise HTTPException(400, f"Format penomoran pendapatan toko: {e}")
+    groups = dict(out.get("parent_by_platform") or {})
+    for plat, code in (patch.get("parent_by_platform") or {}).items():
+        p = _fs.canonical_platform(plat)
+        c = str(code or "").strip()
+        if not c:
+            continue
+        acc = await db.rahaza_coa_accounts.find_one({"code": c}, {"_id": 0})
+        if not acc:
+            raise HTTPException(400, f"Kelompok pendapatan '{c}' ({p}) tidak ada di COA.")
+        if (acc.get("type") or "").upper() != "REVENUE":
+            raise HTTPException(400, f"Akun '{c}' bukan akun pendapatan (REVENUE).")
+        groups[p] = c
+    out["parent_by_platform"] = groups
+    out["enabled"] = True
+    return out
+
+
+@router.get("/store-revenue/preview")
+async def store_revenue_preview(request: Request, code_format: str = Query(""),
+                                platform: str = Query("shopee"), store_code: str = Query("SHP-XX")):
+    """Nomor akun pendapatan toko BERIKUTNYA bila format ini dipakai (tanpa menulis apa pun)."""
+    from core import finance_sync as _fs
+    db = get_db()
+    cfg = await _fs.store_revenue_settings(db)
+    fmt = code_format or cfg["code_format"]
+    try:
+        fmt = _fs.validate_code_format(fmt)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    group = cfg["parent_by_platform"].get(_fs.canonical_platform(platform))
+    if not group:
+        raise HTTPException(400, f"Platform '{platform}' tidak punya kelompok pendapatan.")
+    try:
+        nxt = await _fs._next_code(db, group, code_format=fmt, store_code=store_code)
+    except ValueError as e:
+        return {"ok": False, "code_format": fmt, "group": group, "error": str(e),
+                "capacity": _fs.seq_capacity(fmt)}
+    return {"ok": True, "code_format": fmt, "group": group, "next_code": nxt,
+            "capacity": _fs.seq_capacity(fmt)}
 
 
 @router.post("/backfill/{entity_type}")

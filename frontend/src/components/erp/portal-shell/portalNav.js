@@ -39,7 +39,7 @@ import {
   TrendingUp, FileSpreadsheet, Shirt, Users,
   KeyRound, History, Building2, FileCog, BookOpen, UserPlus, GraduationCap, Palette,
   // Production operational
-  LayoutGrid, ClipboardList, ClipboardSignature, Boxes,
+  LayoutGrid, ClipboardSignature, Boxes,
   Hammer, Activity, Siren, AlertTriangle, Truck, Tv2, Zap,
   ClipboardPen, Package, CalendarDays,
   // Production process stages
@@ -47,7 +47,7 @@ import {
   // Production master
   Workflow, Timer, Wrench, Factory, HardHat, Ruler, BookMarked,
   // Warehouse
-  Archive, PackageMinus, PackagePlus, ArrowRightLeft, MapPin, Sparkles, Lock, Award, Send,
+  Archive, PackageMinus, PackagePlus, ArrowRightLeft, MapPin, Sparkles, Lock, Award,
   // Finance — Accounting Core
   FolderTree, BookCheck, Scale, Book, CalendarRange, Settings2,
   FileText, Hourglass, Wallet,
@@ -383,11 +383,12 @@ export const PORTAL_NAV = {
         label: 'OUTBOUND — PENGIRIMAN',
         items: [
           { id: 'wh-material-issue',  label: 'Pengeluaran Material', icon: PackageMinus },
-          { id: 'fulfillment',        label: 'Fulfillment',   icon: Send },
-          // Sesi #20 — gudang butuh pintu yang sama: kalau antrean Fulfillment
-          // menyebut "belum tertaut master", inilah tempat memperbaikinya.
+          // 2026-11-02 (K6, keputusan owner) — 'Fulfillment' & 'Pick List' DILEPAS dari
+          // menu: pesanan marketplace dikirim lewat Seller Center (D4), order manual tidak
+          // lagi memesan stok, dan pesanan impor tidak masuk antrean. moduleId-nya tetap
+          // terdaftar di moduleRegistry ⇒ deep-link lama tetap hidup.
+          // Sesi #20 — Jembatan SKU tetap: tempat memperbaiki tautan SKU marketplace.
           { id: 'sku-bridge',         label: 'Jembatan SKU',  icon: Link2 },
-          { id: 'wh-picklist',        label: 'Pick List',     icon: ClipboardList },
           { id: 'wms-delivery-notes', label: 'Surat Jalan',   icon: FileText },
           { id: 'wh-returns',         label: 'Retur Fisik',   icon: RotateCcw },
         ],

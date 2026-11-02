@@ -46,7 +46,7 @@ router = APIRouter(prefix="/api/dewi/kasbon", tags=["Kasbon"])
 from core.authz import only  # noqa: E402
 from core.roles import FINANCE_ROLES, HR_ROLES  # noqa: E402
 from routes.rahaza_payroll_shared import (  # noqa: E402 — 2026-11-02 (P5): helper bersama
-    _today_wib, notify_requester, parse_ymd, resolve_payment_account,
+    _today_wib, ensure_not_self_approval, notify_requester, parse_ymd, resolve_payment_account,
 )
 _HR_OR_FIN = tuple(dict.fromkeys(HR_ROLES + FINANCE_ROLES))
 _PRIVILEGED_ROLES = {r.lower() for r in _HR_OR_FIN} | {"superadmin", "admin"}
@@ -158,6 +158,38 @@ async def _post_kasbon_gl(db, event_type: str, source_ref: str, memo: str, amoun
         return {"ok": False, "error": str(exc)}
 
 
+async def kasbon_limit_check(db, employee_id: str, amount: float, installment_count: int) -> dict:
+    """K25 (2026-11-02): batas kasbon dari `rahaza_payroll_settings.kasbon`. Bawaan 0 = tanpa batas.
+
+    Return {ok, errors[], warnings[], base_salary, max_amount}. `errors` = melanggar batas yang terisi;
+    `warnings` = batas % terisi tetapi gaji pokok karyawan tidak diketahui (bukan skema bulanan) —
+    HR yang menilai saat review."""
+    from routes.rahaza_payroll_settings import get_kasbon_settings
+    cfg = await get_kasbon_settings(db)
+    pct = float(cfg.get("max_pct_of_base_salary") or 0)
+    max_inst = int(cfg.get("max_installments") or 0)
+    out = {"ok": True, "errors": [], "warnings": [], "base_salary": None, "max_amount": None,
+           "max_pct_of_base_salary": pct, "max_installments": max_inst}
+    if max_inst > 0 and int(installment_count or 1) > max_inst:
+        out["errors"].append(f"Jumlah cicilan {installment_count}× melebihi batas {max_inst}×.")
+    if pct > 0:
+        prof = await db.rahaza_payroll_profiles.find_one(
+            {"employee_id": employee_id, "active": True, "pay_scheme": "monthly"}, {"_id": 0, "base_rate": 1})
+        base = float((prof or {}).get("base_rate") or 0)
+        if base > 0:
+            cap = round(base * pct / 100.0)
+            out.update(base_salary=base, max_amount=cap)
+            if float(amount) > cap + 0.01:
+                out["errors"].append(
+                    f"Nominal Rp {float(amount):,.0f} melebihi batas {pct:g}% × gaji pokok Rp {base:,.0f} "
+                    f"= Rp {cap:,.0f}.".replace(",", "."))
+        else:
+            out["warnings"].append(f"Batas {pct:g}% gaji pokok tidak bisa dicek: karyawan tidak punya Profil Gaji "
+                                   "bulanan aktif. HR menilai saat review.")
+    out["ok"] = not out["errors"]
+    return out
+
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -225,6 +257,11 @@ async def submit_kasbon_request(
     emp_email = (emp or {}).get("email") or user.get("email", "")
     actual_emp_id = (emp or {}).get("id") or (emp or {}).get("employee_id") or employee_id
 
+    # 2026-11-02 (K25): batas kasbon (% gaji pokok, maks cicilan) dari Pengaturan Payroll.
+    limit = await kasbon_limit_check(db, actual_emp_id, amount, installment_count)
+    if not limit["ok"]:
+        raise HTTPException(400, "Pengajuan melebihi batas kasbon: " + " ".join(limit["errors"]))
+
     # ── FASE G (sesi #18) — KEBIJAKAN PENOMORAN DITEGAKKAN ────────────────────
     # Sebelum ini nomor SELALU dibuat otomatis (`KSB-00001`/`PIN-00001`) sehingga
     # setelan "Otomatis/Manual" di Administrasi Sistem → Penomoran Dokumen tidak
@@ -276,6 +313,7 @@ async def submit_kasbon_request(
         "paid_amount": 0.0,
         "outstanding_balance": amount,
         "repayments": [],
+        "limit_warnings": limit["warnings"],  # 2026-11-02 (K25)
         # Meta
         "submitted_by": user.get("email", ""),
         "submitted_by_name": user.get("name", ""),
@@ -393,20 +431,45 @@ async def hr_review_kasbon(
         raise HTTPException(404, "Kasbon tidak ditemukan")
     if doc.get("status") != "submitted":
         raise HTTPException(400, f"Status saat ini '{doc.get('status')}', hanya bisa review saat 'submitted'")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju — HR tidak boleh mereview kasbon miliknya / yang ia ajukan.
+    ensure_not_self_approval(doc, user, own_employee_ids=await _own_employee_ids(db, user), what="kasbon")
 
     new_status = "hr_approved" if action == "approve" else "hr_rejected"
     upd = {
         "status": new_status,
         "hr_reviewed_by": user.get("name", user.get("email", "")),
+        "hr_reviewed_by_id": user.get("id"),
         "hr_reviewed_at": _now().isoformat(),
         "hr_notes": body.get("notes", ""),
         "updated_at": _now().isoformat(),
     }
-    await db.dewi_kasbon_requests.update_one({"id": req_id}, {"$set": upd})
+    if action == "approve":
+        # K25: nilai disetujui ≤ nilai diminta (opsional `approved_amount`), dan tetap dalam batas kasbon.
+        requested = float(doc.get("amount") or 0)
+        raw = body.get("approved_amount")
+        approved = requested
+        if raw not in (None, ""):
+            try:
+                approved = float(raw)
+            except (TypeError, ValueError):
+                raise HTTPException(400, "approved_amount harus angka.")
+            if approved <= 0:
+                raise HTTPException(400, "Nilai disetujui harus > 0 (gunakan Tolak bila tidak disetujui).")
+            if approved > requested + 0.01:
+                raise HTTPException(400, f"Nilai disetujui (Rp {approved:,.0f}) melebihi nilai diminta "
+                                         f"(Rp {requested:,.0f}).".replace(",", "."))
+        count = int(doc.get("installment_count") or 1)
+        limit = await kasbon_limit_check(db, doc.get("employee_id"), approved, count)
+        if not limit["ok"]:
+            raise HTTPException(400, "Tidak bisa disetujui — melebihi batas kasbon: " + " ".join(limit["errors"]))
+        if abs(approved - requested) > 0.01:
+            upd.update({"requested_amount": requested, "amount": approved,
+                        "outstanding_balance": approved, "installment_amount": math.ceil(approved / max(count, 1))})
+    await db.dewi_kasbon_requests.update_one({"id": req_id, "status": "submitted"}, {"$set": upd})
     updated = await db.dewi_kasbon_requests.find_one({"id": req_id}, {"_id": 0})
     # 2026-11-02 (P5 butir 12): beri tahu karyawan pemohon hasil review (tautan: Portal Saya → Kasbon).
     label = doc.get("type_label") or "Kasbon"
-    nominal = f"Rp {float(doc.get('amount') or 0):,.0f}".replace(",", ".")
+    nominal = f"Rp {float((updated or doc).get('amount') or 0):,.0f}".replace(",", ".")
     approved = action == "approve"
     await notify_requester(
         db, user_id=await _kasbon_requester_user_id(db, doc),
@@ -778,6 +841,39 @@ async def apply_payroll_deductions_core(db, period: str, deductions: list, user:
             "message": None if not gl_failed else
             (f"{len(gl_failed)} potongan kasbon TIDAK dicatat karena jurnalnya gagal: "
              f"{(gl_failed[0].get('gl') or {}).get('error')} — kasbon tetap outstanding; ulangi lewat Retry GL run.")}
+
+
+async def restore_payroll_deductions_core(db, run_id: str, user: dict, reason: str = "") -> dict:
+    """2026-11-02 (K34): kembalikan potongan kasbon dari run payroll yang DIBATALKAN.
+
+    Entri angsuran `payroll_deduction` milik run itu dipindah ke `repayments_reversed` (jejak audit),
+    saldo outstanding dikembalikan, status kembali 'disbursed'. Jurnalnya (Dr 2-1200 / Cr 1-1320)
+    dibalik oleh pembatalan run (reverse_journal_entry). Karena entri dipindah, run pengganti untuk
+    periode yang sama akan memotong kasbon itu lagi (dedupe periode tidak lagi menahannya)."""
+    results = []
+    docs = await db.dewi_kasbon_requests.find(
+        {"repayments": {"$elemMatch": {"run_id": run_id, "method": "payroll_deduction"}}},
+        {"_id": 0, "documents": 0}).to_list(500)
+    now = _now().isoformat()
+    for doc in docs:
+        reps = doc.get("repayments") or []
+        mine = [r for r in reps if r.get("run_id") == run_id and r.get("method") == "payroll_deduction"]
+        keep = [r for r in reps if r not in mine]
+        amt = round(sum(float(r.get("amount") or 0) for r in mine), 2)
+        new_out = round(float(doc.get("outstanding_balance") or 0) + amt, 2)
+        new_paid = round(max(0.0, float(doc.get("paid_amount") or 0) - amt), 2)
+        new_status = "disbursed" if new_out > 0.01 else doc.get("status")
+        reversed_rows = list(doc.get("repayments_reversed") or []) + [
+            {**r, "reversed_at": now, "reversed_reason": reason, "reversed_by": user.get("name", "")} for r in mine]
+        res = await db.dewi_kasbon_requests.update_one(
+            {"id": doc["id"], "repayments": {"$elemMatch": {"run_id": run_id, "method": "payroll_deduction"}}},
+            {"$set": {"repayments": keep, "repayments_reversed": reversed_rows, "outstanding_balance": new_out,
+                      "paid_amount": new_paid, "status": new_status, "updated_at": now}})
+        if res.matched_count:
+            results.append({"kasbon_id": doc["id"], "request_number": doc.get("request_number"),
+                            "employee_name": doc.get("employee_name"), "amount_restored": amt,
+                            "new_outstanding": new_out, "new_status": new_status})
+    return {"ok": True, "run_id": run_id, "results": results}
 
 
 @router.post("/apply-payroll-deductions")

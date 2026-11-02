@@ -25,7 +25,7 @@ from auth import require_auth, serialize_doc
 from utils.data_quality import SkipTracker
 import logging
 
-from services.ai import AIError, ai_http_error, ai_text, require_ai
+from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, require_ai
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +55,18 @@ class RCAFilter(BaseModel):
 
 RISK_NOT_ASSESSED = "tidak dapat dinilai"
 
+# 2026-11-02 (K29): label fitur STABIL yang cocok dengan toggle Monitor AI "analytics-ai".
+# Dulu `prod-rca-<user>-<timestamp>` → toggle RCA tidak pernah berefek & biaya per fitur
+# tersebar per user. Tier standard (Opus khusus Laporan Eksekutif).
+FEATURE_PROD_RCA = "analytics-ai-prod-rca"
+FEATURE_QC_RCA = "analytics-ai-qc-rca"
+LLM_TIER = "standard"
 
-async def _call_claude(system_msg: str, prompt: str, session_tag: str) -> dict:
-    await require_ai(session_tag, tier="executive")
+
+async def _call_claude(system_msg: str, prompt: str, session_tag: str, user_id: Optional[str] = None) -> dict:
+    await require_ai(session_tag, user_id=user_id, tier=LLM_TIER)
     try:
-        raw = await ai_text(session_tag, system_msg, prompt, tier="executive")
+        raw = await ai_text(session_tag, system_msg, prompt, tier=LLM_TIER, user_id=user_id)
     except AIError as e:
         raise ai_http_error(e)
     raw = (raw or "").strip()
@@ -230,7 +237,7 @@ Balas HANYA dengan JSON valid tanpa markdown."""
     analysis = await _call_claude(
         "Kamu adalah analis produksi manufaktur garment yang memberikan RCA singkat, actionable, berbasis data, dalam format JSON.",
         prompt,
-        f"prod-rca-{user['id'][:8]}-{int(_now().timestamp())}",
+        FEATURE_PROD_RCA, user.get("id"),
     )
 
     result = {
@@ -299,9 +306,13 @@ async def qc_rca(data: RCAFilter, request: Request):
         line_agg[lid]["checked"] += r.get("checked_qty", 0)
         line_agg[lid]["fail"] += r.get("fail_qty", 0)
         line_agg[lid]["events"] += 1
+    # K27 (2026-11-02): "line" di QC = vendor CMT (sering perorangan) → kode samaran VND-xxx
+    # di prompt; jawaban AI dipetakan balik ke nama asli di server.
+    ps = Pseudonymizer()
     line_list = [
         {
             "line": v["name"] or (lid[:8] + "…" if lid != "unknown" else "unknown"),
+            "ref": ps.code(v["name"] or lid, "vendor"),
             "checked": v["checked"], "fail": v["fail"], "events": v["events"],
             "fail_rate": round(v["fail"] / v["checked"] * 100, 2) if v["checked"] else 0,
         }
@@ -348,8 +359,8 @@ RINGKASAN:
   - Fail rate:     {fail_rate:.2f}%
   - Total QC events: {len(rows)}
 
-TOP 5 LINE DENGAN FAIL RATE TERTINGGI:
-{chr(10).join([f"  - {l['line']}: {l['fail_rate']}% ({l['fail']}/{l['checked']} pcs, {l['events']} events)" for l in line_list[:5]])}
+TOP 5 LINE (VENDOR CMT, nama disamarkan VND-xxx) DENGAN FAIL RATE TERTINGGI:
+{chr(10).join([f"  - {l['ref']}: {l['fail_rate']}% ({l['fail']}/{l['checked']} pcs, {l['events']} events)" for l in line_list[:5]])}
 
 TOP 5 MODEL DENGAN FAIL RATE TERTINGGI:
 {chr(10).join([f"  - {m['model']}: {m['fail_rate']}% ({m['fail']}/{m['checked']} pcs)" for m in model_list[:5]])}
@@ -376,11 +387,13 @@ Berikan RCA dengan format JSON:
 
 Balas HANYA dengan JSON valid tanpa markdown."""
 
-    analysis = await _call_claude(
+    analysis = ps.restore(await _call_claude(
         "Kamu adalah analis QA manufaktur garment yang memberikan RCA actionable berbasis data, format JSON.",
         prompt,
-        f"qc-rca-{user['id'][:8]}-{int(_now().timestamp())}",
-    )
+        FEATURE_QC_RCA, user.get("id"),
+    ))
+    for row in line_list:
+        row.pop("ref", None)
 
     result = {
         "period_days": data.days,

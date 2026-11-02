@@ -4,6 +4,7 @@ Session 15 — P2-8, P2-9, P2-10: HR AI Features
 P2-8: AI Resume Screening
 - POST /api/hr/ai/resume-screen/{candidate_id}  — AI screens candidate resume
 - GET  /api/hr/ai/resume-screen/history          — History of screenings
+- POST /api/hr/ai/resume-screen/{candidate_id}/suggestion — Terima/Ubah/Tolak usulan skor AI (K28)
 
 P2-9: Predictive Attrition
 - POST /api/hr/ai/attrition/predict              — Predict attrition risk
@@ -22,13 +23,35 @@ from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth
-from services.ai import AIError, ai_http_error, ai_text, require_ai
+from services.ai import (
+    AIError, Pseudonymizer, SuggestionDecision, ai_http_error, ai_json, ai_text, clamp_number,
+    decide_suggestion, new_suggestion, pick_enum, require_ai, with_untrusted_rule, wrap_untrusted,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/ai", tags=["hr-ai"])
 
 # 2026-11-02 (No.60): tier, bukan tuple ("openai","gpt-5.1"); kunci dikelola services.ai.
-LLM_TIER = "executive"
+# 2026-11-02 (K29): Opus hanya untuk Laporan Eksekutif → AI SDM memakai standard (Sonnet).
+LLM_TIER = "standard"
+
+# K27 (2026-11-02): nama karyawan/pelamar → kode samaran (KRY-xxx / PLM-xxx), gaji TIDAK
+# PERNAH dikirim; jawaban AI dipetakan balik ke nama asli di server.
+# K28: skor kandidat = USULAN (`ai_suggestion`), bukan nilai resmi; output divalidasi enum.
+RECOMMENDATIONS = ("Strongly Recommended", "Recommended", "Consider", "Not Recommended")
+RISK_LEVELS = ("high", "medium", "low")
+CULTURE_FIT = ("high", "medium", "low")
+SKILL_MATCH = ("yes", "partial", "no")
+
+
+def _score_0_100(v):
+    n = clamp_number(v, 0, 100)
+    if n is None:
+        raise ValueError("harus angka 0–100")
+    return int(round(n))
+
+
+CANDIDATE_SUGGESTION_RULES = {"ai_score": _score_0_100, "ai_recommendation": RECOMMENDATIONS}
 
 
 def _now():
@@ -51,12 +74,12 @@ def serialize(o):
         return o.isoformat()
     return o
 
-async def _call_ai(system_msg: str, user_msg: str, tag: str) -> str:
+async def _call_ai(system_msg: str, user_msg: str, tag: str, user_id: Optional[str] = None) -> str:
     # 2026-11-02: gerbang & galat ramah dari services.ai (dulu 500 "EMERGENT_LLM_KEY ...").
     feature = f"hr-ai-{tag}"
-    await require_ai(feature, tier=LLM_TIER)
+    await require_ai(feature, user_id=user_id, tier=LLM_TIER)
     try:
-        return await ai_text(feature, system_msg, user_msg, tier=LLM_TIER)
+        return await ai_text(feature, system_msg, user_msg, tier=LLM_TIER, user_id=user_id)
     except AIError as e:
         raise ai_http_error(e)
 
@@ -90,7 +113,7 @@ async def screen_resume(
     P2-8: AI Resume Screening.
     Analisis profil kandidat vs. persyaratan posisi, berikan skor dan rekomendasi.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     # Get candidate data
@@ -107,16 +130,20 @@ async def screen_resume(
             {"job_id": candidate["job_id"]}, {"_id": 0}
         )
 
+    # K27: nama pelamar → PLM-xxx; CV (teks pihak luar) disamarkan (nama, HP, email) dan
+    # dibungkus pembatas (K28). Email/telepon/alamat kandidat tidak pernah ikut.
+    ps = Pseudonymizer()
+    ref = ps.code(candidate.get("name"), "pelamar", parts=True) or "PLM-000"
     candidate_profile = {
-        "name": candidate.get("name"),
+        "ref": ref,
         "position_applied": candidate.get("position_applied"),
         "experience_years": candidate.get("experience_years"),
         "education": candidate.get("education"),
         "skills": candidate.get("skills", []),
-        "cv_text": candidate.get("cv_text", ""),
         "current_stage": candidate.get("stage", ""),
         "source": candidate.get("source", ""),
     }
+    cv_block = wrap_untrusted(ps.scrub(candidate.get("cv_text", "")), "cv")
 
     job_info = {}
     if job:
@@ -127,8 +154,9 @@ async def screen_resume(
             "description": job.get("description", ""),
         }
 
-    system_prompt = """Kamu adalah AI HR Recruiter untuk CV. Dewi Aditya.
+    system_prompt = with_untrusted_rule("""Kamu adalah AI HR Recruiter untuk CV. Dewi Aditya.
 Analisis profil kandidat dan berikan penilaian objektif untuk posisi yang dilamar.
+Kandidat disebut dengan kode samaran (mis. PLM-001); pakai kode itu, jangan menebak nama.
 Format JSON response:
 {
   "overall_score": 85,
@@ -141,17 +169,20 @@ Format JSON response:
   "culture_fit": "high/medium/low",
   "interview_questions": ["pertanyaan 1 untuk interview", "pertanyaan 2"],
   "summary": "ringkasan penilaian keseluruhan"
-}"""
+}""")
 
-    user_prompt = f"""Profil Kandidat:\n{json.dumps(candidate_profile, ensure_ascii=False, indent=2)}
+    user_prompt = f"""Profil Kandidat:\n{ai_json(candidate_profile)}
 
-Info Posisi:\n{json.dumps(job_info, ensure_ascii=False, indent=2)}
+Teks CV kandidat:
+{cv_block}
 
-Persyaratan Tambahan: {payload.job_requirements or 'Tidak ada'}
+Info Posisi:\n{ai_json(job_info)}
+
+Persyaratan Tambahan: {ps.scrub(payload.job_requirements) or 'Tidak ada'}
 Fokus Area: {', '.join(payload.focus_areas) if payload.focus_areas else 'Semua area'}"""
 
-    raw = await _call_ai(system_prompt, user_prompt, "resume-screen")
-    analysis = _parse_json_response(raw)
+    raw = await _call_ai(system_prompt, user_prompt, "resume-screen", user.get("id"))
+    analysis = _validate_screening(ps.restore(_parse_json_response(raw)))
 
     # Save to DB
     doc = {
@@ -165,14 +196,56 @@ Fokus Area: {', '.join(payload.focus_areas) if payload.focus_areas else 'Semua a
     }
     await db.hr_ai_results.insert_one(doc)
 
-    # Update candidate with AI score
-    if "overall_score" in analysis:
+    # K28 (2026-11-02): skor AI = USULAN. `ai_score`/`ai_recommendation` resmi baru
+    # berubah saat HR menekan Terima/Ubah (endpoint .../suggestion), aktor dicatat saat itu.
+    suggestion = None
+    if analysis.get("overall_score") is not None:
+        suggestion = new_suggestion(
+            {"ai_score": analysis["overall_score"], "ai_recommendation": analysis.get("recommendation")},
+            feature="hr-ai-resume-screen", user=user, reason=analysis.get("summary", ""),
+            extra={"screening_id": doc["id"]})
         await db.dewi_recruitment_candidates.update_one(
-            {"candidate_id": candidate_id},
-            {"$set": {"ai_score": analysis["overall_score"], "ai_recommendation": analysis.get("recommendation")}}
-        )
+            {"candidate_id": candidate_id}, {"$set": {"ai_suggestion": suggestion}})
 
-    return ok(data={"analysis": analysis, "candidate": serialize(candidate_profile), "generated_at": doc["generated_at"]})
+    shown = {k: v for k, v in candidate_profile.items() if k != "ref"}
+    shown["name"] = candidate.get("name")
+    return ok(data={"analysis": analysis, "candidate": serialize(shown), "ai_suggestion": suggestion,
+                    "generated_at": doc["generated_at"]})
+
+
+def _validate_screening(analysis: dict) -> dict:
+    """K28: skor 0–100 & enum yang sah; nilai di luar itu dikosongkan (bukan dikarang)."""
+    a = dict(analysis or {})
+    if "raw_response" in a:
+        return a
+    score = clamp_number(a.get("overall_score"), 0, 100)
+    a["overall_score"] = None if score is None else int(round(score))
+    a["recommendation"] = pick_enum(a.get("recommendation"), RECOMMENDATIONS)
+    a["culture_fit"] = pick_enum(a.get("culture_fit"), CULTURE_FIT)
+    a["skill_match"] = [
+        {**sm, "match": pick_enum(sm.get("match"), SKILL_MATCH, "no")}
+        for sm in (a.get("skill_match") or []) if isinstance(sm, dict)
+    ]
+    return a
+
+
+@router.post("/resume-screen/{candidate_id}/suggestion")
+async def decide_screening_suggestion(candidate_id: str, payload: SuggestionDecision, request: Request):
+    """K28: HR menerima / mengubah / menolak usulan skor AI kandidat (aktor dicatat di sini)."""
+    user = await require_auth(request)
+    db = get_db()
+    cand = await db.dewi_recruitment_candidates.find_one({"candidate_id": candidate_id}, {"_id": 0})
+    if not cand:
+        raise HTTPException(404, "Kandidat tidak ditemukan")
+    official, decided = decide_suggestion(cand.get("ai_suggestion"), payload, user=user,
+                                          rules=CANDIDATE_SUGGESTION_RULES, current=cand)
+    patch = {"ai_suggestion": decided, "updated_at": _now()}
+    if official:
+        patch.update(official)
+        patch["ai_score_decided_by"] = decided["decided_by"]
+        patch["ai_score_decided_at"] = decided["decided_at"]
+    await db.dewi_recruitment_candidates.update_one({"candidate_id": candidate_id}, {"$set": patch})
+    return ok(data={"candidate_id": candidate_id, "ai_suggestion": decided, "applied": official})
 
 
 @router.get("/resume-screen/history")
@@ -196,7 +269,7 @@ async def predict_attrition(
     P2-9: Predictive Attrition.
     Analisis faktor risiko resign untuk semua karyawan aktif.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     # 2026-11-02: karyawan aktif = `active: True` (field employment_status tidak ada → dulu 0).
@@ -209,7 +282,11 @@ async def predict_attrition(
         return ok(data=[], meta={"total": 0})
 
     # For each employee, gather attrition indicators
+    # K27 (2026-11-02): ke AI hanya kode samaran KRY-xxx + indikator; nama, id, dan GAJI
+    # (base_rate) tidak dikirim dan tidak dikembalikan (`raw_employee_data` dihapus).
+    ps = Pseudonymizer()
     emp_data = []
+    ref_map = {}
     for emp in employees:
         emp_id = emp.get("id") or emp.get("employee_code")
 
@@ -247,9 +324,10 @@ async def predict_attrition(
             except Exception:
                 logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
+        ref = ps.code(emp.get("name") or emp_id, "karyawan")
+        ref_map[ref] = {"employee_id": emp_id, "name": emp.get("name"), "department": emp.get("department")}
         emp_data.append({
-            "employee_id": emp_id,
-            "name": emp.get("name"),
+            "ref": ref,
             "department": emp.get("department"),
             "job_title": emp.get("job_title"),
             "grade": emp.get("grade"),
@@ -257,17 +335,16 @@ async def predict_attrition(
             "absence_90d": absence_count,
             "late_90d": late_count,
             "leave_requests_6m": leave_count,
-            "base_salary": emp.get("base_rate", 0),
         })
 
     system_prompt = """Kamu adalah AI People Analytics specialist untuk CV. Dewi Aditya.
 Analisis data karyawan dan prediksi risiko attrition (resign) untuk setiap karyawan.
+Karyawan disebut dengan kode samaran `ref` (mis. KRY-001); pakai kode itu apa adanya.
 Format JSON response:
 {
   "employees": [
     {
-      "employee_id": "",
-      "name": "",
+      "ref": "KRY-001",
       "risk_level": "high/medium/low",
       "risk_score": 75,
       "risk_factors": ["faktor 1", "faktor 2"],
@@ -279,10 +356,10 @@ Format JSON response:
   "priority_actions": ["aksi prioritas 1", "aksi prioritas 2"]
 }"""
 
-    user_prompt = f"Data karyawan aktif:\n{json.dumps(emp_data[:10], ensure_ascii=False, indent=2)}"
+    user_prompt = f"Data karyawan aktif:\n{ai_json(emp_data[:10])}"
 
-    raw = await _call_ai(system_prompt, user_prompt, "attrition")
-    analysis = _parse_json_response(raw)
+    raw = await _call_ai(system_prompt, user_prompt, "attrition", user.get("id"))
+    analysis = _restore_attrition(_parse_json_response(raw), ps, ref_map)
 
     # Save to DB
     doc = {
@@ -295,7 +372,32 @@ Format JSON response:
     }
     await db.hr_ai_results.insert_one(doc)
 
-    return ok(data={"analysis": analysis, "raw_employee_data": emp_data[:10], "generated_at": doc["generated_at"]})
+    # K27: `raw_employee_data` (berisi base_salary) DIHAPUS dari respons.
+    return ok(data={"analysis": analysis, "generated_at": doc["generated_at"]})
+
+
+def _restore_attrition(analysis: dict, ps: Pseudonymizer, ref_map: dict) -> dict:
+    """Petakan balik KRY-xxx → id/nama/departemen asli (di server) + validasi enum risiko."""
+    a = ps.restore(dict(analysis or {}))
+    if not isinstance((analysis or {}).get("employees"), list):
+        return a
+    emps = []
+    for e in analysis["employees"]:
+        if not isinstance(e, dict):
+            continue
+        ref = str(e.get("ref") or e.get("employee_id") or "")
+        real = ref_map.get(ps.canonical(ref) or ref) or {}
+        row = ps.restore({k: v for k, v in e.items() if k not in ("ref", "name", "employee_id", "department")})
+        row.update({
+            "employee_id": real.get("employee_id"),
+            "name": real.get("name") or ps.real_name(ref),
+            "department": real.get("department"),
+            "risk_level": pick_enum(e.get("risk_level"), RISK_LEVELS),
+            "risk_score": clamp_number(e.get("risk_score"), 0, 100),
+        })
+        emps.append(row)
+    a["employees"] = emps
+    return a
 
 
 @router.get("/attrition/dashboard")
@@ -326,7 +428,7 @@ async def generate_coaching_plan(
     P2-10: AI Performance Coaching Plan.
     Generate personalized coaching plan berdasarkan data kinerja karyawan.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     # Get employee
@@ -358,8 +460,10 @@ async def generate_coaching_plan(
         ).sort("completed_at", -1).limit(5).to_list(5)
     ]
 
+    # K27 (2026-11-02): nama → KRY-xxx (dipetakan balik di server); gaji tidak ikut.
+    ps = Pseudonymizer()
     profile = {
-        "name": employee.get("name"),
+        "ref": ps.code(employee.get("name") or emp_id, "karyawan", parts=True),
         "job_title": employee.get("job_title"),
         "department": employee.get("department"),
         "grade": employee.get("grade"),
@@ -371,7 +475,7 @@ async def generate_coaching_plan(
         "attendance": {"total_days_90d": att_total, "late_days": att_late, "absent_days": att_absent},
         "completed_trainings": len(trainings),
         "focus_area": payload.focus,
-        "goals": payload.goals,
+        "goals": ps.scrub(payload.goals or ""),
     }
 
     # Years of service
@@ -385,6 +489,7 @@ async def generate_coaching_plan(
 
     system_prompt = """Kamu adalah AI Performance Coach untuk CV. Dewi Aditya.
 Buat rencana coaching personal yang spesifik, actionable, dan realistis untuk karyawan.
+Karyawan disebut dengan kode samaran `ref` (mis. KRY-001); pakai kode itu, jangan menebak nama.
 Format JSON:
 {
   "coaching_title": "Judul program coaching",
@@ -400,10 +505,10 @@ Format JSON:
   "motivational_message": "pesan motivasi personal"
 }"""
 
-    user_prompt = f"Profil karyawan:\n{json.dumps(profile, ensure_ascii=False, indent=2)}"
+    user_prompt = f"Profil karyawan:\n{ai_json(profile)}"
 
-    raw = await _call_ai(system_prompt, user_prompt, "coaching")
-    plan = _parse_json_response(raw)
+    raw = await _call_ai(system_prompt, user_prompt, "coaching", user.get("id"))
+    plan = ps.restore(_parse_json_response(raw))
 
     # Save to DB
     doc = {

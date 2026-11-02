@@ -104,7 +104,17 @@ DEFAULT_PROFILES = [
             "debit_salary_expense": "6-2100",
             "credit_salary_payable": "2-1200",
             "credit_tax_pph21": "2-1301",
+            # Cadangan lama: dipakai bila peran per lembaga di bawah dikosongkan Finance.
             "credit_bpjs_payable": "2-1500",
+            # 2026-11-02 (K22): hutang BPJS dipisah per LEMBAGA (potongan karyawan + iuran perusahaan)
+            "credit_bpjs_kes_payable": "2-1501",
+            "credit_bpjs_tk_payable": "2-1502",
+            # 2026-11-02 (K22): beban iuran perusahaan — dipakai hanya bila saklar owner menyala
+            "debit_bpjs_kes_employer_expense": "6-3200",
+            "debit_bpjs_tk_employer_expense": "6-3300",
+            # 2026-11-02 (K38, sementara): potongan penyesuaian manual — kini TAMPIL & bisa diubah
+            # di layar Profil Posting (dulu peran opsional tersembunyi, cadangan kode 4-9000).
+            "credit_other_deduction": "4-9000",
         },
     },
     {
@@ -216,8 +226,13 @@ DEFAULT_PROFILES = [
         "event_type": "petty_cash_expense",
         "description": "Pengeluaran kas kecil → Dr Biaya / Cr Kas Kecil",
         "mapping": {
+            # 2026-11-02 (K26): TIDAK lagi dipakai sebagai beban otomatis pengeluaran kas kecil
+            # (akun dari pemetaan kategori, atau wajib dipilih). Tetap dipakai untuk 'return' uang muka
+            # LAMA yang dulu langsung dibebankan ke akun ini.
             "debit_expense_default": "6-2400",
             "credit_petty_cash":     "1-1101",
+            # 2026-11-02 (K26): uang muka kas kecil atas nama karyawan
+            "debit_employee_advance": "1-1610",
         },
     },
     {

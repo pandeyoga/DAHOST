@@ -134,18 +134,140 @@ async def _backfill_subledgers(db, report: dict, user):
     report["subledgers_created"] = done
 
 
-async def _next_code(db, group: str) -> str:
-    codes = [a["code"] async for a in db.rahaza_coa_accounts.find({"code": {"$regex": f"^{group[:5]}\\d$"}}, {"code": 1})]
-    nums = [int(c[-1]) for c in codes if c[-1].isdigit()]
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K35) — PENOMORAN AKUN PENDAPATAN PER TOKO = KONFIGURASI
+# ══════════════════════════════════════════════════════════════════════════════
+# Dulu penomoran DI-HARD-CODE: satu digit terakhir kelompok (4-111x) ⇒ maks. 9 akun
+# per platform (Shopee & TikTok tinggal 2 slot) lalu `ValueError`. Owner (K35):
+# penomoran bisa dikonfigurasi di pengaturan Auto Akun yang SUDAH ada
+# (`rahaza_coa_auto_settings.entity_types.store_revenue`, tab Auto Akun) — tanpa
+# layar/koleksi baru. Token format:
+#   {prefix}  = 5 karakter pertama kode kelompok (4-111)   — pola lama
+#   {parent}  = kode kelompok utuh (4-1110)
+#   {seq}     = nomor urut ({seq:02d}/{seq:03d} untuk lebar tetap)
+#   {store_code} = kode toko (mis. SHP-09) — pola sub-akun seperti 1-1303-<kode toko>
+# Bawaan = pola lama "{prefix}{seq}" (tidak ada nomor yang bergeser). Toko LAMA tidak
+# diubah: format hanya dipakai saat akun pendapatan toko BARU dibuat.
+STORE_REVENUE_KEY = "store_revenue"
+STORE_REVENUE_DEFAULT_FORMAT = "{prefix}{seq}"
+STORE_REVENUE_FORMATS = ("{prefix}{seq}", "{parent}-{seq:02d}", "{parent}-{seq:03d}",
+                         "{parent}-{store_code}")
+_FMT_TOKEN = re.compile(r"\{(prefix|parent|store_code|seq(?::0[1-4]d)?)\}")
+
+
+def validate_code_format(fmt: str) -> str:
+    """Format penomoran sah? → format yang dirapikan, atau ``ValueError``."""
+    f = (fmt or "").strip()
+    if not f:
+        raise ValueError("Format kode akun tidak boleh kosong.")
+    leftovers = _FMT_TOKEN.sub("", f)
+    if "{" in leftovers or "}" in leftovers:
+        raise ValueError("Format hanya boleh memakai token {prefix}, {parent}, {seq}, "
+                         "{seq:02d}, {seq:03d}, {store_code}.")
+    if not re.fullmatch(r"[0-9A-Za-z\-]*", leftovers):
+        raise ValueError("Di luar token, format hanya boleh berisi huruf, angka, dan tanda '-'.")
+    if ("{seq" in f) == ("{store_code}" in f):
+        raise ValueError("Format wajib memuat SALAH SATU dari {seq} atau {store_code} supaya "
+                         "tiap toko bernomor unik.")
+    if len(_FMT_TOKEN.findall(f)) != len(set(_FMT_TOKEN.findall(f))):
+        raise ValueError("Setiap token hanya boleh dipakai sekali.")
+    if not (f.startswith("{prefix}") or f.startswith("{parent}")):
+        raise ValueError("Format wajib diawali {prefix} atau {parent} supaya akun tetap di "
+                         "bawah kelompok pendapatan platformnya.")
+    return f
+
+
+def _seq_width(fmt: str) -> int | None:
+    m = re.search(r"\{seq(?::0([1-4])d)?\}", fmt)
+    if not m:
+        return None
+    return int(m.group(1)) if m.group(1) else 0          # 0 = tanpa lebar tetap
+
+
+def render_store_revenue_code(fmt: str, group: str, seq: int | None = None,
+                              store_code: str = "") -> str:
+    """Kode akun dari format (murni, tanpa DB)."""
+    sc = re.sub(r"[^A-Za-z0-9\-]", "", (store_code or "").strip().upper())
+    out = fmt.replace("{prefix}", group[:5]).replace("{parent}", group).replace("{store_code}", sc)
+    w = _seq_width(fmt)
+    if w is not None:
+        s = str(int(seq or 0)).zfill(w) if w else str(int(seq or 0))
+        out = re.sub(r"\{seq(?::0[1-4]d)?\}", s, out)
+    return out
+
+
+def seq_capacity(fmt: str) -> int | None:
+    """Kapasitas nomor per kelompok (None = tak terbatas/berbasis kode toko)."""
+    w = _seq_width(fmt)
+    if w is None:
+        return None
+    if w == 0:
+        return 9 if fmt == STORE_REVENUE_DEFAULT_FORMAT else None   # pola lama: satu digit
+    return 10 ** w - 1
+
+
+def _seq_regex(fmt: str, group: str) -> re.Pattern:
+    """Regex kode berformat ``fmt`` di kelompok ``group``; grup 1 = nomor urut."""
+    w = _seq_width(fmt)
+    m = re.search(r"\{seq(?::0[1-4]d)?\}", fmt)
+    head, tail = fmt[:m.start()], fmt[m.end():]
+
+    def lit(s: str) -> str:
+        return re.escape(s.replace("{prefix}", group[:5]).replace("{parent}", group))
+    digits = (r"(\d)" if fmt == STORE_REVENUE_DEFAULT_FORMAT
+              else (r"(\d{%d})" % w if w else r"(\d+)"))
+    return re.compile("^" + lit(head) + digits + lit(tail) + "$")
+
+
+async def store_revenue_settings(db) -> dict:
+    """Setelan penomoran (Auto Akun → `store_revenue`), dengan cadangan bawaan."""
+    try:
+        from routes.coa_auto import get_auto_settings
+        cfg = ((await get_auto_settings(db)).get("entity_types") or {}).get(STORE_REVENUE_KEY) or {}
+    except Exception:  # noqa: BLE001 — setelan rusak tidak boleh menghentikan sinkron
+        cfg = {}
+    groups = dict(REVENUE_GROUP)
+    for k, v in (cfg.get("parent_by_platform") or {}).items():
+        if v:
+            groups[canonical_platform(k)] = str(v).strip()
+    fmt = cfg.get("code_format") or STORE_REVENUE_DEFAULT_FORMAT
+    try:
+        fmt = validate_code_format(fmt)
+    except ValueError:
+        fmt = STORE_REVENUE_DEFAULT_FORMAT
+    return {"code_format": fmt, "parent_by_platform": groups}
+
+
+async def _next_code(db, group: str, *, code_format: str = STORE_REVENUE_DEFAULT_FORMAT,
+                     store_code: str = "") -> str:
+    """Nomor akun pendapatan toko berikutnya di kelompok ``group`` menurut format."""
+    fmt = code_format or STORE_REVENUE_DEFAULT_FORMAT
+    if _seq_width(fmt) is None:                                   # berbasis kode toko
+        base = render_store_revenue_code(fmt, group, store_code=store_code)
+        code, n = base, 1
+        while await db.rahaza_coa_accounts.find_one({"code": code}, {"_id": 0, "code": 1}):
+            n += 1
+            code = f"{base}-{n}"
+        return code
+    rx = _seq_regex(fmt, group)
+    codes = [a["code"] async for a in db.rahaza_coa_accounts.find(
+        {"code": {"$regex": "^" + re.escape(group[:5])}}, {"code": 1})]
+    nums = [int(m.group(1)) for c in codes if (m := rx.match(c or ""))]
     nxt = max(nums + [0]) + 1
-    if nxt > 9:
-        raise ValueError(f"kelompok {group} penuh")
-    return f"{group[:5]}{nxt}"
+    cap = seq_capacity(fmt)
+    if cap is not None and nxt > cap:
+        raise ValueError(f"kelompok {group} penuh untuk format '{fmt}' (maks. {cap}) — ubah format "
+                         "penomoran di Auto Akun › Pendapatan Toko")
+    return render_store_revenue_code(fmt, group, nxt, store_code)
 
 
-async def _store_revenue_accounts(db) -> dict:
+async def _store_revenue_accounts(db, groups: dict | None = None) -> dict:
+    """Akun pendapatan toko (non-header) di semua kelompok platform — pola lama 4-11[123]x
+    DAN kode berformat baru (K35) yang induknya kelompok platform."""
+    parents = sorted(set((groups or REVENUE_GROUP).values()))
     return {a["code"]: a async for a in db.rahaza_coa_accounts.find(
-        {"code": {"$regex": "^4-11[123]\\d$"}, "is_group": False}, {"_id": 0})}
+        {"$or": [{"code": {"$regex": "^4-11[123]\\d$"}}, {"parent_code": {"$in": parents}}],
+         "is_group": False}, {"_id": 0})}
 
 
 async def ensure_store_revenue_account(db, store: dict, *, rev_accounts: dict | None = None,
@@ -165,29 +287,33 @@ async def ensure_store_revenue_account(db, store: dict, *, rev_accounts: dict | 
     → ``{"code", "created": bool}``. ``ValueError`` bila platform tak dikenal atau
     kelompoknya penuh (maks. 9 akun per kelompok).
     """
-    group = revenue_group_for(store.get("platform"))
+    cfg = await store_revenue_settings(db)             # 2026-11-02 (K35)
+    group = cfg["parent_by_platform"].get(canonical_platform(store.get("platform")))
     if not group:
         raise ValueError(f"platform '{store.get('platform')}' tidak punya kelompok akun pendapatan")
     if rev_accounts is None:
-        rev_accounts = await _store_revenue_accounts(db)
+        rev_accounts = await _store_revenue_accounts(db, cfg["parent_by_platform"])
     if used is None:
         used = {c for c in await db.marketing_platform_accounts.distinct("coa_revenue_code") if c}
     key = _norm(store.get("account_name"))
     match = next((c for c, a in rev_accounts.items()
-                  if c.startswith(group[:5]) and c[-1] != "0" and key and _norm(a["name"]) == key
+                  if (a.get("parent_code") == group or c.startswith(group[:5])) and c != group
+                  and not a.get("is_group") and key and _norm(a["name"]) == key
                   and "lain" not in (a.get("name") or "").lower() and c not in used), None)
     flags = {"flags.store_account_code": store.get("account_code"), "flags.is_sales": True,
              "flags.channel": canonical_platform(store.get("platform"))}
     if match:
         await db.rahaza_coa_accounts.update_one({"code": match}, {"$set": {"active": True, **flags, "updated_at": _now()}})
         return {"code": match, "created": False}
-    code = await _next_code(db, group)
+    code = await _next_code(db, group, code_format=cfg["code_format"],
+                            store_code=store.get("account_code") or "")
     doc = {"id": str(uuid.uuid4()), "code": code, "name": f"Penjualan – {store.get('account_name')}", "type": "REVENUE",
            "parent_code": group, "is_group": False, "normal_balance": "CREDIT",
            "flags": {"store_account_code": store.get("account_code"), "is_sales": True,
                      "channel": canonical_platform(store.get("platform"))},
            "cash_flow_group": "OPR", "active": True, "created_at": _now(), "updated_at": _now(),
-           "created_by": "system", "created_by_name": "finance_sync"}
+           "created_by": "system", "created_by_name": "finance_sync",
+           "code_format": cfg["code_format"]}
     await db.rahaza_coa_accounts.insert_one(doc)
     doc.pop("_id", None)
     rev_accounts[code] = doc
@@ -196,7 +322,8 @@ async def ensure_store_revenue_account(db, store: dict, *, rev_accounts: dict | 
 
 async def _sync_stores(db, report: dict):
     stores = await db.marketing_platform_accounts.find({"active": {"$ne": False}}, {"_id": 0}).to_list(500)
-    rev_accounts = await _store_revenue_accounts(db)
+    _cfg = await store_revenue_settings(db)            # 2026-11-02 (K35)
+    rev_accounts = await _store_revenue_accounts(db, _cfg["parent_by_platform"])
     used, created, mapped = set(), [], []
     for s in stores:
         group = revenue_group_for(s.get("platform"))   # 2026-11-02: `tiktokshop` dikenali
@@ -212,7 +339,9 @@ async def _sync_stores(db, report: dict):
         used.add(code)
         ar = (await db.marketing_platform_accounts.find_one({"id": s["id"]}, {"_id": 0, "ar_account_code": 1}) or {}).get("ar_account_code") or CHANNEL_AR_PARENT
         await db.marketing_platform_accounts.update_one({"id": s["id"]}, {"$set": {"coa_receivable_code": ar}})
-        # Rekening pencairan default (1-1201) supaya penarikan saldo bisa dijurnal; owner boleh mengganti di Kelola Akun.
+        # Rekening pencairan default (1-1201) supaya penarikan saldo bisa dijurnal. 2026-11-02 (K4):
+        # yang boleh menggantinya HANYA Finance lewat "Tautan Rekening Bank per Toko"
+        # (`set_store_cash_code`); layar menandai `coa_cash_source=default` sebagai "belum diatur".
         if not (s.get("coa_cash_code") or "").strip() and await db.rahaza_coa_accounts.find_one({"code": "1-1201", "active": True}, {"_id": 0}):
             await db.marketing_platform_accounts.update_one({"id": s["id"]}, {"$set": {"coa_cash_code": "1-1201", "coa_cash_source": "default"}})
         # 2026-11-02 (D3) — baris Peta Akun Channel untuk toko TIDAK lagi dibuat/
@@ -220,8 +349,9 @@ async def _sync_stores(db, report: dict):
         # jejak sinkron; sumber COA toko adalah master toko itu sendiri.
         mapped.append((s.get("account_code"), code, ar))
     deactivated = []
+    _parents = set(_cfg["parent_by_platform"].values())
     for c, a in rev_accounts.items():
-        if c in used or not a.get("active", True) or c[-1] == "0" or "lain" in a["name"].lower():
+        if c in used or not a.get("active", True) or c in _parents or "lain" in a["name"].lower():
             continue  # sub-total/header, "Lain-lain" (penampung) tetap hidup
         if await db.rahaza_journal_lines.count_documents({"account_code": c}) or await db.marketing_platform_accounts.count_documents({"coa_revenue_code": c}):
             continue
@@ -230,6 +360,35 @@ async def _sync_stores(db, report: dict):
     stale = await db.rahaza_channel_gl_mapping.update_many({"channel_key": {"$nin": [s.get("account_code") for s in stores]}, "active": True},
                                                             {"$set": {"active": False, "updated_at": _now()}})
     report["stores"] = {"mapped": mapped, "revenue_created": created, "revenue_deactivated": deactivated, "channel_map_deactivated": stale.modified_count}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K4) — SATU PINTU REKENING TUJUAN PER TOKO
+# ══════════════════════════════════════════════════════════════════════════════
+CASH_SOURCES = ("finance", "excel_master", "default")
+
+
+async def set_store_cash_code(db, store: dict, code: str, *, user: dict | None = None,
+                              source: str = "finance") -> dict:
+    """Tautkan rekening pencairan (``coa_cash_code``) satu toko — dipakai layar Finance
+    "Tautan Rekening Bank per Toko" (`PUT …/payout-bank`) DAN impor Excel master
+    (sheet TOKO). Jalur lain (API Kelola Akun) tidak boleh menulis field ini.
+
+    Selalu memperbarui penanda sumber (`coa_cash_source`) + pengubahnya, supaya layar
+    bisa membedakan rekening bawaan 1-1201 dari yang sudah dipilih Finance.
+    ``ValueError`` bila kode bukan rekening kas/bank aktif.
+    """
+    from core import payout_banks as _banks
+    c = (code or "").strip()
+    if source not in CASH_SOURCES:
+        raise ValueError(f"sumber rekening '{source}' tidak dikenal")
+    if not c or not await _banks.is_bank_code(db, c):
+        raise ValueError(f"Rekening '{c}' tidak ada di daftar Kas & Bank / COA kas-bank aktif.")
+    who = (user or {}).get("email") or (user or {}).get("name") if isinstance(user, dict) else None
+    await db.marketing_platform_accounts.update_one({"id": store["id"]}, {"$set": {
+        "coa_cash_code": c, "coa_cash_source": source, "coa_cash_updated_by": who,
+        "coa_cash_updated_at": _now(), "updated_at": _now()}})
+    return {"code": c, "source": source, "previous": (store.get("coa_cash_code") or "") or None}
 
 
 async def _sync_revenue_flags(db, report: dict) -> None:

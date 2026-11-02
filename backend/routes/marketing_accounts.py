@@ -150,6 +150,21 @@ async def _default_cash_code(db) -> str:
     return (row or {}).get("code", "")
 
 
+# 2026-11-02 (K4) — SATU PINTU rekening tujuan per toko = layar Finance "Tautan Rekening
+# Bank per Toko" (`PUT /api/marketing/withdrawals/accounts/{id}/payout-bank`). Dulu API
+# Kelola Akun masih menerima `coa_cash_code` tanpa gerbang Finance: manager_marketing
+# bisa membelokkan jurnal kas penarikan (uji w2 T4), dan penanda sumber tetap "finance".
+CASH_ONE_DOOR_MSG = ("Rekening pencairan toko hanya diatur Finance di Portal Keuangan → Saldo & "
+                     "Pencairan Marketplace → 'Tautan Rekening Bank per Toko'.")
+
+
+def cash_code_change_blocked(current: Optional[str], incoming: Optional[str]) -> bool:
+    """True bila permintaan Kelola Akun mencoba MENGUBAH rekening pencairan (ditolak)."""
+    if incoming is None:
+        return False
+    return (incoming or "").strip() != (current or "").strip()
+
+
 async def _resolve_pic(db, pic_user_id):
     """(pic_user_id, pic_user_name) — 400 bila id pengguna tidak ada."""
     pid = (pic_user_id or "").strip()
@@ -181,9 +196,13 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
                                  f"'{existing.get('account_name') or '-'}'. Pakai kode lain.")
     
     # ── F0.7 — validasi kode COA harus BENAR-BENAR ada di bagan akun ─────────
+    # 2026-11-02 (K4) — rekening pencairan TIDAK diisi dari form toko: toko baru selalu
+    # mendapat rekening bawaan (`coa_cash_source=default`), lalu Finance menautkannya.
+    if (data.coa_cash_code or "").strip():
+        raise HTTPException(400, CASH_ONE_DOOR_MSG + " Simpan toko tanpa rekening dulu.")
     coa_fields = {
         "coa_revenue_code": (data.coa_revenue_code or "").strip(),
-        "coa_cash_code": (data.coa_cash_code or "").strip(),
+        "coa_cash_code": "",
         "coa_receivable_code": (data.coa_receivable_code or "").strip(),
     }
     for fname, code in coa_fields.items():
@@ -246,6 +265,8 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
         "revenue_basis": basis,
         # 'input' | 'auto_store' (2026-11-02) | 'fallback_platform' (data lama) — badge di UI
         "coa_revenue_source": revenue_source,
+        # 2026-11-02 (K4) — bawaan; layar Finance menampilkan lencana "belum diatur"
+        "coa_cash_source": "default" if coa_fields["coa_cash_code"] else None,
         "pic_user_id": pic_user_id,
         "pic_user_name": pic_user_name,
         "created_at": _now(),
@@ -592,7 +613,11 @@ async def update_platform_account(account_id: str, data: PlatformAccountUpdate, 
         update_data["pic_user_name"] = pname
 
     # ── F0.7 — tautan Finance & basis omzet (divalidasi, bukan diterima mentah) ──
-    for fname in ("coa_revenue_code", "coa_cash_code", "coa_receivable_code"):
+    # 2026-11-02 (K4) — `coa_cash_code` DITOLAK bila mengubah nilai (satu pintu Finance);
+    # nilai sama dengan yang tersimpan diabaikan (layar lama yang mengirim ulang semua field).
+    if cash_code_change_blocked(account.get("coa_cash_code"), getattr(data, "coa_cash_code", None)):
+        raise HTTPException(400, CASH_ONE_DOOR_MSG)
+    for fname in ("coa_revenue_code", "coa_receivable_code"):
         val = getattr(data, fname, None)
         if val is not None:
             if val:

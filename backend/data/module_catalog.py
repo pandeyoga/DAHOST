@@ -51,9 +51,10 @@ _MAKLON = {"view": ["maklon.view"], "manage": ["maklon.manage"], "approve": ["ma
 
 MODULES: list[dict] = [
     # ── MANAJEMEN ───────────────────────────────────────────────────────────
+    # 2026-11-02 (K33): `/api/reports/executive` dipindah ke modul sendiri `fin_exec_report` (Keuangan).
     _m("management", "mgmt_dashboard", "Dashboard & Ringkasan Eksekutif",
        ["management-dashboard", "mgmt-overview"],
-       ["/api/rahaza/management", "/api/management", "/api/reports/executive", "/api/ai-business"], _VE,
+       ["/api/rahaza/management", "/api/management", "/api/ai-business"], _VE,
        {"view": ["dashboard.view", "management.view"], "export": ["report.export"]}),
     _m("management", "mgmt_reports", "Pusat Laporan", ["reports-hub", "phase7-reports", "mgmt-reports", "rnd-dashboard"],
        ["/api/dewi/reports", "/api/rahaza/reports-hub", "/api/rahaza/reports"], _VE,
@@ -235,9 +236,14 @@ MODULES: list[dict] = [
 
     # ── KEUANGAN ────────────────────────────────────────────────────────────
     _m("finance", "fin_dashboard", "Dashboard, Rekap & Laporan Keuangan",
-       ["finance-dashboard", "fin-recap", "fin-reports-hub", "fin-executive-report"],
+       ["finance-dashboard", "fin-recap", "fin-reports-hub"],
        ["/api/rahaza/finance-summary", "/api/financial-recap", "/api/rahaza/finance/reports"], _VE,
        {"view": ["finance.view", "fin.recap.view"], "export": ["report.export"]}),
+    # 2026-11-02 (K33): Laporan Eksekutif (memuat total gaji) DIPISAH dari fin_dashboard supaya owner
+    # bisa mencentang/melepasnya sendiri di Manajemen Role. Penjaga handler (bawaan Manajemen+Keuangan):
+    # routes/dewi_executive_report.exec_report_access.
+    _m("finance", "fin_exec_report", "Laporan Eksekutif", ["fin-executive-report"],
+       ["/api/reports/executive"], _VE, {"export": ["report.export"]}),
     _m("finance", "fin_marketplace", "Saldo & Pencairan Marketplace", ["fin-marketplace-settlement"],
        ["/api/marketing/settlements", "/api/marketing/withdrawals"], _ALL,
        {"view": ["fin.ar.view"], "manage": ["fin.ar.manage"], "approve": ["finance.approve"]}),
@@ -456,6 +462,8 @@ ALSO_PORTALS = {
     "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
     "wh_master": ["production", "rnd"],
+    # 2026-11-02 (K34/K25): Keuangan menyetujui pembatalan run gaji & membayar gaji/BPJS.
+    "hr_payroll": ["finance"],
 }
 for _mod in MODULES:
     _mod["also_portals"] = ALSO_PORTALS.get(_mod["id"], [])

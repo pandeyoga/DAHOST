@@ -340,6 +340,9 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkStatus, setBulkStatus] = useState('');
   const [bulkDialog, setBulkDialog] = useState(false);
+  // 2026-11-02 (K6) — alasan WAJIB untuk membatalkan pesanan yang sudah dikirim
+  // (server menolak tanpa alasan; pembatalan itu membuat pengajuan Retur Fisik RTS).
+  const [bulkNote, setBulkNote] = useState('');
   // F10 — hasil bulk per-order (order mana yang GAGAL & kenapa). Sebelum ini
   // jalur bulk selalu melapor sukses, jadi order yang tidak berubah tidak pernah
   // terlihat oleh staf.
@@ -388,7 +391,7 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
     if (!bulkStatus || selectedIds.size === 0) return;
     try {
       const res = await axios.post(`${API}/api/marketing/orders/bulk-status`,
-        { order_ids: Array.from(selectedIds), status: bulkStatus },
+        { order_ids: Array.from(selectedIds), status: bulkStatus, note: bulkNote.trim() || null },
         { headers: authH }
       );
       // F10 — backend sekarang melapor per-order. Kegagalan TIDAK boleh ditelan:
@@ -453,7 +456,8 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
         title="Lanjutkan Alur Order"
         className="mb-6"
         actions={[
-          { module: 'fulfillment', label: 'Proses Fulfillment di Gudang', icon: Truck, primary: true, hint: 'Order → FG Out (Portal Gudang)' },
+          // 2026-11-02 (K6) — Fulfillment gudang disembunyikan: pesanan marketplace dikirim lewat Seller Center.
+          { module: 'marketing-fulfillment', label: 'Monitoring Kirim', icon: Truck, primary: true, hint: 'Pantau pengiriman Seller Center' },
           { module: 'marketing-complaints', label: 'Komplain Pelanggan', icon: AlertCircle, hint: 'Kelola komplain terkait order (Alur 7)' },
           { module: 'marketing-returns', label: 'Retur & Refund', icon: RotateCcw, hint: 'Proses retur/refund order (Alur 8)' },
         ]}
@@ -694,6 +698,21 @@ export default function UnifiedOrdersDashboard({ token, onNavigate }) {
                 ini kembali menjadi stok jual. Order yang sudah dibatalkan/diretur
                 <b> tidak bisa dihidupkan lagi</b> — bila pembeli memesan ulang, buat order baru.
               </div>
+            </div>
+          )}
+          {bulkStatus === 'cancelled' && (
+            <div className="space-y-1" data-testid="bulk-cancel-reason">
+              <label className="text-[12px] font-medium">
+                Alasan pembatalan <span className="text-muted-foreground">(wajib untuk pesanan yang SUDAH dikirim)</span>
+              </label>
+              <textarea value={bulkNote} onChange={(e) => setBulkNote(e.target.value)} rows={2}
+                placeholder="mis. gagal kirim / paket ditolak pembeli"
+                className="w-full rounded-md border border-[var(--glass-border)] bg-background px-2 py-1 text-sm"
+                data-testid="bulk-cancel-reason-input" />
+              <p className="text-[11px] text-muted-foreground">
+                Pesanan yang sudah dikirim lalu dibatalkan otomatis menjadi pengajuan Retur Fisik "RTS" di Gudang —
+                stok baru bertambah setelah gudang menerima paketnya. Tanpa alasan, pesanan terkirim dilewati.
+              </p>
             </div>
           )}
           <AlertDialogFooter>

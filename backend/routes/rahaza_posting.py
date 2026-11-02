@@ -583,34 +583,156 @@ async def gl_balances_by_code(db, codes: list) -> dict:
 
 
 async def cash_accounts_with_gl(db, q: dict) -> list:
-    """SATU sumber saldo kas: Buku Besar. `balance` = saldo GL akun rekening; `balance_mutasi`
-    = saldo awal + Σ mutasi bank (rahaza_cash_movements) sebagai pembanding rekonsiliasi.
+    """SATU sumber saldo kas: Buku Besar. `balance` = saldo GL akun rekening.
+
+    2026-11-02 (K19, keputusan owner): kolom "Mutasi" (`balance_mutasi`) dan daftar mutasi
+    DITURUNKAN DARI GL (baris `rahaza_journal_lines` akun rekening) — dulu Σ `rahaza_cash_movements`
+    yang tidak ditulis ±14 jalur (transfer, kasbon, payroll, jurnal manual, impor jurnal, …) sehingga
+    mutasi ≠ GL. Kini `balance_mutasi` = Σ mutasi GL = `gl_balance`; `rahaza_cash_movements` hanya
+    metadata (kategori/keterangan) untuk baris GL yang punya dokumen sumber.
+    Rekening tanpa akun GL tetap memakai saldo awal + mutasi tercatat (`balance_source=movements`).
     Field `balance` di dokumen tidak lagi di-$inc oleh modul manapun (Iter 122)."""
     rows = await db.rahaza_cash_accounts.find(q, {"_id": 0}).sort("code", 1).to_list(500)
     if not rows:
         return rows
-    gl = await gl_balances_by_code(db, [r.get("gl_account_code") for r in rows])
+    codes = [r.get("gl_account_code") for r in rows if r.get("gl_account_code")]
+    gl = await gl_balances_by_code(db, codes)
+    counts = {c["_id"]: int(c.get("n") or 0) for c in await db.rahaza_journal_lines.aggregate([
+        {"$match": {"account_code": {"$in": codes}}},
+        {"$group": {"_id": "$account_code", "n": {"$sum": 1}}},
+    ]).to_list(len(codes) + 5)} if codes else {}
+    no_gl_ids = [r["id"] for r in rows if not r.get("gl_account_code")]
     mv = {m["_id"]: m for m in await db.rahaza_cash_movements.aggregate([
-        {"$match": {"account_id": {"$in": [r["id"] for r in rows]}}},
+        {"$match": {"account_id": {"$in": no_gl_ids}}},
         {"$group": {"_id": "$account_id",
                     "inflow": {"$sum": {"$cond": [{"$eq": ["$direction", "in"]}, "$amount", 0]}},
                     "outflow": {"$sum": {"$cond": [{"$eq": ["$direction", "out"]}, "$amount", 0]}}}},
-    ]).to_list(len(rows) + 5)}
+    ]).to_list(len(no_gl_ids) + 5)} if no_gl_ids else {}
     for r in rows:
-        m = mv.get(r["id"]) or {}
-        r["balance_mutasi"] = round(float(r.get("opening_balance") or 0) + float(m.get("inflow") or 0) - float(m.get("outflow") or 0))
         code = r.get("gl_account_code")
         if code:
             r["gl_balance"] = gl.get(code, 0)
             r["balance"] = r["gl_balance"]
+            r["balance_mutasi"] = r["gl_balance"]   # K19: Σ mutasi GL rekening ini (lihat cash_mutations_from_gl)
+            r["mutation_count"] = counts.get(code, 0)
             r["balance_source"] = "gl"
-            r["balance_diff"] = r["balance"] - r["balance_mutasi"]
+            r["mutation_source"] = "gl"
+            r["balance_diff"] = 0
         else:
+            m = mv.get(r["id"]) or {}
+            r["balance_mutasi"] = round(float(r.get("opening_balance") or 0) + float(m.get("inflow") or 0) - float(m.get("outflow") or 0))
             r["gl_balance"] = None
             r["balance"] = r["balance_mutasi"]
             r["balance_source"] = "movements"
+            r["mutation_source"] = "movements"
             r["balance_diff"] = 0
     return rows
+
+
+# ── K19 (2026-11-02): kategori mutasi kas dari `source_module` jurnal ────────────
+# Satu peta untuk daftar mutasi Kas & Bank DAN Laporan Arus Kas "Per Kategori". Modul baru yang
+# belum terdaftar tetap muncul (kategori = nama source_module), jadi tidak ada jalur yang bisa hilang.
+CASH_CATEGORY_BY_SOURCE = {
+    "ar_payment": "ar_payment", "direct_sale": "ar_payment",
+    "ap_payment": "ap_payment", "expense": "expense", "expense_claim": "expense_claim",
+    "bank_transfer": "transfer",
+    "employee_loan_disbursement": "kasbon", "employee_loan_repayment_manual": "kasbon",
+    "employee_loan_repayment_payroll": "kasbon",
+    "payroll_payment": "payroll", "payroll_finalize": "payroll", "bpjs_payment": "payroll", "pph21_payment": "payroll",
+    "manual": "manual_journal", "manual_journal": "manual_journal",
+    "journal_import": "journal_import", "excel_import": "journal_import", "excel_import_mapped": "journal_import",
+    "opening_balance": "opening_balance", "cash_opening_balance": "opening_balance",
+    "asset_acquisition": "asset_purchase", "asset_disposal": "asset_sale",
+    "platform_withdrawal": "marketplace_withdrawal", "marketplace_settlement": "marketplace_withdrawal",
+    "petty_cash_replenish": "petty_cash", "travel_advance": "travel", "travel_settlement": "travel",
+    "bank_recon_adjustment": "bank_recon", "bank_recon": "bank_recon",
+    "sales_refund": "sales_refund", "credit_note": "sales_refund",
+    "maklon_advance_payment": "maklon", "maklon_ar_invoice": "maklon", "cmt_ap_invoice": "cmt_payment",
+}
+CASH_CATEGORY_LABELS = {
+    "ar_payment": "Penerimaan pelanggan", "ap_payment": "Pembayaran pemasok", "expense": "Pengeluaran / biaya",
+    "expense_claim": "Klaim biaya karyawan", "transfer": "Transfer antar rekening", "kasbon": "Kasbon & pinjaman karyawan",
+    "payroll": "Gaji, BPJS & PPh 21", "manual_journal": "Jurnal manual", "journal_import": "Impor jurnal (Excel)",
+    "opening_balance": "Saldo awal", "asset_purchase": "Pembelian aset tetap", "asset_sale": "Penjualan aset tetap",
+    "marketplace_withdrawal": "Penarikan saldo marketplace", "petty_cash": "Kas kecil", "travel": "Perjalanan dinas",
+    "bank_recon": "Penyesuaian rekonsiliasi bank", "sales_refund": "Refund penjualan", "maklon": "Maklon",
+    "cmt_payment": "Pembayaran CMT", "other": "Lain-lain",
+}
+
+
+def cash_category(source_module: Optional[str]) -> str:
+    sm = (source_module or "").strip().lower()
+    return CASH_CATEGORY_BY_SOURCE.get(sm) or sm or "other"
+
+
+def cash_category_label(cat: str) -> str:
+    return CASH_CATEGORY_LABELS.get(cat) or (cat or "other").replace("_", " ").title()
+
+
+async def _movement_meta_index(db, account_id: Optional[str], je_ids: list) -> dict:
+    """Metadata dari rahaza_cash_movements (kategori/keterangan dokumen) per je_id / token source_ref."""
+    if not account_id and not je_ids:
+        return {}
+    flt = {"$or": [{"gl_je_id": {"$in": je_ids}}] + ([{"account_id": account_id}] if account_id else [])}
+    idx = {}
+    async for mv in db.rahaza_cash_movements.find(flt, {"_id": 0}):
+        for key in (mv.get("gl_je_id"), mv.get("id"), mv.get("ref_id")):
+            if key and key not in idx:
+                idx[key] = mv
+    return idx
+
+
+async def cash_mutations_from_gl(db, gl_code: str, from_date: Optional[str] = None, to_date: Optional[str] = None,
+                                 account_id: Optional[str] = None, limit: int = 2000) -> dict:
+    """K19: daftar mutasi rekening = baris buku besar akun `gl_code` (jurnal POSTED; void menghapus cermin).
+
+    Return {opening, rows (terbaru dulu, dengan saldo berjalan), total_in, total_out, closing, count}.
+    Kategori dari `source_module` jurnal; `rahaza_cash_movements` hanya menambah keterangan."""
+    rng = {}
+    if from_date:
+        rng["$gte"] = from_date
+    if to_date:
+        rng["$lte"] = to_date
+    q = {"account_code": gl_code}
+    if rng:
+        q["date"] = rng
+    lines = await db.rahaza_journal_lines.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(limit)
+    opening = 0.0
+    if from_date:
+        async for r in db.rahaza_journal_lines.aggregate([
+                {"$match": {"account_code": gl_code, "date": {"$lt": from_date}}},
+                {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
+            opening = round(float(r.get("d") or 0) - float(r.get("c") or 0), 2)
+    je_ids = sorted({ln.get("je_id") for ln in lines if ln.get("je_id")})
+    heads = {h["id"]: h async for h in db.rahaza_journal_entries.find(
+        {"id": {"$in": je_ids}}, {"_id": 0, "id": 1, "memo": 1, "je_number": 1, "source_ref": 1})} if je_ids else {}
+    meta = await _movement_meta_index(db, account_id, je_ids)
+    running = opening
+    rows, t_in, t_out = [], 0.0, 0.0
+    for ln in lines:
+        d, c = float(ln.get("debit") or 0), float(ln.get("credit") or 0)
+        running = round(running + d - c, 2)
+        t_in += d
+        t_out += c
+        head = heads.get(ln.get("je_id")) or {}
+        src_ref = ln.get("source_ref") or head.get("source_ref") or ""
+        mv = meta.get(ln.get("je_id")) or next((meta[t] for t in str(src_ref).split(":") if t and t in meta), None) or {}
+        cat = cash_category(ln.get("source_module"))
+        rows.append({
+            "id": ln.get("id") or ln.get("line_id"), "je_id": ln.get("je_id"),
+            "je_number": ln.get("je_number") or head.get("je_number"), "date": ln.get("date"),
+            "source_module": ln.get("source_module"), "source_ref": src_ref,
+            "category": cat, "category_label": cash_category_label(cat),
+            "direction": "in" if d > 0 else "out", "amount": round(d if d > 0 else c, 2),
+            "description": ln.get("description") or "", "memo": head.get("memo") or "",
+            "ref_label": mv.get("ref_label") or head.get("memo") or src_ref,
+            "notes": mv.get("notes") or "", "movement_id": mv.get("id"),
+            "running_balance": running,
+        })
+    rows.reverse()
+    return {"gl_account_code": gl_code, "from": from_date, "to": to_date, "opening": round(opening, 2),
+            "total_in": round(t_in, 2), "total_out": round(t_out, 2), "closing": round(running, 2),
+            "count": len(rows), "truncated": len(lines) >= limit, "rows": rows}
 
 
 # ───────────────────────── RETUR RUSAK → KERUGIAN (Iter 122) ──────────────────
@@ -978,10 +1100,38 @@ def payroll_deduction_totals(payslips: list) -> dict:
     return t
 
 
+def payroll_bpjs_breakdown(by_type: Optional[dict], employer_totals: Optional[dict], mapping: dict,
+                           employer_journal: bool) -> dict:
+    """2026-11-02 (K22): rincian hutang BPJS per LEMBAGA (murni, tanpa DB).
+
+    kes = potongan type `bpjs_kesehatan`; tk = potongan `bpjs_*` lainnya (JHT, JP).
+    Iuran perusahaan ({kes, tk} dari slip) hanya masuk bila `employer_journal` (saklar owner) menyala.
+    Akun hutang: peran per lembaga, cadangan `credit_bpjs_payable` (perilaku lama 2-1500)."""
+    by_type = by_type or {}
+    kes_emp = sum(float(v or 0) for k, v in by_type.items() if k == "bpjs_kesehatan")
+    tk_emp = sum(float(v or 0) for k, v in by_type.items() if str(k).startswith("bpjs") and k != "bpjs_kesehatan")
+    er = employer_totals or {}
+    legacy = mapping.get("credit_bpjs_payable")
+    out = {"employer_journal": bool(employer_journal)}
+    for agency, emp_amt, er_key, pay_role, exp_role in (
+            ("kes", kes_emp, "kes", "credit_bpjs_kes_payable", "debit_bpjs_kes_employer_expense"),
+            ("tk", tk_emp, "tk", "credit_bpjs_tk_payable", "debit_bpjs_tk_employer_expense")):
+        out[agency] = {
+            "employee": round(emp_amt, 2),
+            "employer": round(float(er.get(er_key) or 0), 2) if employer_journal else 0.0,
+            "payable_code": mapping.get(pay_role) or legacy,
+            "expense_code": mapping.get(exp_role),
+        }
+    return out
+
+
 async def post_payroll_run(db, run: dict, user: dict) -> dict:
     """Payroll finalize → JE (H-02: per komponen potongan).
-    Dr Beban Gaji (gross − potongan late/LWOP) ; Cr Hutang Gaji (net + kasbon) ; Cr Hutang PPh21 ; Cr Hutang BPJS ;
+    Dr Beban Gaji (gross − potongan late/LWOP) ; Cr Hutang Gaji (net + kasbon) ; Cr Hutang PPh21 ;
+    Cr Hutang BPJS Kes / TK (per lembaga, 2026-11-02 K22) ;
     Cr Pendapatan Lain-Lain (potongan penyesuaian manual, 2026-11-02).
+    Bila saklar owner "jurnal iuran perusahaan" menyala (run.bpjs_employer_journal):
+      Dr 6-3200 Beban BPJS Kes perusahaan / Cr 2-1501 ; Dr 6-3300 Beban BPJS TK perusahaan / Cr 2-1502.
     Kasbon dikredit ke Hutang Gaji lalu dipindah ke piutang kasbon oleh modul kasbon (employee_loan_repayment_payroll).
     Idempotent via source_ref = payroll:{run_id}."""
     run_id = run.get("id")
@@ -995,7 +1145,8 @@ async def post_payroll_run(db, run: dict, user: dict) -> dict:
     sal_payable = mapping.get("credit_salary_payable")
     pph21_code = mapping.get("credit_tax_pph21")
     bpjs_code = mapping.get("credit_bpjs_payable")
-    if not sal_expense or not sal_payable or not pph21_code or not bpjs_code:
+    has_bpjs_roles = bool(bpjs_code or (mapping.get("credit_bpjs_kes_payable") and mapping.get("credit_bpjs_tk_payable")))
+    if not sal_expense or not sal_payable or not pph21_code or not has_bpjs_roles:
         result = {"ok": False, "error": "Mapping 'payroll_finalize' belum lengkap (salary_expense/salary_payable/tax_pph21/bpjs_payable)."}
         await _save_source_posting_result(db, "rahaza_payroll_runs", run_id, result)
         return result
@@ -1007,6 +1158,7 @@ async def post_payroll_run(db, run: dict, user: dict) -> dict:
     if by_type is None:
         slips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0, "deductions": 1, "manual_deduction": 1}).to_list(2000)
         comp = payroll_deduction_totals(slips)
+        by_type = comp["by_type"]
     else:
         comp = {"pph21": float(run.get("total_pph21") or 0), "bpjs": float(run.get("total_bpjs_employee") or 0),
                 "kasbon": float(run.get("total_kasbon") or 0), "other": float(run.get("total_other_deductions") or 0)}
@@ -1042,17 +1194,90 @@ async def post_payroll_run(db, run: dict, user: dict) -> dict:
         lines.append({"account_code": sal_payable, "debit": 0, "credit": kasbon, "description": f"{desc} - Potongan kasbon (dipindah ke piutang oleh modul kasbon)"})
     if pph21 > 0:
         lines.append({"account_code": pph21_code, "debit": 0, "credit": pph21, "description": f"{desc} - PPh21"})
+
+    # 2026-11-02 (K22): BPJS karyawan dipisah per lembaga (2-1501 Kes / 2-1502 TK); bila rincian per tipe
+    # tidak cocok dengan total (data lama), seluruh BPJS tetap ke akun cadangan lama.
+    bk = payroll_bpjs_breakdown(by_type, run.get("bpjs_employer_totals"), mapping, bool(run.get("bpjs_employer_journal")))
     if bpjs > 0:
-        lines.append({"account_code": bpjs_code, "debit": 0, "credit": bpjs, "description": f"{desc} - BPJS karyawan"})
+        split_ok = abs((bk["kes"]["employee"] + bk["tk"]["employee"]) - bpjs) <= 0.01
+        if split_ok and bk["kes"]["payable_code"] and bk["tk"]["payable_code"]:
+            for agency, label in (("kes", "BPJS Kesehatan karyawan"), ("tk", "BPJS Ketenagakerjaan karyawan")):
+                if bk[agency]["employee"] > 0:
+                    lines.append({"account_code": bk[agency]["payable_code"], "debit": 0,
+                                  "credit": bk[agency]["employee"], "description": f"{desc} - {label}"})
+        else:
+            fallback = bpjs_code or bk["kes"]["payable_code"]
+            lines.append({"account_code": fallback, "debit": 0, "credit": bpjs, "description": f"{desc} - BPJS karyawan"})
+            bk["kes"].update(employee=bpjs, payable_code=fallback)
+            bk["tk"]["employee"] = 0.0
     if manual > 0:
         # 2026-11-02: beban gaji tetap BRUTO; potongan manual = uang yang ditahan perusahaan dari
         # karyawan (denda/ganti rugi) → Cr Pendapatan Lain-Lain (atau peran credit_other_deduction).
         lines.append({"account_code": other_ded_code, "debit": 0, "credit": manual,
                       "description": f"{desc} - Potongan penyesuaian manual"})
 
+    # 2026-11-02 (K22): iuran BPJS PERUSAHAAN — hanya bila saklar owner menyala saat finalisasi.
+    if bk["employer_journal"]:
+        for agency, label in (("kes", "Iuran BPJS Kesehatan perusahaan"), ("tk", "Iuran BPJS Ketenagakerjaan perusahaan")):
+            amt = bk[agency]["employer"]
+            if amt <= 0:
+                continue
+            if not bk[agency]["expense_code"] or not bk[agency]["payable_code"]:
+                role = "debit_bpjs_kes_employer_expense" if agency == "kes" else "debit_bpjs_tk_employer_expense"
+                result = {"ok": False, "error": (f"Jurnal iuran BPJS perusahaan menyala tetapi peran "
+                                                 f"payroll_finalize.{role} belum diisi di Profil Posting.")}
+                await _save_source_posting_result(db, "rahaza_payroll_runs", run_id, result)
+                return result
+            lines.append({"account_code": bk[agency]["expense_code"], "debit": amt, "credit": 0, "description": f"{desc} - {label}"})
+            lines.append({"account_code": bk[agency]["payable_code"], "debit": 0, "credit": amt, "description": f"{desc} - {label}"})
+
     result = await _create_posted_je(db, je_date, memo, "payroll_finalize", source_ref, lines, user)
     await _save_source_posting_result(db, "rahaza_payroll_runs", run_id, result)
+    if result.get("ok"):
+        # Rincian per lembaga disimpan di run → dipakai tombol Bayar BPJS (akun & nilai yang SAMA dgn jurnal).
+        await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": {"bpjs_breakdown": bk}})
     return result
+
+
+async def reverse_journal_entry(db, je: dict, user: dict, reason: str, *, source_module: str = "payroll_cancel") -> dict:
+    """2026-11-02 (K34): JURNAL PEMBALIK (bukan void) untuk satu JE: debit ↔ kredit ditukar.
+
+    Tanggal = tanggal JE asli bila periodenya masih terbuka (laporan periode itu bersih kembali,
+    run pengganti bisa diposting di periode yang sama); bila periode asli sudah ditutup → hari ini (WIB).
+    Idempoten per JE asli (source_ref `reverse:{je_id}`); JE asli diberi tanda `reversed_by_*`."""
+    ref = f"reverse:{je['id']}"
+    existing = await _find_existing_je(db, source_module, ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"), "already_reversed": True,
+                "original": je.get("je_number")}
+    try:
+        d = date.fromisoformat(str(je.get("date"))[:10])
+    except ValueError:
+        d = None
+    if d is None or await _period_is_closed(db, d):
+        from routes.rahaza_payroll_shared import _today_wib
+        d = _today_wib()
+    lines = [{"account_code": ln.get("account_code"), "debit": float(ln.get("credit") or 0),
+              "credit": float(ln.get("debit") or 0), "cost_center_id": ln.get("cost_center_id"),
+              "description": f"Pembalik {je.get('je_number')}: {ln.get('description') or ''}".strip()}
+             for ln in (je.get("lines") or [])]
+    memo = f"PEMBALIK {je.get('je_number')} — {reason}".strip()
+    res = await _create_posted_je(db, d, memo, source_module, ref, lines, user)
+    if res.get("ok"):
+        await db.rahaza_journal_entries.update_one({"id": je["id"]}, {"$set": {
+            "reversed_by_je_id": res["je_id"], "reversed_by_je_number": res["je_number"],
+            "reversed_at": _now(), "reverse_reason": reason, "updated_at": _now()}})
+    return {**res, "original": je.get("je_number"), "date": d.isoformat()}
+
+
+async def payroll_run_journals(db, run_id: str) -> list:
+    """Semua JE aktif milik satu run: jurnal finalisasi + jurnal potongan kasbon run itu."""
+    import re as _re
+    return await db.rahaza_journal_entries.find({"status": {"$ne": "voided"}, "$or": [
+        {"source_module": "payroll_finalize", "source_ref": f"payroll:{run_id}"},
+        {"source_module": "employee_loan_repayment_payroll",
+         "source_ref": {"$regex": f"^kasbon-payroll-.+-{_re.escape(run_id)}$"}},
+    ]}, {"_id": 0}).to_list(500)
 
 
 async def post_payroll_payment(db, run: dict, payment_date: str, bank_code: str, user: dict) -> dict:
@@ -1525,9 +1750,12 @@ async def post_asset_acquisition(db, asset: dict, user: dict) -> dict:
         return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
 
     mapping = await get_mapping(db, "asset_acquisition")
-    debit_code = mapping.get("debit_fixed_asset")
-    credit_code = mapping.get("credit_ap_clearing")
-    
+    # 2026-11-02 (K18): Dr akun aset MILIK aset (form/kategori, routes.rahaza_fixed_assets.resolve_asset_accounts)
+    # → profil; Cr akun sumber dana yang dipilih (rekening kas/bank, Hutang Belum Ditagih, atau akun debit
+    # faktur pemasok) → profil (GRNI). Dulu selalu Dr 1-2500 / Cr 2-1150 apa pun kategori & sumber dananya.
+    debit_code = await _asset_own_account(db, asset, "account_id_asset") or mapping.get("debit_fixed_asset")
+    credit_code = asset.get("acquisition_credit_code") or mapping.get("credit_ap_clearing")
+
     if not debit_code or not credit_code:
         result = {"ok": False, "error": "Mapping 'asset_acquisition' belum lengkap."}
         await _save_source_posting_result(db, "rahaza_fixed_assets", asset_id, result, prefix="gl")
@@ -1544,9 +1772,16 @@ async def post_asset_acquisition(db, asset: dict, user: dict) -> dict:
     except Exception:
         je_date = date.today()
 
-    memo = f"Asset Acquisition: {asset.get('code')} - {asset.get('name')} from GR {asset.get('grn_number', '')}".strip()
+    via = (f"GR {asset.get('grn_number')}" if asset.get("grn_number")
+           else f"faktur {asset.get('ap_invoice_number')}" if asset.get("ap_invoice_number")
+           else asset.get("cash_account_name") or asset.get("funding_source") or "")
+    memo = f"Asset Acquisition: {asset.get('code')} - {asset.get('name')} · {via}".strip(" ·")
     desc = f"Asset {asset.get('code')}"
-    
+    if debit_code == credit_code:
+        # Faktur pemasok sudah mendebit akun aset itu sendiri → tidak perlu reklas.
+        return {"ok": True, "je_id": None, "je_number": None, "skipped": True,
+                "reason": f"Akun debit faktur sudah {debit_code} — tanpa jurnal reklas"}
+
     lines = [
         {"account_code": debit_code, "debit": total_cost, "credit": 0, "description": desc},
         {"account_code": credit_code, "debit": 0, "credit": total_cost, "description": desc},

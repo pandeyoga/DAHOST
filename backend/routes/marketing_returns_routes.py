@@ -114,22 +114,16 @@ def compute_refund(refund_type: Optional[str], price: Any, qty: Any,
 
 async def _refresh_rekap(db, *docs, actor: str = "system") -> None:
     """2026-11-02 (No.16) — retur mengubah "omzet setelah retur" di rekap harian
-    toko pada TANGGAL RETUR. Dipanggil sesudah retur dibuat/diubah/dihapus/
-    disetujui/ditolak. Gagal hitung ulang tidak membatalkan pencatatan retur
+    toko pada TANGGAL RETUR. Dipanggil sesudah retur diubah/dihapus/ditolak.
+    2026-11-02 (K36) — retur baru dihitung SETELAH keputusan gudang, jadi pembuatan
+    retur tidak lagi memanggil ini; keputusan Retur Fisik yang memanggilnya
+    (`routes/dewi_wh_returns`). Gagal hitung ulang tidak membatalkan pencatatan retur
     (tombol "Hitung Ulang" di Input Sales tetap bisa memulihkannya)."""
-    pairs = set()
-    for d in docs:
-        aid = (d or {}).get("account_id")
-        dt = str((d or {}).get("date") or "")[:10]
-        if aid and len(dt) == 10:
-            pairs.add((aid, dt))
-    if not pairs:
-        return
     try:
-        from core import marketing_daily_rollup as _rollup
-        await _rollup.recompute_pairs(db, pairs, actor=actor)
+        from core import marketing_returns as _mret
+        await _mret.refresh_rekap_for_docs(db, *docs, actor=actor)
     except Exception as e:  # noqa: BLE001
-        logger.error("[retur] rekap harian gagal dihitung ulang untuk %s: %s", sorted(pairs), e)
+        logger.error("[retur] rekap harian gagal dihitung ulang: %s", e)
 
 # ── Seed ─────────────────────────────────────────────────────────────────────
 # 2026-11-02 — seeder ini TIDAK LAGI dipanggil saat GET daftar/ringkasan retur:
@@ -476,26 +470,24 @@ async def create_return(body: ReturnIn, request: Request):
     await db.marketing_returns.insert_one(ret)
     ret.pop("_id", None)
 
-    # ── W4 (sesi #29) — JEMBATAN OTOMATIS KE GUDANG + RESTOCK ─────────────────
-    # Keputusan pemilik: retur yang dibuat di Marketing HARUS langsung muncul di
-    # "Retur Fisik" gudang DAN langsung menambah stok sesuai kondisi barang.
-    # Sebelum ini `wh_returns` = 0 dokumen selamanya (jembatannya manual & tak
-    # pernah diklik), jadi barang retur hilang dari pembukuan stok.
+    # ── JEMBATAN OTOMATIS KE GUDANG ───────────────────────────────────────────
+    # W4 (sesi #29): retur Marketing otomatis muncul di "Retur Fisik" gudang.
+    # 2026-11-02 (K1, W4 DICABUT): HANYA pekerjaan **Pending** yang dibuat
+    # (`auto_restock=False`). Stok & jurnal lahir saat gudang Terima (qty aktual) →
+    # Periksa → Putuskan. Rekap omzet juga baru berkurang setelah keputusan itu (K36).
     # Kegagalan TIDAK membatalkan pencatatan retur (uangnya nyata, harus tercatat)
     # tetapi WAJIB berjejak di `wh_sync_*` supaya tidak menggantung diam-diam.
     bridge = None
     try:
         bridge = await _rb.ensure_wh_return(db, ret, actor=user,
                                            condition=ret["item_condition"],
-                                           auto_restock=True)
+                                           auto_restock=False)
     except Exception as e:  # noqa: BLE001
         logger.error("[retur] jembatan Marketing→Gudang gagal untuk %s: %s", ret["id"], e)
         await db.marketing_returns.update_one({"id": ret["id"]}, {"$set": {
             "wh_sync_ok": False, "wh_sync_error": str(e)[:300], "wh_sync_at": _now(),
         }})
     fresh = await db.marketing_returns.find_one({"id": ret["id"]}, {"_id": 0})
-    # 2026-11-02 (No.16) — retur langsung mengurangi omzet setelah retur di rekap.
-    await _refresh_rekap(db, fresh or ret, actor=user.get("email", "system"))
     return {
         "success": True,
         "data": serialize(fresh or ret),
@@ -565,8 +557,21 @@ async def update_return(return_id: str, body: ReturnUpdate, request: Request):
 async def delete_return(return_id: str, request: Request):
     await require_auth(request)
     db = get_db()
-    existing = await db.marketing_returns.find_one(
-        {"id": return_id}, {"_id": 0, "account_id": 1, "date": 1})
+    existing = await db.marketing_returns.find_one({"id": return_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Return not found")
+    # 2026-11-02 (K1) — hapus SEBELUM keputusan gudang ⇒ pekerjaan gudang dibatalkan.
+    # SESUDAH keputusan ⇒ ditolak: dokumen ini satu-satunya jejak uang refund untuk
+    # stok/jurnal yang sudah dibukukan; balik dulu keputusannya di Gudang.
+    wh = await _rb.find_linked_wh(db, existing)
+    if wh and _rb.is_decided(wh):
+        raise HTTPException(400, (
+            f"Retur ini sudah diputuskan gudang ({wh.get('return_code')}: "
+            f"{wh.get('action_taken') or '-'}) dan sudah menggerakkan stok/jurnal. Minta Gudang "
+            "menekan 'Balik Keputusan' di Retur Fisik dulu, atau tolak retur ini (bukan hapus)."))
+    if wh:
+        await _rb.cancel_for_marketing_return(db, existing, actor=_get_user(request),
+                                              reason="dihapus")
     res = await db.marketing_returns.delete_one({"id": return_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Return not found")
@@ -603,9 +608,10 @@ async def approve_return(return_id: str, request: Request):
     fresh = await db.marketing_returns.find_one({"id": return_id}, {"_id": 0})
     if fresh and not fresh.get("wh_return_id"):
         try:
+            # 2026-11-02 (K1) — hanya pekerjaan Pending; stok menunggu keputusan gudang.
             res = await _rb.ensure_wh_return(db, fresh, actor=_get_user(request),
                                             condition=fresh.get("item_condition"),
-                                            auto_restock=True)
+                                            auto_restock=False)
             wh_msg = res.get("message", "")
         except Exception as e:  # noqa: BLE001
             logger.error("[retur] jembatan saat approve gagal (%s): %s", return_id, e)
@@ -643,19 +649,24 @@ async def reject_return(return_id: str, request: Request):
     )
     # 2026-11-02 (No.16) — retur DITOLAK tidak lagi mengurangi omzet rekap.
     await _refresh_rekap(db, existing, actor=_get_user(request).get("email", "system"))
-    # W4 — kejujuran stok: kalau retur ini SUDAH menambah stok (restock otomatis
-    # saat dibuat) lalu kemudian ditolak, angka stok sudah bergerak. Jangan diam:
-    # beri peringatan supaya petugas gudang bisa menyesuaikan (lewat Opname /
-    # Pengeluaran), bukan menemukannya berbulan-bulan kemudian sebagai selisih.
+    # 2026-11-02 (K1) — pekerjaan gudang yang BELUM diputuskan ikut DIBATALKAN. Yang
+    # SUDAH diputuskan tidak diubah diam-diam: stok & jurnalnya hanya bisa dibalik
+    # gudang lewat "Balik Keputusan" (jurnal pembalik + stok keluar berjejak).
     warning = None
-    if existing.get("wh_restocked"):
-        warning = (
-            f"Perhatian: retur ini sudah menambah stok {existing.get('wh_restock_qty', 0)} "
-            f"pcs di {existing.get('wh_restock_location_code') or 'gudang'} "
-            f"(retur fisik {existing.get('wh_return_code') or '-'}). Karena retur "
-            "sekarang DITOLAK, sesuaikan stoknya di Gudang bila barang tidak benar-benar "
-            "kembali.")
-    return {"success": True, "message": "Return rejected", "warning": warning}
+    wh_message = ""
+    try:
+        wh = await _rb.cancel_for_marketing_return(db, existing, actor=_get_user(request),
+                                                   reason="ditolak")
+        wh_message = wh.get("message", "")
+        if wh.get("state") == "decided":
+            warning = wh_message
+        if wh.get("wh_return"):
+            await _rb._stamp_marketing(db, return_id, wh["wh_return"])
+    except Exception as e:  # noqa: BLE001
+        logger.error("[retur] pembatalan pekerjaan gudang gagal (%s): %s", return_id, e)
+        warning = f"Retur ditolak, tetapi pekerjaan gudangnya gagal dibatalkan: {e}"
+    return {"success": True, "message": "Return rejected", "warning": warning,
+            "warehouse_message": wh_message}
 
 @router.post("/{return_id}/complete")
 async def complete_return(return_id: str, request: Request):
@@ -711,9 +722,13 @@ async def complete_return(return_id: str, request: Request):
     if not wh_ret_id and disposition not in {"dispose", "refund_only", "donation"}:
         warning = (
             "Barang fisik belum ditangani Gudang (belum ada wh_return terkait). "
-            "Stok FG tidak otomatis bertambah. "
-            "Bila retur nyatanya harus di-restock, buat 'Retur Fisik di Gudang' terlebih dahulu."
+            "Stok FG hanya bertambah setelah Gudang menerima & memutuskan retur ini. "
+            "Kirim dulu ke 'Retur Fisik di Gudang'."
         )
+    elif wh_ret_id and existing.get("wh_return_status") != _rb.STATUS_RESOLVED:
+        warning = (f"Retur Fisik {existing.get('wh_return_code') or ''} masih "
+                   f"'{existing.get('wh_return_status') or 'Pending'}' — stok & omzet setelah "
+                   "retur baru berubah setelah Gudang memutuskan.")
 
     return {"success": True, "message": "Return completed", "warning": warning,
             "credit_note": credit_note, "credit_note_message": cn_message}
@@ -733,8 +748,10 @@ async def sync_returns_to_warehouse(request: Request):
 
     Body (opsional):
       dry_run: true      → hanya menghitung & menjelaskan, TIDAK menulis
-      auto_restock: bool → langsung tambah stok (default true)
       condition: 'Baik' | 'Rusak'
+
+    2026-11-02 (K1) — `auto_restock` DIABAIKAN: jalur Marketing hanya membuat
+    pekerjaan Pending; stok bertambah setelah gudang memutuskan.
     """
     user = await require_auth(request)
     db = get_db()
@@ -746,7 +763,7 @@ async def sync_returns_to_warehouse(request: Request):
     res = await _rb.sync_all(
         db, actor=user,
         dry_run=bool(body.get("dry_run")),
-        auto_restock=body.get("auto_restock", True) is not False,
+        auto_restock=False,
         condition=body.get("condition"),
         limit=int(body.get("limit") or 500),
     )
@@ -763,9 +780,12 @@ async def create_wh_return_from_marketing(return_id: str, request: Request):
         sehingga restock bisa tepat sasaran;
       · retur berstatus `pending` pun boleh dijembatani (barangnya nyata sudah di
         jalan) — pemilik minta otomatis, bukan menunggu approve;
-      · idempoten & bisa langsung menambah stok sesuai kondisi barang.
+      · idempoten.
 
-    Body (opsional): {condition: 'Baik'|'Rusak', auto_restock: bool}
+    2026-11-02 (K1) — hanya membuat pekerjaan Pending; `auto_restock` di body
+    DIABAIKAN (stok & jurnal menunggu keputusan gudang).
+
+    Body (opsional): {condition: 'Baik'|'Rusak'}
     """
     user = await require_auth(request)
     db = get_db()
@@ -786,7 +806,7 @@ async def create_wh_return_from_marketing(return_id: str, request: Request):
         res = await _rb.ensure_wh_return(
             db, ret, actor=user,
             condition=body.get("condition", ret.get("item_condition")),
-            auto_restock=body.get("auto_restock", True) is not False)
+            auto_restock=False)
     except _rb.ReturnBridgeError as e:
         raise HTTPException(400, str(e))
 

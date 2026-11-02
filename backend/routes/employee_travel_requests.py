@@ -59,13 +59,16 @@ STATUS_LABELS = {
 
 from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5): helper bersama
-    notify_requester, parse_ymd, resolve_payment_account,
+    ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
+    split_own_requests,
 )
 
 # 2026-11-02 (P5 butir 6): pembayar uang muka = peran Keuangan NYATA (accounting, staff_keuangan,
-# manager_keuangan, …) + HR yang memang sudah boleh (pemisahan tugas menunggu keputusan owner).
-# Dulu daftar memakai nama 'finance' yang tidak ada di data → staff_keuangan & accounting 403.
-ADVANCE_PAYER_ROLES = tuple(dict.fromkeys(FINANCE_ROLES + ('hr',)))
+# manager_keuangan, …). Dulu daftar memakai nama 'finance' yang tidak ada di data → staff_keuangan &
+# accounting 403.
+# 2026-11-02 (K25, keputusan owner): pemisahan tugas uang keluar — HR TIDAK lagi boleh membayar uang
+# muka (dulu satu orang HR bisa membuat, menyetujui, dan membayar dinasnya sendiri).
+ADVANCE_PAYER_ROLES = tuple(FINANCE_ROLES)
 GL_EMPLOYEE_ADVANCE = '1-1610'   # Uang Muka Karyawan
 GL_BANK_DEFAULT = '1-1201'       # cadangan bila klien lama tidak mengirim rekening
 # Portal Saya belum punya menu Klaim/Dinas → tautan notifikasi ke Dashboard Portal Saya (id menu nyata).
@@ -515,14 +518,23 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
     doc = await _get_or_404(db, req_id)
     if doc.get('status') != 'submitted':
         raise HTTPException(400, f"Status '{doc.get('status')}' tidak bisa di-approve. Harus submitted.")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju.
+    ensure_not_self_approval(doc, user, what='perjalanan dinas')
 
     now = _now()
+    requested = float(doc.get('cash_advance_requested') or 0)
     cash_adv_approved = payload.cash_advance_approved \
         if payload.cash_advance_approved is not None \
-        else doc.get('cash_advance_requested', 0)
+        else requested
+    # 2026-11-02 (K25): nilai disetujui ≤ nilai diminta (uji lama: HR menyetujui 5.000.000 untuk 1.000.000).
+    if cash_adv_approved < 0:
+        raise HTTPException(400, 'Uang muka disetujui tidak boleh negatif.')
+    if cash_adv_approved > requested + 0.01:
+        raise HTTPException(400, (f"Uang muka disetujui (Rp {cash_adv_approved:,.0f}) melebihi yang diminta "
+                                  f"(Rp {requested:,.0f}).").replace(',', '.'))
 
     await db.employee_travel_requests.update_one(
-        {'id': req_id},
+        {'id': req_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
             'approved_by': user.get('id'),
@@ -530,6 +542,7 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
             'approved_at': now,
             'approval_note': payload.note or '',
             'cash_advance_approved': cash_adv_approved,
+            'cash_advance_decided': True,   # K25: nilai uang muka diputuskan eksplisit (termasuk 0)
             'updated_at': now,
         }}
     )
@@ -595,7 +608,7 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     db = get_db()
     role = (user.get('role') or '').lower()
     if role not in ADVANCE_PAYER_ROLES:
-        raise HTTPException(403, 'Hanya Keuangan (atau HR) yang dapat melakukan pembayaran uang muka')
+        raise HTTPException(403, 'Hanya Keuangan yang dapat membayar uang muka dinas (pemisahan tugas: HR tidak membayar).')
 
     doc = await _get_or_404(db, req_id)
     if doc.get('status') != 'approved':
@@ -618,6 +631,14 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
         raise HTTPException(400, (
             f"Penyelesaian dinas {stl.get('settlement_number')} ({stl.get('status')}) sudah dibuat sebelum uang "
             "muka dibayar. Tolak penyelesaian itu dulu, bayar uang muka, lalu buat penyelesaian baru."))
+    # 2026-11-02 (K25): batas bayar = uang muka DISETUJUI. Dulu nilai disetujui 0 (mis. persetujuan massal
+    # yang tidak mengisi nilai) berarti TANPA batas. Data lama tanpa keputusan eksplisit → nilai diminta.
+    cap = _approved if (_approved > 0 or doc.get('cash_advance_decided')) \
+        else float(doc.get('cash_advance_requested') or 0)
+    if cap <= 0:
+        raise HTTPException(400, 'Tidak ada uang muka yang disetujui untuk perjalanan dinas ini.')
+    if amount > cap + 0.01:
+        raise HTTPException(400, f'Uang muka dibayar ({amount:,.0f}) melebihi yang disetujui ({cap:,.0f}).')
 
     now = _now()
     # 2026-11-02 (P5 butir 7): tanggal jurnal = tanggal bayar yang diisi; rekening = yang dipilih.
@@ -736,13 +757,18 @@ async def bulk_approve_travel(body: BulkApproveTravelRequest, user: dict = Depen
     """Bulk approve (Finance/HR/Manager) — FASE 5 (T-20): satu implementasi di core.bulk_approve."""
     from core.bulk_approve import bulk_approve
     db = get_db()
-    res = await bulk_approve(db, user, body.travel_ids, collection="employee_travel_requests", number_field="trip_number",
+    ids, own = await split_own_requests(db, 'employee_travel_requests', body.travel_ids, user)
+    res = await bulk_approve(db, user, ids, collection="employee_travel_requests", number_field="trip_number",
                              module="travel_request", approval_note=body.approval_note or "")
+    merge_own_failures(res, own, len(body.travel_ids))
     # 2026-11-02 (P5 butir 12): persetujuan massal juga memberi tahu tiap pemohon.
     for tid in ((res.get('results') or {}).get('success') or []):
         doc = await db.employee_travel_requests.find_one({'id': tid}, {'_id': 0})
         if doc:
+            # K25: persetujuan massal menyetujui uang muka SEBESAR yang diminta (tercatat eksplisit).
+            await db.employee_travel_requests.update_one({'id': tid}, {'$set': {
+                'cash_advance_approved': float(doc.get('cash_advance_requested') or 0), 'cash_advance_decided': True}})
             await _notify_travel_decision(db, doc, approved=True, note=body.approval_note or '',
-                                          advance=float(doc.get('cash_advance_approved') or 0))
+                                          advance=float(doc.get('cash_advance_requested') or 0))
     return res
 

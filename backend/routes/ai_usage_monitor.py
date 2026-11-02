@@ -18,6 +18,9 @@ from ai_cost_tracker import (
     get_ai_settings,
     invalidate_ai_settings_cache,
     ai_status,
+    effective_budgets,
+    month_to_date_cost,
+    AI_FEATURE_GROUPS,
     TIER_MODELS,
     DEFAULT_DAILY_BUDGET_USD,
     DEFAULT_MONTHLY_BUDGET_USD,
@@ -28,25 +31,10 @@ from database import get_db
 router = APIRouter(prefix="/api/ai/usage", tags=["ai-usage-monitor"])
 
 # WS-B(d) — grup fitur AI yang dapat di-on/off oleh admin (match by prefix).
-AI_FEATURE_GROUPS = [
-    {"key": "executive-narrative", "label": "Analisis Eksekutif AI"},
-    {"key": "daily-summary", "label": "Ringkasan Bisnis Harian"},
-    {"key": "revenue-forecast", "label": "Prediksi Pendapatan"},
-    {"key": "cashflow", "label": "Prediksi Arus Kas"},
-    {"key": "fraud-detect", "label": "Deteksi Anomali / Fraud"},
-    {"key": "prod-optimize", "label": "Optimasi Produksi"},
-    {"key": "marketing", "label": "AI Marketing & Insights"},
-    {"key": "maklon", "label": "Estimasi Harga Maklon"},
-    {"key": "wms", "label": "AI Gudang (WMS)"},
-    {"key": "smart-import", "label": "Smart Import (mapping AI)"},
-    {"key": "rahaza", "label": "Asisten AI Rahaza"},
-    {"key": "career", "label": "Career Coach SDM"},
-    # 2026-11-02: grup yang dulu tidak bisa dimatikan dari layar ini.
-    {"key": "hr-ai", "label": "AI SDM (screening CV, attrition, coaching)"},
-    {"key": "assistant-erp", "label": "Asisten ERP"},
-    {"key": "analytics-ai", "label": "RCA Produksi/QC"},
-    {"key": "predictive-maintenance", "label": "Saran Perawatan Mesin"},
-]
+# 2026-11-02 (K29): daftar dipindah ke ai_cost_tracker.AI_FEATURE_GROUPS (SSOT) supaya
+# label fitur di log (`feature_group`) selalu cocok dengan toggle di layar ini.
+# Tier yang boleh jadi default: executive (Opus) KHUSUS Laporan Eksekutif.
+DEFAULT_TIER_CHOICES = tuple(k for k in TIER_MODELS if k != "executive")
 
 
 async def _check_admin(request: Request):
@@ -77,12 +65,11 @@ async def usage_logs(
 @router.get("/budgets")
 async def get_budgets(request: Request):
     await _check_admin(request)
+    # 2026-11-02 (K29): anggaran EFEKTIF (setelan Monitor AI → env), bukan angka env bawaan.
     return {
         "success": True,
         "data": {
-            "daily_usd": DEFAULT_DAILY_BUDGET_USD,
-            "monthly_usd": DEFAULT_MONTHLY_BUDGET_USD,
-            "per_feature_daily_usd": DEFAULT_PER_FEATURE_DAILY_USD,
+            **(await effective_budgets(get_db())),
             "info": "Atur batas anggaran di tab Pengaturan Monitor AI.",
         },
     }
@@ -131,6 +118,10 @@ async def today_status(request: Request):
     ]).to_list(length=10)
 
     pct_daily = (cost / daily_budget * 100) if daily_budget > 0 else 0
+    # 2026-11-02 (K29): batas bulanan dari setelan yang sama ikut ditampilkan & menentukan status.
+    monthly_budget = float(settings.get("monthly_budget_usd") or DEFAULT_MONTHLY_BUDGET_USD)
+    month_cost = round(await month_to_date_cost(db), 4)
+    pct_monthly = (month_cost / monthly_budget * 100) if monthly_budget > 0 else 0
 
     # 2026-11-02: status JUJUR — dulu "healthy" walau kunci kosong & SDM tidak terpasang,
     # karena panggilan yang gagal sebelum ke Anthropic tidak pernah dicatat.
@@ -145,7 +136,7 @@ async def today_status(request: Request):
     recent_error_count = sum(int(r.get("n") or 0) for r in recent_errors)
     health = _health_label(
         ai_available=status["available"], ai_enabled=bool(settings.get("ai_enabled", True)),
-        pct_daily=pct_daily, successful=int(stats.get("successful", 0) or 0),
+        pct_daily=max(pct_daily, pct_monthly), successful=int(stats.get("successful", 0) or 0),
         failed=int(stats.get("failed", 0) or 0),
     )
 
@@ -160,6 +151,9 @@ async def today_status(request: Request):
             "total_tokens": stats.get("tokens", 0),
             "daily_budget_usd": daily_budget,
             "budget_used_pct": round(pct_daily, 1),
+            "monthly_budget_usd": monthly_budget,
+            "month_cost_usd": month_cost,
+            "monthly_used_pct": round(pct_monthly, 1),
             "health": health,
             "top_features": top_features,
             "ai_available": status["available"],
@@ -217,7 +211,8 @@ async def get_settings(request: Request):
         "data": {
             **settings,
             "feature_groups": AI_FEATURE_GROUPS,
-            "tiers": list(TIER_MODELS.keys()),
+            "tiers": list(DEFAULT_TIER_CHOICES),
+            "executive_features": ["executive-narrative"],  # K29: satu-satunya pemakai Opus
             "tier_models": {k: f"{v[0]}/{v[1]}" for k, v in TIER_MODELS.items()},
             "ai_status": await ai_status(db),
             "env_defaults": {
@@ -257,8 +252,10 @@ async def update_settings(request: Request, payload: dict = Body(...)):
                 raise HTTPException(400, f"{k} tidak boleh negatif")
             update[k] = round(fv, 4)
         elif k == "default_tier":
-            if v not in TIER_MODELS:
-                raise HTTPException(400, f"default_tier harus salah satu dari {list(TIER_MODELS.keys())}")
+            # K29 (2026-11-02): Opus (executive) hanya untuk Laporan Eksekutif, bukan default.
+            if v not in DEFAULT_TIER_CHOICES:
+                raise HTTPException(400, f"default_tier harus salah satu dari {list(DEFAULT_TIER_CHOICES)} "
+                                         "(executive/Opus khusus Laporan Eksekutif)")
             update[k] = v
         elif k == "disabled_features":
             if not isinstance(v, list):
