@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -18,10 +19,8 @@ export default function RahazaAttendanceApprovalModule({ token }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
   const [statusFilter, setStatusFilter] = useState('pending');
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().slice(0, 10);
-  });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [fromDate, setFromDate] = useState(() => daysAgoWIB(7));
+  const [toDate, setToDate] = useState(() => todayWIB());
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [approvalNotes, setApprovalNotes] = useState('');
   const [approvalLoading, setApprovalLoading] = useState(false);

@@ -10,6 +10,7 @@ import {
   FileText, Sparkles, BarChart3, MessageSquare, CheckSquare, Save,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { todayWIB } from '@/lib/waktu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -21,7 +22,7 @@ export default function RahazaAIModule({ headers }) {
   const [tab, setTab] = useState('summary');
   const [summary, setSummary] = useState(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
-  const [summaryDate, setSummaryDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [summaryDate, setSummaryDate] = useState(() => todayWIB());
 
   const [rcQuestion, setRcQuestion] = useState('');
   const [rcAnswer, setRcAnswer] = useState(null);

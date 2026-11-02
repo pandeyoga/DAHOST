@@ -87,6 +87,12 @@ async def update_settings(request: Request):
     return serialize_doc(material_fields.with_aliases(out or {}, "default_material_cost_per_kg"))
 
 
+def mi_item_net_qty(item: dict) -> float:
+    """Qty bahan yang benar-benar terpakai satu baris MI = keluar (cadangan: kebutuhan) − sudah diretur."""
+    gross = float(item.get("qty_issued") or item.get("qty_required") or 0)
+    return max(0.0, round(gross - float(item.get("qty_returned") or 0), 4))
+
+
 async def _compute_hpp(db, wo_id: str):
     from core.wo_reader import get_wo  # T-03: SSOT production_jobs
     wo = await get_wo(db, wo_id)
@@ -117,7 +123,9 @@ async def _compute_hpp(db, wo_id: str):
                 # `fabric`/`kain`/`benang`/`interlining` tanpa unit_cost memakai default
                 # AKSESORIS (per unit), bukan default bahan (per kg) ⇒ HPP salah diam-diam.
                 unit_cost = default_yarn if material_fields.is_kglike_material(mat) else default_acc
-            qty = float(item.get("qty_issued") or item.get("qty_required") or 0)
+            # 2026-11-02 (K10): pemakaian = keluar − diretur (Retur Material mengisi `qty_returned` baris MI;
+            # status MI tetap 'issued'). Dulu bahan yang sudah kembali ke gudang tetap dibebankan ke HPP.
+            qty = mi_item_net_qty(item)
             amount = qty * unit_cost
             material_cost += amount
             material_breakdown.append({

@@ -111,3 +111,6 @@ credentials.json
 
 /.tok_*
 .emergent/
+
+# worktree sementara agen Claude Code (lokal)
+/.claude/worktrees/

@@ -27,6 +27,7 @@ import uuid
 import io
 from datetime import datetime, timezone, date
 from typing import Optional
+from utils.waktu import today_wib, wib_day_bounds_utc, wib_date_str
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-production"])
 
@@ -617,7 +618,7 @@ async def create_assignment(request: Request):
     line_id = body.get("line_id")
     if not line_id:
         raise HTTPException(400, "line_id required")
-    assign_date = body.get("assign_date") or date.today().isoformat()
+    assign_date = body.get("assign_date") or today_wib().isoformat()
     process_id   = body.get("process_id") or None
     process_code = body.get("process_code") or None
 
@@ -729,7 +730,7 @@ async def record_wip_event(request: Request):
     event = {
         "id": _uid(),
         "timestamp": _now(),
-        "event_date": _now().date().isoformat(),                        # FIX: date string for reports
+        "event_date": wib_date_str(),                        # FIX: date string for reports
         "line_id": line_id,
         "process_id": process_id,
         "process_code": proc.get("code") if proc else "",          # FIX: Pareto reports
@@ -842,7 +843,7 @@ async def line_board(request: Request, assign_date: Optional[str] = None):
     """
     await require_auth(request)
     db = get_db()
-    today = assign_date or date.today().isoformat()
+    today = assign_date or today_wib().isoformat()
 
     lines = await db.rahaza_lines.find({"active": True}, {"_id": 0}).to_list(500)
     procs = await db.rahaza_processes.find({"active": True, "is_rework": False}, {"_id": 0}).sort("order_seq", 1).to_list(500)
@@ -862,10 +863,10 @@ async def line_board(request: Request, assign_date: Optional[str] = None):
     loc_map = await _name_map("rahaza_locations", {l.get("location_id") for l in lines if l.get("location_id")})
 
     # Output today per line (event_type=output)
-    start = datetime.combine(date.fromisoformat(today), datetime.min.time()).replace(tzinfo=timezone.utc)
-    end   = datetime.combine(date.fromisoformat(today), datetime.max.time()).replace(tzinfo=timezone.utc)
+    # Batas hari WIB dalam UTC (No.54a) — dulu 00:00–23:59 UTC (= 07:00 WIB s/d 06:59 WIB besok).
+    start, end = wib_day_bounds_utc(date.fromisoformat(today))
     pipe = [
-        {"$match": {"event_type": "output", "timestamp": {"$gte": start, "$lte": end}}},
+        {"$match": {"event_type": "output", "timestamp": {"$gte": start, "$lt": end}}},
         {"$group": {"_id": "$line_id", "total": {"$sum": "$qty"}}},
     ]
     out_agg = await db.rahaza_wip_events.aggregate(pipe).to_list(500)

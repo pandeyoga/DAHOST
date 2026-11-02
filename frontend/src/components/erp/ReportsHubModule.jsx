@@ -26,7 +26,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { GlassCard } from '@/components/ui/glass';
 import { PageHeader } from './moduleAtoms';
-import { PeriodPicker } from './PeriodPicker';
+import { PeriodPicker, resolvePreset } from './PeriodPicker';
 import { formatRupiah } from '@/lib/format';
 
 const CATEGORY_ICON = {
@@ -92,19 +92,8 @@ export default function ReportsHubModule({ token, onNavigate }) {
 
   const range = useMemo(() => {
     let { from, to } = period || {};
-    if (!from || !to) {
-      const now = new Date();
-      const t = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const add = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-      const p = period?.preset || '30d';
-      if (p === 'today') { from = iso(t); to = iso(t); }
-      else if (p === '7d') { from = iso(add(t, -6)); to = iso(t); }
-      else if (p === '30d') { from = iso(add(t, -29)); to = iso(t); }
-      else if (p === '90d') { from = iso(add(t, -89)); to = iso(t); }
-      else if (p === 'month') { from = iso(new Date(t.getFullYear(), t.getMonth(), 1)); to = iso(t); }
-      else if (p === 'ytd') { from = `${t.getFullYear()}-01-01`; to = iso(t); }
-    }
+    // Preset dihitung SSOT PeriodPicker (WIB) — dulu disalin di sini dengan jam perangkat & tanpa 'Bulan Lalu'.
+    if (!from || !to) ({ from, to } = resolvePreset(period?.preset || '30d'));
     return { from, to };
   }, [period]);
 

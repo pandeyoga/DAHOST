@@ -463,8 +463,8 @@ async def product_performance(
     user = await require_auth(request)
     db = get_db()
     start, end = _date_range(days)
-    # Sesi demo diberi rincian sekali supaya panel ini tidak tampak rusak di DB baru.
-    await _LP.seed_demo_products(db)
+    # 2026-11-02 — dulu sesi demo diberi rincian produk karangan di sini; seeder demo
+    # tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     match: dict = dict(_LF.date_match("session_date", start, end))
     extra = []

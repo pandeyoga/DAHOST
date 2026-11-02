@@ -12,12 +12,13 @@ Usage: When resolving approver for a resource:
   2. If yes, route approval to delegatee
 """
 import uuid
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth
 from core.roles import HR_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/delegations", tags=["rahaza-delegations"])
 
@@ -37,7 +38,7 @@ def _s(d):
 
 async def get_active_delegation(db, user_id: str, scope: str = "all") -> Optional[dict]:
     """Check if user_id has active delegation for given scope today."""
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     return await db.rahaza_approval_delegations.find_one({
         "delegator_id": user_id,
         "is_active": True,
@@ -53,7 +54,7 @@ async def list_delegations(request: Request, active_only: bool = False):
     db = get_db()
     filt = {}
     if active_only:
-        today = date.today().isoformat()
+        today = today_wib().isoformat()
         filt = {"is_active": True, "start_date": {"$lte": today}, "end_date": {"$gte": today}}
     docs = await db.rahaza_approval_delegations.find(filt, {"_id": 0}).sort("start_date", -1).to_list(500)
     return {"ok": True, "delegations": [_s(d) for d in docs]}
@@ -79,8 +80,8 @@ async def create_delegation(request: Request):
         "delegatee_id": delegatee_id,
         "delegatee_name": body.get("delegatee_name") or "",
         "scopes": body.get("scopes") or ["all"],  # ['leave','overtime','all']
-        "start_date": body.get("start_date") or date.today().isoformat(),
-        "end_date": body.get("end_date") or date.today().isoformat(),
+        "start_date": body.get("start_date") or today_wib().isoformat(),
+        "end_date": body.get("end_date") or today_wib().isoformat(),
         "reason": body.get("reason") or "",
         "is_active": True,
         "created_at": _now(),

@@ -18,6 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -70,6 +72,15 @@ const defaultEmployee = {
   bank_name: 'BCA', bank_account_number: '', bank_account_holder: '',
   emergency_contact_name: '', emergency_phone: '', emergency_relation: 'Orang Tua',
 };
+
+// 2026-11-02 (K23): kepesertaan BPJS per program. Cermin backend resolve_bpjs_programs().
+const BPJS_PROGRAMS = [['kes', 'BPJS Kesehatan'], ['jht', 'JHT'], ['jp', 'JP'], ['jkk_jkm', 'JKK & JKM']];
+function bpjsProgramsOf(emp) {
+  if (emp?.bpjs_programs && typeof emp.bpjs_programs === 'object') return emp.bpjs_programs;
+  const kes = !!String(emp?.bpjs_kesehatan_number || '').trim();
+  const tk = !!String(emp?.bpjs_ketenagakerjaan_number || '').trim();
+  return { kes, jht: tk, jp: tk, jkk_jkm: tk };
+}
 
 export default function HREmployeeModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -326,8 +337,8 @@ function EmployeeRow({ emp, onEdit, onDelete, onLinkUser, token }) {
   ];
   const complete = fields.filter(Boolean).length;
   const pct = Math.round(complete / fields.length * 100);
-  const contractEnd = emp.contract_end_date ? new Date(emp.contract_end_date) : null;
-  const daysUntilEnd = contractEnd ? Math.ceil((contractEnd - new Date()) / 86400000) : null;
+  // sisa hari kalender WIB (kontrak berakhir hari ini = 0, bukan sudah lewat sejak 07:00 WIB)
+  const daysUntilEnd = emp.contract_end_date ? daysBetweenISO(todayWIB(), toWIBDate(emp.contract_end_date)) : null;
   const isExpiring = daysUntilEnd !== null && daysUntilEnd >= 0 && daysUntilEnd <= 30;
 
   return (
@@ -573,7 +584,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                   <Sel value={form.wage_scheme} onChange={set('wage_scheme')} options={WAGE_SCHEMES} />
                 </Field>
                 <Field label="Rate / Base (Rp)" help="Borongan pcs=Rp/pcs, jam=Rp/jam, mingguan/bulanan=total">
-                  <Input type="number" min={0} value={form.base_rate} onChange={e => setForm(f => ({ ...f, base_rate: Number(e.target.value) }))} />
+                  <MoneyInput value={form.base_rate} onChange={e => setForm(f => ({ ...f, base_rate: Number(e.target.value) }))} />
                 </Field>
               </div>
             </TabsContent>
@@ -677,6 +688,28 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                   <Input value={form.bpjs_ketenagakerjaan_number} onChange={set('bpjs_ketenagakerjaan_number')}
                     placeholder="11 digit" />
                 </Field>
+                {/* 2026-11-02 (K23): kepesertaan per program — potongan payroll HANYA untuk program yang dicentang.
+                    Belum pernah dicentang → diturunkan dari nomor kartu (Kes ← no. Kes; JHT/JP/JKK-JKM ← no. TK). */}
+                <div className="col-span-2 rounded-lg border border-[var(--glass-border)] p-3" data-testid="emp-bpjs-programs">
+                  <div className="text-xs font-semibold mb-2">Kepesertaan BPJS (potongan & iuran hanya untuk yang dicentang)</div>
+                  <div className="flex flex-wrap gap-4">
+                    {BPJS_PROGRAMS.map(([k, label]) => {
+                      const progs = bpjsProgramsOf(form);
+                      return (
+                        <label key={k} className="flex items-center gap-1.5 text-xs cursor-pointer">
+                          <input type="checkbox" checked={!!progs[k]} data-testid={`emp-bpjs-${k}`}
+                            onChange={() => setForm(f => ({ ...f, bpjs_programs: { ...bpjsProgramsOf(f), [k]: !bpjsProgramsOf(f)[k] } }))} />
+                          {label}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {!form.bpjs_programs && (
+                    <div className="text-[10px] text-muted-foreground mt-1.5">
+                      Belum diatur — sementara mengikuti nomor kartu di atas. Centang/hapus centang untuk menetapkan.
+                    </div>
+                  )}
+                </div>
               </div>
             </TabsContent>
 

@@ -535,6 +535,23 @@ async def import_table(key: str, request: Request, file: UploadFile = File(...),
         else:
             valid.append((doc, row_info))
 
+    # 2026-11-02 (S2-H, T8): baris Bagan Akun melewati penjaga yang SAMA dengan layar (PUT/POST
+    # /api/rahaza/coa/accounts): grup/rinci, nonaktif, induk, tipe, kode, dan penanda di-MERGE.
+    # Dulu `$set` seluruh baris → akun berjurnal bisa jadi grup/beda tipe, penanda toko terhapus.
+    if entry["collection"] == "rahaza_coa_accounts" and valid:
+        from routes.rahaza_coa import prepare_coa_import
+        prepared = await prepare_coa_import(db, [d for d, _ in valid])
+        coa_valid = []
+        for (doc, info), (prep, errs) in zip(valid, prepared):
+            if errs:
+                info["errors"] = errs
+                invalid.append(info)
+                continue
+            doc.clear()
+            doc.update(prep)
+            coa_valid.append((doc, info))
+        valid = coa_valid
+
     # detect insert vs update for preview
     would_insert = would_update = 0
     still_valid = []

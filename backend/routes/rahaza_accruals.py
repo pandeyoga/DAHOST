@@ -30,7 +30,7 @@ Recurring Accruals:
 from fastapi import APIRouter, Depends, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from dateutil.relativedelta import relativedelta
 from typing import Optional
 import uuid
@@ -38,6 +38,7 @@ import logging
 from core.authz import only  # T-01 2.3
 from core.roles import FINANCE_ROLES  # T-01 2.3
 from routes.shared import require_portal_dep  # FIN-04
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/finance", tags=["rahaza-accruals"],
@@ -81,7 +82,7 @@ async def create_accrual(request: Request):
     db = get_db()
     body = await request.json()
     
-    period = body.get("period", date.today().strftime("%Y-%m"))
+    period = body.get("period", today_wib().strftime("%Y-%m"))
     accrual_type = body.get("accrual_type", "other")
     amount = float(body.get("amount", 0))
     
@@ -338,7 +339,7 @@ async def create_recurring_accruals(request: Request):
     target_period = body.get("target_period")
     if not target_period:
         # Default: next month
-        next_month = date.today() + relativedelta(months=1)
+        next_month = today_wib() + relativedelta(months=1)
         target_period = next_month.strftime("%Y-%m")
     
     template_ids = body.get("template_ids", [])

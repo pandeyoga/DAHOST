@@ -17,6 +17,7 @@ from auth import require_auth, serialize_doc, log_activity
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, SalesDataEntry, _recalculate_health_score, _is_pic_role
 from core import marketing_sales_shape as _shape
 from core import marketing_cycle as _cycle
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -285,7 +286,7 @@ async def generate_ar_batch_from_sales(data: ARBatchRequest, request: Request):
 async def _gen_ar_number(db):
     """Generate AR invoice number with date prefix (RC-5 fix: atomic counter)."""
     from utils.counters import gen_prefixed_number
-    today = datetime.now(timezone.utc).date().strftime("%Y%m%d")
+    today = today_wib().strftime("%Y%m%d")
     return await gen_prefixed_number(db, "rahaza_ar_invoices", "invoice_number", f"AR-{today}-", 3)
 
 

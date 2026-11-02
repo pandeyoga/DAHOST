@@ -18,13 +18,12 @@ import {
 } from 'lucide-react';
 import { apicall, fmtCurrency, fmtDate, API } from '../utils';
 import { KPICard } from '../components/KPICard';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 
 export function UtilizationReportTab({ token, categories }) {
   // Default: last 90 days
-  const today = new Date().toISOString().slice(0, 10);
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 3600 * 1000).toISOString().slice(0, 10);
-  const [dateFrom, setDateFrom] = useState(ninetyDaysAgo);
-  const [dateTo, setDateTo] = useState(today);
+  const [dateFrom, setDateFrom] = useState(() => daysAgoWIB(90));
+  const [dateTo, setDateTo] = useState(() => todayWIB());
   const [categoryId, setCategoryId] = useState('all');
   const [threshold, setThreshold] = useState(30);
   const [report, setReport] = useState(null);

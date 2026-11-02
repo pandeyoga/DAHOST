@@ -70,14 +70,20 @@ async def create_fg_issue(request: Request):
     if mat.get("type") != "fg":
         raise HTTPException(400, "Material bukan produk jadi (type=fg)")
 
-    default_loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0})
-    loc_id = default_loc["id"] if default_loc else None
+    # 2026-11-02 — No.18(a): lokasi asal WAJIB dipilih pengguna. Dulu dipakai "lokasi aktif
+    # pertama" (di seed = KTR-PST Kantor Pusat) sehingga stok 36 pcs di GD-L1-RAK terbaca 0.
+    loc_id = (body.get("location_id") or "").strip()
+    if not loc_id:
+        raise HTTPException(400, "location_id wajib diisi — pilih lokasi asal barang jadi yang dikeluarkan.")
+    from core import location_resolver
+    if not await location_resolver.location_exists(db, loc_id):
+        raise HTTPException(400, "Lokasi asal tidak ditemukan di Struktur Gudang.")
     stock_doc = await db.rahaza_material_stock.find_one(
         {"material_id": material_id, "location_id": loc_id}, {"_id": 0}
     )
     available = float(stock_doc.get("qty", 0)) if stock_doc else 0
     if qty > available:
-        raise HTTPException(400, f"Stok tidak cukup. Tersedia: {available} pcs, diminta: {qty} pcs")
+        raise HTTPException(400, f"Stok tidak cukup di lokasi ini. Tersedia: {available} pcs, diminta: {qty} pcs")
 
     customer_name = None
     if customer_id:
@@ -135,6 +141,22 @@ async def create_fg_issue(request: Request):
         "issued_by":       user.get("name", ""),
         "timestamp":       _fg_now(),
     })
+    # 2026-11-02 (K41 = a): HPP barang yang keluar dinilai WAC dan DIJURNAL lewat helper paket WAC
+    # (`post_fg_issue_cogs`: Dr akun alasan — profil `fg_issue` — / Cr 1-1404 senilai qty × WAC).
+    # Dulu pengeluaran ini hanya memotong stok; nilai 1-1404 tidak pernah turun. Gagal jurnal tidak
+    # membatalkan pengeluaran fisik, tetapi DICATAT di dokumen & dikembalikan ke layar.
+    from routes.rahaza_posting import post_fg_issue_cogs
+    try:
+        gl = await post_fg_issue_cogs(db, issue_doc, user)
+    except Exception as e:  # noqa: BLE001
+        gl = {"ok": False, "error": str(e)}
+    gl_set = {"gl_je_id": gl.get("je_id"), "gl_je_number": gl.get("je_number"),
+              "cogs": gl.get("cogs"), "unit_cost": gl.get("unit_cost"), "cogs_basis": "wac",
+              "debit_mapping": gl.get("debit_mapping"),
+              "gl_post_error": None if gl.get("ok") else (gl.get("error") or "jurnal gagal")}
+    await db.rahaza_fg_issues.update_one({"id": issue_id}, {"$set": gl_set})
+    issue_doc.update(gl_set)
     await log_activity(user["id"], user.get("name", ""), "fg_issue_created", "rahaza.fg_issue",
-                      f"{issue_number}: {mat.get('code')} qty={qty} reason={reason}")
+                      f"{issue_number}: {mat.get('code')} qty={qty} reason={reason}"
+                      + (f" je={gl.get('je_number')}" if gl.get("ok") else " (jurnal gagal)"))
     return serialize_doc({**issue_doc, "ok": True})

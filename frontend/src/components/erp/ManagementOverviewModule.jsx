@@ -21,11 +21,12 @@ import {
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Badge } from '@/components/ui/badge';
 import {
   StatCard, ChartCard, GlassTooltip, HeroCrystalCard, DonutProgress, CHART_PALETTE,
 } from './dashboardAtoms';
-import { PeriodPicker } from './PeriodPicker';
+import { PeriodPicker, resolvePreset } from './PeriodPicker';
 import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area,
 } from 'recharts';
@@ -93,17 +94,8 @@ export default function ManagementOverviewModule({ token }) {
   const dateRange = useMemo(() => {
     let { from, to } = period || {};
     if (!from || !to) {
-      const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      const add = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-      const preset = period?.preset || '30d';
-      if (preset === 'today') { from = iso(today); to = iso(today); }
-      else if (preset === '7d') { from = iso(add(today, -6)); to = iso(today); }
-      else if (preset === '30d') { from = iso(add(today, -29)); to = iso(today); }
-      else if (preset === '90d') { from = iso(add(today, -89)); to = iso(today); }
-      else if (preset === 'month') { from = iso(new Date(today.getFullYear(), today.getMonth(), 1)); to = iso(today); }
-      else if (preset === 'ytd') { from = `${today.getFullYear()}-01-01`; to = iso(today); }
+      // Rentang preset (tanggal WIB) dari SSOT PeriodPicker — tidak dihitung ulang di sini.
+      ({ from, to } = resolvePreset(period?.preset || '30d'));
     }
     return { from, to };
   }, [period]);
@@ -343,7 +335,7 @@ export default function ManagementOverviewModule({ token }) {
               <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="pr-1-stage-max">
                 Cukup 1 tahap bila nilai ≤ (Rp)
               </label>
-              <Input id="pr-1-stage-max" type="number" min="0" step="100000" className="h-8 w-40"
+              <MoneyInput id="pr-1-stage-max" className="h-8 w-40"
                      value={cfgDraft.pr_1_stage_max} data-testid="pr-1-stage-max-input"
                      onChange={(e) => setCfgDraft((p) => ({ ...p, pr_1_stage_max: e.target.value }))} />
               <span className="mt-0.5 block text-[10px] text-foreground/50">
@@ -354,7 +346,7 @@ export default function ManagementOverviewModule({ token }) {
               <label className="mb-1 block text-[11px] text-foreground/60" htmlFor="pr-2-stage-max">
                 Cukup 2 tahap bila nilai ≤ (Rp)
               </label>
-              <Input id="pr-2-stage-max" type="number" min="0" step="1000000" className="h-8 w-40"
+              <MoneyInput id="pr-2-stage-max" className="h-8 w-40"
                      value={cfgDraft.pr_2_stage_max} data-testid="pr-2-stage-max-input"
                      onChange={(e) => setCfgDraft((p) => ({ ...p, pr_2_stage_max: e.target.value }))} />
               <span className="mt-0.5 block text-[10px] text-foreground/50">

@@ -5,7 +5,7 @@ Phase 3 Week 13: Tracking retur dan refund produk
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Any, Optional, Tuple
 from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel, Field
 from database import get_db
@@ -17,6 +17,7 @@ from core import returns_bridge as _rb
 from routes.shared import require_portal
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/returns", tags=["marketing-returns"])
@@ -66,7 +67,69 @@ def serialize(obj):
 def _get_user(request: Request) -> dict:
     return getattr(request.state, "user", {}) or {}
 
+
+# ── 2026-11-02 (No.14a) — REFUND = NOMINAL AKTUAL ────────────────────────────
+# Dulu refund parsial DIPATOK 70% harga (`price * 0.7`) dan refund penuh = harga
+# SATUAN (qty diabaikan): retur 3 pcs @107.999 full → tercatat 107.999, parsial
+# 5 pcs → 75.599,30. Keputusan owner No.14(a): refund diisi NOMINAL AKTUAL dari
+# platform. Aturan:
+#   · tukar / tanpa refund → 0 (tidak boleh diisi nominal);
+#   · nominal dikirim     → dipakai apa adanya (≥ 0, divalidasi);
+#   · refund penuh tanpa nominal → harga × qty (usulan awal layar yang sama);
+#   · refund sebagian tanpa nominal → DITOLAK (tidak ada lagi tebakan 70%).
+# Data lama (refund 70% / tanpa `refund_amount_source`) tetap terbaca apa adanya.
+NO_MONEY_REFUND_TYPES = ("exchange", "no_refund")
+
+
+def compute_refund(refund_type: Optional[str], price: Any, qty: Any,
+                   refund_amount: Any = None) -> Tuple[float, str]:
+    """→ ``(nominal_refund, sumber)``; sumber ∈ ``input`` · ``harga_x_qty`` · ``tanpa_refund``."""
+    rt = refund_type or "full_refund"
+    if rt not in REFUND_TYPES:
+        raise HTTPException(400, f"Tipe refund harus salah satu dari: {', '.join(REFUND_TYPES)}")
+    amt = None
+    if refund_amount is not None and refund_amount != "":
+        try:
+            amt = float(refund_amount)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Nominal refund harus berupa angka (Rp).")
+        if amt < 0:
+            raise HTTPException(400, "Nominal refund tidak boleh negatif.")
+    if rt in NO_MONEY_REFUND_TYPES:
+        if amt:
+            raise HTTPException(400, "Tipe tukar barang / tanpa refund tidak punya nominal "
+                                     "refund. Kosongkan nominalnya atau ganti tipe refund.")
+        return 0.0, "tanpa_refund"
+    if amt is not None:
+        return round(amt, 2), "input"
+    if rt == "full_refund":
+        try:
+            p = float(price or 0)
+            q = max(int(qty or 1), 1)
+        except (TypeError, ValueError):
+            p, q = 0.0, 1
+        return round(p * q, 2), "harga_x_qty"
+    raise HTTPException(400, "Refund sebagian: isi Nominal Refund Aktual (Rp) sesuai "
+                             "keputusan platform — sistem tidak lagi menebak 70%.")
+
+
+async def _refresh_rekap(db, *docs, actor: str = "system") -> None:
+    """2026-11-02 (No.16) — retur mengubah "omzet setelah retur" di rekap harian
+    toko pada TANGGAL RETUR. Dipanggil sesudah retur diubah/dihapus/ditolak.
+    2026-11-02 (K36) — retur baru dihitung SETELAH keputusan gudang, jadi pembuatan
+    retur tidak lagi memanggil ini; keputusan Retur Fisik yang memanggilnya
+    (`routes/dewi_wh_returns`). Gagal hitung ulang tidak membatalkan pencatatan retur
+    (tombol "Hitung Ulang" di Input Sales tetap bisa memulihkannya)."""
+    try:
+        from core import marketing_returns as _mret
+        await _mret.refresh_rekap_for_docs(db, *docs, actor=actor)
+    except Exception as e:  # noqa: BLE001
+        logger.error("[retur] rekap harian gagal dihitung ulang: %s", e)
+
 # ── Seed ─────────────────────────────────────────────────────────────────────
+# 2026-11-02 — seeder ini TIDAK LAGI dipanggil saat GET daftar/ringkasan retur:
+# dulu, bila semua retur dihapus, 30 retur fiktif (created_by=system) muncul lagi
+# di data go-live. Fungsinya dibiarkan untuk skrip demo yang memanggilnya sadar.
 async def seed_returns_if_empty():
     db = get_db()
     if await db.marketing_returns.count_documents({}) > 0:
@@ -163,7 +226,9 @@ class ReturnIn(BaseModel):
     account_id: Optional[str] = None  # UUID dari marketing_platform_accounts
     account_name: Optional[str] = None
     date: str
-    order_id: str
+    # 2026-11-02 — No.4(c): retur bebas, nomor pesanan TIDAK wajib (sering sulit
+    # didapat dari paket fisik). Retur tanpa nomor tetap dihitung di rekap toko.
+    order_id: Optional[str] = ""
     # W4 (sesi #29) — KONDISI BARANG & JUMLAH yang kembali. Dua kolom inilah yang
     # membuat retur bisa langsung mengubah stok tanpa menebak:
     #   `item_condition` = Baik  → stok masuk zona jual (ZNA-FG)
@@ -181,6 +246,8 @@ class ReturnIn(BaseModel):
     reason_detail: str
     courier: str
     refund_type: Optional[str] = "full_refund"
+    # 2026-11-02 (No.14a) — nominal refund AKTUAL dari platform (Rp, ≥ 0).
+    refund_amount: Optional[float] = Field(default=None, ge=0)
     notes: Optional[str] = ""
 
 class ReturnUpdate(BaseModel):
@@ -233,7 +300,7 @@ async def get_reasons(request: Request):
 @router.get("/summary")
 async def get_summary(request: Request):
     user = await require_auth(request)
-    await seed_returns_if_empty()
+    # 2026-11-02 — tidak lagi menyemai retur demo saat layar dibuka (lihat seed_returns_if_empty).
     db = get_db()
 
     # F6 (sesi #9) — ringkasan retur WAJIB berlingkup toko: sebelumnya staf
@@ -284,7 +351,7 @@ async def list_returns(
     account_id: str = Query(default=""),
 ):
     user = await require_auth(request)
-    await seed_returns_if_empty()
+    # 2026-11-02 — tidak lagi menyemai retur demo saat layar dibuka.
     db = get_db()
 
     q = await _scope.scope_filter(db, user, None)
@@ -371,12 +438,14 @@ async def create_return(body: ReturnIn, request: Request):
     elif not (getattr(body, "product", "") or "").strip():
         raise HTTPException(400, "Produk wajib: pilih item dari katalog toko.")
 
-    refund_amount = body.price if body.refund_type == "full_refund" else (body.price * 0.7) if body.refund_type == "partial_refund" else 0
+    # 2026-11-02 (No.14a) — nominal aktual, bukan 70% dipatok (lihat compute_refund).
+    refund_amount, refund_source = compute_refund(
+        body.refund_type, body.price, body.qty, body.refund_amount)
 
     ret = {
         "id": str(uuid.uuid4()),
         "date": body.date,
-        "order_id": body.order_id,
+        "order_id": (body.order_id or "").strip(),
         "catalog_item_id": _item.get("id") if _item else None,
         "sku": _item.get("sku", "") if _item else "",
         "product": (_item.get("name") if _item else body.product) or "",
@@ -388,8 +457,9 @@ async def create_return(body: ReturnIn, request: Request):
         "reason_detail": body.reason_detail,
         "courier": body.courier,
         "status": "pending",
-        "refund_type": body.refund_type,
+        "refund_type": body.refund_type or "full_refund",
         "refund_amount": refund_amount,
+        "refund_amount_source": refund_source,
         "appeal_status": "pending",
         "appeal_result": "Menunggu",
         "notes": body.notes or "",
@@ -401,18 +471,18 @@ async def create_return(body: ReturnIn, request: Request):
     await db.marketing_returns.insert_one(ret)
     ret.pop("_id", None)
 
-    # ── W4 (sesi #29) — JEMBATAN OTOMATIS KE GUDANG + RESTOCK ─────────────────
-    # Keputusan pemilik: retur yang dibuat di Marketing HARUS langsung muncul di
-    # "Retur Fisik" gudang DAN langsung menambah stok sesuai kondisi barang.
-    # Sebelum ini `wh_returns` = 0 dokumen selamanya (jembatannya manual & tak
-    # pernah diklik), jadi barang retur hilang dari pembukuan stok.
+    # ── JEMBATAN OTOMATIS KE GUDANG ───────────────────────────────────────────
+    # W4 (sesi #29): retur Marketing otomatis muncul di "Retur Fisik" gudang.
+    # 2026-11-02 (K1, W4 DICABUT): HANYA pekerjaan **Pending** yang dibuat
+    # (`auto_restock=False`). Stok & jurnal lahir saat gudang Terima (qty aktual) →
+    # Periksa → Putuskan. Rekap omzet juga baru berkurang setelah keputusan itu (K36).
     # Kegagalan TIDAK membatalkan pencatatan retur (uangnya nyata, harus tercatat)
     # tetapi WAJIB berjejak di `wh_sync_*` supaya tidak menggantung diam-diam.
     bridge = None
     try:
         bridge = await _rb.ensure_wh_return(db, ret, actor=user,
                                            condition=ret["item_condition"],
-                                           auto_restock=True)
+                                           auto_restock=False)
     except Exception as e:  # noqa: BLE001
         logger.error("[retur] jembatan Marketing→Gudang gagal untuk %s: %s", ret["id"], e)
         await db.marketing_returns.update_one({"id": ret["id"]}, {"$set": {
@@ -456,19 +526,58 @@ async def update_return(return_id: str, body: ReturnUpdate, request: Request):
         upd["product"] = _it.get("name", "")
     if "reason" in upd:
         upd["reason_label"] = REASON_LABELS.get(upd["reason"], upd["reason"])
+    if "order_id" in upd:
+        upd["order_id"] = (upd["order_id"] or "").strip()
+    # 2026-11-02 (No.14a) — refund dihitung ulang bila tipe/harga/qty/nominal berubah.
+    # Nominal aktual yang SUDAH dicatat (atau refund sebagian data lama) tidak
+    # ditimpa tebakan hanya karena harga/qty diedit tanpa nominal baru.
+    if any(k in upd for k in ("refund_type", "price", "qty", "refund_amount")):
+        rt = upd.get("refund_type") or existing.get("refund_type") or "full_refund"
+        same_type = rt == (existing.get("refund_type") or "full_refund")
+        keep_old = ("refund_amount" not in upd and same_type
+                    and rt not in NO_MONEY_REFUND_TYPES
+                    and existing.get("refund_amount") is not None
+                    and (existing.get("refund_amount_source") == "input"
+                         or rt == "partial_refund"))
+        if keep_old:
+            upd["refund_amount"] = existing.get("refund_amount")
+            upd["refund_amount_source"] = existing.get("refund_amount_source") or "data_lama"
+        else:
+            upd["refund_amount"], upd["refund_amount_source"] = compute_refund(
+                rt, upd.get("price", existing.get("price")),
+                upd.get("qty", existing.get("qty") or 1), upd.get("refund_amount"))
     upd["updated_at"] = _now()
-    
+
     await db.marketing_returns.update_one({"id": return_id}, {"$set": upd})
     updated = {**existing, **upd}
+    # 2026-11-02 (No.16) — tanggal/toko/nominal bisa berubah: hitung ulang KEDUA hari.
+    await _refresh_rekap(db, existing, updated, actor=_get_user(request).get("email", "system"))
     return {"success": True, "data": serialize(updated)}
 
 @router.delete("/{return_id}", dependencies=only(*MARKETING_CS_ROLES))  # T-01 2.3
 async def delete_return(return_id: str, request: Request):
     await require_auth(request)
     db = get_db()
+    existing = await db.marketing_returns.find_one({"id": return_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Return not found")
+    # 2026-11-02 (K1) — hapus SEBELUM keputusan gudang ⇒ pekerjaan gudang dibatalkan.
+    # SESUDAH keputusan ⇒ ditolak: dokumen ini satu-satunya jejak uang refund untuk
+    # stok/jurnal yang sudah dibukukan; balik dulu keputusannya di Gudang.
+    wh = await _rb.find_linked_wh(db, existing)
+    if wh and _rb.is_decided(wh):
+        raise HTTPException(400, (
+            f"Retur ini sudah diputuskan gudang ({wh.get('return_code')}: "
+            f"{wh.get('action_taken') or '-'}) dan sudah menggerakkan stok/jurnal. Minta Gudang "
+            "menekan 'Balik Keputusan' di Retur Fisik dulu, atau tolak retur ini (bukan hapus)."))
+    if wh:
+        await _rb.cancel_for_marketing_return(db, existing, actor=_get_user(request),
+                                              reason="dihapus")
     res = await db.marketing_returns.delete_one({"id": return_id})
     if res.deleted_count == 0:
         raise HTTPException(404, "Return not found")
+    # 2026-11-02 (No.16) — retur yang dihapus tidak lagi mengurangi omzet rekap.
+    await _refresh_rekap(db, existing, actor=_get_user(request).get("email", "system"))
     return {"success": True, "message": "Deleted"}
 
 @router.post("/{return_id}/approve")
@@ -500,9 +609,10 @@ async def approve_return(return_id: str, request: Request):
     fresh = await db.marketing_returns.find_one({"id": return_id}, {"_id": 0})
     if fresh and not fresh.get("wh_return_id"):
         try:
+            # 2026-11-02 (K1) — hanya pekerjaan Pending; stok menunggu keputusan gudang.
             res = await _rb.ensure_wh_return(db, fresh, actor=_get_user(request),
                                             condition=fresh.get("item_condition"),
-                                            auto_restock=True)
+                                            auto_restock=False)
             wh_msg = res.get("message", "")
         except Exception as e:  # noqa: BLE001
             logger.error("[retur] jembatan saat approve gagal (%s): %s", return_id, e)
@@ -538,19 +648,26 @@ async def reject_return(return_id: str, request: Request):
             "updated_at": _now()
         }}
     )
-    # W4 — kejujuran stok: kalau retur ini SUDAH menambah stok (restock otomatis
-    # saat dibuat) lalu kemudian ditolak, angka stok sudah bergerak. Jangan diam:
-    # beri peringatan supaya petugas gudang bisa menyesuaikan (lewat Opname /
-    # Pengeluaran), bukan menemukannya berbulan-bulan kemudian sebagai selisih.
+    # 2026-11-02 (No.16) — retur DITOLAK tidak lagi mengurangi omzet rekap.
+    await _refresh_rekap(db, existing, actor=_get_user(request).get("email", "system"))
+    # 2026-11-02 (K1) — pekerjaan gudang yang BELUM diputuskan ikut DIBATALKAN. Yang
+    # SUDAH diputuskan tidak diubah diam-diam: stok & jurnalnya hanya bisa dibalik
+    # gudang lewat "Balik Keputusan" (jurnal pembalik + stok keluar berjejak).
     warning = None
-    if existing.get("wh_restocked"):
-        warning = (
-            f"Perhatian: retur ini sudah menambah stok {existing.get('wh_restock_qty', 0)} "
-            f"pcs di {existing.get('wh_restock_location_code') or 'gudang'} "
-            f"(retur fisik {existing.get('wh_return_code') or '-'}). Karena retur "
-            "sekarang DITOLAK, sesuaikan stoknya di Gudang bila barang tidak benar-benar "
-            "kembali.")
-    return {"success": True, "message": "Return rejected", "warning": warning}
+    wh_message = ""
+    try:
+        wh = await _rb.cancel_for_marketing_return(db, existing, actor=_get_user(request),
+                                                   reason="ditolak")
+        wh_message = wh.get("message", "")
+        if wh.get("state") == "decided":
+            warning = wh_message
+        if wh.get("wh_return"):
+            await _rb._stamp_marketing(db, return_id, wh["wh_return"])
+    except Exception as e:  # noqa: BLE001
+        logger.error("[retur] pembatalan pekerjaan gudang gagal (%s): %s", return_id, e)
+        warning = f"Retur ditolak, tetapi pekerjaan gudangnya gagal dibatalkan: {e}"
+    return {"success": True, "message": "Return rejected", "warning": warning,
+            "warehouse_message": wh_message}
 
 @router.post("/{return_id}/complete")
 async def complete_return(return_id: str, request: Request):
@@ -577,17 +694,45 @@ async def complete_return(return_id: str, request: Request):
         }}
     )
 
+    # 2026-11-02 — tombol "Selesaikan & Terbitkan Nota Kredit" dulu HANYA memanggil
+    # endpoint ini, dan endpoint ini tidak menerbitkan apa pun (create-credit-note
+    # tidak punya pemanggil di layar) ⇒ nota kredit tidak pernah ada. Sekarang nota
+    # kredit benar-benar dibuat di sini (gl_mode=settlement, TANPA jurnal — refund
+    # diakui lewat baris refunds pencairan, D2) dan tautannya disimpan di retur.
+    credit_note = None
+    cn_message = ""
+    if float(existing.get("refund_amount") or 0) > 0:
+        try:
+            res = await _issue_credit_note(db, {**existing, "status": "completed"},
+                                           _get_user(request))
+            credit_note = serialize(res.get("credit_note"))
+            cn_message = (f"Nota kredit {credit_note.get('cn_number')} diterbitkan"
+                          if res.get("created") else
+                          f"Nota kredit {credit_note.get('cn_number')} sudah ada")
+        except HTTPException as e:
+            cn_message = f"Retur selesai, tetapi nota kredit tidak terbit: {e.detail}"
+        except Exception as e:  # noqa: BLE001
+            logger.exception("[retur] nota kredit gagal diterbitkan untuk %s", return_id)
+            cn_message = f"Retur selesai, tetapi nota kredit gagal diterbitkan: {e}"
+    else:
+        cn_message = "Retur selesai tanpa nota kredit (nominal refund Rp 0 — tukar/tanpa refund)."
+
     warning = None
     wh_ret_id = existing.get("wh_return_id")
     disposition = (existing.get("disposition") or "").lower()
     if not wh_ret_id and disposition not in {"dispose", "refund_only", "donation"}:
         warning = (
             "Barang fisik belum ditangani Gudang (belum ada wh_return terkait). "
-            "Stok FG tidak otomatis bertambah. "
-            "Bila retur nyatanya harus di-restock, buat 'Retur Fisik di Gudang' terlebih dahulu."
+            "Stok FG hanya bertambah setelah Gudang menerima & memutuskan retur ini. "
+            "Kirim dulu ke 'Retur Fisik di Gudang'."
         )
+    elif wh_ret_id and existing.get("wh_return_status") != _rb.STATUS_RESOLVED:
+        warning = (f"Retur Fisik {existing.get('wh_return_code') or ''} masih "
+                   f"'{existing.get('wh_return_status') or 'Pending'}' — stok & omzet setelah "
+                   "retur baru berubah setelah Gudang memutuskan.")
 
-    return {"success": True, "message": "Return completed", "warning": warning}
+    return {"success": True, "message": "Return completed", "warning": warning,
+            "credit_note": credit_note, "credit_note_message": cn_message}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -604,8 +749,10 @@ async def sync_returns_to_warehouse(request: Request):
 
     Body (opsional):
       dry_run: true      → hanya menghitung & menjelaskan, TIDAK menulis
-      auto_restock: bool → langsung tambah stok (default true)
       condition: 'Baik' | 'Rusak'
+
+    2026-11-02 (K1) — `auto_restock` DIABAIKAN: jalur Marketing hanya membuat
+    pekerjaan Pending; stok bertambah setelah gudang memutuskan.
     """
     user = await require_auth(request)
     db = get_db()
@@ -617,7 +764,7 @@ async def sync_returns_to_warehouse(request: Request):
     res = await _rb.sync_all(
         db, actor=user,
         dry_run=bool(body.get("dry_run")),
-        auto_restock=body.get("auto_restock", True) is not False,
+        auto_restock=False,
         condition=body.get("condition"),
         limit=int(body.get("limit") or 500),
     )
@@ -634,9 +781,12 @@ async def create_wh_return_from_marketing(return_id: str, request: Request):
         sehingga restock bisa tepat sasaran;
       · retur berstatus `pending` pun boleh dijembatani (barangnya nyata sudah di
         jalan) — pemilik minta otomatis, bukan menunggu approve;
-      · idempoten & bisa langsung menambah stok sesuai kondisi barang.
+      · idempoten.
 
-    Body (opsional): {condition: 'Baik'|'Rusak', auto_restock: bool}
+    2026-11-02 (K1) — hanya membuat pekerjaan Pending; `auto_restock` di body
+    DIABAIKAN (stok & jurnal menunggu keputusan gudang).
+
+    Body (opsional): {condition: 'Baik'|'Rusak'}
     """
     user = await require_auth(request)
     db = get_db()
@@ -657,7 +807,7 @@ async def create_wh_return_from_marketing(return_id: str, request: Request):
         res = await _rb.ensure_wh_return(
             db, ret, actor=user,
             condition=body.get("condition", ret.get("item_condition")),
-            auto_restock=body.get("auto_restock", True) is not False)
+            auto_restock=False)
     except _rb.ReturnBridgeError as e:
         raise HTTPException(400, str(e))
 
@@ -679,14 +829,117 @@ async def create_wh_return_from_marketing(return_id: str, request: Request):
 # PHASE 7B: RETURNS → CREDIT NOTE AUTO-POSTING
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _issue_credit_note(db, ret: dict, user: dict) -> dict:
+    """Terbitkan SATU nota kredit untuk satu retur (idempoten, aman diklik dua kali).
+
+    2026-11-02 — dipakai tombol "Selesaikan & Terbitkan Nota Kredit" (`/complete`)
+    dan endpoint `create-credit-note`. Aturan:
+      * nominal = refund AKTUAL retur (No.14a); refund 0 ⇒ 400 (tidak ada uang kembali);
+      * `gl_mode = settlement` ⇒ TANPA jurnal: refund marketplace diakui lewat
+        baris `refunds` pada jurnal pencairan (D2, anti dobel 4-1200);
+      * retur diklaim ATOMIK sebelum nota dibuat ⇒ dua klik bersamaan tidak
+        melahirkan dua nota; nota yatim (tautannya hilang) ditautkan ulang.
+
+    → ``{"created": bool, "credit_note": dict, "posting": dict|None}``
+    """
+    return_id = ret["id"]
+    if ret.get("credit_note_id"):
+        cn = await db.rahaza_credit_notes.find_one({"id": ret["credit_note_id"]}, {"_id": 0})
+        if cn:
+            return {"created": False, "credit_note": cn, "posting": None}
+    orphan = await db.rahaza_credit_notes.find_one({"return_id": return_id}, {"_id": 0})
+    if orphan:
+        await db.marketing_returns.update_one({"id": return_id}, {"$set": {
+            "credit_note_id": orphan["id"], "credit_note_number": orphan.get("cn_number"),
+            "credit_note_status": orphan.get("status") or "issued", "updated_at": _now()}})
+        return {"created": False, "credit_note": orphan, "posting": None}
+
+    refund_amount = round(float(ret.get("refund_amount") or 0), 2)
+    if refund_amount <= 0:
+        raise HTTPException(400, "Nominal refund retur ini Rp 0 (tukar/tanpa refund) — "
+                                 "tidak ada nota kredit yang perlu diterbitkan.")
+
+    cn_id = str(uuid.uuid4())
+    claim = await db.marketing_returns.update_one(
+        {"id": return_id, "credit_note_id": ret.get("credit_note_id") or {"$in": [None, ""]}},
+        {"$set": {"credit_note_id": cn_id, "credit_note_status": "issuing"}})
+    if not claim.modified_count:
+        fresh = await db.marketing_returns.find_one({"id": return_id}, {"_id": 0}) or {}
+        cn = await db.rahaza_credit_notes.find_one({"id": fresh.get("credit_note_id")}, {"_id": 0})
+        if cn:
+            return {"created": False, "credit_note": cn, "posting": None}
+        raise HTTPException(409, "Nota kredit retur ini sedang diterbitkan — muat ulang sebentar lagi.")
+
+    # Iter 121 (B-08): TIDAK membuat pelanggan fiktif "MARKETPLACE" — CN retur
+    # marketplace hanya catatan operasional; nilainya diakui lewat baris refunds pencairan.
+    customer = await db.rahaza_customers.find_one({"code": "MARKETPLACE"}, {"_id": 0})
+    try:
+        # RC-5: penomoran atomik (bukan count_documents()+1)
+        today = today_wib().strftime("%Y%m%d")
+        cn_number = await gen_prefixed_number(db, "rahaza_credit_notes", "cn_number", f"CN-{today}-", 3)
+        cn_doc = {
+            "id": cn_id,
+            "cn_number": cn_number,
+            "return_id": return_id,
+            "order_id": ret.get("order_id"),
+            "customer_id": customer["id"] if customer else None,
+            "platform": ret.get("platform"),
+            "account_id": ret.get("account_id"),
+            "account_name": ret.get("account_name"),
+            "issue_date": today_wib().isoformat(),
+            "return_date": ret.get("date"),
+            "items": [{
+                "description": f"Retur: {ret.get('product')} - {ret.get('reason_label')}",
+                "qty": max(int(ret.get("qty") or 1), 1),
+                "unit": "pcs",
+                # harga per pcs = refund aktual ÷ qty; `amount` = refund aktual utuh
+                "price": round(refund_amount / max(int(ret.get("qty") or 1), 1), 2),
+                "amount": refund_amount,
+            }],
+            "subtotal": refund_amount,
+            "tax_pct": 0,
+            "tax_amount": 0,
+            "total": refund_amount,
+            "status": "issued",
+            "gl_mode": "settlement",
+            "gl_note": "Retur marketplace diakui lewat baris refunds pada jurnal pencairan — tidak dijurnal terpisah (anti dobel 4-1200).",
+            "notes": f"Credit note untuk return {return_id}: {ret.get('reason_detail', '')}",
+            "created_at": _now(),
+            "updated_at": _now(),
+            "created_by": (user or {}).get("email", "unknown"),
+        }
+        await db.rahaza_credit_notes.insert_one(cn_doc)
+    except Exception:
+        await db.marketing_returns.update_one(
+            {"id": return_id, "credit_note_id": cn_id},
+            {"$set": {"credit_note_id": None, "credit_note_status": None}})
+        raise
+
+    await db.marketing_returns.update_one({"id": return_id}, {"$set": {
+        "credit_note_id": cn_id, "credit_note_number": cn_number,
+        "credit_note_status": "issued", "updated_at": _now()}})
+
+    # gl_mode=settlement ⇒ post_credit_note MELEWATI jurnal dan hanya mencatat alasannya.
+    posting_result = None
+    try:
+        from routes.rahaza_posting import post_credit_note
+        cn_refresh = await db.rahaza_credit_notes.find_one({"id": cn_id}, {"_id": 0})
+        posting_result = await post_credit_note(db, cn_refresh, user)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Credit note auto-post failed")
+        posting_result = {"ok": False, "error": str(e)}
+    final_cn = await db.rahaza_credit_notes.find_one({"id": cn_id}, {"_id": 0})
+    return {"created": True, "credit_note": final_cn, "posting": posting_result}
+
+
 @router.post("/{return_id}/create-credit-note")
 async def create_credit_note(return_id: str, request: Request):
     """
     Phase 7B: Create Credit Note dari approved return.
-    
-    Saat retur disetujui, sistem akan:
-    1. Create credit note record
-    2. Auto-post reversing GL entry (Dr Revenue / Cr AR)
+
+    2026-11-02 — logikanya kini di `_issue_credit_note` (dipakai juga oleh
+    `/complete`). Nota kredit retur marketplace ber-`gl_mode=settlement`: TIDAK
+    dijurnal terpisah (refund diakui lewat baris refunds pencairan, D2).
     """
     user = await require_auth(request)
     db = get_db()
@@ -704,80 +957,9 @@ async def create_credit_note(return_id: str, request: Request):
     if ret.get("credit_note_id"):
         raise HTTPException(400, "Credit note sudah dibuat untuk return ini")
     
-    # Ensure customer exists (get or create marketplace customer)
-    # Iter 121 (B-08): TIDAK lagi membuat pelanggan fiktif "MARKETPLACE" — CN retur
-    # marketplace hanya catatan operasional; nilainya diakui lewat baris refunds pencairan.
-    customer = await db.rahaza_customers.find_one({"code": "MARKETPLACE"}, {"_id": 0})
-    customer_id = customer["id"] if customer else None
-    
-    # Generate credit note number (RC-5 fix: atomic race-safe numbering, was count_documents()+1)
-    today = datetime.now(timezone.utc).date().strftime("%Y%m%d")
-    cn_prefix = f"CN-{today}-"
-    cn_number = await gen_prefixed_number(db, "rahaza_credit_notes", "cn_number", cn_prefix, 3)
-    
-    # Calculate amount
-    refund_amount = float(ret.get("refund_amount", 0))
-    if refund_amount <= 0:
-        raise HTTPException(400, "Refund amount harus > 0")
-    
-    # Create credit note record
-    cn_doc = {
-        "id": str(uuid.uuid4()),
-        "cn_number": cn_number,
-        "return_id": return_id,
-        "order_id": ret.get("order_id"),
-        "customer_id": customer_id,
-        "platform": ret.get("platform"),
-        "account_id": ret.get("account_id"),
-        "account_name": ret.get("account_name"),
-        "issue_date": datetime.now(timezone.utc).date().isoformat(),
-        "items": [{
-            "description": f"Retur: {ret.get('product')} - {ret.get('reason_label')}",
-            "qty": 1,
-            "unit": "pcs",
-            "price": refund_amount,
-            "amount": refund_amount,
-        }],
-        "subtotal": round(refund_amount),
-        "tax_pct": 0,
-        "tax_amount": 0,
-        "total": round(refund_amount),
-        "status": "issued",
-        "gl_mode": "settlement",
-        "gl_note": "Retur marketplace diakui lewat baris refunds pada jurnal pencairan — tidak dijurnal terpisah (anti dobel 4-1200).",
-        "notes": f"Credit note untuk return {return_id}: {ret.get('reason_detail', '')}",
-        "created_at": _now(),
-        "updated_at": _now(),
-        "created_by": user.get("email", "unknown"),
-    }
-    
-    await db.rahaza_credit_notes.insert_one(cn_doc)
-    
-    # Update return record with credit note reference
-    await db.marketing_returns.update_one(
-        {"id": return_id},
-        {"$set": {
-            "credit_note_id": cn_doc["id"],
-            "credit_note_number": cn_number,
-            "credit_note_status": "issued",
-            "updated_at": _now(),
-        }}
-    )
-    
-    # Auto-post GL reversing entry
-    posting_result = None
-    try:
-        from routes.rahaza_posting import post_credit_note
-        cn_refresh = await db.rahaza_credit_notes.find_one({"id": cn_doc["id"]}, {"_id": 0})
-        posting_result = await post_credit_note(db, cn_refresh, user)
-    except Exception as e:
-        logger.exception("Credit note auto-post failed")
-        posting_result = {"ok": False, "error": str(e)}
-    
-    # Get final state
-    final_cn = await db.rahaza_credit_notes.find_one({"id": cn_doc["id"]}, {"_id": 0})
-    final_cn["_posting_result"] = posting_result
-    
+    res = await _issue_credit_note(db, ret, user)
+    final_cn = res.get("credit_note") or {}
+    final_cn["_posting_result"] = res.get("posting")
     return {"success": True, "data": serialize(final_cn)}
 
 

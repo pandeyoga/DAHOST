@@ -23,13 +23,14 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 import logging
 import uuid
 import csv
 import io
+from utils.waktu import wib_stamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/hr/expenses', tags=['Employee-Expenses'])
@@ -50,7 +51,29 @@ STATUS_LABELS = {
     'posted': 'Sudah di-Post GL',
 }
 
-from core.roles import APPROVER_ROLES  # T-08: satu konstanta
+from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5) · K25 pemisahan tugas
+    ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
+    split_own_requests,
+)
+
+# Portal Saya belum punya menu Klaim → tautan notifikasi ke Dashboard Portal Saya (id menu nyata).
+SELF_LINK_MODULE = 'portal-dashboard'
+
+
+async def _notify_claim_decision(db, doc: dict, *, approved: bool, note: str = '') -> None:
+    """2026-11-02 (P5 butir 12): beri tahu pemohon (employee_id = id akun login) hasil persetujuan klaim."""
+    nominal = f"Rp {float(doc.get('total_amount') or 0):,.0f}".replace(',', '.')
+    await notify_requester(
+        db, user_id=doc.get('employee_id') or doc.get('created_by'),
+        subtype='expense_claim_approved' if approved else 'expense_claim_rejected',
+        severity='success' if approved else 'warning',
+        title=f"Klaim {doc.get('claim_number', '')} {'disetujui' if approved else 'ditolak'}",
+        body=(f"Klaim biaya \"{doc.get('title', '')}\" {nominal} "
+              + ('disetujui dan menunggu pembayaran Keuangan.' if approved else 'ditolak.')
+              + (f" Catatan: {note}" if note else '')),
+        link_module=SELF_LINK_MODULE, source_type='expense_claim', source_id=doc.get('id'),
+        source_ref=doc.get('claim_number'))
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -151,6 +174,7 @@ class DisbursePayload(BaseModel):
     bank_account_id: Optional[str] = ''
     payment_method: Optional[str] = 'transfer'
     note: Optional[str] = ''
+    payment_date: Optional[str] = ''   # 2026-11-02 (P5 butir 7): tanggal cair (YYYY-MM-DD, WIB) = tanggal jurnal
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -314,7 +338,7 @@ async def export_claims(
         ])
 
     output.seek(0)
-    filename = f"expense_claims_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"expense_claims_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -406,6 +430,8 @@ async def submit_claim(claim_id: str, user: dict = Depends(require_auth)):
             source_id=claim_id,
             source_ref=doc.get('claim_number'),
             target_roles=list(APPROVER_ROLES),
+            # 2026-11-02: pemohon (mis. accounting) tidak menerima "Perlu Tindakan" atas klaimnya sendiri
+            exclude_user_ids=[x for x in {user.get('id'), doc.get('employee_id')} if x],
             status='sent',
             meta={'link_module': 'hr-approval-inbox'},
         )
@@ -426,10 +452,12 @@ async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Dep
     doc = await _get_claim_or_404(db, claim_id)
     if doc.get('status') != 'submitted':
         raise HTTPException(400, f"Status klaim saat ini: {doc.get('status')}. Harus submitted untuk di-approve.")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju.
+    ensure_not_self_approval(doc, user, what='klaim biaya')
 
     now = _now()
     await db.rahaza_expense_claims.update_one(
-        {'id': claim_id},
+        {'id': claim_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
             'approved_by': user.get('id'),
@@ -441,6 +469,7 @@ async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Dep
     )
     await log_activity(user.get('id'), user.get('name'), 'approve', 'expense_claim',
                        f"Approve klaim {doc.get('claim_number')}")
+    await _notify_claim_decision(db, doc, approved=True, note=payload.note or '')
     return {'ok': True, 'id': claim_id, 'new_status': 'approved'}
 
 
@@ -470,6 +499,7 @@ async def reject_claim(claim_id: str, payload: RejectPayload, user: dict = Depen
     )
     await log_activity(user.get('id'), user.get('name'), 'reject', 'expense_claim',
                        f"Reject klaim {doc.get('claim_number')}: {payload.reason}")
+    await _notify_claim_decision(db, doc, approved=False, note=payload.reason)
     return {'ok': True, 'id': claim_id, 'new_status': 'rejected'}
 
 
@@ -478,8 +508,10 @@ async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = D
     """Finance disburse klaim — bayar ke karyawan + post GL."""
     db = get_db()
     role = (user.get('role') or '').lower()
-    if role not in APPROVER_ROLES:  # FIN-02
-        raise HTTPException(403, 'Hanya Finance yang dapat melakukan disbursement')
+    # 2026-11-02 (K25): pencairan klaim = uang keluar → hanya peran Keuangan. Dulu APPROVER_ROLES
+    # (termasuk hr/manager) sehingga HR bisa menyetujui sekaligus mencairkan.
+    if role not in FINANCE_ROLES:  # FIN-02
+        raise HTTPException(403, 'Hanya Keuangan yang dapat mencairkan klaim (pemisahan tugas: HR tidak membayar).')
 
     doc = await _get_claim_or_404(db, claim_id)
     if doc.get('status') != 'approved':
@@ -490,7 +522,8 @@ async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = D
         raise HTTPException(400, 'Total klaim 0, tidak bisa disburse')
 
     now = _now()
-    je_date = date.today()
+    # 2026-11-02 (P5 butir 7): tanggal jurnal = tanggal cair yang diisi (WIB), bukan hari ini.
+    je_date = parse_ymd(payload.payment_date, field='tanggal pencairan klaim')
 
     # RC-05: posting WAJIB lewat engine rahaza_posting (idempoten, validasi COA/saldo/periode).
     # Default akun: Dr 6-3500 (Biaya Reimbursement Karyawan) / Cr bank default profil 'expense'.
@@ -504,13 +537,15 @@ async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = D
         _m = await db.employee_expense_gl_mappings.find_one({'category': doc.get('category'), 'is_active': True}, {'_id': 0, 'gl_account_code': 1})
         gl_debit_code = (_m or {}).get('gl_account_code')
     gl_debit_code = gl_debit_code or doc.get('gl_debit_code') or '6-3500'
-    credit_code = (await get_mapping(db, 'expense')).get('credit_cash_default')  # default bank (profil)
+    default_credit = (await get_mapping(db, 'expense')).get('credit_cash_default')  # default bank (profil)
 
+    # 2026-11-02 (P5 butir 7): rekening yang dipilih di form "Cairkan" divalidasi = kas/bank aktif
+    # (dulu id tak dikenal diam-diam jatuh ke akun profil).
     bank_acc_id = payload.bank_account_id or doc.get('bank_account_id') or ''
-    if bank_acc_id:
-        ba = await db.rahaza_cash_accounts.find_one({'id': bank_acc_id}, {'_id': 0})
-        if ba and (ba.get('gl_account_code') or ba.get('code')):
-            credit_code = ba.get('gl_account_code') or ba.get('code')
+    acc = await resolve_payment_account(db, cash_account_id=bank_acc_id, default_code=default_credit,
+                                        purpose='Pencairan klaim')
+    credit_code = acc['gl_code']
+    bank_acc_id = acc.get('cash_account_id') or bank_acc_id
 
     memo = f"Reimburse {doc.get('claim_number')} — {doc.get('employee_name', '')}"
     lines = [
@@ -571,8 +606,17 @@ class BulkApproveRequest(BaseModel):
 async def bulk_approve_claims(body: BulkApproveRequest, user: dict = Depends(require_auth)):
     """Bulk approve (Finance/HR/Manager) — FASE 5 (T-20): satu implementasi di core.bulk_approve."""
     from core.bulk_approve import bulk_approve
-    return await bulk_approve(get_db(), user, body.claim_ids, collection="rahaza_expense_claims", number_field="claim_number",
-                              module="expense_claim", approval_note=body.approval_note or "")
+    db = get_db()
+    ids, own = await split_own_requests(db, "rahaza_expense_claims", body.claim_ids, user)  # K25
+    res = await bulk_approve(db, user, ids, collection="rahaza_expense_claims", number_field="claim_number",
+                             module="expense_claim", approval_note=body.approval_note or "")
+    merge_own_failures(res, own, len(body.claim_ids))
+    # 2026-11-02 (P5 butir 12): persetujuan massal juga memberi tahu tiap pemohon.
+    for cid in ((res.get('results') or {}).get('success') or []):
+        doc = await db.rahaza_expense_claims.find_one({'id': cid}, {'_id': 0})
+        if doc:
+            await _notify_claim_decision(db, doc, approved=True, note=body.approval_note or '')
+    return res
 
 
 # ── Supporting data ────────────────────────────────────────────────────────────

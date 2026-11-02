@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
@@ -26,6 +27,8 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { todayWIB } from '../../lib/waktu';
 
 /* F13 (sesi #11) — inbox UANG yang tidak bisa disempitkan maupun dibawa keluar.
    Layar ini dulu hanya punya 3 tab jenis: TIDAK ADA kotak pencarian sama sekali,
@@ -68,6 +71,11 @@ function ActionModal({ item, token, onClose, onRefresh }) {
   const [note, setNote] = useState('');
   const [advanceAmount, setAdvanceAmount] = useState('');
   const [loading, setLoading] = useState(false);
+  // 2026-11-02 (P5 butir 7): rekening sumber + tanggal bayar (WIB) dikirim ke backend; dulu "Bayar"
+  // hanya mengirim {payment_method:'transfer'} sehingga jurnal selalu dari 1-1201 bertanggal hari ini.
+  const { accounts, loaded: accLoaded } = usePaymentCashAccounts(token);
+  const [payAccount, setPayAccount] = useState('');
+  const [payDate, setPayDate] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const isClaim = item.type === 'expense_claim';
@@ -164,20 +172,32 @@ function ActionModal({ item, token, onClose, onRefresh }) {
       )}
 
       {/* Finance Actions */}
+      {item.status === 'approved' && (
+        <div className="grid grid-cols-2 gap-2" data-testid="expense-pay-source">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Dibayar dari Rekening</label>
+            <CashAccountSelect accounts={accounts} loaded={accLoaded} value={payAccount} onChange={setPayAccount}
+              className="w-full h-8 px-2 rounded-md border border-border bg-background text-sm" testId="expense-pay-account" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Tanggal Bayar</label>
+            <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="text-sm h-8" />
+          </div>
+        </div>
+      )}
       {!isClaim && item.status === 'approved' && (
         <div className="rounded-lg bg-teal-50 border border-teal-200 p-3 space-y-2">
           <p className="text-sm font-medium text-teal-800">Bayar Uang Muka Perjalanan Dinas</p>
           <div className="flex gap-2">
-            <Input
-              type="number"
+            <MoneyInput
               placeholder={`Jumlah (estimasi: ${fmt(item.amount)})`}
               value={advanceAmount}
               onChange={e => setAdvanceAmount(e.target.value)}
               className="text-sm h-8"
             />
             <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-foreground whitespace-nowrap"
-              onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || item.amount })}
-              disabled={loading}>
+              onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || item.amount, bank_account_id: payAccount, payment_date: payDate })}
+              disabled={loading || !payAccount}>
               <Banknote className="w-3.5 h-3.5 mr-1" />Bayar
             </Button>
           </div>
@@ -188,8 +208,8 @@ function ActionModal({ item, token, onClose, onRefresh }) {
         <div className="rounded-lg bg-green-50 border border-green-200 p-3">
           <p className="text-sm font-medium text-green-800 mb-2">Disbursement Klaim Biaya</p>
           <Button className="bg-green-600 hover:bg-green-700 text-foreground" size="sm"
-            onClick={() => doAction('disburse', { payment_method: 'transfer' })}
-            disabled={loading}>
+            onClick={() => doAction('disburse', { payment_method: 'transfer', bank_account_id: payAccount, payment_date: payDate })}
+            disabled={loading || !payAccount}>
             <Banknote className="w-3.5 h-3.5 mr-1" />Bayar & Post GL
           </Button>
         </div>

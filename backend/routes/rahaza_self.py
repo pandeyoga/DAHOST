@@ -20,10 +20,11 @@ Admin Utility:
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
 from auth import require_auth, serialize_doc
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
 import logging
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-self"])
@@ -85,9 +86,9 @@ async def self_attendance(
 
     emp_id = emp["id"]
     if not from_:
-        from_ = (date.today() - timedelta(days=30)).isoformat()
+        from_ = (today_wib() - timedelta(days=30)).isoformat()
     if not to:
-        to = date.today().isoformat()
+        to = today_wib().isoformat()
 
     q = {
         "employee_id": emp_id,
@@ -137,6 +138,9 @@ async def self_payslips(
             q["period_from"]["$lte"] = to
 
     slips = await db.rahaza_payslips.find(q, {"_id": 0}).sort("period_from", -1).to_list(500)
+    # 2026-11-02 (audit T3) — hanya slip dari run final/dibayar (draft masih bisa berubah).
+    from routes.rahaza_payroll_payslips import only_published_slips
+    slips = await only_published_slips(db, slips)
 
     # Enrich with run info
     run_ids = list({s.get("run_id") for s in slips if s.get("run_id")})
@@ -169,6 +173,10 @@ async def self_payslip_detail(slip_id: str, request: Request):
     slip = await db.rahaza_payslips.find_one({"id": slip_id, "employee_id": emp["id"]}, {"_id": 0})
     if not slip:
         raise HTTPException(404, "Payslip tidak ditemukan atau bukan milik Anda.")
+    # 2026-11-02 (audit T3) — slip run draft belum boleh dilihat karyawan.
+    from routes.rahaza_payroll_payslips import only_published_slips
+    if not await only_published_slips(db, [slip]):
+        raise HTTPException(404, "Slip gaji ini belum difinalisasi HR.")
     return serialize_doc(slip)
 
 

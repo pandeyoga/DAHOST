@@ -11,11 +11,19 @@ import Modal from './Modal';
 import PaginationBar from './PaginationBar';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { thisYearWIB } from '@/lib/waktu';
 
 const STATUS_MAP = {
   draft:    { label: 'Draft',    color: 'bg-secondary text-muted-foreground' },
   approved: { label: 'Approved', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
   locked:   { label: 'Terkunci', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+};
+
+// 2026-11-02: status variance dari backend — pendapatan (above/below_target) vs biaya (under/over)
+const BUDGET_STATUS_LABEL = {
+  over: 'Over Budget', under: 'Under Budget', on_target: 'On Target',
+  above_target: 'Di Atas Target', below_target: 'Di Bawah Target',
 };
 
 const MONTHS = [
@@ -32,7 +40,7 @@ export default function BudgetModule({ token }) {
   const [loading, setLoading] = useState(false);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
-  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [filterYear, setFilterYear] = useState(thisYearWIB());
   const [filterStatus, setFilterStatus] = useState('');
 
   // Modals
@@ -44,7 +52,7 @@ export default function BudgetModule({ token }) {
   const [coa, setCoa] = useState([]);
 
   // Forms
-  const [budgetForm, setBudgetForm] = useState({ name: '', year: new Date().getFullYear(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
+  const [budgetForm, setBudgetForm] = useState({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
   const [itemForm, setItemForm] = useState({ account_id: '', month: '', amount_budgeted: '', notes: '' });
 
   const fetchBudgets = useCallback(async (p = 1) => {
@@ -106,7 +114,7 @@ export default function BudgetModule({ token }) {
       toast.success('Budget berhasil dibuat');
       setModalBudget(false);
       fetchBudgets(1);
-      setBudgetForm({ name: '', year: new Date().getFullYear(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
+      setBudgetForm({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
     } else {
       const e = await r.json();
       toast.error(e.detail || 'Gagal membuat budget');
@@ -228,11 +236,12 @@ export default function BudgetModule({ token }) {
                   <td className={`px-3 py-2 text-right font-medium ${r.variance < 0 ? 'text-red-700 dark:text-red-500' : 'text-emerald-500'}`}>{fmtRp(r.variance)}</td>
                   <td className={`px-3 py-2 text-right ${r.variance < 0 ? 'text-red-700 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{r.variance_pct}%</td>
                   <td className="px-3 py-2">
+                    {/* 2026-11-02 (audit No.53): baris pendapatan memakai label target (di atas = baik) */}
                     <span className={`px-1.5 py-0.5 rounded-full text-xs ${
-                      r.status === 'over' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
-                      r.status === 'under' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
+                      (r.status === 'over' || r.status === 'below_target') ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                      (r.status === 'under' || r.status === 'above_target') ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
                       'bg-secondary text-muted-foreground'
-                    }`}>{r.status === 'over' ? 'Over Budget' : r.status === 'under' ? 'Under Budget' : 'On Target'}</span>
+                    }`}>{BUDGET_STATUS_LABEL[r.status] || 'On Target'}</span>
                   </td>
                 </tr>
               ))}
@@ -326,12 +335,13 @@ export default function BudgetModule({ token }) {
                 <select value={itemForm.month} onChange={e => setItemForm(f => ({...f, month: e.target.value}))}
                   className="w-full border border-border rounded-md px-2.5 py-1.5 text-sm bg-[var(--card-surface)]">
                   <option value="">-- Pilih Bulan --</option>
-                  {MONTHS.map(m => <option key={m} value={`${budgetForm.year || selected.year}-${m}`}>{selected.year}-{m}</option>)}
+                  {/* 2026-11-02 (audit No.53): nilai bulan dulu memakai tahun form "Budget baru" (tahun berjalan) → item tersimpan ke tahun yang salah */}
+                  {MONTHS.map(m => <option key={m} value={`${selected.year}-${m}`}>{selected.year}-{m}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Jumlah Budget (Rp) *</label>
-                <GlassInput type="number" placeholder="0" value={itemForm.amount_budgeted} onChange={e => setItemForm(f => ({...f, amount_budgeted: e.target.value}))} />
+                <MoneyInput glass placeholder="0" value={itemForm.amount_budgeted} onChange={e => setItemForm(f => ({...f, amount_budgeted: e.target.value}))} />
               </div>
               <div>
                 <label className="block text-xs text-muted-foreground mb-1">Catatan</label>

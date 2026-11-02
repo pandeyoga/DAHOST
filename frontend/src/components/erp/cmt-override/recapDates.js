@@ -12,21 +12,17 @@
  * Kalau memakai zona browser: staf yang laptopnya ter-set UTC akan membuka rekap
  * tanggal KEMARIN sepanjang pagi (00:00-07:00 WIB) lalu menyimpulkan "semua vendor
  * belum mengisi" — persis jam produksi mulai bekerja. Backend memakai
- * `utils/waktu.today_wib()`; di sini padanannya.
+ * `utils/waktu.today_wib()`; padanannya di frontend = `@/lib/waktu` (SSOT).
+ * Nama lama di bawah dipertahankan sebagai ALIAS supaya pemanggil tidak berubah —
+ * tidak ada lagi aritmetika tanggal salinan di berkas ini.
  */
+import { todayWIB, addDaysISO, daysBetweenISO } from '@/lib/waktu';
 
-/** Tanggal HARI INI menurut WIB sebagai 'YYYY-MM-DD'. */
-export const isoToday = () => {
-  const wib = new Date(Date.now() + 7 * 3600 * 1000);
-  return wib.toISOString().slice(0, 10);
-};
+/** Tanggal HARI INI menurut WIB sebagai 'YYYY-MM-DD' (= todayWIB). */
+export const isoToday = () => todayWIB();
 
-/** Geser tanggal ISO sebanyak `delta` hari (pakai jam 12:00Z supaya bebas DST). */
-export const shiftDay = (iso, delta) => {
-  const d = new Date(`${iso}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + delta);
-  return d.toISOString().slice(0, 10);
-};
+/** Geser tanggal ISO sebanyak `delta` hari (= addDaysISO). */
+export const shiftDay = (iso, delta) => addDaysISO(iso, delta);
 
 /** '2026-08-10' -> 'Senin, 10 Agustus 2026' (nama hari ikut: briefing menyebut hari). */
 export const dayLabel = (iso) => {
@@ -46,7 +42,5 @@ export const shortDate = (iso) => {
   } catch { return iso; }
 };
 
-/** Selisih hari (b - a) untuk dua tanggal ISO. */
-export const daysBetween = (a, b) => Math.round(
-  (new Date(`${b}T12:00:00Z`) - new Date(`${a}T12:00:00Z`)) / 86400000,
-);
+/** Selisih hari (b - a) untuk dua tanggal ISO (= daysBetweenISO). */
+export const daysBetween = (a, b) => daysBetweenISO(a, b);

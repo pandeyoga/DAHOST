@@ -31,6 +31,7 @@ import logging
 import uuid
 import csv
 import io
+from utils.waktu import wib_stamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/hr/expenses', tags=['Employee-Travel'])
@@ -57,7 +58,22 @@ STATUS_LABELS = {
     'rejected': 'Ditolak',
 }
 
-from core.roles import APPROVER_ROLES  # T-08: satu konstanta
+from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5): helper bersama
+    ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
+    split_own_requests,
+)
+
+# 2026-11-02 (P5 butir 6): pembayar uang muka = peran Keuangan NYATA (accounting, staff_keuangan,
+# manager_keuangan, …). Dulu daftar memakai nama 'finance' yang tidak ada di data → staff_keuangan &
+# accounting 403.
+# 2026-11-02 (K25, keputusan owner): pemisahan tugas uang keluar — HR TIDAK lagi boleh membayar uang
+# muka (dulu satu orang HR bisa membuat, menyetujui, dan membayar dinasnya sendiri).
+ADVANCE_PAYER_ROLES = tuple(FINANCE_ROLES)
+GL_EMPLOYEE_ADVANCE = '1-1610'   # Uang Muka Karyawan
+GL_BANK_DEFAULT = '1-1201'       # cadangan bila klien lama tidak mengirim rekening
+# Portal Saya belum punya menu Klaim/Dinas → tautan notifikasi ke Dashboard Portal Saya (id menu nyata).
+SELF_LINK_MODULE = 'portal-dashboard'
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -176,6 +192,10 @@ class AdvancePaidPayload(BaseModel):
     amount_paid: float = Field(ge=0)
     payment_method: Optional[str] = 'transfer'
     note: Optional[str] = ''
+    # 2026-11-02 (P5 butir 7): rekening sumber (rahaza_cash_accounts.id) + tanggal bayar (YYYY-MM-DD, WIB)
+    bank_account_id: Optional[str] = ''
+    cash_account_id: Optional[str] = ''
+    payment_date: Optional[str] = ''
 
 
 # ── Endpoints ──────────────────────────────────────────────────────────────────
@@ -361,7 +381,7 @@ async def export_travel_requests(
         ])
 
     output.seek(0)
-    filename = f"travel_requests_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"travel_requests_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -479,6 +499,8 @@ async def submit_travel_request(req_id: str, user: dict = Depends(require_auth))
             source_id=req_id,
             source_ref=doc.get('trip_number'),
             target_roles=list(APPROVER_ROLES),
+            # 2026-11-02: pemohon tidak menerima "Perlu Tindakan" atas perjalanan dinasnya sendiri
+            exclude_user_ids=[x for x in {user.get('id'), doc.get('employee_id')} if x],
             status='sent',
             meta={'link_module': 'hr-approval-inbox'},
         )
@@ -499,14 +521,23 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
     doc = await _get_or_404(db, req_id)
     if doc.get('status') != 'submitted':
         raise HTTPException(400, f"Status '{doc.get('status')}' tidak bisa di-approve. Harus submitted.")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju.
+    ensure_not_self_approval(doc, user, what='perjalanan dinas')
 
     now = _now()
+    requested = float(doc.get('cash_advance_requested') or 0)
     cash_adv_approved = payload.cash_advance_approved \
         if payload.cash_advance_approved is not None \
-        else doc.get('cash_advance_requested', 0)
+        else requested
+    # 2026-11-02 (K25): nilai disetujui ≤ nilai diminta (uji lama: HR menyetujui 5.000.000 untuk 1.000.000).
+    if cash_adv_approved < 0:
+        raise HTTPException(400, 'Uang muka disetujui tidak boleh negatif.')
+    if cash_adv_approved > requested + 0.01:
+        raise HTTPException(400, (f"Uang muka disetujui (Rp {cash_adv_approved:,.0f}) melebihi yang diminta "
+                                  f"(Rp {requested:,.0f}).").replace(',', '.'))
 
     await db.employee_travel_requests.update_one(
-        {'id': req_id},
+        {'id': req_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
             'approved_by': user.get('id'),
@@ -514,12 +545,29 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
             'approved_at': now,
             'approval_note': payload.note or '',
             'cash_advance_approved': cash_adv_approved,
+            'cash_advance_decided': True,   # K25: nilai uang muka diputuskan eksplisit (termasuk 0)
             'updated_at': now,
         }}
     )
     await log_activity(user.get('id'), user.get('name'), 'approve', 'travel_request',
                        f"Approve travel request {doc.get('trip_number')}")
+    await _notify_travel_decision(db, doc, approved=True, note=payload.note or '',
+                                  advance=float(cash_adv_approved or 0))
     return {'ok': True, 'id': req_id, 'new_status': 'approved', 'cash_advance_approved': cash_adv_approved}
+
+
+async def _notify_travel_decision(db, doc: dict, *, approved: bool, note: str = '', advance: float = 0) -> None:
+    """2026-11-02 (P5 butir 12): beri tahu pemohon (employee_id = id akun login) hasil persetujuan dinas."""
+    adv = f" Uang muka disetujui Rp {advance:,.0f}.".replace(',', '.') if approved and advance > 0 else ''
+    await notify_requester(
+        db, user_id=doc.get('employee_id') or doc.get('created_by'),
+        subtype='travel_request_approved' if approved else 'travel_request_rejected',
+        severity='success' if approved else 'warning',
+        title=f"Perjalanan dinas {doc.get('trip_number', '')} {'disetujui' if approved else 'ditolak'}",
+        body=(f"Perjalanan dinas ke {doc.get('destination', '')} ({doc.get('start_date', '')} s/d {doc.get('end_date', '')}) "
+              + ('disetujui.' + adv if approved else 'ditolak.') + (f" Catatan: {note}" if note else '')),
+        link_module=SELF_LINK_MODULE, source_type='travel_request', source_id=doc.get('id'),
+        source_ref=doc.get('trip_number'))
 
 
 @router.post('/travel/{req_id}/reject')
@@ -548,21 +596,22 @@ async def reject_travel_request(req_id: str, payload: RejectPayload, user: dict 
     )
     await log_activity(user.get('id'), user.get('name'), 'reject', 'travel_request',
                        f"Reject travel request {doc.get('trip_number')}: {payload.reason}")
+    await _notify_travel_decision(db, doc, approved=False, note=payload.reason)
     return {'ok': True, 'id': req_id, 'new_status': 'rejected'}
 
 
 @router.post('/travel/{req_id}/advance-paid')
 async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict = Depends(require_auth)):
     """Finance: tandai cash advance sudah dibayar + buat JE advance.
-    
-    Journal Entry:
-      Dr  1-1610  Uang Muka Karyawan   (amount_paid)
-          Cr  1-1201  Bank             (amount_paid)
+
+    Journal Entry (tanggal = payment_date, WIB):
+      Dr  1-1610  Uang Muka Karyawan        (amount_paid)
+          Cr  <rekening kas/bank dipilih>  (amount_paid)
     """
     db = get_db()
     role = (user.get('role') or '').lower()
-    if role not in ('superadmin', 'admin', 'owner', 'hr', 'finance'):
-        raise HTTPException(403, 'Hanya Finance yang dapat melakukan pembayaran uang muka')
+    if role not in ADVANCE_PAYER_ROLES:
+        raise HTTPException(403, 'Hanya Keuangan yang dapat membayar uang muka dinas (pemisahan tugas: HR tidak membayar).')
 
     doc = await _get_or_404(db, req_id)
     if doc.get('status') != 'approved':
@@ -575,17 +624,44 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     if _approved and amount > _approved + 0.01:  # FIN-12: pembayaran dibatasi angka yang disetujui
         raise HTTPException(400, f'Uang muka dibayar ({amount:,.0f}) melebihi yang disetujui ({_approved:,.0f}).')
 
+    # 2026-11-02 (P5 butir 8): uang muka TIDAK boleh dibayar bila penyelesaian (settlement) dinas sudah
+    # dibuat — settlement itu menghitung "uang muka 0" lalu membayar penuh biaya dari bank, sehingga
+    # karyawan menerima dua kali (uji: 1.600.000 untuk biaya 800.000) dan 1-1610 tersangkut.
+    stl = await db.employee_travel_settlements.find_one(
+        {'travel_request_id': req_id, 'status': {'$nin': ['rejected']}},
+        {'_id': 0, 'settlement_number': 1, 'status': 1})
+    if stl:
+        raise HTTPException(400, (
+            f"Penyelesaian dinas {stl.get('settlement_number')} ({stl.get('status')}) sudah dibuat sebelum uang "
+            "muka dibayar. Tolak penyelesaian itu dulu, bayar uang muka, lalu buat penyelesaian baru."))
+    # 2026-11-02 (K25): batas bayar = uang muka DISETUJUI. Dulu nilai disetujui 0 (mis. persetujuan massal
+    # yang tidak mengisi nilai) berarti TANPA batas. Data lama tanpa keputusan eksplisit → nilai diminta.
+    cap = _approved if (_approved > 0 or doc.get('cash_advance_decided')) \
+        else float(doc.get('cash_advance_requested') or 0)
+    if cap <= 0:
+        raise HTTPException(400, 'Tidak ada uang muka yang disetujui untuk perjalanan dinas ini.')
+    if amount > cap + 0.01:
+        raise HTTPException(400, f'Uang muka dibayar ({amount:,.0f}) melebihi yang disetujui ({cap:,.0f}).')
+
     now = _now()
-    je_date = date.today()
+    # 2026-11-02 (P5 butir 7): tanggal jurnal = tanggal bayar yang diisi; rekening = yang dipilih.
+    je_date = parse_ymd(payload.payment_date, field='tanggal pembayaran uang muka')
+    # 2026-11-02 (S2-H butir 7): akun dari peran Profil Posting `employee_travel` (bawaan = konstanta)
+    from routes.rahaza_posting_profiles import role_code
+    advance_code = await role_code(db, 'employee_travel', 'debit_employee_advance', GL_EMPLOYEE_ADVANCE)
+    acc = await resolve_payment_account(
+        db, cash_account_id=payload.bank_account_id or payload.cash_account_id,
+        default_code=await role_code(db, 'employee_travel', 'credit_bank_default', GL_BANK_DEFAULT),
+        purpose='Pembayaran uang muka dinas')
 
     # RC-05: posting WAJIB lewat engine rahaza_posting (validasi COA/saldo/periode).
     from routes.rahaza_posting import _create_posted_je
-    credit_code = '1-1201'  # Bank BCA default
+    credit_code = acc['gl_code']
 
     memo = f"Uang Muka Perjalanan Dinas {doc.get('trip_number')} — {doc.get('employee_name', '')}"
     lines = [
         {
-            'account_code': '1-1610',   # Dr: Uang Muka Karyawan (asset naik)
+            'account_code': advance_code,   # Dr: Uang Muka Karyawan (asset naik)
             'debit': amount, 'credit': 0,
             'description': memo, 'cost_center_id': '',
         },
@@ -615,6 +691,10 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
             'advance_paid_by': user.get('id'),
             'advance_paid_by_name': user.get('name'),
             'payment_method': payload.payment_method or 'transfer',
+            'advance_payment_date': je_date.isoformat(),
+            'advance_cash_account_id': acc.get('cash_account_id'),
+            'advance_account_code': credit_code,
+            'advance_account_name': acc.get('name'),
             'advance_je_id': je_id,
             'advance_je_number': je_number,
             'updated_at': now,
@@ -683,6 +763,19 @@ class BulkApproveTravelRequest(BaseModel):
 async def bulk_approve_travel(body: BulkApproveTravelRequest, user: dict = Depends(require_auth)):
     """Bulk approve (Finance/HR/Manager) — FASE 5 (T-20): satu implementasi di core.bulk_approve."""
     from core.bulk_approve import bulk_approve
-    return await bulk_approve(get_db(), user, body.travel_ids, collection="employee_travel_requests", number_field="trip_number",
-                              module="travel_request", approval_note=body.approval_note or "")
+    db = get_db()
+    ids, own = await split_own_requests(db, 'employee_travel_requests', body.travel_ids, user)
+    res = await bulk_approve(db, user, ids, collection="employee_travel_requests", number_field="trip_number",
+                             module="travel_request", approval_note=body.approval_note or "")
+    merge_own_failures(res, own, len(body.travel_ids))
+    # 2026-11-02 (P5 butir 12): persetujuan massal juga memberi tahu tiap pemohon.
+    for tid in ((res.get('results') or {}).get('success') or []):
+        doc = await db.employee_travel_requests.find_one({'id': tid}, {'_id': 0})
+        if doc:
+            # K25: persetujuan massal menyetujui uang muka SEBESAR yang diminta (tercatat eksplisit).
+            await db.employee_travel_requests.update_one({'id': tid}, {'$set': {
+                'cash_advance_approved': float(doc.get('cash_advance_requested') or 0), 'cash_advance_decided': True}})
+            await _notify_travel_decision(db, doc, approved=True, note=body.approval_note or '',
+                                          advance=float(doc.get('cash_advance_requested') or 0))
+    return res
 

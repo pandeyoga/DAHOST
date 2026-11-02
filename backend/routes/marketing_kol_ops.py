@@ -11,6 +11,7 @@ from routes.marketing_kol_shared import (
     router, _uid, _now, _get_user, SessionCreate, CatalogItemCreate,
 )
 from core import stock_service
+from utils.waktu import fmt_wib
 
 
 # ── LIVE SESSIONS ────────────────────────────────────────────────────────────────────
@@ -292,7 +293,7 @@ async def get_leaderboard(request: Request, month: Optional[str] = Query(None, d
     await require_auth(request)
     db = get_db()
     if not month:
-        month = _now().strftime('%Y-%m')
+        month = fmt_wib('%Y-%m')
     # BUG-R11-A (FASE 11): `int(month.split('-')[1])` dulu dieksekusi mentah,
     # jadi `?month=99` melempar ValueError/IndexError → HTTP 500.
     # Sekarang periode divalidasi lebih dulu dan input salah dibalas HTTP 400.
@@ -382,7 +383,7 @@ async def seed_kol_demo(request: Request):
         if not await db.marketing_kol_creators.find_one({'creator_code': c['creator_code']}):
             await db.marketing_kol_creators.insert_one(c)
             created += 1
-    month = _now().strftime('%Y-%m')
+    month = fmt_wib('%Y-%m')
     created_sessions = 0
     for idx, c in enumerate(demo_creators):
         creator_doc = await db.marketing_kol_creators.find_one({'creator_code': c['creator_code']}, {'_id': 0})

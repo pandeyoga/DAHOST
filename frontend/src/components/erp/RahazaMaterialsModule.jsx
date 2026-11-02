@@ -10,6 +10,7 @@ import { CATEGORY_OPTIONS, categoryToStoredType, typeToCategory, isKgLike } from
 import UomEditor from './UomEditor';
 import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf, MATERIAL_UNITS } from '@/lib/uom';
 import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
+import { MoneyInput } from '@/components/ui/money-input';
 
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk Jadi). Semua tipe legacy
 // dipetakan ke kategori yang sama agar label konsisten.
@@ -319,9 +320,10 @@ export default function RahazaMaterialsModule({ token }) {
             ) : (
               <div>
                 <label className="block text-xs font-medium text-foreground/70 mb-1">Harga Awal (Rp) — opsional</label>
-                <GlassInput type="number" step="1" min="0" value={form.unit_cost}
+                <MoneyInput glass
+                  value={form.unit_cost}
                   onChange={e => setForm({...form, unit_cost: e.target.value})}
-                  placeholder="Cth: 25000" data-testid="mat-field-unit-cost" />
+                  placeholder="Cth: 25.000" data-testid="mat-field-unit-cost" />
                 <p className="text-[11px] text-muted-foreground mt-1">
                   Hanya untuk barang yang sudah ada di gudang sebelum sistem ini. Setelah ada
                   pembelian (PO → penerimaan), harga <strong>otomatis mengikuti harga beli</strong>.

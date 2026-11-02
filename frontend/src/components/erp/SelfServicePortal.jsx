@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { User, Calendar, FileText, AlertCircle, Loader2, ChevronRight, Building2, Link as LinkIcon, MapPin } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -28,10 +29,8 @@ export default function SelfServicePortal({ user, headers, onNavigate }) {
   const [attendance, setAttendance] = useState(null);
   const [payslips, setPayslips] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [attFrom, setAttFrom] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10);
-  });
-  const [attTo, setAttTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [attFrom, setAttFrom] = useState(() => daysAgoWIB(30));
+  const [attTo, setAttTo] = useState(todayWIB);
   const [tab, setTab] = useState('kehadiran');
 
   const loadProfile = useCallback(async () => {

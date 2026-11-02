@@ -7,6 +7,8 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { DataTable } from './DataTableV2';
 import OnwardCTA from './OnwardCTA';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 
@@ -96,7 +98,7 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
         emptyTitle="Belum ada expense"
         emptyDescription='Klik "Tambah" untuk input biaya operasional.'
         emptyIcon={CreditCard}
-        exportFilename={`expenses-${new Date().toISOString().slice(0,10)}.csv`}
+        exportFilename={`expenses-${todayWIB()}.csv`}
       />
       <OnwardCTA
         onNavigate={onNavigate}
@@ -112,8 +114,7 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
 }
 
 function ExpEditor({ centers, accounts, onClose, onSave, saving }) {
-  const today = new Date().toISOString().split('T')[0];
-  const [s, setS] = useState({ date: today, category: 'operasional', description: '', amount: 0, cost_center_id: '', account_id: '', notes: '' });
+  const [s, setS] = useState({ date: todayWIB(), category: 'operasional', description: '', amount: 0, cost_center_id: '', account_id: '', notes: '' });
   const upd = (k, v) => setS(x => ({ ...x, [k]: v }));
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -123,7 +124,7 @@ function ExpEditor({ centers, accounts, onClose, onSave, saving }) {
           <div><label className="text-xs uppercase text-muted-foreground">Tanggal</label><GlassInput type="date" value={s.date} onChange={e => upd('date', e.target.value)} /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Kategori</label><GlassInput value={s.category} onChange={e => upd('category', e.target.value)} placeholder="operasional | sewa | listrik | ..." /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Deskripsi</label><GlassInput value={s.description} onChange={e => upd('description', e.target.value)} data-testid="exp-desc" /></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Jumlah</label><GlassInput type="number" min={0} step="1000" value={s.amount} onChange={e => upd('amount', Number(e.target.value))} data-testid="exp-amount" /></div>
+          <div><label className="text-xs uppercase text-muted-foreground">Jumlah</label><MoneyInput glass value={s.amount} onChange={e => upd('amount', Number(e.target.value))} data-testid="exp-amount" /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Cost Center</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
           <div><label className="text-xs uppercase text-muted-foreground">Bayar dari Rekening (opsional)</label><SmartNativeSelect value={s.account_id} onChange={e => upd('account_id', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="">— Tidak link —</option>{accounts.map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name}`}</option>)}</SmartNativeSelect></div>
         </div>

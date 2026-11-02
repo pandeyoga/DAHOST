@@ -14,6 +14,7 @@ import MaterialRequestTracker from './MaterialRequestTracker';
 import { useSortableTable, SortableHeader } from './useSortableTable';
 import { BizBadge, BizFilter, matchBiz } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
 
 const TABS = [
@@ -22,7 +23,7 @@ const TABS = [
   { id: 'replacement', label: 'Permintaan Pengganti', icon: AlertTriangle },
 ];
 
-export default function VendorShipmentModule({ userRole, hasPerm = () => false, portalId }) {
+export default function VendorShipmentModule({ userRole, hasPerm = () => false, portalId, onNavigate }) {
   // Pemisahan data per proses bisnis: Portal Produksi = internal, Portal Maklon = maklon.
   const businessType = portalId === 'maklon' ? 'maklon' : portalId === 'production' ? 'internal' : null;
   const [activeTab, setActiveTab] = useState('shipments');
@@ -87,7 +88,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   const [matLoading, setMatLoading] = useState(false);
   const [form, setForm] = useState({
     shipment_number: '', delivery_note_number: '', vendor_id: '',
-    shipment_date: new Date().toISOString().split('T')[0], notes: '', items: []
+    shipment_date: todayWIB(), notes: '', items: []
   });
   // 2026-09-23 — nomor shipment mengikuti kebijakan Otomatis/Manual owner;
   // dibaca ulang tiap modal dibuka supaya pratinjau nomor berikutnya selalu segar.
@@ -366,11 +367,20 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   );
 
   const handleDelete = async () => {
+    const target = confirmDelete;
     try {
-      await apiDelete(`/vendor-shipments/${confirmDelete.id}`);
+      await apiDelete(`/vendor-shipments/${target.id}`);
       setConfirmDelete(null);
       fetchAll();
-    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
+    } catch (e) {
+      setConfirmDelete(null);
+      // 2026-11-02 (K10): SJ yang bahannya sudah keluar dikunci backend → arahkan ke Retur Material.
+      const locked = /Retur Material/i.test(e.message || '');
+      toast.error(e.message || 'Gagal menghapus', locked && onNavigate ? {
+        duration: 12000,
+        action: { label: 'Buka Retur Material', onClick: () => onNavigate('prod-material-returns', { vendor_shipment_id: target.id }) },
+      } : undefined);
+    }
   };
 
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID') : '-';
@@ -436,7 +446,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
           {showBizFilter && <BizFilter value={bizFilter} onChange={setBizFilter} counts={bizCounts} />}
           <ImportExportPanel importType={null} exportType="vendor-shipments" />
           {canCreate && (
-            <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setPoAccessories([]); setShowModal(true); }}
+            <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setPoAccessories([]); setShowModal(true); }}
               className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
               <Plus className="w-4 h-4" /> Buat Shipment Normal
             </button>
@@ -969,7 +979,8 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
         </Modal>
       )}
 
-      {confirmDelete && <ConfirmDialog title="Hapus Shipment?" message={`Shipment "${confirmDelete.shipment_number}" akan dihapus.`} onConfirm={handleDelete} onCancel={() => setConfirmDelete(null)} />}
+      {/* 2026-11-02 (K10): teks konfirmasi mengikuti kunci backend — SJ yang bahannya sudah keluar tidak bisa dihapus */}
+      {confirmDelete && <ConfirmDialog title="Hapus Shipment?" message={`Shipment "${confirmDelete.shipment_number}" akan dihapus. Surat jalan tidak bisa dihapus setelah bahan keluar — gunakan Retur Material untuk mengembalikan bahan ke gudang (stok kembali & jurnal dibalik), lalu hapus.`} onConfirm={handleDelete} onCancel={() => setConfirmDelete(null)} />}
 
       {/* Phase 16: Modal Buat Permintaan Manual (untuk shipment yang sudah ter-inspeksi) */}
       {manualReqShipment && (

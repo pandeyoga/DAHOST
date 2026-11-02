@@ -8,10 +8,12 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { apicall, fmtCurrency } from '../utils';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 export function DisposalRequestDialog({ open, onClose, token, asset, onRequested }) {
   const [form, setForm] = useState({
-    disposal_date: new Date().toISOString().slice(0, 10),
+    disposal_date: todayWIB(),
     disposal_value: '',
     reason: '',
   });
@@ -57,7 +59,7 @@ export function DisposalRequestDialog({ open, onClose, token, asset, onRequested
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Nilai Penjualan (Rp, isi 0 jika dibuang)</label>
-            <Input type="number" placeholder="0" value={form.disposal_value} onChange={e => set('disposal_value', e.target.value)} className="mt-1" />
+            <MoneyInput placeholder="0" value={form.disposal_value} onChange={e => set('disposal_value', e.target.value)} className="mt-1" />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Alasan Disposal *</label>

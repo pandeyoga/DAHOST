@@ -17,6 +17,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Megaphone, Loader2, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -27,6 +28,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
 import { MarketingAccountSelect } from './pickers/MarketingPickers';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -62,7 +64,7 @@ export default function AdsEntryDialog({ open, onClose, onSaved, token, entry })
         revenue: entry.revenue ?? '',
       });
     } else {
-      setForm({ ...EMPTY, date: new Date().toISOString().slice(0, 10) });
+      setForm({ ...EMPTY, date: todayWIB() });
     }
   }, [open, entry]);
 
@@ -159,12 +161,18 @@ export default function AdsEntryDialog({ open, onClose, onSaved, token, entry })
           </div>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            {[['spend', 'Biaya Iklan (Rp)'], ['revenue', 'Revenue dari Iklan (Rp)'],
-              ['impressions', 'Impresi'], ['clicks', 'Klik'], ['conversions', 'Konversi']].map(([k, l]) => (
+            {/* money=true → nominal Rupiah (MoneyInput, titik ribuan otomatis); sisanya hitungan. */}
+            {[['spend', 'Biaya Iklan (Rp)', true], ['revenue', 'Revenue dari Iklan (Rp)', true],
+              ['impressions', 'Impresi'], ['clicks', 'Klik'], ['conversions', 'Konversi']].map(([k, l, money]) => (
                 <div key={k}>
                   <label className="text-xs font-medium mb-1 block">{l}</label>
-                  <Input type="number" min="0" value={form[k]} onChange={set(k)}
-                    className="h-9 tabular-nums" data-testid={`ads-${k}`} />
+                  {money ? (
+                    <MoneyInput value={form[k]} onChange={set(k)}
+                      className="h-9 tabular-nums" data-testid={`ads-${k}`} />
+                  ) : (
+                    <Input type="number" min="0" value={form[k]} onChange={set(k)}
+                      className="h-9 tabular-nums" data-testid={`ads-${k}`} />
+                  )}
                 </div>
               ))}
             <div>

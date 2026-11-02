@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Activity, AlertTriangle, CheckCircle2, Users, Target, BarChart3, RefreshCw, Calendar, ChevronDown, ChevronUp } from 'lucide-react';
 import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 
 const BALANCE_COLOR = (ratio) => {
@@ -36,7 +37,7 @@ function BalanceMeter({ ratio }) {
 export default function RahazaLineBalancingModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayWIB);
   const [shifts, setShifts] = useState([]);
   const [shiftId, setShiftId] = useState('');
   const [expandedLine, setExpandedLine] = useState(null);

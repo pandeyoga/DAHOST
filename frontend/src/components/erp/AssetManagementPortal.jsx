@@ -22,6 +22,7 @@ import {
 
 // Phase 1-3 refactor — extracted helpers/dialogs/drawers/sections
 import { apicall } from './asset/utils';
+import { thisMonthWIB } from '@/lib/waktu';
 import { EditCategoryDialog } from './asset/dialogs/EditCategoryDialog';
 import { TransferAssetDialog } from './asset/dialogs/TransferAssetDialog';
 import { DisposalRequestDialog } from './asset/dialogs/DisposalRequestDialog';
@@ -174,7 +175,7 @@ export default function AssetManagementPortal({ token, user, defaultTab }) {
             <ShoppingCart size={14} className="mr-1" /> Request Pengadaan
           </Button>
           <Button size="sm" variant="outline" onClick={async () => {
-            const period = new Date().toISOString().slice(0, 7);
+            const period = thisMonthWIB();
             if (!window.confirm(`Posting depresiasi massal untuk periode ${period}?`)) return;
             try {
               const d = await apicall('POST', `/api/assets/batch-depreciate/${period}`, token, {});

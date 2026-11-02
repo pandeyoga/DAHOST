@@ -8,6 +8,7 @@ import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
 import SearchableSelect from './SearchableSelect';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
 
 const STATUS_OPTIONS = ['Repair Needed', 'In Repair', 'Completed', 'Shipped Back'];
@@ -40,7 +41,7 @@ export default function ProductionReturnModule({ userRole }) {
     customer_name: '',
     buyer_name: '',
     reference_po_id: '',
-    return_date: new Date().toISOString().split('T')[0],
+    return_date: todayWIB(),
     return_reason: RETURN_REASONS[0],
     notes: '',
     items: []
@@ -70,7 +71,7 @@ export default function ProductionReturnModule({ userRole }) {
     setForm({
       customer_name: '', buyer_name: '',
       reference_po_id: '',
-      return_date: new Date().toISOString().split('T')[0],
+      return_date: todayWIB(),
       return_reason: RETURN_REASONS[0],
       notes: '',
       items: []

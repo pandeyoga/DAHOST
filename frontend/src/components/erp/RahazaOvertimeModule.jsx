@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -224,7 +225,7 @@ export default function RahazaOvertimeModule({ token, user }) {
 function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose }) {
   const [form, setForm] = useState({
     employee_id: currentUser?.employee_id || '',
-    date: new Date().toISOString().slice(0, 10),
+    date: todayWIB(),
     start_time: '17:00',
     end_time: '19:00',
     rate_multiplier: 1.5,

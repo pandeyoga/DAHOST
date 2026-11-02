@@ -4,7 +4,7 @@ CV. Dewi Aditya — Asset Karyawan (Employee Asset Management)
 Tracking aset perusahaan yang dipinjamkan ke karyawan:
 - CRUD master aset (laptop, seragam, helm, kendaraan, dll.)
 - Assignment & return per karyawan
-- Cetak label barcode PDF (per aset)
+- (2026-11-02) cetak label DIPINDAH ke label aset tunggal (Portal Aset / Aset Tetap)
 
 Collections:
   da_assets             — master aset
@@ -21,6 +21,7 @@ from fastapi.responses import StreamingResponse
 from pymongo import ReturnDocument
 from database import get_db
 from auth import require_auth
+from utils.waktu import wib_date_str
 
 router = APIRouter(prefix="/api/dewi/assets", tags=["dewi-assets"])
 
@@ -197,7 +198,7 @@ async def assign_asset(asset_id: str, request: Request):
         "employee_id": emp_id,
         "employee_name": emp.get("name"),
         "employee_code": emp.get("employee_code"),
-        "assigned_date": body.get("assigned_date") or _now().date().isoformat(),
+        "assigned_date": body.get("assigned_date") or wib_date_str(),
         "expected_return_date": body.get("expected_return_date") or "",
         "notes": body.get("notes") or "",
         "assigned_by": user["id"],
@@ -227,7 +228,7 @@ async def return_asset(asset_id: str, request: Request):
     if not active:
         raise HTTPException(404, "Tidak ada penugasan aktif untuk aset ini.")
 
-    return_date = body.get("return_date") or _now().date().isoformat()
+    return_date = body.get("return_date") or wib_date_str()
     condition = body.get("condition") or "Baik"
 
     # ── R10 concurrency hardening (TOCTOU-safe): atomically claim the ACTIVE
@@ -288,130 +289,22 @@ async def list_all_assignments(request: Request, status: Optional[str] = "active
     return {"ok": True, "assignments": [_s(d) for d in docs]}
 
 
-# ─── BARCODE LABEL PDF ────────────────────────────────────────────────────────
+# ─── LABEL ASET ───────────────────────────────────────────────────────────────
+# 2026-11-02 (registri aset tunggal): generator label kembar di sini (python-barcode PNG, kode
+# `asset_code` AST-xxxxxx yang tidak dikenal registri induk) DIHAPUS. Label aset dicetak dari Portal
+# Aset / Keuangan › Aset Tetap dengan kode registri `rahaza_fixed_assets.code` (core/label_render).
+_LABEL_MOVED = ("Label aset tidak lagi dicetak dari menu Aset Karyawan. Cetak dari Portal Aset atau "
+                "Keuangan › Aset Tetap (kode registri induk) — barang yang belum terdaftar didaftarkan "
+                "dulu di registri Aset Tetap.")
+
 
 @router.get("/{asset_id}/label")
 async def print_label(asset_id: str, request: Request):
-    """Generate PDF barcode label untuk aset."""
     await require_auth(request)
-    db = get_db()
-    asset = await db.da_assets.find_one({"asset_id": asset_id}, {"_id": 0})
-    if not asset:
-        raise HTTPException(404, "Aset tidak ditemukan.")
-
-    try:
-        from reportlab.pdfgen import canvas as rl_canvas
-        from reportlab.lib.pagesizes import A4
-        from reportlab.lib.units import mm
-        import barcode
-        from barcode.writer import ImageWriter
-
-        buf = io.BytesIO()
-        # Label size: 90mm × 40mm (landscape)
-        LW, LH = 90 * mm, 40 * mm
-        c = rl_canvas.Canvas(buf, pagesize=(LW, LH))
-
-        # Barcode
-        code_val = asset.get("asset_code", asset_id[:8])
-        try:
-            bc_cls = barcode.get_barcode_class("code128")
-            bc_obj = bc_cls(code_val, writer=ImageWriter())
-            bc_buf = io.BytesIO()
-            bc_obj.write(bc_buf, options={"write_text": False, "quiet_zone": 2, "module_height": 10})
-            bc_buf.seek(0)
-            from reportlab.lib.utils import ImageReader
-            img = ImageReader(bc_buf)
-            c.drawImage(img, 5 * mm, 16 * mm, width=80 * mm, height=18 * mm, preserveAspectRatio=True)
-        except Exception:
-            c.setFont("Helvetica", 8)
-            c.drawString(5 * mm, 20 * mm, f"[{code_val}]")
-
-        # Text
-        c.setFont("Helvetica-Bold", 9)
-        c.drawString(5 * mm, 10 * mm, asset.get("asset_name", "")[:35])
-        c.setFont("Helvetica", 7)
-        c.drawString(5 * mm, 6 * mm, f"Kode: {code_val}  |  Kategori: {asset.get('category','')}")
-        c.drawString(5 * mm, 3 * mm, f"S/N: {asset.get('serial_number','—')}  |  CV. Dewi Aditya")
-        # Border
-        c.setStrokeColorRGB(0.2, 0.4, 0.6)
-        c.setLineWidth(0.5)
-        c.rect(1 * mm, 1 * mm, LW - 2 * mm, LH - 2 * mm)
-
-        c.save()
-        buf.seek(0)
-        filename = f"label_{code_val}.pdf"
-        return StreamingResponse(buf, media_type="application/pdf",
-                                 headers={"Content-Disposition": f'attachment; filename="{filename}"'})
-    except ImportError:
-        raise HTTPException(500, "reportlab/python-barcode belum terinstall.")
+    raise HTTPException(410, _LABEL_MOVED)
 
 
 @router.get("/labels/bulk")
 async def print_bulk_labels(request: Request, category: Optional[str] = None):
-    """Generate PDF semua label aset sekaligus."""
     await require_auth(request)
-    db = get_db()
-    filt = {}
-    if category:
-        filt["category"] = category
-    assets = await db.da_assets.find(filt, {"_id": 0}).to_list(200)
-    if not assets:
-        raise HTTPException(404, "Tidak ada aset ditemukan.")
-
-    try:
-        from reportlab.pdfgen import canvas as rl_canvas
-        from reportlab.lib.units import mm
-        from reportlab.lib.pagesizes import A4
-        import barcode
-        from barcode.writer import ImageWriter
-        from reportlab.lib.utils import ImageReader
-
-        buf = io.BytesIO()
-        PW, PH = A4
-        c = rl_canvas.Canvas(buf, pagesize=A4)
-
-        LW, LH = 85 * mm, 38 * mm
-        cols, rows = 2, 7
-        x_start, y_start = 10 * mm, PH - 15 * mm
-        x_gap, y_gap = 5 * mm, 3 * mm
-
-        cur_col, cur_row = 0, 0
-        for asset in assets:
-            x = x_start + cur_col * (LW + x_gap)
-            y = y_start - (cur_row + 1) * (LH + y_gap)
-
-            code_val = asset.get("asset_code", asset.get("asset_id", "")[:8])
-            try:
-                bc_cls = barcode.get_barcode_class("code128")
-                bc_obj = bc_cls(code_val, writer=ImageWriter())
-                bc_buf = io.BytesIO()
-                bc_obj.write(bc_buf, options={"write_text": False, "quiet_zone": 2, "module_height": 8})
-                bc_buf.seek(0)
-                img = ImageReader(bc_buf)
-                c.drawImage(img, x + 2 * mm, y + 14 * mm, width=81 * mm, height=15 * mm, preserveAspectRatio=True)
-            except Exception:
-                c.drawString(x + 2 * mm, y + 20 * mm, f"[{code_val}]")
-
-            c.setFont("Helvetica-Bold", 8)
-            c.drawString(x + 2 * mm, y + 9 * mm, asset.get("asset_name", "")[:35])
-            c.setFont("Helvetica", 6)
-            c.drawString(x + 2 * mm, y + 5 * mm, f"Kode: {code_val}")
-            c.drawString(x + 2 * mm, y + 2 * mm, f"{asset.get('category','')}")
-            c.setStrokeColorRGB(0.3, 0.5, 0.7)
-            c.setLineWidth(0.4)
-            c.rect(x, y, LW, LH)
-
-            cur_col += 1
-            if cur_col >= cols:
-                cur_col = 0
-                cur_row += 1
-                if cur_row >= rows:
-                    c.showPage()
-                    cur_row = 0
-
-        c.save()
-        buf.seek(0)
-        return StreamingResponse(buf, media_type="application/pdf",
-                                 headers={"Content-Disposition": 'attachment; filename="labels_aset.pdf"'})
-    except ImportError:
-        raise HTTPException(500, "reportlab/python-barcode belum terinstall.")
+    raise HTTPException(410, _LABEL_MOVED)

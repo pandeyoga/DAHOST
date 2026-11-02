@@ -389,6 +389,40 @@ class ActionPayload(BaseModel):
     reason: Optional[str] = None
 
 
+def _tolak_ajuan_sendiri(doc: dict, user: dict, what: str) -> None:
+    """K25 (keputusan owner 2026-11-02): kotak masuk HR ikut aturan pengaju ≠ penyetuju
+    yang sama dengan layar klaim & dinas (dulu inbox melewatinya)."""
+    from routes.rahaza_payroll_shared import ensure_not_self_approval
+    ensure_not_self_approval(doc, user, what=what)
+
+
+async def _kabari_pemohon(req_type: str, doc: dict, *, approved: bool, note: str = '') -> None:
+    """2026-11-02: keputusan lewat kotak masuk HR juga mengabari pemohon — memakai helper
+    notifikasi yang sama dengan layar asal tiap jenis ajuan (dulu inbox diam)."""
+    db = get_db()
+    fresh = None
+    try:
+        if req_type == 'leave':
+            from routes.rahaza_leave import notify_leave_decision
+            fresh = await db.rahaza_leave_requests.find_one({'id': doc.get('id')}, {'_id': 0}) or doc
+            await notify_leave_decision(db, fresh, approved=approved, reason=note)
+        elif req_type == 'overtime':
+            from routes.rahaza_overtime import notify_overtime_decision
+            fresh = await db.rahaza_overtime_requests.find_one({'id': doc.get('id')}, {'_id': 0}) or doc
+            await notify_overtime_decision(db, fresh, approved=approved, reason=note)
+        elif req_type == 'expense_claim':
+            from routes.employee_expense_claims import _notify_claim_decision
+            fresh = await db.rahaza_expense_claims.find_one({'id': doc.get('id')}, {'_id': 0}) or doc
+            await _notify_claim_decision(db, fresh, approved=approved, note=note)
+        elif req_type == 'travel_request':
+            from routes.employee_travel_requests import _notify_travel_decision
+            fresh = await db.employee_travel_requests.find_one({'id': doc.get('id')}, {'_id': 0}) or doc
+            await _notify_travel_decision(db, fresh, approved=approved, note=note,
+                                          advance=float(fresh.get('cash_advance_approved') or 0))
+    except Exception:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan keputusan
+        logger.exception('notifikasi pemohon gagal (%s %s)', req_type, doc.get('id'))
+
+
 @router.post('/{req_type}/{req_id}/approve')
 async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPayload] = None,
                           user: dict = Depends(require_auth)):
@@ -421,6 +455,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         )
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve cuti {req_id} via HR Inbox')
+        await _kabari_pemohon('leave', leave, approved=True, note=note)
         return {'ok': True, 'type': 'leave', 'id': req_id, 'new_status': 'approved'}
 
     if req_type == 'overtime':
@@ -441,6 +476,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         )
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve lembur {req_id} via HR Inbox')
+        await _kabari_pemohon('overtime', ot, approved=True, note=note)
         return {'ok': True, 'type': 'overtime', 'id': req_id, 'new_status': 'approved'}
 
     if req_type == 'salary_adjustment':
@@ -517,6 +553,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
             raise HTTPException(404, 'Klaim biaya tidak ditemukan')
         if claim.get('status') != 'submitted':
             raise HTTPException(400, f"Status klaim saat ini: {claim.get('status')}. Harus submitted.")
+        _tolak_ajuan_sendiri(claim, user, 'klaim biaya')
         await db.rahaza_expense_claims.update_one(
             {'id': req_id},
             {'$set': {
@@ -530,6 +567,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         )
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve klaim biaya {req_id} via HR Inbox')
+        await _kabari_pemohon('expense_claim', claim, approved=True, note=note)
         return {'ok': True, 'type': 'expense_claim', 'id': req_id, 'new_status': 'approved'}
 
     if req_type == 'travel_request':
@@ -538,6 +576,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
             raise HTTPException(404, 'Travel request tidak ditemukan')
         if tr.get('status') != 'submitted':
             raise HTTPException(400, f"Status travel request saat ini: {tr.get('status')}. Harus submitted.")
+        _tolak_ajuan_sendiri(tr, user, 'perjalanan dinas')
         await db.employee_travel_requests.update_one(
             {'id': req_id},
             {'$set': {
@@ -552,6 +591,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         )
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve travel request {req_id} via HR Inbox')
+        await _kabari_pemohon('travel_request', tr, approved=True, note=note)
         return {'ok': True, 'type': 'travel_request', 'id': req_id, 'new_status': 'approved'}
 
     raise HTTPException(400, 'Unhandled type')
@@ -589,6 +629,7 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         )
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject cuti {req_id}: {reason}')
+        await _kabari_pemohon('leave', leave, approved=False, note=reason)
         return {'ok': True, 'type': 'leave', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'overtime':
@@ -606,6 +647,7 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         )
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject lembur {req_id}: {reason}')
+        await _kabari_pemohon('overtime', ot, approved=False, note=reason)
         return {'ok': True, 'type': 'overtime', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'salary_adjustment':
@@ -682,6 +724,7 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         )
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject klaim biaya {req_id}: {reason}')
+        await _kabari_pemohon('expense_claim', claim, approved=False, note=reason)
         return {'ok': True, 'type': 'expense_claim', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'travel_request':
@@ -701,6 +744,7 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         )
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject travel request {req_id}: {reason}')
+        await _kabari_pemohon('travel_request', tr, approved=False, note=reason)
         return {'ok': True, 'type': 'travel_request', 'id': req_id, 'new_status': 'rejected'}
 
     raise HTTPException(400, 'Unhandled type')

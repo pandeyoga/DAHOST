@@ -43,6 +43,7 @@ from services.hr_shift_service import (
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/shifts", tags=["hr-shifts"])
@@ -265,7 +266,7 @@ async def cancel_assignment(request: Request, assignment_id: str):
 async def employee_active_shift(request: Request, employee_id: str):
     await require_auth(request)
     db = get_db()
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = wib_date_str()
     shift = await get_employee_shift(db, employee_id, today)
     return _ok(shift)
 

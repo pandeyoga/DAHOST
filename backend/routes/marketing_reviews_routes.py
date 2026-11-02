@@ -13,8 +13,10 @@ from auth import require_auth
 # F6 (sesi #9) — daftar & ringkasan WAJIB berlingkup toko (core/marketing_account_scope).
 from core import marketing_account_scope as _scope
 from routes.shared import require_portal
-import os
-from ai_llm import LlmChat, UserMessage
+from services.ai import (
+    AIError, SuggestionDecision, ai_http_error, ai_text, decide_suggestion, mask_pii, new_suggestion,
+    pick_enum, require_ai, with_untrusted_rule, wrap_untrusted,
+)
 import json
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
@@ -22,7 +24,6 @@ from core.roles import MARKETING_CS_ROLES  # T-01 2.3
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/reviews", tags=["marketing-reviews"])
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 REVIEW_CATEGORIES = [
     "produk_tidak_sesuai_deskripsi",
@@ -225,7 +226,7 @@ async def get_platforms(request: Request):
 @router.get("/summary")
 async def get_summary(request: Request):
     user = await require_auth(request)
-    await seed_reviews_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     # F6 (sesi #9) — ringkasan ulasan WAJIB berlingkup toko.
@@ -291,7 +292,7 @@ async def list_reviews(
     account_id: str = Query(default=""),
 ):
     user = await require_auth(request)
-    await seed_reviews_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     q = await _scope.scope_filter(db, user, None)
@@ -458,52 +459,80 @@ async def respond_to_review(review_id: str, request: Request):
 
 @router.post("/{review_id}/ai-categorize")
 async def ai_categorize_review(review_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     review = await db.marketing_reviews.find_one({"id": review_id}, {"_id": 0})
     if not review:
         raise HTTPException(404, "Review not found")
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI not configured")
+    # 2026-11-02: gerbang tunggal services.ai (dulu 503 "AI not configured").
+    await require_ai("marketing-review-categorize", user_id=user.get("id"), db=db, tier="light")
 
-    review_text = review.get("review_text", "")
+    # K28 (2026-11-02): teks ulasan = data pihak luar → disamarkan (kontak, K27) & dibungkus
+    # pembatas; kategori divalidasi ke REVIEW_CATEGORIES dan disimpan sebagai USULAN.
+    review_text = mask_pii(review.get("review_text", ""))
     rating = review.get("rating", 0)
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"review-categorize-{review_id[:8]}",
-        system_message="Kamu adalah AI classifier untuk review produk fashion muslim Indonesia. Kategorikan review ke salah satu kategori yang sesuai. Respond ONLY with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = with_untrusted_rule(
+        "Kamu adalah AI classifier untuk review produk fashion muslim Indonesia. Kategorikan review ke "
+        "salah satu kategori yang sesuai. Respond ONLY with valid JSON.")
 
     categories_str = ", ".join([f"{k} ({v})" for k, v in CATEGORY_LABELS.items()])
     prompt = (
         f"Kategorikan review berikut:\n"
         f"Rating: {rating} bintang\n"
-        f"Review: \"{review_text}\"\n\n"
+        f"{wrap_untrusted(review_text, 'ulasan')}\n\n"
         f"Pilih SATU kategori yang paling sesuai dari:\n{categories_str}\n\n"
         f"Return JSON persis: {{\"category\": \"<category_key>\", \"confidence\": 0.95, \"reasoning\": \"penjelasan singkat\"}}"
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-review-categorize", ai_system_msg, prompt, tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = clean.split("```")[1]
             if clean.startswith("json"):
                 clean = clean[4:]
         result = json.loads(clean.strip())
-
-        category = result.get("category", "tanpa_keterangan")
-        
-        await db.marketing_reviews.update_one(
-            {"id": review_id},
-            {"$set": {
-                "category": category,
-                "category_label": CATEGORY_LABELS.get(category, category),
-                "updated_at": _now()
-            }}
-        )
-        return {"success": True, "result": result, "applied_category": category}
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
-        raise HTTPException(500, f"AI categorization failed: {e}")
+        logger.warning(f"AI categorize parse error: {e}")
+        raise HTTPException(502, "Hasil kategori AI tidak dapat dibaca. Silakan coba lagi.")
+
+    category = pick_enum(result.get("category"), REVIEW_CATEGORIES)
+    if category is None:
+        raise HTTPException(502, "Jawaban AI berisi kategori yang tidak sah, sehingga tidak dipakai. "
+                                 "Silakan pilih kategori manual atau coba lagi.")
+    suggestion = new_suggestion(
+        {"category": category}, feature="marketing-review-categorize", user=user,
+        reason=result.get("reasoning", ""), confidence=result.get("confidence"),
+        extra={"category_label": CATEGORY_LABELS.get(category, category)})
+    # Kategori resmi TIDAK diubah di sini — tunggu Terima/Ubah (endpoint ai-suggestion).
+    await db.marketing_reviews.update_one(
+        {"id": review_id}, {"$set": {"ai_suggestion": suggestion, "updated_at": _now()}})
+    return {"success": True, "result": {**result, "category": category},
+            "suggested_category": category, "ai_suggestion": suggestion}
+
+
+REVIEW_SUGGESTION_RULES = {"category": tuple(REVIEW_CATEGORIES)}
+
+
+@router.post("/{review_id}/ai-suggestion")
+async def decide_review_suggestion(review_id: str, body: SuggestionDecision, request: Request):
+    """K28 (2026-11-02): Terima / Ubah / Tolak usulan kategori AI; aktor dicatat saat itu."""
+    user = await require_auth(request)
+    db = get_db()
+    review = await db.marketing_reviews.find_one({"id": review_id}, {"_id": 0})
+    if not review:
+        raise HTTPException(404, "Review not found")
+    official, decided = decide_suggestion(review.get("ai_suggestion"), body, user=user,
+                                          rules=REVIEW_SUGGESTION_RULES, current=review)
+    patch = {"ai_suggestion": decided, "updated_at": _now()}
+    if official:
+        patch["category"] = official["category"]
+        patch["category_label"] = CATEGORY_LABELS.get(official["category"], official["category"])
+        patch["categorized_by"] = decided["decided_by"]
+        patch["categorized_at"] = decided["decided_at"]
+    await db.marketing_reviews.update_one({"id": review_id}, {"$set": patch})
+    return {"success": True, "ai_suggestion": decided, "applied": official}

@@ -30,10 +30,15 @@ Reference (year 2024/2025 tarif):
   BPJS Ketenagakerjaan:
     JHT (Hari Tua): 5.7% = 2% employee + 3.7% employer (no ceiling)
     JP  (Pensiun):  3%   = 1% employee + 2%   employer (ceiling 10,042,300)
-    JKK (Kecelakaan Kerja): 0.24% - 1.74% employer only (risk tier; default 0.54% = Very Low)
+    JKK (Kecelakaan Kerja): 0.24% - 1.74% employer only (risk tier; bawaan very_low = 0.24%)
     JKM (Kematian): 0.30% employer only
+
+2026-11-02 (keputusan owner K22/K23): tarif, plafon, dan kelas risiko JKK di atas hanya NILAI BAWAAN.
+Nilai yang berlaku dibaca dari `rahaza_payroll_settings` (key "bpjs", lihat rahaza_payroll_settings.py)
+dan dikirim ke fungsi di sini lewat parameter `cfg`. Kepesertaan per program per karyawan
+(`rahaza_employees.bpjs_programs`) dikirim lewat parameter `programs` — lihat resolve_bpjs_programs().
 """
-from typing import Dict
+from typing import Dict, Optional
 
 
 # ─── Constants ───────────────────────────────────────────────────────────────
@@ -73,6 +78,73 @@ BPJS_JKK_RATES = {  # company pays, risk tier
     "very_high": 0.0174,
 }
 BPJS_JKM_COMP_RATE = 0.003
+
+# 2026-11-02 (K22): satu bentuk konfigurasi BPJS. Nilai bawaan = konstanta di atas (tidak diduplikasi
+# angka di tempat lain); rahaza_payroll_settings.DEFAULT_BPJS dibangun dari fungsi ini.
+BPJS_PROGRAM_KEYS = ("kes", "jht", "jp", "jkk_jkm")
+
+
+def default_bpjs_config() -> Dict:
+    return {
+        "rates": {
+            "kes_emp": BPJS_KES_EMP_RATE, "kes_comp": BPJS_KES_COMP_RATE,
+            "jht_emp": BPJS_JHT_EMP_RATE, "jht_comp": BPJS_JHT_COMP_RATE,
+            "jp_emp": BPJS_JP_EMP_RATE, "jp_comp": BPJS_JP_COMP_RATE,
+            "jkm_comp": BPJS_JKM_COMP_RATE,
+        },
+        "ceilings": {"kes": BPJS_KES_CEILING, "jp": BPJS_JP_CEILING},
+        "jkk_rates": dict(BPJS_JKK_RATES),
+        "jkk_risk_tier": "very_low",
+    }
+
+
+def merge_bpjs_config(stored: Optional[Dict]) -> Dict:
+    """Gabungkan dokumen setelan tersimpan dengan nilai bawaan (kunci yang hilang = bawaan)."""
+    cfg = default_bpjs_config()
+    stored = stored or {}
+    for grp in ("rates", "ceilings", "jkk_rates"):
+        for k, v in (stored.get(grp) or {}).items():
+            if k in cfg[grp] and v is not None:
+                try:
+                    cfg[grp][k] = float(v)
+                except (TypeError, ValueError):
+                    pass
+    tier = stored.get("jkk_risk_tier")
+    if tier in cfg["jkk_rates"]:
+        cfg["jkk_risk_tier"] = tier
+    return cfg
+
+
+def resolve_bpjs_programs(emp: Optional[Dict]) -> Dict[str, bool]:
+    """Kepesertaan BPJS per program untuk satu karyawan (K23, 2026-11-02).
+
+    - Bila `bpjs_programs` sudah diisi HR (dict) → itulah yang berlaku (kunci yang hilang = tidak ikut).
+    - Data lama tanpa centang: punya nomor BPJS Kesehatan → Kes; punya nomor BPJS Ketenagakerjaan →
+      JHT, JP, JKK-JKM. TIDAK ADA lagi aturan "nomor apa pun → Kes dipotong" (dulu pemegang nomor TK
+      saja ikut dipotong Kes 1%, temuan No.40)."""
+    emp = emp or {}
+    explicit = emp.get("bpjs_programs")
+    if isinstance(explicit, dict):
+        return {k: bool(explicit.get(k)) for k in BPJS_PROGRAM_KEYS}
+    has_kes = bool(str(emp.get("bpjs_kesehatan_number") or "").strip())
+    has_tk = bool(str(emp.get("bpjs_ketenagakerjaan_number") or "").strip())
+    return {"kes": has_kes, "jht": has_tk, "jp": has_tk, "jkk_jkm": has_tk}
+
+
+def normalize_bpjs_programs(value) -> Optional[Dict[str, bool]]:
+    """Bersihkan isian form karyawan → {kes, jht, jp, jkk_jkm} bool. None bila tidak dikirim."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("bpjs_programs harus berupa objek {kes, jht, jp, jkk_jkm}.")
+    return {k: bool(value.get(k)) for k in BPJS_PROGRAM_KEYS}
+
+
+def overtime_tier_factor(hours: float, first_mult: float = 1.5, next_mult: float = 2.0) -> float:
+    """Faktor pengali lembur hari kerja (K24): jam ke-1 × first_mult, jam berikutnya × next_mult.
+    Contoh 3 jam: 1×1,5 + 2×2 = 5,5."""
+    h = max(0.0, float(hours or 0))
+    return min(h, 1.0) * float(first_mult) + max(h - 1.0, 0.0) * float(next_mult)
 
 
 # ─── PPh21 ───────────────────────────────────────────────────────────────────
@@ -142,9 +214,18 @@ def compute_bpjs(
     monthly_gross: float,
     include_ketenagakerjaan: bool = True,
     jkk_risk_tier: str = "very_low",
+    *,
+    programs: Optional[Dict[str, bool]] = None,
+    cfg: Optional[Dict] = None,
 ) -> Dict:
     """
     Calculate BPJS deductions (Kesehatan + Ketenagakerjaan).
+
+    2026-11-02 (K22/K23):
+      `programs` = kepesertaan {kes, jht, jp, jkk_jkm}; None = perilaku lama (Kes selalu,
+                   JHT/JP/JKK/JKM bila include_ketenagakerjaan).
+      `cfg`      = setelan dari rahaza_payroll_settings (merge_bpjs_config); None = konstanta bawaan.
+                   Kelas risiko JKK diambil dari cfg["jkk_risk_tier"] bila cfg diberikan.
 
     Returns keys:
       kes_emp, kes_comp (BPJS Kesehatan)
@@ -154,29 +235,38 @@ def compute_bpjs(
       total_employee: total potongan dari karyawan (masuk deductions)
       total_company:  total kontribusi perusahaan (cost, bukan potongan)
     """
-    # BPJS Kesehatan (ceiling 12M)
-    kes_base = min(monthly_gross, BPJS_KES_CEILING)
-    kes_emp = round(kes_base * BPJS_KES_EMP_RATE)
-    kes_comp = round(kes_base * BPJS_KES_COMP_RATE)
+    if programs is None:
+        programs = {"kes": True, "jht": include_ketenagakerjaan, "jp": include_ketenagakerjaan,
+                    "jkk_jkm": include_ketenagakerjaan}
+    c = merge_bpjs_config(cfg) if cfg is not None else default_bpjs_config()
+    if cfg is None:
+        c["jkk_risk_tier"] = jkk_risk_tier
+    r, ceil = c["rates"], c["ceilings"]
 
-    jht_emp = jht_comp = jp_emp = jp_comp = jkk_comp = jkm_comp = 0
+    kes_emp = kes_comp = jht_emp = jht_comp = jp_emp = jp_comp = jkk_comp = jkm_comp = 0
 
-    if include_ketenagakerjaan:
-        # JHT — no ceiling, full gross
-        jht_emp = round(monthly_gross * BPJS_JHT_EMP_RATE)
-        jht_comp = round(monthly_gross * BPJS_JHT_COMP_RATE)
+    if programs.get("kes"):
+        # BPJS Kesehatan (plafon)
+        kes_base = min(monthly_gross, ceil["kes"])
+        kes_emp = round(kes_base * r["kes_emp"])
+        kes_comp = round(kes_base * r["kes_comp"])
 
-        # JP — ceiling 10.042.300
-        jp_base = min(monthly_gross, BPJS_JP_CEILING)
-        jp_emp = round(jp_base * BPJS_JP_EMP_RATE)
-        jp_comp = round(jp_base * BPJS_JP_COMP_RATE)
+    if programs.get("jht"):
+        # JHT — tanpa plafon
+        jht_emp = round(monthly_gross * r["jht_emp"])
+        jht_comp = round(monthly_gross * r["jht_comp"])
 
-        # JKK (company only, based on risk tier)
-        jkk_rate = BPJS_JKK_RATES.get(jkk_risk_tier, BPJS_JKK_RATES["very_low"])
+    if programs.get("jp"):
+        # JP — dengan plafon
+        jp_base = min(monthly_gross, ceil["jp"])
+        jp_emp = round(jp_base * r["jp_emp"])
+        jp_comp = round(jp_base * r["jp_comp"])
+
+    if programs.get("jkk_jkm"):
+        # JKK (perusahaan saja, per kelas risiko) + JKM (perusahaan saja)
+        jkk_rate = c["jkk_rates"].get(c["jkk_risk_tier"], c["jkk_rates"].get("very_low", 0))
         jkk_comp = round(monthly_gross * jkk_rate)
-
-        # JKM (company only)
-        jkm_comp = round(monthly_gross * BPJS_JKM_COMP_RATE)
+        jkm_comp = round(monthly_gross * r["jkm_comp"])
 
     total_employee = kes_emp + jht_emp + jp_emp
     total_company = kes_comp + jht_comp + jp_comp + jkk_comp + jkm_comp
@@ -192,7 +282,15 @@ def compute_bpjs(
         "jkm_comp": jkm_comp,
         "total_employee": total_employee,
         "total_company": total_company,
+        # 2026-11-02 (K22): pembagian per LEMBAGA untuk jurnal & tombol Bayar BPJS.
+        "kes_company": kes_comp,
+        "tk_company": jht_comp + jp_comp + jkk_comp + jkm_comp,
+        "jkk_risk_tier": c["jkk_risk_tier"],
     }
+
+
+def _pct(rate: float) -> str:
+    return f"{float(rate) * 100:g}%".replace(".", ",")
 
 
 def compute_full_tax_and_bpjs(
@@ -203,10 +301,15 @@ def compute_full_tax_and_bpjs(
     include_ketenagakerjaan: bool = True,
     jkk_risk_tier: str = "very_low",
     bpjs_base: float | None = None,
+    *,
+    programs: Optional[Dict[str, bool]] = None,
+    bpjs_cfg: Optional[Dict] = None,
 ) -> Dict:
     """
     One-shot calculator.
     Returns a list of 'deductions' [{label, amount, type}] + the raw calc.
+
+    2026-11-02 (K22/K23): `programs` & `bpjs_cfg` diteruskan ke compute_bpjs (lihat di sana).
 
     FASE 15 — `bpjs_base`: dasar iuran BPJS adalah **UPAH TETAP** (gaji pokok +
     tunjangan TETAP), bukan penghasilan bruto. Rujukan: PP 84/2013 jo. Perpres
@@ -217,9 +320,12 @@ def compute_full_tax_and_bpjs(
     PPh21 TETAP memakai `monthly_gross` (seluruh penghasilan) sesuai UU PPh.
     """
     base_for_bpjs = monthly_gross if bpjs_base is None else float(bpjs_base)
-    bpjs = compute_bpjs(base_for_bpjs, include_ketenagakerjaan, jkk_risk_tier) if apply_bpjs else {
+    bpjs = compute_bpjs(base_for_bpjs, include_ketenagakerjaan, jkk_risk_tier,
+                        programs=programs, cfg=bpjs_cfg) if apply_bpjs else {
         "kes_emp": 0, "jht_emp": 0, "jp_emp": 0, "total_employee": 0, "total_company": 0,
+        "kes_company": 0, "tk_company": 0,
     }
+    rates = (merge_bpjs_config(bpjs_cfg) if bpjs_cfg is not None else default_bpjs_config())["rates"]
 
     bpjs_emp_annual = bpjs["total_employee"] * 12
     pph21 = compute_pph21_monthly(monthly_gross, ptkp_code, bpjs_emp_annual) if apply_pph21 else {
@@ -227,13 +333,18 @@ def compute_full_tax_and_bpjs(
     }
 
     deductions = []
+    # 2026-11-02 (K23): baris potongan mengikuti hasil compute_bpjs (yang sudah memperhitungkan
+    # kepesertaan per program); label memakai tarif yang berlaku, bukan teks tetap.
     if apply_bpjs and bpjs["kes_emp"] > 0:
-        deductions.append({"label": "BPJS Kesehatan (1%)", "amount": bpjs["kes_emp"], "type": "bpjs_kesehatan"})
-    if apply_bpjs and include_ketenagakerjaan:
+        deductions.append({"label": f"BPJS Kesehatan ({_pct(rates['kes_emp'])})", "amount": bpjs["kes_emp"],
+                           "type": "bpjs_kesehatan"})
+    if apply_bpjs and (include_ketenagakerjaan or programs is not None):
         if bpjs["jht_emp"] > 0:
-            deductions.append({"label": "BPJS Ketenagakerjaan JHT (2%)", "amount": bpjs["jht_emp"], "type": "bpjs_jht"})
+            deductions.append({"label": f"BPJS Ketenagakerjaan JHT ({_pct(rates['jht_emp'])})",
+                               "amount": bpjs["jht_emp"], "type": "bpjs_jht"})
         if bpjs["jp_emp"] > 0:
-            deductions.append({"label": "BPJS Ketenagakerjaan JP (1%)", "amount": bpjs["jp_emp"], "type": "bpjs_jp"})
+            deductions.append({"label": f"BPJS Ketenagakerjaan JP ({_pct(rates['jp_emp'])})",
+                               "amount": bpjs["jp_emp"], "type": "bpjs_jp"})
     if apply_pph21 and pph21["pph21_monthly"] > 0:
         deductions.append({"label": f"PPh21 ({ptkp_code})", "amount": pph21["pph21_monthly"], "type": "pph21"})
 

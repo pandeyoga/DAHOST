@@ -12,11 +12,12 @@ Storage: koleksi `rahaza_setup_state` = { user_id, status, completed_steps[], up
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 import uuid
 import logging
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
 from core import product_master as pm  # T1: SATU definisi "model masih hidup"
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/setup", tags=["Setup Wizard"])
@@ -136,7 +137,21 @@ async def seed_sample_data(request: Request):
     # ── Line ── (pakai location & process yang ada). Phase 17C: seed 1 line per
     # proses utama (non-rework) supaya operator bisa walk-through bundle sampai PACKING
     # tanpa perlu buat line manual dulu.
-    first_location = await db.rahaza_locations.find_one({"active": True}, sort=[("code", 1)])
+    # 2026-11-02 — No.18(a): line demo tidak lagi ditempel ke "lokasi aktif pertama".
+    # Lokasi line hanya dipakai bila pemanggil mengirim `location_id` yang valid; selain
+    # itu line dibuat TANPA lokasi (line tidak memegang stok — lengkapi di Master Line).
+    try:
+        _body = await request.json() if await request.body() else {}
+    except Exception:  # noqa: BLE001 — body opsional
+        _body = {}
+    first_location = None
+    _loc_id = str((_body or {}).get("location_id") or "").strip()
+    if _loc_id:
+        first_location = await db.rahaza_locations.find_one({"id": _loc_id, "active": True}, {"_id": 0})
+        if not first_location:
+            raise HTTPException(400, "location_id tidak ditemukan / tidak aktif di Master Lokasi.")
+    else:
+        out["messages"].append("Line demo dibuat tanpa lokasi — pilih lokasinya di Master Line bila perlu.")
     main_procs = await db.rahaza_processes.find(
         {"active": {"$ne": False}, "is_rework": {"$ne": True}},
         {"_id": 0},
@@ -197,7 +212,7 @@ async def seed_sample_data(request: Request):
             "name": e["name"],
             "role_hint": e["role_hint"],
             "phone": "",
-            "join_date": date.today().isoformat(),
+            "join_date": today_wib().isoformat(),
             "active": True,
             "created_at": _now(),
             "updated_at": _now(),
@@ -324,7 +339,7 @@ async def seed_sample_data(request: Request):
     if not existing_order:
         order_id = _uid()
         # Count orders hari ini untuk order_number
-        today_iso = date.today().strftime("%Y%m%d")
+        today_iso = today_wib().strftime("%Y%m%d")
         order_number = f"DEMO-{today_iso}-001"
         items = []
         for sz_code in ["S", "M", "L", "XL"]:
@@ -342,7 +357,7 @@ async def seed_sample_data(request: Request):
         await db.rahaza_orders.insert_one({
             "id": order_id,
             "order_number": order_number,
-            "order_date": date.today().isoformat(),
+            "order_date": today_wib().isoformat(),
             "due_date": None,
             "customer_id": None,
             "customer_name": "Produksi Internal (Demo)",

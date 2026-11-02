@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
+import { thisMonthWIB, addMonthsYM } from '@/lib/waktu';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -15,7 +16,7 @@ const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
 
 export default function AnalyticsTab({ authH }) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => thisMonthWIB());
   const [hostPerformance, setHostPerformance] = useState([]);
   const [shiftAnalysis, setShiftAnalysis] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -48,11 +49,9 @@ export default function AnalyticsTab({ authH }) {
     fetchAnalytics();
   }, [fetchAnalytics]);
 
-  const changeMonth = (offset) => {
-    const [year, mon] = month.split('-').map(Number);
-    const date = new Date(year, mon - 1 + offset, 1);
-    setMonth(date.toISOString().slice(0, 7));
-  };
+  // Aritmetika bulan murni (lib/waktu) — `new Date(y, m, 1).toISOString()` di browser
+  // WIB mundur ke bulan sebelumnya.
+  const changeMonth = (offset) => setMonth(addMonthsYM(month, offset));
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(hostPerformance, 10);
   return (

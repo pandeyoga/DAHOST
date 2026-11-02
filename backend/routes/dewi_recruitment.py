@@ -11,6 +11,7 @@ import uuid
 import re
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/recruitment", tags=["Recruitment"])
 
@@ -271,7 +272,7 @@ async def update_candidate(
                     # Build employee_code from candidate name
                     nm = (candidate.get("name") or "HIRE").upper().split()
                     initials = "".join(w[0] for w in nm[:2]) if nm else "NEW"
-                    code_prefix = f"EMP-{initials}-{_dt.now().strftime('%y%m')}"
+                    code_prefix = f"EMP-{initials}-{fmt_wib('%y%m')}"
                     # Unique suffix
                     seq = 1
                     while await db.rahaza_employees.find_one({"employee_code": f"{code_prefix}-{seq:03d}"}):

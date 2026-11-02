@@ -33,6 +33,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { GlassPanel } from '@/components/ui/glass';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { AccountBadge } from './AccountBadge';
@@ -40,6 +41,7 @@ import NoStoreScopeNotice from './NoStoreScopeNotice';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
 import { downloadCsv } from '@/lib/csv';
+import { daysAgoWIB, addDaysISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
@@ -88,9 +90,9 @@ function QuickSalesDialog({ open, onClose, account, task, date, token, onSuccess
         <div className="space-y-3 mt-1">
           <div>
             <Label className="text-xs">Revenue (Rp) <span className="text-red-700 dark:text-red-400">*</span></Label>
-            <Input type="number" min={0} step={1000} value={form.revenue}
+            <MoneyInput value={form.revenue}
               onChange={(e) => setForm((f) => ({ ...f, revenue: e.target.value }))}
-              placeholder="Contoh: 4500000" className="mt-1 h-9"
+              placeholder="Contoh: 4.500.000" className="mt-1 h-9"
               data-testid="quick-revenue-input" autoFocus />
           </div>
           <div>
@@ -154,12 +156,8 @@ const COLUMNS = [
 ];
 
 export default function DailyReportModule({ token }) {
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(yesterday.getDate() - 1);
-  const yestStr = yesterday.toISOString().slice(0, 10);
-
-  const [date, setDate]       = useState(yestStr);
+  // Bawaan = KEMARIN menurut kalender WIB (bukan tanggal UTC/perangkat).
+  const [date, setDate]       = useState(() => daysAgoWIB(1));
   const [report, setReport]   = useState(null);
   const [loading, setLoading] = useState(true);
   const [eksekusiTarget, setEksekusiTarget] = useState(null); // { account, task }
@@ -185,8 +183,8 @@ export default function DailyReportModule({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const prevDay = () => { const d = new Date(date); d.setDate(d.getDate() - 1); setDate(d.toISOString().slice(0, 10)); };
-  const nextDay = () => { const d = new Date(date); d.setDate(d.getDate() + 1); setDate(d.toISOString().slice(0, 10)); };
+  const prevDay = () => setDate(addDaysISO(date, -1));
+  const nextDay = () => setDate(addDaysISO(date, 1));
 
   const s = report?.summary || {};
   const accounts = report?.accounts || [];

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Calculator, RefreshCw, Save, Package, Users, Layers, TrendingUp, BarChart3, Building2 } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { GlassCard, GlassPanel } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -12,6 +12,8 @@ import { ExportButtonGroup } from './ExportButtonGroup';
 import { toast } from 'sonner';
 import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import { readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
 const fmt = formatRupiah;
@@ -135,9 +137,8 @@ function InternalWOTab({ token, headers }) {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
             <div>
               <label className="text-xs uppercase text-muted-foreground">Overhead/pcs</label>
-              <GlassInput
-                type="number"
-                min={0}
+              <MoneyInput
+                glass
                 value={settings.overhead_rate_per_pcs || 0}
                 onChange={e => setSettings(s => ({ ...s, overhead_rate_per_pcs: Number(e.target.value) }))}
                 data-testid="hpp-overhead-pcs"
@@ -145,9 +146,8 @@ function InternalWOTab({ token, headers }) {
             </div>
             <div>
               <label className="text-xs uppercase text-muted-foreground">Default Bahan/kg</label>
-              <GlassInput
-                type="number"
-                min={0}
+              <MoneyInput
+                glass
                 value={readNumber(settings, FIELD.defaultMaterialCostPerKg)}
                 onChange={e => setSettings(s => ({ ...s, default_material_cost_per_kg: Number(e.target.value) }))}
                 data-testid="hpp-yarn-kg"
@@ -155,18 +155,16 @@ function InternalWOTab({ token, headers }) {
             </div>
             <div>
               <label className="text-xs uppercase text-muted-foreground">Default Accessory/unit</label>
-              <GlassInput
-                type="number"
-                min={0}
+              <MoneyInput
+                glass
                 value={settings.default_accessory_cost_per_unit || 0}
                 onChange={e => setSettings(s => ({ ...s, default_accessory_cost_per_unit: Number(e.target.value) }))}
               />
             </div>
             <div>
               <label className="text-xs uppercase text-muted-foreground">Labor Fallback/pcs</label>
-              <GlassInput
-                type="number"
-                min={0}
+              <MoneyInput
+                glass
                 value={settings.labor_rate_fallback_per_pcs || 0}
                 onChange={e => setSettings(s => ({ ...s, labor_rate_fallback_per_pcs: Number(e.target.value) }))}
               />
@@ -595,7 +593,7 @@ function ClientAnalysisTab({ token, headers }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `client_analysis_${selectedClientId}_${new Date().toISOString().split('T')[0]}.csv`;
+        a.download = `client_analysis_${selectedClientId}_${todayWIB()}.csv`;
         a.click();
         URL.revokeObjectURL(url);
       }
@@ -613,7 +611,7 @@ function ClientAnalysisTab({ token, headers }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `client_analysis_${selectedClientId}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        a.download = `client_analysis_${selectedClientId}_${todayWIB()}.xlsx`;
         a.click();
         URL.revokeObjectURL(url);
       }

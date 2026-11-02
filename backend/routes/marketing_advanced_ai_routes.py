@@ -6,7 +6,6 @@ C) A/B Testing (content experiments + AI winner conclusion)
 """
 import uuid
 import logging
-import os
 import json
 import math
 from datetime import datetime, timezone, timedelta
@@ -15,11 +14,10 @@ from fastapi import APIRouter, Request, HTTPException, Query
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, clamp_number, pick_enum, require_ai
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/advanced-ai", tags=["marketing-advanced-ai"])
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 
 def _now(): return datetime.now(timezone.utc)
@@ -102,11 +100,16 @@ async def get_pricing_settings(request: Request):
 
 @router.put("/pricing/settings")
 async def update_pricing_settings(payload: PricingSettingsIn, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     current = await _get_pricing_settings(db)
     update = {k: v for k, v in payload.dict().items() if v is not None}
-    merged = {**current, **update, "_type": "settings", "updated_at": _now(), "updated_by": "admin"}
+    # K28 (2026-11-02): harga dinamis WAJIB disetujui manusia → mode "auto_apply" &
+    # approval_required=False ditolak diam-diam (dulu disimpan tapi tidak pernah dibaca).
+    update["mode"] = "suggest_only"
+    update["approval_required"] = True
+    merged = {**current, **update, "_type": "settings", "updated_at": _now(),
+              "updated_by": _actor_label(user)}
     await db.marketing_dynamic_pricing_settings.update_one(
         {"_type": "settings"}, {"$set": merged}, upsert=True
     )
@@ -117,15 +120,15 @@ async def update_pricing_settings(payload: PricingSettingsIn, request: Request):
 @router.post("/pricing/run")
 async def run_pricing_suggestions(request: Request):
     """Generate dynamic pricing suggestions berdasarkan data penjualan + AI analysis."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     settings = await _get_pricing_settings(db)
 
     if not settings.get("enabled"):
         raise HTTPException(400, "Dynamic Pricing sedang OFF. Aktifkan di Settings terlebih dahulu.")
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
+    # 2026-11-02: gerbang tunggal services.ai (pesan ramah).
+    await require_ai("marketing-pricing", user_id=user.get("id"), db=db, tier="light")
 
     # Rate limit check
     cooldown = settings.get("run_cooldown_minutes", 30)
@@ -146,7 +149,10 @@ async def run_pricing_suggestions(request: Request):
             "avg_price": {"$avg": {"$ifNull": ["$unit_price", "$price", 0]}},
             "total_revenue": {"$sum": {"$ifNull": ["$total_amount", 0]}},
             "return_count": {"$sum": {"$cond": [{"$eq": ["$status", "returned"]}, 1, 0]}},
-            "cancel_count": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}}
+            "cancel_count": {"$sum": {"$cond": [{"$eq": ["$status", "cancelled"]}, 1, 0]}},
+            # K28 (2026-11-02): bukti pemetaan produk → item katalog/SKU untuk "Terapkan".
+            "catalog_item_ids": {"$addToSet": "$catalog_item_id"},
+            "skus": {"$addToSet": "$sku_id"},
         }},
         {"$match": {"_id": {"$ne": None}}},
         {"$sort": {"total_orders_30d": -1}},
@@ -161,6 +167,8 @@ async def run_pricing_suggestions(request: Request):
             "revenue_30d": round(p["total_revenue"] or 0),
             "return_rate_pct": round(p["return_count"] / max(p["total_orders_30d"], 1) * 100, 1),
             "cancel_rate_pct": round(p["cancel_count"] / max(p["total_orders_30d"], 1) * 100, 1),
+            "_catalog_item_ids": [x for x in (p.get("catalog_item_ids") or []) if x],
+            "_skus": [x for x in (p.get("skus") or []) if x],
         })
 
     # Review scores per product
@@ -184,14 +192,11 @@ async def run_pricing_suggestions(request: Request):
         comp_map[c["_id"]] = c["complaints_30d"]
 
     if not products:
-        # Seed with sample products if empty
-        products = [
-            {"product": "Dress Batik Premium", "orders_30d": 45, "avg_price_rp": 185000, "revenue_30d": 8325000, "return_rate_pct": 2.2, "cancel_rate_pct": 1.1},
-            {"product": "Kebaya Modern", "orders_30d": 28, "avg_price_rp": 320000, "revenue_30d": 8960000, "return_rate_pct": 1.4, "cancel_rate_pct": 3.5},
-            {"product": "Blouse Casual", "orders_30d": 62, "avg_price_rp": 95000, "revenue_30d": 5890000, "return_rate_pct": 0.8, "cancel_rate_pct": 4.8},
-            {"product": "Rok Plisket", "orders_30d": 8, "avg_price_rp": 145000, "revenue_30d": 1160000, "return_rate_pct": 5.0, "cancel_rate_pct": 12.5},
-            {"product": "Celana Palazzo", "orders_30d": 34, "avg_price_rp": 110000, "revenue_30d": 3740000, "return_rate_pct": 1.5, "cancel_rate_pct": 2.9},
-        ]
+        # K28 (2026-11-02): dulu 5 produk CONTOH dikarang lalu diusulkan harganya — usulan
+        # untuk produk yang tidak ada di katalog tidak mungkin diterapkan. Sekarang jujur kosong.
+        return ok(data={"suggestions": []},
+                  meta={"count": 0, "products_analyzed": 0,
+                        "message": "Belum ada data order produk untuk dianalisis."})
 
     # Enrich with reviews & complaints
     for p in products:
@@ -208,19 +213,17 @@ async def run_pricing_suggestions(request: Request):
         "rounding": settings["rounding_rule"]
     }
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"pricing-{uuid.uuid4().hex[:8]}",
-        system_message=(
-            "Kamu adalah sistem dynamic pricing untuk brand fashion Indonesia CV Dewi Aditya. "
-            "Berikan rekomendasi harga yang cerdas, aman, dan realistis. "
-            "Pertimbangkan demand, review, complaint, dan guardrails. "
-            "Respond only with valid JSON."
-        )
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = (
+        "Kamu adalah sistem dynamic pricing untuk brand fashion Indonesia CV Dewi Aditya. "
+        "Berikan rekomendasi harga yang cerdas, aman, dan realistis. "
+        "Pertimbangkan demand, review, complaint, dan guardrails. "
+        "Respond only with valid JSON."
+    )
 
+    by_product = {p["product"]: p for p in products}
+    prompt_rows = [{k: v for k, v in p.items() if not k.startswith("_")} for p in products]
     prompt = (
-        f"Data produk 30 hari terakhir:\n{json.dumps(products, ensure_ascii=False, indent=2)}\n\n"
+        f"Data produk 30 hari terakhir:\n{json.dumps(prompt_rows, ensure_ascii=False, indent=2)}\n\n"
         f"Konfigurasi guardrails:\n{json.dumps(cfg_summary, ensure_ascii=False)}\n\n"
         f"Untuk setiap produk, tentukan apakah harga harus naik, turun, atau tetap. "
         f"Hitung suggested_price_rp (sudah dibulatkan ke {settings['rounding_rule']}). "
@@ -242,27 +245,41 @@ async def run_pricing_suggestions(request: Request):
 
     suggestions_created = []
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-pricing", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = "\n".join(clean.split("\n")[1:-1])
         ai_result = json.loads(clean)
 
         for s in ai_result.get("suggestions", []):
-            if s.get("direction") == "hold" or s.get("current_price_rp", 0) == 0:
+            # K28 (2026-11-02): output AI divalidasi — produk harus ada di data, harga & arah
+            # dihitung ulang server, guardrail dinilai server (bukan klaim AI).
+            src = by_product.get(s.get("product"))
+            new_price = clamp_number(s.get("suggested_price_rp"), 0, 1e12)
+            if not src or not new_price or src["avg_price_rp"] <= 0:
                 continue
+            cur = float(src["avg_price_rp"])
+            change = round((new_price - cur) / cur * 100, 1)
+            direction = "increase" if change > 0 else "decrease" if change < 0 else "hold"
+            if direction == "hold":
+                continue
+            guard_ok = (change <= float(settings["max_price_increase_pct_per_run"])
+                        and -change <= float(settings["max_price_decrease_pct_per_run"]))
             doc = {
                 "id": str(uuid.uuid4()),
-                "product": s.get("product", ""),
-                "current_price_rp": s.get("current_price_rp", 0),
-                "suggested_price_rp": s.get("suggested_price_rp", 0),
-                "direction": s.get("direction", "hold"),
-                "change_pct": s.get("change_pct", 0),
-                "confidence": s.get("confidence", "medium"),
-                "primary_reason": s.get("primary_reason", ""),
-                "secondary_reasons": s.get("secondary_reasons", []),
-                "guardrail_ok": s.get("guardrail_ok", True),
-                "guardrail_note": s.get("guardrail_note"),
+                "product": src["product"],
+                "catalog_item_ids": src.get("_catalog_item_ids", []),
+                "skus": src.get("_skus", []),
+                "current_price_rp": cur,
+                "suggested_price_rp": new_price,
+                "direction": direction,
+                "change_pct": change,
+                "confidence": pick_enum(s.get("confidence"), ("high", "medium", "low"), "low"),
+                "primary_reason": str(s.get("primary_reason") or "")[:300],
+                "secondary_reasons": [str(x)[:200] for x in (s.get("secondary_reasons") or [])][:5],
+                "guardrail_ok": guard_ok,
+                "guardrail_note": None if guard_ok else "Perubahan melewati batas guardrail — tidak bisa diterapkan.",
                 "status": "pending",
                 "created_at": _now(),
                 "updated_at": _now(),
@@ -273,9 +290,11 @@ async def run_pricing_suggestions(request: Request):
             doc.pop("_id", None)
             suggestions_created.append(doc)
 
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"Pricing AI error: {e}")
-        raise HTTPException(500, f"AI pricing gagal: {e}")
+        raise HTTPException(502, "Usulan harga dari AI tidak dapat dibaca. Silakan coba lagi.")
 
     # Log run event
     await db.marketing_dynamic_pricing_events.insert_one({
@@ -283,7 +302,8 @@ async def run_pricing_suggestions(request: Request):
         "event_type": "run",
         "suggestions_count": len(suggestions_created),
         "created_at": _now(),
-        "actor": "admin"
+        "actor": _actor_label(user),  # 2026-11-02: aktor sebenarnya, bukan "admin"
+        "actor_id": user.get("id"),
     })
 
     return ok(
@@ -317,29 +337,54 @@ async def list_pricing_suggestions(
     )
 
 
+# 2026-11-02 (audit A §4.2): Approve/Reject/Apply memakai SATU gerbang izin yang sama.
+# Dulu Apply hanya `require_auth` → cs_staff yang ditolak saat Approve bisa "Apply"
+# usulan pending, dan semua aksi tercatat sebagai "admin".
+_PRICING_APPROVE_KEYS = ('toko.approve', 'toko.manage', 'pricing.approve')
+_PRICING_APPROVE_ROLES = ('manager_marketing', 'pic_marketing', 'pic_toko',
+                          'manager', 'owner', 'admin', 'superadmin')
+
+# K28 (2026-11-02, keputusan owner): Apply kini BENAR-BENAR menulis harga katalog lewat
+# endpoint harga yang sudah ada (PUT item katalog) + jejak `marketing_change_log`.
+# Bila produk usulan tidak terpetakan ke item katalog/SKU → ditolak dengan pesan jelas.
+PRICING_APPLY_UNMAPPED_MSG = (
+    "Produk \"{product}\" belum terpetakan ke item katalog/SKU, sehingga harga tidak bisa "
+    "diterapkan otomatis. Tautkan pesanan produk ini ke item katalog (SKU/model) lalu ulangi, "
+    "atau ubah harga manual di Katalog. Status usulan tidak diubah."
+)
+
+
+def _actor_label(user: dict) -> str:
+    return (user or {}).get("name") or (user or {}).get("email") or (user or {}).get("id") or "-"
+
+
+async def _require_pricing_approver(request: Request, message: str) -> dict:
+    from routes.shared import require_perm
+    return await require_perm(request, *_PRICING_APPROVE_KEYS,
+                              legacy_roles=_PRICING_APPROVE_ROLES, message=message)
+
+
 @router.post("/pricing/suggestions/{suggestion_id}/approve")
 async def approve_suggestion(suggestion_id: str, request: Request):
-    from routes.shared import require_perm
-    await require_perm(
-        request, 'toko.approve', 'toko.manage', 'pricing.approve',
-        legacy_roles=('manager_marketing', 'pic_marketing', 'pic_toko',
-                      'manager', 'owner', 'admin', 'superadmin'),
-        message='Akses ditolak: Anda tidak berhak menyetujui usulan harga.')
+    user = await _require_pricing_approver(
+        request, 'Akses ditolak: Anda tidak berhak menyetujui usulan harga.')
     db = get_db()
     doc = await db.marketing_dynamic_pricing_suggestions.find_one({"id": suggestion_id})
     if not doc:
         raise HTTPException(404, "Suggestion tidak ditemukan")
     if doc["status"] != "pending":
         raise HTTPException(400, f"Status sudah {doc['status']}")
+    actor = _actor_label(user)
     await db.marketing_dynamic_pricing_suggestions.update_one(
         {"id": suggestion_id},
-        {"$set": {"status": "approved", "updated_at": _now(), "decided_by": "admin"}}
+        {"$set": {"status": "approved", "updated_at": _now(),
+                  "decided_by": actor, "decided_by_id": user.get("id")}}
     )
     await db.marketing_dynamic_pricing_events.insert_one({
         "id": str(uuid.uuid4()), "event_type": "approve",
         "suggestion_id": suggestion_id, "product": doc["product"],
         "current_price_rp": doc["current_price_rp"], "suggested_price_rp": doc["suggested_price_rp"],
-        "created_at": _now(), "actor": "admin"
+        "created_at": _now(), "actor": actor, "actor_id": user.get("id"),
     })
     return ok(data={"status": "approved"})
 
@@ -349,34 +394,67 @@ async def reject_suggestion(
     suggestion_id: str, request: Request,
     reason: Optional[str] = Query(None)
 ):
-    from routes.shared import require_perm
-    await require_perm(
-        request, 'toko.approve', 'toko.manage', 'pricing.approve',
-        legacy_roles=('manager_marketing', 'pic_marketing', 'pic_toko',
-                      'manager', 'owner', 'admin', 'superadmin'),
-        message='Akses ditolak: Anda tidak berhak menolak usulan harga.')
+    user = await _require_pricing_approver(
+        request, 'Akses ditolak: Anda tidak berhak menolak usulan harga.')
     db = get_db()
     doc = await db.marketing_dynamic_pricing_suggestions.find_one({"id": suggestion_id})
     if not doc:
         raise HTTPException(404, "Suggestion tidak ditemukan")
     if doc["status"] not in ["pending", "approved"]:
         raise HTTPException(400, f"Status sudah {doc['status']}")
+    actor = _actor_label(user)
     await db.marketing_dynamic_pricing_suggestions.update_one(
         {"id": suggestion_id},
-        {"$set": {"status": "rejected", "updated_at": _now(), "decided_by": "admin", "reject_reason": reason}}
+        {"$set": {"status": "rejected", "updated_at": _now(), "decided_by": actor,
+                  "decided_by_id": user.get("id"), "reject_reason": reason}}
     )
     await db.marketing_dynamic_pricing_events.insert_one({
         "id": str(uuid.uuid4()), "event_type": "reject",
         "suggestion_id": suggestion_id, "product": doc["product"],
-        "reason": reason, "created_at": _now(), "actor": "admin"
+        "reason": reason, "created_at": _now(), "actor": actor, "actor_id": user.get("id"),
     })
     return ok(data={"status": "rejected"})
 
 
+async def _resolve_catalog_items(db, doc: dict) -> list:
+    """Petakan usulan → item katalog: catalog_item_id order → SKU → nama persis (aktif saja)."""
+    active = {"is_active": {"$ne": False}}
+    ids = [i for i in (doc.get("catalog_item_ids") or []) if i]
+    if ids:
+        items = await db.marketing_catalog_items.find({"id": {"$in": ids}, **active}, {"_id": 0}).to_list(20)
+        if items:
+            return items
+    skus = [str(s).strip().upper() for s in (doc.get("skus") or []) if s]
+    if skus:
+        items = await db.marketing_catalog_items.find({"sku": {"$in": skus}, **active}, {"_id": 0}).to_list(20)
+        if items:
+            return items
+    name = str(doc.get("product") or "").strip()
+    if name:
+        return await db.marketing_catalog_items.find({"name": name, **active}, {"_id": 0}).to_list(20)
+    return []
+
+
+async def _margin_pct_at(db, item: dict, price: float):
+    """Margin (%) item bila dijual di `price` — SSOT core.catalog_margin; None = belum terukur."""
+    from core import catalog_margin as _cmargin
+    fg = await _cmargin.fg_cost_map(db, [item.get("fg_material_id")])
+    row = _cmargin.decorate({**item, "harga_jual": price}, fg.get(item.get("fg_material_id")))
+    return row.get("margin_pct")
+
+
 @router.post("/pricing/suggestions/{suggestion_id}/apply")
-async def apply_suggestion(suggestion_id: str, request: Request):
-    """Mark as applied (in real system would push to platform API)."""
-    await require_auth(request)
+async def apply_suggestion(suggestion_id: str, request: Request,
+                           catalog_item_id: Optional[str] = None):
+    """Terapkan usulan harga — K28 (2026-11-02).
+
+    Syarat: izin yang sama dengan Approve + status `approved` (persetujuan tetap wajib).
+    Produk dipetakan ke item katalog (id order → SKU → nama); harga ditulis lewat endpoint
+    harga katalog yang SUDAH ADA (`PUT /api/marketing/catalogs/{id}/items/{id}`) dan jejaknya
+    ke `marketing_change_log` (nilai lama → baru, aktor dari token). Tanpa pemetaan → 409.
+    """
+    user = await _require_pricing_approver(
+        request, 'Akses ditolak: Anda tidak berhak menerapkan usulan harga.')
     db = get_db()
     settings = await _get_pricing_settings(db)
     if not settings.get("enabled"):
@@ -384,19 +462,62 @@ async def apply_suggestion(suggestion_id: str, request: Request):
     doc = await db.marketing_dynamic_pricing_suggestions.find_one({"id": suggestion_id})
     if not doc:
         raise HTTPException(404, "Suggestion tidak ditemukan")
-    if doc["status"] not in ["pending", "approved"]:
-        raise HTTPException(400, f"Tidak bisa apply status '{doc['status']}'")
+    if doc["status"] != "approved":
+        raise HTTPException(400, "Usulan harus disetujui (Approve) lebih dulu sebelum diterapkan.")
+
+    items = await _resolve_catalog_items(db, doc)
+    if catalog_item_id:
+        items = [i for i in items if i.get("id") == catalog_item_id]
+    if not items:
+        raise HTTPException(409, PRICING_APPLY_UNMAPPED_MSG.format(product=doc.get("product", "")))
+    if len(items) > 1:
+        pilihan = ", ".join(f"{i.get('sku') or '-'} ({i.get('id')})" for i in items[:10])
+        raise HTTPException(409, f"Produk \"{doc.get('product', '')}\" cocok dengan {len(items)} item "
+                                 f"katalog: {pilihan}. Pilih satu item (catalog_item_id) untuk diterapkan.")
+    item = items[0]
+    if not item.get("catalog_id"):
+        raise HTTPException(409, PRICING_APPLY_UNMAPPED_MSG.format(product=doc.get("product", "")))
+
+    old_price = float(item.get("harga_jual") or item.get("price") or 0)
+    new_price = clamp_number(doc.get("suggested_price_rp"), 0, 1e12)
+    if not new_price:
+        raise HTTPException(409, "Harga usulan tidak sah (harus lebih dari 0).")
+    if old_price > 0:
+        change = (new_price - old_price) / old_price * 100
+        if change > float(settings.get("max_price_increase_pct_per_run", 10)) or \
+                -change > float(settings.get("max_price_decrease_pct_per_run", 15)):
+            raise HTTPException(409, f"Perubahan {change:+.1f}% dari harga katalog sekarang "
+                                     f"(Rp{old_price:,.0f}) melewati batas guardrail. Tidak diterapkan.")
+    margin = await _margin_pct_at(db, item, new_price)
+    min_margin = float(settings.get("min_margin_pct_global") or 0)
+    if margin is not None and margin < min_margin:
+        raise HTTPException(409, f"Margin pada harga baru {margin:.1f}% di bawah batas minimum "
+                                 f"{min_margin:.1f}%. Tidak diterapkan.")
+
+    # Tulis lewat endpoint harga katalog yang sudah ada (normalisasi harga_jual/price, stats).
+    from routes.marketing_catalog_items import CatalogItemUpdate, update_catalog_item
+    await update_catalog_item(item["catalog_id"], item["id"], CatalogItemUpdate(harga_jual=new_price), request)
+
+    actor = _actor_label(user)
+    from core.marketing_cycle import log_change
+    await log_change(db, account_id=item.get("account_id"), entity="catalog_item", entity_id=item["id"],
+                     action="price_change", before={"harga_jual": old_price}, after={"harga_jual": new_price},
+                     reason=f"Usulan harga AI {suggestion_id} (disetujui {doc.get('decided_by') or '-'})",
+                     user=user)
     await db.marketing_dynamic_pricing_suggestions.update_one(
         {"id": suggestion_id},
-        {"$set": {"status": "applied", "applied_at": _now(), "updated_at": _now(), "decided_by": "admin"}}
-    )
+        {"$set": {"status": "applied", "applied_at": _now(), "updated_at": _now(),
+                  "applied_by": actor, "applied_by_id": user.get("id"),
+                  "catalog_item_id": item["id"], "sku": item.get("sku"),
+                  "old_price_rp": old_price, "new_price_rp": new_price}})
     await db.marketing_dynamic_pricing_events.insert_one({
-        "id": str(uuid.uuid4()), "event_type": "apply",
-        "suggestion_id": suggestion_id, "product": doc["product"],
-        "old_price_rp": doc["current_price_rp"], "new_price_rp": doc["suggested_price_rp"],
-        "change_pct": doc["change_pct"], "created_at": _now(), "actor": "admin"
+        "id": str(uuid.uuid4()), "event_type": "apply", "suggestion_id": suggestion_id,
+        "product": doc.get("product"), "catalog_item_id": item["id"], "sku": item.get("sku"),
+        "old_price_rp": old_price, "new_price_rp": new_price,
+        "created_at": _now(), "actor": actor, "actor_id": user.get("id"),
     })
-    return ok(data={"status": "applied", "new_price_rp": doc["suggested_price_rp"]})
+    return ok(data={"status": "applied", "catalog_item_id": item["id"], "sku": item.get("sku"),
+                    "old_price_rp": old_price, "new_price_rp": new_price})
 
 
 @router.get("/pricing/events")
@@ -417,13 +538,26 @@ async def list_pricing_events(
 #  PHASE 5B — CHURN PREDICTION
 # ═══════════════════════════════════════════════════════════════════════════
 
+def _empty_churn_result() -> dict:
+    """Hasil churn kosong yang jujur (tanpa pelanggan fiktif) — 2026-11-02."""
+    return {
+        "summary": {
+            "total_customers": 0,
+            "segments": {"low": 0, "medium": 0, "high": 0, "critical": 0},
+            "segment_insights": {},
+            "general_strategy": "",
+            "quick_wins": [],
+            "no_data": True,
+        },
+        "customers": [],
+    }
+
+
 @router.post("/churn/run")
 async def run_churn_analysis(request: Request):
     """RFM-based churn analysis + AI explanation & recommendations."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
 
     # Build customer profiles from orders
     now = _now()
@@ -484,25 +618,13 @@ async def run_churn_analysis(request: Request):
         })
 
     if not customers:
-        # Demo data
-        import random
-        random.seed(42)
-        names = ["Ayu Sari", "Budi Santoso", "Citra Dewi", "Deni Rahman", "Eka Putri",
-                 "Fani Lestari", "Gilang Pratama", "Hana Safitri", "Irwan Setiawan", "Joko Widodo",
-                 "Kartika Sari", "Lukman Hakim", "Maya Indah", "Nurul Hidayah", "Oscar Pratama"]
-        for name in names:
-            rec_days = random.choice([5, 15, 35, 55, 80, 120, 150, 200])
-            cnt = random.randint(1, 15)
-            spent = random.randint(100000, 3000000)
-            r = 5 if rec_days <= 14 else 4 if rec_days <= 30 else 3 if rec_days <= 60 else 2 if rec_days <= 90 else 1
-            f = 5 if cnt >= 10 else 4 if cnt >= 5 else 3 if cnt >= 3 else 2 if cnt >= 2 else 1
-            m = 5 if spent >= 2000000 else 4 if spent >= 1000000 else 3 if spent >= 500000 else 2 if spent >= 200000 else 1
-            rfm = r + f + m
-            risk = "low" if rfm >= 12 else "medium" if rfm >= 8 else "high" if rfm >= 5 else "critical"
-            customers.append({"customer": name, "recency_days": rec_days, "order_count": cnt,
-                              "total_spent_rp": spent, "freq_per_month": round(cnt / 3, 1),
-                              "r_score": r, "f_score": f, "m_score": m, "rfm_total": rfm,
-                              "churn_risk": risk, "platforms": ["shopee"]})
+        # 2026-11-02: DULU 15 pelanggan FIKTIF ("Ayu Sari", "Budi Santoso", …) dikarang
+        # dengan angka acak, dikirim ke AI, lalu DISIMPAN ke marketing_churn_scores.
+        # Sekarang: tanpa data order → hasil kosong yang jujur, tanpa panggilan AI.
+        return ok(data=_empty_churn_result(), meta={
+            "analyzed_at": _now().isoformat(),
+            "message": "Belum ada data order pelanggan untuk dianalisis.",
+        })
 
     # Summary
     segments = {"low": [], "medium": [], "high": [], "critical": []}
@@ -512,15 +634,18 @@ async def run_churn_analysis(request: Request):
     # AI explanation for high/critical customers
     high_risk = [c for c in customers if c["churn_risk"] in ["high", "critical"]][:10]
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"churn-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah customer retention specialist untuk brand fashion Indonesia. Berikan rekomendasi retensi yang praktis dan empati. Respond only with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    # 2026-11-02: gerbang tunggal services.ai (sesudah data dipastikan ada).
+    await require_ai("marketing-churn", user_id=user.get("id"), db=db, tier="light")
+    ai_system_msg = ("Kamu adalah customer retention specialist untuk brand fashion Indonesia. "
+                     "Berikan rekomendasi retensi yang praktis dan empati. Respond only with valid JSON.")
 
+    # K27 (2026-11-02): nama pembeli → kode samaran PLG-xxx; dipetakan balik di server.
+    ps = Pseudonymizer()
+    high_risk_ai = [{**c, "customer": ps.code(c["customer"], "pelanggan")} for c in high_risk]
     prompt = (
-        f"Data customer berisiko churn (high/critical) dari CV Dewi Aditya (fashion brand):\n"
-        f"{json.dumps(high_risk, ensure_ascii=False, indent=2)}\n\n"
+        f"Data customer berisiko churn (high/critical) dari CV Dewi Aditya (fashion brand), "
+        f"nama pelanggan disamarkan dengan kode PLG-xxx (pakai kode itu apa adanya):\n"
+        f"{json.dumps(high_risk_ai, ensure_ascii=False, indent=2, default=str)}\n\n"
         f"Summary segment: low={len(segments['low'])}, medium={len(segments['medium'])}, high={len(segments['high'])}, critical={len(segments['critical'])}\n\n"
         f"Return JSON persis:\n"
         f"{{\"segment_insights\": {{"
@@ -538,17 +663,21 @@ async def run_churn_analysis(request: Request):
 
     ai_result = {}
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-churn", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = "\n".join(clean.split("\n")[1:-1])
-        ai_result = json.loads(clean)
+        ai_result = ps.restore(json.loads(clean))
+    except AIError as e:
+        logger.warning(f"Churn AI error: {e.code}")
+        ai_result = {"general_strategy": f"{e} Skor RFM tetap tersedia.", "quick_wins": []}
     except Exception as e:
         logger.error(f"Churn AI error: {e}")
-        ai_result = {"general_strategy": "Error AI. Data RFM tersedia.", "quick_wins": []}
+        ai_result = {"general_strategy": "Penjelasan AI tidak dapat dibaca. Skor RFM tetap tersedia.", "quick_wins": []}
 
     # Build action map
-    action_map = {a["customer"]: a for a in ai_result.get("customer_actions", [])}
+    action_map = {a.get("customer"): a for a in (ai_result.get("customer_actions") or []) if isinstance(a, dict)}
     for c in customers:
         if c["customer"] in action_map:
             c["ai_action"] = action_map[c["customer"]].get("action")
@@ -744,23 +873,19 @@ async def record_ab_result(exp_id: str, payload: ABResultIn, request: Request):
 @router.post("/ab-tests/{exp_id}/conclude")
 async def conclude_ab_test(exp_id: str, request: Request):
     """AI decides winner based on goal metric and data."""
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     doc = await db.marketing_ab_experiments.find_one({"id": exp_id})
     if not doc:
         raise HTTPException(404, "Experiment tidak ditemukan")
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI tidak dikonfigurasi")
+    await require_ai("marketing-ab-conclude", user_id=user.get("id"), db=db, tier="light")
 
     variants = doc.get("variants", [])
     if not any(v.get("views", 0) > 0 for v in variants):
         raise HTTPException(400, "Belum ada data hasil yang diinput. Gunakan tombol 'Input Hasil' terlebih dahulu.")
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"ab-conclude-{uuid.uuid4().hex[:8]}",
-        system_message="Kamu adalah analis marketing A/B testing untuk brand fashion Indonesia. Berikan kesimpulan yang jelas berdasarkan data. Respond only with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = ("Kamu adalah analis marketing A/B testing untuk brand fashion Indonesia. "
+                     "Berikan kesimpulan yang jelas berdasarkan data. Respond only with valid JSON.")
 
     prompt = (
         f"A/B Experiment: {doc['name']}\n"
@@ -782,14 +907,17 @@ async def conclude_ab_test(exp_id: str, request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-ab-conclude", ai_system_msg, prompt,
+                                 tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = "\n".join(clean.split("\n")[1:-1])
         result = json.loads(clean)
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"AB conclude error: {e}")
-        raise HTTPException(500, f"AI conclude gagal: {e}")
+        raise HTTPException(502, "Kesimpulan AI tidak dapat dibaca. Silakan coba lagi.")
 
     await db.marketing_ab_experiments.update_one(
         {"id": exp_id},

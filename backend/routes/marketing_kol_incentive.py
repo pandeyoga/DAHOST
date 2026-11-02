@@ -34,6 +34,7 @@ from auth import log_activity, require_auth, serialize_doc
 from database import get_db
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/marketing/kol", tags=["marketing-kol-incentive"])
 
@@ -67,7 +68,7 @@ def _add_months(d: date, months: int) -> date:
 
 def _period_window(cfg: dict, today: date | None = None) -> dict:
     """Jendela periode yang memuat HARI INI (bergulir dari `period_start`)."""
-    today = today or datetime.now(timezone.utc).date()
+    today = today or today_wib()
     months = int(cfg.get("period_months") or DEFAULT_PERIOD_MONTHS)
     months = max(1, months)
     raw_start = cfg.get("period_start") or today.replace(day=1).isoformat()
@@ -172,7 +173,7 @@ async def set_incentive(creator_id: str, body: IncentiveCfgIn, request: Request)
         raise HTTPException(400, "mode harus none | per_pcs | target_bonus | both")
     cfg = _norm_cfg(body.model_dump())
     if not cfg["period_start"]:
-        cfg["period_start"] = datetime.now(timezone.utc).date().replace(day=1).isoformat()
+        cfg["period_start"] = today_wib().replace(day=1).isoformat()
     await db[CREATORS].update_one({"id": creator_id},
                                   {"$set": {"incentive": cfg, "updated_at": _now()}})
     await log_activity(user.get("id", "system"), user.get("name") or user.get("email", "system"),
@@ -242,7 +243,7 @@ async def close_period(creator_id: str, request: Request):
     # adalah bagian periode yang baru saja DITUTUP (dan sudah dibayar). Kalau
     # dimulai hari ini, pcs hari ini terhitung dua kali — sekali di periode lama
     # yang dibayar, sekali lagi di periode baru.
-    today = (datetime.now(timezone.utc).date() + timedelta(days=1)).isoformat()
+    today = (today_wib() + timedelta(days=1)).isoformat()
     history = creator.get("incentive_history") or []
     history.append({
         "closed_at": _now().isoformat(), "closed_by": user.get("name") or "system",

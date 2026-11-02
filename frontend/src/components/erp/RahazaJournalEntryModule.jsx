@@ -7,9 +7,10 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { IconButton } from './IconButton';
 import { formatRupiah } from '@/lib/format';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 const STATUS_COLORS = {
   draft: 'text-amber-300 bg-amber-400/10 border-amber-400/25',
@@ -24,7 +25,7 @@ function StatusBadge({ status }) {
 
 function JournalEditor({ accounts, onSave, onClose, token }) {
   const [form, setForm] = useState({
-    date: todayISO(),
+    date: todayWIB(),
     memo: '',
     je_number: '',
     post: false,
@@ -109,10 +110,10 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
               </SmartNativeSelect>
             </div>
             <div className="col-span-2">
-              <GlassInput type="number" value={ln.debit} onChange={e => { setLine(i, 'debit', e.target.value); if (Number(e.target.value) > 0) setLine(i, 'credit', 0); }} placeholder="Debit" data-testid={`je-line-${i}-debit`} />
+              <MoneyInput decimals={2} glass value={ln.debit} onChange={e => { setLine(i, 'debit', e.target.value); if (Number(e.target.value) > 0) setLine(i, 'credit', 0); }} placeholder="Debit" data-testid={`je-line-${i}-debit`} />
             </div>
             <div className="col-span-2">
-              <GlassInput type="number" value={ln.credit} onChange={e => { setLine(i, 'credit', e.target.value); if (Number(e.target.value) > 0) setLine(i, 'debit', 0); }} placeholder="Credit" data-testid={`je-line-${i}-credit`} />
+              <MoneyInput decimals={2} glass value={ln.credit} onChange={e => { setLine(i, 'credit', e.target.value); if (Number(e.target.value) > 0) setLine(i, 'debit', 0); }} placeholder="Credit" data-testid={`je-line-${i}-credit`} />
             </div>
             <div className="col-span-2">
               <GlassInput value={ln.description} onChange={e => setLine(i, 'description', e.target.value)} placeholder="Uraian" data-testid={`je-line-${i}-desc`} />
@@ -216,8 +217,8 @@ export default function RahazaJournalEntryModule({ token }) {
   const [editing, setEditing] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [filterStatus, setFilterStatus] = useState('');
-  const [filterFrom, setFilterFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); });
-  const [filterTo, setFilterTo] = useState(todayISO());
+  const [filterFrom, setFilterFrom] = useState(() => monthStartWIB());
+  const [filterTo, setFilterTo] = useState(() => todayWIB());
   const [search, setSearch] = useState('');
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 

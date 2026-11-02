@@ -423,3 +423,134 @@ async def issue_for_vendor_shipment(db, shipment: dict, ship_items: list,
             "mi_number": mi["mi_number"], "bom_notes": notes,
             "negative_stock_lines": fresh.get("negative_stock_lines") or [],
             "total_pcs": total_pcs, "material_lines": len(items)}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 4. KIRIM MATERIAL MAKLON ⇒ MI HANYA UNTUK AKSESORIS MILIK DA (2026-11-02, K14 / P-7)
+# ═════════════════════════════════════════════════════════════════════════════
+# Keputusan owner K14 (P-7): kain/bahan milik KLIEN maklon di luar neraca DA (tidak di-MI), tetapi
+# aksesoris MILIK DA yang dipakai pesanan maklon tetap dibukukan sebagai BIAYA DA lewat MI. Dulu
+# `routes/vendor_shipment.py` mengecualikan SEMUA surat jalan maklon dari MI, sehingga stok aksesoris
+# DA tidak pernah turun dan biayanya tidak terbukukan (dilaporkan sebagai celah oleh
+# `production_maklon_bridge.compute_maklon_hpp`). Sumber kebutuhan = BOM maklon per PO
+# (`dewi_maklon_bom.materials`, baris `ownership` milik DA + `material_id`), mesin potong stok &
+# posting = SAMA (`issue_material_issue`); jurnalnya Dr biaya proyek maklon / Cr 1-1402.
+MAKLON_DA_OWNERSHIP = ("cv_da_stock", "cv_da", "da_provided")   # sama dgn production_maklon_bridge
+_MI_NOT_COUNTED = ("rejected", "draft", "cancelled")
+
+
+def maklon_da_need(bom_lines: list, pcs_total: float, issued_by_mat: dict) -> tuple[list, list]:
+    """Fungsi murni: kebutuhan MI per baris BOM maklon milik DA.
+
+    need = qty_per_pcs × pcs KUMULATIF semua surat jalan PO ini − qty yang SUDAH di-MI untuk PO
+    ini (jalur mana pun). Kumulatif = tidak dobel bila MI sudah diterbitkan lewat jalur lain.
+    Return (baris [{material_id, qty, bom_unit, name}], catatan)."""
+    out, notes = [], []
+    agg: dict = {}
+    for ln in bom_lines or []:
+        if (ln.get("ownership") or "") not in MAKLON_DA_OWNERSHIP:
+            continue                                   # kain/bahan milik klien — bukan stok DA
+        name = ln.get("material_name") or ln.get("material_id") or "?"
+        if not ln.get("material_id"):
+            notes.append(f"{name}: baris BOM maklon milik DA tanpa material_id — tidak bisa di-MI")
+            continue
+        per = _f(ln.get("qty_per_pcs"))
+        if per <= 0:
+            notes.append(f"{name}: qty per pcs 0 di BOM maklon — dilewati")
+            continue
+        a = agg.setdefault(ln["material_id"], {"material_id": ln["material_id"], "per_pcs": 0.0,
+                                               "bom_unit": ln.get("unit") or "", "name": name})
+        a["per_pcs"] += per
+    for mid, a in agg.items():
+        need = round(a["per_pcs"] * _f(pcs_total) - _f(issued_by_mat.get(mid)), 4)
+        if need > 1e-9:
+            out.append({"material_id": mid, "qty": need, "bom_unit": a["bom_unit"], "name": a["name"]})
+    return out, notes
+
+
+async def issue_for_maklon_shipment(db, shipment: dict, ship_items: list, user: dict) -> dict | None:
+    """MI OTOMATIS aksesoris DA untuk satu surat jalan material MAKLON. None = tidak ada yang di-MI
+    (BOM maklon tanpa aksesoris DA, atau kebutuhan sudah tertutup MI lain). Idempoten per surat jalan."""
+    from core import bom_uom
+    from core import uom as uom_core
+    from routes.rahaza_inventory_shared import _gen_mi_number, _now, _uid
+
+    existing = await db.rahaza_material_issues.find_one(
+        {"vendor_shipment_id": shipment["id"], "status": {"$ne": "rejected"}}, {"_id": 0})
+    if existing:
+        return {"ok": True, "already": True, "mi": existing}
+    po_id = shipment.get("po_id")
+    bom = await db.dewi_maklon_bom.find_one({"po_id": po_id}, {"_id": 0}) if po_id else None
+    if not bom or not any((m.get("ownership") or "") in MAKLON_DA_OWNERSHIP for m in bom.get("materials") or []):
+        return None
+
+    # pcs kumulatif semua surat jalan PO ini (termasuk yang baru dibuat) & qty yang sudah di-MI
+    sids = [s["id"] async for s in db.vendor_shipments.find({"po_id": po_id}, {"_id": 0, "id": 1})]
+    pcs_total = 0.0
+    async for si in db.vendor_shipment_items.find({"shipment_id": {"$in": sids}}, {"_id": 0, "qty_sent": 1}):
+        pcs_total += _f(si.get("qty_sent"))
+    issued: dict = {}
+    async for old in db.rahaza_material_issues.find(
+            {"production_po_id": po_id, "status": {"$nin": list(_MI_NOT_COUNTED)}}, {"_id": 0, "items": 1}):
+        for it in old.get("items") or []:
+            issued[it.get("material_id")] = issued.get(it.get("material_id"), 0.0) + _f(it.get("qty_issued"))
+
+    need, notes = maklon_da_need(bom.get("materials") or [], pcs_total, issued)
+    mats = {}
+    if need:
+        async for m in db.rahaza_materials.find({"id": {"$in": [n["material_id"] for n in need]}}, {"_id": 0}):
+            mats[m["id"]] = m
+    items, auto_loc = [], {}
+    from core import negative_stock
+    neg_ok = await negative_stock.allowed(db)
+    for n in need:
+        mat = mats.get(n["material_id"])
+        if not mat:
+            notes.append(f"{n['name']}: material_id {n['material_id']} tidak ada di Master Item — tidak di-MI")
+            continue
+        qty = n["qty"]
+        if n["bom_unit"] and (n["bom_unit"] or "").strip().lower() != (mat.get("unit") or "").strip().lower():
+            try:
+                f, _src = bom_uom.factor_to_base(mat, n["bom_unit"])
+                qty = round(qty * f, 4)
+            except uom_core.UomError as e:
+                raise BomMissing(f"{mat.get('code') or n['name']}: satuan BOM maklon '{n['bom_unit']}' "
+                                 f"tidak bisa dikonversi ke satuan master ({e}).")
+        loc, _avail = await best_location_for(db, mat["id"], qty)
+        if not loc and neg_ok:
+            fb = await negative_stock.fallback_location(db, mat)
+            loc = fb["id"] if fb else None
+        if not loc:
+            raise BomMissing(f"Aksesoris DA {mat.get('code') or n['name']} belum punya baris stok di gudang "
+                             "mana pun. Catat penerimaan/opname dulu.")
+        auto_loc[mat["id"]] = loc
+        items.append({"id": _uid(), "material_id": mat["id"], "qty_required": qty,
+                      "qty_issued": 0, "location_id": loc, "notes": "aksesoris DA — pesanan maklon"})
+    if not items:
+        return {"ok": True, "already": False, "skipped": True, "mi": None, "bom_notes": notes,
+                "total_pcs": pcs_total, "material_lines": 0} if notes else None
+
+    mi = {
+        "id": _uid(), "mi_number": await _gen_mi_number(db),
+        "work_order_id": None, "wo_number_snapshot": "", "job_id": None,
+        "vendor_shipment_id": shipment["id"],
+        "vendor_shipment_number": shipment.get("shipment_number", ""),
+        "vendor_id": shipment.get("vendor_id", ""), "vendor_name": shipment.get("vendor_name", ""),
+        "production_po_id": po_id, "po_number_snapshot": shipment.get("po_number", ""),
+        "business_type": "maklon", "cost_target": "maklon",
+        "qty_wo_pcs": int(sum(_f(i.get("qty_sent")) for i in ship_items)),
+        "items": items, "status": "pending_approval", "source": "vendor_shipment_maklon",
+        "notes": ("Otomatis dari Kirim Material CMT MAKLON "
+                  f"{shipment.get('shipment_number', '')} — aksesoris milik DA (K14)"
+                  + (f" · catatan: {'; '.join(notes)}" if notes else "")),
+        "bom_notes": notes,
+        "created_by": user.get("id"), "created_by_name": user.get("name", ""),
+        "created_at": _now(), "updated_at": _now(),
+    }
+    await db.rahaza_material_issues.insert_one(dict(mi))
+    fresh = await issue_material_issue(db, mi, user, loc_overrides=auto_loc, ref_type="maklon_material_issue")
+    await db.vendor_shipments.update_one({"id": shipment["id"]}, {"$set": {
+        "material_issue_id": mi["id"], "material_issue_number": mi["mi_number"]}})
+    return {"ok": True, "already": False, "mi": fresh, "mi_number": mi["mi_number"], "bom_notes": notes,
+            "negative_stock_lines": fresh.get("negative_stock_lines") or [],
+            "total_pcs": pcs_total, "material_lines": len(items)}

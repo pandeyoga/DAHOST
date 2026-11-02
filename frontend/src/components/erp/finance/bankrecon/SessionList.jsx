@@ -7,6 +7,8 @@ import PaginationBar from '@/components/ui/PaginationBar';
 import { Loader2, Plus, AlertCircle, Trash2, ChevronRight } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah as fmt } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { thisMonthWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const LIMIT = 15;
@@ -21,7 +23,7 @@ function CreateForm({ headers, accounts, onCreated, onCancel }) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    period: new Date().toISOString().slice(0, 7), cash_account_id: '', opening_balance: 0, closing_balance: 0, notes: '',
+    period: thisMonthWIB(), cash_account_id: '', opening_balance: 0, closing_balance: 0, notes: '',
   });
   const set = (k) => (e) => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -59,12 +61,12 @@ function CreateForm({ headers, accounts, onCreated, onCancel }) {
           </div>
           <div>
             <label className="text-xs font-medium mb-1 block">Saldo Awal Rekening Koran</label>
-            <input type="number" data-testid="recon-input-opening" className="w-full border rounded-lg px-3 py-2 text-sm"
+            <MoneyInput unstyled decimals={2} allowNegative data-testid="recon-input-opening" className="w-full border rounded-lg px-3 py-2 text-sm"
               value={form.opening_balance} onChange={set('opening_balance')} />
           </div>
           <div>
             <label className="text-xs font-medium mb-1 block">Saldo Akhir Rekening Koran</label>
-            <input type="number" data-testid="recon-input-closing" className="w-full border rounded-lg px-3 py-2 text-sm"
+            <MoneyInput unstyled decimals={2} allowNegative data-testid="recon-input-closing" className="w-full border rounded-lg px-3 py-2 text-sm"
               value={form.closing_balance} onChange={set('closing_balance')} />
           </div>
         </div>

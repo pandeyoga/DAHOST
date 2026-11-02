@@ -9,7 +9,7 @@ line below is an exact cut-paste from server.py, no logic was altered.
 """
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import JSONResponse
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 from database import get_db
 from auth import require_auth, check_role, log_activity, serialize_doc
@@ -20,6 +20,7 @@ from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_env
 from routes.rahaza_bom import _is_kglike
 from core import bom_uom  # 2026-08-02: konversi satuan baris BOM → satuan dasar
 from utils.variant_ssot import resolve_variant, create_fg_pending_inbound_for_variant
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api", tags=["production-execution"])
 logger = logging.getLogger(__name__)
@@ -295,7 +296,7 @@ async def production_tracking(request: Request):
                                                                 'delivery_deadline': 1}).to_list(None) if po_ids else []
     po_deadline = {p['id']: (p.get('deadline') or p.get('delivery_deadline')) for p in pos}
 
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
 
     def _as_date(v):
         try:

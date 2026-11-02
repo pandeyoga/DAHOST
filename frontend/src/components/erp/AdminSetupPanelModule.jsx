@@ -16,6 +16,68 @@ const API_BASE = process.env.REACT_APP_BACKEND_URL || '';
 // Authorization header → endpoint `_require_super` menolak 401 → "Gagal fetch status".
 const authHeaders = () => ({ Authorization: `Bearer ${localStorage.getItem('erp_token')}` });
 
+// 2026-11-02 (S2-H) — kartu "Integritas tautan COA" dari accounting-status.coa_integrity (core/coa_bindings).
+function CoaIntegrityCard({ data }) {
+  const groups = [
+    ['dangling_refs', 'Akun tidak ada di Bagan Akun'],
+    ['inactive_targets', 'Akun nonaktif'],
+    ['group_targets', 'Akun grup (tidak bisa diposting)'],
+  ];
+  const nProblem = groups.reduce((n, [k]) => n + (data[k] || []).length, 0);
+  return (
+    <Card className={`shadow-sm ${nProblem ? 'border-destructive/50' : 'border-border/50'}`} data-testid="coa-integrity-card">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center justify-between gap-2">
+          <span className="flex items-center gap-2">
+            {nProblem ? <AlertCircle className="h-4 w-4 text-destructive" /> : <CheckCircle2 className="h-4 w-4 text-success" />}
+            Integritas tautan COA
+          </span>
+          <Badge variant="outline" className={nProblem ? 'text-destructive' : 'text-success'}>{nProblem ? `${nProblem} masalah` : 'OK'}</Badge>
+        </CardTitle>
+        <CardDescription>
+          {data.checked_refs ?? 0} rujukan konfigurasi (profil posting, toko, rekening, relasi, pemetaan GL, kas kecil, aset, anggaran, kode program) diperiksa terhadap {data.accounts ?? 0} akun.
+          {data.error && ` Gagal: ${data.error}`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {groups.map(([k, label]) => (data[k] || []).length > 0 && (
+          <div key={k}>
+            <p className="font-medium">{label} ({data[k].length})</p>
+            <ul className="mt-1 space-y-1 text-xs">
+              {data[k].slice(0, 8).map((r) => (
+                <li key={r.code} className="break-words">
+                  <span className="font-mono">{r.code}</span> {r.name || ''} — {(r.refs || []).slice(0, 2).join(' · ')}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        {(data.fallback_warnings || []).length > 0 && (
+          <div>
+            <p className="font-medium">Kode cadangan yang akan terpakai ({data.fallback_warnings.length})</p>
+            <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
+              {data.fallback_warnings.slice(0, 6).map((w) => (
+                <li key={`${w.role}-${w.code}`}>Peran <span className="font-mono">{w.role}</span> kosong → <span className="font-mono">{w.code}</span> {w.name || ''}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {(data.sync_skipped || []).length > 0 && (
+          <div>
+            <p className="font-medium">Dilewati sinkron toko ({data.sync_skipped.length})</p>
+            <ul className="mt-1 space-y-1 text-xs text-muted-foreground">
+              {data.sync_skipped.slice(0, 6).map((x) => <li key={x.code}><span className="font-mono">{x.code}</span> {x.name} — {x.reason}</li>)}
+            </ul>
+          </div>
+        )}
+        {!nProblem && !(data.fallback_warnings || []).length && !(data.sync_skipped || []).length && (
+          <p className="text-muted-foreground">Semua rujukan menunjuk akun yang ada, aktif, dan bisa diposting.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function AdminSetupPanelModule() {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -58,7 +120,11 @@ export default function AdminSetupPanelModule() {
       });
       const data = await res.json();
       if (data.ok) {
-        toast.success(`COA seeded: ${data.count_before} → ${data.count_after} accounts`);
+        const extra = [
+          data.recreated?.length ? `${data.recreated.length} akun bawaan dibuat ulang (${data.recreated.slice(0, 5).join(', ')})` : '',
+          data.normal_balance_fixed?.length ? `saldo normal kontra dirapikan: ${data.normal_balance_fixed.join(', ')}` : '',
+        ].filter(Boolean).join(' · ');
+        toast.success(`COA: ${data.count_before} → ${data.count_after} akun${extra ? ` · ${extra}` : ''}`);
         await fetchStatus();
       } else {
         toast.error(data.error || 'Seed COA failed');
@@ -301,6 +367,9 @@ export default function AdminSetupPanelModule() {
           </Card>
         </div>
 
+        {/* 2026-11-02 (S2-H) INV-COA-REF — rujukan konfigurasi → akun ada, aktif, bukan grup */}
+        {status?.coa_integrity && <CoaIntegrityCard data={status.coa_integrity} />}
+
         {/* Info */}
         <Card className="border-border/50 bg-muted/20">
           <CardHeader>
@@ -310,7 +379,7 @@ export default function AdminSetupPanelModule() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>• <strong>COA</strong>: 88 akun standar (1-xxxx aset, 2-xxxx liabilitas, 3-xxxx ekuitas, 4-xxxx revenue, 5-xxxx income lain, 6-xxxx expense)</p>
+            <p>• <strong>COA</strong>: skema tunggal 4 digit (1 aset · 2 liabilitas · 3 ekuitas · 4 pendapatan · 5 HPP · 6 beban · 7 pendapatan/beban lain). Akun bawaan yang hilang dibuat ulang & dilaporkan; saldo normal akun kontra dirapikan.</p>
             <p>• <strong>Posting Profiles</strong>: 18+ event types (ar_invoice, ap_invoice, payroll_run, inventory_*, expense, wip_to_fg, bank_transfer, dll)</p>
             <p>• <strong>Idempotent</strong>: Aman dijalankan berulang kali tanpa duplikasi data</p>
             <p>• <strong>Auto-seed on startup</strong>: Deployment baru otomatis seed COA & Posting Profiles jika masih kosong</p>

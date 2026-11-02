@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -115,12 +116,99 @@ async def _vendor_user_ids(db, vendor_id: str) -> list:
     return [r["id"] for r in rows if r.get("id")]
 
 
+# 2026-11-02 (K17 butir 6): peran Keuangan yang BENAR-BENAR ada di aplikasi ini
+# (`core/roles.py`). Dulu notifikasi selisih memakai `finance`/`admin_finance` (peran
+# fiktif tanpa pengguna) sehingga Keuangan tidak pernah tahu ada selisih.
+FINANCE_NOTIFY_ROLES = ("accounting", "staff_keuangan")
+
+
 async def _admin_finance_user_ids(db) -> list:
     rows = await db.users.find(
-        {"role": {"$in": ["superadmin", "admin", "admin_maklon", "finance",
-                          "admin_finance", "owner", "manager"]}},
+        {"role": {"$in": ["superadmin", "admin", "admin_maklon", "owner", "manager",
+                          *FINANCE_NOTIFY_ROLES]}},
         {"_id": 0, "id": 1}).to_list(50)
     return [r["id"] for r in rows if r.get("id")]
+
+
+async def notify_finance(db, *, title: str, body: str, source_type: str, source_id: str,
+                         source_ref: str = "", meta: dict | None = None,
+                         subtype: str = "cmt_billing_variance") -> None:
+    """Notifikasi ke peran Keuangan nyata (accounting, staff_keuangan) — satu pintu."""
+    await _notify(db, type="dewi", subtype=subtype, severity="warning",
+                  target_roles=list(FINANCE_NOTIFY_ROLES), title=title, body=body,
+                  source_type=source_type, source_id=source_id, source_ref=source_ref,
+                  meta={"link_module": "prod-cmt-billing", **(meta or {})})
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# K17 (keputusan owner b, 2026-11-02) — TAGIHAN CMT TIDAK DIUBAH OTOMATIS,
+# tetapi DITANDAI untuk Keuangan setiap kali dasar tagihannya berubah.
+# ═══════════════════════════════════════════════════════════════════════════
+async def refresh_cmt_payment_variance(db, receipt_id: str) -> dict | None:
+    """Hitung ulang angka selisih tagihan CMT satu penerimaan (tanpa mengubah nilai tagihan).
+
+    `overbilled_pcs`  = pcs yang sudah ditagih tetapi tidak lagi lolos QC (koreksi turun)
+    `open_short_qty`  = selisih kirim CMT→DA penerimaan ini yang masih terbuka
+    `variance_unresolved_qty` = jumlah keduanya → kolom "selisih belum diselesaikan"
+    """
+    if not receipt_id:
+        return None
+    pay = await db.dewi_cmt_payments.find_one({"source_receipt_id": receipt_id}, {"_id": 0})
+    if not pay:
+        return None
+    lines = await db.cmt_receipt_lines.find({"receipt_id": receipt_id}, {"_id": 0}).to_list(500)
+    cur_by_line = {ln["id"]: _i(ln.get("qty_actual")) for ln in lines}
+    over_pcs, over_amt = 0, 0.0
+    for b in pay.get("breakdown") or []:
+        billed = _i(b.get("qty_billed", b.get("qty_actual")))
+        cur = cur_by_line.get(b.get("line_id"), billed)
+        if billed > cur:
+            over_pcs += billed - cur
+            over_amt += (billed - cur) * float(b.get("cmt_rate_per_pcs") or 0)
+    shorts = await db[CMT_SHORT].find({"receipt_id": receipt_id, "status": STATUS_OPEN},
+                                      {"_id": 0}).to_list(None)
+    open_short = sum(max(0, _i(s.get("qty_short")) - _i(s.get("qty_resolved"))) for s in shorts)
+    upd = {"overbilled_pcs": over_pcs, "overbilled_amount": round(over_amt, 2),
+           "open_short_qty": open_short, "variance_unresolved_qty": over_pcs + open_short,
+           "updated_at": _now()}
+    await db.dewi_cmt_payments.update_one({"id": pay["id"]}, {"$set": upd})
+    return {**pay, **upd}
+
+
+async def flag_cmt_payment_variance(db, receipt_id: str, *, reason: str, event_type: str,
+                                    actor: dict | None = None, qty: int = 0,
+                                    notify: bool = True) -> dict | None:
+    """Tandai tagihan CMT (`variance_flagged`) + alasan + notifikasi Keuangan.
+
+    Nilai tagihan TIDAK diubah (keputusan owner b). Dipanggil oleh koreksi hasil QC,
+    koreksi deklarasi, dan penyelesaian selisih CMT.
+    """
+    pay = await refresh_cmt_payment_variance(db, receipt_id)
+    if not pay:
+        return None
+    event = {"at": _now(), "type": event_type, "reason": reason, "qty": _i(qty),
+             "by": (actor or {}).get("name", "sistem")}
+    reasons = list(pay.get("variance_reasons") or [])
+    if reason and reason not in reasons:
+        reasons.append(reason)
+    await db.dewi_cmt_payments.update_one({"id": pay["id"]}, {
+        "$set": {"variance_flagged": True, "needs_finance_review": True,
+                 "variance_reasons": reasons, "variance_reason": "; ".join(reasons),
+                 "updated_at": _now()},
+        "$push": {"variance_events": event}})
+    if notify:
+        body = (f"Tagihan CMT {pay.get('payment_code')} ({pay.get('cmt_name') or pay.get('vendor_name') or '-'}, "
+                f"PO {pay.get('po_number') or '-'}) DITANDAI untuk Keuangan: {reason}. Nilai tagihan "
+                f"tidak diubah otomatis (Rp {float(pay.get('subtotal') or 0):,.0f}); selisih belum "
+                f"diselesaikan {pay.get('variance_unresolved_qty', 0)} pcs"
+                + (f", lebih tagih Rp {float(pay.get('overbilled_amount') or 0):,.0f}"
+                   if pay.get('overbilled_amount') else "") + ".")
+        await notify_finance(db, title=f"Tagihan CMT perlu ditinjau — {pay.get('payment_code')}",
+                             body=body, source_type="dewi_cmt_payments", source_id=pay["id"],
+                             source_ref=pay.get("payment_code") or "",
+                             meta={"payment_code": pay.get("payment_code"), "event": event_type,
+                                   "receipt_id": receipt_id})
+    return await db.dewi_cmt_payments.find_one({"id": pay["id"]}, {"_id": 0})
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -161,7 +249,7 @@ async def record_cmt_short(db, *, receipt: dict, line: dict, claimed: int, arriv
     doc = {
         "id": _id(),
         "short_number": await _number(db, CMT_SHORT, "SEL-CMT-"),
-        "short_date": _now()[:10],
+        "short_date": wib_date_str(),
         "receipt_id": receipt.get("id"),
         "receipt_code": receipt.get("receipt_code"),
         "receipt_line_id": line["id"],
@@ -362,6 +450,10 @@ async def cancel_cmt_short(db, short_id: str, *, actor: dict | None = None,
         await db.cmt_receipt_lines.update_one(
             {"id": s["receipt_line_id"]},
             {"$set": {"short_status": STATUS_CANCELLED, "qty_short": 0}})
+    try:
+        await refresh_cmt_payment_variance(db, s.get("receipt_id"))
+    except Exception:  # noqa: BLE001
+        logger.exception("segarkan selisih tagihan CMT gagal (%s)", s.get("short_number"))
     return await db[CMT_SHORT].find_one({"id": short_id}, {"_id": 0})
 
 
@@ -408,6 +500,16 @@ async def resolve_cmt_short_manual(db, short_id: str, *, resolution: str, notes:
                       body=body, source_type=CMT_SHORT, source_id=short_id,
                       source_ref=s.get("short_number"),
                       meta={"short_number": s.get("short_number"), "resolution": resolution})
+    # 2026-11-02 (K17 butir 6): docstring di atas berjanji Keuangan memprosesnya — dulu
+    # notifikasi hanya ke vendor. Sekarang tagihan penerimaannya DITANDAI + Keuangan diberi tahu.
+    try:
+        await flag_cmt_payment_variance(
+            db, s.get("receipt_id"), event_type=f"short_{resolution}", actor=actor, qty=open_qty,
+            reason=(f"selisih kirim {s.get('short_number')} {open_qty} pcs {s.get('sku') or ''} "
+                    f"diselesaikan: {CMT_RESOLUTIONS[resolution]}"
+                    + (f" ({notes})" if notes else "")))
+    except Exception:  # noqa: BLE001
+        logger.exception("penandaan tagihan CMT untuk selisih %s gagal", s.get("short_number"))
     return await db[CMT_SHORT].find_one({"id": short_id}, {"_id": 0})
 
 
@@ -472,7 +574,7 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
     doc = {
         "id": _id(),
         "short_number": await _number(db, BUYER_SHORT, "SEL-BYR-"),
-        "short_date": _now()[:10],
+        "short_date": wib_date_str(),
         "shipment_id": shipment.get("id"),
         "shipment_number": shipment.get("shipment_number"),
         "shipment_item_id": item.get("id"),
@@ -516,20 +618,37 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
         "$push": {"edit_history": entry}})
 
     # 3. barang belum sampai kembali ke stok FG (kewajiban DA untuk dikirim ulang)
+    # 2026-11-02 (K17 butir 3): hanya bila baris ini MEMANG mengeluarkan stok (serah terima
+    # PO internal tidak memotong stok ⇒ mengembalikan stok = stok fantom), dan
+    # `fg_issued_qty` ikut turun supaya hapus/koreksi SJ tidak mengembalikan stok dua kali.
     try:
-        mat = await qled.resolve_fg_material(db, sku=doc["sku"])
+        mat = (await qled.resolve_fg_material(db, material_id=item.get("fg_material_id", ""),
+                                              sku=doc["sku"])
+               if item.get("fg_issued_at") else None)
         if mat:
+            await db.buyer_shipment_items.update_one(
+                {"id": item["id"]},
+                {"$set": {"fg_issued_qty": max(0, _i(item.get("fg_issued_qty")) - short_qty)}})
+            # 2026-11-02 (F1): barang yang belum sampai kembali ke stok dengan biaya saat ia
+            # keluar (jejak FIFO baris SJ ini), bukan lapisan Rp 0 yang menurunkan rata-rata HPP.
+            exit_cost = await qled.exit_cost_of(db, material_id=mat["id"],
+                                                shipment_item_id=item.get("id") or "",
+                                                sku=mat.get("code", doc["sku"]))
             posted = await qled.post_fg_accepted(
                 db, material_id=mat["id"], qty=short_qty,
                 ref={"source": "buyer_short_reopen", "short_id": doc["id"],
                      "short_number": doc["short_number"],
                      "shipment_id": doc["shipment_id"],
                      "shipment_number": doc["shipment_number"],
+                     "shipment_item_id": item.get("id") or "",
                      "po_id": po_id, "po_number": po_number},
                 actor=actor,
                 meta={"material_code": mat.get("code", doc["sku"]),
                       "material_name": mat.get("name", ""), "unit": "pcs",
-                      "type": "finished_goods"})
+                      "type": "finished_goods"},
+                exit_cost=exit_cost,
+                # K14: barang PO maklon tidak membentuk lapisan biaya DA (juga saat kembali)
+                skip_cost_layer=(shipment.get("business_type") == "maklon"))
             await db.rahaza_fg_movements.insert_one({
                 "id": _id(), "sku_code": doc["sku"], "movement_type": "IN",
                 "qty": short_qty, "source": "buyer_short_reopen",
@@ -561,8 +680,14 @@ async def record_buyer_short(db, *, shipment: dict, item: dict, qty_shipped: int
 
 async def resolve_buyer_shorts_on_dispatch(db, *, po_item_id: str = "", qty: int = 0,
                                            shipment: dict | None = None,
-                                           actor: dict | None = None) -> dict:
-    """Dispatch baru untuk item yang sama menutup selisih buyer (kirim ulang)."""
+                                           actor: dict | None = None,
+                                           shipment_item_id: str = "") -> dict:
+    """Dispatch baru untuk item yang sama menutup selisih buyer (kirim ulang).
+
+    2026-11-02 (K17 butir 3): penutupan DITAUTKAN ke baris SJ penutupnya
+    (`resolution_links[]`) supaya hapus/koreksi SJ itu MEMBUKA KEMBALI selisihnya
+    (dulu SEL-BYR tetap `resolved` walau SJ kirim ulangnya sudah dihapus — w3 S10b).
+    """
     remaining = _i(qty)
     out = {"resolved": 0, "shorts": []}
     if remaining <= 0 or not po_item_id:
@@ -590,10 +715,220 @@ async def resolve_buyer_shorts_on_dispatch(db, *, po_item_id: str = "", qty: int
             "$push": {"history": {"at": _now(), "by": (actor or {}).get("name", "sistem"),
                                   "action": "resolve_reship", "qty": take,
                                   "shipment_number": (shipment or {}).get("shipment_number", ""),
-                                  "reason": "dikirim ulang"}}})
+                                  "reason": "dikirim ulang"},
+                      "resolution_links": {"shipment_id": (shipment or {}).get("id", ""),
+                                      "shipment_number": (shipment or {}).get("shipment_number", ""),
+                                      "shipment_item_id": shipment_item_id, "qty": take,
+                                      "at": _now()}}})
         out["resolved"] += take
         out["shorts"].append({"short_number": s.get("short_number"), "qty": take})
         remaining -= take
+    return out
+
+
+async def reopen_buyer_shorts_for_item(db, *, shipment_item_id: str, qty: int | None = None,
+                                       actor: dict | None = None, reason: str = "") -> dict:
+    """Buka kembali selisih buyer yang DITUTUP oleh baris SJ `shipment_item_id`.
+
+    `qty=None` = seluruh penutupan baris itu (SJ dihapus); angka = sebagian (qty dikirim
+    dikoreksi turun). Selisih terbaru dibuka lebih dulu.
+    """
+    out = {"reopened": 0, "shorts": []}
+    if not shipment_item_id:
+        return out
+    left = None if qty is None else _i(qty)
+    shorts = await db[BUYER_SHORT].find(
+        {"resolution_links": {"$exists": True}, "status": {"$ne": STATUS_CANCELLED}}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    shorts = [s for s in shorts
+              if any(x.get("shipment_item_id") == shipment_item_id for x in (s.get("resolution_links") or []))]
+    for s in shorts:
+        if left is not None and left <= 0:
+            break
+        links = list(s.get("resolution_links") or [])
+        by_item = sum(_i(x.get("qty")) for x in links if x.get("shipment_item_id") == shipment_item_id)
+        take = by_item if left is None else min(by_item, left)
+        if take <= 0:
+            continue
+        # kurangi tautan baris ini sebanyak `take`
+        rest, new_links = take, []
+        for x in links:
+            if rest > 0 and x.get("shipment_item_id") == shipment_item_id:
+                cut = min(rest, _i(x.get("qty")))
+                rest -= cut
+                if _i(x.get("qty")) - cut > 0:
+                    new_links.append({**x, "qty": _i(x.get("qty")) - cut})
+                continue
+            new_links.append(x)
+        await db[BUYER_SHORT].update_one({"id": s["id"]}, {
+            "$inc": {"qty_resolved": -take},
+            "$set": {"status": STATUS_OPEN, "resolution": "", "resolved_at": "", "resolved_by": "",
+                     "resolution_links": new_links, "updated_at": _now()},
+            "$push": {"history": {"at": _now(), "by": (actor or {}).get("name", "sistem"),
+                                  "action": "reopen", "qty": take,
+                                  "reason": reason or "pengiriman ulang dibatalkan/dikoreksi"}}})
+        out["reopened"] += take
+        out["shorts"].append({"short_number": s.get("short_number"), "qty": take})
+        if left is not None:
+            left -= take
+    return out
+
+
+async def _stock_back(db, item: dict, qty: int, ref: dict, actor: dict | None,
+                      maklon: bool = False) -> int:
+    """Barang yang tidak jadi sampai kembali ke stok FG (biaya = saat ia keluar)."""
+    from core import production_qty_ledger as qled
+    if qty <= 0 or not item.get("fg_issued_at"):
+        return 0
+    mat = await qled.resolve_fg_material(db, material_id=item.get("fg_material_id", ""),
+                                         sku=item.get("sku", ""))
+    if not mat:
+        return 0
+    exit_cost = await qled.exit_cost_of(db, material_id=mat["id"], shipment_item_id=item.get("id") or "",
+                                        sku=mat.get("code", ""))
+    posted = await qled.post_fg_accepted(
+        db, material_id=mat["id"], qty=qty, ref=ref, actor=actor,
+        meta={"material_code": mat.get("code", ""), "unit": "pcs", "type": "finished_goods"},
+        exit_cost=exit_cost, skip_cost_layer=maklon)
+    await db.rahaza_fg_movements.insert_one({
+        "id": _id(), "sku_code": item.get("sku", ""), "movement_type": "IN", "qty": qty,
+        "source": ref.get("source"), "ref_id": ref.get("short_id") or item.get("shipment_id"),
+        "ref_number": ref.get("short_number") or ref.get("shipment_number", ""),
+        "material_id": mat["id"], "location_id": posted["location_id"],
+        "notes": ref.get("notes", ""), "created_by": (actor or {}).get("name", "sistem"),
+        "created_at": _now()})
+    await db.buyer_shipment_items.update_one(
+        {"id": item["id"]}, {"$inc": {"fg_issued_qty": -qty}})
+    return qty
+
+
+async def _stock_out_again(db, item: dict, qty: int, ref: dict, actor: dict | None,
+                           maklon: bool = False) -> int:
+    """Selisih dibatalkan (barang ternyata sampai) → stok yang tadi dikembalikan keluar lagi."""
+    from core import production_qty_ledger as qled
+    if qty <= 0 or not item.get("fg_issued_at"):
+        return 0
+    mat = await qled.resolve_fg_material(db, material_id=item.get("fg_material_id", ""),
+                                         sku=item.get("sku", ""))
+    if not mat:
+        return 0
+    await qled.issue_fg(db, material_id=mat["id"], qty=qty, sku=item.get("sku", ""), ref=ref, actor=actor,
+                        skip_cost=maklon)
+    await db.rahaza_fg_movements.insert_one({
+        "id": _id(), "sku_code": item.get("sku", ""), "movement_type": "OUT", "qty": qty,
+        "source": ref.get("source"), "ref_id": ref.get("short_id") or item.get("shipment_id"),
+        "ref_number": ref.get("short_number") or "", "material_id": mat["id"],
+        "notes": ref.get("notes", ""), "created_by": (actor or {}).get("name", "sistem"),
+        "created_at": _now()})
+    await db.buyer_shipment_items.update_one({"id": item["id"]}, {"$inc": {"fg_issued_qty": qty}})
+    return qty
+
+
+class BuyerReceiptError(ValueError):
+    """Koreksi qty diterima buyer ditolak (pesan siap tampil)."""
+
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+async def apply_buyer_receipt(db, *, shipment: dict, item: dict, new_received: int,
+                              actor: dict | None = None, reason: str = "") -> dict:
+    """K17 butir 3 — qty diterima buyer dicatat / dikoreksi DUA ARAH.
+
+    Aturan:
+      · diterima ≤ dikirim (klaim asli SJ). Dulu 7 untuk kirim 5 diterima (w3 S11b).
+      · TURUN  → selisih baru (atau selisih terbuka baris ini diperbesar), barang yang belum
+                 sampai kembali ke stok, dokumen SJ = qty diterima.
+      · NAIK   → selisih terbuka baris ini dikurangi/dibatalkan, stok yang tadi dikembalikan
+                 keluar lagi, dokumen SJ naik lagi. Dulu `qty_received` 10 > `qty_shipped` 8,
+                 SEL-BYR tetap terbuka dan stok +2 fantom (w3 S12b).
+    Caller tetap menulis `qty_received` + riwayatnya.
+    """
+    new_received = _i(new_received)
+    cur = _i(item.get("qty_shipped"))
+    claimed = _i(item.get("qty_shipped_claimed")) or cur
+    if new_received < 0:
+        raise BuyerReceiptError("qty_received tidak boleh negatif")
+    if new_received > claimed:
+        raise BuyerReceiptError(
+            f"Qty diterima ({new_received}) melebihi qty dikirim pada surat jalan ini "
+            f"({claimed} pcs). Buyer tidak mungkin menerima lebih dari yang dikirim — periksa "
+            f"angkanya, atau buat pengiriman baru bila memang ada barang tambahan.")
+    out = {"buyer_short": None, "short_extended": 0, "short_cancelled": 0,
+           "stock_returned": 0, "stock_reissued": 0}
+    if new_received == cur:
+        return out
+    open_s = await db[BUYER_SHORT].find_one(
+        {"shipment_item_id": item["id"], "status": STATUS_OPEN}, {"_id": 0})
+    who = (actor or {}).get("name", "sistem")
+    if new_received < cur:
+        delta = cur - new_received
+        if not open_s:
+            out["buyer_short"] = await record_buyer_short(
+                db, shipment=shipment, item=item, qty_shipped=cur, qty_received=new_received,
+                actor=actor, reason=reason)
+            return out
+        await db[BUYER_SHORT].update_one({"id": open_s["id"]}, {
+            "$inc": {"qty_short": delta},
+            "$set": {"qty_received": new_received, "updated_at": _now()},
+            "$push": {"history": {"at": _now(), "by": who, "action": "extend", "qty": delta,
+                                  "reason": reason or "qty diterima buyer dikoreksi turun"}}})
+        await db.buyer_shipment_items.update_one({"id": item["id"]}, {
+            "$set": {"qty_shipped": new_received, "updated_at": _now()},
+            "$inc": {"qty_short_open": delta},
+            "$push": {"edit_history": {"old_qty": cur, "new_qty": new_received, "edited_by": who,
+                                       "edited_at": _now(), "source": "buyer_receipt_variance",
+                                       "reason": f"selisih {open_s.get('short_number')} +{delta} pcs"}}})
+        out["short_extended"] = delta
+        try:
+            out["stock_returned"] = await _stock_back(db, item, delta, {
+                "source": "buyer_short_reopen", "short_id": open_s["id"],
+                "short_number": open_s.get("short_number"), "shipment_id": shipment.get("id"),
+                "shipment_item_id": item["id"],
+                "notes": f"Selisih buyer {open_s.get('short_number')} bertambah {delta} pcs"}, actor,
+                maklon=shipment.get("business_type") == "maklon")
+        except Exception:  # noqa: BLE001
+            logger.exception("pengembalian stok selisih buyer %s gagal", open_s.get("short_number"))
+        out["buyer_short"] = await db[BUYER_SHORT].find_one({"id": open_s["id"]}, {"_id": 0})
+        return out
+
+    need = new_received - cur
+    open_qty = max(0, _i((open_s or {}).get("qty_short")) - _i((open_s or {}).get("qty_resolved")))
+    if need > open_qty:
+        raise BuyerReceiptError(
+            f"Koreksi naik qty diterima maksimal {cur + open_qty} pcs: selisih buyer baris ini "
+            + (f"yang masih terbuka hanya {open_qty} pcs" if open_s else "tidak ada yang terbuka")
+            + " (selisih yang sudah dikirim ulang / diputuskan Keuangan tidak bisa dibatalkan dari sini).",
+            409)
+    left_short = _i(open_s.get("qty_short")) - need
+    fully = left_short <= _i(open_s.get("qty_resolved"))
+    st = (STATUS_CANCELLED if _i(open_s.get("qty_resolved")) == 0 else STATUS_RESOLVED) if fully else STATUS_OPEN
+    await db[BUYER_SHORT].update_one({"id": open_s["id"]}, {
+        "$set": {"qty_short": max(0, left_short), "qty_received": new_received, "status": st,
+                 "resolution": ("dibatalkan" if st == STATUS_CANCELLED else open_s.get("resolution", "")),
+                 "resolution_notes": (reason or "qty diterima dikoreksi naik — barang ternyata sampai")
+                 if st == STATUS_CANCELLED else open_s.get("resolution_notes", ""),
+                 "updated_at": _now()},
+        "$push": {"history": {"at": _now(), "by": who, "action": "cancel_part", "qty": need,
+                              "reason": reason or "qty diterima buyer dikoreksi naik"}}})
+    await db.buyer_shipment_items.update_one({"id": item["id"]}, {
+        "$set": {"qty_shipped": new_received, "updated_at": _now()},
+        "$inc": {"qty_short_open": -need},
+        "$push": {"edit_history": {"old_qty": cur, "new_qty": new_received, "edited_by": who,
+                                   "edited_at": _now(), "source": "buyer_receipt_variance",
+                                   "reason": f"selisih {open_s.get('short_number')} −{need} pcs (koreksi naik)"}}})
+    out["short_cancelled"] = need
+    try:
+        out["stock_reissued"] = await _stock_out_again(db, item, need, {
+            "source": "buyer_short_cancel", "short_id": open_s["id"],
+            "short_number": open_s.get("short_number"), "shipment_id": shipment.get("id"),
+            "shipment_item_id": item["id"],
+            "notes": f"Selisih buyer {open_s.get('short_number')} dibatalkan {need} pcs (barang sampai)"},
+            actor, maklon=shipment.get("business_type") == "maklon")
+    except Exception:  # noqa: BLE001
+        logger.exception("stok keluar ulang selisih buyer %s gagal", open_s.get("short_number"))
+    out["buyer_short"] = await db[BUYER_SHORT].find_one({"id": open_s["id"]}, {"_id": 0})
     return out
 
 

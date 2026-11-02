@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 
 from services.management_alerts import _management_user_ids, get_alert_config, MANAGEMENT_ROLES
 from utils.notif_unified import notif_insert
+from utils.waktu import to_wib, wib_date_str
 
 logger = logging.getLogger(__name__)
 
@@ -105,11 +106,11 @@ async def build_rnd_decision_report(db, *, days: int = 7, stale_days: int = None
     } for x in samples if (_dt(x.get("approved_at")) or since) >= since]
     sample_decided.sort(key=lambda r: r["decided_at"], reverse=True)
 
-    iso = now.isocalendar()
+    iso = to_wib(now).isocalendar()   # pekan & tanggal periode menurut WIB (No.54a)
     return {
         "generated_at": now.isoformat(),
-        "period_from": since.date().isoformat(),
-        "period_to": now.date().isoformat(),
+        "period_from": wib_date_str(since),
+        "period_to": wib_date_str(now),
         "days": int(days),
         "stale_days": stale,
         "week_key": f"{iso[0]}-W{iso[1]:02d}",

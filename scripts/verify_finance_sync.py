@@ -5,7 +5,8 @@
   S2  Tiap rekening aktif punya gl_account_code yang ada, aktif, postable, dan berada di bawah Kas/Bank
   S3  Auto Akun cmt_vendor → vendor_partners, induk 2-1110; profil posting cmt_ap_invoice.credit_ap = 2-1110
   S4  Semua vendor CMT aktif punya sub-ledger 2-1110-<kode>; klien maklon → 1-1305-<kode>; toko → 1-1303-<kode>
-  S5  Tiap toko aktif punya coa_revenue_code (akun aktif postable di 4-11xx) & baris Peta Akun Channel aktif (kunci = kode toko)
+  S5  Tiap toko aktif punya coa_revenue_code SENDIRI (akun aktif postable di kelompok platformnya, bukan "Lain-lain",
+      tidak dipakai toko lain). 2026-11-02: baris Peta Akun Channel tidak lagi diwajibkan (D3)
   S6  Semua kode di profil posting & peta channel aktif menunjuk akun aktif non-header
   S7  Tidak ada nama akun kas/bank aktif kembar; tidak ada sub-ledger CMT di bawah 2-1100 untuk vendor_partners
   S8  API: Tambah rekening dgn gl_account_code yang sudah tertaut → 409; gl_account_code asal → 400; sinkron ulang idempoten (0 perubahan)
@@ -19,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(1, str(ROOT / "backend"))  # 2026-11-02: aturan kelompok pendapatan toko (core.finance_sync)
 from lib.gr_common import db_handle, http, login  # noqa: E402
 
 G, R, X = "\033[92m", "\033[91m", "\033[0m"
@@ -29,6 +31,33 @@ FAIL: list[str] = []
 def check(k, cond, m, d=""):
     (PASS if cond else FAIL).append(k)
     print(f"  {G if cond else R}{'✓' if cond else '✗'}{X} {k} {m}" + (f" · {d}" if d else ""))
+
+
+def s5_store_revenue_issues(stores: list, act: dict, channel_maps: dict) -> tuple[list, list]:
+    """S5 (murni, bisa diuji tanpa DB) → (toko bermasalah, baris peta lama yang bertentangan).
+
+    2026-11-02 (D3/No.10b): Peta Akun Channel tidak lagi dibuat untuk toko (owner: "Peta Akun
+    Channel seharusnya tidak ada"); toko memakai akun pendapatan SENDIRI di master toko. Aturan
+    baru: akun pendapatan toko aktif & postable, di kelompok platformnya (4-111x Shopee ·
+    4-112x TikTok · 4-113x Tokopedia), bukan akun penampung "Lain-lain"/sub-total, dan tidak
+    dipakai bersama toko lain. Baris peta lama TIDAK diwajibkan; yang bertentangan hanya dilaporkan."""
+    from core.finance_sync import revenue_group_for
+    bad, owner_of, conflict = [], {}, []
+    for s in stores:
+        sc, rc = s.get("account_code"), s.get("coa_revenue_code")
+        group = revenue_group_for(s.get("platform"))
+        a = act.get(rc) or {}
+        if (not group or not rc or not a or a.get("is_group") or not rc.startswith(group[:5])
+                or rc == group or "lain" in (a.get("name") or "").lower()):
+            bad.append(f"{sc}:{rc or '-'}")
+        elif rc in owner_of:
+            bad.append(f"{sc}:{rc} (dipakai juga oleh {owner_of[rc]})")
+        else:
+            owner_of[rc] = sc
+        cm = channel_maps.get(sc)
+        if cm and rc and cm.get("credit_revenue") != rc:
+            conflict.append(f"{sc}:{cm.get('credit_revenue')}≠{rc}")
+    return bad, conflict
 
 
 def main() -> int:
@@ -58,9 +87,15 @@ def main() -> int:
 
     st = db.rahaza_coa_auto_settings.find_one({"id": "default"}, {"_id": 0}) or {}
     cv = (st.get("entity_types") or {}).get("cmt_vendor") or {}
-    prof = (db.rahaza_posting_profiles.find_one({"event_type": "cmt_ap_invoice"}, {"_id": 0}) or {}).get("mapping") or {}
-    check("S3", cv.get("collection") == "vendor_partners" and cv.get("parent_code") == "2-1110" and prof.get("credit_ap") == "2-1110",
-          "auto akun CMT → vendor_partners/2-1110 & profil cmt_ap_invoice.credit_ap 2-1110", f"{cv.get('collection')} {cv.get('parent_code')} {prof.get('credit_ap')}")
+    prof_doc = db.rahaza_posting_profiles.find_one({"event_type": "cmt_ap_invoice"}, {"_id": 0}) or {}
+    prof = prof_doc.get("mapping") or {}
+    # 2026-11-02: sinkron tidak lagi menimpa credit_ap pilihan Finance (penanda `user_roles`);
+    # nilai pilihan pengguna sah asalkan akun hutang aktif & postable.
+    ap = prof.get("credit_ap")
+    ap_ok = ap == "2-1110" or ("credit_ap" in (prof_doc.get("user_roles") or [])
+                               and ap in act and not act[ap].get("is_group") and act[ap].get("type") == "LIABILITY")
+    check("S3", cv.get("collection") == "vendor_partners" and cv.get("parent_code") == "2-1110" and ap_ok,
+          "auto akun CMT → vendor_partners/2-1110 & profil cmt_ap_invoice.credit_ap 2-1110 (atau pilihan Finance)", f"{cv.get('collection')} {cv.get('parent_code')} {ap}")
 
     def missing(coll, field, prefix):
         return [e.get("code") or e.get("account_code") for e in db[coll].find({"active": {"$ne": False}}, {"_id": 0})
@@ -69,13 +104,10 @@ def main() -> int:
     check("S4", not (m1 or m2 or m3), "sub-ledger vendor CMT / klien maklon / toko lengkap", f"cmt={m1[:3]} maklon={m2[:3]} toko={m3[:3]}")
 
     stores = list(db.marketing_platform_accounts.find({"active": {"$ne": False}}, {"_id": 0}))
-    bad5 = []
-    for s in stores:
-        rc = s.get("coa_revenue_code")
-        cm = db.rahaza_channel_gl_mapping.find_one({"channel_key": s.get("account_code"), "active": True}, {"_id": 0})
-        if not rc or rc not in act or act[rc].get("is_group") or not rc.startswith("4-11") or not cm or cm.get("credit_revenue") != rc:
-            bad5.append(s.get("account_code"))
-    check("S5", not bad5 and stores, "tiap toko punya akun pendapatan 4-11xx + baris Peta Akun Channel", f"toko={len(stores)} buruk={bad5}")
+    maps = {cm.get("channel_key"): cm for cm in db.rahaza_channel_gl_mapping.find({"active": True}, {"_id": 0})}
+    bad5, legacy_conflict = s5_store_revenue_issues(stores, act, maps)
+    check("S5", not bad5 and stores, "tiap toko punya akun pendapatan SENDIRI di kelompok platformnya (tanpa Peta Akun Channel)",
+          f"toko={len(stores)} buruk={bad5[:5]}" + (f" · peta lama bertentangan (info)={legacy_conflict[:3]}" if legacy_conflict else ""))
 
     bad6 = []
     for p in db.rahaza_posting_profiles.find({}, {"_id": 0, "event_type": 1, "mapping": 1}):

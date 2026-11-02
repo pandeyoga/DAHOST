@@ -24,7 +24,7 @@ Identitas & otorisasi memakai SSOT `utils/employee_identity.py`
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -38,20 +38,17 @@ from routes.rahaza_attendance_sessions import (APPROVAL_APPROVED,
                                                recompute_session_totals,
                                                session_approval)
 from utils.employee_identity import is_hr, resolve_my_employee
+from utils.waktu import today_wib, WIB
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-hr"])
 log = logging.getLogger(__name__)
-
-# Zona waktu operasional (WIB) — jam pada laporan ditampilkan waktu lokal.
-WIB = timezone(timedelta(hours=7))
-
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
 def _today_iso() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _require_approver(user: dict) -> None:

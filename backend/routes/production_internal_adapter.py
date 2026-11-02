@@ -27,6 +27,7 @@ from routes.production_rbac import deny_klien
 from routes.rahaza_bom import _is_kglike
 from core import bom_uom  # 2026-08-02: konversi satuan baris BOM → satuan dasar
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
+from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["production-internal-adapter"])
@@ -63,7 +64,9 @@ async def _active_bom(db, model_id, size_id, color=None):
     base = {'model_id': model_id, 'size_id': size_id, 'is_active': True, 'active': {'$ne': False}}
     color = (color or '').strip()
     if color:
-        specific = await db.rahaza_boms.find_one({**base, 'color': color}, {'_id': 0})
+        # 2026-11-02 (butir 10): cocok ke NAMA atau KODE warna (BOM menyimpan keduanya)
+        specific = await db.rahaza_boms.find_one(
+            {**base, '$or': [{'color': color}, {'color_code': color}]}, {'_id': 0})
         if specific:
             return specific
     general = await db.rahaza_boms.find_one(
@@ -256,7 +259,9 @@ async def create_mi_draft_from_job(db, job: dict, user: dict, default_loc=None):
         if not model_id or not size_id:
             missing_bom.append(f"item {ji.get('sku','?')}: tanpa model_id/size_id")
             continue
-        bom = await _active_bom(db, model_id, size_id)
+        # 2026-11-02 (butir 10, F1b): BOM per WARNA varian (dulu tanpa warna ⇒ BOM warna lain)
+        bom = await _active_bom(db, model_id, size_id,
+                                ji.get('color') or pi.get('color') or ji.get('color_code') or pi.get('color_code'))
         if not bom:
             missing_bom.append(f"item {ji.get('sku','?')}: BOM aktif tidak ditemukan")
             continue
@@ -380,7 +385,7 @@ async def insert_wip_mirror(db, job, job_item, qty, ctx, user, progress_id=None)
     emp, proc = ctx['employee'], ctx['process']
     ev = {
         'id': new_id(),
-        'event_date': now().date().isoformat(),
+        'event_date': wib_date_str(),
         'timestamp': now(),
         'line_id': None, 'line_assignment_id': None,
         'process_id': proc['id'], 'process_code': proc.get('code'),

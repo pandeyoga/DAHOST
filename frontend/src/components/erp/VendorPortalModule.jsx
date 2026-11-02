@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from './EmptyState';
+import { todayWIB } from '@/lib/waktu';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -23,7 +24,6 @@ function fmtTs(ts) {
   if (!ts) return '—';
   return new Date(ts).toLocaleString('id-ID', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
 }
-function todayIso() { return new Date().toISOString().slice(0,10); }
 
 const STATUS_LABEL = { open: 'Belum Mulai', in_progress: 'Sedang Berjalan', done: 'Selesai', cancelled: 'Dibatalkan' };
 const STATUS_COLOR = {
@@ -103,7 +103,7 @@ function JobCard({ job, onClick }) {
 function ProgressForm({ job, token, onSuccess }) {
   const [qty,    setQty]    = useState('');
   const [reject, setReject] = useState('');
-  const [date,   setDate]   = useState(todayIso());
+  const [date,   setDate]   = useState(todayWIB);
   const [notes,  setNotes]  = useState('');
   const [saving, setSaving] = useState(false);
   const [err,    setErr]    = useState('');
@@ -148,7 +148,7 @@ function ProgressForm({ job, token, onSuccess }) {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
               <label className="text-[11px] font-semibold text-muted-foreground uppercase">Tanggal</label>
-              <input type="date" value={date} onChange={e=>setDate(e.target.value)} max={todayIso()}
+              <input type="date" value={date} onChange={e=>setDate(e.target.value)} max={todayWIB()}
                 data-testid="prog-date"
                 className="w-full px-3 py-2 rounded-lg bg-foreground/[0.08] border border-foreground/[0.15] text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50" />
             </div>
@@ -192,7 +192,7 @@ function ProgressForm({ job, token, onSuccess }) {
 function ProgressHistory({ reports, jobId, token, onDelete }) {
   const [deleting, setDeleting] = useState(null);
   const headers = { Authorization: `Bearer ${token}` };
-  const today   = todayIso();
+  const today   = todayWIB();
 
   async function handleDelete(reportId) {
     if (!window.confirm('Hapus laporan ini?')) return;

@@ -137,7 +137,8 @@ class TestBankRecon:
 
 
 class TestFulfillmentCogsFifo:
-    def test_00_post_cogs_shipment_uses_fifo_layers(self):
+    # 2026-11-02 (owner No.26a): nilai keluar = qty × WAC (lapisan tunggal 40.000 → angka sama), basis 'wac'
+    def test_00_post_cogs_shipment_uses_wac(self):
         from motor.motor_asyncio import AsyncIOMotorClient
         from routes.rahaza_posting import post_cogs_shipment
         from core import fg_cost_layers as fcl
@@ -158,11 +159,11 @@ class TestFulfillmentCogsFifo:
                                           {"id": "qa", "name": "QA"})
             return r1, r2, r3
         r1, r2, r3 = asyncio.run(run())
-        assert r1["ok"] and r1["basis"] == "fifo_batch" and r1["total_cogs"] == 160000 and r1["uncosted_qty"] == 0
+        assert r1["ok"] and r1["basis"] == "wac" and r1["total_cogs"] == 160000 and r1["uncosted_qty"] == 0
         je = db.rahaza_journal_entries.find_one({"id": r1["je_id"]}, {"_id": 0})
         codes = {l["account_code"]: (l["debit"], l["credit"]) for l in je["lines"]}
         assert codes["1-1404"] == (0, 160000) and codes["5-1000"][0] == 100000 and codes["5-2000"][0] == 48000
-        assert "biaya batch FIFO" in je["memo"]
+        assert "WAC" in je["memo"]
         assert r2.get("already_posted")
         assert r3["ok"] is False and r3["reason"] == "zero_cogs"
         assert db.fg_cost_layers.find_one({"id": f"ly-{SFX}"})["qty_remaining"] == 6

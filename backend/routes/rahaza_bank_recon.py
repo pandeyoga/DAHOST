@@ -21,11 +21,12 @@ Adjustment Types:
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 import uuid
 import logging
 from core.roles import FINANCE_ROLES  # FIN-02
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/finance", tags=["rahaza-bank-recon"])
@@ -100,7 +101,7 @@ async def create_bank_adjustment(request: Request):
     if not bank_account:
         raise HTTPException(404, "Bank account tidak ditemukan")
     
-    adjustment_date = body.get("adjustment_date", date.today().isoformat())
+    adjustment_date = body.get("adjustment_date", today_wib().isoformat())
     
     doc = {
         "id": _uid(),

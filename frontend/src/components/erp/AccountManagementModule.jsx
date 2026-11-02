@@ -82,8 +82,12 @@ const BASIS_SHORT = {
 const platformColors = {
   shopee: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
   tiktokshop: 'bg-pink-500/10 text-pink-400 border-pink-500/30',
+  // 2026-11-02 (No.10) — 3 toko seed tersimpan `tiktok`; platform yang sama dengan `tiktokshop`.
+  tiktok: 'bg-pink-500/10 text-pink-400 border-pink-500/30',
   tokopedia: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
 };
+// 2026-11-02 (No.10b) — nilai pemilih "buat akun pendapatan sendiri untuk toko ini".
+const AUTO_REVENUE = '__auto__';
 
 const statusColors = {
   active: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30',
@@ -93,7 +97,8 @@ const statusColors = {
 
 const statusLabel = (s) => (STATUSES.find(x => x.value === s)?.label || s || '—');
 const groupLabel = (g) => (GROUPS.find(x => x.value === g)?.label || (g || '—'));
-const platformLabel = (p) => (PLATFORMS.find(x => x.value === p)?.label || p || '—');
+const platformLabel = (p) => (PLATFORMS.find(x => x.value === p)?.label
+  || (p === 'tiktok' ? 'TikTokShop' : p) || '—');
 
 /** Sel tabel untuk kode COA: kode (mono) + nama akun kecil di bawahnya. */
 function CoaCell({ code, name, testId, fallback }) {
@@ -214,7 +219,9 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         status: 'active',
         has_api_integration: false,
         pic_user_id: '',
-        coa_revenue_code: fallbackRevenue('shopee') || '',
+        // 2026-11-02 (No.10b) — toko baru otomatis dibuatkan akun pendapatan SENDIRI
+        // (bukan lagi diusulkan akun penampung "Lain-lain").
+        coa_revenue_code: AUTO_REVENUE,
         coa_cash_code: coa.default_cash || '',
         coa_receivable_code: coa.default_receivable || '',
         revenue_basis: 'produk_setelah_diskon',
@@ -228,11 +235,14 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
   /** Ganti platform saat buat baru → sarankan akun pendapatan platform tsb. */
   const handlePlatformChange = (v) => {
     setForm(f => {
-      const wasSuggested = !f.coa_revenue_code || f.coa_revenue_code === fallbackRevenue(f.platform);
+      // 2026-11-02 (No.10b) — mode otomatis tetap otomatis; akun pilihan lain
+      // dikembalikan ke otomatis karena belum tentu milik platform baru.
+      const keepManual = f.coa_revenue_code && f.coa_revenue_code !== AUTO_REVENUE
+        && f.coa_revenue_code !== fallbackRevenue(f.platform);
       return {
         ...f,
         platform: v,
-        coa_revenue_code: wasSuggested ? (fallbackRevenue(v) || '') : f.coa_revenue_code,
+        coa_revenue_code: keepManual ? f.coa_revenue_code : AUTO_REVENUE,
       };
     });
   };
@@ -272,7 +282,8 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         group: form.group,
         has_api_integration: form.has_api_integration,
         pic_user_id: form.pic_user_id || null,
-        coa_revenue_code: form.coa_revenue_code,
+        // AUTO_REVENUE ⇒ kosong ⇒ server membuat akun "Penjualan – <nama toko>".
+        coa_revenue_code: form.coa_revenue_code === AUTO_REVENUE ? null : form.coa_revenue_code,
         coa_receivable_code: form.coa_receivable_code || null,
         revenue_basis: form.revenue_basis,
         platform_warehouse_name: form.platform_warehouse_name.trim(),
@@ -301,9 +312,11 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
       if (!res.ok) throw new Error(body.detail || 'Gagal menyimpan akun');
 
       const saved = body.account || {};
-      if (!isEdit && saved.ar_account_code) {
+      if (!isEdit && (saved.ar_account_code || saved.coa_revenue_code)) {
         toast.success(
-          `Akun dibuat · akun COA piutang toko otomatis: ${saved.ar_account_code}`,
+          `Akun dibuat · piutang toko: ${saved.ar_account_code || '—'}`
+          + (saved.coa_revenue_source === 'auto_store'
+            ? ` · akun pendapatan toko baru: ${saved.coa_revenue_code}` : ''),
           { duration: 6000 },
         );
       } else {
@@ -326,7 +339,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
           <DialogDescription>
             {isEdit
               ? 'Perbarui identitas toko, PIC, dan tautan Finance (akun pendapatan · rekening pencairan · piutang).'
-              : 'Daftarkan toko marketplace. Akun COA piutang khusus toko ini dibuat otomatis (anak 1-220).'}
+              : 'Daftarkan toko marketplace. Akun piutang (anak 1-1303) dan akun pendapatan khusus toko ini dibuat otomatis.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -448,6 +461,14 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
                     <SelectValue placeholder="Pilih akun pendapatan..." />
                   </SelectTrigger>
                   <SelectContent className="max-h-72">
+                    {!isEdit && (
+                      <SelectGroup>
+                        <SelectLabel>Otomatis (disarankan)</SelectLabel>
+                        <SelectItem value={AUTO_REVENUE} data-testid="acc-coa-revenue-auto">
+                          Buat akun baru: Penjualan – {form.account_name.trim() || 'nama toko'}
+                        </SelectItem>
+                      </SelectGroup>
+                    )}
                     {revRecommended.length > 0 && (
                       <SelectGroup>
                         <SelectLabel>Disarankan untuk {platformLabel(form.platform)}</SelectLabel>
@@ -467,7 +488,9 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Omzet toko ini dibukukan ke akun tersebut (mis. 4-122 TikTok Outfit Boutique).
+                  {form.coa_revenue_code === AUTO_REVENUE
+                    ? `Akun pendapatan khusus toko ini dibuat otomatis di kelompok ${platformLabel(form.platform)} saat disimpan.`
+                    : 'Omzet toko ini dibukukan ke akun tersebut (mis. 4-1122 TikTok Outfit Boutique).'}
                 </p>
                 {revenueIsCatchAll && (
                   <p className="text-xs text-amber-500 mt-1 flex items-start gap-1" data-testid="acc-coa-revenue-catchall-hint">

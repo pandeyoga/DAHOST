@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Button } from '@/components/ui/button';
 import { Loader2, Upload } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { MoneyInput } from '@/components/ui/money-input';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -77,7 +78,7 @@ export function ImportPanel({ sessionId, headers, onDone }) {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2 items-end">
           <input type="date" data-testid="recon-txn-date" className={inputCls} value={form.txn_date} onChange={e => setForm(f => ({ ...f, txn_date: e.target.value }))} />
           <input data-testid="recon-txn-desc" className={inputCls} placeholder="Keterangan" value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
-          <input type="number" data-testid="recon-txn-amount" className={inputCls} placeholder="Nominal" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
+          <MoneyInput unstyled decimals={2} data-testid="recon-txn-amount" className={inputCls} placeholder="Nominal" value={form.amount} onChange={e => setForm(f => ({ ...f, amount: e.target.value }))} />
           <select data-testid="recon-txn-direction" className={inputCls + ' bg-background'} value={form.direction} onChange={e => setForm(f => ({ ...f, direction: e.target.value }))}>
             <option value="in">Masuk (kredit rekening)</option>
             <option value="out">Keluar (debit rekening)</option>

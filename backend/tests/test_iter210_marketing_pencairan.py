@@ -65,6 +65,13 @@ def _get_balance(hdr, account_id):
     return None
 
 
+def _ref_is(ref, number):
+    """2026-11-02: kunci jurnal pencairan/penarikan kini `<nomor>@<id dokumen>` (audit
+    K-1/K-2, dua toko boleh bernomor sama). Kunci lama (nomor mentah) tetap diterima."""
+    ref = ref or ""
+    return ref == number or ref.startswith(f"{number}@")
+
+
 # ---------- Tahap 1: Settlements ----------
 class TestStage1Settlement:
     settlement_id_str = f"{TAG}-{UNIQ}-S1"
@@ -116,7 +123,7 @@ class TestStage1Settlement:
         assert jr.status_code == 200, jr.text
         data = _unwrap(jr.json())
         entries = data if isinstance(data, list) else data.get("items", [])
-        entries = [e for e in entries if e.get("source_ref") == TestStage1Settlement.settlement_id_str]
+        entries = [e for e in entries if _ref_is(e.get("source_ref"), TestStage1Settlement.settlement_id_str)]
         assert entries, f"no journal for {TestStage1Settlement.settlement_id_str}"
         lines = entries[0].get("lines") or []
         assert lines, "no journal lines found"
@@ -181,7 +188,7 @@ class TestStage2Withdrawal:
         assert jr.status_code == 200, jr.text
         data = _unwrap(jr.json())
         entries = data if isinstance(data, list) else data.get("items", [])
-        entries = [e for e in entries if e.get("source_ref") == TestStage2Withdrawal.ref1]
+        entries = [e for e in entries if _ref_is(e.get("source_ref"), TestStage2Withdrawal.ref1)]
         assert entries, f"no journal for {TestStage2Withdrawal.ref1}"
         lines = entries[0].get("lines") or []
         assert lines, "no wd journal lines"

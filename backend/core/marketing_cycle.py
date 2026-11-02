@@ -53,10 +53,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from core import marketing_sales_shape as _shape
 from core import marketing_daily_rollup as _rollup
 from core import marketing_returns as _ret
+from utils.waktu import WIB, now_wib
 
 logger = logging.getLogger(__name__)
 
-WIB = timezone(timedelta(hours=7))
 
 ACCOUNTS = "marketing_platform_accounts"
 DAILY = "marketing_sales_data"
@@ -159,8 +159,8 @@ def empty_categories(default: float = 0.0) -> Dict[str, float]:
 
 
 def today_wib() -> datetime:
-    """Hari ini menurut jam dinding WIB — dasar `days_elapsed` & pace."""
-    return datetime.now(WIB)
+    """Hari ini menurut jam dinding WIB — dasar `days_elapsed` & pace (datetime aware; delegasi ke SSOT)."""
+    return now_wib()
 
 
 def month_progress(period: str, today: Optional[datetime] = None) -> Dict[str, Any]:

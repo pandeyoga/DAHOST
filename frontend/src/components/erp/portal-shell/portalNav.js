@@ -39,7 +39,7 @@ import {
   TrendingUp, FileSpreadsheet, Shirt, Users,
   KeyRound, History, Building2, FileCog, BookOpen, UserPlus, GraduationCap, Palette,
   // Production operational
-  LayoutGrid, ClipboardList, ClipboardSignature, Boxes,
+  LayoutGrid, ClipboardSignature, Boxes,
   Hammer, Activity, Siren, AlertTriangle, Truck, Tv2, Zap,
   ClipboardPen, Package, CalendarDays,
   // Production process stages
@@ -47,7 +47,7 @@ import {
   // Production master
   Workflow, Timer, Wrench, Factory, HardHat, Ruler, BookMarked,
   // Warehouse
-  Archive, PackageMinus, PackagePlus, ArrowRightLeft, MapPin, Sparkles, Lock, Award, Send,
+  Archive, PackageMinus, PackagePlus, ArrowRightLeft, MapPin, Sparkles, Lock, Award,
   // Finance — Accounting Core
   FolderTree, BookCheck, Scale, Book, CalendarRange, Settings2,
   FileText, Hourglass, Wallet,
@@ -190,6 +190,7 @@ export const PORTAL_NAV = {
   //       prod-progress        "Input Progress"  — progres masuk dari CMT/Portal Vendor
   //       prod-shift-handover  "Operan Shift"    — tidak relevan lagi
   //       prod-material-returns "Retur Material" — duplikasi (material diurus di Kirim Material CMT)
+  //         ↳ 2026-11-02 (K10): DIPASANG LAGI sebagai layar Retur Material (koreksi SJ yang bahannya sudah keluar).
   //       hr-ai-hub            "AI Actions"      — isinya hub AI SDM, bukan produksi
   //   - Data internal & maklon DIPISAH di modul yang dipakai bersama
   //     (business_type=internal): Production Jobs, Tracking Produksi, Laporan Variance,
@@ -228,6 +229,9 @@ export const PORTAL_NAV = {
           // LINTAS-portal memang diizinkan aturan IA (shortcut yang disengaja) —
           // isinya modul yang SAMA, bukan salinan kedua.
           { id: 'wh-material-issue',      label: 'Pengeluaran Material', icon: PackageMinus },
+          // 2026-11-02 (K10): Retur Material DIPASANG LAGI — satu-satunya jalur koreksi surat jalan
+          // material yang bahannya sudah keluar (hapus SJ dikunci; bahan kembali + jurnal balik).
+          { id: 'prod-material-returns',  label: 'Retur Material',      icon: RotateCcw },
           { id: 'da-cmt-receive',         label: 'Terima FG dari CMT',  icon: Truck },
           { id: 'cmt-permak',             label: 'Permak / Perbaikan',  icon: Wrench },
           { id: 'prod-shipments-buyer',   label: 'Serah Terima FG',     icon: PackageOpen },
@@ -323,6 +327,8 @@ export const PORTAL_NAV = {
         items: [
           { id: 'proc-3way-match',  label: 'Rekonsiliasi PO', icon: Scale },
           { id: 'proc-ap-invoices', label: 'Faktur Supplier', icon: ReceiptText },
+          // 2026-11-02 (K11): dokumen Retur Pembelian — pemilik Pengadaan (PurchaseReturnModule)
+          { id: 'proc-purchase-returns', label: 'Retur Pembelian', icon: RotateCcw },
         ],
       },
     ],
@@ -362,6 +368,9 @@ export const PORTAL_NAV = {
           { id: 'wms-fabric-rolls',      label: 'Roll Kain',         icon: Package },
           { id: 'wh-putaway',            label: 'Penyimpanan',       icon: ArrowRightLeft },
           { id: 'wh-quarantine',         label: 'Karantina QC',      icon: ShieldAlert },
+          // 2026-11-02 (K10): gudang MENERIMA retur material dari produksi (lokasi wajib) — pintasan
+          // lintas-portal ke modul yang SAMA dengan menu Produksi, bukan salinan.
+          { id: 'prod-material-returns', label: 'Retur Material',    icon: RotateCcw },
         ],
       },
       {
@@ -383,11 +392,15 @@ export const PORTAL_NAV = {
         label: 'OUTBOUND — PENGIRIMAN',
         items: [
           { id: 'wh-material-issue',  label: 'Pengeluaran Material', icon: PackageMinus },
-          { id: 'fulfillment',        label: 'Fulfillment',   icon: Send },
-          // Sesi #20 — gudang butuh pintu yang sama: kalau antrean Fulfillment
-          // menyebut "belum tertaut master", inilah tempat memperbaikinya.
+          // 2026-11-02 (K15, keputusan owner) — barang jadi marketplace keluar di-scan harian:
+          // stok & HPP (WAC) per scan, satu jurnal HPP per lembar saat Tutup Hari.
+          { id: 'wh-scan-out',        label: 'Scan Keluar Penjualan', icon: Barcode },
+          // 2026-11-02 (K6, keputusan owner) — 'Fulfillment' & 'Pick List' DILEPAS dari
+          // menu: pesanan marketplace dikirim lewat Seller Center (D4), order manual tidak
+          // lagi memesan stok, dan pesanan impor tidak masuk antrean. moduleId-nya tetap
+          // terdaftar di moduleRegistry ⇒ deep-link lama tetap hidup.
+          // Sesi #20 — Jembatan SKU tetap: tempat memperbaiki tautan SKU marketplace.
           { id: 'sku-bridge',         label: 'Jembatan SKU',  icon: Link2 },
-          { id: 'wh-picklist',        label: 'Pick List',     icon: ClipboardList },
           { id: 'wms-delivery-notes', label: 'Surat Jalan',   icon: FileText },
           { id: 'wh-returns',         label: 'Retur Fisik',   icon: RotateCcw },
         ],
@@ -483,10 +496,14 @@ export const PORTAL_NAV = {
       },
       {
         label: 'PENJUALAN & PENERIMAAN',
+        // 2026-11-02 (D3) — pintu 'Peta Akun Channel' (`fin-channel-gl`) DILEPAS dari
+        // menu atas keputusan owner: "Peta Akun Channel seharusnya tidak ada" (peta
+        // COA kedua). COA per toko ada di master toko (Marketing › Kelola Akun);
+        // penjualan non-marketplace lewat Portal Penjualan (profil `ar_invoice`).
+        // Modulnya tetap terdaftar (baca-saja) untuk deep-link lama.
         items: [
           { id: 'fin-marketplace-settlement', label: 'Saldo & Pencairan Marketplace', icon: Banknote },
           { id: 'fin-ar-360',                 label: 'Aging Piutang',         icon: Scale },
-          { id: 'fin-channel-gl',             label: 'Peta Akun Channel',     icon: Store },
         ],
       },
       {
@@ -498,6 +515,8 @@ export const PORTAL_NAV = {
           { id: 'fin-ap-aging',     label: 'Aging Hutang',            icon: Scale },
           { id: 'proc-ap-invoices', label: 'Faktur Supplier (Bahan)', icon: ReceiptText },
           { id: 'prod-cmt-billing', label: 'Invoice Vendor CMT',      icon: Banknote },
+          // 2026-11-02 (K11): Nota Debit diterbitkan Keuangan (DebitNoteModule)
+          { id: 'fin-debit-notes',  label: 'Nota Debit',              icon: ReceiptText },
         ],
       },
       {
@@ -714,7 +733,10 @@ export const PORTAL_NAV = {
       {
         label: 'KEUANGAN & ANALITIK',
         items: [
-          { id: 'maklon-billing',  label: 'Invoice',     icon: Banknote },
+          { id: 'maklon-billing',  label: 'Invoice Klien', icon: Banknote },
+          // 2026-11-02 (K16): tagihan vendor CMT PO maklon — layar yang SAMA dengan Produksi/
+          // Keuangan (ProductionCMTBillingModule, scope maklon dari portal), bukan duplikat.
+          { id: 'prod-cmt-billing', label: 'Tagihan Vendor CMT', icon: Banknote },
           { id: 'maklon-hpp',      label: 'HPP Jahit',   icon: Target },
           { id: 'maklon-ai-quote', label: 'Estimasi AI', icon: Sparkles },
         ],

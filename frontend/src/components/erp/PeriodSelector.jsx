@@ -3,25 +3,17 @@ import { Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { GlassInput } from '@/components/ui/glass';
+import { todayWIB, daysAgoWIB, monthStartWIB, daysBetweenISO } from '@/lib/waktu';
 
-const getToday = () => new Date().toISOString().split('T')[0];
-const getDaysAgo = (days) => {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  return d.toISOString().split('T')[0];
-};
+// Semua tanggal preset = kalender WIB (lib/waktu), bukan tanggal UTC/perangkat.
 // FASE D (2026-08-16) — "Bulan Ini" ada karena SEMUA target & anggaran marketing
 // bersifat BULANAN. Tanpa preset ini, bawaan 30 hari terakhir selalu menyerempet dua
 // bulan, jadi omzet di layar tidak pernah bisa dibandingkan dengan targetnya.
-const getMonthStart = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
-};
 
 export function PeriodSelector({ value, onChange }) {
   const [isCustom, setIsCustom] = useState(false);
-  const [customFrom, setCustomFrom] = useState(value.date_from || getDaysAgo(30));
-  const [customTo, setCustomTo] = useState(value.date_to || getToday());
+  const [customFrom, setCustomFrom] = useState(value.date_from || daysAgoWIB(30));
+  const [customTo, setCustomTo] = useState(value.date_to || todayWIB());
 
   const presets = [
     { label: 'Bulan Ini', month: true },
@@ -32,8 +24,8 @@ export function PeriodSelector({ value, onChange }) {
   ];
 
   const handlePreset = (preset) => {
-    const to = getToday();
-    const from = preset.month ? getMonthStart() : (preset.days === 0 ? to : getDaysAgo(preset.days));
+    const to = todayWIB();
+    const from = preset.month ? monthStartWIB() : (preset.days === 0 ? to : daysAgoWIB(preset.days));
     onChange({ date_from: from, date_to: to });
     setIsCustom(false);
   };
@@ -50,10 +42,8 @@ export function PeriodSelector({ value, onChange }) {
 
   const currentLabel = () => {
     if (!value.date_from || !value.date_to) return 'Pilih Periode';
-    if (value.date_from === getMonthStart() && value.date_to === getToday()) return 'Bulan Ini';
-    const from = new Date(value.date_from);
-    const to = new Date(value.date_to);
-    const diffDays = Math.ceil((to - from) / (1000 * 60 * 60 * 24));
+    if (value.date_from === monthStartWIB() && value.date_to === todayWIB()) return 'Bulan Ini';
+    const diffDays = daysBetweenISO(value.date_from, value.date_to);
     
     if (diffDays === 0) return 'Hari Ini';
     if (diffDays === 7) return '7 Hari Terakhir';

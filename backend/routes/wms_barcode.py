@@ -41,6 +41,7 @@ from auth import log_activity, require_auth, serialize_doc
 from core import label_render as lr
 from database import get_db
 from utils.counters import gen_prefixed_number
+from utils.waktu import fmt_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/barcode", tags=["wms-barcode"])
@@ -48,6 +49,8 @@ router = APIRouter(prefix="/api/wms/barcode", tags=["wms-barcode"])
 MAX_LABELS = 500          # total lembar per satu PDF
 MAX_COPIES_PER_ROW = 200
 KINDS = ("material", "fg")
+# 2026-11-02 (keputusan owner): pilihan ukuran label barang jadi — standar 100×70 atau hangtag 70×40.
+FG_SIZES = {"standard": "fg", "hangtag": "fg_hangtag"}
 MASTER_LIMIT = 20000
 
 
@@ -227,41 +230,17 @@ class BarcodeBatchIn(BaseModel):
     source: str = "manual"           # manual | produksi
     po_id: Optional[str] = None
     note: str = ""
-
-
-async def _attach_stock(db, mats: List[dict]):
-    ids = [m["id"] for m in mats if m.get("id")]
-    if not ids:
-        return
-    per = {}
-    async for s in db.rahaza_material_stock.find(
-            {"material_id": {"$in": ids}},
-            {"_id": 0, "material_id": 1, "qty": 1, "location_id": 1}):
-        per.setdefault(s["material_id"], []).append(s)
-    loc_ids = list({s.get("location_id") for rows in per.values()
-                    for s in rows if s.get("location_id")})
-    loc_map = {}
-    if loc_ids:
-        async for loc in db.rahaza_locations.find({"id": {"$in": loc_ids}},
-                                                  {"_id": 0, "id": 1, "code": 1, "name": 1}):
-            loc_map[loc["id"]] = loc.get("code") or loc.get("name") or "-"
-        async for pos in db.wh_positions.find({"id": {"$in": loc_ids}},
-                                              {"_id": 0, "id": 1, "label": 1, "barcode": 1}):
-            loc_map.setdefault(pos["id"], pos.get("label") or pos.get("barcode") or "-")
-    for m in mats:
-        rows = per.get(m.get("id")) or []
-        if not rows:
-            continue
-        m["stock_qty"] = sum(float(s.get("qty") or 0) for s in rows)
-        main = next((s.get("location_id") for s in rows
-                     if float(s.get("qty") or 0) > 0 and s.get("location_id")), None)
-        m["location"] = loc_map.get(main, "-")
+    size: str = "standard"           # FG: standard (100×70) | hangtag (70×40) — 2026-11-02
 
 
 @router.post("/batch-pdf")
 async def barcode_batch_pdf(data: BarcodeBatchIn, request: Request):
     user = await require_auth(request)
     kind = _check_kind(data.kind)
+    size = (data.size or "standard").lower() if kind == "fg" else "standard"
+    if size not in FG_SIZES:
+        raise HTTPException(400, f"Ukuran label harus salah satu dari {tuple(FG_SIZES)}")
+    render_kind = FG_SIZES[size] if kind == "fg" else kind
     if not lr.LABELS_OK:
         raise HTTPException(500, "Pustaka pencetak label (reportlab/barcode) tidak tersedia")
     if not data.rows:
@@ -314,20 +293,23 @@ async def barcode_batch_pdf(data: BarcodeBatchIn, request: Request):
                                  f"'{kind}'. Pindah ke tab yang sesuai.")
 
     if kind == "material" and data.include_stock:
-        await _attach_stock(db, list({m["id"]: m for m in docs}.values()))
+        await lr.attach_stock_info(db, list({m["id"]: m for m in docs}.values()))
 
-    pdf = lr.grid_labels_pdf(kind, docs, include_stock=data.include_stock,
-                             title=f"Barcode {kind} ({len(docs)} label)")
+    try:
+        pdf = lr.grid_labels_pdf(render_kind, docs, include_stock=data.include_stock,
+                                 title=f"Barcode {kind} ({len(docs)} label)")
+    except lr.LabelCodeError as e:
+        raise HTTPException(400, str(e))
 
     job = {
         "id": __import__("uuid").uuid4().hex,
         "job_number": await gen_prefixed_number(
             db, "wh_barcode_print_jobs", "job_number",
-            f"BC-{_now().strftime('%Y%m%d')}-", 3),
+            f"BC-{fmt_wib('%Y%m%d')}-", 3),
         "kind": kind, "source": data.source if data.source in ("manual", "produksi") else "manual",
         "po_id": data.po_id, "note": (data.note or "")[:500],
         "rows": resolved_rows, "item_count": len(resolved_rows), "total_labels": len(docs),
-        "include_stock": bool(data.include_stock),
+        "include_stock": bool(data.include_stock), "size": size,
         "created_at": _now(), "created_by": user.get("id"),
         "created_by_name": user.get("name") or user.get("email") or "",
     }

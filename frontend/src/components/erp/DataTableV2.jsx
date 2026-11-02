@@ -42,6 +42,7 @@ import {
   SlidersHorizontal, Download, Rows3, Rows2, Rows4, Check, Inbox,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { todayWIB } from '@/lib/waktu';
 import { ResponsiveTableWrapper } from '@/components/ui/responsive-table-wrapper';
 
 function useDebouncedValue(value, delay = 250) {
@@ -243,7 +244,7 @@ export function DataTable({
     if (exportFn) {
       await exportFn(filtered);
     } else {
-      const name = exportFilename || `${tableId}-${new Date().toISOString().slice(0, 10)}.csv`;
+      const name = exportFilename || `${tableId}-${todayWIB()}.csv`;
       downloadCSV(name, visibleColumns, filtered);
     }
   };

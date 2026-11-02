@@ -17,12 +17,68 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from auth import require_auth
 from database import get_db
+from utils.waktu import today_wib, now_wib
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Akses (2026-11-02, keputusan owner K33)
+# ---------------------------------------------------------------------------
+# Dulu semua handler hanya `require_auth` → peran apa pun (mis. `operator`) membaca total gaji
+# lewat `hr-snapshot`. Kini satu penjaga (`require_exec_report`, dipanggil SEMUA handler), dikonfigurasi
+# lewat Manajemen Role yang SUDAH ada
+# (modul granular `fin_exec_report` di data/module_catalog.py, menu `fin-executive-report`):
+#   1. owner/superadmin/admin atau izin "*"                      → selalu boleh;
+#   2. menu "Laporan Eksekutif" disembunyikan untuk peran/pengguna → DITOLAK (termasuk peran yang
+#      izin per modul Portal Keuangan-nya sudah diatur owner tanpa centang "Lihat — Laporan Eksekutif");
+#   3. izin `mod.fin_exec_report.view`                           → boleh (peran apa pun yang dicentang);
+#   4. belum diatur owner (bawaan)                               → hanya peran yang bisa membuka
+#      Portal Manajemen atau Portal Keuangan (accounting, staff_keuangan, manager_*, …).
+EXEC_REPORT_MODULE = "fin_exec_report"
+EXEC_REPORT_MENU = "fin-executive-report"
+EXEC_REPORT_DEFAULT_PORTALS = ("management", "finance")
+
+
+async def exec_report_access(db, user: dict) -> tuple[bool, str]:
+    """(boleh?, alasan) untuk Laporan Eksekutif — lihat aturan di atas."""
+    from data.module_catalog import granular_portals, perm_key
+    from routes.shared import SUPER_ROLES, resolve_role_access, user_permissions
+    role = (user.get("role") or "").lower()
+    if role in SUPER_ROLES:
+        return True, "super"
+    perms = user_permissions(user)
+    if "*" in perms:
+        return True, "wildcard"
+    access = await resolve_role_access(db, {"id": user.get("id"), "role": role})
+    if EXEC_REPORT_MENU in (access.get("hidden_modules") or []):
+        return False, "hidden"
+    if perm_key(EXEC_REPORT_MODULE, "view") in perms:
+        return True, "permission"
+    if "finance" in granular_portals(perms):
+        return False, "not_granted"
+    if set(access.get("portals") or []) & set(EXEC_REPORT_DEFAULT_PORTALS):
+        return True, "default_portal"
+    return False, "default_portal"
+
+
+async def require_exec_report(request: Request) -> dict:
+    user = await require_auth(request)
+    ok, _why = await exec_report_access(get_db(), user)
+    if not ok:
+        raise HTTPException(
+            403, "Akses ditolak: peran Anda tidak diberi izin 'Lihat — Laporan Eksekutif' "
+                 f"(mod.{EXEC_REPORT_MODULE}.view). Owner dapat mengaturnya di Administrasi Sistem › "
+                 "Manajemen Role (Izin per modul › Portal Keuangan).")
+    return user
+
+
+# Penjaga dipanggil di SETIAP handler (bukan dependency router) supaya dependency route tetap persis
+# yang dipasang server.py (_DENY_EXTERNAL; diuji test_p1_router_guards).
 router = APIRouter(prefix="/api/reports/executive", tags=["executive-report"])
 
 
@@ -54,6 +110,30 @@ def _delta_pct(curr: float, prev: float) -> Optional[float]:
 # ---------------------------------------------------------------------------
 # Finance aggregations
 # ---------------------------------------------------------------------------
+# 2026-11-02 (audit No.51): status faktur yang benar-benar terbit. Draft & batal/void tidak pernah
+# menjadi pendapatan.
+REAL_AR_STATUSES = ["paid", "partial", "partial_paid", "sent", "issued", "overdue", "written_off"]
+
+
+async def _gl_revenue(db, start: str, end: str) -> float:
+    """2026-11-02 (audit No.51): pendapatan = saldo akun REVENUE buku besar periode itu
+    (kredit − debit, tanpa jurnal penutup tahun) — rumus yang SAMA dengan Laporan Laba/Rugi.
+    Artinya DPP tanpa PPN (PPN keluaran = hutang 2-1400), sudah dikurangi retur/diskon/potongan
+    platform, dan pendapatan pencairan marketplace (yang menurut D2 hanya ada di GL) ikut."""
+    codes = [a["code"] async for a in db.rahaza_coa_accounts.find(
+        {"type": "REVENUE", "is_group": False}, {"_id": 0, "code": 1})]
+    if not codes:
+        return 0.0
+    rows = await db.rahaza_journal_lines.aggregate([
+        {"$match": {"date": {"$gte": start, "$lte": end}, "source_module": {"$ne": "year_end_close"},
+                    "account_code": {"$in": codes}}},
+        {"$group": {"_id": None, "d": {"$sum": {"$ifNull": ["$debit", 0]}},
+                    "c": {"$sum": {"$ifNull": ["$credit", 0]}}}},
+    ]).to_list(1)
+    r = rows[0] if rows else {}
+    return round(float(r.get("c") or 0) - float(r.get("d") or 0), 2)
+
+
 async def _finance_kpis(db, year: int, month: int) -> dict:
     start, end = _month_range(year, month)
 
@@ -61,27 +141,29 @@ async def _finance_kpis(db, year: int, month: int) -> dict:
     rev_pipeline = [
         {"$match": {
             "issue_date": {"$gte": start, "$lte": end},
-            "status": {"$in": ["paid", "partial", "partial_paid", "sent", "issued", "overdue", "written_off"]},  # FIN-09: pendapatan diakui saat terbit (hapus-buku = beban, bukan pengurang pendapatan)
+            "status": {"$in": REAL_AR_STATUSES},  # FIN-09: pendapatan diakui saat terbit (hapus-buku = beban, bukan pengurang pendapatan)
         }},
         {"$group": {"_id": None,
                     "total_revenue": {"$sum": {"$ifNull": ["$total", 0]}},
+                    # 2026-11-02: DPP faktur = total − PPN (pembanding; angka utama dari GL)
+                    "total_dpp": {"$sum": {"$subtract": [{"$ifNull": ["$total", 0]},
+                                                         {"$ifNull": ["$tax_amount", 0]}]}},
                     "total_paid": {"$sum": {"$subtract": [{"$ifNull": ["$total", 0]}, {"$ifNull": ["$balance", 0]}]}},
                     "invoice_count": {"$sum": 1}}},
     ]
     rev_rows = await db.rahaza_ar_invoices.aggregate(rev_pipeline).to_list(1)
     rev_data = rev_rows[0] if rev_rows else {}
 
-    # Expenses — RC-02/W-D: SSOT rahaza_journal_lines (flat; account_type EXPENSE/COGS, sum debit)
-    exp_pipeline = [
-        {"$match": {"date": {"$gte": start, "$lte": end},
-                    "account_type": {"$in": ["EXPENSE", "COGS"]}}},
-        {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$debit", 0]}}}},
-    ]
-    exp_rows = await db.rahaza_journal_lines.aggregate(exp_pipeline).to_list(1)
-    total_expenses = exp_rows[0]["total"] if exp_rows else 0
+    # 2026-11-02 (K33): biaya & laba bersih dari rumus Laba/Rugi buku besar yang SAMA dengan layar L/R
+    # (routes.rahaza_fin_reports.compute_profit_loss). Dulu Σ DEBIT akun EXPENSE/COGS saja → retur/
+    # koreksi sisi kredit (mis. pembalikan HPP, reklas beban) tidak mengurangi biaya, laba bersih
+    # terlalu kecil; pendapatan lain-lain & beban lain-lain juga tidak ikut.
+    from routes.rahaza_fin_reports import compute_profit_loss
+    pl_totals = (await compute_profit_loss(db, start, end))["totals"]
+    total_expenses = round(pl_totals["cogs"] + pl_totals["expense"] + pl_totals["other_expense"], 2)
 
     # AR overdue — SSOT rahaza_ar_invoices: belum lunas & due_date lewat
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     ar_overdue_pipeline = [
         {"$match": {"status": {"$in": ["sent", "issued", "partial", "partial_paid", "overdue"]}, "due_date": {"$lte": today}}},  # FIN-09
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$balance", 0]}}, "count": {"$sum": 1}}},
@@ -89,15 +171,23 @@ async def _finance_kpis(db, year: int, month: int) -> dict:
     ar_rows = await db.rahaza_ar_invoices.aggregate(ar_overdue_pipeline).to_list(1)
     ar_data = ar_rows[0] if ar_rows else {}
 
-    revenue = float(rev_data.get("total_revenue") or 0)
-    net_income = revenue - total_expenses
+    # 2026-11-02 (audit No.51): dulu Σ `total` faktur (termasuk PPN 11%) dan pencairan marketplace
+    # tidak terbaca (revenue 0 untuk toko online). Kini dari akun pendapatan GL.
+    revenue = await _gl_revenue(db, start, end)
+    net_income = round(revenue + pl_totals["other_income"] - total_expenses, 2)  # = laba bersih L/R
 
     return {
         "revenue_rp": revenue,
+        "revenue_source": "gl_revenue_accounts",
+        "invoice_revenue_dpp_rp": round(float(rev_data.get("total_dpp") or 0), 2),
+        "invoice_revenue_gross_rp": round(float(rev_data.get("total_revenue") or 0), 2),
         "paid_revenue_rp": float(rev_data.get("total_paid") or 0),
         "invoice_count": int(rev_data.get("invoice_count") or 0),
         "total_expenses_rp": total_expenses,
+        "other_income_rp": round(pl_totals["other_income"], 2),
+        "gross_profit_rp": round(revenue - pl_totals["cogs"], 2),
         "net_income_rp": net_income,
+        "net_income_source": "gl_profit_loss",
         "profit_margin_pct": round(net_income / max(revenue, 1) * 100, 1),
         "ar_overdue_rp": float(ar_data.get("total") or 0),
         "ar_overdue_count": int(ar_data.get("count") or 0),
@@ -156,7 +246,9 @@ async def _production_kpis(db, year: int, month: int) -> dict:
 async def _hr_kpis(db, year: int, month: int) -> dict:
     start, end = _month_range(year, month)
 
-    total_active = await db.rahaza_employees.count_documents({"employment_status": "active"})
+    # 2026-11-02 (K33): penulis karyawan memakai `active: True` — field `employment_status` tidak
+    # pernah ditulis (seed: 0 dokumen) sehingga kartu "karyawan aktif" selalu 0.
+    total_active = await db.rahaza_employees.count_documents({"active": True})
 
     # Attendance rate — RC-01: SSOT live rahaza_attendance_events (status hadir/izin/sakit;
     # 'present' ikut dihitung utk kompatibilitas seed demo)
@@ -188,8 +280,10 @@ async def _hr_kpis(db, year: int, month: int) -> dict:
     )
 
     # Payroll total (finalized runs this month)
+    # 2026-11-02: dulu `created_at` (datetime) dibandingkan dengan string tanggal → selalu 0.
+    # Bulan gaji ditentukan oleh akhir periode run (string YYYY-MM-DD), bukan kapan run dibuat.
     payroll_pipeline = [
-        {"$match": {"status": "finalized", "created_at": {"$gte": start, "$lte": end}}},
+        {"$match": {"status": "finalized", "period_to": {"$gte": start, "$lte": end}}},
         {"$group": {"_id": None, "total": {"$sum": {"$ifNull": ["$total_net_pay", {"$ifNull": ["$total_net", 0]}]}}}},  # FIN-09: penulis menulis total_net
     ]
     pr_rows = await db.rahaza_payroll_runs.aggregate(payroll_pipeline).to_list(1)
@@ -270,11 +364,12 @@ async def executive_summary(
     month: int = Query(default=None, ge=1, le=12),
 ):
     """Full cross-module executive snapshot for given year/month (default: current month)."""
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
     now = _now()
-    y = year or now.year
-    m = month or now.month
+    wib = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
+    y = year or wib.year
+    m = month or wib.month
 
     prev_y, prev_m = _prev_month(y, m)
     start, end = _month_range(y, m)
@@ -327,11 +422,12 @@ async def executive_ai_narrative(
     wrapper (tier 'executive' = Opus) to produce a concise management report.
     Cached 1h per period (bypass with refresh=true).
     """
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
     now = _now()
-    y = year or now.year
-    m = month or now.month
+    wib = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
+    y = year or wib.year
+    m = month or wib.month
     prev_y, prev_m = _prev_month(y, m)
 
     import asyncio
@@ -423,9 +519,9 @@ async def kpi_comparison(
     months: int = Query(6, ge=2, le=24),
 ):
     """Month-on-month KPI comparison across the last N months."""
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # bulan-bulan dihitung dari bulan berjalan WIB (No.54a)
     results = []
 
     for i in range(months - 1, -1, -1):
@@ -455,9 +551,9 @@ async def finance_snapshot(
     year: Optional[int] = Query(None, ge=1970, le=2999),
     month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     data = await _finance_kpis(db, y, m)
     prev_y, prev_m = _prev_month(y, m)
@@ -481,9 +577,9 @@ async def production_snapshot(
     year: Optional[int] = Query(None, ge=1970, le=2999),
     month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     data = await _production_kpis(db, y, m)
     prev_y, prev_m = _prev_month(y, m)
@@ -506,9 +602,9 @@ async def hr_snapshot(
     year: Optional[int] = Query(None, ge=1970, le=2999),
     month: Optional[int] = Query(None, ge=1, le=12),
 ):
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     data = await _hr_kpis(db, y, m)
     return {"ok": True, "period": f"{y}-{m:02d}", "data": data}
@@ -520,9 +616,9 @@ async def marketing_snapshot(
     year: Optional[int] = None,
     month: Optional[int] = None,
 ):
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y, m = (year or now.year), (month or now.month)
     try:
         data = await _marketing_kpis(db, y, m)
@@ -537,9 +633,9 @@ async def executive_trend(
     months: int = Query(6, ge=2, le=12),
 ):
     """Multi-KPI revenue + production + HR trend for last N months."""
-    await require_auth(request)
+    await require_exec_report(request)  # K33
     db = get_db()
-    now = _now()
+    now = now_wib()   # bulan-bulan dihitung dari bulan berjalan WIB (No.54a)
     data = []
     for i in range(months - 1, -1, -1):
         target = now - timedelta(days=i * 30)

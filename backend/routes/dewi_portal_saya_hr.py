@@ -10,6 +10,7 @@ from typing import Optional
 import uuid
 import logging
 from storage import put_object, generate_storage_path
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["portal-hr"])
@@ -103,14 +104,14 @@ async def get_dashboard(request: Request):
     u, emp = await _get_linked_employee(db, user["id"])
     uid = user["id"]
     emp_id = emp["id"] if emp else None
-    today_str = date.today().isoformat()
-    month_start = date.today().replace(day=1).isoformat()
+    today_str = today_wib().isoformat()
+    month_start = today_wib().replace(day=1).isoformat()
 
     # --- Leave balance ---
     leave_balance = []
     if emp_id:
         bals = await db.rahaza_leave_balances.find(
-            {"employee_id": emp_id, "year": date.today().year}, {"_id": 0}
+            {"employee_id": emp_id, "year": today_wib().year}, {"_id": 0}
         ).to_list(20)
         lt_ids = [b.get("leave_type_id") for b in bals]
         lts = await db.rahaza_leave_types.find({"id": {"$in": lt_ids}}, {"_id": 0}).to_list(500) if lt_ids else []
@@ -128,9 +129,14 @@ async def get_dashboard(request: Request):
     # --- Last payslip ---
     last_payslip = None
     if emp_id:
-        slip = await db.rahaza_payslips.find_one(
-            {"employee_id": emp_id}, {"_id": 0}, sort=[("period_from", -1)]
-        )
+        # 2026-11-02 (audit T3) — slip terakhir = slip terakhir dari run final/dibayar,
+        # bukan run draft (take-home draft masih bisa berubah).
+        from routes.rahaza_payroll_payslips import only_published_slips
+        recent = await db.rahaza_payslips.find(
+            {"employee_id": emp_id}, {"_id": 0}
+        ).sort("period_from", -1).to_list(24)
+        published = await only_published_slips(db, recent)
+        slip = published[0] if published else None
         if slip:
             last_payslip = {
                 "period": slip.get("period_from", "")[:7],
@@ -203,7 +209,7 @@ async def get_dashboard(request: Request):
     })
 
     # --- Upcoming reminders ---
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    tomorrow = (today_wib() + timedelta(days=1)).isoformat()
     upcoming_reminders = await db.portal_reminders.find(
         {"user_id": uid, "is_done": False, "remind_at": {"$lte": tomorrow + "T23:59:59"}},
         {"_id": 0}
@@ -398,7 +404,11 @@ async def my_payslips(request: Request):
         raise HTTPException(409, "Akun belum terhubung ke data karyawan.")
     slips = await db.rahaza_payslips.find(
         {"employee_id": emp["id"]}, {"_id": 0}
-    ).sort("period_from", -1).to_list(24)
+    ).sort("period_from", -1).to_list(100)
+    # 2026-11-02 (audit T3) — karyawan hanya melihat slip dari run final/dibayar;
+    # angka run draft masih bisa berubah sebelum difinalisasi HR.
+    from routes.rahaza_payroll_payslips import only_published_slips
+    slips = (await only_published_slips(db, slips))[:24]
     return {"employee": emp.get("name"), "items": slips}
 
 

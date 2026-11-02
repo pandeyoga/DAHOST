@@ -51,9 +51,10 @@ _MAKLON = {"view": ["maklon.view"], "manage": ["maklon.manage"], "approve": ["ma
 
 MODULES: list[dict] = [
     # ── MANAJEMEN ───────────────────────────────────────────────────────────
+    # 2026-11-02 (K33): `/api/reports/executive` dipindah ke modul sendiri `fin_exec_report` (Keuangan).
     _m("management", "mgmt_dashboard", "Dashboard & Ringkasan Eksekutif",
        ["management-dashboard", "mgmt-overview"],
-       ["/api/rahaza/management", "/api/management", "/api/reports/executive", "/api/ai-business"], _VE,
+       ["/api/rahaza/management", "/api/management", "/api/ai-business"], _VE,
        {"view": ["dashboard.view", "management.view"], "export": ["report.export"]}),
     _m("management", "mgmt_reports", "Pusat Laporan", ["reports-hub", "phase7-reports", "mgmt-reports", "rnd-dashboard"],
        ["/api/dewi/reports", "/api/rahaza/reports-hub", "/api/rahaza/reports"], _VE,
@@ -129,7 +130,9 @@ MODULES: list[dict] = [
        {"view": ["cmt.view", "fin.ap.view"], "manage": ["cmt.belanja.manage"], "approve": ["cmt.approve"]}),
     _m("production", "prod_sewing_cost", "Biaya Jahit", ["prod-sewing-cost"], ["/api/production/sewing-cost"], _CRUD,
        {"view": ["hpp.view"], "manage": ["hpp.manage"]}),
-    _m("production", "prod_material_req", "Kebutuhan & Retur Material", ["prod-material-requirements"],
+    # 2026-11-02 (K10): + menu "Retur Material" (`prod-material-returns`, dipasang lagi).
+    _m("production", "prod_material_req", "Kebutuhan & Retur Material",
+       ["prod-material-requirements", "prod-material-returns"],
        ["/api/rahaza/material-requirements", "/api/production/material-returns"], _ALL,
        {"view": ["bom.view"], "approve": ["inventory.approve"]}),
     _m("production", "prod_analytics", "Analitik & Estimasi AI Produksi", ["prod-analytics-hub", "prod-ai-insights"],
@@ -172,6 +175,11 @@ MODULES: list[dict] = [
         "approve": ["proc.match.approve"]}),
     _m("procurement", "proc_shopping_list", "Belanja Mingguan", ["wh-shopping-list"], ["/api/rahaza/shopping-list"],
        ("view", "create", "export"), {"view": ["inv.stock.view"], "create": ["proc.pr.manage"]}),
+    # 2026-11-02 (K11): Retur Pembelian (RTP) — dokumen milik Pengadaan. Ditulis juga dari Karantina QC
+    #   (Gudang: "Buat Retur Pembelian") dan di-refund dari layar Nota Debit (Keuangan) → ALSO_PORTALS.
+    _m("procurement", "proc_purchase_returns", "Retur Pembelian", ["proc-purchase-returns"],
+       ["/api/rahaza/purchase-returns"], _ALL,
+       {"view": ["proc.po.view"], "manage": ["proc.po.manage"], "approve": ["proc.po.approve"]}),
 
     # ── GUDANG ──────────────────────────────────────────────────────────────
     _m("warehouse", "wh_dashboard", "Dashboard, Alert & Reorder", ["warehouse-dashboard", "warehouse-smart"],
@@ -211,6 +219,9 @@ MODULES: list[dict] = [
        {"view": ["shipment.view"], "manage": ["shipment.manage"], "approve": ["shipment.dispatch"]}),
     _m("warehouse", "wh_returns", "Retur Fisik", ["wh-returns"], ["/api/wh/returns"], _ALL,
        {"view": ["warehouse.view"], "manage": ["warehouse.manage"], "approve": ["warehouse.approve"]}),
+    # 2026-11-02 (K15): Scan Keluar Penjualan marketplace (lembar harian, stok + HPP per scan).
+    _m("warehouse", "wh_scan_out", "Scan Keluar Penjualan", ["wh-scan-out"], ["/api/wh/scan-out"], _ALL,
+       {"view": ["warehouse.view"], "manage": ["warehouse.manage"], "approve": ["warehouse.approve"]}),
     _m("warehouse", "wh_sku_bridge", "Jembatan SKU", ["sku-bridge"], ["/api/sku-bridge"], _CRUD),
     _m("warehouse", "wh_tools", "Barcode, Struktur Gudang & Satuan", ["wh-barcode", "wh-structure", "wh-units"],
        ["/api/wms/barcode", "/api/wms/labels", "/api/wms/buildings", "/api/wms/zones", "/api/wms/racks",
@@ -235,9 +246,14 @@ MODULES: list[dict] = [
 
     # ── KEUANGAN ────────────────────────────────────────────────────────────
     _m("finance", "fin_dashboard", "Dashboard, Rekap & Laporan Keuangan",
-       ["finance-dashboard", "fin-recap", "fin-reports-hub", "fin-executive-report"],
+       ["finance-dashboard", "fin-recap", "fin-reports-hub"],
        ["/api/rahaza/finance-summary", "/api/financial-recap", "/api/rahaza/finance/reports"], _VE,
        {"view": ["finance.view", "fin.recap.view"], "export": ["report.export"]}),
+    # 2026-11-02 (K33): Laporan Eksekutif (memuat total gaji) DIPISAH dari fin_dashboard supaya owner
+    # bisa mencentang/melepasnya sendiri di Manajemen Role. Penjaga handler (bawaan Manajemen+Keuangan):
+    # routes/dewi_executive_report.exec_report_access.
+    _m("finance", "fin_exec_report", "Laporan Eksekutif", ["fin-executive-report"],
+       ["/api/reports/executive"], _VE, {"export": ["report.export"]}),
     _m("finance", "fin_marketplace", "Saldo & Pencairan Marketplace", ["fin-marketplace-settlement"],
        ["/api/marketing/settlements", "/api/marketing/withdrawals"], _ALL,
        {"view": ["fin.ar.view"], "manage": ["fin.ar.manage"], "approve": ["finance.approve"]}),
@@ -249,6 +265,9 @@ MODULES: list[dict] = [
        {"view": ["finance.view"], "manage": ["finance.manage"]}),
     _m("finance", "fin_ap", "Aging Hutang (AP)", ["fin-ap-aging"], ["/api/rahaza/ap-aging"], _VE,
        {"view": ["fin.ap.view"]}),
+    # 2026-11-02 (K11): Nota Debit pemasok (atas Retur Pembelian) diterbitkan Keuangan.
+    _m("finance", "fin_debit_notes", "Nota Debit Pemasok", ["fin-debit-notes"], ["/api/rahaza/debit-notes"],
+       ("view", "create", "export"), {"view": ["fin.ap.view"], "create": ["fin.ap.manage"]}),
     _m("finance", "fin_cash", "Kas & Bank, Prediksi Kas", ["fin-cash", "fin-ai-cashflow"],
        ["/api/rahaza/cash-accounts", "/api/rahaza/cash-movements", "/api/finance/ai-cashflow"], _ALL,
        {"view": ["fin.cash.view", "fin.payment.view"], "manage": ["fin.cash.manage", "fin.payment.manage"],
@@ -450,12 +469,21 @@ ALSO_PORTALS = {
     "mgmt_reports": ["rnd", "finance", "production"], "mgmt_approval": ["hr"], "prod_vendor_cmt": ["maklon"],
     "prod_po": ["maklon"], "prod_vendor_shipment": ["maklon"], "prod_cmt_receive": ["maklon", "finance"],
     "prod_cmt_permak": ["maklon"], "prod_cmt_monitor": ["maklon"], "prod_buyer_shipment": ["maklon"],
-    "prod_jobs": ["maklon", "finance"], "prod_variance": ["maklon"], "prod_cmt_billing": ["finance"],
+    "prod_jobs": ["maklon", "finance"], "prod_variance": ["maklon"], "prod_cmt_billing": ["finance", "maklon"],
     "proc_match": ["finance"], "proc_shopping_list": ["warehouse"], "wh_material_issue": ["production"],
     "wh_sku_bridge": ["toko"], "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
     "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
     "wh_master": ["production", "rnd"],
+    # 2026-11-02: tagihan CMT (posting/bayar) juga ditulis dari Portal Maklon (layar Tagihan CMT maklon) —
+    #   `prod_cmt_billing` + "maklon" supaya aksi tulisnya tidak ditolak gerbang.
+    # 2026-11-02 (K34/K25): Keuangan menyetujui pembatalan run gaji & membayar gaji/BPJS.
+    "hr_payroll": ["finance"],
+    # 2026-11-02 (K11): Retur Pembelian dibuat dari Karantina QC (Gudang) dan refund-nya dicatat dari
+    #   layar Nota Debit (Keuangan).
+    "proc_purchase_returns": ["warehouse", "finance"],
+    # 2026-11-02 (K10): gudang menerima Retur Material (menu pintasan di Portal Gudang).
+    "prod_material_req": ["warehouse"],
 }
 for _mod in MODULES:
     _mod["also_portals"] = ALSO_PORTALS.get(_mod["id"], [])

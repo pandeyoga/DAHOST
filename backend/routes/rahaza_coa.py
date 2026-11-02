@@ -16,10 +16,14 @@ from auth import require_auth, serialize_doc, log_activity
 import uuid
 from datetime import datetime, timezone
 import re
+import logging
 from core.roles import FINANCE_ROLES  # FIN-02
+from core import coa_bindings as cb  # 2026-11-02 (S2-H): satu daftar keterikatan akun
 
 router = APIRouter(prefix="/api/rahaza/coa", tags=["rahaza-coa"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # RBAC: portal finance (BUG-RBAC-1)
+
+log = logging.getLogger(__name__)
 
 ACCOUNT_TYPES = ["ASSET", "LIABILITY", "EQUITY", "REVENUE", "COGS", "EXPENSE", "OTHER_INCOME", "OTHER_EXPENSE"]
 NORMAL_DEBIT = {"ASSET", "COGS", "EXPENSE", "OTHER_EXPENSE"}
@@ -41,8 +45,196 @@ async def _require_fin(request: Request):
     raise HTTPException(403, "Forbidden: butuh permission finance.")
 
 
-def _normal_balance_for(acc_type: str) -> str:
-    return "DEBIT" if acc_type in NORMAL_DEBIT else "CREDIT"
+def _normal_balance_for(acc_type: str, flags: dict | None = None) -> str:
+    """Saldo normal dari tipe; akun KONTRA (`flags.is_contra`) kebalikannya — 2026-11-02 (S2-H, T18):
+    dulu seed memberi akumulasi penyusutan/cadangan saldo DEBIT dan retur/diskon/prive KREDIT, sehingga
+    Buku Besar menampilkan saldo minus."""
+    nb = "DEBIT" if acc_type in NORMAL_DEBIT else "CREDIT"
+    if (flags or {}).get("is_contra"):
+        nb = "CREDIT" if nb == "DEBIT" else "DEBIT"
+    return nb
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (S2-H) — ATURAN AKUN: kode, tipe, induk, penanda. Satu tempat untuk POST, PUT, dan impor
+# Excel COA (routes/data_transfer.py) supaya ketiganya mustahil berbeda.
+# ══════════════════════════════════════════════════════════════════════════════
+TYPE_LABELS = {"ASSET": "Aset", "LIABILITY": "Liabilitas", "EQUITY": "Ekuitas", "REVENUE": "Pendapatan",
+               "COGS": "HPP", "EXPENSE": "Beban", "OTHER_INCOME": "Pendapatan Lain", "OTHER_EXPENSE": "Beban Lain"}
+# Awalan kode → tipe yang sah (skema tunggal 4 digit, keputusan owner 2026-09-12)
+PREFIX_TYPES = {"1": {"ASSET"}, "2": {"LIABILITY"}, "3": {"EQUITY"}, "4": {"REVENUE", "OTHER_INCOME"},
+                "5": {"COGS"}, "6": {"EXPENSE", "OTHER_EXPENSE"}, "7": {"OTHER_INCOME", "OTHER_EXPENSE"}}
+NEW_CODE_RX = re.compile(r"^[1-7]-\d{4}(?:-[A-Z0-9]+)*$")
+# Penanda yang boleh diubah pengguna (form & impor). Penanda sistem (subledger_*, legacy_of,
+# store_account_code, deactivated_reason, …) DIJAGA: tidak bisa dihapus/ditimpa lewat form maupun impor.
+USER_FLAGS = ("is_cash", "is_bank", "is_ar", "is_ap", "is_sales", "channel", "is_contra",
+              "is_fixed_asset", "is_accum_dep", "is_long_term")
+
+
+class CoaRuleError(ValueError):
+    """Pelanggaran aturan akun — PUT/POST menjawab HTTP `status`, impor menjadikannya galat baris."""
+
+    def __init__(self, msg: str, status: int = 400):
+        super().__init__(msg)
+        self.status = status
+
+
+def type_family(t: str) -> str:
+    t = (t or "").upper()
+    if t in ("ASSET", "LIABILITY", "EQUITY"):
+        return t
+    return "INCOME" if t in ("REVENUE", "OTHER_INCOME") else "EXPENSE"
+
+
+def check_code_type(code: str, acc_type: str) -> None:
+    """Pola kode akun baru + kecocokan awalan ↔ tipe."""
+    if not NEW_CODE_RX.match(code or ""):
+        raise CoaRuleError(f"Kode akun '{code}' tidak sah. Pola: angka 1–7, tanda '-', 4 digit "
+                           f"(mis. 6-2950), boleh diikuti akhiran sub-akun (mis. 1-1303-SHP-09).")
+    if acc_type not in ACCOUNT_TYPES:
+        raise CoaRuleError(f"Tipe akun harus salah satu dari: {', '.join(TYPE_LABELS[t] for t in ACCOUNT_TYPES)}.")
+    ok = PREFIX_TYPES.get(code[0], set())
+    if acc_type not in ok:
+        raise CoaRuleError(f"Kode {code} berawalan {code[0]}- untuk akun bertipe "
+                           f"{' / '.join(TYPE_LABELS[t] for t in sorted(ok))}, bukan {TYPE_LABELS.get(acc_type, acc_type)}.")
+
+
+def check_parent(code: str, acc_type: str, parent_code: str | None, by_code: dict, *,
+                 is_subledger: bool = False) -> None:
+    """Induk harus ada, aktif, bukan diri sendiri/turunannya (siklus), berupa akun grup (kecuali
+    sub-ledger di bawah akun kontrol), dan sekeluarga tipe (aset di bawah aset, beban di bawah beban)."""
+    if not parent_code:
+        return
+    if parent_code == code:
+        raise CoaRuleError(f"Akun {code} tidak boleh menjadi induk dirinya sendiri.")
+    parent = by_code.get(parent_code)
+    if not parent:
+        raise CoaRuleError(f"Akun induk {parent_code} tidak ada di Bagan Akun.")
+    cur, hops = parent, 0
+    while cur and hops < 50:
+        if cur.get("parent_code") == code:
+            raise CoaRuleError(f"Akun induk {parent_code} adalah turunan {code} — pilihan ini membuat "
+                               f"lingkaran (siklus) sehingga akun hilang dari pohon.")
+        cur, hops = by_code.get(cur.get("parent_code")), hops + 1
+    if parent.get("active", True) is False:
+        raise CoaRuleError(f"Akun induk {parent_code} {parent.get('name', '')} nonaktif.")
+    if not parent.get("is_group") and not is_subledger:
+        raise CoaRuleError(f"Akun induk {parent_code} {parent.get('name', '')} adalah akun rinci (bukan grup). "
+                           f"Pilih akun grup sebagai induk.")
+    pf, cf = type_family(parent.get("type")), type_family(acc_type)
+    others = {"OTHER_INCOME", "OTHER_EXPENSE"}
+    if pf != cf and not ({(parent.get("type") or "").upper(), acc_type} <= others):
+        raise CoaRuleError(f"Akun induk {parent_code} bertipe {TYPE_LABELS.get(parent.get('type'), parent.get('type'))}; "
+                           f"akun bertipe {TYPE_LABELS.get(acc_type, acc_type)} tidak boleh berada di bawahnya.")
+
+
+def merge_flags(existing: dict | None, incoming: dict | None) -> dict:
+    """Penanda di-MERGE (bukan diganti): hanya USER_FLAGS yang disebut yang berubah; penanda sistem dijaga.
+    Dulu impor/form mengganti seluruh `flags` → is_sales/channel toko & subledger_* hilang (T8)."""
+    out = dict(existing or {})
+    if not isinstance(incoming, dict):
+        return out
+    for k, v in incoming.items():
+        if k not in USER_FLAGS:
+            continue
+        if k == "channel":
+            v = str(v or "").strip().lower()
+            if v:
+                out[k] = v
+            else:
+                out.pop(k, None)
+        elif v:
+            out[k] = True
+        else:
+            out.pop(k, None)
+    return out
+
+
+def _journal_lines(bindings: list) -> int:
+    return sum(int(b.get("detail") or 0) for b in bindings if b["kind"] in ("jurnal", "jurnal_draft"))
+
+
+def plan_account_update(acc: dict, body: dict, bindings: list, by_code: dict) -> dict:
+    """Rencana perubahan satu akun (MURNI). Dipakai PUT /accounts/{id} DAN impor Excel COA.
+    Melempar `CoaRuleError` berisi alasan Indonesia yang menyebut keterikatannya."""
+    upd: dict = {}
+    code = acc["code"]
+    new_code = str(body.get("code") or "").strip().upper() if "code" in body else ""
+    if new_code and new_code != code.upper():
+        reasons = cb.check_action(acc, "change_code", bindings)
+        if reasons:
+            raise CoaRuleError(f"Kode akun {code} tidak bisa diubah: akun ini sudah dirujuk "
+                               f"({'; '.join(reasons[:6])}). Kode menjadi kunci jurnal & konfigurasi — buat "
+                               f"akun baru dengan kode {new_code} lalu pindahkan rujukannya.")
+        if new_code in by_code:
+            raise CoaRuleError(f"Kode akun '{new_code}' sudah ada.", 409)
+        upd["code"] = new_code
+    final_code = upd.get("code", code)
+    new_type = str(body.get("type") or "").strip().upper() if "type" in body else ""
+    if new_type and new_type != (acc.get("type") or "").upper():
+        if new_type not in ACCOUNT_TYPES:
+            raise CoaRuleError(f"Tipe akun '{new_type}' tidak dikenal.")
+        reasons = cb.check_action(acc, "change_type", bindings)
+        if reasons:
+            raise CoaRuleError(f"Tipe akun {code} tidak bisa diubah dari {TYPE_LABELS.get(acc.get('type'), acc.get('type'))} "
+                               f"ke {TYPE_LABELS[new_type]}: {'; '.join(reasons[:6])}. Jurnal historis akan berpindah "
+                               f"golongan laporan — buat akun baru lalu reklasifikasi saldonya.")
+        upd["type"] = new_type
+    final_type = upd.get("type", acc.get("type"))
+    if "code" in upd or "type" in upd:
+        check_code_type(final_code, final_type)
+    if "name" in body:
+        nm = str(body.get("name") or "").strip()
+        if nm and nm != acc.get("name"):
+            upd["name"] = nm
+            upd["name_user_set"] = True     # Auto Akun tidak menimpa nama ini lagi (T15)
+    fl = acc.get("flags") or {}
+    if "parent_code" in body:
+        np = str(body.get("parent_code") or "").strip() or None
+        if np != (acc.get("parent_code") or None):
+            check_parent(final_code, final_type, np, by_code, is_subledger=bool(fl.get("subledger")))
+            upd["parent_code"] = np
+    elif "type" in upd and acc.get("parent_code"):
+        check_parent(final_code, final_type, acc.get("parent_code"), by_code, is_subledger=bool(fl.get("subledger")))
+    if "is_group" in body:
+        want = bool(body.get("is_group"))
+        if want != bool(acc.get("is_group")):
+            action = "make_group" if want else "make_leaf"
+            used = _journal_lines(bindings)
+            if want and used:
+                # 2026-11-02 (audit No.48) — pesan lama dipertahankan
+                raise CoaRuleError(
+                    f"Akun {code} sudah punya {used} baris jurnal, jadi tidak bisa dijadikan Akun Group (header): "
+                    f"saldonya akan hilang dari laporan dan Neraca Saldo tidak seimbang. Buat akun anak baru lalu "
+                    f"pindahkan saldonya dengan jurnal reklasifikasi.")
+            msg = cb.blocked_message(acc, action, bindings)
+            if msg:
+                raise CoaRuleError(msg + (" Akun grup tidak bisa menerima jurnal, jadi posting otomatis akan gagal."
+                                          if want else " Pindahkan atau nonaktifkan anak-anaknya dulu."))
+            upd["is_group"] = want
+            # 2026-11-02 (audit No.47): dicatat HANYA bila nilainya benar-benar berubah (dulu setiap simpan
+            # form — termasuk ganti nama — menandainya sehingga penegakan grup wajib berhenti).
+            upd["is_group_user_set"] = True
+    if "flags" in body:
+        merged = merge_flags(fl, body.get("flags"))
+        if merged != fl:
+            upd["flags"] = merged
+    if "active" in body:
+        want = bool(body.get("active"))
+        if want != (acc.get("active", True) is not False):
+            if not want:
+                msg = cb.blocked_message(acc, "deactivate", bindings)
+                if msg:
+                    raise CoaRuleError(msg + " Posting otomatis ke akun nonaktif akan gagal.")
+            upd["active"] = want
+            upd["active_user_set"] = True   # sinkron toko tidak menonaktifkan/menghidupkan ulang (T13)
+            if want:
+                upd["deactivated_reason"] = None
+    if "type" in upd or ("flags" in upd and bool((upd["flags"] or {}).get("is_contra")) != bool(fl.get("is_contra"))):
+        nb = _normal_balance_for(final_type, upd.get("flags", fl))
+        if nb != acc.get("normal_balance"):
+            upd["normal_balance"] = nb
+    return upd
 
 
 def _cf_group(value, acc: dict) -> str:
@@ -194,8 +386,23 @@ SEED_TEMPLATE = [
 
 
 # ─────────────────────── ENDPOINTS ────────────────────────────────────────
+async def _attach_usage(db, rows: list, full: bool) -> list:
+    """2026-11-02 (S2-H): lencana "Terhubung · N" — satu kali agregasi untuk seluruh daftar."""
+    allb = await cb.collect_bindings(db, None if full else [r["code"] for r in rows], accounts=rows)
+    for r in rows:
+        bl = allb.get(r["code"], [])
+        s = cb.summarize(bl)
+        s["can_delete"] = not cb.check_action(r, "delete", bl)
+        s["can_deactivate"] = not cb.check_action(r, "deactivate", bl)
+        s["can_make_group"] = not cb.check_action(r, "make_group", bl)
+        s["can_make_leaf"] = not cb.check_action(r, "make_leaf", bl)
+        r["usage"] = s
+    return rows
+
+
 @router.get("/accounts")
-async def list_accounts(request: Request, active_only: bool = True, search: str = "", type: str = ""):
+async def list_accounts(request: Request, active_only: bool = True, search: str = "", type: str = "",
+                        with_usage: bool = False):
     await require_auth(request)
     db = get_db()
     q = {}
@@ -209,25 +416,77 @@ async def list_accounts(request: Request, active_only: bool = True, search: str 
             {"name": {"$regex": re.escape(search), "$options": "i"}},
         ]
     rows = await db.rahaza_coa_accounts.find(q, {"_id": 0}).sort("code", 1).to_list(5000)
+    if with_usage:
+        rows = await _attach_usage(db, rows, full=not q)
     return serialize_doc(rows)
 
 
+def build_tree(rows: list) -> list:
+    """Pohon dari parent_code. Induk yang tidak ada → akar. Data lama bersiklus (dulu induk tidak
+    divalidasi, T9: 1-1100 ↔ 1-1101 hilang dari pohon) diputus supaya SEMUA akun tetap tampil."""
+    by_code = {r["code"]: {**r, "children": []} for r in rows}
+    roots = []
+    for r in rows:
+        parent = r.get("parent_code")
+        if parent and parent in by_code and parent != r["code"]:
+            by_code[parent]["children"].append(by_code[r["code"]])
+        else:
+            roots.append(by_code[r["code"]])
+    seen = set()
+
+    def mark(n):
+        stack = [n]
+        while stack:
+            x = stack.pop()
+            if x["code"] in seen:
+                continue
+            seen.add(x["code"])
+            stack.extend(x["children"])
+    for n in roots:
+        mark(n)
+    for r in rows:                       # simpul dalam siklus: lepaskan dari induknya, jadikan akar
+        if r["code"] in seen:
+            continue
+        node = by_code[r["code"]]
+        par = by_code.get(r.get("parent_code"))
+        if par:
+            par["children"] = [c for c in par["children"] if c is not node]
+        node["cycle_broken"] = True
+        roots.append(node)
+        mark(node)
+    return roots
+
+
 @router.get("/tree")
-async def coa_tree(request: Request, active_only: bool = True):
+async def coa_tree(request: Request, active_only: bool = True, with_usage: bool = False):
     """Return accounts as tree structure based on parent_code."""
     await require_auth(request)
     db = get_db()
     q = {"active": True} if active_only else {}
     rows = await db.rahaza_coa_accounts.find(q, {"_id": 0}).sort("code", 1).to_list(5000)
-    by_code = {r["code"]: {**r, "children": []} for r in rows}
-    roots = []
-    for r in rows:
-        parent = r.get("parent_code")
-        if parent and parent in by_code:
-            by_code[parent]["children"].append(by_code[r["code"]])
-        else:
-            roots.append(by_code[r["code"]])
-    return serialize_doc(roots)
+    if with_usage:
+        rows = await _attach_usage(db, rows, full=not q)
+    return serialize_doc(build_tree(rows))
+
+
+@router.get("/accounts/{aid}/usage")
+async def account_usage(aid: str, request: Request):
+    """2026-11-02 (S2-H): rincian keterikatan satu akun (per sumber + tautan layar pengaturannya) dan
+    aksi yang boleh/tidak beserta alasannya — laci "Keterikatan akun" di layar Bagan Akun."""
+    await require_auth(request)
+    db = get_db()
+    acc = await db.rahaza_coa_accounts.find_one({"$or": [{"id": aid}, {"code": aid}]}, {"_id": 0})
+    if not acc:
+        raise HTTPException(404, "Akun tidak ditemukan.")
+    return serialize_doc(await cb.usage_for(db, acc))
+
+
+@router.get("/integrity")
+async def coa_integrity(request: Request):
+    """2026-11-02 (S2-H) INV-COA-REF: rujukan konfigurasi (profil, toko, rekening, relasi, pemetaan,
+    kas kecil, aset, anggaran, kode program) → akun harus ada, aktif, dan bukan grup."""
+    await require_auth(request)
+    return serialize_doc(await cb.integrity_report(get_db()))
 
 
 @router.post("/accounts")
@@ -235,22 +494,25 @@ async def create_account(request: Request):
     user = await _require_fin(request)
     db = get_db()
     body = await request.json()
-    code = (body.get("code") or "").strip()
+    code = (body.get("code") or "").strip().upper()
     name = (body.get("name") or "").strip()
     acc_type = (body.get("type") or "").strip().upper()
 
     if not code or not name:
-        raise HTTPException(400, "code & name wajib.")
-    if acc_type not in ACCOUNT_TYPES:
-        raise HTTPException(400, f"type harus salah satu dari {ACCOUNT_TYPES}")
+        raise HTTPException(400, "Kode dan nama akun wajib diisi.")
     if await db.rahaza_coa_accounts.find_one({"code": code}):
         raise HTTPException(409, f"Kode akun '{code}' sudah ada.")
-
-    parent_code = body.get("parent_code") or None
-    if parent_code:
-        parent = await db.rahaza_coa_accounts.find_one({"code": parent_code})
-        if not parent:
-            raise HTTPException(400, f"Parent '{parent_code}' tidak ditemukan.")
+    parent_code = (body.get("parent_code") or "").strip() or None
+    flags = merge_flags({}, body.get("flags") or {})
+    # 2026-11-02 (S2-H, T10): dulu kode bebas ("abc"), tipe lepas dari awalan, induk tidak dicek, dan akun
+    # kontra (akumulasi penyusutan) diberi saldo normal DEBIT. Kini satu aturan dengan PUT & impor.
+    try:
+        check_code_type(code, acc_type)
+        if parent_code:
+            pdoc = await db.rahaza_coa_accounts.find_one({"code": parent_code}, {"_id": 0})
+            check_parent(code, acc_type, parent_code, {parent_code: pdoc} if pdoc else {})
+    except CoaRuleError as e:
+        raise HTTPException(e.status, str(e))
 
     doc = {
         "id": _uid(),
@@ -259,9 +521,9 @@ async def create_account(request: Request):
         "type": acc_type,
         "parent_code": parent_code,
         "is_group": bool(body.get("is_group", False)),
-        "normal_balance": _normal_balance_for(acc_type),
-        "flags": body.get("flags") or {},
-        "cash_flow_group": _cf_group(body.get("cash_flow_group"), {"code": code, "type": acc_type, "flags": body.get("flags") or {}}),
+        "normal_balance": _normal_balance_for(acc_type, flags),
+        "flags": flags,
+        "cash_flow_group": _cf_group(body.get("cash_flow_group"), {"code": code, "type": acc_type, "flags": flags}),
         "active": True,
         "created_at": _now(),
         "updated_at": _now(),
@@ -273,50 +535,128 @@ async def create_account(request: Request):
     return serialize_doc(doc)
 
 
+async def account_journal_usage(db, code: str) -> int:
+    """2026-11-02 (audit No.48): jumlah baris jurnal yang memakai akun ini — baris buku besar
+    (jurnal posted) + jurnal draft yang memuatnya. Akun bertransaksi tidak boleh jadi header:
+    laporan hanya membaca akun non-group sehingga saldonya hilang & neraca saldo tak seimbang.
+    2026-11-02 (S2-H): keterikatan LENGKAP (profil, toko, rekening, …) ada di `core.coa_bindings`;
+    fungsi ini tetap ada untuk pemanggil lama (seed grup wajib)."""
+    if not code:
+        return 0
+    posted = await db.rahaza_journal_lines.count_documents({"account_code": code})
+    drafts = await db.rahaza_journal_entries.count_documents({"status": "draft", "lines.account_code": code})
+    return int(posted) + int(drafts)
+
+
+async def accounts_by_code(db) -> dict:
+    return {a["code"]: a async for a in db.rahaza_coa_accounts.find({}, {"_id": 0}) if a.get("code")}
+
+
+async def prepare_coa_import(db, docs: list) -> list:
+    """2026-11-02 (S2-H, T8) — impor Excel COA melewati penjaga YANG SAMA dengan PUT/POST.
+    Dulu impor `$set` seluruh baris: akun berjurnal bisa diubah tipe/grup, penanda toko terhapus,
+    neraca saldo tak seimbang. Kini per baris → (dokumen yang ditulis, [galat]):
+      * akun lama: `plan_account_update` (grup/rinci, nonaktif, induk, tipe, kode) — penanda di-MERGE;
+      * akun baru: pola kode, awalan↔tipe, induk (boleh akun baru di baris sebelumnya).
+    Kolom `normal_balance` diterjemahkan ke penanda kontra (saldo normal kebalikan tipe = akun kontra)."""
+    by_code = await accounts_by_code(db)
+    olds = [str(d.get("code") or "").strip() for d in docs if str(d.get("code") or "").strip() in by_code]
+    allb = await cb.collect_bindings(db, olds) if olds else {}
+    pending = dict(by_code)
+    out = []
+    for d in docs:
+        code = str(d.get("code") or "").strip()
+        acc = by_code.get(code)
+        body = {k: d[k] for k in ("name", "type", "parent_code", "is_group", "active", "flags") if k in d}
+        try:
+            if "type" in body:
+                body["type"] = str(body["type"] or "").strip().upper()
+            flags_in = body.get("flags") if isinstance(body.get("flags"), dict) else {}
+            nb_in = str(d.get("normal_balance") or "").strip().upper()
+            if nb_in:
+                if nb_in not in ("DEBIT", "CREDIT"):
+                    raise CoaRuleError(f"normal_balance '{nb_in}' harus DEBIT atau CREDIT.")
+                t = body.get("type") or (acc or {}).get("type") or ""
+                contra = nb_in != _normal_balance_for(t)
+                if "is_contra" in flags_in and bool(flags_in["is_contra"]) != contra:
+                    raise CoaRuleError(f"normal_balance {nb_in} bertentangan dengan flags.is_contra untuk tipe {t}.")
+                body["flags"] = {**flags_in, "is_contra": contra}
+            if acc:
+                upd = plan_account_update(acc, body, allb.get(code, []), pending)
+                out.append(({"code": code, **upd}, []))
+                pending[code] = {**acc, **upd}
+                continue
+            code = code.upper()
+            acc_type = body.get("type") or ""
+            check_code_type(code, acc_type)
+            parent = str(body.get("parent_code") or "").strip() or None
+            check_parent(code, acc_type, parent, pending)
+            flags = merge_flags({}, body.get("flags") or {})
+            new = {"code": code, "name": str(body.get("name") or "").strip(), "type": acc_type,
+                   "parent_code": parent, "is_group": bool(body.get("is_group", False)),
+                   "normal_balance": _normal_balance_for(acc_type, flags), "flags": flags,
+                   "active": body.get("active", True) is not False}
+            new["cash_flow_group"] = _cf_group(None, new)
+            if not new["name"]:
+                raise CoaRuleError("Nama akun wajib diisi.")
+            pending[code] = new
+            out.append((new, []))
+        except CoaRuleError as e:
+            out.append(({"code": code}, [str(e)]))
+    return out
+
+
 @router.put("/accounts/{aid}")
 async def update_account(aid: str, request: Request):
     user = await _require_fin(request)
     db = get_db()
     body = await request.json()
-    acc = await db.rahaza_coa_accounts.find_one({"id": aid})
+    acc = await db.rahaza_coa_accounts.find_one({"id": aid}, {"_id": 0})
     if not acc:
         raise HTTPException(404, "Akun tidak ditemukan.")
-    update = {"updated_at": _now()}
-    if "name" in body:
-        update["name"] = (body["name"] or "").strip() or acc["name"]
-    if "parent_code" in body:
-        update["parent_code"] = body["parent_code"] or None
-    if "is_group" in body:
-        update["is_group"] = bool(body["is_group"])
-    if "flags" in body:
-        update["flags"] = body["flags"] or {}
-    if "active" in body:
-        update["active"] = bool(body["active"])
+    # 2026-11-02 (S2-H): penjaga lengkap — jadikan grup / grup→rinci / nonaktif / induk / tipe / kode
+    # memakai SATU daftar keterikatan (dulu hanya baris jurnal; tipe & kode diabaikan diam-diam, T7).
+    bindings = (await cb.collect_bindings(db, [acc["code"]])).get(acc["code"], [])
+    try:
+        update = plan_account_update(acc, body, bindings, await accounts_by_code(db))
+    except CoaRuleError as e:
+        raise HTTPException(e.status, str(e))
     if "cash_flow_group" in body:
-        update["cash_flow_group"] = _cf_group(body["cash_flow_group"], acc)
-    # note: type & code tidak bisa diubah agar tidak merusak jurnal historis
+        update["cash_flow_group"] = _cf_group(body["cash_flow_group"], {**acc, **update})
+    update["updated_at"] = _now()
     await db.rahaza_coa_accounts.update_one({"id": aid}, {"$set": update})
     acc = await db.rahaza_coa_accounts.find_one({"id": aid}, {"_id": 0})
-    await log_activity(user["id"], user.get("name", ""), "update_account", "coa", aid)
+    what = "reactivate_account" if update.get("active") is True else (
+        "deactivate_account" if update.get("active") is False else "update_account")
+    await log_activity(user["id"], user.get("name", ""), what, "coa", f"{acc.get('code')} {aid}")
     return serialize_doc(acc)
 
 
 @router.delete("/accounts/{aid}")
 async def deactivate_account(aid: str, request: Request):
+    """2026-11-02 (S2-H): HAPUS PERMANEN hanya untuk akun BEBAS (tanpa jurnal posted/draft, anak, rujukan
+    konfigurasi, kode program, dan bukan akun bawaan). Selain itu 409 + daftar keterikatan dan tawaran
+    "Nonaktifkan" (PUT active=false, yang juga ditolak bila akun jadi target posting aktif).
+    Dulu: akun tanpa baris jurnal posted dihapus permanen walau dirujuk profil/toko/rekening (T1, T11, T12),
+    akun berjurnal dinonaktifkan diam-diam walau jadi target posting (T6)."""
     user = await _require_fin(request)
     db = get_db()
-    acc = await db.rahaza_coa_accounts.find_one({"id": aid})
+    acc = await db.rahaza_coa_accounts.find_one({"id": aid}, {"_id": 0})
     if not acc:
         raise HTTPException(404, "Akun tidak ditemukan.")
-    # cek apakah pernah dipakai di jurnal (soft disable)
-    used = await db.rahaza_journal_lines.count_documents({"account_code": acc["code"]})
-    if used > 0:
-        await db.rahaza_coa_accounts.update_one({"id": aid}, {"$set": {"active": False, "updated_at": _now()}})
-        await log_activity(user["id"], user.get("name", ""), "deactivate_account", "coa", acc["code"])
-        return {"ok": True, "soft_disabled": True, "used_count": used}
-    await db.rahaza_coa_accounts.delete_one({"id": aid})
-    await log_activity(user["id"], user.get("name", ""), "delete_account", "coa", acc["code"])
-    return {"ok": True, "deleted": True}
+    bindings = (await cb.collect_bindings(db, [acc["code"]])).get(acc["code"], [])
+    if not cb.check_action(acc, "delete", bindings):
+        await db.rahaza_coa_accounts.delete_one({"id": aid})
+        await log_activity(user["id"], user.get("name", ""), "delete_account", "coa", acc["code"])
+        return {"ok": True, "deleted": True}
+    msg = cb.blocked_message(acc, "delete", bindings)
+    if acc.get("active", True) is False:
+        msg += " Akun ini sudah nonaktif."
+    else:
+        deact = cb.check_action(acc, "deactivate", bindings)
+        msg += (" Akun ini masih bisa DINONAKTIFKAN (riwayat jurnal & rujukan tetap utuh)." if not deact else
+                f" Menonaktifkan pun belum bisa: {'; '.join(deact[:4])}.")
+    raise HTTPException(409, msg)
 
 
 @router.post("/seed")
@@ -348,7 +688,7 @@ async def seed_template(request: Request):
             "type": acc_type,
             "parent_code": parent_code,
             "is_group": is_group,
-            "normal_balance": _normal_balance_for(acc_type),
+            "normal_balance": _normal_balance_for(acc_type, flags),   # 2026-11-02 (S2-H, T18)
             "flags": flags,
             "active": True,
             "created_at": _now(),
@@ -358,8 +698,10 @@ async def seed_template(request: Request):
         }
         await db.rahaza_coa_accounts.insert_one(doc)
         inserted += 1
+    nb_fixed = await fix_contra_normal_balance(db)
     await log_activity(user["id"], user.get("name", ""), "seed_coa", "coa", f"inserted={inserted} skipped={skipped}")
-    return {"ok": True, "inserted": inserted, "skipped": skipped, "total_template": len(SEED_TEMPLATE)}
+    return {"ok": True, "inserted": inserted, "skipped": skipped, "total_template": len(SEED_TEMPLATE),
+            "normal_balance_fixed": nb_fixed}
 
 
 
@@ -720,6 +1062,8 @@ async def seed_coa_accounts(db) -> dict:
     existing_codes: set = set()
     async for d in db.rahaza_coa_accounts.find({}, {"_id": 0, "code": 1}):
         existing_codes.add(d["code"])
+    had_accounts = bool(existing_codes)
+    recreated: list = []
     inserted = 0
     skipped = 0
     template_codes = [c for c, *_ in SEED_TEMPLATE if c not in DUP_TEMPLATE_CODES]
@@ -730,12 +1074,13 @@ async def seed_coa_accounts(db) -> dict:
         await db.rahaza_coa_accounts.insert_one({
             "id": _uid(), "code": code, "name": name, "type": acc_type,
             "parent_code": PARENT_OVERRIDES.get(code) or _infer_parent_code(code, template_codes),
-            "is_group": is_group, "normal_balance": _normal_balance_for(acc_type),
+            "is_group": is_group, "normal_balance": _normal_balance_for(acc_type, flags),   # S2-H (T18)
             "flags": flags, "active": True,
             "created_at": _now(), "updated_at": _now(),
             "created_by": "system", "created_by_name": "auto-seed",
         })
         existing_codes.add(code)
+        recreated.append(code)
         inserted += 1
     for code, name, acc_type, is_group, parent_code, nb_override, cf_group in DA_UNIFIED_ACCOUNTS:
         if code in existing_codes:
@@ -751,14 +1096,49 @@ async def seed_coa_accounts(db) -> dict:
             "created_by": "system", "created_by_name": "auto-seed",
         })
         existing_codes.add(code)
+        recreated.append(code)
         inserted += 1
     type_fixed = 0
     for gcode in UNIFIED_GROUP_CODES:
+        # 2026-11-02 (audit No.47/48): startup dulu mencentang ulang grup pada SETIAP restart —
+        # termasuk akun yang sengaja di-uncheck Finance dan sudah bertransaksi → neraca saldo tak
+        # seimbang. Kini hanya akun yang belum disentuh pengguna DAN belum punya baris jurnal.
+        acc = await db.rahaza_coa_accounts.find_one(
+            {"code": gcode, "is_group": {"$ne": True}}, {"_id": 0, "code": 1, "is_group_user_set": 1})
+        if not acc or acc.get("is_group_user_set") or await account_journal_usage(db, gcode):
+            continue
         r = await db.rahaza_coa_accounts.update_one({"code": gcode, "is_group": {"$ne": True}},
                                                     {"$set": {"is_group": True, "updated_at": _now()}})
         type_fixed += r.modified_count
+    # 2026-11-02 (S2-H): akun bawaan yang HILANG (terhapus sebelum penjaga hapus ada) memang dibuat
+    # ulang — tetapi tidak lagi diam-diam: dicatat di log startup & laporan seed. Sejak penjaga S2-H
+    # akun bawaan tidak bisa dihapus permanen (hanya dinonaktifkan), jadi ini hanya terjadi pada data lama.
+    if had_accounts and recreated:
+        log.warning("[coa] seed startup MENAMBAH %d akun bawaan yang belum ada di DB (akun template baru, "
+                    "atau akun bawaan yang dulu terhapus — dibuat dengan id baru): %s",
+                    len(recreated), ", ".join(recreated))
+    nb_fixed = await fix_contra_normal_balance(db)
     return {"inserted": inserted, "skipped": skipped, "type_fixed": type_fixed,
+            "recreated": recreated if had_accounts else [], "normal_balance_fixed": nb_fixed,
             "total_template": len(SEED_TEMPLATE) + len(DA_UNIFIED_ACCOUNTS)}
+
+
+async def fix_contra_normal_balance(db) -> list:
+    """2026-11-02 (S2-H, T18) — IDEMPOTEN: akun KONTRA (`flags.is_contra`) bersaldo normal kebalikan
+    tipenya. Seed 4 digit dulu memakai saldo normal tipe apa adanya: akumulasi penyusutan & cadangan
+    piutang = DEBIT, retur/diskon penjualan & prive = KREDIT → Buku Besar menampilkan saldo minus.
+    Hanya `normal_balance` yang berubah (tanda saldo berjalan di Buku Besar); angka jurnal tidak."""
+    fixed = []
+    async for a in db.rahaza_coa_accounts.find({"flags.is_contra": True},
+                                                {"_id": 0, "code": 1, "type": 1, "normal_balance": 1, "flags": 1}):
+        want = _normal_balance_for((a.get("type") or "").upper(), a.get("flags"))
+        if a.get("normal_balance") != want:
+            await db.rahaza_coa_accounts.update_one({"code": a["code"]},
+                                                    {"$set": {"normal_balance": want, "updated_at": _now()}})
+            fixed.append(a["code"])
+    if fixed:
+        log.info("[coa] saldo normal akun kontra diperbaiki: %s", ", ".join(fixed))
+    return fixed
 
 
 def _infer_parent_code(code: str, all_codes: list) -> str | None:

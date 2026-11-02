@@ -15,6 +15,8 @@ berubah arti diam-diam.
 
     omzet bruto  = definisi lama (semua status KECUALI `cancelled`)      ← TETAP
     nilai retur  = Σ pesanan berstatus `returned`
+                 + Σ refund aktual retur MODUL per tanggal retur (2026-11-02, No.16;
+                   tanpa dobel dengan pesanan yang sudah `returned`/`cancelled`)
     omzet net    = bruto − nilai retur                                   ← BARU
 
 TIGA HAL YANG DIJAGA BERKAS INI
@@ -64,8 +66,40 @@ DEFAULT_RETURN_THRESHOLDS = {
 LABEL_GROSS = ("Omzet BRUTO — definisi lama yang dipakai target, capaian, dan "
                "ROAS: semua pesanan KECUALI yang dibatalkan (pesanan retur IKUT).")
 LABEL_NET = ("Omzet SETELAH RETUR — bruto dikurangi nilai pesanan berstatus "
-             "retur. Angka analisis; target & capaian TIDAK memakainya supaya "
-             "angka rapat yang sudah beredar tidak berubah arti.")
+             "retur DAN nominal refund retur modul Retur yang SUDAH DIPUTUSKAN "
+             "GUDANG (per tanggal retur; retur yang masih menunggu paket belum "
+             "dihitung). Angka analisis; target & capaian TIDAK memakainya "
+             "supaya angka rapat yang sudah beredar tidak berubah arti.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (No.16) — RETUR DARI MODUL RETUR IKUT MENGURANGI OMZET DI REKAP
+# ══════════════════════════════════════════════════════════════════════════════
+# Sebelum ini rekap hanya mengenal retur dari STATUS pesanan hasil impor. Retur
+# yang dicatat staf di Marketing › Komplain & Retur (form atau impor "Retur &
+# Refund") tidak mengurangi apa pun — uji audit: retur modul atas IMP-A-3002 →
+# rekap tidak berubah sama sekali. Keputusan owner No.16: retur mengurangi omzet
+# di rekap. Aturannya:
+#   * nilai yang dikurangkan = NOMINAL REFUND AKTUAL retur (No.14a), pada TANGGAL
+#     RETUR, per TOKO — retur tanpa nomor pesanan (No.4c) ikut dihitung;
+#   * retur DITOLAK/DIBATALKAN tidak dihitung (barang/uang tidak kembali);
+#   * ANTI-DOBEL: retur yang menunjuk pesanan toko yang SAMA yang sudah berstatus
+#     `returned` (nilainya sudah dihitung dari status impor) atau `cancelled`
+#     (sudah keluar dari bruto) TIDAK dihitung lagi.
+MODULE_RETURN_EXCLUDED_STATUSES: Tuple[str, ...] = ("rejected", "cancelled")
+ORDER_STATUSES_ALREADY_REFLECTED: Tuple[str, ...] = ("returned", "cancelled")
+
+# ── 2026-11-02 (K36) — retur mengurangi omzet rekap HANYA SETELAH DIPUTUSKAN GUDANG ──
+# Keputusan owner K36 (bersama K1): retur yang baru DIAJUKAN (pekerjaan Retur Fisik
+# Pending/Received/Inspected) belum mengurangi apa pun. Yang dihitung hanya retur
+# yang keputusan gudangnya berlaku (`wh_return_status = Resolved`, dibalikkan ke
+# retur Marketing oleh `core.returns_bridge._stamp_marketing`). Keputusan "Ditolak —
+# Dikembalikan ke Pembeli" = barang kembali ke pembeli ⇒ penjualan tetap berdiri ⇒
+# TIDAK dihitung. Keputusan yang DIBALIK (`Reversed`) / dibatalkan juga tidak.
+WH_DECIDED_STATUS = "Resolved"
+# Harus sama persis dengan `core.returns_bridge.ACTION_REJECT_TO_BUYER` (dijaga uji).
+WH_NOT_COUNTED_ACTIONS: Tuple[str, ...] = ("Ditolak — Dikembalikan ke Pembeli",)
+# Field retur Marketing yang dibutuhkan pembaca rekap (proyeksi kueri).
+DECISION_FIELDS: Tuple[str, ...] = ("wh_return_status", "wh_action_taken")
 
 
 def _r(v: Any, nd: int = 2) -> float:
@@ -103,6 +137,111 @@ def order_units(order: dict) -> int:
     if q:
         return q
     return sum(_rollup.item_qty(it) for it in ((order or {}).get("items") or []))
+
+
+# ── 2026-11-02 (No.16) — pembaca retur MODUL (koleksi `marketing_returns`) ────
+def _key(v: Any) -> str:
+    return str(v or "").strip()
+
+
+def is_warehouse_decided(ret: dict) -> bool:
+    """2026-11-02 (K36) — sudah ada keputusan gudang yang berlaku dan menerima barangnya?"""
+    r = ret or {}
+    if str(r.get("wh_return_status") or "").strip() != WH_DECIDED_STATUS:
+        return False
+    return str(r.get("wh_action_taken") or "").strip() not in WH_NOT_COUNTED_ACTIONS
+
+
+def is_module_return_counted(ret: dict) -> bool:
+    """Retur modul yang ikut mengurangi omzet: tidak ditolak/batal di Marketing DAN
+    sudah diputuskan gudang (K36, 2026-11-02 — sebelumnya: semua status kecuali
+    ditolak/batal, termasuk yang masih menunggu paket)."""
+    return (str((ret or {}).get("status") or "").strip().lower()
+            not in MODULE_RETURN_EXCLUDED_STATUSES) and is_warehouse_decided(ret)
+
+
+def module_return_value(ret: dict) -> float:
+    """Nominal refund aktual satu retur (No.14a). Data lama dibaca apa adanya."""
+    return max(_r((ret or {}).get("refund_amount")), 0.0)
+
+
+def module_return_units(ret: dict) -> int:
+    """Pcs satu retur — form menulis `qty`, impor menulis `quantity`."""
+    for k in ("qty", "quantity"):
+        if (ret or {}).get(k) is not None:
+            return max(_int(ret.get(k)), 0)
+    return 1
+
+
+def module_return_order_keys(ret: dict) -> Tuple[str, str]:
+    """(nomor pesanan platform, id dokumen pesanan) yang ditunjuk retur."""
+    return _key((ret or {}).get("order_id")), _key((ret or {}).get("order_ref_id"))
+
+
+def select_uncovered_module_returns(returns: Iterable[dict],
+                                    reflected_orders: Iterable[dict]) -> List[dict]:
+    """Buang retur modul yang nilainya SUDAH tercermin di status pesanan.
+
+    ``reflected_orders`` = pesanan toko yang sama berstatus
+    :data:`ORDER_STATUSES_ALREADY_REFLECTED` (dicari pemanggil). Retur dianggap
+    tercermin bila nomor pesanan (`order_id`) atau id dokumennya (`order_ref_id`,
+    diisi impor) cocok. Retur tanpa nomor pesanan (No.4c) selalu dihitung.
+    """
+    oids = {_key(o.get("order_id")) for o in reflected_orders or []} - {""}
+    ids = {_key(o.get("id")) for o in reflected_orders or []} - {""}
+    out = []
+    for r in returns or []:
+        if not is_module_return_counted(r):
+            continue
+        oid, ref = module_return_order_keys(r)
+        if (oid and oid in oids) or (ref and ref in ids):
+            continue
+        out.append(r)
+    return out
+
+
+def split_module_returns(returns: Iterable[dict]) -> Dict[str, Any]:
+    """Ringkas retur modul (yang sudah lolos saringan) satu hari."""
+    rows = [r for r in (returns or []) if is_module_return_counted(r)]
+    return {
+        "module_returns_count": len(rows),
+        "module_returns_value": _r(sum(module_return_value(r) for r in rows)),
+        "module_returns_units": sum(module_return_units(r) for r in rows),
+    }
+
+
+async def refresh_rekap_for_docs(db, *docs, actor: str = "system") -> dict:
+    """Hitung ulang rekap harian (toko, TANGGAL RETUR) untuk dokumen retur ini.
+
+    Satu pintu untuk modul Retur Marketing, keputusan Retur Fisik gudang (K36), dan
+    impor "Retur & Refund" (2026-11-02). Gagal hitung ulang dicatat pemanggil."""
+    pairs = set()
+    for d in docs:
+        aid = (d or {}).get("account_id")
+        dt = str((d or {}).get("date") or "")[:10]
+        if aid and len(dt) == 10:
+            pairs.add((aid, dt))
+    if not pairs:
+        return {"pairs": 0}
+    res = await _rollup.recompute_pairs(db, pairs, actor=actor)
+    return {"pairs": len(pairs), **{k: v for k, v in (res or {}).items() if k != "details"}}
+
+
+async def refresh_rekap_for_return_ids(db, return_ids: Iterable[str], *,
+                                       actor: str = "system") -> dict:
+    """Seperti :func:`refresh_rekap_for_docs`, tetapi dari id retur Marketing.
+    Tidak pernah melempar — kegagalan rekap tidak boleh membatalkan keputusan gudang."""
+    import logging
+    ids = sorted({i for i in (return_ids or []) if i})
+    if not ids:
+        return {"pairs": 0}
+    try:
+        docs = await db.marketing_returns.find(
+            {"id": {"$in": ids}}, {"_id": 0, "account_id": 1, "date": 1}).to_list(5000)
+        return await refresh_rekap_for_docs(db, *docs, actor=actor)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).error("[retur] rekap harian gagal dihitung ulang (%s): %s", ids, e)
+        return {"pairs": 0, "error": str(e)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -157,6 +296,10 @@ def from_daily_rows(rows: Sequence[dict], basis: Optional[str] = None) -> Dict[s
     basis = basis if basis in _shape.VALID_BASIS else _shape.DEFAULT_BASIS
     ret_p = ret_a = 0.0
     ret_orders = ret_units = 0
+    # 2026-11-02 (No.16) — retur modul sudah TERMASUK di returned_* rekap turunan;
+    # jumlah & nilainya dibawa terpisah supaya kalimat "N pesanan retur" jujur.
+    mod_count = 0
+    mod_value = 0.0
     days_known = days_total = 0
     unknown_sources: Dict[str, int] = {}
     for r in rows or []:
@@ -182,6 +325,8 @@ def from_daily_rows(rows: Sequence[dict], basis: Optional[str] = None) -> Dict[s
             ret_a += float(ful.get("returned_value") or 0)
             ret_orders += _int(ful.get("returned_orders"))
             ret_units += _int(ful.get("returned_units"))
+            mod_count += _int(ful.get("module_returns_count"))
+            mod_value += float(ful.get("module_returns_value") or 0)
         else:
             # Hari yang angkanya diimpor/diketik/di-override: retur tidak diketahui.
             # Kalau dokumennya kebetulan MEMBAWA angka retur (mis. impor rekap yang
@@ -202,6 +347,8 @@ def from_daily_rows(rows: Sequence[dict], basis: Optional[str] = None) -> Dict[s
         "returned_order_amount": _r(ret_a),
         "returned_orders": ret_orders,
         "returned_units": ret_units,
+        "returned_module_count": mod_count,
+        "returned_module_value": _r(mod_value),
         "basis": basis,
         "coverage": {
             "days_known": days_known,
@@ -234,6 +381,9 @@ def resolve(basis: Optional[str], gross_revenue: Any, split: Dict[str, Any]) -> 
         "returned_amount": returned,
         "returned_orders": _int(split.get("returned_orders")),
         "returned_units": _int(split.get("returned_units")),
+        # 2026-11-02 (No.16) — bagian retur yang berasal dari modul Retur.
+        "returned_module_count": _int(split.get("returned_module_count")),
+        "returned_module_value": _r(split.get("returned_module_value")),
         "revenue_net_returns": max(net, 0.0),
         "returns_pct": _r(returned / gross * 100) if gross > 0 else 0.0,
         "over_returned": net < 0,
@@ -262,8 +412,11 @@ def evaluate_flags(returns: Dict[str, Any],
     th = thresholds_from(settings)
     pct = _r((returns or {}).get("returns_pct"))
     n = _int((returns or {}).get("returned_orders"))
+    # 2026-11-02 (No.16) — retur modul juga retur; tanpa ini toko yang returnya
+    # hanya dicatat di modul Retur tidak pernah mendapat peringatan.
+    n_mod = _int((returns or {}).get("returned_module_count"))
     flags: List[dict] = []
-    if n <= 0:
+    if n + n_mod <= 0:
         return flags
     if pct >= th["returns_red_pct"]:
         sev = "red"
@@ -271,10 +424,11 @@ def evaluate_flags(returns: Dict[str, Any],
         sev = "yellow"
     else:
         return flags
+    what = f"{n} pesanan retur" + (f" + {n_mod} retur modul" if n_mod else "")
     flags.append({
         "code": "returns_high", "severity": sev,
         "title": "Nilai retur tinggi",
-        "message": (f"{n} pesanan retur senilai Rp {rp(returns.get('returned_amount'))} "
+        "message": (f"{what} senilai Rp {rp(returns.get('returned_amount'))} "
                     f"= {pct}% dari omzet bruto. Omzet setelah retur "
                     f"Rp {rp(returns.get('revenue_net_returns'))}."),
         "value": pct,
@@ -286,9 +440,12 @@ def evaluate_flags(returns: Dict[str, Any],
 def data_note(returns: Dict[str, Any]) -> str:
     """Satu kalimat kejujuran untuk `data_notes` — SELALU menyebut kata 'retur'."""
     cov = (returns or {}).get("coverage") or {}
+    n_mod = _int(returns.get("returned_module_count"))
+    mod_txt = (f" (termasuk {n_mod} retur dari modul Retur senilai "
+               f"Rp {rp(returns.get('returned_module_value'))})" if n_mod else "")
     base = (f"Omzet bruto Rp {rp(returns.get('revenue_gross'))} memasukkan "
-            f"{_int(returns.get('returned_orders'))} pesanan RETUR senilai "
-            f"Rp {rp(returns.get('returned_amount'))}; omzet setelah retur "
+            f"{_int(returns.get('returned_orders'))} pesanan RETUR; total retur "
+            f"Rp {rp(returns.get('returned_amount'))}{mod_txt}; omzet setelah retur "
             f"Rp {rp(returns.get('revenue_net_returns'))}. Target & capaian "
             "tetap memakai BRUTO supaya angka yang sudah beredar tidak berubah.")
     if not cov.get("complete", True):

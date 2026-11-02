@@ -2,7 +2,6 @@
 Complaints Management Module — Backend Routes
 Phase 2 Week 5: Complaint tracking dengan SLA + AI classification
 """
-import os
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta
@@ -14,13 +13,15 @@ from auth import require_auth
 # F6 (sesi #9) — ringkasan & daftar WAJIB berlingkup toko.
 from core import marketing_account_scope as _scope
 from utils.query_guards import q_date
-from ai_llm import LlmChat, UserMessage
+from services.ai import (
+    AIError, Pseudonymizer, SuggestionDecision, ai_http_error, ai_text, clamp_number, decide_suggestion,
+    new_suggestion, pick_enum, require_ai, with_untrusted_rule, wrap_untrusted,
+)
 import json
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/complaints", tags=["marketing-complaints"])
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 COMPLAINT_CATEGORIES = [
     "missing_item", "wrong_item", "quality_defect",
@@ -225,7 +226,7 @@ async def seed_complaints_if_empty():
 async def complaints_summary(request: Request):
     user = await require_auth(request)
     db = get_db()
-    await seed_complaints_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     # F6 (sesi #9) — ringkasan komplain WAJIB berlingkup toko.
     _s = await _scope.scope_filter(db, user, None)
 
@@ -306,7 +307,7 @@ async def list_complaints(
 ):
     user = await require_auth(request)
     db = get_db()
-    await seed_complaints_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     q: dict = await _scope.scope_filter(db, user, None)
     if platform:
@@ -451,49 +452,100 @@ async def add_note(complaint_id: str, body: NoteBody, request: Request):
 
 @router.post("/{complaint_id}/ai-classify")
 async def ai_reclassify(complaint_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
     c = await db.marketing_complaints.find_one({"id": complaint_id}, {"_id": 0})
     if not c:
         raise HTTPException(404, "Complaint not found")
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI not configured")
+    # 2026-11-02: gerbang tunggal services.ai (dulu 503 "AI not configured").
+    await require_ai("marketing-complaint-classify", user_id=user.get("id"), db=db, tier="light")
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"complaint-classify-{complaint_id[:8]}",
-        system_message="Kamu adalah sistem klasifikasi komplain pelanggan marketplace Indonesia. Respond only with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    # K28 (2026-11-02): teks komplain = data pihak luar → dibungkus pembatas; nama pelanggan
+    # diganti kode samaran & kontak disamarkan (K27); output divalidasi ke enum.
+    ai_system_msg = with_untrusted_rule(
+        "Kamu adalah sistem klasifikasi komplain pelanggan marketplace Indonesia. Respond only with valid JSON.")
+    ps = Pseudonymizer()
+    ps.code(c.get("customer_name"), "pelanggan", parts=True)
+    data_block = wrap_untrusted(
+        f"Teks: {ps.scrub(c.get('complaint_text', ''))}\nProduk: {ps.scrub(c.get('product_name', ''))}",
+        "komplain")
 
     cats = ", ".join(COMPLAINT_CATEGORIES)
     prompt = (
-        f"Klasifikasikan komplain marketplace Indonesia:\n"
-        f"Teks: '{c.get('complaint_text', '')}' | Produk: {c.get('product_name', '')}\n\n"
+        f"Klasifikasikan komplain marketplace Indonesia berikut:\n{data_block}\n\n"
+        f"Pilih category HANYA dari: {cats}. Pilih severity HANYA dari: {', '.join(COMPLAINT_SEVERITIES)}.\n"
         f"Return JSON persis: {{\"category\": \"<{cats}>\", \"severity\": \"low|medium|high|critical\", "
         f"\"sentiment_score\": -1.0, \"requires_immediate_action\": true, "
-        f"\"response_template\": \"template respons Bahasa Indonesia\", \"confidence\": 0.9}}"
+        f"\"response_template\": \"template respons Bahasa Indonesia\", \"confidence\": 0.9, "
+        f"\"reason\": \"alasan singkat\"}}"
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-complaint-classify", ai_system_msg, prompt, tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = clean.split("```")[1]
             if clean.startswith("json"):
                 clean = clean[4:]
-        result = json.loads(clean.strip())
-
-        update = {
-            "category":          result.get("category", c["category"]),
-            "category_label":    CATEGORY_LABELS_ID.get(result.get("category", c["category"]), c["category"]),
-            "severity":          result.get("severity", c.get("severity", "medium")),
-            "ai_confidence":     result.get("confidence", 0.9),
-            "response_template": result.get("response_template", c.get("response_template", "")),
-            "updated_at":        _now()
-        }
-        await db.marketing_complaints.update_one({"id": complaint_id}, {"$set": update})
-        return {"ok": True, "result": result}
+        result = ps.restore(json.loads(clean.strip()))
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
-        raise HTTPException(500, f"AI classification failed: {e}")
+        logger.warning(f"AI classify parse error: {e}")
+        raise HTTPException(502, "Hasil klasifikasi AI tidak dapat dibaca. Silakan coba lagi.")
+
+    category = pick_enum(result.get("category"), COMPLAINT_CATEGORIES)
+    severity = pick_enum(result.get("severity"), COMPLAINT_SEVERITIES)
+    if category is None or severity is None:
+        # Nilai di luar daftar baku (mis. hasil prompt injection) TIDAK disimpan.
+        raise HTTPException(502, "Jawaban AI berisi kategori/severity yang tidak sah, sehingga tidak dipakai. "
+                                 "Silakan klasifikasikan manual atau coba lagi.")
+    suggestion = new_suggestion(
+        {"category": category, "severity": severity,
+         "response_template": str(result.get("response_template") or "")[:2000]},
+        feature="marketing-complaint-classify", user=user,
+        reason=result.get("reason", ""), confidence=result.get("confidence"),
+        extra={"sentiment_score": clamp_number(result.get("sentiment_score"), -1, 1),
+               "requires_immediate_action": bool(result.get("requires_immediate_action")),
+               "category_label": CATEGORY_LABELS_ID.get(category, category)})
+    # Nilai resmi (category/severity/template) TIDAK diubah di sini — tunggu Terima/Ubah.
+    await db.marketing_complaints.update_one(
+        {"id": complaint_id}, {"$set": {"ai_suggestion": suggestion, "updated_at": _now()}})
+    return {"ok": True, "result": {**result, "category": category, "severity": severity},
+            "ai_suggestion": suggestion}
+
+
+COMPLAINT_SEVERITIES = ("low", "medium", "high", "critical")
+COMPLAINT_SUGGESTION_RULES = {
+    "category": tuple(COMPLAINT_CATEGORIES),
+    "severity": COMPLAINT_SEVERITIES,
+    "response_template": lambda v: str(v or "")[:2000],
+}
+
+
+@router.post("/{complaint_id}/ai-suggestion")
+async def decide_complaint_suggestion(complaint_id: str, body: SuggestionDecision, request: Request):
+    """K28 (2026-11-02): Terima / Ubah / Tolak usulan klasifikasi AI.
+
+    Nilai resmi baru berubah DI SINI, divalidasi ke daftar baku, aktor & nilai lama dicatat.
+    """
+    user = await require_auth(request)
+    db = get_db()
+    c = await db.marketing_complaints.find_one({"id": complaint_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Complaint not found")
+    official, decided = decide_suggestion(c.get("ai_suggestion"), body, user=user,
+                                          rules=COMPLAINT_SUGGESTION_RULES, current=c)
+    patch = {"ai_suggestion": decided, "updated_at": _now(), "updated_by": user.get("email", "system")}
+    if official:
+        patch.update(official)
+        if "category" in official:
+            patch["category_label"] = CATEGORY_LABELS_ID.get(official["category"], official["category"])
+        patch["ai_confidence"] = decided.get("confidence")
+        patch["classified_by"] = decided["decided_by"]
+        patch["classified_at"] = decided["decided_at"]
+        patch["classification_source"] = f"ai_{decided['status']}"
+    await db.marketing_complaints.update_one({"id": complaint_id}, {"$set": patch})
+    return serialize({"ok": True, "ai_suggestion": decided, "applied": official})

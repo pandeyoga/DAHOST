@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { toast } from 'sonner';
 import { FileSearch, Sparkles, AlertTriangle, CheckCircle, XCircle, Loader2, TrendingUp, Award } from 'lucide-react';
 import { IconButton } from '../IconButton';
+import AISuggestionPanel from '../AISuggestionPanel';
 
 const RECOMMENDATION_COLOR = {
   'Strongly Recommended': '#10b981',
@@ -17,6 +18,12 @@ const RECOMMENDATION_COLOR = {
   'Consider': '#f59e0b',
   'Not Recommended': '#ef4444',
 };
+
+// K28 (2026-11-02): skor AI kandidat = usulan; HR Terima/Ubah/Tolak sebelum jadi skor resmi.
+const SCORE_SUGGESTION_FIELDS = [
+  { key: 'ai_score', label: 'Skor AI (0–100)', type: 'number' },
+  { key: 'ai_recommendation', label: 'Rekomendasi', options: Object.keys(RECOMMENDATION_COLOR).map(v => ({ value: v, label: v })) },
+];
 
 const MATCH_BADGE = {
   yes: { label: 'Match', color: '#10b981' },
@@ -38,10 +45,12 @@ export default function HRResumeScreeningModule({ token }) {
   const fetchCandidates = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/employees/list`, { headers });
+      // 2026-11-02: daftar PELAMAR (dewi_recruitment_candidates), bukan daftar karyawan —
+      // dulu id karyawan dikirim sebagai candidate_id sehingga screening selalu 404.
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/dewi/recruitment/candidates?limit=200`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      setCandidates(data?.data || []);
+      setCandidates(data?.candidates || []);
     } catch (e) {
       toast.error(`Gagal memuat kandidat: ${e.message}`);
     } finally {
@@ -125,8 +134,8 @@ export default function HRResumeScreeningModule({ token }) {
                 </SelectTrigger>
                 <SelectContent>
                   {candidates.map(c => (
-                    <SelectItem key={c.id || c.employee_code} value={c.id || c.employee_code}>
-                      {c.name} - {c.department || 'N/A'}
+                    <SelectItem key={c.candidate_id} value={c.candidate_id}>
+                      {c.name} - {c.job_title || c.position_applied || 'N/A'}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -185,6 +194,20 @@ export default function HRResumeScreeningModule({ token }) {
                 <div className="text-xs text-muted-foreground mt-1">Skor Keseluruhan</div>
                 <Badge className="mt-2" style={{ background: recColor }}>{result.analysis.recommendation}</Badge>
               </div>
+
+              {result.ai_suggestion && (
+                <AISuggestionPanel
+                  suggestion={result.ai_suggestion}
+                  fields={SCORE_SUGGESTION_FIELDS}
+                  decideUrl={`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/resume-screen/${selectedCandidate}/suggestion`}
+                  headers={{ Authorization: headers.Authorization }}
+                  testId="candidate-ai-suggestion"
+                  onDecided={(data) => {
+                    setResult(prev => ({ ...prev, ai_suggestion: data?.data?.ai_suggestion || prev.ai_suggestion }));
+                    toast.success('Keputusan skor AI tersimpan');
+                  }}
+                />
+              )}
 
               {/* Strengths */}
               {result.analysis.strengths && result.analysis.strengths.length > 0 && (

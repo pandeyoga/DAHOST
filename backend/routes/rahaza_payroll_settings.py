@@ -12,6 +12,14 @@ Prinsip yang dipegang (pelajaran FASE 12 BUG-B):
 Disimpan di `rahaza_payroll_settings` dengan `key` sebagai penanda dokumen
 (pola SSOT yang sama seperti `rahaza_costing_settings`) — tidak menambah
 koleksi baru per-fitur.
+
+2026-11-02 — keputusan owner (TANPA koleksi/layar ganda; semua di koleksi yang sama ini):
+  key "bpjs"      (K22/K23) tarif & plafon per program, kelas risiko JKK, saklar jurnal iuran
+                  perusahaan (bawaan MATI sampai owner menyalakan). Bawaan = konstanta rahaza_payroll_tax.
+  key "overtime"  (K24) aturan CADANGAN bila tarif lembur Profil Gaji = 0:
+                  1/173 × upah tetap, jam ke-1 × 1,5, jam berikutnya × 2 (pengali bisa diatur).
+  key "kasbon"    (K25) batas kasbon: % gaji pokok & maks cicilan. Bawaan 0 = TANPA batas.
+Layar: tab "Pengaturan Payroll" di hub Penggajian (RahazaPayrollSettingsModule.jsx).
 """
 from __future__ import annotations
 
@@ -23,11 +31,68 @@ from fastapi import APIRouter, HTTPException, Request
 from auth import log_activity, serialize_doc
 from database import get_db
 from routes.rahaza_payroll_shared import _require_hr
+from routes.rahaza_payroll_tax import BPJS_JKK_RATES, default_bpjs_config, merge_bpjs_config
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-payroll-settings"])
 
 LATE_KEY = "late_penalty"
 ATT_BONUS_KEY = "attendance_bonus"
+BPJS_KEY = "bpjs"
+OVERTIME_KEY = "overtime"
+KASBON_KEY = "kasbon"
+
+# Saklar jurnal iuran perusahaan: "sampai owner menyalakan" → hanya owner/superadmin yang boleh mengubah.
+SWITCH_ROLES = ("owner", "superadmin")
+
+DEFAULT_BPJS = {
+    "key": BPJS_KEY,
+    **default_bpjs_config(),
+    "employer_contribution_journal": False,   # SENGAJA mati sampai owner menyalakan (K22)
+    "note": ("Tarif bawaan = tarif sistem lama. Iuran perusahaan tetap DIHITUNG dan tampil di slip; "
+             "jurnalnya (Dr 6-3200/6-3300 / Cr 2-1501/2-1502) baru dibuat bila saklar dinyalakan owner."),
+}
+
+OVERTIME_BASES = ("upah_tetap_div_173", "manual")
+DEFAULT_OVERTIME = {
+    "key": OVERTIME_KEY,
+    "basis": "upah_tetap_div_173",   # keputusan owner K24: cadangan bila tarif Profil Gaji = 0
+    "divisor": 173,
+    "first_hour_multiplier": 1.5,
+    "next_hours_multiplier": 2.0,
+    "note": ("Tarif lembur per Profil Gaji tetap dipakai bila > 0. Bila 0: 1/173 × upah tetap "
+             "(gaji pokok bulanan + tunjangan tetap), jam ke-1 × 1,5, jam berikutnya × 2. "
+             "Hanya untuk skema bulanan; skema lain tanpa tarif profil diberi peringatan di run gaji. "
+             "basis 'manual' = tanpa cadangan (lembur bertarif 0 tidak dibayar, hanya diperingatkan)."),
+}
+
+DEFAULT_KASBON = {
+    "key": KASBON_KEY,
+    "max_pct_of_base_salary": 0,   # 0 = tanpa batas (bawaan sampai owner mengisi)
+    "max_installments": 0,         # 0 = tanpa batas
+    "note": ("Batas berlaku untuk pengajuan baru dan saat HR menyetujui. Nilai 0 = tanpa batas. "
+             "Gaji pokok = Profil Gaji aktif skema bulanan."),
+}
+
+
+async def get_bpjs_settings(db) -> dict:
+    """Setelan BPJS yang berlaku (bawaan digabung dengan dokumen tersimpan)."""
+    doc = await db.rahaza_payroll_settings.find_one({"key": BPJS_KEY}, {"_id": 0}) or {}
+    out = {**DEFAULT_BPJS, **merge_bpjs_config(doc)}
+    out["employer_contribution_journal"] = bool(doc.get("employer_contribution_journal", False))
+    for k in ("updated_at", "updated_by", "updated_by_name"):
+        if k in doc:
+            out[k] = doc[k]
+    return out
+
+
+async def get_overtime_settings(db) -> dict:
+    doc = await db.rahaza_payroll_settings.find_one({"key": OVERTIME_KEY}, {"_id": 0}) or {}
+    return {**DEFAULT_OVERTIME, **doc}
+
+
+async def get_kasbon_settings(db) -> dict:
+    doc = await db.rahaza_payroll_settings.find_one({"key": KASBON_KEY}, {"_id": 0}) or {}
+    return {**DEFAULT_KASBON, **doc}
 
 VALID_LATE_MODES = ("per_minute", "tiered", "per_occurrence")
 
@@ -162,16 +227,132 @@ async def set_attendance_bonus(request: Request):
     return serialize_doc({"ok": True, "settings": doc})
 
 
+def _num(body: dict, field: str, *, lo: float = 0.0, hi: Optional[float] = None, default=0.0) -> float:
+    raw = body.get(field, default)
+    try:
+        val = float(raw if raw not in (None, "") else default)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field} harus angka.")
+    if val < lo or (hi is not None and val > hi):
+        rng = f"{lo:g}–{hi:g}" if hi is not None else f"≥ {lo:g}"
+        raise HTTPException(400, f"{field} di luar rentang yang wajar ({rng}).")
+    return val
+
+
+def _audit(user: dict) -> dict:
+    return {"updated_at": _now(), "updated_by": user["id"], "updated_by_name": user.get("name", "")}
+
+
+# ─── BPJS (K22/K23, 2026-11-02) ───────────────────────────────────────────────
+@router.get("/payroll-settings/bpjs")
+async def get_bpjs(request: Request):
+    await _require_hr(request)
+    return serialize_doc(await get_bpjs_settings(get_db()))
+
+
+@router.put("/payroll-settings/bpjs")
+async def set_bpjs(request: Request):
+    """Tarif (desimal, mis. 0.01 = 1%), plafon (Rp), kelas risiko JKK, saklar jurnal iuran perusahaan.
+
+    Saklar `employer_contribution_journal` hanya boleh DIUBAH owner/superadmin (keputusan owner:
+    "bawaan mati sampai owner menyalakan"); HR tetap boleh menyimpan tarif tanpa menyentuh saklar."""
+    user = await _require_hr(request)
+    db = get_db()
+    body = await request.json()
+    cur = await get_bpjs_settings(db)
+    base = default_bpjs_config()
+
+    rates_in = body.get("rates") or {}
+    rates = {}
+    for k in base["rates"]:
+        rates[k] = _num(rates_in, k, hi=0.2, default=cur["rates"][k])
+    ceilings_in = body.get("ceilings") or {}
+    ceilings = {k: _num(ceilings_in, k, default=cur["ceilings"][k]) for k in base["ceilings"]}
+    jkk_in = body.get("jkk_rates") or {}
+    jkk_rates = {k: _num(jkk_in, k, hi=0.2, default=cur["jkk_rates"].get(k, v)) for k, v in BPJS_JKK_RATES.items()}
+    tier = (body.get("jkk_risk_tier") or cur.get("jkk_risk_tier") or "very_low").strip()
+    if tier not in jkk_rates:
+        raise HTTPException(400, f"jkk_risk_tier harus salah satu: {list(jkk_rates)}")
+
+    switch = bool(body.get("employer_contribution_journal", cur["employer_contribution_journal"]))
+    if switch != cur["employer_contribution_journal"] and (user.get("role") or "").lower() not in SWITCH_ROLES:
+        raise HTTPException(403, "Saklar jurnal iuran BPJS perusahaan hanya boleh diubah owner.")
+
+    doc = {"key": BPJS_KEY, "rates": rates, "ceilings": ceilings, "jkk_rates": jkk_rates,
+           "jkk_risk_tier": tier, "employer_contribution_journal": switch, **_audit(user)}
+    await db.rahaza_payroll_settings.update_one({"key": BPJS_KEY}, {"$set": doc}, upsert=True)
+    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.payroll_settings",
+                       f"{BPJS_KEY} jkk={tier} jurnal_perusahaan={'ON' if switch else 'OFF'}")
+    return serialize_doc({"ok": True, "settings": await get_bpjs_settings(db)})
+
+
+# ─── LEMBUR (K24, 2026-11-02) ─────────────────────────────────────────────────
+@router.get("/payroll-settings/overtime")
+async def get_overtime(request: Request):
+    await _require_hr(request)
+    return serialize_doc(await get_overtime_settings(get_db()))
+
+
+@router.put("/payroll-settings/overtime")
+async def set_overtime(request: Request):
+    user = await _require_hr(request)
+    db = get_db()
+    body = await request.json()
+    basis = (body.get("basis") or "upah_tetap_div_173").strip()
+    if basis not in OVERTIME_BASES:
+        raise HTTPException(400, f"basis harus salah satu: {list(OVERTIME_BASES)}")
+    doc = {
+        "key": OVERTIME_KEY, "basis": basis,
+        "divisor": _num(body, "divisor", lo=1, hi=400, default=173),
+        "first_hour_multiplier": _num(body, "first_hour_multiplier", lo=1, hi=10, default=1.5),
+        "next_hours_multiplier": _num(body, "next_hours_multiplier", lo=1, hi=10, default=2.0),
+        **_audit(user),
+    }
+    await db.rahaza_payroll_settings.update_one({"key": OVERTIME_KEY}, {"$set": doc}, upsert=True)
+    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.payroll_settings", OVERTIME_KEY)
+    return serialize_doc({"ok": True, "settings": await get_overtime_settings(db)})
+
+
+# ─── BATAS KASBON (K25, 2026-11-02) ───────────────────────────────────────────
+@router.get("/payroll-settings/kasbon")
+async def get_kasbon(request: Request):
+    await _require_hr(request)
+    return serialize_doc(await get_kasbon_settings(get_db()))
+
+
+@router.put("/payroll-settings/kasbon")
+async def set_kasbon(request: Request):
+    user = await _require_hr(request)
+    db = get_db()
+    body = await request.json()
+    doc = {
+        "key": KASBON_KEY,
+        "max_pct_of_base_salary": _num(body, "max_pct_of_base_salary", hi=1000),
+        "max_installments": int(_num(body, "max_installments", hi=120)),
+        **_audit(user),
+    }
+    await db.rahaza_payroll_settings.update_one({"key": KASBON_KEY}, {"$set": doc}, upsert=True)
+    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.payroll_settings", KASBON_KEY)
+    return serialize_doc({"ok": True, "settings": await get_kasbon_settings(db)})
+
+
 @router.get("/payroll-settings")
 async def list_settings(request: Request, key: Optional[str] = None):
-    """Semua pengaturan payroll (untuk panel HR)."""
-    await _require_hr(request)
+    """Semua pengaturan payroll (untuk panel HR — tab "Pengaturan Payroll")."""
+    user = await _require_hr(request)
     db = get_db()
+    loaders = {
+        LATE_KEY: lambda: _get(db, LATE_KEY, DEFAULT_LATE),
+        ATT_BONUS_KEY: lambda: _get(db, ATT_BONUS_KEY, DEFAULT_ATT_BONUS),
+        BPJS_KEY: lambda: get_bpjs_settings(db),
+        OVERTIME_KEY: lambda: get_overtime_settings(db),
+        KASBON_KEY: lambda: get_kasbon_settings(db),
+    }
     if key:
-        default = DEFAULT_LATE if key == LATE_KEY else DEFAULT_ATT_BONUS
-        return serialize_doc(await _get(db, key, default))
-    return serialize_doc({
-        "ok": True,
-        "late_penalty": await _get(db, LATE_KEY, DEFAULT_LATE),
-        "attendance_bonus": await _get(db, ATT_BONUS_KEY, DEFAULT_ATT_BONUS),
-    })
+        if key not in loaders:
+            raise HTTPException(404, f"Kunci pengaturan '{key}' tidak dikenal: {list(loaders)}")
+        return serialize_doc(await loaders[key]())
+    out = {"ok": True, "can_toggle_bpjs_journal": (user.get("role") or "").lower() in SWITCH_ROLES}
+    for k, fn in loaders.items():
+        out[k] = await fn()
+    return serialize_doc(out)

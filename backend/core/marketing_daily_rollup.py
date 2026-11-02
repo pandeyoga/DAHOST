@@ -26,7 +26,9 @@ ATURAN YANG TIDAK BOLEH DILANGGAR
   lain (F7/F8, entri manual) dan **tidak pernah ditimpa**.
 * **Tidak meninggalkan angka nyangkut.** Bila tidak ada lagi pesanan pada hari itu
   dan dokumennya memang turunan, dokumen itu **dihapus** (bukan dibiarkan 0),
-  supaya rollback impor benar-benar mengembalikan keadaan.
+  supaya rollback impor benar-benar mengembalikan keadaan. (2026-11-02, No.16:
+  hari yang hanya punya retur modul tetap punya dokumen — omzet 0, nilai retur
+  terisi — supaya retur itu tetap mengurangi "omzet setelah retur" bulan itu.)
 * **Override SPV dihormati.** Dokumen `source='manual_override'` tidak ditimpa
   kecuali dipanggil dengan `force=True` (tombol "Hitung Ulang (paksa)").
 * **Zona waktu.** `order_date` disimpan sebagai jam dinding platform (WIB).
@@ -47,6 +49,8 @@ logger = logging.getLogger(__name__)
 ORDERS = "marketing_orders"
 DAILY = "marketing_sales_data"
 ACCOUNTS = "marketing_platform_accounts"
+# 2026-11-02 (No.16) — retur yang dicatat di modul Retur ikut ke rekap harian.
+RETURNS = "marketing_returns"
 
 REVENUE_TYPE = "total"
 # Status yang TIDAK dihitung sebagai omzet (uangnya tidak pernah ada).
@@ -174,8 +178,17 @@ def item_revenue(it: dict) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 # HITUNG SATU HARI
 # ══════════════════════════════════════════════════════════════════════════════
-def summarize_orders(orders: List[dict]) -> dict:
-    """Ringkas daftar pesanan satu hari → angka datar untuk `build_daily_doc`."""
+def summarize_orders(orders: List[dict],
+                     module_returns: Optional[List[dict]] = None) -> dict:
+    """Ringkas daftar pesanan satu hari → angka datar untuk `build_daily_doc`.
+
+    ``module_returns`` (2026-11-02, No.16) = retur modul Retur bertanggal hari ini
+    yang SUDAH disaring anti-dobel oleh pemanggil
+    (:func:`core.marketing_returns.select_uncovered_module_returns`). Refund
+    aktualnya ditambahkan ke nilai retur (kedua basis) sehingga "omzet setelah
+    retur" turun; omzet BRUTO, jumlah pesanan, dan tingkat retur pesanan tidak
+    berubah (keputusan sesi #9: angka lama tidak bergeser).
+    """
     live_ok = [o for o in orders if (o.get("status") or "") not in EXCLUDED_FOR_REVENUE]
     cancelled = [o for o in orders if (o.get("status") or "") == "cancelled"]
     returned = [o for o in orders if (o.get("status") or "") == "returned"]
@@ -207,14 +220,19 @@ def summarize_orders(orders: List[dict]) -> dict:
     # uang dari berkas ini, jadi impor tingkat-modul akan melingkar.
     from core import marketing_returns as _ret
     rsplit = _ret.split_from_orders(orders)
+    msplit = _ret.split_module_returns(module_returns or [])
+    mval = msplit["module_returns_value"]
     fulfillment = {
         "cancelled_orders": len(cancelled),
         "cancelled_value": round(sum(order_amount_of(o) for o in cancelled), 2),
         "returned_orders": len(returned),
-        "returned_value": round(sum(order_amount_of(o) for o in returned), 2),
+        "returned_value": round(sum(order_amount_of(o) for o in returned) + mval, 2),
         # BARU: dasar "omzet setelah retur" untuk toko berbasis omzet produk.
-        "returned_revenue_product": rsplit["returned_revenue_product"],
-        "returned_units": rsplit["returned_units"],
+        "returned_revenue_product": round(rsplit["returned_revenue_product"] + mval, 2),
+        "returned_units": rsplit["returned_units"] + msplit["module_returns_units"],
+        # 2026-11-02 (No.16) — bagian retur modul, terpisah supaya bisa ditelusuri.
+        "module_returns_count": msplit["module_returns_count"],
+        "module_returns_value": mval,
         "cancellation_rate": round(len(cancelled) / total_orders * 100, 2) if total_orders else 0.0,
         "return_rate": round(len(returned) / total_orders * 100, 2) if total_orders else 0.0,
         "fulfillment_rate": round(len(fulfilled) / total_orders * 100, 2) if total_orders else 0.0,
@@ -234,9 +252,76 @@ def summarize_orders(orders: List[dict]) -> dict:
     }
 
 
+# Field fulfillment khusus retur modul. Tidak dikenal skema grup
+# (`core.marketing_sales_shape.FULFILLMENT_FIELDS`), jadi ditulis langsung.
+MODULE_RETURN_FULFILLMENT_KEYS = ("module_returns_count", "module_returns_value")
+
+
+def _date_query(field: str, date: str) -> dict:
+    start, end = _day_bounds(date)
+    return {"$or": [
+        {field: {"$gte": start, "$lt": end}},
+        {field: {"$gte": date, "$lt": date + "￿"}},   # dokumen string
+    ]}
+
+
+async def module_returns_for_day(db, account_id: str, date: str) -> List[dict]:
+    """2026-11-02 (No.16) — retur modul toko ini bertanggal ``date`` yang BELUM
+    tercermin di status pesanan (anti-dobel, lihat `core.marketing_returns`)."""
+    from core import marketing_returns as _ret
+    # 2026-11-02 (K36) — `wh_return_status`/`wh_action_taken` ikut dibaca: retur dihitung
+    # HANYA setelah diputuskan gudang (`core.marketing_returns.is_module_return_counted`).
+    rows = await db[RETURNS].find(
+        {"account_id": account_id, **_date_query("date", date)},
+        {"_id": 0, "id": 1, "date": 1, "status": 1, "order_id": 1, "order_ref_id": 1,
+         "refund_amount": 1, "qty": 1, "quantity": 1,
+         **{f: 1 for f in _ret.DECISION_FIELDS}}).to_list(5000)
+    rows = [r for r in rows
+            if order_date_key(r.get("date")) == date and _ret.is_module_return_counted(r)]
+    if not rows:
+        return []
+    oids = sorted({_ret.module_return_order_keys(r)[0] for r in rows} - {""})
+    refs = sorted({_ret.module_return_order_keys(r)[1] for r in rows} - {""})
+    reflected: List[dict] = []
+    if oids or refs:
+        ors = ([{"order_id": {"$in": oids}}] if oids else []) + (
+            [{"id": {"$in": refs}}] if refs else [])
+        reflected = await db[ORDERS].find(
+            {"account_id": account_id,
+             "status": {"$in": list(_ret.ORDER_STATUSES_ALREADY_REFLECTED)},
+             "$or": ors},
+            {"_id": 0, "id": 1, "order_id": 1}).to_list(5000)
+    return _ret.select_uncovered_module_returns(rows, reflected)
+
+
+async def _refresh_linked_return_days(db, account_id: str, date: str,
+                                      orders: List[dict], actor: str) -> None:
+    """Pesanan hari ini yang (kini) `returned`/`cancelled` bisa punya retur modul
+    di TANGGAL LAIN yang dulu dihitung. Tanggal itu dihitung ulang (satu tingkat,
+    tanpa berantai) supaya nilainya tidak tercatat dua kali."""
+    from core import marketing_returns as _ret
+    hit = [o for o in orders
+           if str(o.get("status") or "").strip().lower() in _ret.ORDER_STATUSES_ALREADY_REFLECTED]
+    if not hit:
+        return
+    oids = sorted({str(o.get("order_id") or "").strip() for o in hit} - {""})
+    ids = sorted({str(o.get("id") or "").strip() for o in hit} - {""})
+    ors = ([{"order_id": {"$in": oids}}] if oids else []) + ([{"order_ref_id": {"$in": ids}}] if ids else [])
+    if not ors:
+        return
+    linked = await db[RETURNS].find({"account_id": account_id, "$or": ors},
+                                    {"_id": 0, "date": 1}).to_list(5000)
+    for d in sorted({order_date_key(r.get("date")) for r in linked} - {None, date}):
+        await recompute_daily(db, account_id, d, actor=actor, _follow=False)
+
+
 async def recompute_daily(db, account_id: str, date: str, *,
-                          force: bool = False, actor: str = "system") -> dict:
+                          force: bool = False, actor: str = "system",
+                          _follow: bool = True) -> dict:
     """Hitung ulang rekap harian SATU tanggal dari `marketing_orders`. Idempoten.
+
+    2026-11-02 (No.16): retur modul Retur bertanggal hari ini (yang belum
+    tercermin di status pesanan) ikut mengurangi "omzet setelah retur".
 
     → ``{account_id, date, action, orders, revenue_product, skipped_reason?}``
     ``action`` ∈ ``upserted`` · ``deleted`` · ``skipped_override`` · ``noop``
@@ -273,6 +358,10 @@ async def recompute_daily(db, account_id: str, date: str, *,
     }, {"_id": 0}).to_list(20000)
     # jaring pengaman: buang pesanan yang tanggalnya bukan hari ini
     orders = [o for o in orders if order_date_key(o.get("order_date")) == date]
+    # 2026-11-02 (No.16) — retur modul per tanggal retur, sudah anti-dobel.
+    mod_returns = await module_returns_for_day(db, account_id, date)
+    if _follow:
+        await _refresh_linked_return_days(db, account_id, date, orders, actor)
 
     existing = await db[DAILY].find_one(
         {"account_id": account_id, "date": date, "revenue_type": REVENUE_TYPE}, {"_id": 0})
@@ -283,7 +372,7 @@ async def recompute_daily(db, account_id: str, date: str, *,
                 "orders": len(orders),
                 "skipped_reason": "angka hari ini di-override SPV; pakai Hitung Ulang (paksa)"}
 
-    if not orders:
+    if not orders and not mod_returns:
         # Tidak ada pesanan: dokumen turunan HARUS hilang supaya angka tidak nyangkut
         # sesudah rollback impor / pembatalan pesanan.
         if existing and (src in (_shape.SOURCE_ORDERS_AUTO,)
@@ -293,7 +382,7 @@ async def recompute_daily(db, account_id: str, date: str, *,
             return {"account_id": account_id, "date": date, "action": "deleted", "orders": 0}
         return {"account_id": account_id, "date": date, "action": "noop", "orders": 0}
 
-    flat = summarize_orders(orders)
+    flat = summarize_orders(orders, mod_returns)
     doc = _shape.build_daily_doc(
         account=account, date=date, revenue_type=REVENUE_TYPE, flat=flat,
         source=_shape.SOURCE_ORDERS_AUTO,
@@ -317,6 +406,7 @@ async def recompute_daily(db, account_id: str, date: str, *,
         "account_name": account.get("account_name", ""),
         "platform": account.get("platform", ""),
         "rollup_orders_count": len(orders),
+        "rollup_module_returns_count": len(mod_returns),
         "rollup_at": now,
         "rollup_by": actor,
         "updated_at": now,
@@ -328,6 +418,8 @@ async def recompute_daily(db, account_id: str, date: str, *,
     for k in DERIVED_FULFILLMENT_KEYS:
         if k in fulfillment:
             set_fields[f"fulfillment.{k}"] = fulfillment[k]
+    for k in MODULE_RETURN_FULFILLMENT_KEYS:
+        set_fields[f"fulfillment.{k}"] = flat["fulfillment"].get(k, 0)
     # jejak override sebelumnya dihapus saat kembali menjadi turunan
     unset_fields = {"override_reason": "", "override_by": "", "override_at": ""}
 
@@ -353,7 +445,8 @@ async def recompute_daily(db, account_id: str, date: str, *,
         upsert=True,
     )
     return {"account_id": account_id, "date": date, "action": "upserted",
-            "orders": len(orders), "revenue_product": flat["revenue_product"]}
+            "orders": len(orders), "revenue_product": flat["revenue_product"],
+            "module_returns": len(mod_returns)}
 
 
 async def recompute_range(db, account_id: str, date_from: str, date_to: str, *,

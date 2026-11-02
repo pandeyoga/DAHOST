@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime, timezone, date
 from typing import Optional
 from core.roles import FINANCE_ROLES  # FIN-02
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/journals", tags=["rahaza-journals"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # RBAC: portal finance (BUG-RBAC-1)
@@ -105,6 +106,20 @@ async def _validate_lines(db, lines: list) -> tuple[float, float]:
     return round(total_d, 2), round(total_c, 2)
 
 
+async def revalidate_draft_lines(db, je: dict) -> tuple[list, float, float]:
+    """2026-11-02 (S2-H, T5): validasi ULANG akun saat draft diposting — akun bisa dihapus/dinonaktifkan/
+    dijadikan grup sesudah draft disimpan. Dulu draft diposting apa adanya → baris GL ke akun yang tidak
+    ada, Neraca Saldo tidak seimbang. Nama/tipe akun di baris ikut disegarkan dari Bagan Akun.
+    Dipakai `post_journal`; jalur posting draft lain (pencairan/penarikan marketplace) sebaiknya ikut."""
+    lines = [dict(ln) for ln in (je.get("lines") or [])]
+    try:
+        total_d, total_c = await _validate_lines(db, lines)
+    except HTTPException as e:
+        raise HTTPException(e.status_code, f"Draft {je.get('je_number')} tidak bisa diposting — {e.detail} "
+                                           f"Perbaiki baris jurnalnya atau aktifkan lagi akunnya di Bagan Akun.")
+    return lines, total_d, total_c
+
+
 async def _check_period_open(db, d: date):
     """H-08: satu aturan periode dgn mesin posting (masa depan >31 hari / periode belum dibuka / closed / locked)."""
     from routes.rahaza_posting import _ensure_period_open
@@ -119,7 +134,7 @@ async def create_journal(request: Request):
     user = await _require_fin(request)
     db = get_db()
     body = await request.json()
-    je_date_str = (body.get("date") or "").strip() or date.today().isoformat()
+    je_date_str = (body.get("date") or "").strip() or today_wib().isoformat()
     try:
         je_date = date.fromisoformat(je_date_str)
     except ValueError:
@@ -269,10 +284,13 @@ async def post_journal(je_id: str, request: Request):
         raise HTTPException(400, f"Hanya draft yang bisa di-post. Status sekarang: {je['status']}")
     je_date = date.fromisoformat(je["date"])
     await _check_period_open(db, je_date)
+    lines, total_d, total_c = await revalidate_draft_lines(db, je)
+    je["lines"] = lines
     # FIN-17: atomik — hanya satu permintaan yang mengubah draft→posted; baris disalin hanya bila menang
     res = await db.rahaza_journal_entries.update_one(
         {"id": je_id, "status": "draft"},
-        {"$set": {"status": "posted", "posted_at": _now(), "posted_by": user["id"], "updated_at": _now()}},
+        {"$set": {"status": "posted", "posted_at": _now(), "posted_by": user["id"], "updated_at": _now(),
+                  "lines": lines, "total_debit": total_d, "total_credit": total_c}},
     )
     if res.modified_count == 0:
         raise HTTPException(409, "Jurnal sudah diposting oleh permintaan lain.")

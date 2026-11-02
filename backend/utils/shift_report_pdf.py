@@ -3,7 +3,6 @@ PT Rahaza — End-of-Shift PDF Generator
 Generates a clean A4 PDF summary for a shift handover record.
 """
 import io
-from datetime import datetime, timezone
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 )
@@ -13,6 +12,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.styles import ParagraphStyle
+from utils.waktu import fmt_wib
 
 # ─── Colors ──────────────────────────────────────────────────────────
 BRAND_DARK  = colors.HexColor("#0f172a")
@@ -376,7 +376,7 @@ def build_shift_report_pdf(handover: dict, wo_summary: list = None) -> bytes:
     # Footer
     story.append(HRFlowable(width=PAGE_W - 2 * MARGIN, color=BORDER))
     story.append(Spacer(1, 2 * mm))
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now_str = fmt_wib("%Y-%m-%d %H:%M WIB")
     story.append(Paragraph(
         f"Dicetak: {now_str} | Dokumen resmi PT Rahaza Global Indonesia | Sistem ERP Rahaza v2.5",
         styles["note"]

@@ -57,7 +57,7 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -68,6 +68,7 @@ from core.pr_approval import ACC_PR_COLLECTION, ACC_PR_SUPPLIER_FIELD
 from routes.shared import require_portal
 from database import get_db
 from utils.counters import gen_prefixed_number
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/procurement", tags=["procurement-suppliers"])
@@ -526,7 +527,7 @@ async def _price_row_from_body(db, supplier_id: str, body: dict, cur: dict | Non
         raise HTTPException(400, "Harga tidak boleh negatif.")
     moq = float(body.get("moq") if "moq" in body else cur.get("moq") or 0)
     valid_from = (body.get("valid_from") if "valid_from" in body
-                  else cur.get("valid_from")) or date.today().isoformat()
+                  else cur.get("valid_from")) or today_wib().isoformat()
     valid_to = body.get("valid_to") if "valid_to" in body else cur.get("valid_to")
     return {
         "supplier_id": supplier_id,
@@ -627,7 +628,7 @@ async def price_lookup(request: Request, material_id: str, supplier_id: Optional
     """
     await _require_procurement_read(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     q: dict = {"material_id": material_id, "is_active": True,
                "valid_from": {"$lte": today}}
     if supplier_id:

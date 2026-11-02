@@ -80,7 +80,8 @@ def _resolve_receiver_type(body: dict, user: dict, override_ctx: dict | None = N
     return RECEIVER_BUYER
 
 
-async def _validate_source_receipts_cap(db, source_receipt_ids: list, items_data: list, user: dict):
+async def _validate_source_receipts_cap(db, source_receipt_ids: list, items_data: list, user: dict,
+                                        require_receipts: bool = True):
     """Phase B: for DA + receiver_type='buyer', validate that:
       1. source_receipt_ids[] non-empty
       2. All referenced `cmt_receipts` exist AND status='Approved'
@@ -90,17 +91,22 @@ async def _validate_source_receipts_cap(db, source_receipt_ids: list, items_data
 
     Returns dict {source_receipt_ids, receipts, receipt_lines} for downstream.
     Raises HTTPException on any violation.
+
+    2026-11-02 (K17 butir 2 & 7): batas qty SELALU per po_item dari SSOT
+    `core.dispatch_capacity` (lolos QC total − sudah dikirim ke buyer), juga untuk
+    serah terima PO INTERNAL (`require_receipts=False`) — dulu internal memakai
+    `max(lolos, produced)` sehingga 11 pcs boleh diserahkan padahal lolos QC 10.
     """
-    if not source_receipt_ids:
+    if not source_receipt_ids and require_receipts:
         raise HTTPException(
             400,
             'Buyer shipment dari DA wajib source_receipt_ids[] (mengacu ke '
             'cmt_receipts status Approved). Phase B enforcement.'
         )
     receipts = await db.cmt_receipts.find(
-        {'id': {'$in': list(source_receipt_ids)}}, {'_id': 0}
-    ).to_list(None)
-    if len(receipts) != len(set(source_receipt_ids)):
+        {'id': {'$in': list(source_receipt_ids or [])}}, {'_id': 0}
+    ).to_list(None) if source_receipt_ids else []
+    if source_receipt_ids and len(receipts) != len(set(source_receipt_ids)):
         found_ids = {r['id'] for r in receipts}
         missing = [rid for rid in source_receipt_ids if rid not in found_ids]
         raise HTTPException(
@@ -130,10 +136,10 @@ async def _validate_source_receipts_cap(db, source_receipt_ids: list, items_data
     #     reject yang sudah diperbaiki BISA dikirim (dulu mustahil selamanya).
     from core import dispatch_capacity as dcap
     cap_rows = await dcap.map_for_validation(
-        db, receipt_ids=list(source_receipt_ids), items_data=items_data)
+        db, receipt_ids=list(source_receipt_ids or []), items_data=items_data)
     receipt_lines = await db.cmt_receipt_lines.find(
         {'receipt_id': {'$in': list(source_receipt_ids)}}, {'_id': 0}
-    ).to_list(None)
+    ).to_list(None) if source_receipt_ids else []
 
     requested_by_key = {}
     label_by_key = {}
@@ -152,9 +158,13 @@ async def _validate_source_receipts_cap(db, source_receipt_ids: list, items_data
         max_avail = int(row.get('shippable', max(0, good + fixed - already)) or 0)
         if req_qty > max_avail:
             label = row.get('sku') or label_by_key.get(k, k)
-            detail = (f'lolos QC {good} pcs'
-                      + (f' + hasil permak {fixed} pcs' if fixed else '')
-                      + f' − sudah dikirim {already} pcs')
+            if row.get('source') == 'internal':
+                detail = (f"hasil produksi sendiri {int(row.get('internal_produced', 0) or 0)} pcs"
+                          f" − sudah diserahkan {already} pcs")
+            else:
+                detail = (f'lolos QC {good} pcs'
+                          + (f' + hasil permak {fixed} pcs' if fixed else '')
+                          + f' − sudah dikirim {already} pcs')
             raise HTTPException(
                 400,
                 f'Qty kirim untuk {label} ({req_qty} pcs) melebihi sisa yang boleh '
@@ -168,6 +178,32 @@ async def _validate_source_receipts_cap(db, source_receipt_ids: list, items_data
         'receipt_lines': receipt_lines,
         'capacity': cap_rows,
     }
+
+
+async def _sync_maklon_mirrors(db, po_ids, user: dict) -> None:
+    """2026-11-02 (K17 butir 5): cermin `dewi_maklon_pos` (qty_dispatched/status)
+    disinkronkan dari SSOT setiap mutasi SJ buyer — dulu tetap 0/`confirmed` walau
+    sudah dikirim 50 (w3 S2), karena buyer_shipment tidak pernah memanggil bridge."""
+    pids = [p for p in dict.fromkeys(po_ids or []) if p]
+    if not pids:
+        return
+    try:
+        from routes.production_maklon_bridge import try_sync_maklon_finance
+        async for p in db.production_pos.find(
+                {'id': {'$in': pids}, 'business_type': 'maklon'}, {'_id': 0, 'id': 1}):
+            await try_sync_maklon_finance(db, p['id'], user)
+    except Exception:  # noqa: BLE001
+        logger.exception('sinkron cermin maklon gagal untuk PO %s', pids)
+
+
+async def _po_ids_of_items(db, items: list) -> list:
+    pids = [it.get('po_id') for it in items if it.get('po_id')]
+    poi = [it.get('po_item_id') for it in items if it.get('po_item_id') and not it.get('po_id')]
+    if poi:
+        async for d in db.po_items.find({'id': {'$in': poi}}, {'_id': 0, 'po_id': 1}):
+            if d.get('po_id'):
+                pids.append(d['po_id'])
+    return list(dict.fromkeys(pids))
 
 
 async def _resolve_pos_for_items(db, items_data, body_po_id, receiver_type):
@@ -412,8 +448,10 @@ async def _issue_fg_for_dispatch(db, shipment: dict, items: list, user: dict) ->
                'po_number': it.get('po_number') or shipment.get('po_number'),
                'customer_name': shipment.get('customer_name')}
         try:
+            # 2026-11-02 (K14): barang PO maklon milik klien — keluar tanpa konsumsi lapisan biaya DA
             res = await qled.issue_fg(db, material_id=mat['id'], qty=qty, sku=sku,
-                                     ref=ref, actor=user)
+                                     ref=ref, actor=user,
+                                     skip_cost=(shipment.get('business_type') == 'maklon'))
         except qled.FGStockShortfall as e:
             out['warnings'].append(str(e))
             continue
@@ -488,10 +526,13 @@ async def buyer_dispatch_capacity(request: Request):
             'good_from_cmt': sum(r['good_from_cmt'] for r in rows),
             'reworked_ok': sum(r['reworked_ok'] for r in rows),
             'internal_produced': sum(r['internal_produced'] for r in rows),
+            'accepted_total': sum(r.get('accepted_total', 0) for r in rows),
             'dispatched': sum(r['dispatched'] for r in rows),
             'shippable': sum(r['shippable'] for r in rows),
         },
-        'formula': 'sisa bisa kirim = lolos QC + hasil permak + hasil produksi internal − sudah dikirim',
+        # 2026-11-02 (K17 butir 2/7): dihitung per item PO (semua penerimaan − semua SJ buyer)
+        'formula': ('sisa bisa kirim = lolos QC (semua penerimaan selesai QC) + hasil permak sendiri '
+                    '− sudah dikirim ke buyer; PO internal tanpa CMT: hasil produksi sendiri'),
     }
 
 
@@ -628,26 +669,20 @@ async def get_buyer_shipments(request: Request):
         if not po_numbers and s.get('po_number'):
             po_numbers = [s['po_number']]
         is_consolidated = bool(s.get('is_consolidated')) or len(po_ids) > 1
-        po_item_map = {}
-        for item in items:
-            key = item.get('po_item_id') or item['id']
-            if key not in po_item_map:
-                po_item_map[key] = {'ordered_qty': item.get('ordered_qty', 0), 'shipped': 0, 'received': 0}
-            po_item_map[key]['shipped'] += item.get('qty_shipped', 0)
-            po_item_map[key]['received'] += (item['qty_received'] if item.get('qty_received') is not None else item.get('qty_shipped', 0))
-        total_ordered = sum(v['ordered_qty'] for v in po_item_map.values())
-        total_shipped = sum(v['shipped'] for v in po_item_map.values())
-        total_received = sum(v['received'] for v in po_item_map.values())
-        remaining = max(0, total_ordered - total_received)
-        pct = round((total_received / total_ordered * 100)) if total_ordered > 0 else 0
+        # 2026-11-02 (K17 butir 5): satu rumus progres (SSOT) — status ikut dihitung.
+        from core import dispatch_capacity as _dcap
+        prog = _dcap.shipment_progress(items)
         max_dispatch = max((i.get('dispatch_seq', 1) for i in items), default=0)
         result.append({**serialize_doc(s), 'items': serialize_doc(items),
                        'po_ids': po_ids, 'po_numbers': po_numbers,
                        'is_consolidated': is_consolidated,
                        'receiver_type': s.get('receiver_type') or RECEIVER_BUYER,
-                       'total_ordered': total_ordered, 'total_shipped': total_shipped,
-                       'total_received': total_received,
-                       'remaining': remaining, 'progress_pct': pct, 'dispatch_count': max_dispatch})
+                       'total_ordered': prog['total_ordered'], 'total_shipped': prog['total_shipped'],
+                       'total_received': prog['total_received'],
+                       'remaining': prog['remaining'], 'progress_pct': prog['progress_pct'],
+                       'ship_status': prog['ship_status'],
+                       'lines_unrecorded': prog['lines_unrecorded'],
+                       'dispatch_count': max_dispatch})
 
     if wants:
         return _paginated_envelope(result, total, page, per_page)
@@ -676,19 +711,18 @@ async def get_buyer_shipment(bsid: str, request: Request):
                                'size': item.get('size', ''), 'color': item.get('color', ''),
                                'ordered_qty': item.get('ordered_qty', 0), 'cumulative_shipped': 0, 'cumulative_received': 0}
         poi_totals[key]['cumulative_shipped'] += item.get('qty_shipped', 0)
-        poi_totals[key]['cumulative_received'] += (item['qty_received'] if item.get('qty_received') is not None else item.get('qty_shipped', 0))
+        from core.dispatch_capacity import item_dispatched as _eff
+        poi_totals[key]['cumulative_received'] += _eff(item)
     dispatches = sorted(dispatch_map.values(), key=lambda d: d['dispatch_seq'])
     summary_items = list(poi_totals.values())
-    total_ordered = sum(i['ordered_qty'] for i in summary_items)
-    total_shipped = sum(i['cumulative_shipped'] for i in summary_items)
-    total_received = sum(i['cumulative_received'] for i in summary_items)
-    remaining = max(0, total_ordered - total_received)
-    pct = round((total_received / total_ordered * 100)) if total_ordered > 0 else 0
+    from core import dispatch_capacity as _dcap
+    prog = _dcap.shipment_progress(items)   # 2026-11-02 (K17 butir 5): satu rumus progres/status
     result = serialize_doc(s)
     result.update({'items': serialize_doc(items), 'dispatches': dispatches,
-                   'summary_items': summary_items, 'total_ordered': total_ordered,
-                   'total_shipped': total_shipped, 'total_received': total_received,
-                   'remaining': remaining, 'progress_pct': pct})
+                   'summary_items': summary_items, 'total_ordered': prog['total_ordered'],
+                   'total_shipped': prog['total_shipped'], 'total_received': prog['total_received'],
+                   'remaining': prog['remaining'], 'progress_pct': prog['progress_pct'],
+                   'ship_status': prog['ship_status'], 'lines_unrecorded': prog['lines_unrecorded']})
 
     # ── FASE 6 (cacat CONS-1/CONS-3 + keluhan #6 owner) ───────────────────────
     # "jika saya gabungkan dan ada child shipment maka tidak bisa ambil data child
@@ -856,9 +890,10 @@ async def create_buyer_shipment(request: Request):
         raise HTTPException(400, 'Dispatch harus memiliki minimal 1 pcs barang dikirim')
 
     # ─── PHASE B — source_receipt_ids cap (DA → buyer) ────────────────────
-    if receiver_type == RECEIVER_BUYER and not is_vendor(user) and (source_receipt_ids or not internal_dispatch):
-        # Validate source_receipt_ids exist, are Approved, and cap qty per SKU.
-        await _validate_source_receipts_cap(db, source_receipt_ids, items_data, user)
+    # 2026-11-02 (K17 butir 2/7): SATU pagar per po_item untuk maklon MAUPUN internal.
+    if receiver_type == RECEIVER_BUYER and not is_vendor(user):
+        await _validate_source_receipts_cap(db, source_receipt_ids, items_data, user,
+                                            require_receipts=not internal_dispatch)
     # ──────────────────────────────────────────────────────────────────────
 
     # ─── GAP E pre-flight — stok FG harus CUKUP sebelum dokumen ditulis ────
@@ -870,65 +905,13 @@ async def create_buyer_shipment(request: Request):
         fg_warnings = await _fg_precheck_for_dispatch(db, items_data)
     # ──────────────────────────────────────────────────────────────────────
 
-    # Cap qty_shipped against total produced (C-1): supports overproduction,
-    # blocks phantom/ghost shipments. Cumulative across all dispatches.
-    # Phase B: SKIPPED when receiver_type='da' (CMT declaration is upstream of
-    # any DA receipt — DA will verify actual qty at cmt_receipts inspection).
-    # Phase B fix: when computing "already received", EXCLUDE receiver_type='da'
-    # rows (those are CMT→DA declarations, NOT buyer receipts) so DA dispatch
-    # capacity is not double-counted.
-    if receiver_type == RECEIVER_BUYER:
-        for item in items_data:
-            po_item_id = item.get('po_item_id')
-            qty_req = int(item.get('qty_shipped', 0) or 0)
-            if qty_req < 0:
-                raise HTTPException(400, f'qty_shipped tidak boleh negatif')
-            if po_item_id and qty_req > 0:
-                # Sum all produced for this po_item (all jobs + child jobs)
-                all_job_items = await db.production_job_items.find({'po_item_id': po_item_id}).to_list(None)
-                total_produced = sum(int(ji.get('produced_qty', 0) or 0) for ji in all_job_items)
-                # Cap based on ACTUAL RECEIVED (effective: qty_received when set, else qty_shipped)
-                # so shortfalls (shipped > received) re-open capacity to re-ship the difference.
-                # Phase B: only count shipments to BUYER (receiver_type='buyer' or legacy null).
-                bs_ids = await db.buyer_shipments.distinct(
-                    'id',
-                    {'$or': [
-                        {'receiver_type': RECEIVER_BUYER},
-                        {'receiver_type': {'$exists': False}},
-                        {'receiver_type': None},
-                    ]}
-                )
-                all_bs_items = await db.buyer_shipment_items.find(
-                    {'po_item_id': po_item_id, 'shipment_id': {'$in': bs_ids}}
-                ).to_list(None)
-                total_already_received = sum(
-                    (int(bi['qty_received']) if bi.get('qty_received') is not None else int(bi.get('qty_shipped', 0) or 0))
-                    for bi in all_bs_items)
-
-                # Phase B relaxation: if source_receipt_ids present, use Σqty_actual
-                # (from those receipts) as the "produced capacity" instead of the raw
-                # job_items produced_qty — because the FG has been formally handed over
-                # from CMT to DA and the receipts are the SSOT of what DA can dispatch.
-                if source_receipt_ids:
-                    _receipt_lines = await db.cmt_receipt_lines.find(
-                        {'receipt_id': {'$in': list(source_receipt_ids)},
-                         'po_item_id': po_item_id}
-                    ).to_list(None)
-                    receipt_cap = sum(int(ln.get('qty_actual', 0) or 0) for ln in _receipt_lines)
-                    # Take the LARGER (more permissive) of produced_qty vs receipt_cap;
-                    # receipt validation function already enforces the per-SKU tighter cap.
-                    total_produced = max(total_produced, receipt_cap)
-
-                if total_already_received + qty_req > total_produced:
-                    sku = (await db.po_items.find_one({'id': po_item_id}) or {}).get('sku', '')
-                    raise HTTPException(400,
-                        f'Qty kirim ke buyer untuk {sku} ({total_already_received + qty_req}) melebihi qty diproduksi/diterima dari CMT ({total_produced}). '
-                        f'Maksimal kirim: {max(0, total_produced - total_already_received)} pcs.')
-    else:
-        # receiver_type='da': only sanity check negative values.
-        for item in items_data:
-            if int(item.get('qty_shipped', 0) or 0) < 0:
-                raise HTTPException(400, 'qty_shipped tidak boleh negatif')
+    # 2026-11-02 (K17 butir 2/7) — pagar lama "C-1" (Σ produced_qty, internal
+    # `max(produced, lolos)`) DIHAPUS: ia mengizinkan serah terima 11 pcs untuk lolos QC
+    # 10 (produksi job anak rework ikut terhitung) dan menghitung kapasitas dengan rumus
+    # KEDUA. Batasnya sekarang hanya `_validate_source_receipts_cap` (SSOT per po_item).
+    for item in items_data:
+        if int(item.get('qty_shipped', 0) or 0) < 0:
+            raise HTTPException(400, 'qty_shipped tidak boleh negatif')
 
 
     job_id = body.get('job_id')
@@ -1034,13 +1017,12 @@ async def create_buyer_shipment(request: Request):
         }
         await db.buyer_shipment_items.insert_one(si)
         inserted_items.append(si)
-    all_items = await db.buyer_shipment_items.find({'shipment_id': shipment_id}).to_list(None)
-    any_shipped = any(i.get('qty_shipped', 0) > 0 for i in all_items)
-    ship_status = 'Partially Shipped' if any_shipped else 'Pending'
+    # 2026-11-02 (K17 butir 5): status DIHITUNG dari angka nyata (dulu tidak pernah
+    # "Fully Shipped" walau 100/100 — w3 S7).
+    from core import dispatch_capacity as _dcap
     await db.buyer_shipments.update_one({'id': shipment_id}, {'$set': {
-        'ship_status': ship_status, 'last_dispatch': dispatch_date,
-        'last_dispatch_seq': dispatch_seq, 'updated_at': now()
-    }})
+        'last_dispatch': dispatch_date, 'last_dispatch_seq': dispatch_seq, 'updated_at': now()}})
+    ship_status = (await _dcap.refresh_shipment_status(db, shipment_id)).get('ship_status', 'Pending')
 
     # ─── GAP E — STOK FG KELUAR (dispatch riil ke buyer) ──────────────────
     # + GAP G — pengiriman ulang MENUTUP catatan selisih buyer yang masih open.
@@ -1066,7 +1048,7 @@ async def create_buyer_shipment(request: Request):
                     continue
                 r = await shortmod.resolve_buyer_shorts_on_dispatch(
                     db, po_item_id=it['po_item_id'], qty=int(it.get('qty_shipped') or 0),
-                    shipment=master_shipment, actor=user)
+                    shipment=master_shipment, actor=user, shipment_item_id=it.get('id', ''))
                 closed['resolved'] += r.get('resolved', 0)
                 closed['shorts'].extend(r.get('shorts') or [])
             buyer_short_closed = closed if closed['resolved'] else None
@@ -1103,6 +1085,8 @@ async def create_buyer_shipment(request: Request):
     if internal_dispatch and receiver_type == RECEIVER_BUYER:
         cogs_result = {'ok': True, 'skipped': 'internal_handover',
                        'note': 'HPP dibukukan saat barang terjual, bukan saat serah terima ke gudang.'}
+    if receiver_type == RECEIVER_BUYER:
+        await _sync_maklon_mirrors(db, po_ids, user)
     _label = 'CMT Declaration to DA' if receiver_type == RECEIVER_DA else 'Buyer Shipment'
     await log_activity(user['id'], user['name'], 'Create' if is_new else 'Add Dispatch', _label, f"{_label} - {ship_status}")
     result = serialize_doc(master_shipment)
@@ -1152,13 +1136,18 @@ async def delete_buyer_shipment(bsid: str, request: Request):
         if not mat:
             continue
         try:
+            # 2026-11-02 (F1): barang kembali bernilai = biaya saat ia keluar (bukan lapisan Rp 0).
+            exit_cost = await qled.exit_cost_of(db, material_id=mat['id'],
+                                                shipment_item_id=it.get('id') or '',
+                                                sku=mat.get('code', ''))
             posted = await qled.post_fg_accepted(
                 db, material_id=mat['id'], qty=qty,
                 ref={'source': 'buyer_shipment_cancel', 'shipment_id': bsid,
                      'shipment_number': doc.get('shipment_number'),
                      'shipment_item_id': it.get('id')},
                 actor=user, meta={'material_code': mat.get('code', ''), 'unit': 'pcs',
-                                  'type': 'finished_goods'})
+                                  'type': 'finished_goods'},
+                exit_cost=exit_cost, skip_cost_layer=(doc.get('business_type') == 'maklon'))
             await db.rahaza_fg_movements.insert_one({
                 'id': new_id(), 'sku_code': it.get('sku', ''), 'movement_type': 'IN',
                 'qty': qty, 'source': 'buyer_shipment_cancel', 'ref_id': bsid,
@@ -1174,9 +1163,23 @@ async def delete_buyer_shipment(bsid: str, request: Request):
         {'shipment_id': bsid, 'status': 'open'},
         {'$set': {'status': 'cancelled', 'resolution': 'dibatalkan',
                   'resolution_notes': 'surat jalan dihapus', 'updated_at': now()}})
+    # 2026-11-02 (K17 butir 3): selisih buyer yang DITUTUP oleh SJ ini dibuka kembali —
+    # barangnya kembali ke gudang, jadi kewajiban kirim ulangnya hidup lagi (w3 S10b).
+    reopened = {'reopened': 0, 'shorts': []}
+    if (doc.get('receiver_type') or RECEIVER_BUYER) == RECEIVER_BUYER:
+        from core import short_shipment as shortmod
+        for it in items:
+            r = await shortmod.reopen_buyer_shorts_for_item(
+                db, shipment_item_id=it.get('id', ''), actor=user,
+                reason=f"surat jalan {doc.get('shipment_number')} dihapus")
+            reopened['reopened'] += r['reopened']
+            reopened['shorts'] += r['shorts']
+    po_ids = await _po_ids_of_items(db, items)
     await db.buyer_shipment_items.delete_many({'shipment_id': bsid})
     await db.buyer_shipments.delete_one({'id': bsid})
-    return {'success': True, 'fg_stock_reverted': reverted}
+    if (doc.get('receiver_type') or RECEIVER_BUYER) == RECEIVER_BUYER:
+        await _sync_maklon_mirrors(db, po_ids, user)
+    return {'success': True, 'fg_stock_reverted': reverted, 'buyer_short_reopened': reopened}
 
 @router.put("/buyer-shipment-items/{item_id}")
 async def force_edit_buyer_shipment_item(item_id: str, request: Request):
@@ -1208,19 +1211,36 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
     if not item:
         raise HTTPException(404, 'Item pengiriman tidak ditemukan')
     old_qty = int(item.get('qty_shipped', 0) or 0)
+    _ship_hdr = await db.buyer_shipments.find_one({'id': item.get('shipment_id')}, {'_id': 0}) or {}
+    _is_buyer = (_ship_hdr.get('receiver_type') or RECEIVER_BUYER) == RECEIVER_BUYER
 
-    # Full override: no cap enforced. Compute an informational warning if the new
-    # cumulative shipped for this po_item exceeds total produced.
+    # 2026-11-02 (K17 butir 3): aturan diterima ≤ dikirim juga berlaku untuk force-edit,
+    # dan baris yang punya SELISIH BUYER dikoreksi lewat qty diterima (supaya selisih,
+    # stok, dan dokumen bergerak bersama — bukan tiga angka yang bercabang).
+    if _is_buyer and new_qty != old_qty:
+        if item.get('qty_received') is not None and new_qty < int(item.get('qty_received') or 0):
+            raise HTTPException(400, (
+                f"Qty dikirim ({new_qty}) tidak boleh di bawah qty yang sudah DITERIMA buyer "
+                f"({int(item.get('qty_received') or 0)}). Koreksi qty diterima dulu."))
+        origin_short = await db.buyer_short_records.find_one(
+            {'shipment_item_id': item_id, 'status': {'$ne': 'cancelled'}}, {'_id': 0, 'short_number': 1})
+        if origin_short:
+            raise HTTPException(409, (
+                f"Baris ini punya selisih buyer {origin_short.get('short_number')} — koreksi lewat "
+                f"'Qty diterima' supaya selisih & stok ikut disesuaikan."))
+
+    # Full override: no cap enforced (keputusan lama owner). Peringatan dihitung dari SSOT
+    # (2026-11-02 K17 butir 5): dulu menjumlah deklarasi CMT→DA juga ⇒ "200 pcs melebihi
+    # 102" padahal angka benar 98 dari lolos QC 100.
     warning = None
     po_item_id = item.get('po_item_id')
-    if po_item_id:
-        all_job_items = await db.production_job_items.find({'po_item_id': po_item_id}).to_list(None)
-        total_produced = sum(int(ji.get('produced_qty', 0) or 0) for ji in all_job_items)
-        all_bs_items = await db.buyer_shipment_items.find({'po_item_id': po_item_id}).to_list(None)
-        total_shipped_others = sum(int(bi.get('qty_shipped', 0) or 0) for bi in all_bs_items if bi.get('id') != item_id)
-        if total_shipped_others + new_qty > total_produced:
-            warning = (f'Total kirim untuk item ini ({total_shipped_others + new_qty} pcs) '
-                       f'melebihi qty diproduksi ({total_produced} pcs).')
+    if po_item_id and _is_buyer:
+        from core import dispatch_capacity as _dcap
+        qv = (await _dcap.po_item_quantities(db, [po_item_id])).get(po_item_id) or {}
+        new_total = int(qv.get('dispatched', 0)) - _dcap.item_dispatched(item) + new_qty
+        if new_total > int(qv.get('accepted_total', 0)):
+            warning = (f'Total kirim untuk item ini ({new_total} pcs) melebihi qty lolos QC '
+                       f"({int(qv.get('accepted_total', 0))} pcs).")
 
     edit_entry = {
         'old_qty': old_qty, 'new_qty': new_qty, 'reason': reason,
@@ -1249,15 +1269,21 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
                        'shipment_number': shipment.get('shipment_number'),
                        'shipment_item_id': item_id, 'reason': reason}
                 try:
+                    _mkl = shipment.get('business_type') == 'maklon'   # K14: tanpa lapisan biaya DA
                     if delta > 0:
                         await qled.issue_fg(db, material_id=mat['id'], qty=delta,
-                                            sku=item.get('sku', ''), ref=ref, actor=user)
+                                            sku=item.get('sku', ''), ref=ref, actor=user, skip_cost=_mkl)
                         mv = 'OUT'
                     else:
+                        # 2026-11-02 (F1): barang kembali bernilai = biaya saat ia keluar.
+                        exit_cost = await qled.exit_cost_of(db, material_id=mat['id'],
+                                                            shipment_item_id=item_id,
+                                                            sku=mat.get('code', ''))
                         await qled.post_fg_accepted(
                             db, material_id=mat['id'], qty=-delta, ref=ref, actor=user,
                             meta={'material_code': mat.get('code', ''), 'unit': 'pcs',
-                                  'type': 'finished_goods'})
+                                  'type': 'finished_goods'},
+                            exit_cost=exit_cost, skip_cost_layer=_mkl)
                         mv = 'IN'
                     await db.rahaza_fg_movements.insert_one({
                         'id': new_id(), 'sku_code': item.get('sku', ''), 'movement_type': mv,
@@ -1277,14 +1303,24 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
                     warning = (warning + ' ' if warning else '') + f'Stok FG gagal dikoreksi: {e}'
     # ──────────────────────────────────────────────────────────────────────
 
-    # Recompute ship_status for the parent (master) shipment
+    # 2026-11-02 (K17 butir 3): qty dikirim turun pada baris yang MENUTUP selisih buyer
+    # ⇒ selisih itu dibuka kembali sebesar penurunannya.
+    reopened = None
+    if _is_buyer and new_qty < old_qty:
+        from core import short_shipment as shortmod
+        reopened = await shortmod.reopen_buyer_shorts_for_item(
+            db, shipment_item_id=item_id, qty=old_qty - new_qty, actor=user,
+            reason=f"qty dikirim dikoreksi {old_qty} → {new_qty}: {reason}")
+        if not reopened.get('reopened'):
+            reopened = None
+
+    # Recompute ship_status for the parent (master) shipment — dihitung dari angka nyata
     shipment_id = item.get('shipment_id')
     if shipment_id:
-        all_items = await db.buyer_shipment_items.find({'shipment_id': shipment_id}).to_list(None)
-        any_shipped = any(int(i.get('qty_shipped', 0) or 0) > 0 for i in all_items)
-        await db.buyer_shipments.update_one({'id': shipment_id}, {'$set': {
-            'ship_status': 'Partially Shipped' if any_shipped else 'Pending', 'updated_at': now()
-        }})
+        from core import dispatch_capacity as _dcap
+        await _dcap.refresh_shipment_status(db, shipment_id)
+    if _is_buyer:
+        await _sync_maklon_mirrors(db, await _po_ids_of_items(db, [item]), user)
 
     await log_activity(user['id'], user['name'], 'Force Edit', 'Buyer Shipment',
         f"Koreksi qty {item.get('sku', '')} (SN {item.get('serial_number', '-')}) "
@@ -1293,7 +1329,7 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
     updated = await db.buyer_shipment_items.find_one({'id': item_id}, {'_id': 0})
     return {'success': True, 'item': serialize_doc(updated),
             'old_qty': old_qty, 'new_qty': new_qty, 'warning': warning,
-            'stock_adjust': stock_adjust}
+            'stock_adjust': stock_adjust, 'buyer_short_reopened': reopened}
 
 @router.put("/buyer-shipment-items/{item_id}/received")
 async def set_buyer_shipment_item_received(item_id: str, request: Request):
@@ -1321,33 +1357,39 @@ async def set_buyer_shipment_item_received(item_id: str, request: Request):
     if not item:
         raise HTTPException(404, 'Item pengiriman tidak ditemukan')
     qty_shipped = int(item.get('qty_shipped', 0) or 0)
+    # klaim asli SJ (sebelum dikoreksi oleh selisih) — batas atas qty diterima
+    qty_dispatched_doc = int(item.get('qty_shipped_claimed') or 0) or qty_shipped
     old_recv = item.get('qty_received')
     old_recv = int(old_recv) if old_recv is not None else qty_shipped
+    ship = await db.buyer_shipments.find_one({'id': item.get('shipment_id')}, {'_id': 0}) or {}
+
+    # ─── GAP G + 2026-11-02 (K17 butir 3) — SELISIH TERIMA BUYER, DUA ARAH ──────
+    # Aturan owner: dokumen SJ = qty yang benar-benar diterima; selisihnya dokumen
+    # `SEL-BYR-…` (bisa dikirim ulang), barangnya kembali ke stok FG, Admin/Keuangan
+    # diberi tahu. BARU: diterima ≤ dikirim (dulu 7 untuk kirim 5 lolos), dan koreksi
+    # NAIK membatalkan selisih + mengeluarkan lagi stok yang tadi dikembalikan (dulu
+    # selisih tetap terbuka + stok fantom). Selisih tidak ditulis senyap bila gagal.
+    buyer_short = None
+    receipt_effect = None
+    if (ship.get('receiver_type') or RECEIVER_BUYER) == RECEIVER_BUYER:
+        from core import short_shipment as shortmod
+        try:
+            receipt_effect = await shortmod.apply_buyer_receipt(
+                db, shipment=ship, item=item, new_received=new_recv, actor=user, reason=reason)
+        except shortmod.BuyerReceiptError as e:
+            raise HTTPException(e.status, str(e))
+        buyer_short = (receipt_effect or {}).get('buyer_short')
+    elif new_recv > qty_dispatched_doc:
+        raise HTTPException(400, f'Qty diterima ({new_recv}) melebihi qty dikirim ({qty_dispatched_doc}).')
 
     entry = {'old_qty': old_recv, 'new_qty': new_recv, 'reason': reason,
              'edited_by': user['name'], 'edited_by_id': user['id'], 'edited_at': now()}
     await db.buyer_shipment_items.update_one({'id': item_id},
         {'$set': {'qty_received': new_recv, 'received_by': user['name'], 'received_at': now(), 'updated_at': now()},
          '$push': {'received_history': entry}})
-
-    # ─── GAP G — SELISIH TERIMA BUYER PUNYA IDENTITAS + TINDAK LANJUT ─────
-    # Aturan owner: perlakuannya SAMA dengan selisih CMT→DA (bisa ketinggalan /
-    # salah hitung) ⇒ dokumen SJ dikoreksi ke qty yang benar-benar diterima,
-    # selisihnya menjadi dokumen `SEL-BYR-…` status open (bisa dikirim ulang),
-    # barangnya dikembalikan ke stok FG, dan Admin/Finance dapat notifikasi.
-    # Keputusan tanggungan (CMT / DA) diambil saat PO ditutup — bukan otomatis.
-    buyer_short = None
-    if new_recv < qty_shipped:
-        try:
-            from core import short_shipment as shortmod
-            ship = await db.buyer_shipments.find_one({'id': item.get('shipment_id')}, {'_id': 0}) or {}
-            if (ship.get('receiver_type') or RECEIVER_BUYER) == RECEIVER_BUYER:
-                buyer_short = await shortmod.record_buyer_short(
-                    db, shipment=ship, item=item, qty_shipped=qty_shipped,
-                    qty_received=new_recv, actor=user, reason=reason)
-        except Exception:
-            import logging as _lg
-            _lg.getLogger(__name__).exception('pencatatan selisih buyer gagal (item %s)', item_id)
+    if item.get('shipment_id'):
+        from core import dispatch_capacity as _dcap
+        await _dcap.refresh_shipment_status(db, item['shipment_id'])
     # ──────────────────────────────────────────────────────────────────────
 
     await log_activity(user['id'], user['name'], 'Set Qty Diterima', 'Buyer Shipment',
@@ -1372,13 +1414,17 @@ async def set_buyer_shipment_item_received(item_id: str, request: Request):
         if _po_id:
             from routes.production_maklon_bridge import try_auto_close_po_on_full
             auto_close = await try_auto_close_po_on_full(db, _po_id, user)
+            if (ship.get('receiver_type') or RECEIVER_BUYER) == RECEIVER_BUYER:
+                await _sync_maklon_mirrors(db, [_po_id], user)
     except Exception:
         auto_close = None
     # ──────────────────────────────────────────────────────────────────────
 
-    return {'success': True, 'item': serialize_doc(updated), 'qty_shipped': qty_shipped,
-            'qty_received': new_recv, 'variance': qty_shipped - new_recv,
+    return {'success': True, 'item': serialize_doc(updated), 'qty_shipped': qty_dispatched_doc,
+            'qty_received': new_recv, 'variance': qty_dispatched_doc - new_recv,
             'buyer_short': serialize_doc(buyer_short) if buyer_short else None,
+            'receipt_effect': serialize_doc({k: v for k, v in (receipt_effect or {}).items()
+                                             if k != 'buyer_short'}) if receipt_effect else None,
             'po_auto_close': auto_close}
 
 @router.get("/buyer-receipt-variance")
@@ -1403,6 +1449,10 @@ async def buyer_receipt_variance(request: Request):
     from core.cmt_override import apply_scope as _ov_scope2
     await _ov_scope2(request, user, db, bs_q, param_vendor_id=sp.get('vendor_id'))
     shipments = await db.buyer_shipments.find(bs_q, {'_id': 0}).to_list(None)
+    # 2026-11-02 (K17 butir 1): laporan "Kirim vs Diterima BUYER" hanya membaca SJ ke
+    # buyer — deklarasi CMT→DA (`receiver_type='da'`) dulu ikut ⇒ shipped 2× (w3 S1–S12).
+    from core.dispatch_capacity import is_buyer_receiver as _is_buyer
+    shipments = [s for s in shipments if _is_buyer(s)]
     ship_map = {s['id']: s for s in shipments}
     ship_ids = list(ship_map.keys())
     if not ship_ids:
@@ -1436,8 +1486,8 @@ async def buyer_receipt_variance(request: Request):
             }
         row = po_rows[po_key]
         shipped = int(it.get('qty_shipped', 0) or 0)
-        recv = it.get('qty_received')
-        recv = int(recv) if recv is not None else shipped
+        from core.dispatch_capacity import item_dispatched as _eff
+        recv = _eff(it)    # diterima tidak pernah melebihi dikirim (K17 butir 3)
         var = shipped - recv
         ikey = it.get('po_item_id') or it.get('id')
         if ikey not in row['_items']:
@@ -1524,6 +1574,28 @@ async def resolve_buyer_short(short_id: str, request: Request):
                        f"{(doc or {}).get('qty_short')} pcs → {body.get('resolution')}"
                        + (f". Catatan: {body.get('notes')}" if body.get('notes') else ''))
     return {'success': True, 'short': serialize_doc(doc)}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K17 butir 11) — DIAGNOSA INVARIAN QTY INV-Q1..Q5 per item PO
+# ═══════════════════════════════════════════════════════════════════════════
+@router.get("/production-qty-invariants")
+async def production_qty_invariants(request: Request):
+    """Periksa INV-Q1..Q5 (audit w3 §6) untuk satu PO atau daftar item PO.
+
+    Query: `po_id=` atau `po_item_ids=a,b`. Hanya membaca (tidak memperbaiki).
+    Angka berasal dari SSOT `core.dispatch_capacity.po_item_quantities`.
+    """
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    sp = request.query_params
+    po_id = (sp.get('po_id') or '').strip()
+    ids = [x.strip() for x in (sp.get('po_item_ids') or '').split(',') if x.strip()]
+    if not po_id and not ids:
+        raise HTTPException(400, 'po_id atau po_item_ids wajib diisi')
+    from core import dispatch_capacity as dcap
+    return serialize_doc(await dcap.check_invariants(db, po_id=po_id, po_item_ids=ids))
+
 
 @router.get("/buyer-shipment-dispatches")
 async def get_dispatches(request: Request):

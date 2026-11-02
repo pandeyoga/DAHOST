@@ -2,7 +2,7 @@ import { GlassCard, GlassPanel } from '@/components/ui/glass';
 import { motion } from 'framer-motion';
 import {
   BarChart3, HandCoins, PieChart, Calculator, BookCheck, Scale, Wallet, FolderTree,
-  FileText, FileSpreadsheet, Award, Banknote, Store, Landmark, ArrowRightLeft, Hourglass,
+  FileText, FileSpreadsheet, Award, Banknote, Landmark, ArrowRightLeft, Hourglass,
   Brain, Receipt, ShieldAlert, Book, Package,
 } from 'lucide-react';
 
@@ -15,7 +15,8 @@ const QUICK_LINKS = [
 
   { id: 'fin-marketplace-settlement', label: 'Saldo & Pencairan Marketplace', desc: 'Dana dilepas ke saldo toko, potongan platform & penarikan ke bank.', icon: Banknote, group: 'penerimaan' },
   { id: 'fin-ar-360',                 label: 'Aging Piutang',         desc: 'Umur piutang & statement pelanggan.',        icon: Scale,    group: 'penerimaan' },
-  { id: 'fin-channel-gl',             label: 'Peta Akun Channel',     desc: 'Akun pendapatan per channel penjualan.',      icon: Store,    group: 'penerimaan' },
+  // 2026-11-02 (D3): kartu 'Peta Akun Channel' (fin-channel-gl) dilepas — sama dengan menu
+  // portalNav.js. COA per toko ada di master toko (Marketing › Kelola Akun).
 
   { id: 'fin-cash',          label: 'Kas & Bank',        desc: 'Saldo akun kas/bank & pergerakan.',       icon: Landmark,       group: 'kas' },
   { id: 'fin-petty-cash',    label: 'Kas Kecil',         desc: 'Pengeluaran kecil harian & pengisian.',   icon: Wallet,         group: 'kas' },

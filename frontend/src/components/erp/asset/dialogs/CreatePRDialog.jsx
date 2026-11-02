@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Plus, X } from 'lucide-react';
@@ -145,7 +146,7 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
                       onChange={e => setItem(idx, 'qty', e.target.value)} />
                     <Input placeholder="Satuan (pcs)" value={item.unit}
                       onChange={e => setItem(idx, 'unit', e.target.value)} />
-                    <Input placeholder="Est. Harga (Rp)" type="number" value={item.estimated_price}
+                    <MoneyInput placeholder="Est. Harga (Rp)" value={item.estimated_price}
                       onChange={e => setItem(idx, 'estimated_price', e.target.value)} />
                   </div>
                   <Input placeholder="Spesifikasi / catatan" value={item.specification}

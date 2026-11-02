@@ -5,9 +5,8 @@ Features:
 - Comprehensive career coaching (path + skills + learning)
 - Both one-time report + chat-based interaction
 - Full data analysis (performance + skills + training + market + company needs)
-- Emergent LLM integration
+- Claude (Anthropic) lewat services.ai — 2026-11-02
 """
-import os
 import uuid
 import json
 import logging
@@ -17,13 +16,21 @@ from fastapi import APIRouter, Request, Query, HTTPException
 from pydantic import BaseModel
 from database import get_db
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, Pseudonymizer, ai_http_error, require_ai, ai_text as _ai_text
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/portal-saya/career-coach", tags=["career-coach"])
 
-LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
-LLM_MODEL = ("openai", "gpt-5.1")
+# 2026-11-02 (No.60): tier Claude, bukan tuple ("openai","gpt-5.1"); kunci dikelola services.ai.
+# 2026-11-02 (K29): Opus hanya untuk Laporan Eksekutif → Career Coach memakai standard (Sonnet).
+LLM_TIER = "standard"
+
+
+def _coach_pseudonymizer(profile: dict) -> tuple[Pseudonymizer, str]:
+    """K27 (2026-11-02): nama karyawan → kode samaran untuk prompt; dipetakan balik di server."""
+    ps = Pseudonymizer()
+    name = (profile.get("basic_info") or {}).get("name") or "karyawan"
+    return ps, ps.code(name, "karyawan", parts=True)
 
 # ============================================================================
 # MODELS
@@ -128,28 +135,25 @@ async def generate_career_report(request: Request, coach_request: CareerCoachReq
     await require_auth(request)
     db = get_db()
     
-    if not LLM_KEY:
-        raise HTTPException(500, "AI service not configured")
-    
     user = request.state.user
+    await require_ai("career-report", user_id=user.get("id"), db=db, tier=LLM_TIER)
     
     # Get career profile
     profile_response = await get_career_profile(request)
     profile = profile_response["data"]
     
-    # Build AI prompt
-    prompt = _build_career_coaching_prompt(profile, coach_request)
-    
+    # Build AI prompt — K27: nama diganti kode samaran, jawaban dipetakan balik di server.
+    ps, ref = _coach_pseudonymizer(profile)
+    prompt = _build_career_coaching_prompt(profile, coach_request, display_name=ref, ps=ps)
+
     try:
-        chat = LlmChat(
-            api_key=LLM_KEY,
-            session_id=f"career-report-{user.get('id')[:8]}",
-            system_message="You are an expert career coach for employees in a garment manufacturing company. Provide comprehensive, actionable career guidance in Indonesian language."
-        ).with_model(LLM_MODEL[0], LLM_MODEL[1])
-        
-        ai_response = await chat.send_message(UserMessage(text=prompt))
-        ai_text = ai_response if isinstance(ai_response, str) else (ai_response.text if hasattr(ai_response, 'text') else str(ai_response))
-        
+        ai_text = ps.restore(await _ai_text(
+            "career-report",
+            "You are an expert career coach for employees in a garment manufacturing company. Provide comprehensive, actionable career guidance in Indonesian language. "
+            "The employee is referred to by a pseudonymous code (e.g. KRY-001); keep using that code.",
+            prompt, tier=LLM_TIER, user_id=user.get("id"),
+        ))
+
         # Parse AI response into structured format
         report = _parse_ai_report(ai_text)
         
@@ -175,16 +179,21 @@ async def generate_career_report(request: Request, coach_request: CareerCoachReq
             "message": "Career coaching report generated"
         }
         
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
+        # 2026-11-02: jangan kirim isi exception mentah ke pengguna.
         logger.error(f"AI career coaching error: {e}")
-        raise HTTPException(500, f"AI generation failed: {str(e)}")
+        raise HTTPException(500, "Laporan karier AI gagal dibuat. Silakan coba lagi.")
 
-def _build_career_coaching_prompt(profile: dict, request: CareerCoachRequest) -> str:
-    """Build comprehensive AI prompt."""
+def _build_career_coaching_prompt(profile: dict, request: CareerCoachRequest, *,
+                                  display_name: str = "KRY-001", ps: Optional[Pseudonymizer] = None) -> str:
+    """Build comprehensive AI prompt (K27: tanpa nama asli & tanpa kode karyawan)."""
+    goals = ps.scrub(request.specific_goals) if (ps and request.specific_goals) else request.specific_goals
     return f"""You are an expert career coach for employees in a garment manufacturing company.
 
 EMPLOYEE PROFILE:
-- Name: {profile['basic_info']['name']}
+- Name (pseudonym): {display_name}
 - Current Role: {profile['basic_info']['job_title']} in {profile['basic_info']['department']}
 - Tenure: {profile['basic_info']['tenure_years']} years
 - Skills: {', '.join(profile['current_skills']) if profile['current_skills'] else 'Not specified'}
@@ -200,7 +209,7 @@ AVAILABLE OPPORTUNITIES:
 {json.dumps(profile.get('available_opportunities', []), indent=2)}
 
 FOCUS AREA: {request.focus_area}
-{f"SPECIFIC GOALS: {request.specific_goals}" if request.specific_goals else ""}
+{f"SPECIFIC GOALS: {goals}" if goals else ""}
 
 Please provide a comprehensive career coaching report covering:
 1. CURRENT ASSESSMENT: Strengths, areas for improvement, market positioning
@@ -256,28 +265,31 @@ async def chat_with_coach(request: Request, chat_msg: ChatMessage):
     await require_auth(request)
     db = get_db()
     
-    if not LLM_KEY:
-        raise HTTPException(500, "AI service not configured")
-    
     user = request.state.user
+    await require_ai("career-chat", user_id=user.get("id"), db=db, tier=LLM_TIER)
     
     # Get or create conversation
+    # 2026-11-02 (IDOR): percakapan HANYA milik user yang login. Dulu `conversation_id`
+    # milik orang lain bisa dibaca & DITIMPA (replace_one upsert tanpa filter pemilik).
     conversation_id = chat_msg.conversation_id or str(uuid.uuid4())
-    
-    conversation = await db["rahaza_career_chats"].find_one({"id": conversation_id})
-    
+    owner = user.get("id")
+
+    conversation = await db["rahaza_career_chats"].find_one({"id": conversation_id, "employee_id": owner})
+    if chat_msg.conversation_id and not conversation:
+        raise HTTPException(404, "Percakapan tidak ditemukan")
+
+    # K27: system prompt dibangun ULANG tiap pesan dengan kode samaran (percakapan lama
+    # menyimpan nama asli di `system_prompt` — itu tidak lagi dikirim ke AI).
+    profile = (await get_career_profile(request))["data"]
+    ps, ref = _coach_pseudonymizer(profile)
+    system_prompt = f"""You are a supportive career coach helping {ref} (pseudonymous code),
+a {profile['basic_info']['job_title']} with {profile['basic_info']['tenure_years']} years tenure.
+Provide personalized, actionable career guidance. Keep referring to the employee as {ref}."""
+
     if not conversation:
-        # Get profile for context
-        profile_response = await get_career_profile(request)
-        profile = profile_response["data"]
-        
-        system_prompt = f"""You are a supportive career coach helping {profile['basic_info']['name']}, 
-a {profile['basic_info']['job_title']} with {profile['basic_info']['tenure_years']} years tenure. 
-Provide personalized, actionable career guidance."""
-        
         conversation = {
             "id": conversation_id,
-            "employee_id": user.get("id"),
+            "employee_id": owner,
             "messages": [],
             "system_prompt": system_prompt,
             "started_at": datetime.now(timezone.utc).isoformat()
@@ -303,15 +315,11 @@ Provide personalized, actionable career guidance."""
         
         conversation_context += f"User: {chat_msg.message}\n"
         
-        # Call AI
-        chat = LlmChat(
-            api_key=LLM_KEY,
-            session_id=conversation_id,
-            system_message=conversation.get("system_prompt", "You are a supportive career coach.")
-        ).with_model(LLM_MODEL[0], LLM_MODEL[1])
-        
-        ai_response = await chat.send_message(UserMessage(text=chat_msg.message))
-        ai_text = ai_response if isinstance(ai_response, str) else (ai_response.text if hasattr(ai_response, 'text') else str(ai_response))
+        # Call AI — K27: nama sendiri di pesan disamarkan, jawaban dipetakan balik.
+        ai_text = ps.restore(await _ai_text(
+            "career-chat", system_prompt,
+            ps.scrub(chat_msg.message), tier=LLM_TIER, user_id=user.get("id"),
+        ))
         
         # Add AI response
         conversation["messages"].append({
@@ -322,9 +330,11 @@ Provide personalized, actionable career guidance."""
         
         conversation["updated_at"] = datetime.now(timezone.utc).isoformat()
         
-        # Save conversation
+        # Save conversation (filter pemilik → tidak bisa menimpa percakapan orang lain)
+        conversation["system_prompt"] = system_prompt
+        conversation.pop("_id", None)
         await db["rahaza_career_chats"].replace_one(
-            {"id": conversation_id},
+            {"id": conversation_id, "employee_id": owner},
             conversation,
             upsert=True
         )
@@ -338,9 +348,11 @@ Provide personalized, actionable career guidance."""
             }
         }
         
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.error(f"AI chat error: {e}")
-        raise HTTPException(500, f"AI chat failed: {str(e)}")
+        raise HTTPException(500, "Chat dengan AI career coach gagal. Silakan coba lagi.")
 
 @router.get("/chat/history")
 async def get_chat_history(request: Request, conversation_id: Optional[str] = Query(None)):
@@ -351,7 +363,9 @@ async def get_chat_history(request: Request, conversation_id: Optional[str] = Qu
     user = request.state.user
     
     if conversation_id:
-        conversation = await db["rahaza_career_chats"].find_one({"id": conversation_id})
+        # 2026-11-02 (IDOR): hanya percakapan milik user yang login.
+        conversation = await db["rahaza_career_chats"].find_one(
+            {"id": conversation_id, "employee_id": user.get("id")})
         if not conversation:
             raise HTTPException(404, "Conversation not found")
         

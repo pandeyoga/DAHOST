@@ -4,10 +4,9 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
+import { todayWIB, yearStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const startOfYear = () => { const d = new Date(); d.setMonth(0, 1); return d.toISOString().slice(0, 10); };
 
 function Section({ label, total, accounts, testId, tone }) {
   const [open, setOpen] = useState(false);
@@ -52,8 +51,8 @@ export default function RahazaPnLModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [from, setFrom] = useState(startOfYear());
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(yearStartWIB());
+  const [to, setTo] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {

@@ -4,6 +4,15 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
 import { PeriodAlerts, YearEndClose } from './RahazaPeriodsExtras';
+import { thisMonthWIB } from '../../lib/waktu';
+
+// 2026-11-02 (audit No.34): backend kini menolak tutup/kunci periode yang BELUM berakhir (WIB)
+// — rahaza_periods.period_not_ended_error. Tombolnya dinonaktifkan di sini + alasan di tooltip,
+// supaya pengguna tidak menekan tombol yang pasti ditolak.
+function periodNotEndedReason(periodCode, thisMonth = thisMonthWIB()) {
+  if (!periodCode || periodCode < thisMonth) return '';
+  return `Periode ${periodCode} belum berakhir (WIB). Tutup/kunci hanya boleh setelah tanggal terakhir periode ini lewat.`;
+}
 
 const STATUS_COLORS = {
   open: 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25',
@@ -22,6 +31,7 @@ export default function RahazaPeriodsModule({ token }) {
   const [year, setYear] = useState(new Date().getFullYear());
   const [policy, setPolicy] = useState(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const thisMonth = thisMonthWIB();
 
   useEffect(() => {
     fetch('/api/rahaza/periods/policy', { headers }).then(r => r.ok ? r.json() : null).then(setPolicy).catch(() => {});
@@ -90,7 +100,9 @@ export default function RahazaPeriodsModule({ token }) {
           </div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {periods.map(p => (
+            {periods.map(p => {
+              const blockReason = periodNotEndedReason(p.period_code, thisMonth);
+              return (
               <GlassCard key={p.period_code} className="p-4" hover={false} data-testid={`pr-card-${p.period_code}`}>
                 <div className="flex items-start justify-between">
                   <div>
@@ -111,18 +123,22 @@ export default function RahazaPeriodsModule({ token }) {
                 )}
                 <div className="flex gap-1 mt-3 flex-wrap">
                   {p.status === 'open' && (
-                    <Button variant="ghost" onClick={() => act(p.period_code, 'close')} className="h-7 text-[11px] border border-[var(--glass-border)]" data-testid={`pr-close-${p.period_code}`}>
-                      <Lock className="w-3 h-3 mr-1" />Close
-                    </Button>
+                    <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-close-wrap-${p.period_code}`}>
+                      <Button variant="ghost" disabled={!!blockReason} onClick={() => act(p.period_code, 'close')} className="h-7 text-[11px] border border-[var(--glass-border)]" data-testid={`pr-close-${p.period_code}`}>
+                        <Lock className="w-3 h-3 mr-1" />Close
+                      </Button>
+                    </span>
                   )}
                   {p.status === 'closed' && (
                     <>
                       <Button variant="ghost" onClick={() => act(p.period_code, 'reopen')} className="h-7 text-[11px] border border-[var(--glass-border)]" data-testid={`pr-reopen-${p.period_code}`}>
                         <LockOpen className="w-3 h-3 mr-1" />Reopen
                       </Button>
-                      <Button variant="ghost" onClick={() => act(p.period_code, 'lock')} className="h-7 text-[11px] border border-red-400/25 text-red-300" data-testid={`pr-lock-${p.period_code}`}>
-                        <ShieldCheck className="w-3 h-3 mr-1" />Lock Final
-                      </Button>
+                      <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-lock-wrap-${p.period_code}`}>
+                        <Button variant="ghost" disabled={!!blockReason} onClick={() => act(p.period_code, 'lock')} className="h-7 text-[11px] border border-red-400/25 text-red-300" data-testid={`pr-lock-${p.period_code}`}>
+                          <ShieldCheck className="w-3 h-3 mr-1" />Lock Final
+                        </Button>
+                      </span>
                     </>
                   )}
                   {p.status === 'locked' && (
@@ -131,8 +147,12 @@ export default function RahazaPeriodsModule({ token }) {
                     </div>
                   )}
                 </div>
+                {blockReason && p.status !== 'locked' && (
+                  <div className="text-[10px] text-muted-foreground mt-1.5" data-testid={`pr-not-ended-${p.period_code}`}>Belum berakhir — belum bisa ditutup/dikunci.</div>
+                )}
               </GlassCard>
-            ))}
+              );
+            })}
           </div>
         )}
       </GlassCard>

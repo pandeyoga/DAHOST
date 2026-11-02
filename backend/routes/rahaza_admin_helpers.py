@@ -3,7 +3,6 @@
 from fastapi import Request, HTTPException
 from auth import require_auth, hash_password
 from routes.rahaza_master import seed_rahaza_master_data
-from routes.rahaza_coa import SEED_TEMPLATE, _normal_balance_for, _infer_parent_code
 from routes.rahaza_posting_profiles import DEFAULT_PROFILES as PROFILE_TEMPLATES
 import random
 import logging
@@ -58,26 +57,12 @@ async def _ensure_period(db, d: date) -> str:
 
 
 async def _seed_coa(db, user: dict):
-    inserted = 0
-    codes_in_template = [c for c, *_ in SEED_TEMPLATE]
-    existing_codes = set()
-    async for d in db.rahaza_coa_accounts.find({"code": {"$in": codes_in_template}}, {"_id": 0, "code": 1}):
-        existing_codes.add(d["code"])
-    for code, name, acc_type, is_group, flags in SEED_TEMPLATE:
-        if code in existing_codes:
-            continue
-        parent_code = _infer_parent_code(code, codes_in_template)
-        await db.rahaza_coa_accounts.insert_one({
-            "id": _uid(),
-            "code": code, "name": name, "type": acc_type,
-            "parent_code": parent_code, "is_group": is_group,
-            "normal_balance": _normal_balance_for(acc_type),
-            "flags": flags, "active": True,
-            "created_at": _now(), "updated_at": _now(),
-            "created_by": user["id"], "created_by_name": user.get("name", ""),
-        })
-        inserted += 1
-    return inserted
+    """2026-11-02 (S2-H butir 11): DULU salinan seed sendiri yang menulis saldo normal dari TIPE saja
+    (akun kontra seperti akumulasi penyusutan/retur penjualan jadi DEBIT/KREDIT terbalik) dan tanpa
+    PARENT_OVERRIDES/akun khas DA. Kini memakai SATU seed yang sama dengan startup
+    (`routes.rahaza_coa.seed_coa_accounts`: penanda `flags.is_contra` → saldo normal, induk, akun DA)."""
+    from routes.rahaza_coa import seed_coa_accounts
+    return (await seed_coa_accounts(db))["inserted"]
 
 
 async def _seed_posting_profiles(db, user: dict):

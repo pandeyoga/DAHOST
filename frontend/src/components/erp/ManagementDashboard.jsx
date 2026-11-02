@@ -16,6 +16,7 @@ import {
 } from './dashboardAtoms';
 import NextActionWidget from './NextActionWidget';
 import { PeriodPicker } from './PeriodPicker';
+import { thisYearWIB } from '@/lib/waktu';
 
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
 const fmtShortIDR = (n) => {
@@ -116,7 +117,9 @@ export default function ManagementDashboard({ token, onNavigate, onModuleChange 
             <PeriodPicker value={period} onChange={setPeriod} compareEnabled={true} testId="mgmt-dashboard-period" />
             {(onModuleChange || onNavigate) && (
               <button
-                onClick={drill('ai-business-dashboard')()}
+                // 2026-11-02: dulu `drill(...)()` → navigasi DIPANGGIL SAAT RENDER sehingga
+                // Dashboard Eksekutif langsung terlempar ke AI Business dan tak bisa dibuka.
+                onClick={drill('ai-business-dashboard')}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-purple-600/80 hover:bg-purple-600 text-foreground rounded-lg shadow-sm transition-colors"
                 title="Buka AI Business Intelligence"
               >
@@ -151,7 +154,7 @@ export default function ManagementDashboard({ token, onNavigate, onModuleChange 
           <div className="space-y-0.5" data-testid="kpi-revenue-ytd">
             <p className="text-xs text-muted-foreground">Revenue YTD</p>
             <p className="text-lg font-bold text-emerald-600">{fmtShortIDR(metrics?.revenueYTD)}</p>
-            <p className="text-xs text-muted-foreground">Tahun {new Date().getFullYear()}</p>
+            <p className="text-xs text-muted-foreground">Tahun {thisYearWIB()}</p>
           </div>
           {/* Attendance Today */}
           <div className="space-y-0.5" data-testid="kpi-attendance">

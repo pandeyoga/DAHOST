@@ -21,7 +21,7 @@ Endpoint:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Query, Request
@@ -33,6 +33,7 @@ from database import get_db
 # (cukup login) sehingga angka belanja, hutang supplier, dan daftar PO/PR bisa
 # dibaca semua pegawai. Kini butuh AKSES PORTAL Pengadaan lewat penjaga SSOT.
 from routes.shared import require_portal
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/procurement", tags=["procurement-dashboard"])
@@ -59,7 +60,7 @@ async def procurement_overview(request: Request):
     """Kartu KPI + antrean kerja + peringatan untuk Portal Pengadaan."""
     user = await require_portal(request, "procurement", allow_perms=("purchasing.view", "purchasing.manage"))
     db = get_db()
-    today = date.today()
+    today = today_wib()
     month_start = today.replace(day=1).isoformat()
 
     # ── PR ──────────────────────────────────────────────────────────────────
@@ -189,7 +190,7 @@ async def procurement_pipeline(request: Request, days: int = Query(90, ge=7, le=
     """Funnel P2P: PR → PO → GR → AP dalam N hari terakhir."""
     await require_portal(request, "procurement", allow_perms=("purchasing.view", "purchasing.manage"))
     db = get_db()
-    since_iso = (date.today() - timedelta(days=days)).isoformat()
+    since_iso = (today_wib() - timedelta(days=days)).isoformat()
     since_dt = _now() - timedelta(days=days)
 
     pr_by_status = await db.dewi_procurement_requests.aggregate([
@@ -227,7 +228,7 @@ async def spend_analysis(request: Request, months: int = Query(6, ge=1, le=24),
     """Analisis belanja: per supplier, per kategori material, per bulan."""
     await require_portal(request, "procurement", allow_perms=("purchasing.view", "purchasing.manage"))
     db = get_db()
-    start = (date.today().replace(day=1) - timedelta(days=31 * (months - 1))).replace(day=1)
+    start = (today_wib().replace(day=1) - timedelta(days=31 * (months - 1))).replace(day=1)
     q: dict = {"po_date": {"$gte": start.isoformat()},
                "status": {"$nin": ["cancelled", "rejected", "draft"]}}
     if supplier_id:

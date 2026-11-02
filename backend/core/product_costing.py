@@ -46,6 +46,8 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timezone
 
 from core import bom_uom
@@ -187,10 +189,84 @@ async def save_override(db, model_id: str, patch: dict, user: dict | None = None
 # ══════════════════════════════════════════════════════════════════════════════
 # BOM → biaya bahan per pcs
 # ══════════════════════════════════════════════════════════════════════════════
-async def find_active_bom(db, model_id: str, size_id: str):
-    """BOM aktif untuk (model_id, size_id) — pola yang sama dengan MRP-lite."""
-    if not model_id or not size_id:
-        return None
+# 2026-11-02 (F1b) — BOM disimpan per model × ukuran × WARNA (keputusan owner
+# 2026-09-12: "1 master per model×warna×ukuran"; 77 kombinasi model+ukuran punya
+# >1 BOM aktif). Dulu resolver ini mengabaikan warna sehingga HPP warna CARAMEL
+# DA-1101 memakai BOM BURGUNDY (32.175 vs 91.396,10). Sekarang warna dipakai bila
+# diketahui; bila BOM warna itu belum ada, jatuh ke BOM umum (tanpa warna), lalu ke
+# perilaku lama (BOM aktif mana pun) DENGAN penanda `other_color` supaya layar bisa
+# memberi tahu — tidak diam-diam.
+BOM_MATCH_EXACT = "exact"            # BOM warna itu sendiri
+BOM_MATCH_GENERAL = "general"        # BOM umum (kolom warna kosong)
+BOM_MATCH_OTHER = "other_color"      # BOM warna lain (fallback aman = perilaku lama)
+BOM_MATCH_NONE = "none"              # warna tidak diminta (perilaku lama persis)
+
+# Jembatan untuk pemanggil di berkas lain yang BELUM bisa meneruskan warna sendiri
+# (mis. `core/fg_cost_layers.compute_batch_unit_cost`). Pemanggil yang tahu warnanya
+# membungkus panggilannya dengan `bom_color_scope(warna)`; argumen `color` eksplisit
+# selalu menang atas jembatan ini.
+_BOM_COLOR_HINT: ContextVar[str | None] = ContextVar("bom_color_hint", default=None)
+
+
+@contextmanager
+def bom_color_scope(color: str | None):
+    """Selama blok ini, `find_active_bom` tanpa argumen warna memakai `color`."""
+    token = _BOM_COLOR_HINT.set((color or "").strip() or None)
+    try:
+        yield
+    finally:
+        _BOM_COLOR_HINT.reset(token)
+
+
+def _color_key(v) -> str:
+    return str(v or "").strip().upper()
+
+
+def color_of(doc: dict | None) -> str:
+    """Warna sebuah varian / item SPK / FG (kode dulu, lalu nama)."""
+    d = doc or {}
+    return (str(d.get("color_code") or "").strip()
+            or str(d.get("color_name") or "").strip()
+            or str(d.get("color") or "").strip())
+
+
+def bom_matches_color(bom: dict, color: str | None) -> bool:
+    """BOM ini milik warna `color`? (cocok ke nama ATAU kode warna, tanpa beda huruf)."""
+    want = _color_key(color)
+    if not want:
+        return False
+    return want in {_color_key(bom.get("color")), _color_key(bom.get("color_code"))} - {""}
+
+
+def _bom_is_general(bom: dict) -> bool:
+    return not _color_key(bom.get("color")) and not _color_key(bom.get("color_code"))
+
+
+def pick_bom_for_color(cands: list[dict], color: str | None) -> tuple[dict | None, str]:
+    """Pilih BOM untuk satu warna dari kandidat BOM aktif SATU model+ukuran (fungsi murni).
+
+    `cands` sudah terurut prioritas (is_active dulu, versi terbaru dulu).
+    Return (bom, match). `match == other_color` → pemanggil memakai BOM lama (fallback aman).
+    """
+    if not cands:
+        return None, BOM_MATCH_NONE
+    if not _color_key(color):
+        return cands[0], BOM_MATCH_NONE
+    exact = [b for b in cands if bom_matches_color(b, color)]
+    if exact:
+        return exact[0], BOM_MATCH_EXACT
+    general = [b for b in cands if _bom_is_general(b)]
+    if general:
+        return general[0], BOM_MATCH_GENERAL
+    return cands[0], BOM_MATCH_OTHER
+
+
+def _bom_priority(b: dict):
+    return (0 if b.get("is_active") is True else 1, -_f(b.get("version")))
+
+
+async def _legacy_active_bom(db, model_id: str, size_id: str):
+    """Perilaku lama (tanpa warna) — dipertahankan persis untuk pemanggil tanpa warna."""
     bom = await db.rahaza_boms.find_one(
         {"model_id": model_id, "size_id": size_id, "active": True, "is_active": True}, {"_id": 0})
     if bom:
@@ -199,6 +275,30 @@ async def find_active_bom(db, model_id: str, size_id: str):
         {"model_id": model_id, "size_id": size_id, "active": True}, {"_id": 0}
     ).sort("version", -1).to_list(50)
     return cands[0] if cands else None
+
+
+async def find_active_bom_ex(db, model_id: str, size_id: str, color: str | None = None):
+    """(bom, match) untuk model+ukuran+warna. Lihat `pick_bom_for_color`."""
+    if not model_id or not size_id:
+        return None, BOM_MATCH_NONE
+    if color is None:
+        color = _BOM_COLOR_HINT.get()
+    if not _color_key(color):
+        return await _legacy_active_bom(db, model_id, size_id), BOM_MATCH_NONE
+    cands = await db.rahaza_boms.find(
+        {"model_id": model_id, "size_id": size_id, "active": True}, {"_id": 0}).to_list(200)
+    cands.sort(key=_bom_priority)
+    bom, match = pick_bom_for_color(cands, color)
+    if match == BOM_MATCH_OTHER:
+        # fallback aman: BOM yang SAMA dengan yang dipakai sebelum perbaikan ini
+        bom = await _legacy_active_bom(db, model_id, size_id) or bom
+    return bom, match
+
+
+async def find_active_bom(db, model_id: str, size_id: str, color: str | None = None):
+    """BOM aktif untuk (model_id, size_id[, warna]) — pola yang sama dengan MRP-lite."""
+    bom, _match = await find_active_bom_ex(db, model_id, size_id, color)
+    return bom
 
 
 def _cost_source_of(mat: dict | None, unit_cost: float) -> str:
@@ -238,15 +338,24 @@ async def _material_master(db, cache: dict, material_id: str | None, code: str |
     return doc
 
 
-async def compute_material_cost(db, model_id: str, size_id: str, *, cache: dict | None = None) -> dict:
-    """Biaya bahan per pcs untuk satu (model, size). Tidak pernah menebak harga."""
+async def compute_material_cost(db, model_id: str, size_id: str, *, cache: dict | None = None,
+                                color: str | None = None, bom: dict | None = None,
+                                bom_match: str | None = None) -> dict:
+    """Biaya bahan per pcs untuk satu (model, size[, warna]). Tidak pernah menebak harga.
+
+    2026-11-02 (F1b): `color` (kode/nama warna varian) memilih BOM warna itu. `bom`
+    (+ `bom_match`) boleh dikirim langsung oleh pemanggil yang sudah memilihnya.
+    """
     cache = cache if cache is not None else {}
     out = {
         "bom_id": None, "bom_version": None, "lines": [],
         "material_cost": 0.0, "fabric_cost": 0.0, "accessory_cost": 0.0, "other_cost": 0.0,
         "gaps": [], "uom_warnings": [], "line_count": 0, "unvalued_count": 0,
+        "color_requested": (color or "").strip(), "bom_color": "", "bom_color_match": BOM_MATCH_NONE,
     }
-    bom = await find_active_bom(db, model_id, size_id)
+    match = bom_match or BOM_MATCH_NONE
+    if bom is None:
+        bom, match = await find_active_bom_ex(db, model_id, size_id, color)
     if not bom:
         out["gaps"].append(_gap(
             "bom_missing",
@@ -257,6 +366,14 @@ async def compute_material_cost(db, model_id: str, size_id: str, *, cache: dict 
     mats, warns = await bom_uom.ensure_uom(db, bom)
     out["bom_id"] = bom.get("id")
     out["bom_version"] = bom.get("version")
+    out["bom_color"] = bom.get("color") or bom.get("color_code") or ""
+    out["bom_color_match"] = match
+    if match == BOM_MATCH_OTHER:
+        out["gaps"].append(_gap(
+            "bom_color_missing",
+            f"BOM warna {color} untuk ukuran ini belum ada — biaya bahan sementara memakai "
+            f"BOM warna {out['bom_color'] or 'lain'} (perkiraan).",
+            "Buat BOM untuk warna ini", "rnd-bom", size_id=size_id, color=color))
     out["uom_warnings"] = list(warns or [])
     if not mats:
         out["gaps"].append(_gap(
@@ -619,6 +736,78 @@ async def _price_info(db, model: dict, size_id: str, fg_ids: list[str]) -> dict:
     return out
 
 
+def _row_hpps(rows: list[dict]) -> list[float]:
+    """HPP/pcs yang berlaku: per warna bila ada FG warna, selain itu angka per ukuran (F1b)."""
+    out: list[float] = []
+    for r in rows:
+        cols = [c["hpp_unit"] for c in (r.get("colors") or []) if c.get("bom_id") and c["hpp_unit"] > 0]
+        if cols:
+            out.extend(cols)
+        elif r.get("bom_id") and r.get("hpp_unit", 0) > 0:
+            out.append(r["hpp_unit"])
+    return out
+
+
+def _bad_statuses(mc: dict) -> list[str]:
+    return sorted({ln["status"] for ln in (mc.get("lines") or []) if ln.get("status") != "ok"})
+
+
+async def _color_costs(db, model_id: str, size: dict, fg_rows: list[dict], size_mc: dict, *,
+                       cmt_rate: float, labor_rate: float, overhead: float,
+                       cache: dict) -> tuple[list[dict], list[dict]]:
+    """2026-11-02 (F1b) — HPP tiap FG warna dari BOM warnanya sendiri.
+
+    Satu BOM dihitung sekali (cache per bom_id). Warna tanpa BOM sendiri → BOM ukuran
+    lama (= perilaku sebelum perbaikan) + gap `bom_color_missing`, tidak diam-diam.
+    """
+    if not fg_rows:
+        return [], []
+    cands = await db.rahaza_boms.find(
+        {"model_id": model_id, "size_id": size["size_id"], "active": True}, {"_id": 0}).to_list(200)
+    cands.sort(key=_bom_priority)
+    by_bom: dict = {}
+    if size_mc.get("bom_id"):
+        by_bom[size_mc["bom_id"]] = size_mc
+    out, gaps = [], []
+    for f in fg_rows:
+        col = color_of(f)
+        bom, match = pick_bom_for_color(cands, col)
+        if match in (BOM_MATCH_OTHER, BOM_MATCH_NONE) or not bom:
+            mc = size_mc                       # perilaku lama, apa adanya
+        else:
+            mc = by_bom.get(bom.get("id"))
+            if mc is None:
+                mc = await compute_material_cost(db, model_id, size["size_id"], cache=cache,
+                                                 color=col, bom=bom, bom_match=match)
+                by_bom[bom.get("id")] = mc
+                gaps.extend(mc.get("gaps") or [])
+        if match == BOM_MATCH_OTHER:
+            gaps.append(_gap(
+                "bom_color_missing",
+                f"Warna {col} ukuran {size.get('size_code') or size['size_id']} belum punya BOM "
+                f"sendiri — HPP-nya memakai BOM warna {size_mc.get('bom_color') or 'lain'} (perkiraan).",
+                "Buat BOM untuk warna ini", "rnd-bom", size_id=size["size_id"], color=col))
+        computable = bool(mc.get("bom_id")) and bool(mc.get("lines")) and not _bad_statuses(mc)
+        unit = _r(_f(mc.get("material_cost")) + cmt_rate + labor_rate + overhead)
+        out.append({
+            "fg_id": f["id"], "code": f.get("code"), "color": col,
+            "color_name": f.get("color_name") or f.get("color") or "",
+            "bom_id": mc.get("bom_id"), "bom_version": mc.get("bom_version"),
+            "bom_color": mc.get("bom_color") or "", "bom_color_match": match,
+            "material_cost": _r(mc.get("material_cost")),
+            "fabric_cost": _r(mc.get("fabric_cost")), "accessory_cost": _r(mc.get("accessory_cost")),
+            "other_cost": _r(mc.get("other_cost")),
+            "unvalued_count": mc.get("unvalued_count", 0),
+            "bad_line_statuses": _bad_statuses(mc),
+            "computable": computable,
+            "hpp_unit": unit,
+            "confidence": ("full" if (computable and cmt_rate > 0 and labor_rate > 0)
+                           else ("partial" if mc.get("bom_id") else "none")),
+            "hpp_current": _r(f.get("hpp")), "hpp_source_current": f.get("hpp_source") or "none",
+        })
+    return out, gaps
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # HPP per model (semua size)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -655,7 +844,7 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
         fg_rows = await db.rahaza_materials.find(
             {"type": "fg", "model_id": model_id, "size_id": s["size_id"]},
             {"_id": 0, "id": 1, "code": 1, "name": 1, "hpp": 1, "hpp_source": 1,
-             "color_name": 1, "variant_id": 1}).to_list(500)
+             "color_name": 1, "color_code": 1, "color": 1, "variant_id": 1}).to_list(500)
         fg_ids = [f["id"] for f in fg_rows]
         price = await _price_info(db, model, s["size_id"], fg_ids)
         # T-04: baris `unlinked`/`uom_unclear` juga membuat HPP tidak bisa dipercaya.
@@ -663,6 +852,14 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
             ln["status"] == "ok" for ln in mc["lines"])
         hpp = _r(mc["material_cost"] + cmt["rate"] + labor["rate"] + overhead)
         marg = margin_of(price["best_price"], hpp)
+        # 2026-11-02 (F1b) — HPP PER WARNA. Angka per ukuran di atas tetap dihitung
+        # seperti dulu (kompatibilitas layar), tetapi tiap FG warna kini memakai BOM
+        # warnanya sendiri; `apply_model_cost` menulis angka per warna ini.
+        colors, color_gaps = await _color_costs(
+            db, model_id, s, fg_rows, mc, cmt_rate=cmt["rate"], labor_rate=labor["rate"],
+            overhead=overhead, cache=cache)
+        gaps.extend(color_gaps)
+        color_hpps = [c["hpp_unit"] for c in colors if c["bom_id"] and c["hpp_unit"] > 0]
         row = {
             "size_id": s["size_id"], "size_code": s["size_code"], "size_from": s["from"],
             "bom_id": mc["bom_id"], "bom_version": mc["bom_version"],
@@ -683,6 +880,10 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
                              "color_name": f.get("color_name") or "",
                              "hpp_current": _r(f.get("hpp")),
                              "hpp_source_current": f.get("hpp_source") or "none"} for f in fg_rows],
+            "colors": colors,
+            "hpp_unit_min": _r(min(color_hpps)) if color_hpps else hpp,
+            "hpp_unit_max": _r(max(color_hpps)) if color_hpps else hpp,
+            "hpp_varies_by_color": bool(color_hpps) and (max(color_hpps) - min(color_hpps)) > 0.005,
             "price": price,
             "margin": marg["margin"], "margin_pct": marg["margin_pct"],
             "has_price": marg["has_price"], "margin_known": marg["margin_known"],
@@ -698,7 +899,7 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
                 "marketing-catalog", size_id=s["size_id"]))
 
     computable_rows = [r for r in rows if r["bom_id"]]
-    hpp_values = [r["hpp_unit"] for r in computable_rows if r["hpp_unit"] > 0]
+    hpp_values = _row_hpps(computable_rows)
     model_hpp = _r(sum(hpp_values) / len(hpp_values)) if hpp_values else 0.0
     cur_hpp, cur_src = pm.resolve_hpp(model)
 
@@ -790,7 +991,7 @@ async def list_models_cost(db, *, q: str | None = None, only_gaps: bool = False,
                                      target_margin_pct=target_margin_pct,
                                      settings=settings, cache=cache, with_candidates=False)
         sizes = d["sizes"]
-        hpps = [s["hpp_unit"] for s in sizes if s["bom_id"] and s["hpp_unit"] > 0]
+        hpps = _row_hpps([s for s in sizes if s["bom_id"]])
         prices = [s["price"]["best_price"] for s in sizes if s["price"]["best_price"] > 0]
         margins = [s["margin_pct"] for s in sizes if s.get("margin_known")]
         ready = any(s["confidence"] == "full" for s in sizes)
@@ -851,48 +1052,77 @@ async def apply_model_cost(db, model_id: str, user: dict, *, size_ids: list[str]
     for s in d["sizes"]:
         if size_ids and s["size_id"] not in size_ids:
             continue
-        if not s["bom_id"] or s["hpp_unit"] <= 0 or not s.get("computable"):
-            if not s["bom_id"]:
-                reason = "BOM belum ada"
-            elif not s.get("computable"):
-                bad = [ln for ln in s["lines"] if ln["status"] != "ok"]
-                reason = (f"{len(bad)} baris BOM belum bisa dinilai "
-                          f"({', '.join(sorted({ln['status'] for ln in bad}))}) — HPP tidak diterapkan")
+        # 2026-11-02 (F1b): tiap FG WARNA ditulis dengan HPP dari BOM warnanya sendiri
+        # (dulu satu angka per ukuran ditimpakan ke semua warna). Ukuran tanpa FG varian
+        # tetap diproses sebagai satu target (angka model saja), seperti dulu.
+        targets = s.get("colors") or [None]
+        for c in targets:
+            src = c or s
+            label = {"size_id": s["size_id"], "size_code": s["size_code"]}
+            if c:
+                label.update({"fg_id": c["fg_id"], "code": c["code"], "color": c["color"]})
+            bad = src.get("bad_line_statuses") if c else _bad_statuses(s)
+            if not src["bom_id"] or src["hpp_unit"] <= 0 or not src.get("computable"):
+                if not src["bom_id"]:
+                    reason = "BOM belum ada"
+                elif not src.get("computable"):
+                    reason = (f"baris BOM belum bisa dinilai ({', '.join(bad)}) — HPP tidak diterapkan")
+                else:
+                    reason = "HPP 0"
+                skipped.append({**label, "reason": reason})
+                continue
+            breakdown = {
+                "material": src["material_cost"], "fabric": src["fabric_cost"],
+                "accessory": src["accessory_cost"], "other": src["other_cost"],
+                "cmt": s["cmt_cost"], "internal_labor": s["internal_labor_cost"],
+                "overhead": s["overhead_cost"], "confidence": src["confidence"],
+                "unvalued_count": src["unvalued_count"], "bom_id": src["bom_id"],
+                "bom_version": src["bom_version"],
+            }
+            if c:
+                breakdown.update({"color": c["color"], "bom_color": c["bom_color"],
+                                  "bom_color_match": c["bom_color_match"]})
+                fg_filter = {"id": c["fg_id"]}
+                fg_ids = [c["fg_id"]]
             else:
-                reason = "HPP 0"
-            skipped.append({"size_id": s["size_id"], "size_code": s["size_code"], "reason": reason})
-            continue
-        breakdown = {
-            "material": s["material_cost"], "fabric": s["fabric_cost"],
-            "accessory": s["accessory_cost"], "other": s["other_cost"],
-            "cmt": s["cmt_cost"], "internal_labor": s["internal_labor_cost"],
-            "overhead": s["overhead_cost"], "confidence": s["confidence"],
-            "unvalued_count": s["unvalued_count"], "bom_id": s["bom_id"],
-            "bom_version": s["bom_version"],
-        }
-        res_fg = await db.rahaza_materials.update_many(
-            {"type": "fg", "model_id": model_id, "size_id": s["size_id"]},
-            {"$set": {"hpp": s["hpp_unit"], "hpp_source": HPP_SOURCE_BOM,
-                      "hpp_updated_at": now, "hpp_breakdown": breakdown,
-                      "updated_at": now}})
-        fg_updated += res_fg.modified_count
-        fg_ids = [f["id"] for f in s["fg_variants"]]
-        if fg_ids:
-            res_items = await db.marketing_catalog_items.update_many(
-                {"$or": [{"fg_material_id": {"$in": fg_ids}}, {"material_id": {"$in": fg_ids}}]},
-                {"$set": {"hpp": s["hpp_unit"], "hpp_source": HPP_SOURCE_BOM,
-                          "hpp_updated_at": now, "updated_at": now}})
-            item_updated += res_items.modified_count
-        applied.append({"size_id": s["size_id"], "size_code": s["size_code"],
-                        "hpp_unit": s["hpp_unit"], "fg_count": len(fg_ids),
-                        "confidence": s["confidence"], "breakdown": breakdown})
+                fg_filter = {"type": "fg", "model_id": model_id, "size_id": s["size_id"]}
+                fg_ids = [f["id"] for f in s["fg_variants"]]
+            res_fg = await db.rahaza_materials.update_many(
+                fg_filter,
+                {"$set": {"hpp": src["hpp_unit"], "hpp_source": HPP_SOURCE_BOM,
+                          "hpp_updated_at": now, "hpp_breakdown": breakdown,
+                          "updated_at": now}})
+            fg_updated += res_fg.modified_count
+            # 2026-11-02 (owner No.26a): item katalog yang FG-nya SUDAH bernilai WAC memakai WAC itu
+            # (`fcl._sync_catalog`); HPP kalkulator hanya estimasi dan tidak boleh menimpanya.
+            # Satu definisi "sudah WAC" = `catalog_margin.effective_fg_cost` (sumber fg_wac).
+            wac_ids = []
+            if fg_ids:
+                from core import catalog_margin as _cm
+                async for m in db.rahaza_materials.find(
+                        {"id": {"$in": fg_ids}}, {"_id": 0, "id": 1, "unit_cost": 1, "wac_components": 1}):
+                    if _cm.effective_fg_cost(m)["source"] == _cm.SRC_WAC:
+                        wac_ids.append(m["id"])
+            cat_ids = [i for i in fg_ids if i not in wac_ids]
+            if cat_ids:
+                res_items = await db.marketing_catalog_items.update_many(
+                    {"$or": [{"fg_material_id": {"$in": cat_ids}}, {"material_id": {"$in": cat_ids}}]},
+                    {"$set": {"hpp": src["hpp_unit"], "hpp_source": HPP_SOURCE_BOM,
+                              "hpp_updated_at": now, "updated_at": now}})
+                item_updated += res_items.modified_count
+            applied.append({**label, "hpp_unit": src["hpp_unit"], "fg_count": len(fg_ids),
+                            "catalog_kept_wac": len(wac_ids),
+                            "confidence": src["confidence"], "breakdown": breakdown})
 
     hpps = [a["hpp_unit"] for a in applied]
     model_hpp = _r(sum(hpps) / len(hpps)) if hpps else 0.0
     model_before = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0})
     hpp_before, src_before = pm.resolve_hpp(model_before or {})
     if applied:
-        by_size = {a["size_id"]: a["hpp_unit"] for a in applied}
+        per_size: dict = {}
+        for a in applied:
+            per_size.setdefault(a["size_id"], []).append(a["hpp_unit"])
+        by_size = {sid: _r(sum(v) / len(v)) for sid, v in per_size.items()}
         merged = {**(model_before or {}), "hpp_bom": model_hpp}
         merged.pop("hpp", None)
         eff_hpp, eff_src = pm.resolve_hpp(merged)
@@ -940,7 +1170,8 @@ async def list_snapshots(db, *, model_id: str | None = None, limit: int = 50) ->
 # ══════════════════════════════════════════════════════════════════════════════
 async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None = None,
                                       variant_id: str | None = None, qty_pcs: float = 0.0,
-                                      input_material_id: str | None = None) -> dict:
+                                      input_material_id: str | None = None,
+                                      color: str | None = None) -> dict:
     """Kebutuhan bahan menurut BOM untuk rencana potongan N pcs.
 
     Dipakai dialog Order Cutting supaya rencana pemakaian kain **tidak ditebak**.
@@ -963,12 +1194,18 @@ async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None 
     out["model_code"] = model.get("code") or ""
     out["model_name"] = model.get("name") or ""
 
-    if not size_id and variant_id:
+    color = (color or "").strip()
+    if variant_id:
+        # 2026-11-02 (F1b): varian membawa WARNA — BOM dipilih per warna (bukan hanya ukuran).
         v = await db.rahaza_model_variants.find_one(
-            {"id": variant_id, "model_id": model_id}, {"_id": 0, "size_id": 1, "size_code": 1})
-        size_id = (v or {}).get("size_id")
-        out["size_id"] = size_id
-        out["size_code"] = (v or {}).get("size_code") or ""
+            {"id": variant_id, "model_id": model_id},
+            {"_id": 0, "size_id": 1, "size_code": 1, "color_code": 1, "color_name": 1, "color": 1})
+        if not size_id:
+            size_id = (v or {}).get("size_id")
+            out["size_id"] = size_id
+            out["size_code"] = (v or {}).get("size_code") or ""
+        color = color or color_of(v)
+    out["color"] = color
     if size_id and not out["size_code"]:
         s = await db.rahaza_sizes.find_one({"id": size_id}, {"_id": 0, "code": 1})
         out["size_code"] = (s or {}).get("code") or ""
@@ -990,7 +1227,7 @@ async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None 
             "Pilih varian (warna · size)", "cutting-orders"))
         return out
 
-    bom = await find_active_bom(db, model_id, size_id)
+    bom, bom_match = await find_active_bom_ex(db, model_id, size_id, color)
     if not bom:
         out["gaps"].append(_gap(
             "bom_missing",
@@ -1002,6 +1239,14 @@ async def bom_requirement_for_cutting(db, *, model_id: str, size_id: str | None 
     out["has_bom"] = True
     out["bom_id"] = bom.get("id")
     out["bom_version"] = bom.get("version")
+    out["bom_color"] = bom.get("color") or bom.get("color_code") or ""
+    out["bom_color_match"] = bom_match
+    if bom_match == BOM_MATCH_OTHER:
+        out["gaps"].append(_gap(
+            "bom_color_missing",
+            f"Warna {color} ukuran {out['size_code'] or size_id} belum punya BOM sendiri — "
+            f"angka di bawah memakai BOM warna {out['bom_color'] or 'lain'}; periksa sebelum dipakai.",
+            "Buat BOM untuk warna ini", "rnd-bom", size_id=size_id, color=color))
     mats, warns = await bom_uom.ensure_uom(db, bom)
     out["uom_warnings"] = list(warns or [])
 

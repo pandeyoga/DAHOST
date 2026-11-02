@@ -16,6 +16,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { GlassCard } from '@/components/ui/glass';
@@ -862,8 +863,8 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
                     />
                   </td>
                   <td className="p-1">
-                    <Input
-                      type="number"
+                    <MoneyInput
+                      decimals={2}
                       value={m.cost_per_unit}
                       onChange={(e) => updateMat(idx, 'cost_per_unit', e.target.value)}
                       className="h-7 text-xs w-24 text-right"

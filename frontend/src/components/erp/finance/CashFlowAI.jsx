@@ -1,6 +1,6 @@
 /**
  * AI Cash Flow Prediction — CV. Dewi Aditya ERP
- * Finance portal feature powered by Claude via EMERGENT_LLM_KEY.
+ * Finance portal feature powered by Claude (Anthropic) lewat services.ai backend (2026-11-02).
  */
 import { useState, useCallback } from 'react';
 import axios from 'axios';

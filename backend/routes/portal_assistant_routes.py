@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from auth import require_auth
 from database import get_db
 from services import portal_assistant as kb
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
@@ -68,7 +69,7 @@ async def ask(request: Request):
     question = (body.get("question") or body.get("message") or "").strip()
     portal = (body.get("portal") or "").strip() or None
     module = (body.get("module") or "").strip() or None
-    session_id = body.get("session_id") or f"asst-{user['id'][:8]}-{date.today().isoformat()}"
+    session_id = body.get("session_id") or f"asst-{user['id'][:8]}-{today_wib().isoformat()}"
     if not question:
         raise HTTPException(400, "Pertanyaan wajib diisi.")
 
@@ -116,10 +117,12 @@ async def _try_ai(db, question, portal, module, session_id, user):
             session_tag="assistant-erp",
             db=db,
             tier="light",
+            user_id=(user or {}).get("id"),
         )
         return (reply or "").strip(), None
-    except LLMUnavailable:
-        return None, "Bantuan AI belum aktif — kunci Claude belum dipasang admin."
+    except LLMUnavailable as e:
+        # 2026-11-02: pesan ramah dari services.ai (kunci kosong / dimatikan admin).
+        return None, f"Bantuan AI belum aktif — {e.detail}"
     except HTTPException as e:
         log.warning("assistant AI gagal: %s", e.detail)
         return None, "Bantuan AI sedang tidak tersedia."
@@ -134,7 +137,7 @@ async def history(request: Request, session_id: Optional[str] = None,
     user = await require_auth(request)
     db = get_db()
     if not session_id:
-        session_id = f"asst-{user['id'][:8]}-{date.today().isoformat()}"
+        session_id = f"asst-{user['id'][:8]}-{today_wib().isoformat()}"
     rows = await db[COLL].find(
         {"session_id": session_id, "user_id": user["id"]}, {"_id": 0},
     ).sort("created_at", 1).to_list(limit)

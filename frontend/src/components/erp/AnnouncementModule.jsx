@@ -23,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { toWIBDate } from '@/lib/waktu';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageHeader } from './moduleAtoms';
 import { EmptyState } from './EmptyState';
@@ -179,8 +180,8 @@ function AnnouncementFormDialog({ open, onClose, announcement, onSuccess }) {
         priority: announcement.priority || 0,
         target_portals: announcement.target_portals || ['all'],
         is_active: announcement.is_active ?? true,
-        start_date: announcement.start_date ? new Date(announcement.start_date).toISOString().split('T')[0] : '',
-        end_date: announcement.end_date ? new Date(announcement.end_date).toISOString().split('T')[0] : '',
+        start_date: toWIBDate(announcement.start_date),
+        end_date: toWIBDate(announcement.end_date),
       });
     } else {
       setForm({

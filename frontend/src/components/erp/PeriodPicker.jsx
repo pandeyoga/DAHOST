@@ -12,27 +12,22 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Calendar, ChevronDown, Check, GitCompare } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  todayWIB, addDaysISO, monthStartWIB, lastMonthPeriodWIB, yearStartWIB,
+} from '@/lib/waktu';
 
-function iso(d) { return d.toISOString().slice(0, 10); }
-function addDays(d, n) { const x = new Date(d); x.setDate(x.getDate() + n); return x; }
-function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
-function endOfMonth(d) { return new Date(d.getFullYear(), d.getMonth() + 1, 0); }
-
-function resolvePreset(preset) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+/** Rentang tanggal kalender WIB (No.54(a)) untuk sebuah preset: { from, to } 'YYYY-MM-DD'. */
+export function resolvePreset(preset) {
+  const today = todayWIB();
   switch (preset) {
-    case 'today':     return { from: iso(today), to: iso(today) };
-    case '7d':        return { from: iso(addDays(today, -6)), to: iso(today) };
-    case '30d':       return { from: iso(addDays(today, -29)), to: iso(today) };
-    case '90d':       return { from: iso(addDays(today, -89)), to: iso(today) };
-    case 'month':     return { from: iso(startOfMonth(today)), to: iso(today) };
-    case 'last-month':{
-      const last = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-      return { from: iso(last), to: iso(endOfMonth(last)) };
-    }
-    case 'ytd':       return { from: `${today.getFullYear()}-01-01`, to: iso(today) };
-    default:          return { from: null, to: null };
+    case 'today':      return { from: today, to: today };
+    case '7d':         return { from: addDaysISO(today, -6), to: today };
+    case '30d':        return { from: addDaysISO(today, -29), to: today };
+    case '90d':        return { from: addDaysISO(today, -89), to: today };
+    case 'month':      return { from: monthStartWIB(), to: today };
+    case 'last-month': return lastMonthPeriodWIB();
+    case 'ytd':        return { from: yearStartWIB(), to: today };
+    default:           return { from: null, to: null };
   }
 }
 
@@ -68,7 +63,7 @@ export function PeriodPicker({ value, onChange, compareEnabled = true, testId = 
 
   const pick = (key) => {
     if (key === 'custom') {
-      onChange({ ...value, preset: 'custom', from: from || iso(new Date()), to: to || iso(new Date()) });
+      onChange({ ...value, preset: 'custom', from: from || todayWIB(), to: to || todayWIB() });
       return;
     }
     const r = resolvePreset(key);

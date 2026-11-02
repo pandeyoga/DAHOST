@@ -27,6 +27,7 @@ import json
 import asyncio
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib, today_wib, now_wib
 
 _log = logging.getLogger(__name__)
 
@@ -137,11 +138,11 @@ async def get_my_shifts(
     
     # Default to current month if not specified
     if not date_from:
-        date_from = _now().strftime('%Y-%m-01')
+        date_from = fmt_wib('%Y-%m-01')
     if not date_to:
         # Last day of current month
         import calendar
-        now = _now()
+        now = now_wib()   # bulan berjalan WIB (No.54a)
         last_day = calendar.monthrange(now.year, now.month)[1]
         date_to = now.strftime(f'%Y-%m-{last_day}')
     
@@ -380,7 +381,7 @@ async def get_my_notifications(request: Request):
     persisted = [_reshape_lh_notif(d) async for d in cursor]
 
     # 2. Derived notifications (legacy fallback for backwards compatibility)
-    seven_days_ago = (_now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    seven_days_ago = (today_wib() - timedelta(days=7)).isoformat()
 
     recent_shifts = await db.marketing_livehost_shifts.find({
         'host_id': host['id'],

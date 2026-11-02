@@ -27,18 +27,18 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from core import accessory_valuation
 from utils import accessory_valuation_export as export
 from utils import email_sender
 from utils.notif_recipients import resolve_role_recipients
+from utils.waktu import WIB
 
 _log = logging.getLogger(__name__)
 
 RUNS_COLL = "acc_valuation_report_runs"
 CONFIG_COLL = "dewi_provider_config"
-JAKARTA = ZoneInfo("Asia/Jakarta")
+JAKARTA = WIB   # SSOT utils.waktu (dulu ZoneInfo lokal)
 
 # "Keuangan" = tim yang menutup buku. Owner/superadmin sengaja TIDAK otomatis ikut
 # supaya kotak masuk pimpinan tidak penuh lampiran rutin; kalau perlu, tambahkan

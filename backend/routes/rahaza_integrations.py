@@ -5,7 +5,11 @@ Endpoints (prefix /api/rahaza/integration-settings):
   GET    /                    — list all keys (values masked)
   POST   /                    — upsert a key
   DELETE /{key_name}          — remove a key
-  GET    /resolve/{key_name}  — get resolved key value (superadmin only, internal use)
+  GET    /test/{key_name}     — cek kunci tersedia (nilai TIDAK pernah dikembalikan)
+
+2026-11-02 (No.60): kategori AI hanya menawarkan ANTHROPIC_API_KEY. Pilihan lama
+EMERGENT/OPENAI/GEMINI dihapus; bila masih tersimpan di DB ditandai "tidak dipakai".
+Nilai kunci TIDAK PERNAH dikirim utuh ke frontend — hanya bentuk tersamar.
 
 Storage: koleksi `rahaza_integration_settings`
   { key_name, masked_value, description, category, updated_at, updated_by }
@@ -34,33 +38,29 @@ def _now() -> str:
 
 
 def _mask(value: str) -> str:
-    """Show only last 4 chars, mask the rest."""
+    """Bentuk tersamar: panjang TETAP (tidak membocorkan panjang kunci) + 4 karakter akhir.
+
+    2026-11-02: dulu `*` sepanjang kunci — panjang & prefix ikut terlihat.
+    """
     if not value:
         return ""
-    if len(value) <= 6:
-        return "*" * len(value)
-    return "*" * (len(value) - 4) + value[-4:]
+    if len(value) <= 12:
+        return "••••••••"
+    return "••••••••" + value[-4:]
+
+
+# Kunci AI lama yang tidak dipakai lagi (No.60: hanya Anthropic).
+DEPRECATED_AI_KEYS = {"EMERGENT_LLM_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"}
 
 
 # ─── Known integration keys with metadata ────────────────────────────────────
 KNOWN_KEYS = {
-    "EMERGENT_LLM_KEY": {
-        "label": "Emergent LLM Key",
-        "description": "Universal LLM key for OpenAI, Claude, Gemini via Emergent platform. Digunakan untuk fitur AI Insights dan Chatbot.",
+    "ANTHROPIC_API_KEY": {
+        "label": "Anthropic API Key (Claude)",
+        "description": "Satu-satunya kunci AI. Dipakai semua fitur AI (ringkasan, prediksi kas, "
+                       "klasifikasi, asisten ERP, dll). Diambil dari console Anthropic, diawali 'sk-ant-'.",
         "category": "ai",
-        "placeholder": "ek-...",
-    },
-    "OPENAI_API_KEY": {
-        "label": "OpenAI API Key",
-        "description": "Kunci API OpenAI untuk GPT-4, DALL-E, dll. Opsional jika sudah menggunakan Emergent LLM Key.",
-        "category": "ai",
-        "placeholder": "sk-...",
-    },
-    "GEMINI_API_KEY": {
-        "label": "Google Gemini API Key",
-        "description": "Kunci API Google Gemini untuk text generation dan image generation.",
-        "category": "ai",
-        "placeholder": "AIza...",
+        "placeholder": "sk-ant-...",
     },
     "WHATSAPP_API_TOKEN": {
         "label": "WhatsApp Business API Token",
@@ -105,6 +105,17 @@ KNOWN_KEYS = {
         "placeholder": "password",
     },
 }
+
+
+def _invalidate_ai_key_cache(key_name: str) -> None:
+    """Kunci Anthropic baru langsung dipakai fitur AI (tanpa menunggu cache 30 dtk)."""
+    if key_name == "ANTHROPIC_API_KEY":
+        try:
+            from ai_cost_tracker import invalidate_api_key_cache, reset_client_cache
+            invalidate_api_key_cache()
+            reset_client_cache()
+        except Exception:  # pragma: no cover
+            logger.debug("invalidate AI key cache gagal", exc_info=True)
 
 
 async def get_integration_key(key_name: str, db=None) -> str | None:
@@ -164,11 +175,14 @@ async def list_settings(request: Request):
     for key_name, doc in stored_map.items():
         if key_name not in KNOWN_KEYS:
             value = doc.get("value", "")
+            deprecated = key_name in DEPRECATED_AI_KEYS
             result.append({
                 "key_name": key_name,
                 "label": key_name,
-                "description": doc.get("description", ""),
-                "category": doc.get("category", "custom"),
+                "description": ("Tidak dipakai lagi — AI kini hanya memakai ANTHROPIC_API_KEY. "
+                                "Boleh dihapus.") if deprecated else doc.get("description", ""),
+                "category": "custom" if deprecated else doc.get("category", "custom"),
+                "deprecated": deprecated,
                 "placeholder": "",
                 "masked_value": _mask(value) if value else "",
                 "is_configured": bool(value),
@@ -203,6 +217,11 @@ async def upsert_setting(request: Request):
     import re
     if not re.match(r'^[A-Z0-9_]+$', key_name):
         raise HTTPException(400, "key_name hanya boleh berisi huruf kapital, angka, dan underscore.")
+    # 2026-11-02 (No.60): provider AI selain Anthropic tidak dipakai lagi.
+    if key_name in DEPRECATED_AI_KEYS:
+        raise HTTPException(400, "Kunci AI ini tidak dipakai lagi. Fitur AI hanya memakai ANTHROPIC_API_KEY.")
+    if key_name == "ANTHROPIC_API_KEY" and not value.startswith("sk-ant-"):
+        raise HTTPException(400, "Format kunci Anthropic tidak valid (harus diawali 'sk-ant-').")
 
     now = _now()
     doc = {
@@ -219,6 +238,7 @@ async def upsert_setting(request: Request):
         upsert=True,
     )
     logger.info(f"Integration key {key_name} upserted by {user.get('email')}")
+    _invalidate_ai_key_cache(key_name)
     return {
         "ok": True,
         "key_name": key_name,
@@ -241,7 +261,8 @@ async def delete_setting(key_name: str, request: Request):
     if result.deleted_count == 0:
         raise HTTPException(404, f"Kunci {key_name} tidak ditemukan di database.")
     logger.info(f"Integration key {key_name} deleted by {user.get('email')}")
-    return {"ok": True, "message": f"Kunci {key_name} dihapus. Sistem akan fallback ke environment variable."}
+    _invalidate_ai_key_cache(key_name)
+    return {"ok": True, "message": f"Kunci {key_name} dihapus dari database. Bila kunci juga diatur di server, nilai server yang dipakai."}
 
 
 @router.get("/test/{key_name}")

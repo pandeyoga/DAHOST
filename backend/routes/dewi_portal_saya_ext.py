@@ -361,7 +361,11 @@ async def get_my_payslips(
     # Find payslips from rahaza_payroll_payslips collection
     payslips = await db.rahaza_payslips.find(
         {"employee_id": emp_id}, {"_id": 0}
-    ).sort("created_at", -1).limit(limit).to_list(limit)
+    ).sort("created_at", -1).to_list(500)
+    # 2026-11-02 (audit T3) — karyawan hanya melihat slip dari run final/dibayar;
+    # angka run draft masih bisa berubah sebelum difinalisasi HR. Saring dulu, baru `limit`.
+    from routes.rahaza_payroll_payslips import only_published_slips
+    payslips = (await only_published_slips(db, payslips))[:limit]
 
     return {"payslips": serialize(payslips), "total": len(payslips)}
 

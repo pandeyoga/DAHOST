@@ -10,6 +10,8 @@ Collections:
 
 Barcode format: {BLDG}-{ZONE}-{RACK}-S{shelf}-P{slot}
 e.g.: WH1-A-R01-S2-P3
+2026-11-02: maksimal 18 karakter — awalan dipendekkan bila perlu (`assign_bin_prefix`, `wh_racks.bin_prefix`);
+kode lama hasil migrasi disimpan di `wh_positions.barcode_aliases`.
 
 Routes (all under /api/wms):
   Buildings:  GET/POST/PUT/DELETE /wms/buildings
@@ -21,6 +23,7 @@ Routes (all under /api/wms):
   Map:        GET /wms/map/{building_id}  — full visual map data
 """
 
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -35,6 +38,89 @@ router = APIRouter(prefix="/api/wms", tags=["wms-structure"])
 
 
 def _uid(): return str(uuid.uuid4())
+
+
+# ─── 2026-11-02 (keputusan owner barcode, butir 13): kode bin PENDEK ≤ 18 karakter ─────────
+# Kode bin lama `{GEDUNG}-{ZONA}-{RAK}-Sxx-Pyy` bisa 25+ karakter → di label 65 mm hanya 10/24 terbaca
+# (uji decode 203 dpi, core/label_render). Aturan baru, SATU generator (rak baru, tambah posisi, skrip
+# migrasi `scripts/shorten_bin_codes.py`):
+#   1. format lama dipakai bila kode terpanjang rak itu ≤ 18 karakter (label lama tetap sama);
+#   2. selain itu awalan dipendekkan: gedung ≤3 + zona ≤2 (segmen terakhir: GD-L1 → L1, ZN-FG → FG), "-",
+#      rak ≤ 4 (nomor ujung dipertahankan: RK-01 → RK01);
+#   3. awalan yang sudah dipakai rak lain diberi akhiran pembeda (2..9, A..Z).
+# Kode lama yang diganti skrip migrasi disimpan di `wh_positions.barcode_aliases` → tetap dikenali resolver.
+BIN_CODE_MAX = 18
+_SUFFIXES = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+
+
+def bin_code(prefix: str, shelf: int, slot: int) -> str:
+    return f"{prefix}-S{int(shelf):02d}-P{int(slot):02d}"
+
+
+def _alnum(s) -> str:
+    return re.sub(r"[^0-9A-Z]", "", str(s or "").upper())
+
+
+def _seg(code, n: int) -> str:
+    """Bagian pembeda kode gedung/zona: segmen TERAKHIR bila kode bersegmen (GD-L1 → L1, ZN-FG → FG)."""
+    parts = [x for x in re.split(r"[^0-9A-Za-z]+", str(code or "").upper()) if x]
+    pick = parts[-1] if len(parts) > 1 else "".join(parts)
+    return pick[:n]
+
+
+def _shorten(code: str, room: int) -> str:
+    """Pendekkan kode rak: nomor di ujung dipertahankan (RAK01 → RA01), huruf depan dipotong."""
+    if len(code) <= room:
+        return code
+    m = re.match(r"^(.*?)(\d+)$", code)
+    if m and len(m.group(2)) < room:
+        return m.group(1)[:room - len(m.group(2))] + m.group(2)
+    return code[:room]
+
+
+def bin_prefix_candidates(bldg: str, zone: str, rack: str, num_shelves: int, slots_per_shelf: int) -> list:
+    """Urutan awalan kandidat (fungsi murni). Semua kandidat menghasilkan kode ≤ BIN_CODE_MAX."""
+    budget = BIN_CODE_MAX - (len(bin_code("", num_shelves, slots_per_shelf)))
+    out = []
+    legacy = f"{bldg or 'WH'}-{zone or 'Z'}-{rack}"
+    if len(legacy) <= budget:
+        out.append(legacy)
+    b, z, r = _seg(bldg, 3) or "WH", _seg(zone, 2) or "Z", _alnum(rack) or "R"
+    head = f"{b}{z}-"
+    room = budget - len(head)
+    if room < 2:                                   # gedung+zona terlalu panjang untuk rak bernomor besar
+        head = f"{b[:2]}{z[:1]}-"
+        room = budget - len(head)
+    r = _shorten(r, room)
+    base = f"{head}{r}"
+    out.append(base)
+    stem = f"{head}{r[:max(1, room - 1)]}"
+    out += [f"{stem}{c}" for c in _SUFFIXES]
+    return list(dict.fromkeys(out))
+
+
+async def assign_bin_prefix(db, rack: dict, *, taken: Optional[set] = None) -> str:
+    """Awalan kode bin untuk rak ini (dipakai ulang bila sudah tersimpan & masih muat)."""
+    shelves, slots = int(rack.get("num_shelves") or 1), int(rack.get("slots_per_shelf") or 1)
+    cur = rack.get("bin_prefix")
+    if cur and len(bin_code(cur, shelves, slots)) <= BIN_CODE_MAX:
+        return cur
+    taken = set(taken or ())
+    async for r in db.wh_racks.find({"id": {"$ne": rack.get("id")}, "bin_prefix": {"$nin": [None, ""]}},
+                                    {"_id": 0, "bin_prefix": 1}):
+        taken.add(r["bin_prefix"].upper())
+    for cand in bin_prefix_candidates(rack.get("building_code"), rack.get("zone_code"), rack.get("code"),
+                                      shelves, slots):
+        if cand.upper() in taken:
+            continue
+        clash = await db.wh_positions.find_one(
+            {"rack_id": {"$ne": rack.get("id")},
+             "$or": [{"barcode": {"$regex": f"^{re.escape(cand)}-S", "$options": "i"}},
+                     {"barcode_aliases": {"$regex": f"^{re.escape(cand)}-S", "$options": "i"}}]},
+            {"_id": 0, "id": 1})
+        if not clash:
+            return cand
+    raise HTTPException(400, "Tidak menemukan kode rak pendek yang unik — ganti kode rak/zona.")
 def _now(): return datetime.now(timezone.utc)
 
 
@@ -53,6 +139,10 @@ class ZoneIn(BaseModel):
     name: str = Field(..., min_length=1)
     zone_type: str = Field("general", description="rm | fg | wip | general | transit")
     description: Optional[str] = None
+    # 2026-11-02 (K9): lokasi gudang (`rahaza_locations.id`) tempat zona ini berada. Dibaca mesin opname
+    # (`core.opname_engine.location_scope`) supaya rak/bin zona ikut cakupan opname lokasi itu.
+    # None = tidak diubah (PUT) / tanpa tautan (POST); "" = lepas tautan.
+    location_id: Optional[str] = None
 
 
 class RackIn(BaseModel):
@@ -145,9 +235,27 @@ async def list_zones(request: Request, building_id: Optional[str] = None):
     if building_id:
         q["building_id"] = building_id
     zones = await db.wh_zones.find(q, {"_id": 0}).sort("code", 1).to_list(500)
+    loc_ids = sorted({z.get("location_id") or z.get("rahaza_location_id") for z in zones} - {None, ""})
+    locs = {x["id"]: x async for x in db.rahaza_locations.find(
+        {"id": {"$in": loc_ids}}, {"_id": 0, "id": 1, "code": 1, "name": 1})} if loc_ids else {}
     for z in zones:
         z["rack_count"] = await db.wh_racks.count_documents({"zone_id": z["id"], "active": True})
+        lid = z.get("location_id") or z.get("rahaza_location_id")
+        z["location_id"] = lid or None
+        z["location_code"] = (locs.get(lid) or {}).get("code")
+        z["location_name"] = (locs.get(lid) or {}).get("name")
     return serialize_doc(zones)
+
+
+async def _zone_location(db, location_id: Optional[str]) -> dict:
+    """Field tautan zona → lokasi gudang (2026-11-02, K9). Lokasi wajib ada & aktif."""
+    lid = (location_id or "").strip()
+    if not lid:
+        return {"location_id": None, "location_code": None, "location_name": None}
+    loc = await db.rahaza_locations.find_one({"id": lid, "active": {"$ne": False}}, {"_id": 0})
+    if not loc:
+        raise HTTPException(400, "Lokasi gudang yang ditautkan tidak ditemukan / nonaktif.")
+    return {"location_id": lid, "location_code": loc.get("code"), "location_name": loc.get("name")}
 
 
 @router.post("/zones")
@@ -164,6 +272,7 @@ async def create_zone(data: ZoneIn, request: Request):
         "id": _uid(), "building_id": data.building_id, "building_code": building["code"],
         "building_name": building["name"], "code": code, "name": data.name,
         "zone_type": data.zone_type, "description": data.description or "",
+        **(await _zone_location(db, data.location_id)),
         "active": True, "created_at": _now(), "created_by": user.get("email", "system"),
     }
     await db.wh_zones.insert_one(zone)
@@ -178,10 +287,11 @@ async def update_zone(zone_id: str, data: ZoneIn, request: Request):
     zone = await db.wh_zones.find_one({"id": zone_id})
     if not zone:
         raise HTTPException(404, "Zona tidak ditemukan")
-    await db.wh_zones.update_one({"id": zone_id}, {"$set": {
-        "name": data.name, "zone_type": data.zone_type, "description": data.description or "",
-        "updated_at": _now(),
-    }})
+    upd = {"name": data.name, "zone_type": data.zone_type, "description": data.description or "",
+           "updated_at": _now()}
+    if data.location_id is not None:      # None = tautan lokasi tidak diubah
+        upd.update(await _zone_location(db, data.location_id))
+    await db.wh_zones.update_one({"id": zone_id}, {"$set": upd})
     return {"message": "Zona diupdate"}
 
 
@@ -207,11 +317,13 @@ async def _generate_positions(db, rack: dict):
     bldg_code = rack.get("building_code", "WH")
     zone_code = rack.get("zone_code", "Z")
     rack_code = rack["code"]
+    # 2026-11-02: awalan kode bin dari `assign_bin_prefix` (≤ 18 karakter); cadangan = format lama
+    prefix = rack.get("bin_prefix") or f"{bldg_code}-{zone_code}-{rack_code}"
 
     positions = []
     for shelf in range(1, num_shelves + 1):
         for slot in range(1, slots_per_shelf + 1):
-            barcode = f"{bldg_code}-{zone_code}-{rack_code}-S{shelf:02d}-P{slot:02d}"
+            barcode = bin_code(prefix, shelf, slot)
             label = f"Shelf {shelf}, Slot {slot}"
             pos = {
                 "id": _uid(),
@@ -295,6 +407,7 @@ async def create_rack(data: RackIn, request: Request):
         "created_at": _now(),
         "created_by": user.get("email", "system"),
     }
+    rack["bin_prefix"] = await assign_bin_prefix(db, rack)   # 2026-11-02: kode bin ≤ 18 karakter
 
     await db.wh_racks.insert_one(rack)
 
@@ -342,11 +455,15 @@ async def update_rack(rack_id: str, data: RackIn, request: Request):
         updated_rack = await db.wh_racks.find_one({"id": rack_id}, {"_id": 0})
         bldg_code = updated_rack.get("building_code", "WH")
         zone_code = updated_rack.get("zone_code", "Z")
+        # 2026-11-02: posisi baru memakai awalan pendek (≤ 18 karakter) yang sama dengan generator rak baru
+        prefix = await assign_bin_prefix(db, updated_rack)
+        if prefix != updated_rack.get("bin_prefix"):
+            await db.wh_racks.update_one({"id": rack_id}, {"$set": {"bin_prefix": prefix}})
         new_positions = []
         for shelf in range(1, new_shelves + 1):
             for slot in range(1, new_slots + 1):
                 if (shelf, slot) not in existing_positions:
-                    barcode = f"{bldg_code}-{zone_code}-{updated_rack['code']}-S{shelf:02d}-P{slot:02d}"
+                    barcode = bin_code(prefix, shelf, slot)
                     new_positions.append({
                         "id": _uid(), "rack_id": rack_id,
                         "zone_id": updated_rack["zone_id"], "building_id": updated_rack["building_id"],
@@ -410,7 +527,8 @@ async def get_position_by_barcode(barcode: str, request: Request):
     """Scan barcode → get full position info (for scanner search)."""
     await require_auth(request)
     db = get_db()
-    pos = await db.wh_positions.find_one({"barcode": barcode}, {"_id": 0})
+    from core.scan_resolver import position_by_barcode  # SSOT kode scan (2026-11-02)
+    pos = await position_by_barcode(db, barcode)
     if not pos:
         raise HTTPException(404, f"Posisi dengan barcode '{barcode}' tidak ditemukan")
     return serialize_doc(pos)
@@ -509,25 +627,25 @@ async def warehouse_search(
     if not q or not q.strip():
         return {"positions": [], "materials": []}
 
-    query_str = q.strip()
+    # 2026-11-02 — hasil scan lewat SSOT `core.scan_resolver` (normalisasi + tanpa
+    # beda huruf + QR label FG). Dulu teks scan masuk mentah ke `$regex` sehingga
+    # kode seperti `AST-001(` membuat HTTP 500.
+    from core import scan_resolver as sr
+    query_str = sr.normalize_code(q)
 
-    # 1. Try barcode match (position barcode or material barcode)
-    pos_by_barcode = await db.wh_positions.find_one({"barcode": query_str}, {"_id": 0})
+    # 1. Barcode posisi
+    pos_by_barcode = await sr.position_by_barcode(db, query_str)
     if pos_by_barcode:
         return serialize_doc({"type": "position", "result": pos_by_barcode})
 
-    # 2. Try material code exact match
-    mat_q = {"$or": [
-        {"code": {"$regex": f"^{query_str}$", "$options": "i"}},
-        {"name": {"$regex": query_str, "$options": "i"}},
-    ]}
-    if not any(c in query_str for c in [" ", "-"]):
-        mat_q = {"$or": [
-            {"code": {"$regex": query_str, "$options": "i"}},
-            {"name": {"$regex": query_str, "$options": "i"}},
-        ]}
-
-    materials = await db.rahaza_materials.find(mat_q, {"_id": 0}).limit(5).to_list(500)
+    # 2. Kode barang persis (FG/bahan) → cadangan: kode/nama mengandung teks
+    hit = await sr.resolve_item(db, query_str)
+    if hit:
+        materials = [hit["_doc"]]
+    else:
+        rx = {"$regex": re.escape(query_str), "$options": "i"}
+        materials = await db.rahaza_materials.find(
+            {"$or": [{"code": rx}, {"name": rx}]}, {"_id": 0}).limit(5).to_list(500)
     mat_ids = [m["id"] for m in materials]
 
     pos_q = {"material_id": {"$in": mat_ids}, "status": "occupied"}

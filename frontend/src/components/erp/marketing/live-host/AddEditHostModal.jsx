@@ -3,6 +3,7 @@ import { User, Save, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -154,10 +155,7 @@ export default function AddEditHostModal({ host, accounts, authH, onClose, onSuc
             </div>
             <div>
               <Label className="text-xs font-semibold">Hourly Rate (Rp)</Label>
-              <Input
-                type="number"
-                min="0"
-                step="1000"
+              <MoneyInput
                 value={form.hourly_rate}
                 onChange={(e) => setForm((f) => ({ ...f, hourly_rate: Number(e.target.value) }))}
                 className="mt-1 h-9"

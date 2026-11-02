@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 // Sprint A.1: UniversalScanner SSOT
 import UniversalScanner from './scanner/UniversalScanner';
+import { sameScanCode } from './scanner/scanCode';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -404,8 +405,9 @@ function PickListDetailDialog({ picklist, onMarkPicked, onComplete, onDownloadPd
 
   // Sprint A.1: Scan-to-pick handler
   const handleScanToPick = useCallback((barcode) => {
+    // 2026-11-02 (Paket 3a): aturan kode scan bersama (tanpa beda huruf, prefix scanner dibuang)
     const item = localItems.find(
-      it => it.position_barcode && it.position_barcode === barcode && it.status !== 'picked'
+      it => it.position_barcode && sameScanCode(it.position_barcode, barcode) && it.status !== 'picked'
     );
     if (item) {
       toast.success(`Posisi ${barcode} — mengkonfirmasi pick ${item.material_code}`);
@@ -418,7 +420,7 @@ function PickListDetailDialog({ picklist, onMarkPicked, onComplete, onDownloadPd
     } else {
       // Try matching material code/barcode too
       const byMat = localItems.find(
-        it => (it.material_code === barcode || it.material_barcode === barcode) && it.status !== 'picked'
+        it => (sameScanCode(it.material_code, barcode) || sameScanCode(it.material_barcode, barcode)) && it.status !== 'picked'
       );
       if (byMat) {
         toast.success(`Material ${barcode} — mengkonfirmasi pick`);

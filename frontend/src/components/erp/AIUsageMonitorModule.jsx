@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
@@ -18,6 +18,10 @@ const HEALTH_COLOR = {
   monitor: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30',
   warning: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
   critical: 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
+  // 2026-11-02: status jujur saat AI mati / dimatikan / gagal
+  offline: 'bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/40',
+  disabled: 'bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/40',
+  error: 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
 };
 
 const HEALTH_LABEL = {
@@ -25,6 +29,9 @@ const HEALTH_LABEL = {
   monitor: 'Pantau',
   warning: 'Peringatan',
   critical: 'Kritis',
+  offline: 'AI Mati',
+  disabled: 'Dimatikan Admin',
+  error: 'Banyak Galat',
 };
 
 function fmtUSD(v) {
@@ -160,7 +167,7 @@ export default function AIUsageMonitorModule({ token }) {
             <Brain className="w-6 h-6 text-violet-500" /> AI Usage Monitor
           </h1>
           <p className="text-sm text-muted-foreground">
-            Monitor cost & usage Emergent LLM per fitur. Real-time budget alert & cost analytics.
+            Monitor biaya & pemakaian AI Claude (Anthropic) per fitur. Status AI, galat terakhir & anggaran.
           </p>
         </div>
         <Button onClick={refreshAll} disabled={loading} size="sm" data-testid="ai-usage-refresh">
@@ -200,10 +207,36 @@ export default function AIUsageMonitorModule({ token }) {
                   <span className="font-semibold">{today.budget_used_pct}% terpakai</span>
                 </div>
                 <Progress value={Math.min(today.budget_used_pct, 100)} className="h-2" />
+                {/* K29 (2026-11-02): batas bulanan dari tab Pengaturan ikut dipantau */}
+                {today.monthly_budget_usd != null && (
+                  <>
+                    <div className="mt-3 mb-1 flex items-center justify-between text-xs" data-testid="ai-usage-monthly">
+                      <span>Budget Bulanan: {fmtUSD(today.month_cost_usd)} / {fmtUSD(today.monthly_budget_usd)}</span>
+                      <span className="font-semibold">{today.monthly_used_pct}% terpakai</span>
+                    </div>
+                    <Progress value={Math.min(today.monthly_used_pct || 0, 100)} className="h-2" />
+                  </>
+                )}
+                {today.ai_available === false && (
+                  <div className="mt-3 p-2 rounded bg-slate-500/10 border border-slate-500/30 text-xs flex items-start gap-1.5" data-testid="ai-usage-offline">
+                    <Power className="w-4 h-4 mt-0.5" />
+                    <span>{today.ai_status?.message || 'Fitur AI belum aktif.'}</span>
+                  </div>
+                )}
                 {today.health === 'critical' && (
                   <div className="mt-3 p-2 rounded bg-red-500/10 border border-red-500/30 text-xs text-red-600 dark:text-red-400 flex items-start gap-1.5">
                     <AlertTriangle className="w-4 h-4 mt-0.5" />
-                    <span>Budget harian terlampaui. Fitur AI akan fallback ke heuristic mode. Set env var <code>LLM_DAILY_BUDGET_USD</code> untuk naikkan limit.</span>
+                    <span>Budget harian/bulanan terlampaui. Fitur AI akan menolak panggilan baru. Naikkan batas di tab Pengaturan.</span>
+                  </div>
+                )}
+                {today.recent_error_count > 0 && (
+                  <div className="mt-3 p-2 rounded bg-amber-500/10 border border-amber-500/30 text-xs" data-testid="ai-usage-recent-errors">
+                    <p className="font-medium mb-1">{today.recent_error_count} galat AI dalam 24 jam terakhir</p>
+                    <ul className="space-y-0.5">
+                      {(today.recent_errors || []).slice(0, 5).map((e) => (
+                        <li key={e.code}>{e.count}× — {e.message || e.code}</li>
+                      ))}
+                    </ul>
                   </div>
                 )}
               </GlassCard>
@@ -263,7 +296,7 @@ export default function AIUsageMonitorModule({ token }) {
               <div className="ml-auto flex gap-2 text-xs text-muted-foreground">
                 <span>Daily: {fmtUSD(budgets.daily_usd)}</span>
                 <span>·</span>
-                <span>Monthly: {fmtUSD(budgets.monthly_usd)}</span>
+                <span>Monthly: {budgets.month_cost_usd != null ? `${fmtUSD(budgets.month_cost_usd)} / ` : ''}{fmtUSD(budgets.monthly_usd)}</span>
               </div>
             )}
           </GlassCard>
@@ -422,17 +455,17 @@ export default function AIUsageMonitorModule({ token }) {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Harian</label>
-                    <Input type="number" min="0" step="0.5" value={form.daily_budget_usd}
+                    <MoneyInput decimals={2} value={form.daily_budget_usd}
                       onChange={(e) => setField('daily_budget_usd', e.target.value)} data-testid="ai-set-daily" />
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Bulanan</label>
-                    <Input type="number" min="0" step="5" value={form.monthly_budget_usd}
+                    <MoneyInput decimals={2} value={form.monthly_budget_usd}
                       onChange={(e) => setField('monthly_budget_usd', e.target.value)} data-testid="ai-set-monthly" />
                   </div>
                   <div>
                     <label className="text-xs text-muted-foreground mb-1 block">Per Fitur / Hari</label>
-                    <Input type="number" min="0" step="0.5" value={form.per_feature_daily_usd}
+                    <MoneyInput decimals={2} value={form.per_feature_daily_usd}
                       onChange={(e) => setField('per_feature_daily_usd', e.target.value)} data-testid="ai-set-perfeature" />
                   </div>
                 </div>
@@ -455,7 +488,7 @@ export default function AIUsageMonitorModule({ token }) {
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground mt-2">executive = analisis berat (Opus), standard = umum (Sonnet), light = ringan/murah (Haiku).</p>
+                <p className="text-xs text-muted-foreground mt-2">standard = umum (Sonnet), light = klasifikasi/asisten (Sonnet, effort rendah). Opus (executive) dipakai KHUSUS narasi Laporan Eksekutif dan tidak bisa dijadikan default.</p>
               </GlassCard>
 
               {/* Feature toggles */}

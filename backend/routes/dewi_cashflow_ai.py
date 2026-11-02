@@ -2,16 +2,18 @@
 AI Cash Flow Prediction — CV. Dewi Aditya ERP
 Endpoint: GET /api/finance/ai-cashflow
 
-Aggregates AR aging + AP aging + 60-day cash movements, then calls LLM
-(via emergentintegrations) to generate a short-term cash flow prediction
-with risks & recommendations.
+Aggregates AR aging + AP aging + 60-day cash movements, then calls Claude
+(lewat lapisan tunggal `services.ai`, 2026-11-02) to generate a short-term
+cash flow prediction with risks & recommendations.
 """
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from database import get_db
 from auth import require_auth, serialize_doc
 from datetime import date, timedelta
-import os
 import logging
+
+from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, require_ai
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ def _fmt(n: float) -> str:
 
 async def _build_context(db) -> dict:
     """Fetch & aggregate data for the LLM prompt."""
-    today = date.today()
+    today = today_wib()
     sixty_ago = (today - timedelta(days=60)).isoformat()
     today_iso = today.isoformat()
 
@@ -115,8 +117,10 @@ async def _build_context(db) -> dict:
 
     # ── Upcoming AP due in 30 days ──
     next_30 = (today + timedelta(days=30)).isoformat()
+    # 2026-11-02: dulu hanya 'sent'/'partial' → AP berstatus partial_paid & overdue
+    # (status kanonik) tidak pernah masuk daftar kewajiban 30 hari ke depan.
     upcoming_ap = await db.rahaza_ap_invoices.find(
-        {'status': {'$in': ['sent', 'partial']}, 'due_date': {'$gte': today_iso, '$lte': next_30}},
+        {'status': {'$in': ['sent', 'issued', 'partial', 'partial_paid', 'overdue']}, 'due_date': {'$gte': today_iso, '$lte': next_30}},
         {'_id': 0, 'vendor_name': 1, 'balance': 1, 'due_date': 1}
     ).sort('due_date', 1).to_list(10)
 
@@ -139,11 +143,17 @@ async def _build_context(db) -> dict:
     }
 
 
-def _build_prompt(ctx: dict) -> str:
+def _build_prompt(ctx: dict, ps: Pseudonymizer | None = None) -> str:
+    """K27 (2026-11-02): nama pelanggan/vendor → kode samaran PLG-xxx / VND-xxx.
+
+    Pemetaan balik dilakukan di server (`ps.restore`) pada jawaban AI.
+    """
+    ps = ps or Pseudonymizer()
     ar = ctx['ar_buckets']
     ap = ctx['ap_buckets']
-    upar = ctx['upcoming_ar']
-    upap = ctx['upcoming_ap']
+    upar = [{**i, '_ref': ps.code(i.get('customer_name') or i.get('buyer_name') or '?', 'pelanggan')}
+            for i in ctx['upcoming_ar']]
+    upap = [{**i, '_ref': ps.code(i.get('vendor_name') or '?', 'vendor')} for i in ctx['upcoming_ap']]
     prompt = f"""Anda adalah CFO digital untuk CV. Dewi Aditya, perusahaan garmen di Indonesia.
 Tanggal hari ini: {ctx['today']}.
 
@@ -169,10 +179,12 @@ Arus Kas 60 hari terakhir:
 - Net 60 hari: {_fmt(ctx['cash_in_60'] - ctx['cash_out_60'])}
 
 Tagihan AR yang jatuh tempo 30 hari ke depan:
-{chr(10).join(f"- {i.get('customer_name') or i.get('buyer_name','?')}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upar) or '- Tidak ada'}
+{chr(10).join(f"- {i['_ref']}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upar) or '- Tidak ada'}
 
 Kewajiban AP yang jatuh tempo 30 hari ke depan:
-{chr(10).join(f"- {i.get('vendor_name','?')}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upap) or '- Tidak ada'}
+{chr(10).join(f"- {i['_ref']}: {_fmt(float(i.get('balance',0)))} (due: {i.get('due_date','')})" for i in upap) or '- Tidak ada'}
+
+(Nama pelanggan/vendor disamarkan dengan kode PLG-xxx / VND-xxx; pakai kode itu apa adanya.)
 
 Order produksi aktif: {ctx['active_orders']} order
 
@@ -196,32 +208,30 @@ async def ai_cashflow_prediction(request: Request):
     """
     AI Cash Flow Prediction — analisis arus kas 30/60/90 hari ke depan.
     Menggunakan data AR/AP aging + arus kas historis untuk menghasilkan
-    prediksi dan rekomendasi berbasis LLM (GPT-4o).
+    prediksi dan rekomendasi berbasis Claude (tier standard — K29: Opus khusus
+    Laporan Eksekutif).
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
 
-    llm_key = os.environ.get('EMERGENT_LLM_KEY')
-    if not llm_key:
-        raise HTTPException(503, "EMERGENT_LLM_KEY tidak tersedia di environment.")
+    # 2026-11-02: gerbang tunggal (kunci Anthropic + SDK); pesan ramah, tanpa nama env.
+    await require_ai("cashflow", user_id=user.get("id"), db=db, tier="standard")
 
     # ── Build context ──
     ctx = await _build_context(db)
 
-    # ── Call LLM ──
+    # ── Call LLM ── (K27: nama disamarkan, dipetakan balik di server)
+    ps = Pseudonymizer()
     try:
-        from ai_llm import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=llm_key,
-            session_id=f"cashflow-{date.today().isoformat()}",
-            system_message="Kamu adalah CFO digital yang ahli keuangan garmen Indonesia.",
-        ).with_model("openai", "gpt-5.1")
-        prompt = _build_prompt(ctx)
-        response = await chat.send_message(UserMessage(text=prompt))
-        analysis = response.text if hasattr(response, 'text') else str(response)
-    except Exception as e:
-        logger.error(f"LLM cashflow error: {e}")
-        raise HTTPException(502, f"Gagal memanggil AI: {str(e)[:200]}")
+        analysis = ps.restore(await ai_text(
+            "cashflow",
+            "Kamu adalah CFO digital yang ahli keuangan garmen Indonesia.",
+            _build_prompt(ctx, ps),
+            tier="standard",
+            user_id=user.get("id"),
+        ))
+    except AIError as e:
+        raise ai_http_error(e)
 
     return {
         'analysis': analysis,

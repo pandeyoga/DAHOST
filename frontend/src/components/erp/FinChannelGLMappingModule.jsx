@@ -11,11 +11,16 @@
  *   1. Melihat semua channel dan routing GL-nya
  *   2. Mengedit akun Piutang/Pendapatan per channel
  *   3. Seed default 13 channel CV. Dewi Aditya
+ *
+ * 2026-11-02 (D3) — keputusan owner: "Peta Akun Channel seharusnya tidak ada".
+ * Menu dilepas dari Portal Keuangan; layar ini tinggal BACA-SAJA untuk baris toko
+ * marketplace (server menjawab 410 untuk tulis & seed). COA per toko diatur di
+ * Marketing › Kelola Akun; penjualan non-marketplace lewat Portal Penjualan.
  */
 import { useState, useEffect, useCallback, useReducer } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
-  Store, RefreshCw, Plus, Edit2, Save, X, Zap, ShoppingBag,
+  Store, RefreshCw, Plus, Edit2, Save, X, ShoppingBag,
   ArrowRight, Check, AlertCircle, Layers
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
@@ -58,7 +63,6 @@ export default function FinChannelGLMappingModule({ token }) {
   const [editId, setEditId] = useState(null);
   const [editForm, setEditForm] = useState({});
   const [saving, setSaving] = useState(false);
-  const [seeding, setSeeding] = useState(false);
   const [filterPlatform, setFilterPlatform] = useState('all');
   const [tick, setTick] = useState(0);
 
@@ -89,22 +93,6 @@ export default function FinChannelGLMappingModule({ token }) {
     });
     return () => { x = true; };
   }, [token, tick]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const seedDefault = async () => {
-    setSeeding(true);
-    try {
-      const r = await fetch(`${BACKEND_URL}/api/rahaza/channel-gl-mapping/seed-da`, {
-        method: 'POST', headers: hdrs,
-      });
-      const d = await r.json();
-      if (r.ok) {
-        toast.success(`Seed selesai: ${d.inserted} channel baru, ${d.skipped} sudah ada.`);
-        refresh();
-      } else {
-        toast.error(d.detail || 'Seed gagal');
-      }
-    } finally { setSeeding(false); }
-  };
 
   const startEdit = (ch) => {
     setEditId(ch.id);
@@ -170,28 +158,22 @@ export default function FinChannelGLMappingModule({ token }) {
             >
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
-            {channels.length < 10 && (
-              <Button
-                onClick={seedDefault}
-                disabled={seeding}
-                className="h-9 gap-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400"
-                data-testid="channel-gl-seed-btn"
-              >
-                <Zap className="w-3.5 h-3.5" />
-                {seeding ? 'Menyiapkan...' : 'Seed Default (13 Channel)'}
-              </Button>
-            )}
+            {/* 2026-11-02 (D3) — tombol "Seed Default (13 Channel)" dilepas: 11 dari 13
+                barisnya toko marketplace (server kini menjawab 410). */}
           </>
         }
       />
 
-      {/* Info banner */}
-      <div className="rounded-lg border border-[hsl(var(--primary)/0.20)] bg-[hsl(var(--primary)/0.06)] px-4 py-3 flex gap-3">
-        <AlertCircle className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
-        <div className="text-xs text-foreground/70 leading-relaxed">
-          <strong className="text-foreground">Cara kerja:</strong> Saat invoice AR dikirim (<code className="text-[hsl(var(--primary))]">send</code>),
-          sistem otomatis membuat jurnal <strong>Dr {'{debit_ar}'} / Cr {'{credit_revenue}'}</strong>
-          sesuai channel yang dipilih pada invoice. Pastikan setiap channel sudah memiliki akun yang tepat.
+      {/* 2026-11-02 (D3) — banner penghentian, menggantikan penjelasan "cara kerja". */}
+      <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 flex gap-3"
+        data-testid="channel-gl-deprecated-banner">
+        <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+        <div className="text-xs text-foreground/80 leading-relaxed">
+          <strong className="text-foreground">Peta Akun Channel dihentikan untuk toko marketplace.</strong>{' '}
+          Keputusan owner: COA per toko, tanpa peta COA kedua. Akun pendapatan &amp; piutang tiap toko
+          diatur di <strong>Marketing › Kelola Akun</strong> dan dipakai jurnal pencairan/penarikan.
+          Penjualan di luar marketplace dicatat lewat <strong>Portal Penjualan</strong>.
+          Baris di bawah hanya untuk dilihat.
         </div>
       </div>
 
@@ -252,7 +234,7 @@ export default function FinChannelGLMappingModule({ token }) {
                       icon={Store}
                       title="Belum ada channel"
                       description={channels.length === 0
-                        ? "Klik 'Seed Default' untuk menambahkan 13 channel CV. Dewi Aditya."
+                        ? "Tidak ada baris peta channel aktif."
                         : "Tidak ada channel untuk filter ini."}
                     />
                   </td>
@@ -352,6 +334,11 @@ export default function FinChannelGLMappingModule({ token }) {
                               <X className="w-3 h-3" />
                             </button>
                           </>
+                        ) : ch.read_only ? (
+                          <span className="text-[10px] text-muted-foreground italic"
+                            title={ch.read_only_reason || ''} data-testid={`channel-readonly-${ch.id}`}>
+                            Baca-saja
+                          </span>
                         ) : (
                           <button
                             onClick={() => startEdit(ch)}

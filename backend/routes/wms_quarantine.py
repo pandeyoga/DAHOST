@@ -6,14 +6,15 @@ Endpoint (prefix /api/wms/quarantine):
   GET    /location                → info lokasi karantina kanonik
   GET    /reject-categories       → kategori alasan reject (reuse standar GRN QC)
   POST   /{item_id}/release       → lepas ke lokasi storage (barang jadi tersedia lagi)
-  POST   /{item_id}/return-supplier → keluarkan utk retur ke supplier
+  POST   /{item_id}/return-supplier → 410 sejak 2026-11-02 (K11): pakai dokumen Retur Pembelian
   POST   /{item_id}/scrap         → buang (write-off)
   POST   /manual                  → masukkan material ke karantina secara manual (mis. temuan gudang)
 
 ATURAN JURNAL (grounded, lihat plan.md FASE 6):
   * Reject **saat GR** ⇒ `valued=False` (AP invoice pakai net qty ⇒ belum pernah masuk
-    nilai persediaan). Retur/scrap barang belum bernilai ⇒ **TANPA JE**. `release`
-    barang belum bernilai ⇒ **kapitalisasi** via `post_inventory_adjust(+)`.
+    nilai persediaan). Scrap barang belum bernilai ⇒ **TANPA JE**. `release` barang belum
+    bernilai dari GR ⇒ **penerimaan susulan** (2026-11-02, K11): Dr persediaan / Cr GRNI pada
+    harga GR/PO (harga potongan diketik Keuangan), bisa ditagih lewat Tagihan dari GR.
   * Reject dari **re-inspeksi pasca-terima** ⇒ `valued=True` (sudah masuk nilai).
     `scrap`/`return_supplier` ⇒ `post_inventory_adjust(−)` (`adjustment_reason='scrap'`
     → Dr Scrap Expense / Cr Inventory). `release` ⇒ tanpa JE (nilai tak berubah,
@@ -30,6 +31,7 @@ from auth import require_auth, check_role, log_activity, serialize_doc
 from core import quarantine, location_resolver
 from utils.reject_reasons import normalize_reject_reasons  # FASE 19: SSOT bentuk alasan reject
 from routes.rahaza_posting import post_inventory_adjust
+from core import purchase_returns as pr  # 2026-11-02 (K11): penerimaan susulan & Retur Pembelian
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/quarantine", tags=["wms-quarantine"])
@@ -55,6 +57,17 @@ def _uid():
 
 def _now():
     return datetime.now(timezone.utc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QTY BERNILAI (2026-11-02 — audit g.md No.20)
+# Dulu `valued` adalah bendera SELURUH item: lepas 4 dari 10 reject GR (belum bernilai)
+# mengkapitalisasi 4, lalu menandai ke-10-nya "bernilai". Sekarang yang dilacak adalah QTY
+# (`valued_qty`). Definisinya dipindah ke SSOT `core.quarantine` (dipakai juga GR, Retur
+# Pembelian, dan revaluasi HPP) — nama lama tetap tersedia di sini.
+# ─────────────────────────────────────────────────────────────────────────────
+from core.quarantine import split_valued, valued_remaining_of  # noqa: E402,F401
+_valued_remaining = quarantine.valued_remaining
 
 
 async def _get_item_or_404(db, item_id: str) -> dict:
@@ -114,12 +127,20 @@ async def list_quarantine(
     source_id: Optional[str] = None,
     limit: int = Query(200, ge=1, le=1000),
     needs_action: bool = Query(False, description="hanya item yang ketersediaannya BELUM terblokir"),
+    legacy_returns: bool = Query(False, description="hanya item dengan retur supplier lama tanpa penyelesaian"),
 ):
     await require_auth(request)
     db = get_db()
-    rows = await quarantine.list_items(db, status=status, material_id=material_id,
-                                      source_id=source_id, limit=limit,
+    rows = await quarantine.list_items(db, status="all" if legacy_returns else status,
+                                      material_id=material_id, source_id=source_id, limit=limit,
                                       needs_action=needs_action)
+    # 2026-11-02 (K11): retur supplier lama (tanpa dokumen penyelesaian) ditandai; qty bernilai &
+    # harga GR asal disajikan untuk tombol "Buat Retur Pembelian" / "Lepas".
+    for r in rows:
+        r["legacy_return_qty"] = legacy_return_qty(r)
+        r["valued_remaining_qty"] = await _valued_remaining(db, r)
+    if legacy_returns:
+        rows = [r for r in rows if r["legacy_return_qty"] > 0]
     return serialize_doc(rows)
 
 
@@ -178,12 +199,47 @@ async def reject_categories(request: Request):
 # ─────────────────────────────────────────────────────────────────────────────
 # DISPOSISI
 # ─────────────────────────────────────────────────────────────────────────────
+async def gr_source_of(db, item: dict) -> tuple:
+    """(dokumen GR, baris GR) asal item karantina reject GR — (None, None) bila bukan dari GR."""
+    src = item.get("source") or {}
+    if src.get("type") not in ("goods_receipt", "grn_inspection") or not src.get("id"):
+        return None, None
+    gr = await db.warehouse_receiving.find_one({"id": src["id"]}, {"_id": 0})
+    if not gr:
+        return None, None
+    line = next((li for li in gr.get("items") or [] if pr.line_id_of(li) == src.get("line_id")), None)
+    if line is None:
+        line = next((li for li in gr.get("items") or [] if li.get("material_id") == item.get("material_id")), None)
+    return gr, line
+
+
+def release_price(body_price, default_price: float, user: dict) -> float:
+    """Harga lepas reject (K11): bawaan = harga GR/PO; harga potongan hanya boleh diketik Keuangan."""
+    if body_price in (None, ""):
+        return float(default_price or 0)
+    try:
+        price = float(body_price)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "unit_price harus berupa angka.")
+    if price < 0:
+        raise HTTPException(400, "unit_price tidak boleh negatif.")
+    if abs(price - float(default_price or 0)) > 0.005 and not pr.is_finance(user):
+        raise HTTPException(403, "Harga potongan lepas reject hanya boleh diketik Keuangan "
+                                 f"(harga bawaan PO/GR: {float(default_price or 0):g}).")
+    return price
+
+
 @router.post("/{item_id}/release")
 async def release_item(item_id: str, request: Request):
     """Lepas barang karantina ke lokasi storage (mis. lolos re-inspeksi / setelah rework).
-    Body: {qty?, to_location_id, notes?}"""
+    Body: {qty?, to_location_id, notes?, unit_price?}
+
+    2026-11-02 (K11): bagian BELUM bernilai dari reject GR = PENERIMAAN SUSULAN pada GR yang sama —
+    Dr persediaan (per jenis) / Cr 2-1150 GRNI sebesar qty × harga (bawaan harga GR/PO; harga
+    potongan diketik Keuangan), HPP rata-rata diperbarui, qty bisa ditagih lewat Tagihan dari GR,
+    dan qty diterima PO bertambah. Dulu Dr persediaan / Cr beban pada HPP master (uji T1)."""
     user = await require_auth(request)
-    if not check_role(user, DISPOSE_ROLES):
+    if not check_role(user, DISPOSE_ROLES) and not pr.is_finance(user):
         raise HTTPException(403, "Hanya staf gudang/supervisor yang boleh melepas barang karantina")
     db = get_db()
     body = await request.json() if await request.body() else {}
@@ -199,59 +255,74 @@ async def release_item(item_id: str, request: Request):
         raise HTTPException(404, "Lokasi tujuan tidak ditemukan")
 
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    valued_before = await _valued_remaining(db, item)
+    valued_part, unvalued_part = split_valued(qty, valued_before)
+    gr, line = await gr_source_of(db, item) if unvalued_part > 0 else (None, None)
+    price = None
+    qty_before = None
+    if gr is not None and line is not None:
+        price = release_price(body.get("unit_price"), pr.gr_line_price(line) or item.get("unit_cost"), user)
+        if price <= 0:
+            raise HTTPException(400, "Harga lepas reject 0 — baris GR asal tidak berharga. Keuangan wajib "
+                                     "mengetik harga (unit_price).")
+        # qty bernilai SEBELUM bagian ini masuk nilai persediaan (dibaca sebelum mutasi)
+        qty_before = await quarantine.valued_onhand(db, item["material_id"])
     try:
         res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_RELEASE,
                                              qty=qty, to_location_id=to_loc, actor=actor,
-                                             notes=body.get("notes", ""))
+                                             notes=body.get("notes", ""),
+                                             extra={"unit_price": price} if price is not None else None)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # JE: barang BELUM bernilai → kapitalisasi (+). Barang sudah bernilai → tanpa JE.
+    # JE: bagian BELUM bernilai → penerimaan susulan (GR) / kapitalisasi (lainnya). Bagian sudah
+    # bernilai → tanpa JE (pindah lokasi). Sisa karantina TETAP belum bernilai.
     posting = {"ok": True, "skipped": True, "reason": "sudah bernilai — pindah lokasi tidak mengubah nilai"}
-    if not item.get("valued"):
-        posting = await _post_je(db, item=item, qty=qty, direction=+1,
-                                reason="quarantine_release", user=user)
-        if posting.get("ok"):
-            await db[quarantine.QUARANTINE_COLL].update_one({"id": item_id}, {"$set": {"valued": True}})
+    late = None
+    if unvalued_part > 0 and price is not None:
+        late = await pr.receive_late(db, gr=gr, line=line, qty=unvalued_part, unit_price=price,
+                                     location_id=to_loc, source="quarantine_release", ref_id=item_id,
+                                     ref_number=f"karantina {item.get('material_code', '')}", user=user,
+                                     qty_before=qty_before)
+        posting = late["posting"]
+    elif unvalued_part > 0:
+        posting = await _post_je(db, item=item, qty=unvalued_part, direction=+1,
+                                 reason="quarantine_release", user=user)
+    await db[quarantine.QUARANTINE_COLL].update_one({"id": item_id}, {
+        "$set": {"valued_qty": round(valued_before - valued_part, 4)},
+        "$inc": {"released_capitalized_qty": unvalued_part if posting.get("ok") and unvalued_part > 0 else 0}})
 
     await log_activity(user.get("id", ""), user.get("name", ""), "quarantine_release",
                        "wh_quarantine_items",
-                       f"Lepas {qty} {item.get('unit','')} {item.get('material_code','')} dari karantina")
+                       f"Lepas {qty} {item.get('unit','')} {item.get('material_code','')} dari karantina"
+                       + (f" @ {price:g} (penerimaan susulan GR {gr.get('receipt_number', '')})" if late else ""))
     return {"ok": True, "action": "release", "qty": qty, "to_location_id": to_loc,
-            "remaining_qty": res["remaining_qty"], "closed": res["closed"], "posting": posting}
+            "remaining_qty": res["remaining_qty"], "closed": res["closed"], "posting": posting,
+            "late_receipt": (late or {}).get("late_receipt"), "unit_price": price,
+            "wac": (late or {}).get("wac")}
 
 
 @router.post("/{item_id}/return-supplier")
 async def return_to_supplier(item_id: str, request: Request):
-    """Keluarkan barang karantina untuk diretur ke supplier. Body: {qty?, notes?}"""
-    user = await require_auth(request)
-    if not check_role(user, DISPOSE_ROLES):
-        raise HTTPException(403, "Hanya staf gudang/supervisor yang boleh memproses retur supplier")
-    db = get_db()
-    body = await request.json() if await request.body() else {}
-    item = await _get_item_or_404(db, item_id)
-    if item.get("status") != "open":
-        raise HTTPException(400, "Item karantina sudah ditutup")
-    qty = float(body.get("qty") or item.get("remaining_qty") or 0)
-    actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
-    try:
-        res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_RETURN,
-                                              qty=qty, actor=actor, notes=body.get("notes", ""))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
+    """DIHENTIKAN 2026-11-02 (K11): diganti dokumen Retur Pembelian (`POST /api/rahaza/purchase-returns`).
 
-    # JE hanya bila barang SUDAH bernilai (pernah masuk nilai persediaan)
-    posting = {"ok": True, "skipped": True,
-               "reason": "belum pernah masuk nilai persediaan (AP invoice pakai net qty)"}
-    if item.get("valued"):
-        posting = await _post_je(db, item=item, qty=qty, direction=-1,
-                                 reason="return_supplier", user=user)
+    Jalur lama mengeluarkan barang tanpa pemasok, nota, maupun cara penyelesaian, dan barang
+    bernilai dijurnal sebagai beban (uji T1: 330.000). Disposisi `return_supplier` lama tetap
+    terbaca di daftar karantina sebagai "Retur lama tanpa penyelesaian"."""
+    await require_auth(request)
+    raise HTTPException(410, "Retur supplier langsung dari karantina sudah diganti dokumen Retur Pembelian — "
+                             "gunakan tombol \"Buat Retur Pembelian\" (pilih penyelesaian: tukar barang, potong "
+                             "tagihan, refund, diterima dengan diskon, atau dimusnahkan).")
 
-    await log_activity(user.get("id", ""), user.get("name", ""), "quarantine_return_supplier",
-                       "wh_quarantine_items",
-                       f"Retur supplier {qty} {item.get('unit','')} {item.get('material_code','')}")
-    return {"ok": True, "action": "return_supplier", "qty": qty,
-            "remaining_qty": res["remaining_qty"], "closed": res["closed"], "posting": posting}
+
+def legacy_return_qty(item: dict) -> float:
+    """Qty disposisi `return_supplier` lama TANPA dokumen Retur Pembelian (murni). Hanya barang dari
+    pemasok (GR / re-inspeksi / temuan gudang) — retur rework ke vendor CMT (permak) bukan retur pembelian."""
+    if ((item.get("source") or {}).get("type") or "manual") not in ("goods_receipt", "grn_inspection", "manual"):
+        return 0.0
+    return round(sum(float(d.get("qty") or 0) for d in item.get("dispositions") or []
+                     if isinstance(d, dict) and d.get("action") == quarantine.ACTION_RETURN
+                     and not d.get("purchase_return_id")), 4)
 
 
 @router.post("/{item_id}/scrap")
@@ -268,16 +339,21 @@ async def scrap_item(item_id: str, request: Request):
         raise HTTPException(400, "Item karantina sudah ditutup")
     qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    valued_before = await _valued_remaining(db, item)
     try:
         res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_SCRAP,
                                               qty=qty, actor=actor, notes=body.get("notes", ""))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
+    # write-off hanya untuk bagian yang SUDAH bernilai — 2026-11-02
+    valued_part, _unvalued = split_valued(qty, valued_before)
     posting = {"ok": True, "skipped": True,
                "reason": "belum pernah masuk nilai persediaan → tidak perlu write-off"}
-    if item.get("valued"):
-        posting = await _post_je(db, item=item, qty=qty, direction=-1, reason="scrap", user=user)
+    if valued_part > 0:
+        posting = await _post_je(db, item=item, qty=valued_part, direction=-1, reason="scrap", user=user)
+    await db[quarantine.QUARANTINE_COLL].update_one(
+        {"id": item_id}, {"$set": {"valued_qty": round(valued_before - valued_part, 4)}})
 
     await log_activity(user.get("id", ""), user.get("name", ""), "quarantine_scrap",
                        "wh_quarantine_items",

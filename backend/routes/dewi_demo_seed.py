@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, require_demo_seed_allowed
 from routes._maklon_adapter import legacy_orders_view as _lmo
+from utils.waktu import today_wib
 
 
 router = APIRouter(prefix="/api/dewi", tags=["dewi-demo-seed"])
@@ -29,7 +30,7 @@ def _now() -> datetime:
 
 
 def _date_str(days_offset: int = 0) -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=days_offset)).date().isoformat()
+    return (today_wib() + timedelta(days=days_offset)).isoformat()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

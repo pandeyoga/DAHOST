@@ -44,7 +44,7 @@ sebagai `approved` supaya laporan lama tidak berubah.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -52,6 +52,7 @@ from fastapi import APIRouter, HTTPException, Request
 from auth import log_activity, require_auth, serialize_doc
 from database import get_db
 from utils.employee_identity import is_hr, resolve_employee_for
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-hr"])
 
@@ -67,7 +68,7 @@ def _now() -> datetime:
 
 
 def _today_iso() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _aware(v):

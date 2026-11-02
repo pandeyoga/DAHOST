@@ -3,14 +3,12 @@
 Includes:
   POST /{asset_id}/scan
   GET  /{asset_id}/scan-history
-  GET  /{asset_id}/barcode      (PNG)
-  GET  /{asset_id}/qrcode       (PNG)
-  GET  /{asset_id}/label-pdf    (PDF, supports template=standard|sticker|a4)
+  GET  /{asset_id}/barcode      (410 — 2026-11-02: dipindah ke label aset tunggal)
+  GET  /{asset_id}/qrcode       (410 — 2026-11-02: dipindah ke label aset tunggal)
+  GET  /{asset_id}/label-pdf    (PDF, template=standard|sticker|a4 — generator core/label_render)
 
 Note: /scan-by-number/{num} lives in scan_lookup.py (literal-path module).
 """
-import io
-import json
 import logging
 from fastapi import Request, HTTPException
 from fastapi.responses import Response
@@ -68,166 +66,51 @@ async def get_asset_scan_history(asset_id: str, request: Request):
     return [_ser(s) for s in scans]
 
 
+# ── 2026-11-02 (registri aset tunggal) ──────────────────────────────────────────
+# Label aset dicetak SATU generator (`core/label_render`: kind `asset` 90×50 / `asset_small` 50×25)
+# dengan kode registri induk Keuangan (`rahaza_fixed_assets.code`). Generator kembar di sini (PNG
+# python-barcode + QR JSON berisi URL) DIHAPUS: barcode & QR berdiri sendiri kini ada di dalam label.
+_LABEL_MOVED = ("Barcode/QR aset kini dicetak di label aset tunggal (kode registri Aset Tetap) — "
+                "gunakan GET /api/assets/{id}/label-pdf.")
+
+
 @router.get("/{asset_id}/barcode")
 async def get_asset_barcode(asset_id: str, request: Request):
-    """Generate Code128 barcode image (PNG)."""
     await require_auth(request)
-    db = get_db()
-    asset = await db.dewi_assets.find_one({"id": asset_id}, {"_id": 0, "asset_number": 1, "name": 1})
-    if not asset:
-        raise HTTPException(404, "Aset tidak ditemukan.")
-    try:
-        import barcode
-        from barcode.writer import ImageWriter
-        code_val = asset["asset_number"]
-        bc_cls = barcode.get_barcode_class("code128")
-        bc_obj = bc_cls(code_val, writer=ImageWriter())
-        buf = io.BytesIO()
-        bc_obj.write(buf, options={"write_text": True, "font_size": 12, "text_distance": 3, "module_height": 12})
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
-    except Exception as e:
-        logger.error(f"Barcode generation error: {e}")
-        raise HTTPException(500, "Gagal generate barcode")
+    raise HTTPException(410, _LABEL_MOVED)
 
 
 @router.get("/{asset_id}/qrcode")
 async def get_asset_qrcode(asset_id: str, request: Request):
-    """Generate QR code image (PNG) dengan JSON lengkap + URL link."""
     await require_auth(request)
-    db = get_db()
-    asset = await db.dewi_assets.find_one({"id": asset_id}, {"_id": 0})
-    if not asset:
-        raise HTTPException(404, "Aset tidak ditemukan.")
+    raise HTTPException(410, _LABEL_MOVED)
+
+
+async def asset_label_response(db, *, asset_id: str = "", fixed_asset_id: str = "",
+                               template: str = "standard") -> Response:
+    """PDF label aset dari generator bersama. Dipakai Portal Aset & Keuangan › Aset Tetap."""
+    from core import label_render as lr
+    if not lr.LABELS_OK:
+        raise HTTPException(500, "Pustaka pencetak label tidak tersedia")
     try:
-        import qrcode
-        base_url = request.base_url.scheme + "://" + request.base_url.netloc
-        qr_data = {
-            "type": "asset",
-            "asset_id": asset["id"],
-            "asset_number": asset["asset_number"],
-            "name": asset["name"],
-            "category": asset.get("category_name", ""),
-            "location": asset.get("location", ""),
-            "url": f"{base_url}/asset/{asset['id']}",
-        }
-        qr = qrcode.QRCode(
-            version=None,
-            error_correction=qrcode.constants.ERROR_CORRECT_M,
-            box_size=10,
-            border=2,
-        )
-        qr.add_data(json.dumps(qr_data))
-        qr.make(fit=True)
-        img = qr.make_image(fill_color="black", back_color="white")
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        buf.seek(0)
-        return Response(content=buf.read(), media_type="image/png")
-    except Exception as e:
-        logger.error(f"QR code generation error: {e}")
-        raise HTTPException(500, "Gagal generate QR code")
+        doc = await lr.asset_label_doc(db, asset_id=asset_id, fixed_asset_id=fixed_asset_id)
+        if template == "a4":
+            cols, rows, _, _ = lr.grid_geometry(lr.A4[0], lr.A4[1], lr.ASSET_LABEL_MM[0] * lr.mm,
+                                                lr.ASSET_LABEL_MM[1] * lr.mm)
+            pdf = lr.grid_labels_pdf("asset", [doc] * (cols * rows), title=f"Label aset {doc['label_code']}")
+        else:
+            pdf = lr.single_label_pdf("asset_small" if template == "sticker" else "asset", doc)
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except lr.LabelCodeError as e:
+        raise HTTPException(400, str(e))
+    return Response(content=pdf.getvalue(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'inline; filename="asset-label-{doc["label_code"]}.pdf"'})
 
 
 @router.get("/{asset_id}/label-pdf")
 async def get_asset_label_pdf(asset_id: str, request: Request, template: str = "standard"):
-    """Generate printable label PDF (barcode + QR + asset info).
-    Template: standard (90×50mm) | sticker (50×25mm, QR only) | a4 (A4 full page).
-    """
+    """Label aset (PDF). Template: standard (90×50) | sticker (50×25) | a4 (satu halaman A4 berisi label).
+    Kode = kode registri Aset Tetap (Keuangan); aset yang belum tertaut ditolak 400."""
     await require_auth(request)
-    db = get_db()
-    asset = await db.dewi_assets.find_one({"id": asset_id}, {"_id": 0})
-    if not asset:
-        raise HTTPException(404, "Aset tidak ditemukan.")
-
-    try:
-        from reportlab.pdfgen import canvas as rl_canvas
-        from reportlab.lib.units import mm
-        from reportlab.lib.utils import ImageReader
-        import barcode
-        from barcode.writer import ImageWriter
-        import qrcode
-
-        buf = io.BytesIO()
-
-        templates = {
-            "standard": (90 * mm, 50 * mm),
-            "sticker": (50 * mm, 25 * mm),
-            "a4": (210 * mm, 297 * mm),
-        }
-        page_size = templates.get(template, templates["standard"])
-
-        c = rl_canvas.Canvas(buf, pagesize=page_size)
-        LW, LH = page_size
-
-        if template == "sticker":
-            base_url = request.base_url.scheme + "://" + request.base_url.netloc
-            qr_data = json.dumps({
-                "type": "asset",
-                "asset_id": asset["id"],
-                "asset_number": asset["asset_number"],
-                "url": f"{base_url}/asset/{asset['id']}",
-            })
-            qr_obj = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
-                                   box_size=5, border=1)
-            qr_obj.add_data(qr_data)
-            qr_obj.make(fit=True)
-            qr_img = qr_obj.make_image(fill_color="black", back_color="white")
-            qr_buf = io.BytesIO()
-            qr_img.save(qr_buf, format="PNG")
-            qr_buf.seek(0)
-            c.drawImage(ImageReader(qr_buf), 2 * mm, 10 * mm, width=20 * mm, height=20 * mm)
-            c.setFont("Helvetica-Bold", 7)
-            c.drawString(24 * mm, 20 * mm, asset["asset_number"])
-            c.setFont("Helvetica", 6)
-            c.drawString(24 * mm, 16 * mm, asset["name"][:20])
-        else:
-            code_val = asset["asset_number"]
-            bc_cls = barcode.get_barcode_class("code128")
-            bc_obj = bc_cls(code_val, writer=ImageWriter())
-            bc_buf = io.BytesIO()
-            bc_obj.write(bc_buf, options={"write_text": False, "quiet_zone": 2, "module_height": 10})
-            bc_buf.seek(0)
-            c.drawImage(ImageReader(bc_buf), 5 * mm, LH - 22 * mm, width=80 * mm, height=18 * mm,
-                        preserveAspectRatio=True)
-
-            base_url = request.base_url.scheme + "://" + request.base_url.netloc
-            qr_data = json.dumps({
-                "type": "asset",
-                "asset_id": asset["id"],
-                "asset_number": asset["asset_number"],
-                "name": asset["name"],
-                "category": asset.get("category_name", ""),
-                "location": asset.get("location", ""),
-                "url": f"{base_url}/asset/{asset['id']}",
-            })
-            qr_obj = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M,
-                                   box_size=5, border=1)
-            qr_obj.add_data(qr_data)
-            qr_obj.make(fit=True)
-            qr_img = qr_obj.make_image(fill_color="black", back_color="white")
-            qr_buf = io.BytesIO()
-            qr_img.save(qr_buf, format="PNG")
-            qr_buf.seek(0)
-            c.drawImage(ImageReader(qr_buf), LW - 25 * mm, 5 * mm, width=20 * mm, height=20 * mm)
-
-            c.setFont("Helvetica-Bold", 11)
-            c.drawString(5 * mm, LH - 28 * mm, asset["name"][:40])
-            c.setFont("Helvetica", 8)
-            c.drawString(5 * mm, LH - 33 * mm, f"Kode: {asset['asset_number']}")
-            c.drawString(5 * mm, LH - 37 * mm, f"Kategori: {asset.get('category_name', '-')}")
-            c.drawString(5 * mm, LH - 41 * mm, f"Lokasi: {asset.get('location', '-')}")
-            c.setFont("Helvetica", 6)
-            c.drawString(5 * mm, 3 * mm, f"CV. Dewi Aditya • {asset.get('purchase_date', '')}")
-
-        c.showPage()
-        c.save()
-        buf.seek(0)
-        return Response(
-            content=buf.read(),
-            media_type="application/pdf",
-            headers={"Content-Disposition": f'inline; filename="asset-label-{asset["asset_number"]}.pdf"'},
-        )
-    except Exception as e:
-        logger.error(f"Label PDF generation error: {e}")
-        raise HTTPException(500, "Gagal generate label PDF")
+    return await asset_label_response(get_db(), asset_id=asset_id, template=template)

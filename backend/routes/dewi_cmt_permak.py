@@ -30,6 +30,7 @@ from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.production_rbac import PROD_ADMIN_ROLES, is_vendor, vendor_identity
 from routes.shared import can_act
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,7 @@ def _compute_h3_flag(doc: dict, grace_days: int) -> dict:
     if rd and doc.get("status") not in TERMINAL:
         try:
             d = datetime.strptime(str(rd)[:10], "%Y-%m-%d").date()
-            today = _now().date()
+            today = today_wib()
             delta = (d - today).days
             out["days_to_deadline"] = delta
             out["overdue"] = delta < 0
@@ -267,14 +268,23 @@ async def _create_rework_shipment(db, permak: dict, actor: dict) -> dict:
     if not vendor_id:
         return {"ok": False, "error": "vendor CMT tidak diketahui — SJ rework tidak dibuat"}
 
-    # SJ asal (untuk parent_shipment_id → job anak otomatis)
+    # SJ asal (untuk parent_shipment_id → job anak otomatis).
+    # 2026-11-02 (K17 butir 4): diambil dari job INDUK pemilik baris reject (dulu job item
+    # terbaru — bisa job anak rework sebelumnya, sehingga rework berikutnya bertingkat).
+    from core import production_qty_ledger as _qled
     parent_ship_id = None
-    ji_rows = await db.production_job_items.find(
-        {"po_item_id": permak.get("po_item_id")}, {"_id": 0}).sort("created_at", -1).to_list(5)
-    if ji_rows:
-        job = await db.production_jobs.find_one({"id": ji_rows[0].get("job_id")},
+    src_line = await db.cmt_receipt_lines.find_one(
+        {"id": permak.get("source_receipt_line_id")}, {"_id": 0}) if permak.get("source_receipt_line_id") else None
+    main_ji = (await _qled.resolve_job_item_for_line(db, src_line) if src_line else None) \
+        or await _qled.main_job_item_for_po_item(db, permak.get("po_item_id"))
+    if main_ji:
+        job = await db.production_jobs.find_one({"id": main_ji.get("job_id")},
                                                 {"_id": 0, "vendor_shipment_id": 1})
         parent_ship_id = (job or {}).get("vendor_shipment_id")
+    # 2026-11-02 (K17 butir 4): business_type SJ rework = jenis PO-nya (dulu selalu
+    # "maklon" ⇒ SJ rework PO INTERNAL masuk sudut pandang maklon — w3 §2.3).
+    po_bt = await db.production_pos.find_one({"id": permak.get("po_id")}, {"_id": 0, "business_type": 1})
+    business_type = (po_bt or {}).get("business_type") or "internal"
 
     sj_no = await _gen(db, "vendor_shipments", "shipment_number", "SJ-RWK-", 5)
     ship_id = new_id()
@@ -286,7 +296,7 @@ async def _create_rework_shipment(db, permak: dict, actor: dict) -> dict:
         "shipment_date": now(),
         "shipment_type": "REWORK",
         "parent_shipment_id": parent_ship_id,
-        "business_type": "maklon",
+        "business_type": business_type,
         "status": "Sent", "inspection_status": "Pending",
         "rework_permak_id": permak.get("id"),
         "rework_permak_number": permak.get("permak_number"),

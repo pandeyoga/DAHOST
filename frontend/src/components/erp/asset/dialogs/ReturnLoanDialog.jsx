@@ -15,8 +15,7 @@ import { toast } from 'sonner';
 import { AlertTriangle } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { apicall } from '../utils';
-
-const today = () => new Date().toISOString().slice(0, 10);
+import { todayWIB } from '@/lib/waktu';
 
 const CONDITION_HINT = {
   good: 'Aset akan kembali berstatus Aktif dan siap dipinjam lagi.',
@@ -25,13 +24,13 @@ const CONDITION_HINT = {
 };
 
 export function ReturnLoanDialog({ open, onClose, token, loan, onReturned }) {
-  const [form, setForm] = useState({ return_date: today(), condition: 'good', return_notes: '' });
+  const [form, setForm] = useState({ return_date: todayWIB(), condition: 'good', return_notes: '' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => {
     if (open) {
-      setForm({ return_date: today(), condition: 'good', return_notes: '' });
+      setForm({ return_date: todayWIB(), condition: 'good', return_notes: '' });
       setErr('');
     }
   }, [open, loan]);

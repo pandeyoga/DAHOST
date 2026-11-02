@@ -24,6 +24,7 @@ import csv
 import logging
 from datetime import datetime, timezone, date, timedelta
 from typing import Optional
+from utils.waktu import fmt_wib
 
 log = logging.getLogger(__name__)
 
@@ -166,11 +167,24 @@ def _build_payslip_pdf(slip: dict, run: dict, profile: dict = None, doc_settings
         ])
     # overtime row
     if slip.get("overtime_amount", 0) > 0:
+        # 2026-11-02 (K24): tarif cadangan 1/173 × upah tetap → tampilkan dasar per jamnya, bukan "× tarif".
+        ot_lbl = (f"Uang Lembur ({slip.get('overtime_hours', 0)} jam, 1/173 upah tetap = "
+                  f"{_idr(slip.get('overtime_base_hourly', 0))}/jam)"
+                  if slip.get("overtime_basis") == "upah_tetap_div_173"
+                  else f"Uang Lembur ({slip.get('overtime_hours', 0)} jam × {_idr(slip.get('overtime_rate', 0))})")
         earn_rows.append([
-            Paragraph(f"Uang Lembur ({slip.get('overtime_hours', 0)} jam × {_idr(slip.get('overtime_rate', 0))})", val),
+            Paragraph(ot_lbl, val),
             Paragraph("", val),
             Paragraph("", val),
             Paragraph(_idr(slip.get("overtime_amount", 0)), ParagraphStyle("am_r2", fontSize=7.5, fontName="Courier", textColor=BLACK, alignment=TA_RIGHT, leading=10)),
+        ])
+    # 2026-11-02 (K34): penyesuaian pendapatan (±) oleh HR — bruto sudah termasuk nilai ini.
+    if round(float(slip.get("manual_addition") or 0)):
+        earn_rows.append([
+            Paragraph(f"Penyesuaian pendapatan ({slip.get('adjustment_notes') or '-'})", val),
+            Paragraph("", val),
+            Paragraph("", val),
+            Paragraph(_idr(slip.get("manual_addition", 0)), ParagraphStyle("am_r3", fontSize=7.5, fontName="Courier", textColor=BLACK, alignment=TA_RIGHT, leading=10)),
         ])
     earn_tbl = Table(earn_rows, colWidths=[W * 0.47, W * 0.13, W * 0.14, W * 0.26])
     earn_tbl.setStyle(TableStyle([
@@ -235,7 +249,11 @@ def _build_payslip_pdf(slip: dict, run: dict, profile: dict = None, doc_settings
         allowance_elements = [Spacer(1, 3 * mm), alw_tbl]
 
     # ── deductions table ────────────────────────────────────────────────────────
-    ded_rows_data = slip.get("deductions") or []
+    ded_rows_data = [d for d in (slip.get("deductions") or []) if float(d.get("amount") or 0) or d.get("adjusted")]
+    # 2026-11-02 (K34): potongan penyesuaian manual ikut tercetak (dulu masuk total tetapi tidak tampil).
+    if round(float(slip.get("manual_deduction") or 0)):
+        ded_rows_data = ded_rows_data + [{"label": f"Potongan penyesuaian ({slip.get('adjustment_notes') or '-'})",
+                                          "amount": slip.get("manual_deduction")}]
     ded_elements = []
     if ded_rows_data:
         ded_header = [
@@ -382,7 +400,7 @@ def _build_payslip_pdf(slip: dict, run: dict, profile: dict = None, doc_settings
         *([HRFlowable(width="100%", thickness=0.5, color=GREY, spaceAfter=4), sig_tbl] if show_sig else []),
         Spacer(1, 2 * mm),
         Paragraph(
-            f"<i>Slip ini dicetak secara otomatis oleh Sistem ERP CV. Dewi Aditya · {_now().strftime('%d/%m/%Y %H:%M')}</i>",
+            f"<i>Slip ini dicetak secara otomatis oleh Sistem ERP CV. Dewi Aditya · {fmt_wib('%d/%m/%Y %H:%M')}</i>",
             ParagraphStyle("foot", fontSize=5.5, fontName="Helvetica-Oblique", textColor=GREY, alignment=TA_CENTER, leading=7)
         ),
     ]
@@ -437,18 +455,22 @@ async def export_payslip_pdf(pid: str, request: Request):
     """
     user = await require_auth(request)
     db = get_db()
-    role = (user.get("role") or "").lower()
     slip = await db.rahaza_payslips.find_one({"id": pid}, {"_id": 0})
     if not slip:
         raise HTTPException(404, "Payslip tidak ditemukan.")
 
-    can_download_all = role in ("superadmin", "admin", "owner", "hr", "manager")
-    if not can_download_all:
+    # 2026-11-02 (audit T3 lanjutan): aturan SAMA dengan GET /payslips — HR/Keuangan/Manajemen
+    # (`_can_view_all_payslips`) boleh semua slip termasuk draft (ber-watermark); karyawan hanya
+    # slip MILIKNYA dan hanya dari run final/dibayar. Dulu PDF slip run DRAFT tetap bisa diunduh
+    # karyawan padahal JSON-nya disembunyikan (angka draft masih bisa berubah).
+    if not await _can_view_all_payslips(request, user):
         from utils.employee_identity import resolve_my_employee
         emp = await resolve_my_employee(db, user)
         if not emp or emp.get("id") != slip.get("employee_id"):
             raise HTTPException(
                 403, "Anda hanya bisa mengunduh slip gaji milik Anda sendiri.")
+        if not await only_published_slips(db, [slip]):
+            raise HTTPException(404, "Slip gaji ini belum difinalisasi HR.")
 
     run = await db.rahaza_payroll_runs.find_one({"id": slip.get("run_id", "")}, {"_id": 0}) or {}
     profile = await get_company_profile(db)
@@ -472,7 +494,11 @@ async def export_payslip_pdf(pid: str, request: Request):
 @router.get("/payroll-runs/{run_id}/pdf")
 async def export_run_pdf(run_id: str, request: Request):
     """Download PDF bundle berisi SEMUA slip gaji dalam satu run (1 halaman per karyawan)."""
-    await require_auth(request)
+    user = await require_auth(request)
+    # 2026-11-02 (audit T3) — dulu hanya `require_auth`: operator mengunduh slip 25 karyawan.
+    # Kini hanya peran yang boleh melihat SEMUA slip (aturan sama dengan GET /payslips).
+    if not await _can_view_all_payslips(request, user):
+        raise HTTPException(403, "Forbidden: unduh slip satu run khusus HR/Keuangan/Manajemen.")
     db = get_db()
     run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
     if not run:
@@ -523,10 +549,69 @@ async def export_run_pdf(run_id: str, request: Request):
     )
 
 
+# ── AKSES BACA SLIP (2026-11-02, audit T3) ────────────────────────────────────
+# Dulu GET /payslips & /payslips/{pid} hanya `require_auth`: akun karyawan mana pun
+# (mis. tim_packing) membaca 50 slip milik 25 karyawan. Sekarang:
+#   · peran payroll `_require_hr` (sama dengan unduh PDF) dan pemegang portal
+#     SDM/Keuangan/Manajemen (SSOT `routes.shared.require_portal`, sama dengan
+#     gerbang router payroll-runs) → semua slip;
+#   · selain itu → hanya slip miliknya (karyawan tertaut, SSOT employee_identity)
+#     dan hanya dari run final/dibayar; akun tanpa karyawan tertaut → 403.
+_PAYSLIP_ALL_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+_PAYSLIP_ALL_PORTALS = ("hr", "finance", "management")
+# Status run yang slipnya boleh dilihat karyawan: "finalized" (VALID_RUN_STATUS)
+# + "paid" (dipakai payroll_automation). Draft masih bisa berubah; cancelled bukan gaji.
+PUBLISHED_RUN_STATUSES = ("finalized", "paid")
+
+
+async def only_published_slips(db, slips: list) -> list:
+    """Saring slip: hanya yang run-nya berstatus final/dibayar (dipakai juga Portal Saya)."""
+    run_ids = list({s.get("run_id") for s in slips if s.get("run_id")})
+    if not run_ids:
+        return []
+    runs = await db.rahaza_payroll_runs.find(
+        {"id": {"$in": run_ids}, "status": {"$in": list(PUBLISHED_RUN_STATUSES)}},
+        {"_id": 0, "id": 1},
+    ).to_list(len(run_ids))
+    ok = {r.get("id") for r in runs}
+    return [s for s in slips if s.get("run_id") in ok]
+
+
+async def _can_view_all_payslips(request: Request, user: dict) -> bool:
+    role = (user.get("role") or "").lower()
+    if role in _PAYSLIP_ALL_ROLES:
+        return True
+    perms = user.get("_permissions") or []
+    if "*" in perms or "hr.manage" in perms or "payroll.manage" in perms:
+        return True
+    from routes.shared import require_portal
+    try:
+        await require_portal(request, *_PAYSLIP_ALL_PORTALS, allow_perms=("payroll.manage",))
+        return True
+    except HTTPException as e:
+        if e.status_code == 403:
+            return False
+        raise
+
+
+async def _payslip_scope(request: Request):
+    """(user, emp). `emp` None = boleh semua slip; selain itu hanya slip karyawan `emp`."""
+    user = await require_auth(request)
+    if await _can_view_all_payslips(request, user):
+        return user, None
+    from utils.employee_identity import resolve_my_employee
+    emp = await resolve_my_employee(get_db(), user)
+    if not emp or not emp.get("id"):
+        raise HTTPException(
+            403, "Anda hanya bisa melihat slip gaji milik Anda sendiri, tetapi akun Anda "
+                 "belum tertaut ke data karyawan. Hubungi HR.")
+    return user, emp
+
+
 # ── PAYSLIPS ──────────────────────────────────────────────────────────────────
 @router.get("/payslips")
 async def list_payslips(request: Request, run_id: Optional[str] = None, employee_id: Optional[str] = None, employee_code: Optional[str] = None):
-    await require_auth(request)
+    _, my_emp = await _payslip_scope(request)
     db = get_db()
     q = {}
     if run_id:
@@ -535,17 +620,30 @@ async def list_payslips(request: Request, run_id: Optional[str] = None, employee
         q["employee_id"] = employee_id
     if employee_code:
         q["employee_code"] = employee_code
+    if my_emp is not None:
+        # 2026-11-02 — karyawan biasa: filter ke orang lain ditolak, bukan diam-diam diabaikan.
+        if (employee_id and employee_id != my_emp["id"]) or \
+                (employee_code and employee_code != my_emp.get("employee_code")):
+            raise HTTPException(403, "Anda hanya bisa melihat slip gaji milik Anda sendiri.")
+        q["employee_id"] = my_emp["id"]
     rows = await db.rahaza_payslips.find(q, {"_id": 0}).sort("employee_code", 1).to_list(500)
+    if my_emp is not None:
+        rows = await only_published_slips(db, rows)
     return serialize_doc(rows)
 
 
 @router.get("/payslips/{pid}")
 async def get_payslip(pid: str, request: Request):
-    await require_auth(request)
+    _, my_emp = await _payslip_scope(request)
     db = get_db()
     row = await db.rahaza_payslips.find_one({"id": pid}, {"_id": 0})
     if not row:
         raise HTTPException(404, "Payslip tidak ditemukan.")
+    if my_emp is not None:
+        if row.get("employee_id") != my_emp["id"]:
+            raise HTTPException(403, "Anda hanya bisa melihat slip gaji milik Anda sendiri.")
+        if not await only_published_slips(db, [row]):
+            raise HTTPException(404, "Slip gaji ini belum difinalisasi HR.")
     return serialize_doc(row)
 
 
@@ -608,12 +706,31 @@ async def update_payslip(pid: str, request: Request):
 # semantiknya beda: PUT MENGGANTI seluruh array `deductions` (akan menghapus
 # BPJS/PPh21/kasbon hasil hitungan sistem) dan menulis ke `notes`, sementara FE
 # menampilkan `manual_deduction` + `adjustment_notes`.
+# 2026-11-02 (K34, keputusan owner): sebelum finalisasi HR boleh MENAMBAH/MENGURANGI PENDAPATAN maupun
+# POTONGAN dengan alasan, lewat endpoint yang SAMA (tombol "Adj"):
+#   earning_adjustment  (± Rp)  → penyesuaian pendapatan; bruto = bruto sistem + nilai ini (≥ 0)
+#   deduction           (≥ 0)   → potongan penyesuaian manual (perilaku lama; jurnal Cr credit_other_deduction)
+#   deduction_overrides [{index, amount}] → KURANGI baris potongan sistem (terlambat/LWOP/kasbon),
+#                         0 ≤ amount ≤ nilai asli. BPJS & PPh21 tidak diubah manual (ubah kepesertaan/
+#                         setelan lalu buat ulang run draft).
+#   notes / reason      → WAJIB bila ada penyesuaian ≠ 0.
+# BPJS/PPh21 TIDAK dihitung ulang atas penyesuaian pendapatan (dicatat di respons sebagai peringatan).
+STATUTORY_DEDUCTION_PREFIXES = ("bpjs", "pph21")
+
+
+def _num_or_400(raw, field: str) -> float:
+    try:
+        return float(raw or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"{field} harus berupa angka.")
+
+
 @router.post("/payroll-runs/{run_id}/payslips/{slip_id}/adjust")
 async def adjust_payslip(run_id: str, slip_id: str, request: Request):
-    """Set penyesuaian manual (potongan + catatan) pada satu payslip.
+    """Set penyesuaian manual pada satu payslip (lihat blok K34 di atas).
 
     Idempoten: mengirim nilai yang sama dua kali menghasilkan angka yang sama —
-    `manual_deduction` DIGANTI, bukan ditambahkan.
+    nilai penyesuaian DIGANTI, bukan ditambahkan.
     """
     user = await _require_hr(request)
     db = get_db()
@@ -633,37 +750,88 @@ async def adjust_payslip(run_id: str, slip_id: str, request: Request):
         raise HTTPException(400, "Run sudah di-finalize — slip tidak bisa diubah.")
 
     body = await request.json()
-    raw = body.get("deduction", body.get("manual_deduction"))
-    try:
-        deduction = float(raw or 0)
-    except (TypeError, ValueError):
-        raise HTTPException(400, "Nilai penyesuaian harus berupa angka.")
+    # ── potongan penyesuaian manual (≥ 0) — tidak dikirim = nilai sekarang
+    if "deduction" in body or "manual_deduction" in body:
+        deduction = _num_or_400(body.get("deduction", body.get("manual_deduction")), "Nilai penyesuaian")
+    else:
+        deduction = float(slip.get("manual_deduction") or 0)
     if deduction < 0:
-        raise HTTPException(400, "Penyesuaian tidak boleh negatif.")
-    gross = float(slip.get("gross_pay") or 0)
-    base_ded = sum(round(float(d.get("amount") or 0)) for d in (slip.get("deductions") or []))
+        raise HTTPException(400, "Potongan penyesuaian tidak boleh negatif — untuk MENGURANGI potongan sistem "
+                                 "pakai deduction_overrides, untuk menambah gaji pakai earning_adjustment.")
+    # ── penyesuaian pendapatan (±)
+    if "earning_adjustment" in body or "manual_addition" in body:
+        addition = _num_or_400(body.get("earning_adjustment", body.get("manual_addition")), "Penyesuaian pendapatan")
+    else:
+        addition = float(slip.get("manual_addition") or 0)
+    gross_base = float(slip.get("gross_before_adjustment")
+                       if slip.get("gross_before_adjustment") is not None
+                       else float(slip.get("gross_pay") or 0) - float(slip.get("manual_addition") or 0))
+    new_gross = round(gross_base + round(addition))
+    if new_gross < 0:
+        raise HTTPException(400, f"Pengurangan pendapatan {addition:,.0f} melebihi bruto {gross_base:,.0f}.".replace(",", "."))
+
+    # ── kurangi baris potongan sistem (bukan BPJS/PPh21)
+    lines = [dict(d) for d in (slip.get("deductions") or [])]
+    overrides = body.get("deduction_overrides") or []
+    if not isinstance(overrides, list):
+        raise HTTPException(400, "deduction_overrides harus daftar [{index, amount}].")
+    for ov in overrides:
+        try:
+            idx = int(ov.get("index"))
+        except (TypeError, ValueError, AttributeError):
+            raise HTTPException(400, "deduction_overrides: index tidak valid.")
+        if idx < 0 or idx >= len(lines):
+            raise HTTPException(400, f"deduction_overrides: baris potongan #{idx} tidak ada.")
+        ln = lines[idx]
+        typ = str(ln.get("type") or "").lower()
+        if typ.startswith(STATUTORY_DEDUCTION_PREFIXES):
+            raise HTTPException(400, f"Potongan wajib '{ln.get('label')}' (BPJS/PPh21) tidak diubah manual — ubah "
+                                     "kepesertaan/pengaturan lalu hapus & buat ulang run draft.")
+        original = float(ln.get("original_amount") if ln.get("original_amount") is not None else ln.get("amount") or 0)
+        amt = _num_or_400(ov.get("amount"), "deduction_overrides.amount")
+        if amt < 0 or amt > original + 0.01:
+            raise HTTPException(400, (f"Potongan '{ln.get('label')}' hanya boleh DIKURANGI: 0 s/d {original:,.0f} "
+                                      "(untuk menambah potongan pakai potongan penyesuaian).").replace(",", "."))
+        ln["original_amount"] = original
+        ln["amount"] = round(amt)
+        ln["adjusted"] = abs(round(amt) - original) > 0.01
+
+    notes = (body.get("notes") or body.get("reason") or "").strip()
+    changed = round(deduction) != 0 or round(addition) != 0 or any(ln.get("adjusted") for ln in lines)
+    if changed and not notes:
+        raise HTTPException(400, "Alasan penyesuaian wajib diisi.")
+
+    adj_slip = {**slip, "gross_pay": new_gross}
+    ded_total, net = _payslip_totals(adj_slip, deductions=lines, manual_deduction=deduction)
     # Batas atas: total potongan tidak boleh melebihi bruto (net negatif =
     # karyawan berutang ke perusahaan lewat payroll — bukan alur yang didukung).
-    if round(deduction) + base_ded > gross:
+    if ded_total > new_gross:
         raise HTTPException(
             400,
-            f"Penyesuaian terlalu besar: potongan sistem {base_ded:,.0f} + "
-            f"penyesuaian {deduction:,.0f} melebihi bruto {gross:,.0f}.".replace(",", "."),
+            f"Penyesuaian terlalu besar: total potongan {ded_total:,.0f} melebihi bruto {new_gross:,.0f}.".replace(",", "."),
         )
 
-    notes = (body.get("notes") or "").strip()
-    ded_total, net = _payslip_totals(slip, manual_deduction=deduction)
+    log_entry = {"at": _now(), "by": user["id"], "by_name": user.get("name", ""), "reason": notes,
+                 "manual_deduction": round(deduction), "manual_addition": round(addition),
+                 "overrides": [{"index": int(o.get("index")), "amount": round(float(o.get("amount") or 0))}
+                               for o in overrides]}
     await db.rahaza_payslips.update_one({"id": slip_id}, {"$set": {
         "manual_deduction": round(deduction),
+        "manual_addition": round(addition),
+        "gross_before_adjustment": gross_base,
+        "gross_pay": new_gross,
+        "deductions": lines,
         "adjustment_notes": notes,
         "deductions_total": ded_total,
         "net_pay": net,
         "updated_at": _now(),
         "updated_by": user["id"],
         "updated_by_name": user.get("name", ""),
-    }})
+    }, "$push": {"adjustments_log": log_entry}})
     totals = await _recompute_run_totals(db, run_id)
     await log_activity(user["id"], user.get("name", ""), "adjust", "rahaza.payslip",
-                       f"{slip.get('employee_code', slip_id)} → {round(deduction)}")
+                       f"{slip.get('employee_code', slip_id)} pendapatan {round(addition)} potongan {round(deduction)}"
+                       f" baris {len(overrides)} — {notes}")
     out = await db.rahaza_payslips.find_one({"id": slip_id}, {"_id": 0})
-    return {"ok": True, "payslip": serialize_doc(out), "run_totals": serialize_doc(totals)}
+    warn = ("BPJS & PPh21 tidak dihitung ulang atas penyesuaian pendapatan." if round(addition) else None)
+    return {"ok": True, "payslip": serialize_doc(out), "run_totals": serialize_doc(totals), "warning": warn}

@@ -23,6 +23,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, List
 import json
 import asyncio
+from utils.waktu import fmt_wib
 
 _log = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def _month_bounds(month: Optional[str]) -> tuple:
     jatuh ke bulan berjalan seperti perilaku semula.
     """
     if not month or not str(month).strip():
-        month = _now().strftime('%Y-%m')
+        month = fmt_wib('%Y-%m')
     parts = str(month).strip().split('-')
     if len(parts) < 2:
         raise HTTPException(400, f"Parameter 'month' harus berformat 'YYYY-MM'. Diterima: '{month}'.")
@@ -69,7 +70,7 @@ async def get_host_performance(
     
     # Default to current month if not specified
     if not month:
-        month = _now().strftime('%Y-%m')
+        month = fmt_wib('%Y-%m')
     
     year, mon, date_from, date_to = _month_bounds(month)
     month = f"{year}-{mon}"
@@ -144,7 +145,7 @@ async def get_shift_analysis(
     
     # Default to current month
     if not month:
-        month = _now().strftime('%Y-%m')
+        month = fmt_wib('%Y-%m')
     
     year, mon, date_from, date_to = _month_bounds(month)
     month = f"{year}-{mon}"
@@ -486,7 +487,7 @@ async def download_livehost_sop(request: Request):
     from utils.livehost_sop_pdf import build_livehost_sop_pdf
 
     pdf_bytes = build_livehost_sop_pdf(company_name='CV. DEWI ADITYA OFFICIAL')
-    filename = f'SOP_LiveHost_v1.0_{_now().strftime("%Y%m%d")}.pdf'
+    filename = f'SOP_LiveHost_v1.0_{fmt_wib("%Y%m%d")}.pdf'
     return Response(
         content=pdf_bytes,
         media_type='application/pdf',

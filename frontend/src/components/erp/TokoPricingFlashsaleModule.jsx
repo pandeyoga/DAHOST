@@ -4,6 +4,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -231,8 +232,8 @@ export default function TokoPricingFlashsaleModule({ token }) {
                       <div key={idx} className="grid grid-cols-6 gap-2 items-center p-2 rounded-lg bg-foreground/[0.03] border border-foreground/10">
                         <Input placeholder="SKU" className="col-span-1 text-xs" value={p.sku_code} onChange={e => updateProduct(idx, 'sku_code', e.target.value.toUpperCase())} />
                         <Input placeholder="Nama" className="col-span-2 text-xs" value={p.name} onChange={e => updateProduct(idx, 'name', e.target.value)} />
-                        <Input placeholder="Harga asli" type="number" className="text-xs" value={p.original_price} onChange={e => updateProduct(idx, 'original_price', e.target.value)} />
-                        <Input placeholder="Harga flash" type="number" className="text-xs" value={p.flashsale_price} onChange={e => updateProduct(idx, 'flashsale_price', e.target.value)} />
+                        <MoneyInput placeholder="Harga asli" className="text-xs" value={p.original_price} onChange={e => updateProduct(idx, 'original_price', e.target.value)} />
+                        <MoneyInput placeholder="Harga flash" className="text-xs" value={p.flashsale_price} onChange={e => updateProduct(idx, 'flashsale_price', e.target.value)} />
                         <div className="flex items-center gap-1">
                           <span className="text-xs text-red-400 font-semibold whitespace-nowrap">-{p.discount_pct || 0}%</span>
                           <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditing(d => ({ ...d, products: d.products.filter((_, i) => i !== idx) }))}>

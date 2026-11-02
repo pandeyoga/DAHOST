@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import Modal from './engine/Modal';
 import ConfirmDialog from './engine/ConfirmDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api';
+import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const STATUS_META = {
@@ -497,8 +498,8 @@ function CreatePermakDialog({ onClose, onCreated }) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Ongkos Permak / pcs (Rp)</label>
-            <input
-              type="number" min="0"
+            <MoneyInput
+              unstyled
               value={costPerPcs}
               onChange={(e) => setCostPerPcs(e.target.value)}
               placeholder="0"

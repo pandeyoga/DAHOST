@@ -31,9 +31,10 @@ from core import bom_uom as _bom_uom  # cakupan lebar: kemasan + global + kain
 import uuid
 import logging
 import math
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 import re
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-po"])
@@ -149,7 +150,7 @@ async def _gen_po_number(db, requested: str = "", *, sistem: bool = False) -> st
     bukan disembunyikan.
     """
     if sistem:
-        today = date.today().strftime("%Y%m%d")
+        today = today_wib().strftime("%Y%m%d")
         return await gen_prefixed_number(db, "rahaza_purchase_orders", "po_number",
                                          f"PO-{today}-", 3, config_key=PO_DOCNUM_KEY)
     return await issue_number(db, PO_DOCNUM_KEY, requested=requested)
@@ -499,7 +500,7 @@ async def create_po(request: Request):
         "id": _uid(),
         "po_number": await _gen_po_number(db, (body.get("po_number") or "").strip()),
         **sup_fields,
-        "po_date": body.get("po_date") or date.today().isoformat(),
+        "po_date": body.get("po_date") or today_wib().isoformat(),
         "expected_delivery_date": body.get("expected_delivery_date") or None,
         "items": items,
         "total_value": total_value,
@@ -1217,7 +1218,7 @@ async def bulk_import_po_csv(request: Request):
             "id": _uid(),
             "po_number": await _gen_po_number(db, sistem=True),
             **sup_fields,
-            "po_date": body.get("po_date") or date.today().isoformat(),
+            "po_date": body.get("po_date") or today_wib().isoformat(),
             "expected_delivery_date": body.get("expected_delivery_date") or None,
             "items": items,
             "status": "draft",

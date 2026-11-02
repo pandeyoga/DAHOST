@@ -53,10 +53,20 @@ def _round(v: float, kglike: bool, mode: str) -> float:
     return round(v, 4)
 
 
-async def _find_active_bom(db, model_id: str, size_id: str):
-    """Cari BOM aktif utk (model_id, size_id). Prioritas is_active True; fallback versi tertinggi."""
+async def _find_active_bom(db, model_id: str, size_id: str, color: str | None = None):
+    """Cari BOM aktif utk (model_id, size_id[, warna]). Prioritas is_active True; fallback versi tertinggi.
+
+    2026-11-02 (butir 10, F1b): bila warna varian diketahui, BOM warna itu yang dipakai lewat
+    SATU penyelesai `core.product_costing.find_active_bom` (dulu MRP selalu memakai BOM warna
+    lain — PO CRL 10 pcs dihitung 1 baris potongan BRG Rp 321.750, MI nyata 5 baris).
+    """
     if not model_id or not size_id:
         return None
+    if (color or "").strip():
+        from core import product_costing as pc
+        bom = await pc.find_active_bom(db, model_id, size_id, color)
+        if bom:
+            return bom
     bom = await db.rahaza_boms.find_one(
         {"model_id": model_id, "size_id": size_id, "active": True, "is_active": True}, {"_id": 0})
     if bom:
@@ -143,6 +153,7 @@ async def aggregate_material_requirements(request: Request):
             raw_lines.append({
                 "model_id": it.get("model_id"),
                 "size_id": it.get("size_id"),
+                "color": it.get("color_code") or it.get("color") or "",
                 "qty_pcs": float(it.get("qty") or 0),
                 "_label": it.get("product_name") or it.get("sku") or "",
             })
@@ -154,6 +165,7 @@ async def aggregate_material_requirements(request: Request):
             raw_lines.append({
                 "model_id": ln.get("model_id"),
                 "size_id": ln.get("size_id"),
+                "color": ln.get("color_code") or ln.get("color") or "",
                 "qty_pcs": float(ln.get("qty_pcs") or 0),
                 "_label": "",
             })
@@ -184,7 +196,7 @@ async def aggregate_material_requirements(request: Request):
             })
             continue
 
-        bom = await _find_active_bom(db, model_id, size_id)
+        bom = await _find_active_bom(db, model_id, size_id, ln.get("color"))
         if not bom:
             lines_without_bom.append({
                 "model_id": model_id, "model_code": model_code, "size_id": size_id,

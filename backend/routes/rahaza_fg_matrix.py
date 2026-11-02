@@ -32,6 +32,7 @@ import uuid
 import logging
 import re
 from typing import Optional
+from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/fg-matrix", tags=["fg-matrix"])
@@ -352,7 +353,7 @@ async def allocate_fg(request: Request):
     # Create reservation (RC-5 fix: atomic race-safe numbering, was count_documents()+1)
     reservation_no = await gen_prefixed_number(
         db, "rahaza_fg_reservations", "reservation_no",
-        f"RES-{_now().strftime('%Y%m')}-", 4)
+        f"RES-{fmt_wib('%Y%m')}-", 4)
     doc = {
         "id": _uid(),
         "reservation_no": reservation_no,

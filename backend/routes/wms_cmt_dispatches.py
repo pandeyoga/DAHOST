@@ -30,6 +30,7 @@ from database import get_db
 from utils.counters import gen_prefixed_number
 from auth import require_auth, serialize_doc
 import logging
+from utils.waktu import fmt_wib, wib_date_str
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/cmt-dispatches", tags=["wms-cmt"])
@@ -70,7 +71,7 @@ class ReturnLineIn(BaseModel):
 
 
 async def _next_dispatch_no(db) -> str:
-    prefix = f"CMD/{_now().strftime('%Y/%m')}/"
+    prefix = f"CMD/{fmt_wib('%Y/%m')}/"
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1 -> dup/E11000)
     return await gen_prefixed_number(db, "wh_cmt_dispatches", "dispatch_no", prefix, 4)
 
@@ -136,7 +137,7 @@ async def create_dispatch(data: DispatchIn, request: Request):
         "wo_number": data.wo_number,
         "cmt_name": data.cmt_name,
         "cmt_address": data.cmt_address,
-        "delivery_date": data.delivery_date or now.date().isoformat(),
+        "delivery_date": data.delivery_date or wib_date_str(now),
         "status": "draft",
         "sj_id": None,
         "sj_number": "",

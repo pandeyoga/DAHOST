@@ -206,10 +206,8 @@ async def list_catalogs(
     """List semua katalog dengan filter opsional."""
     user = await require_auth(request)
     db = get_db()
-    # F14 — katalog toko tidak boleh kosong sementara order/sample sudah ada:
-    # tanpa katalog, SKU order yatim dan HPP sample tidak punya sumber.
-    from core.marketing_master_seed import ensure_demo_catalogs
-    await ensure_demo_catalogs(db)
+    # 2026-11-02 — dulu (F14) katalog demo dibuat di sini bila koleksi kosong; seeder
+    # demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     q = await _scope.scope_filter(db, user, {})
     if account_id:

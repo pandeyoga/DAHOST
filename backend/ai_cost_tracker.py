@@ -1,31 +1,31 @@
 """
-AI Cost Tracker — central layer untuk monitor LLM usage di seluruh aplikasi.
+AI Cost Tracker — SATU-SATUNYA jalur ke Anthropic (Claude) di seluruh aplikasi.
 
-Features:
-- Tracks every LLM call: feature, user, model, tokens (estimate), latency, success/failure
-- Cost estimation based on token count + model pricing
-- Budget alert ketika cumulative cost mendekati limit
-- Aggregation per-feature, per-day, per-user
+2026-11-02 (keputusan owner No.60): provider AI hanya Anthropic lewat
+`ANTHROPIC_API_KEY` (env atau layar Integrasi). Rantai panggilan:
 
-Usage:
+    routes → services/ai (ai_text / ai_json_call / call_claude) → ai_cost_tracker → Anthropic
+
+Fitur:
+- Melacak setiap panggilan: fitur, user, model, token, latensi, sukses/gagal
+  (TERMASUK panggilan yang gagal karena kunci belum diisi — agar Monitor AI jujur).
+- Estimasi biaya dari token × tarif resmi model.
+- Batas anggaran harian/bulanan/per fitur + master switch & toggle fitur (DB `ai_config`).
+- Galat terkendali berkode (`error_code`) dengan pesan ramah berbahasa Indonesia;
+  nama variabel env & isi exception mentah TIDAK PERNAH sampai ke pengguna.
+
+Pemakaian:
     from ai_cost_tracker import tracked_llm_call
-    
-    result = await tracked_llm_call(
-        feature="daily_summary",
-        user_id=user["id"],
-        model=("openai", "gpt-5.1"),
-        system_message="...",
-        user_message="...",
-        api_key=LLM_KEY,
-    )
-    # result.text — the LLM response
-    # result.tokens_in / tokens_out — token counts
-    # result.cost_usd — estimated cost
-    # result.error — error if any (None if success)
+    res = await tracked_llm_call(feature="daily-summary", user_id=uid, model="standard",
+                                 system_message="...", user_message="...")
+    res.text / res.error (pesan ramah) / res.error_code
 
-Collection: rahaza_ai_usage_logs
+Koleksi log: rahaza_ai_usage_logs
 """
+import base64
+import binascii
 import os
+import re
 import time
 import uuid
 import logging
@@ -33,30 +33,22 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional, Tuple
 from dataclasses import dataclass
 from database import get_db
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 
-# Approximate pricing per 1M tokens (USD)
-# Updated 2026 — these are estimates for Emergent LLM routing
+# ── Tarif resmi per 1 jt token (USD) ─────────────────────────────────────────
+# 2026-11-02: sumber skill `claude-api` (tabel "Current Models", cache 2026-10-06):
+#   Claude Opus 5.5   `claude-opus-5-5`   $4 / $20
+#   Claude Sonnet 5.5 `claude-sonnet-5-5` $2 / $10
+# Tabel lama memakai tarif keliru (opus $15/$75, sonnet $3/$15) sehingga anggaran
+# harian "habis" 1,5–3× lebih cepat dari kenyataan. Biaya di log dihitung saat
+# panggilan, jadi entri OpenAI/Google lama tidak dibutuhkan lagi dan dibuang.
 MODEL_PRICING = {
-    # OpenAI (legacy — dipertahankan utk histori log)
-    ("openai", "gpt-5.1"): {"input": 5.0, "output": 15.0},
-    ("openai", "gpt-5"): {"input": 5.0, "output": 15.0},
-    ("openai", "gpt-4o"): {"input": 2.5, "output": 10.0},
-    ("openai", "gpt-4o-mini"): {"input": 0.15, "output": 0.60},
-    # Anthropic Claude (KANONIK — WS-C)
-    ("anthropic", "claude-opus-4-8"): {"input": 15.0, "output": 75.0},
-    ("anthropic", "claude-sonnet-5"): {"input": 3.0, "output": 15.0},
-    ("anthropic", "claude-sonnet-4-6"): {"input": 3.0, "output": 15.0},
-    ("anthropic", "claude-haiku-4-5-20251001"): {"input": 1.0, "output": 5.0},
-    ("anthropic", "claude-sonnet-4.5"): {"input": 3.0, "output": 15.0},
-    ("anthropic", "claude-sonnet-4"): {"input": 3.0, "output": 15.0},
-    ("anthropic", "claude-haiku-4"): {"input": 0.25, "output": 1.25},
-    # Google (legacy)
-    ("google", "gemini-2.0-flash"): {"input": 0.10, "output": 0.40},
-    ("google", "gemini-2.5-pro"): {"input": 1.25, "output": 5.0},
-    # Default fallback
-    ("default", "default"): {"input": 3.0, "output": 10.0},
+    ("anthropic", "claude-opus-5-5"): {"input": 4.0, "output": 20.0},
+    ("anthropic", "claude-sonnet-5-5"): {"input": 2.0, "output": 10.0},
+    # Model tak dikenal → tarif tertinggi yang dipakai (konservatif, tidak meremehkan biaya).
+    ("default", "default"): {"input": 4.0, "output": 20.0},
 }
 
 # Budget limits (configurable via env, default values)
@@ -64,23 +56,113 @@ DEFAULT_DAILY_BUDGET_USD = float(os.environ.get("LLM_DAILY_BUDGET_USD", "5.0"))
 DEFAULT_MONTHLY_BUDGET_USD = float(os.environ.get("LLM_MONTHLY_BUDGET_USD", "100.0"))
 DEFAULT_PER_FEATURE_DAILY_USD = float(os.environ.get("LLM_PER_FEATURE_DAILY_USD", "2.0"))
 
-# ── WS-C: kanonik Claude + tier by complexity ────────────────────────────────
-# 2026-07-27: SEMUA panggilan AI memakai Anthropic Claude API LANGSUNG
-# (SDK resmi `anthropic`) dengan kunci milik owner — bukan lagi lewat
-# emergentintegrations / Emergent Universal Key.
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-
-# Tier -> (provider, model). Semua fitur AI wajib lewat wrapper ini.
-#   executive : reasoning berat / analitik eksekutif (opus)
-#   standard  : mayoritas tugas (sonnet)
-#   light     : klasifikasi/ekstraksi ringan & murah (haiku)
+# ── Tier → model (No.60: generasi terbaru Sonnet & Opus) ─────────────────────
+#   executive : reasoning berat / analitik eksekutif → Opus 5.5
+#   standard  : mayoritas tugas                      → Sonnet 5.5
+#   light     : klasifikasi/ekstraksi ringan         → Sonnet 5.5
+# 2026-11-02: "light" sengaja TIDAK memakai Haiku karena keputusan No.60 hanya
+# menyebut Sonnet & Opus (pilihan Haiku 5.5 menunggu owner, audit A §8.4 no.1).
 TIER_MODELS = {
-    "executive": ("anthropic", "claude-opus-4-8"),
-    "standard": ("anthropic", "claude-sonnet-5"),
-    "light": ("anthropic", "claude-haiku-4-5-20251001"),
+    "executive": ("anthropic", "claude-opus-5-5"),
+    "standard": ("anthropic", "claude-sonnet-5-5"),
+    "light": ("anthropic", "claude-sonnet-5-5"),
 }
+# Effort diset EKSPLISIT (skill: default Opus 5.5 = medium, Sonnet 5.5 = high).
+# Thinking tidak bisa dimatikan di Opus 5.5 → kedalaman diatur lewat effort.
+TIER_EFFORT = {"executive": "medium", "standard": "medium", "light": "low"}
 DEFAULT_TIER = "standard"
-MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "2048"))
+
+# 2026-11-02 (keputusan owner K29): Opus HANYA untuk narasi Laporan Eksekutif.
+# Fitur lain yang (masih/keliru) meminta tier executive DITURUNKAN ke standard
+# (Sonnet) di sini — satu gerbang, sehingga pemanggil baru tidak bisa diam-diam
+# memakai Opus. Fitur ringan (asisten ERP, klasifikasi) memakai tier light = effort low.
+EXECUTIVE_FEATURES = ("executive-narrative",)
+
+# 2026-11-02 (K29): SSOT grup fitur yang bisa di-on/off di Monitor AI (dulu hanya di
+# routes/ai_usage_monitor.py). Label fitur di log dicocokkan per prefiks ke grup ini
+# sehingga biaya per fitur selalu cocok dengan toggle-nya (`feature_group` di log).
+AI_FEATURE_GROUPS = [
+    {"key": "executive-narrative", "label": "Analisis Eksekutif AI (Opus)"},
+    {"key": "daily-summary", "label": "Ringkasan Bisnis Harian"},
+    {"key": "revenue-forecast", "label": "Prediksi Pendapatan"},
+    {"key": "cashflow", "label": "Prediksi Arus Kas"},
+    {"key": "fraud-detect", "label": "Deteksi Anomali / Fraud"},
+    {"key": "prod-optimize", "label": "Optimasi Produksi"},
+    {"key": "marketing", "label": "AI Marketing & Insights"},
+    {"key": "maklon", "label": "Estimasi Harga Maklon"},
+    {"key": "wms", "label": "AI Gudang (WMS)"},
+    {"key": "smart-import", "label": "Smart Import (mapping AI)"},
+    {"key": "rahaza", "label": "Asisten AI Rahaza"},
+    {"key": "career", "label": "Career Coach SDM"},
+    {"key": "hr-ai", "label": "AI SDM (screening CV, attrition, coaching)"},
+    {"key": "assistant-erp", "label": "Asisten ERP"},
+    {"key": "analytics-ai", "label": "RCA Produksi/QC"},
+    {"key": "predictive-maintenance", "label": "Saran Perawatan Mesin"},
+]
+
+
+def feature_group(feature: Optional[str]) -> Optional[str]:
+    """Kunci grup Monitor AI untuk label fitur (exact / prefiks), atau None."""
+    f = (feature or "").lower().strip().replace("_", "-")
+    for g in sorted(AI_FEATURE_GROUPS, key=lambda g: -len(g["key"])):
+        if f == g["key"] or f.startswith(g["key"] + "-"):
+            return g["key"]
+    return None
+
+
+def executive_allowed(feature: Optional[str]) -> bool:
+    f = (feature or "").lower().strip().replace("_", "-")
+    return any(f == k or f.startswith(k + "-") for k in EXECUTIVE_FEATURES)
+
+# max_tokens: thinking ikut memakai token output, jadi batas kecil (mis. 400) dari
+# pemanggil lama akan memotong jawaban. Skill: non-streaming ≈16000.
+MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_OUTPUT_TOKENS", "16000"))
+MIN_OUTPUT_TOKENS = int(os.environ.get("LLM_MIN_OUTPUT_TOKENS", "8000"))
+
+# 2026-11-02: timeout ±60 dtk & 1 retry (default SDK 10 menit & 2 retry membuat
+# worker FastAPI/proxy menggantung). Total terburuk ≈ timeout × (retry + 1).
+LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "60"))
+LLM_MAX_RETRIES = int(os.environ.get("LLM_MAX_RETRIES", "1"))
+
+ANTHROPIC_KEY_NAME = "ANTHROPIC_API_KEY"
+
+# ── Galat terkendali → pesan ramah (tanpa nama env / exception mentah) ───────
+AI_ERROR_MESSAGES = {
+    "not_configured": "Fitur AI belum aktif: kunci API Anthropic belum diisi admin.",
+    "sdk_missing": "Fitur AI belum aktif: komponen AI belum terpasang di server. Hubungi admin.",
+    "disabled": "Fitur AI sedang dimatikan oleh admin.",
+    "feature_disabled": "Fitur AI ini sedang dimatikan oleh admin.",
+    "over_budget": "Batas anggaran AI sudah tercapai. Coba lagi nanti atau hubungi admin.",
+    "auth": "Kunci API Anthropic ditolak. Admin perlu memeriksa kunci di menu Integrasi.",
+    "rate_limited": "Layanan AI sedang sibuk. Silakan coba lagi beberapa saat lagi.",
+    "timeout": "Layanan AI terlalu lama merespons. Silakan coba lagi.",
+    "connection": "Server tidak dapat terhubung ke layanan AI. Silakan coba lagi nanti.",
+    "bad_request": "Permintaan ke layanan AI tidak dapat diproses.",
+    "upstream": "Layanan AI sedang bermasalah. Silakan coba lagi nanti.",
+    "truncated": "Jawaban AI terpotong karena terlalu panjang, sehingga tidak dipakai. Silakan coba lagi.",
+    "refusal": "AI menolak memproses permintaan ini.",
+    "empty": "AI tidak memberikan jawaban. Silakan coba lagi.",
+    "bad_output": "Jawaban AI tidak dapat dibaca sistem. Silakan coba lagi.",
+    "bad_image": "Format gambar tidak didukung. Gunakan foto JPG atau PNG.",
+    "config": "Konfigurasi fitur AI tidak valid. Hubungi admin.",
+    "internal": "Terjadi kesalahan saat memproses AI. Silakan coba lagi.",
+}
+# Kode yang berarti "AI tidak bisa dipakai sama sekali" (bukan galat sesaat).
+UNAVAILABLE_CODES = ("not_configured", "sdk_missing", "disabled", "feature_disabled")
+
+_HTTP_STATUS = {
+    "not_configured": 503, "sdk_missing": 503, "disabled": 503, "feature_disabled": 503,
+    "over_budget": 429, "rate_limited": 429, "timeout": 504, "connection": 503,
+    "bad_image": 400, "config": 500, "internal": 500,
+}
+
+
+def friendly_error(code: Optional[str]) -> str:
+    return AI_ERROR_MESSAGES.get(code or "internal", AI_ERROR_MESSAGES["internal"])
+
+
+def http_status_for(code: Optional[str]) -> int:
+    return _HTTP_STATUS.get(code or "internal", 502)
 
 
 # ── WS-B(d): DB-driven AI settings (budget + feature toggles + master switch) ─
@@ -125,11 +207,19 @@ def invalidate_ai_settings_cache() -> None:
     _AI_SETTINGS_CACHE["ts"] = 0.0
 
 
+def _norm_feature_key(s: str) -> str:
+    return (s or "").lower().strip().replace("_", "-")
+
+
 def _feature_disabled(feature: str, disabled: list) -> bool:
-    """True bila `feature` cocok (exact atau prefix-grup) dengan salah satu entri disabled."""
-    f = (feature or "").lower()
+    """True bila `feature` cocok (exact atau prefix-grup) dengan salah satu entri disabled.
+
+    2026-11-02: '_' disamakan dengan '-' — label lama `maklon_ai_quote` dulu tidak
+    pernah cocok dengan grup `maklon` sehingga toggle admin tidak berefek.
+    """
+    f = _norm_feature_key(feature)
     for d in (disabled or []):
-        d = (d or "").lower().strip()
+        d = _norm_feature_key(d)
         if not d:
             continue
         if f == d or f.startswith(d + "-"):
@@ -137,20 +227,44 @@ def _feature_disabled(feature: str, disabled: list) -> bool:
     return False
 
 
-def resolve_model(model) -> Tuple[str, str]:
-    """Terima tier string ('executive'/'standard'/'light') ATAU tuple (provider, model)."""
-    if isinstance(model, str):
-        return TIER_MODELS.get(model.lower(), TIER_MODELS[DEFAULT_TIER])
-    if isinstance(model, (tuple, list)) and len(model) == 2:
-        return (model[0], model[1])
-    return TIER_MODELS[DEFAULT_TIER]
+def _normalize_feature(feature: Optional[str]) -> str:
+    """Label fitur stabil: buang sufiks id/uuid (mis. `chat-1a2b3c4d`)."""
+    base = (feature or "ai").strip() or "ai"
+    return re.sub(r"[-_][0-9a-f]{6,}$", "", base) or "ai"
+
+
+def resolve_model(tier) -> Tuple[str, str]:
+    """HANYA menerima tier: 'executive' / 'standard' / 'light'.
+
+    2026-11-02: tuple (provider, model) seperti ("openai", "gpt-5.1") DITOLAK —
+    dulu diteruskan apa adanya ke Anthropic sehingga fitur maklon/perawatan mesin
+    tidak pernah berhasil.
+    """
+    if isinstance(tier, str) and tier.strip().lower() in TIER_MODELS:
+        return TIER_MODELS[tier.strip().lower()]
+    raise ValueError(f"Tier AI tidak dikenal: {tier!r} (pakai executive/standard/light)")
+
+
+def _tier_name(tier) -> str:
+    return tier.strip().lower() if isinstance(tier, str) else DEFAULT_TIER
 
 
 class AIError(Exception):
-    """Kegagalan pemanggilan AI terpusat (termasuk over-budget)."""
-    def __init__(self, message: str, over_budget: bool = False):
-        super().__init__(message or "AI error")
-        self.over_budget = over_budget
+    """Kegagalan pemanggilan AI terpusat. `str(e)` SELALU pesan ramah."""
+
+    def __init__(self, message: Optional[str] = None, over_budget: bool = False, code: Optional[str] = None):
+        code = code or ("over_budget" if over_budget else "internal")
+        super().__init__(message or friendly_error(code))
+        self.code = code
+        self.over_budget = over_budget or code == "over_budget"
+
+    @property
+    def status_code(self) -> int:
+        return http_status_for(self.code)
+
+    @property
+    def user_message(self) -> str:
+        return str(self)
 
 
 @dataclass
@@ -162,7 +276,9 @@ class TrackedResult:
     latency_ms: float = 0.0
     model: str = ""
     success: bool = False
-    error: Optional[str] = None
+    error: Optional[str] = None          # pesan ramah (aman ditampilkan)
+    error_code: Optional[str] = None
+    stop_reason: Optional[str] = None
     over_budget: bool = False
     budget_warning: Optional[str] = None
 
@@ -175,58 +291,217 @@ def _approx_tokens(text: str) -> int:
 
 
 def _calc_cost(model: Tuple[str, str], tokens_in: int, tokens_out: int) -> float:
-    pricing = MODEL_PRICING.get(model, MODEL_PRICING[("default", "default")])
+    pricing = MODEL_PRICING.get(tuple(model), MODEL_PRICING[("default", "default")])
     return (tokens_in * pricing["input"] + tokens_out * pricing["output"]) / 1_000_000
+
+
+def _effective_max_tokens(requested: Optional[int]) -> int:
+    try:
+        req = int(requested or MAX_OUTPUT_TOKENS)
+    except (TypeError, ValueError):
+        req = MAX_OUTPUT_TOKENS
+    return max(req, MIN_OUTPUT_TOKENS)
+
+
+# ── Gambar: media_type dari ISI berkas, bukan dipatok image/png ──────────────
+def detect_image_media_type(image_base64: str) -> Tuple[str, str]:
+    """Return (media_type, base64_bersih). Raise ValueError bila bukan JPEG/PNG.
+
+    2026-11-02: dulu selalu `image/png`, sehingga foto JPEG dari kamera HP dikirim
+    dengan label salah. Prefix data-URL (`data:image/...;base64,`) dibuang.
+    """
+    raw = (image_base64 or "").strip()
+    if raw.startswith("data:"):
+        raw = raw.split(",", 1)[-1]
+    raw = re.sub(r"\s+", "", raw)
+    if not raw:
+        raise ValueError("gambar kosong")
+    head_b64 = raw[:32]
+    head_b64 += "=" * (-len(head_b64) % 4)
+    try:
+        head = base64.b64decode(head_b64, validate=False)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError("base64 gambar rusak") from e
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg", raw
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png", raw
+    raise ValueError("format gambar bukan JPEG/PNG")
+
+
+# ── Kunci & SDK ──────────────────────────────────────────────────────────────
+_KEY_CACHE = {"value": None, "source": "none", "ts": 0.0}
+_KEY_TTL = 30.0  # detik
+
+
+def invalidate_api_key_cache() -> None:
+    """Dipanggil layar Integrasi setelah kunci disimpan/dihapus."""
+    _KEY_CACHE.update({"value": None, "source": "none", "ts": 0.0})
+
+
+async def resolve_api_key(db=None, force: bool = False) -> Tuple[str, str]:
+    """Return (kunci, sumber). Sumber: 'db' (layar Integrasi) → 'env' → 'none'.
+
+    2026-11-02: env dibaca SAAT panggilan (dulu konstanta saat import), dan kunci
+    yang disimpan admin di layar Integrasi kini juga dipakai semua fitur AI.
+    """
+    now = time.time()
+    if (not force) and _KEY_CACHE["ts"] and (now - _KEY_CACHE["ts"]) < _KEY_TTL:
+        return _KEY_CACHE["value"] or "", _KEY_CACHE["source"]
+    value, source = "", "none"
+    try:
+        db = db if db is not None else get_db()
+        doc = await db.rahaza_integration_settings.find_one(
+            {"key_name": ANTHROPIC_KEY_NAME}, {"_id": 0, "value": 1})
+        if doc and (doc.get("value") or "").strip():
+            value, source = doc["value"].strip(), "db"
+    except Exception as e:  # DB belum siap / uji hermetik
+        logger.debug("resolve_api_key: DB tidak terbaca (%s)", type(e).__name__)
+    if not value:
+        env_val = (os.environ.get(ANTHROPIC_KEY_NAME) or "").strip()
+        if env_val:
+            value, source = env_val, "env"
+    _KEY_CACHE.update({"value": value, "source": source, "ts": now})
+    return value, source
+
+
+def sdk_available() -> bool:
+    try:
+        import anthropic  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def sdk_version() -> Optional[str]:
+    try:
+        import anthropic
+        return getattr(anthropic, "__version__", None)
+    except Exception:
+        return None
+
+
+async def ai_status(db=None) -> dict:
+    """Status AI yang jujur untuk gerbang fitur & Monitor AI."""
+    key, source = await resolve_api_key(db)
+    sdk = sdk_available()
+    if not sdk:
+        code = "sdk_missing"
+    elif not key:
+        code = "not_configured"
+    else:
+        code = None
+    return {
+        "available": code is None,
+        "code": code,
+        "message": friendly_error(code) if code else "AI aktif.",
+        "key_configured": bool(key),
+        "key_source": source,
+        "sdk_installed": sdk,
+        "sdk_version": sdk_version() if sdk else None,
+    }
+
+
+async def ai_available(db=None) -> bool:
+    """True bila kunci Anthropic ada (DB/env) DAN SDK `anthropic` bisa di-import.
+
+    2026-11-02: pengganti tunggal semua gerbang lama `EMERGENT_LLM_KEY`.
+    """
+    return (await ai_status(db))["available"]
+
+
+# Klien dipakai ulang (satu per kunci) — dulu dibuat baru di setiap panggilan.
+_CLIENT_CACHE = {"key": None, "client": None}
+
+
+def _make_client(api_key: str):
+    import anthropic
+    return anthropic.AsyncAnthropic(
+        api_key=api_key,
+        timeout=anthropic.Timeout(LLM_TIMEOUT_SECONDS, connect=5.0),
+        max_retries=LLM_MAX_RETRIES,
+    )
+
+
+def _get_client(api_key: str):
+    if _CLIENT_CACHE["client"] is None or _CLIENT_CACHE["key"] != api_key:
+        _CLIENT_CACHE["client"] = _make_client(api_key)
+        _CLIENT_CACHE["key"] = api_key
+    return _CLIENT_CACHE["client"]
+
+
+def reset_client_cache() -> None:
+    _CLIENT_CACHE.update({"key": None, "client": None})
+
+
+def _classify_exception(e: Exception) -> str:
+    """Petakan exception SDK → kode galat (paling spesifik lebih dulu)."""
+    try:
+        import anthropic
+    except Exception:
+        return "internal"
+    if isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return "auth"
+    if isinstance(e, anthropic.RateLimitError):
+        return "rate_limited"
+    if isinstance(e, anthropic.APITimeoutError):
+        return "timeout"
+    if isinstance(e, anthropic.APIConnectionError):
+        return "connection"
+    if isinstance(e, (anthropic.BadRequestError, anthropic.NotFoundError,
+                      anthropic.UnprocessableEntityError)):
+        return "bad_request"
+    if isinstance(e, anthropic.APIStatusError):
+        return "upstream"
+    return "internal"
+
+
+async def sum_cost(db, match: dict) -> float:
+    """Total `cost_usd` log pemakaian untuk filter `match` (satu agregasi)."""
+    rows = await db.rahaza_ai_usage_logs.aggregate([
+        {"$match": match},
+        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
+    ]).to_list(length=1)
+    return float(rows[0].get("total") or 0.0) if rows else 0.0
+
+
+async def month_to_date_cost(db) -> float:
+    """Biaya AI bulan berjalan (UTC, sama dengan kunci `date` di log)."""
+    month_start = today_wib().replace(day=1)
+    return await sum_cost(db, {"date": {"$gte": month_start.isoformat()}})
 
 
 async def _check_budget(db, feature: str, *, daily_budget=None, monthly_budget=None, per_feature_budget=None) -> Tuple[bool, Optional[str]]:
     """Check if we're approaching budget. Returns (over_budget, warning_message).
 
     Budget limits berasal dari setting DB (WS-B d); fallback ke default env.
+    2026-11-02: biaya dihitung dari SEMUA log (jawaban terpotong/ditolak tetap
+    ditagih Anthropic); percobaan yang diblok sebelum memanggil API biayanya 0.
     """
     daily_budget = DEFAULT_DAILY_BUDGET_USD if daily_budget is None else float(daily_budget)
     monthly_budget = DEFAULT_MONTHLY_BUDGET_USD if monthly_budget is None else float(monthly_budget)
     per_feature_budget = DEFAULT_PER_FEATURE_DAILY_USD if per_feature_budget is None else float(per_feature_budget)
 
-    today = datetime.now(timezone.utc).date()
-    month_start = today.replace(day=1)
+    today = today_wib()
 
-    # Daily total
-    daily_pipeline = [
-        {"$match": {"date": today.isoformat(), "success": True}},
-        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-    ]
-    daily_total_doc = await db.rahaza_ai_usage_logs.aggregate(daily_pipeline).to_list(length=1)
-    daily_total = daily_total_doc[0]["total"] if daily_total_doc else 0.0
-
+    daily_total = await sum_cost(db, {"date": today.isoformat()})
     if daily_total >= daily_budget:
-        return True, f"Daily budget exceeded: ${daily_total:.4f} / ${daily_budget}"
+        return True, f"Batas anggaran AI harian tercapai (${daily_total:.4f} dari ${daily_budget})."
 
-    # Feature daily
-    feat_pipeline = [
-        {"$match": {"date": today.isoformat(), "feature": feature, "success": True}},
-        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-    ]
-    feat_total_doc = await db.rahaza_ai_usage_logs.aggregate(feat_pipeline).to_list(length=1)
-    feat_total = feat_total_doc[0]["total"] if feat_total_doc else 0.0
+    feat_total = await sum_cost(db, {"date": today.isoformat(), "feature": feature})
     if feat_total >= per_feature_budget:
-        return True, f"Feature {feature} daily budget exceeded: ${feat_total:.4f} / ${per_feature_budget}"
+        return True, f"Batas anggaran harian fitur AI ini tercapai (${feat_total:.4f} dari ${per_feature_budget})."
 
-    # Monthly total
-    monthly_pipeline = [
-        {"$match": {"date": {"$gte": month_start.isoformat()}, "success": True}},
-        {"$group": {"_id": None, "total": {"$sum": "$cost_usd"}}},
-    ]
-    monthly_total_doc = await db.rahaza_ai_usage_logs.aggregate(monthly_pipeline).to_list(length=1)
-    monthly_total = monthly_total_doc[0]["total"] if monthly_total_doc else 0.0
+    # Bulanan — batas diatur di Monitor AI › Pengaturan (`ai_config.monthly_budget_usd`, K29).
+    monthly_total = await month_to_date_cost(db)
     if monthly_total >= monthly_budget:
-        return True, f"Monthly budget exceeded: ${monthly_total:.4f} / ${monthly_budget}"
+        return True, f"Batas anggaran AI bulanan tercapai (${monthly_total:.4f} dari ${monthly_budget})."
 
     # Warning thresholds
     if daily_total >= daily_budget * 0.8:
-        return False, f"⚠️ Daily budget 80% reached: ${daily_total:.4f} / ${daily_budget}"
+        return False, f"⚠️ Anggaran AI harian sudah 80%: ${daily_total:.4f} / ${daily_budget}"
     if monthly_total >= monthly_budget * 0.8:
-        return False, f"⚠️ Monthly budget 80% reached: ${monthly_total:.4f} / ${monthly_budget}"
+        return False, f"⚠️ Anggaran AI bulanan sudah 80%: ${monthly_total:.4f} / ${monthly_budget}"
 
     return False, None
 
@@ -241,16 +516,23 @@ async def log_usage(
     latency_ms: float,
     success: bool,
     error: Optional[str] = None,
+    error_code: Optional[str] = None,
+    error_detail: Optional[str] = None,
+    stop_reason: Optional[str] = None,
 ):
-    """Insert usage log into rahaza_ai_usage_logs."""
+    """Insert usage log into rahaza_ai_usage_logs.
+
+    `error` = pesan ramah; `error_detail` = ringkasan teknis (hanya untuk admin).
+    """
     try:
         db = get_db()
         await db.rahaza_ai_usage_logs.insert_one({
             "id": str(uuid.uuid4()),
             "feature": feature,
+            "feature_group": feature_group(feature),  # K29: cocok dengan toggle Monitor AI
             "user_id": user_id,
-            "model_provider": model[0] if isinstance(model, tuple) else "unknown",
-            "model_name": model[1] if isinstance(model, tuple) else str(model),
+            "model_provider": model[0] if isinstance(model, (tuple, list)) else "unknown",
+            "model_name": model[1] if isinstance(model, (tuple, list)) else str(model),
             "tokens_in": int(tokens_in),
             "tokens_out": int(tokens_out),
             "tokens_total": int(tokens_in + tokens_out),
@@ -258,11 +540,32 @@ async def log_usage(
             "latency_ms": round(float(latency_ms), 2),
             "success": bool(success),
             "error": error,
-            "date": datetime.now(timezone.utc).date().isoformat(),
+            "error_code": error_code,
+            "error_detail": (error_detail or None) and str(error_detail)[:300],
+            "stop_reason": stop_reason,
+            "date": today_wib().isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception as e:
         logger.warning(f"Failed to log AI usage: {e}")
+
+
+async def record_ai_failure(feature: str, code: str, *, user_id: Optional[str] = None,
+                            tier: str = DEFAULT_TIER, detail: Optional[str] = None) -> None:
+    """Catat percobaan AI yang gagal sebelum sampai ke Anthropic (mis. kunci kosong)."""
+    t_name = _tier_name(tier)
+    if t_name == "executive" and not executive_allowed(_normalize_feature(feature)):
+        t_name = "standard"  # K29: log menampilkan model yang SEBENARNYA akan dipakai
+    model = TIER_MODELS.get(t_name, TIER_MODELS[DEFAULT_TIER])
+    await log_usage(_normalize_feature(feature), user_id, model, 0, 0, 0.0, 0.0, False,
+                    friendly_error(code), error_code=code, error_detail=detail)
+
+
+def _fail(result: TrackedResult, code: str, message: Optional[str] = None) -> TrackedResult:
+    result.success = False
+    result.error_code = code
+    result.error = message or friendly_error(code)
+    return result
 
 
 async def tracked_llm_call(
@@ -271,7 +574,6 @@ async def tracked_llm_call(
     model,
     system_message: str,
     user_message: str,
-    api_key: Optional[str] = None,
     session_id: Optional[str] = None,
     skip_budget_check: bool = False,
     image_base64: Optional[str] = None,
@@ -279,34 +581,49 @@ async def tracked_llm_call(
 ) -> TrackedResult:
     """Wrapper terpusat yang melacak biaya LLM.
 
-    `model` bisa tier string ('executive'/'standard'/'light') atau tuple (provider, model).
-    `api_key` default ke EMERGENT_LLM_KEY. `image_base64` untuk input vision (opsional).
-    Return TrackedResult dengan .text saat sukses, .error saat gagal.
+    `model` WAJIB tier string ('executive'/'standard'/'light'). Kunci diambil dari
+    layar Integrasi (DB) lalu env `ANTHROPIC_API_KEY`. `image_base64` = JPEG/PNG.
+    Return TrackedResult: `.text` saat sukses; `.error` (ramah) + `.error_code` saat gagal.
     """
-    model = resolve_model(model)
-    # 2026-07-27: hanya kunci Anthropic yang sah. Pemanggil lama masih meneruskan
-    # EMERGENT_LLM_KEY secara eksplisit — abaikan dan pakai kunci Claude resmi.
-    api_key = api_key if str(api_key or "").startswith("sk-ant-") else ANTHROPIC_API_KEY
-    result = TrackedResult(model=f"{model[0]}/{model[1]}")
+    feature = _normalize_feature(feature)
+    tier = _tier_name(model)
+    if tier == "executive" and not executive_allowed(feature):
+        # K29 (2026-11-02): Opus hanya untuk Laporan Eksekutif → selain itu Sonnet.
+        logger.info("AI tier executive diturunkan ke standard untuk fitur %s (K29)", feature)
+        tier = model = "standard"
+    try:
+        resolved = resolve_model(model)
+    except ValueError as e:
+        res = _fail(TrackedResult(model="-"), "config")
+        await log_usage(feature, user_id, ("config", str(model)[:40]), 0, 0, 0.0, 0.0, False,
+                        res.error, error_code="config", error_detail=str(e))
+        return res
+    result = TrackedResult(model=f"{resolved[0]}/{resolved[1]}")
     db = get_db()
 
-    if not api_key:
-        result.error = "ANTHROPIC_API_KEY belum dikonfigurasi"
+    async def _blocked(code: str, detail: Optional[str] = None, message: Optional[str] = None):
+        _fail(result, code, message)
+        await log_usage(feature, user_id, resolved, 0, 0, 0.0, 0.0, False, result.error,
+                        error_code=code, error_detail=detail)
         return result
+
+    if not sdk_available():
+        return await _blocked("sdk_missing")
+    api_key, _src = await resolve_api_key(db)
+    if not api_key:
+        return await _blocked("not_configured")
 
     # WS-B(d): setting DB — master switch, toggle fitur, & budget dari admin
     if not skip_budget_check:
         try:
             settings = await get_ai_settings(db)
-            if not settings.get("ai_enabled", True):
-                result.error = "AI dinonaktifkan oleh admin (master switch)."
-                return result
-            if _feature_disabled(feature, settings.get("disabled_features")):
-                result.error = f"Fitur AI '{feature}' dinonaktifkan oleh admin."
-                return result
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             logger.warning(f"AI settings load failed (continuing): {e}")
             settings = _default_ai_settings()
+        if not settings.get("ai_enabled", True):
+            return await _blocked("disabled")
+        if _feature_disabled(feature, settings.get("disabled_features")):
+            return await _blocked("feature_disabled")
 
         # Budget check (limits dari settings)
         try:
@@ -318,64 +635,90 @@ async def tracked_llm_call(
             )
             if over:
                 result.over_budget = True
-                result.error = warning
                 result.budget_warning = warning
-                return result
+                return await _blocked("over_budget", detail=warning, message=warning)
             if warning:
                 result.budget_warning = warning
         except Exception as e:
             logger.warning(f"Budget check failed (continuing): {e}")
 
-    # Approximate input tokens (system + user)
-    tokens_in_approx = _approx_tokens(system_message) + _approx_tokens(user_message)
+    # Konten pesan (teks / gambar + teks)
+    if image_base64:
+        try:
+            media_type, clean_b64 = detect_image_media_type(image_base64)
+        except ValueError as e:
+            return await _blocked("bad_image", detail=str(e))
+        content = [
+            {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": clean_b64}},
+            {"type": "text", "text": user_message or ""},
+        ]
+    else:
+        content = user_message or ""
 
+    tokens_in_approx = _approx_tokens(system_message) + _approx_tokens(user_message)
     start = time.time()
     try:
-        from anthropic import AsyncAnthropic
-        client = AsyncAnthropic(api_key=api_key)
-
-        if image_base64:
-            content = [
-                {"type": "image",
-                 "source": {"type": "base64", "media_type": "image/png", "data": image_base64}},
-                {"type": "text", "text": user_message},
-            ]
-        else:
-            content = user_message
-
+        client = _get_client(api_key)
         msg = await client.messages.create(
-            model=model[1],
-            max_tokens=int(max_tokens or MAX_OUTPUT_TOKENS),
+            model=resolved[1],
+            max_tokens=_effective_max_tokens(max_tokens),
             system=system_message or "",
             messages=[{"role": "user", "content": content}],
+            output_config={"effort": TIER_EFFORT.get(tier, "medium")},
         )
-        elapsed_ms = (time.time() - start) * 1000
-
-        response = "".join(getattr(b, "text", "") for b in (msg.content or []))
-        usage = getattr(msg, "usage", None)
-        tokens_in = int(getattr(usage, "input_tokens", 0) or tokens_in_approx)
-        tokens_out = int(getattr(usage, "output_tokens", 0) or _approx_tokens(response))
-        cost = _calc_cost(model, tokens_in, tokens_out)
-
-        result.text = response
-        result.tokens_in = tokens_in
-        result.tokens_out = tokens_out
-        result.cost_usd = cost
-        result.latency_ms = elapsed_ms
-        result.success = True
-
-        await log_usage(feature, user_id, model, tokens_in, tokens_out, cost, elapsed_ms, True)
-        return result
     except Exception as e:
         elapsed_ms = (time.time() - start) * 1000
-        result.error = str(e)
+        code = _classify_exception(e)
+        _fail(result, code)
         result.latency_ms = elapsed_ms
-        result.success = False
-        await log_usage(feature, user_id, model, tokens_in_approx, 0, 0.0, elapsed_ms, False, str(e))
+        logger.warning("AI call gagal [%s] %s: %s", feature, code, type(e).__name__)
+        await log_usage(feature, user_id, resolved, tokens_in_approx, 0, 0.0, elapsed_ms, False,
+                        result.error, error_code=code,
+                        error_detail=f"{type(e).__name__}: {str(e)[:200]}")
         return result
 
+    elapsed_ms = (time.time() - start) * 1000
+    usage = getattr(msg, "usage", None)
+    text = "".join(
+        (getattr(b, "text", "") or "")
+        for b in (getattr(msg, "content", None) or [])
+        if getattr(b, "type", None) == "text"
+    )
+    tokens_in = int(getattr(usage, "input_tokens", 0) or tokens_in_approx)
+    tokens_out = int(getattr(usage, "output_tokens", 0) or _approx_tokens(text))
+    cost = _calc_cost(resolved, tokens_in, tokens_out)
+    stop = getattr(msg, "stop_reason", None)
 
-# ── WS-C: High-level helpers (dipakai semua route) ───────────────────────────
+    result.tokens_in = tokens_in
+    result.tokens_out = tokens_out
+    result.cost_usd = cost
+    result.latency_ms = elapsed_ms
+    result.stop_reason = stop
+
+    # 2026-11-02: cek stop_reason SEBELUM memakai isi. Jawaban terpotong/ditolak
+    # tidak boleh diperlakukan sebagai jawaban sah (mis. JSON terpotong → default palsu).
+    code = None
+    if stop == "refusal":
+        code = "refusal"
+    elif stop in ("max_tokens", "model_context_window_exceeded"):
+        code = "truncated"
+    elif not text.strip():
+        code = "empty"
+    if code:
+        _fail(result, code)
+        # Token tetap ditagih Anthropic → dicatat sebagai biaya, tetapi success=False.
+        await log_usage(feature, user_id, resolved, tokens_in, tokens_out, cost, elapsed_ms, False,
+                        result.error, error_code=code, stop_reason=stop)
+        return result
+
+    result.text = text
+    result.success = True
+    await log_usage(feature, user_id, resolved, tokens_in, tokens_out, cost, elapsed_ms, True,
+                    stop_reason=stop)
+    return result
+
+
+# ── WS-C: High-level helpers ─────────────────────────────────────────────────
 async def ai_complete(
     feature: str,
     system_message: str,
@@ -387,7 +730,7 @@ async def ai_complete(
     session_id: Optional[str] = None,
     raise_on_error: bool = True,
 ) -> str:
-    """Panggil AI dan kembalikan teks. Raise AIError bila gagal (default)."""
+    """Panggil AI dan kembalikan teks. Raise AIError (pesan ramah) bila gagal (default)."""
     res = await tracked_llm_call(
         feature=feature, user_id=user_id, model=tier,
         system_message=system_message, user_message=user_message,
@@ -395,7 +738,7 @@ async def ai_complete(
     )
     if not res.success:
         if raise_on_error:
-            raise AIError(res.error or "AI call gagal", over_budget=res.over_budget)
+            raise AIError(res.error, over_budget=res.over_budget, code=res.error_code)
         return ""
     return res.text
 
@@ -403,7 +746,6 @@ async def ai_complete(
 def _extract_json(text: str):
     """Strip markdown fence & ekstrak objek/array JSON pertama; return parsed atau raise."""
     import json as _json
-    import re as _re
     clean = (text or "").strip()
     if clean.startswith("```"):
         parts = clean.split("```")
@@ -414,10 +756,15 @@ def _extract_json(text: str):
     try:
         return _json.loads(clean)
     except Exception:
-        m = _re.search(r"(\{.*\}|\[.*\])", clean, _re.S)
+        m = re.search(r"(\{.*\}|\[.*\])", clean, re.S)
         if m:
             return _json.loads(m.group(1))
         raise
+
+
+def extract_json(text: str):
+    """Versi publik `_extract_json` (raise ValueError/JSONDecodeError bila gagal)."""
+    return _extract_json(text)
 
 
 async def ai_json(
@@ -442,20 +789,20 @@ async def ai_json(
     if not res.success:
         if default is not None:
             return default
-        raise AIError(res.error or "AI JSON call gagal", over_budget=res.over_budget)
+        raise AIError(res.error, over_budget=res.over_budget, code=res.error_code)
     try:
         return _extract_json(res.text)
-    except Exception as e:
+    except Exception:
         if default is not None:
             return default
-        raise AIError(f"Gagal parse JSON dari AI: {e}")
+        raise AIError(code="bad_output")
 
 
 async def get_usage_summary(days: int = 7) -> dict:
     """Get aggregated usage stats for last N days."""
     db = get_db()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
-    
+    cutoff = (today_wib() - timedelta(days=days)).isoformat()
+
     # Overall totals
     overall = await db.rahaza_ai_usage_logs.aggregate([
         {"$match": {"date": {"$gte": cutoff}}},
@@ -469,7 +816,7 @@ async def get_usage_summary(days: int = 7) -> dict:
             "avg_latency_ms": {"$avg": "$latency_ms"},
         }},
     ]).to_list(length=1)
-    
+
     overall_stats = overall[0] if overall else {
         "total_calls": 0, "successful_calls": 0, "failed_calls": 0,
         "total_cost_usd": 0, "total_tokens": 0, "avg_latency_ms": 0,
@@ -496,7 +843,7 @@ async def get_usage_summary(days: int = 7) -> dict:
         }},
         {"$sort": {"cost_usd": -1}},
     ]).to_list(length=100)
-    
+
     # By day
     by_day = await db.rahaza_ai_usage_logs.aggregate([
         {"$match": {"date": {"$gte": cutoff}}},
@@ -514,10 +861,14 @@ async def get_usage_summary(days: int = 7) -> dict:
         {"$sort": {"date": 1}},
     ]).to_list(length=days + 5)
 
+    # 2026-11-02 (K29): grup Monitor AI per fitur + anggaran EFEKTIF dari setelan
+    # (dulu angka env bawaan → "Monthly $100" tetap tampil walau admin mengubahnya).
+    for row in by_feature:
+        row["group"] = feature_group(row.get("feature"))
     return {
         "period_days": days,
         "from_date": cutoff,
-        "to_date": datetime.now(timezone.utc).date().isoformat(),
+        "to_date": today_wib().isoformat(),
         "overall": {
             **overall_stats,
             "total_cost_usd": round(overall_stats.get("total_cost_usd", 0), 4),
@@ -525,11 +876,22 @@ async def get_usage_summary(days: int = 7) -> dict:
         },
         "by_feature": by_feature,
         "by_day": by_day,
-        "budgets": {
-            "daily_usd": DEFAULT_DAILY_BUDGET_USD,
-            "monthly_usd": DEFAULT_MONTHLY_BUDGET_USD,
-            "per_feature_daily_usd": DEFAULT_PER_FEATURE_DAILY_USD,
-        },
+        "budgets": await effective_budgets(db),
+    }
+
+
+async def effective_budgets(db=None) -> dict:
+    """Anggaran yang BENAR-BENAR dipakai `_check_budget` (setelan DB → env) + pemakaian bulan ini."""
+    db = db if db is not None else get_db()
+    s = await get_ai_settings(db)
+    month_cost = await month_to_date_cost(db)
+    monthly = float(s.get("monthly_budget_usd") or 0)
+    return {
+        "daily_usd": float(s.get("daily_budget_usd") or 0),
+        "monthly_usd": monthly,
+        "per_feature_daily_usd": float(s.get("per_feature_daily_usd") or 0),
+        "month_cost_usd": round(month_cost, 4),
+        "monthly_used_pct": round(month_cost / monthly * 100, 1) if monthly > 0 else 0.0,
     }
 
 

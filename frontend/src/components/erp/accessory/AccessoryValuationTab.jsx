@@ -21,6 +21,8 @@ import {
 import { EmptyState } from '../EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import AccessoryValuationLedger from './AccessoryValuationLedger';
+import { MoneyInput } from '@/components/ui/money-input';
+import { thisMonthWIB } from '@/lib/waktu';
 // FASE 10: otomasi — ringkasan harian item belum dinilai + rapor bulanan via email
 import AccessoryValuationAutomation from './AccessoryValuationAutomation';
 
@@ -72,7 +74,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
   const [filter, setFilter] = useState('');
   const [saving, setSaving] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(thisMonthWIB);
   const [downloading, setDownloading] = useState('');
   const [costForm, setCostForm] = useState(null);   // {id, name, unit_cost, stock_qty}
   const [scrapForm, setScrapForm] = useState(null); // {id, name, unit, stock_qty, unit_cost}
@@ -131,12 +133,17 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
   const saveCost = async () => {
     const val = parseFloat(costForm.unit_cost);
     if (!(val >= 0)) { setErr('Harga satuan harus angka ≥ 0'); return; }
+    // 2026-11-02 (K12): Set HPP = revaluasi bernilai audit → alasan wajib
+    if (!String(costForm.notes || '').trim()) { setErr('Alasan koreksi HPP wajib diisi (jejak audit revaluasi).'); return; }
     setSaving(true); setErr(''); setMsg('');
     try {
       const res = await api('POST', '/api/acc/valuation/set-cost', token, {
         acc_id: costForm.id, unit_cost: val, notes: costForm.notes || '',
       });
-      setMsg(`HPP ${costForm.name} diperbarui: ${fmtRp(res.old_unit_cost)} → ${fmtRp(res.new_unit_cost)} · nilai stok ${fmtRp(res.stock_value)}`);
+      const rv = res.revaluation || {};
+      setMsg(`HPP ${costForm.name} diperbarui: ${fmtRp(res.old_unit_cost)} → ${fmtRp(res.new_unit_cost)} · nilai stok ${fmtRp(res.stock_value)}`
+        + (rv.reval_number ? ` · revaluasi ${rv.reval_number} ${rv.delta_value >= 0 ? '+' : '−'}${fmtRp(Math.abs(rv.delta_value || 0))}`
+          + (rv.je_number ? ` (jurnal ${rv.je_number})` : ' (tanpa jurnal: selisih 0)') : ''));
       setCostForm(null);
       setRefreshKey((k) => k + 1);
       await load();
@@ -310,7 +317,7 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
                 <td className="px-4 py-3 text-xs text-muted-foreground">{METHOD_LABEL[it.cost_method] || '-'}</td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1">
-                    <button onClick={() => { setErr(''); setCostForm({ id: it.id, name: it.name, unit_cost: it.unit_cost || '', notes: '' }); }}
+                    <button onClick={() => { setErr(''); setCostForm({ id: it.id, name: it.name, unit_cost: it.unit_cost || '', notes: '', old_cost: Number(it.unit_cost || 0), stock_qty: Number(it.stock_qty || 0), unit: it.unit }); }}
                       className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs border border-border hover:bg-foreground/5"
                       title="Set / koreksi harga satuan" data-testid={`acc-set-cost-${it.id}`}>
                       <Tag className="w-3.5 h-3.5" /> Set HPP
@@ -363,20 +370,34 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
             <div className="space-y-3">
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Harga satuan (Rp) *</label>
-                <input type="number" min="0" step="0.01" value={costForm.unit_cost}
+                <MoneyInput unstyled decimals={2} value={costForm.unit_cost}
                   onChange={(e) => setCostForm({ ...costForm, unit_cost: e.target.value })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                   placeholder="0" data-testid="acc-set-cost-input" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan (opsional)</label>
+                <label className="text-xs text-muted-foreground block mb-1">Alasan koreksi *</label>
                 <input value={costForm.notes} onChange={(e) => setCostForm({ ...costForm, notes: e.target.value })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                   placeholder="mis. hasil audit harga beli terakhir" data-testid="acc-set-cost-notes" />
               </div>
+              {(() => {
+                const nv = parseFloat(costForm.unit_cost);
+                const delta = Number.isFinite(nv) ? (costForm.stock_qty || 0) * (nv - (costForm.old_cost || 0)) : 0;
+                return (
+                  <div className="rounded-lg border border-border px-3 py-2 text-xs" data-testid="acc-set-cost-preview">
+                    <div className="text-muted-foreground">Revaluasi stok bernilai</div>
+                    <div>
+                      {fmtNum(costForm.stock_qty || 0)} {costForm.unit || ''} × ({Number.isFinite(nv) ? fmtRp(nv) : '—'} − {fmtRp(costForm.old_cost || 0)})
+                      {' = '}<strong className={delta < 0 ? 'text-red-700 dark:text-red-400' : ''}>{delta < 0 ? '−' : '+'}{fmtRp(Math.abs(delta))}</strong>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="flex items-start gap-2 text-[11px] text-muted-foreground">
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                Koreksi manual hanya mengubah HPP ke depan (nilai stok & jurnal berikutnya). Jurnal yang sudah terbentuk tidak diubah.
+                Set HPP mengubah nilai SELURUH stok yang ada sekarang. Selisihnya dibukukan sebagai dokumen revaluasi
+                + jurnal: Persediaan Aksesoris (1-1402) lawan Selisih Persediaan (5-1950). Alasan, pelaku, dan riwayat tercatat.
               </div>
               {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
             </div>

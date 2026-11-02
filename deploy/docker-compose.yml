@@ -44,7 +44,9 @@ services:
       ENSURE_INDEXES: ${ENSURE_INDEXES:-1}
       # FASE 4 (T-22): set "0" setelah semua layar memakai /api/auth/download-token
       ALLOW_SESSION_TOKEN_IN_QUERY: ${ALLOW_SESSION_TOKEN_IN_QUERY:-1}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      # 2026-11-02 (No.60): satu-satunya provider AI = Anthropic. Kunci juga bisa diisi admin di
+      # Adm. Sistem › Integrasi & API Keys (diutamakan). Kosong = fitur AI nonaktif (pesan ramah).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - uploads:/app/uploads
       - backups:/app/backups

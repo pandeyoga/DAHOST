@@ -25,6 +25,7 @@ import datetime
 import re
 import io
 import pandas as pd
+from utils.waktu import today_wib, fmt_wib
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
 
@@ -500,7 +501,7 @@ async def import_from_module(request: Request):
             rows.append(row)
 
         if not doc_name:
-            doc_name = f'Import Aset - {datetime.date.today().strftime("%d %b %Y")}'
+            doc_name = f'Import Aset - {today_wib().strftime("%d %b %Y")}'
         source_module = 'assets'
 
     elif module == 'procurement':
@@ -541,7 +542,7 @@ async def import_from_module(request: Request):
             rows.append(row)
 
         if not doc_name:
-            doc_name = f'Import Pengadaan - {datetime.date.today().strftime("%d %b %Y")}'
+            doc_name = f'Import Pengadaan - {today_wib().strftime("%d %b %Y")}'
         source_module = 'procurement'
     else:
         raise HTTPException(400, f"Module '{module}' tidak didukung")
@@ -727,7 +728,7 @@ async def save_version(doc_id: str, request: Request):
 
     label = (body.get("label") or "").strip()
     if not label:
-        label = f"Versi {vnum} — {_now().strftime('%d %b %Y %H:%M')}"
+        label = f"Versi {vnum} — {fmt_wib('%d %b %Y %H:%M')}"
 
     version = {
         "id": _uid(),

@@ -7,6 +7,8 @@ import { IconButton } from './IconButton';
 import OnwardCTA from './OnwardCTA';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint, toBaseQty, baseUnitOf } from './uom/UomPicker';
+import UniversalScanner from './scanner/UniversalScanner';
+import { sameScanCode, scanFeedback } from './scanner/scanCode';
 
 const fmtNum = (v) => (v || 0).toLocaleString('id-ID');
 const CAT_ORDER = ['bahan', 'aksesoris', 'fg'];
@@ -23,7 +25,6 @@ export default function PutAwayModule({ token, onNavigate }) {
   const [zone, setZone] = useState('');
   const [rack, setRack] = useState('');
   const [binId, setBinId] = useState('');
-  const [barcode, setBarcode] = useState('');
   const [qty, setQty] = useState(0);
   const [inputUom, setInputUom] = useState('');   // satuan hitung fisik operator
   const [message, setMessage] = useState(null);
@@ -68,7 +69,7 @@ export default function PutAwayModule({ token, onNavigate }) {
 
   const selectItem = (item) => {
     setSelected(item); setQty(item.unshelved); setInputUom('');
-    setBldg(''); setZone(''); setRack(''); setBinId(''); setBarcode('');
+    setBldg(''); setZone(''); setRack(''); setBinId('');
     setPlacements(null); loadPlacements(item.material_id);
   };
 
@@ -83,11 +84,13 @@ export default function PutAwayModule({ token, onNavigate }) {
 
   const selectedBin = useMemo(() => loc.positions.find((p) => p.id === binId) || null, [loc.positions, binId]);
 
-  const handleScanBarcode = () => {
-    const code = barcode.trim();
+  // 2026-11-02 (Paket 3a): komponen scanner bersama + aturan kode yang sama dengan
+  // backend (`sameScanCode`: tanpa beda huruf, prefix/suffix scanner dibuang).
+  const handleScanBarcode = (raw) => {
+    const code = (raw || '').trim();
     if (!code) return;
-    const pos = loc.positions.find((p) => p.barcode === code);
-    if (!pos) { flash('error', `Bin dengan barcode "${code}" tidak ditemukan`); return; }
+    const pos = loc.positions.find((p) => sameScanCode(p.barcode, code));
+    if (!pos) { scanFeedback('error'); flash('error', `Bin dengan barcode "${code}" tidak ditemukan`); return; }
     if (selected && !pos.is_empty && pos.material_id !== selected.material_id) {
       flash('error', `Bin ${pos.barcode} sudah berisi ${pos.material_code || 'material lain'}. Pilih bin kosong.`);
       return;
@@ -119,7 +122,7 @@ export default function PutAwayModule({ token, onNavigate }) {
         const conv = (effUom && effUom !== baseUnit)
           ? ` (${fmtNum(qty)} ${effUom} = ${fmtNum(qtyBase)} ${baseUnit})` : '';
         flash('success', `Berhasil menempatkan ${fmtNum(qtyBase)} ${baseUnit || selected.unit || 'pcs'} ${selected.code}${conv} → ${selectedBin?.full_label || 'bin'}. Sisa belum dirak: ${fmtNum(data.remaining_unshelved)}`);
-        setSelected(null); setBinId(''); setBarcode(''); setQty(0); setInputUom(''); setPlacements(null);
+        setSelected(null); setBinId(''); setQty(0); setInputUom(''); setPlacements(null);
         fetchData();
       } else { flash('error', data.detail || 'Gagal put-away'); }
     } catch (e) { flash('error', e.message); }
@@ -202,10 +205,8 @@ export default function PutAwayModule({ token, onNavigate }) {
               {/* Scan bin */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1"><ScanLine className="w-3 h-3" /> Scan / Ketik Barcode Bin</label>
-                <div className="flex gap-2">
-                  <GlassInput placeholder="GD-01-ZN-01-RK-01-S01-P01" value={barcode} onChange={(e) => setBarcode(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScanBarcode()} data-testid="putaway-barcode-input" />
-                  <Button variant="outline" onClick={handleScanBarcode} data-testid="putaway-barcode-btn"><ScanLine className="w-4 h-4" /></Button>
-                </div>
+                <UniversalScanner variant="inline" onScan={handleScanBarcode}
+                  placeholder="GD-01-ZN-01-RK-01-S01-P01" data-testid="putaway-barcode-input" />
               </div>
 
               <div className="text-[11px] text-muted-foreground text-center">&mdash; atau pilih manual &mdash;</div>

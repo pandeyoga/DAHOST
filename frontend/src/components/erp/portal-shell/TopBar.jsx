@@ -7,15 +7,17 @@
  *   - Section pill nav (THE MENU)
  *   - Global search
  *   - Command palette shortcut button (⌘K hint)
- *   - Notification bell
+ *   - Notification bell = SATU kotak masuk (Perlu Tindakan + Pemberitahuan)
  *   - Account dropdown
+ *
+ * 2026-11-02 (K30) — ikon "Approval Inbox" (ApprovalBadge) terpisah dihapus:
+ * hitungannya dilebur ke tab "Perlu Tindakan" di bel, tanpa hitung dobel.
  */
 
 import {
   Menu, ChevronLeft, Command as CommandIcon,
 } from 'lucide-react';
 import { NotificationBell } from '../NotificationBell';
-import { ApprovalBadge } from '../ApprovalBadge';
 import GlobalSearch from './GlobalSearch';
 import AccountMenu from './AccountMenu';
 import { PORTAL_LABEL, formatSectionLabel } from './portalNav';
@@ -138,16 +140,8 @@ export default function TopBar({
             <span className="text-[10px] font-semibold tracking-wider uppercase opacity-60">⌘K</span>
           </button>
 
-          {/* Notification Bell */}
+          {/* Kotak masuk (bel): Perlu Tindakan + Pemberitahuan */}
           <NotificationBell
-            token={token}
-            onNavigateModule={(moduleId) => {
-              if (moduleId) onModuleChange(moduleId);
-            }}
-          />
-
-          {/* Approval Inbox Badge */}
-          <ApprovalBadge
             token={token}
             onNavigateModule={(moduleId) => {
               if (moduleId) onModuleChange(moduleId);

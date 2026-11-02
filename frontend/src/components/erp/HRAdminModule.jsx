@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -174,9 +175,9 @@ function GradeDialog({ initial, onSave, onClose }) {
           </div>
           <div className="space-y-1"><Label>Nama Grade *</Label><Input value={form.grade_name} onChange={e => setForm(f => ({ ...f, grade_name: e.target.value }))} placeholder="Level 1 — Staff" /></div>
           <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1"><Label>Min (Rp)</Label><Input type="number" value={form.min_salary} onChange={e => setForm(f => ({ ...f, min_salary: +e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Mid (Rp)</Label><Input type="number" value={form.mid_salary} onChange={e => setForm(f => ({ ...f, mid_salary: +e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Max (Rp)</Label><Input type="number" value={form.max_salary} onChange={e => setForm(f => ({ ...f, max_salary: +e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Min (Rp)</Label><MoneyInput value={form.min_salary} onChange={e => setForm(f => ({ ...f, min_salary: +e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Mid (Rp)</Label><MoneyInput value={form.mid_salary} onChange={e => setForm(f => ({ ...f, mid_salary: +e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Max (Rp)</Label><MoneyInput value={form.max_salary} onChange={e => setForm(f => ({ ...f, max_salary: +e.target.value }))} /></div>
           </div>
           <div className="space-y-1"><Label>Deskripsi</Label><Textarea rows={2} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></div>
         </div>

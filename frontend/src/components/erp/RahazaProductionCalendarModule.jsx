@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Calendar, Plus, Trash2, ChevronLeft, ChevronRight, Calculator, RefreshCw } from 'lucide-react';
+import { todayWIB, thisMonthWIB, thisYearWIB } from '@/lib/waktu';
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const DAYS_SHORT = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
@@ -20,9 +21,8 @@ const TYPE_BADGE = {
 const BLANK = { date: '', name: '', type: 'holiday', notes: '' };
 
 export default function RahazaProductionCalendarModule({ token }) {
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [year, setYear] = useState(thisYearWIB);
+  const [month, setMonth] = useState(() => Number(thisMonthWIB().slice(5, 7)));
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -228,7 +228,7 @@ export default function RahazaProductionCalendarModule({ token }) {
               const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
               const entry = entryMap[dateStr];
               const isSunday = new Date(year, month - 1, day).getDay() === 0;
-              const isToday = dateStr === new Date().toISOString().slice(0, 10);
+              const isToday = dateStr === todayWIB();
               return (
                 <div key={day}
                   className={`h-14 p-1 border-b border-r border-[var(--glass-border)] transition-colors relative

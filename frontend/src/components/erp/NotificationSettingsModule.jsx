@@ -3,17 +3,23 @@
  * Admin menentukan kategori notifikasi (per portal sumber) mana yang boleh
  * diterima tiap role. Default diturunkan dari hak akses portal (RBAC) supaya
  * tidak ada dua sumber kebenaran.
+ *
+ * 2026-11-02 (K31) — retensi notifikasi (`retention_days`, bawaan 90) diatur di
+ * layar & dokumen pengaturan yang SAMA (notif_category_config), bukan layar baru.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Bell, Save, RefreshCw, Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Bell, Save, RefreshCw, Loader2, AlertCircle, ShieldCheck, Clock } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
+const RETENTION_MIN = 7;
+const RETENTION_MAX = 3650;
 
 export default function NotificationSettingsModule({ token }) {
   const [data, setData] = useState(null);
   const [matrix, setMatrix] = useState({});
+  const [retention, setRetention] = useState('90');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -27,6 +33,7 @@ export default function NotificationSettingsModule({ token }) {
       if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
       const d = await r.json();
       setData(d); setMatrix(d.matrix || {});
+      setRetention(String(d.retention_days || d.retention_default_days || 90));
     } catch (e) { setErr(e.message); } finally { setLoading(false); }
      
   }, [token]);
@@ -41,11 +48,18 @@ export default function NotificationSettingsModule({ token }) {
     });
   };
 
+  const retentionNum = Number(retention);
+  const retentionValid = Number.isInteger(retentionNum) && retentionNum >= RETENTION_MIN && retentionNum <= RETENTION_MAX;
+
   const save = async () => {
+    if (!retentionValid) {
+      toast.error(`Masa simpan harus ${RETENTION_MIN}–${RETENTION_MAX} hari.`);
+      return;
+    }
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/notifications/category-config`, {
-        method: 'PUT', headers: h, body: JSON.stringify({ matrix }),
+        method: 'PUT', headers: h, body: JSON.stringify({ matrix, retention_days: retentionNum }),
       });
       if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
       toast.success('Konfigurasi notifikasi tersimpan.');
@@ -94,6 +108,35 @@ export default function NotificationSettingsModule({ token }) {
           jadi tidak boleh ditutup. Setiap pengguna dapat membisukan kategori lain untuk dirinya sendiri
           (ikon gerigi di bel) — tetapi tidak bisa membuka kategori yang sudah ditutup di sini.
         </p>
+      </GlassCard>
+
+      <GlassCard className="p-4 flex flex-wrap items-end gap-4" data-testid="notif-retention-card">
+        <div className="flex items-start gap-2 min-w-[240px] flex-1">
+          <Clock className="w-4 h-4 mt-0.5 text-[hsl(var(--primary))] shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-foreground">Masa simpan notifikasi</p>
+            <p className="text-xs text-muted-foreground">
+              Pemberitahuan yang <b className="text-foreground">sudah dibaca</b> dan tindakan yang
+              <b className="text-foreground"> sudah selesai</b> dihapus otomatis setelah jumlah hari ini
+              (dicek tiap hari pukul 02:30). Notifikasi <b className="text-foreground">Perlu Tindakan</b> yang
+              masih terbuka tidak pernah dihapus.
+            </p>
+          </div>
+        </div>
+        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+          Hari
+          <input
+            type="number" inputMode="numeric" min={RETENTION_MIN} max={RETENTION_MAX} step={1}
+            value={retention}
+            onChange={(e) => setRetention(e.target.value)}
+            className={`w-28 h-9 px-2 rounded-lg border bg-[var(--card-surface)] text-sm text-foreground tabular-nums ${retentionValid ? 'border-[var(--glass-border)]' : 'border-red-400'}`}
+            aria-invalid={!retentionValid}
+            data-testid="notif-retention-days"
+          />
+        </label>
+        {!retentionValid && (
+          <p className="text-xs text-red-600 w-full">Isi {RETENTION_MIN}–{RETENTION_MAX} hari.</p>
+        )}
       </GlassCard>
 
       {err && (

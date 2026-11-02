@@ -6,16 +6,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { PageHeader, StatTile } from '../moduleAtoms';
 import { fmt, fmtCell, authHeaders, downloadXlsx } from './reportShared';
+import { todayWIB, yearStartWIB } from '@/lib/waktu';
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const startOfYear = () => `${new Date().getFullYear()}-01-01`;
 const COLS = ['opening_debit', 'opening_credit', 'period_debit', 'period_credit', 'end_debit', 'end_credit', 'pl_debit', 'pl_credit', 'bs_debit', 'bs_credit'];
 const HEAD = [['Saldo Awal', 2], ['Mutasi', 2], ['Saldo Akhir', 2], ['Laba Rugi', 2], ['Neraca', 2]];
 const tdN = 'py-1.5 px-2 text-right font-mono text-xs whitespace-nowrap';
 
 export default function RahazaWorksheetModule({ token }) {
-  const [from, setFrom] = useState(startOfYear());
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(yearStartWIB());
+  const [to, setTo] = useState(todayWIB());
   const [showZero, setShowZero] = useState(false);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);

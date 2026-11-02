@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -30,13 +32,8 @@ const PLATFORM_ICONS = { shopee: '🛍️', tiktok: '🎵', tokopedia: '🟢', i
 const RETURNS_VIEW_KEY = 'marketing_returns_view';
 const RETURN_HEADS = ['Tanggal', 'Platform', 'Order ID', 'Toko', 'Produk', 'Harga',
   'Alasan', 'Rincian alasan', 'Refund', 'Status', 'Hasil banding', 'Catatan', 'Aksi'];
-const fmtDate = (v) => {
-  if (!v) return '—';
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
-};
+// Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
+const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
 const STATUS_CONFIG = {
   pending:   { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: Clock },
   approved:  { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300', icon: ThumbsUp },
@@ -65,13 +62,18 @@ const EMPTY_FORM = {
   catalog_item_id: '', sku: '',
   account_id: '', account_name: '',
   date: '', order_id: '', platform: 'shopee', product: '', price: 0,
-  // W4 (sesi #29) — KONDISI & JUMLAH barang yang kembali. Dua kolom inilah yang
-  // membuat retur langsung menggerakkan stok gudang tanpa menebak:
-  //   Baik  → masuk Area Produk Jadi (ikut stok jual)
-  //   Rusak → masuk Area Karantina (TIDAK dijual)
+  // W4 (sesi #29) — KONDISI & JUMLAH barang yang DILAPORKAN kembali.
+  // 2026-11-02 (K1) — keduanya hanya PETUNJUK untuk gudang: stok baru bergerak saat
+  // gudang menerima paket (qty aktual), memeriksa, lalu memutuskan.
   item_condition: 'Baik', qty: 1,
-  reason: 'ukuran_salah', reason_detail: '', courier: 'jnt', refund_type: 'full_refund', notes: ''
+  reason: 'ukuran_salah', reason_detail: '', courier: 'jnt', refund_type: 'full_refund', notes: '',
+  // 2026-11-02 (No.14a) — nominal refund AKTUAL dari platform (dulu parsial dipatok 70%).
+  refund_amount: '',
 };
+
+// 2026-11-02 (No.14a) — tukar barang / tanpa refund tidak punya nominal refund.
+const NO_MONEY_REFUND = ['exchange', 'no_refund'];
+const suggestedFullRefund = (f) => (Number(f.price) || 0) * Math.max(1, Number(f.qty) || 1);
 
 export default function ReturnsRefundsModule({ token, onNavigate }) {
   const { toast } = useToast();
@@ -94,6 +96,8 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
   const [showForm, setShowForm] = useState(false);
   const [editTarget, setEditTarget] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  // true = staf sudah mengetik nominal refund sendiri (usulan harga × qty berhenti mengikuti).
+  const [refundTouched, setRefundTouched] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
 
   const [showDetail, setShowDetail] = useState(null);
@@ -171,14 +175,25 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
         reason_detail: ret.reason_detail,
         courier: ret.courier,
         refund_type: ret.refund_type,
+        refund_amount: ret.refund_amount ?? '',
         notes: ret.notes || ''
       });
+      // nominal yang sudah tersimpan (termasuk data lama) ditampilkan apa adanya
+      setRefundTouched(true);
     } else {
       setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, date: todayWIB() });
+      setRefundTouched(false);
     }
     setShowForm(true);
   };
+
+  // Nilai yang tampil di kolom nominal: refund penuh mengikuti harga × qty sampai
+  // staf mengetik sendiri; tukar/tanpa refund selalu 0.
+  const refundNoMoney = NO_MONEY_REFUND.includes(form.refund_type);
+  const refundShown = refundNoMoney
+    ? 0
+    : (form.refund_type === 'full_refund' && !refundTouched ? suggestedFullRefund(form) : form.refund_amount);
 
   // When account_id changes, auto-fill account_name & platform from master
   const handleAccountChange = (accountId) => {
@@ -195,6 +210,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
     setShowForm(false);
     setEditTarget(null);
     setForm(EMPTY_FORM);
+    setRefundTouched(false);
   };
 
   const handleSave = async () => {
@@ -202,26 +218,39 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       toast({ title: 'Error', description: 'Wajib pilih Akun / Toko', variant: 'destructive' });
       return;
     }
-    if (!form.order_id || !(form.catalog_item_id || form.product) || !form.reason_detail) {
-      toast({ title: 'Error', description: 'Order ID, Produk, dan Alasan Detail wajib diisi', variant: 'destructive' });
+    // 2026-11-02 — No.4(c): nomor pesanan TIDAK wajib (retur bebas).
+    if (!(form.catalog_item_id || form.product) || !form.reason_detail) {
+      toast({ title: 'Error', description: 'Produk dan Alasan Detail wajib diisi', variant: 'destructive' });
       return;
     }
+    // 2026-11-02 (No.14a) — nominal refund aktual: wajib ≥ 0 untuk refund penuh/sebagian.
+    let refundAmount = null;
+    if (!refundNoMoney) {
+      const raw = refundShown;
+      if (raw === '' || raw === null || raw === undefined || Number.isNaN(Number(raw))) {
+        toast({ title: 'Error', description: 'Isi Nominal Refund Aktual (Rp) sesuai keputusan platform', variant: 'destructive' });
+        return;
+      }
+      if (Number(raw) < 0) {
+        toast({ title: 'Error', description: 'Nominal refund tidak boleh negatif', variant: 'destructive' });
+        return;
+      }
+      refundAmount = Number(raw);
+    }
+    const payload = { ...form, refund_amount: refundAmount };
     try {
       setFormLoading(true);
       if (editTarget) {
-        await axios.put(`${API}/api/marketing/returns/${editTarget.id}`, form, { headers: authH });
+        await axios.put(`${API}/api/marketing/returns/${editTarget.id}`, payload, { headers: authH });
         toast({ title: 'Berhasil', description: 'Return diperbarui' });
       } else {
-        const res = await axios.post(`${API}/api/marketing/returns`, form, { headers: authH });
+        const res = await axios.post(`${API}/api/marketing/returns`, payload, { headers: authH });
         // W4 — beri tahu APA YANG TERJADI PADA STOK, bukan cuma "tersimpan".
+        // 2026-11-02 (K1) — stok TIDAK lagi bertambah saat retur dibuat.
         const wh = res?.data?.warehouse || {};
         const desc = wh.wh_return_code
-          ? `Retur tersimpan. Retur fisik ${wh.wh_return_code} otomatis dibuat di Gudang`
-            + (wh.restocked
-              ? ` · ${wh.stock_effect === 'sellable'
-                  ? `stok jual bertambah (${wh.location})`
-                  : `barang ditahan di karantina (${wh.location})`}`
-              : ' · stok BELUM bertambah (perlu dipilih produknya di Gudang)')
+          ? `Retur tersimpan. Retur fisik ${wh.wh_return_code} dibuat di Gudang (menunggu paket) · `
+            + 'stok & omzet setelah retur berubah setelah Gudang menerima dan memutuskan.'
           : 'Retur tersimpan (pekerjaan gudang belum terbuat — cek menu Gudang › Retur Fisik)';
         toast({ title: 'Berhasil', description: desc });
       }
@@ -282,14 +311,33 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
       setActionLoading(id);
       const res = await axios.post(`${API}/api/marketing/returns/${id}/complete`, {}, { headers: authH });
       const warning = res?.data?.warning;
+      // 2026-11-02 — /complete kini benar-benar menerbitkan nota kredit; sebutkan nomornya.
+      const cnMsg = res?.data?.credit_note_message || '';
       if (warning) {
-        toast({ title: 'Diselesaikan (dengan peringatan)', description: warning, variant: 'default' });
+        toast({ title: 'Diselesaikan (dengan peringatan)', description: [cnMsg, warning].filter(Boolean).join(' · '), variant: 'default' });
       } else {
-        toast({ title: 'Berhasil', description: 'Return diselesaikan' });
+        toast({ title: 'Berhasil', description: cnMsg || 'Return diselesaikan' });
       }
       fetchReturns(currentPage);
       fetchSummary();
       setShowDetail(null);
+    } catch (e) {
+      toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  // 2026-11-02 — retur yang sudah selesai TANPA nota kredit (data lama, ketika tombol
+  // "Selesaikan & Terbitkan Nota Kredit" belum menerbitkan apa pun) bisa diterbitkan di sini.
+  const handleIssueCreditNote = async (id) => {
+    try {
+      setActionLoading(id);
+      const res = await axios.post(`${API}/api/marketing/returns/${id}/create-credit-note`, {}, { headers: authH });
+      toast({ title: 'Berhasil', description: `Nota kredit ${res?.data?.data?.cn_number || ''} diterbitkan` });
+      const refreshed = await axios.get(`${API}/api/marketing/returns/${id}`, { headers: authH });
+      if (refreshed?.data?.data) setShowDetail(refreshed.data.data);
+      fetchReturns(currentPage);
     } catch (e) {
       toast({ title: 'Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
     } finally {
@@ -318,7 +366,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           : `Retur fisik dibuat di Gudang: ${code}.`)
           + (restocked
             ? ` Stok sudah diperbarui (${effect === 'sellable' ? 'masuk stok jual' : 'ditahan di karantina'}).`
-            : ` ${res?.data?.message || 'Stok belum bertambah — buka menu Gudang › Retur Fisik.'}`),
+            : ' Menunggu Gudang menerima paket & memutuskan (stok belum bergerak).'),
       });
       // refresh list & detail
       const refreshed = await axios.get(`${API}/api/marketing/returns/${id}`, { headers: authH });
@@ -612,28 +660,53 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                 <Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
               </div>
               <div className="space-y-2">
-                <Label>Order ID *</Label>
-                <Input value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })} placeholder="ORD-123456" />
+                {/* 2026-11-02 — No.4(c): retur bebas, nomor pesanan opsional. */}
+                <Label>No. Pesanan (opsional)</Label>
+                <Input value={form.order_id} onChange={e => setForm({ ...form, order_id: e.target.value })}
+                  placeholder="kosongkan bila tidak diketahui" data-testid="return-order-input" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Harga</Label>
-                <Input type="number" value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
+                <Label>Harga Satuan</Label>
+                <MoneyInput value={form.price} onChange={e => setForm({ ...form, price: parseFloat(e.target.value) })} />
               </div>
               <div className="space-y-2">
                 <Label>Tipe Refund</Label>
                 <Select value={form.refund_type} onValueChange={v => setForm({ ...form, refund_type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectTrigger data-testid="return-refund-type-select"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="full_refund">Full Refund</SelectItem>
-                    <SelectItem value="partial_refund">Partial Refund</SelectItem>
-                    <SelectItem value="exchange">Exchange</SelectItem>
-                    <SelectItem value="no_refund">No Refund</SelectItem>
+                    <SelectItem value="full_refund">Refund Penuh</SelectItem>
+                    <SelectItem value="partial_refund">Refund Sebagian</SelectItem>
+                    <SelectItem value="exchange">Tukar Barang</SelectItem>
+                    <SelectItem value="no_refund">Tanpa Refund</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
+            {/* 2026-11-02 (No.14a) — NOMINAL REFUND AKTUAL. Dulu refund sebagian dipatok
+                70% harga dan refund penuh mengabaikan qty. Sekarang staf mengisi angka
+                yang benar-benar dikembalikan platform ("Total Pengembalian Dana"). */}
+            {!refundNoMoney && (
+              <div className="space-y-2">
+                <Label>Nominal Refund Aktual (Rp) *</Label>
+                <MoneyInput value={refundShown}
+                  onChange={e => { setRefundTouched(true); setForm({ ...form, refund_amount: e.target.value }); }}
+                  placeholder={form.refund_type === 'partial_refund' ? 'isi sesuai keputusan platform' : ''}
+                  data-testid="return-refund-amount-input" />
+                <p className="text-xs text-muted-foreground">
+                  {form.refund_type === 'full_refund'
+                    ? `Usulan awal = harga × qty (Rp ${suggestedFullRefund(form).toLocaleString('id-ID')}). Ubah bila platform mengembalikan nominal lain.`
+                    : 'Isi nominal yang benar-benar dikembalikan platform ke pembeli.'}
+                  {refundTouched && form.refund_type === 'full_refund' && (
+                    <button type="button" className="ml-1 underline"
+                      onClick={() => { setRefundTouched(false); setForm({ ...form, refund_amount: '' }); }}>
+                      pakai harga × qty
+                    </button>
+                  )}
+                </p>
+              </div>
+            )}
             <div className="space-y-2">
               <Label>Produk *</Label>
               {/* F15 — produk DIPILIH dari katalog toko. Sebelum ini teks bebas:
@@ -651,23 +724,23 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                 })}
                 testId="return-item-select" />
             </div>
-            {/* ── W4 (sesi #29) — KONDISI & JUMLAH BARANG YANG KEMBALI ─────────
-                Retur yang dibuat di sini LANGSUNG membuat pekerjaan Retur Fisik di
-                Gudang dan langsung menggerakkan stok. Kondisi menentukan lokasinya:
-                Baik → stok jual, Rusak → karantina (tidak boleh dijual). */}
+            {/* ── KONDISI & JUMLAH BARANG YANG DILAPORKAN KEMBALI ──────────────
+                2026-11-02 (K1) — retur di sini membuat pekerjaan Retur Fisik PENDING di
+                Gudang. Gudang mengisi qty AKTUAL & kondisi, lalu memutuskan:
+                Terima → stok jual · Rusak → karantina · Tolak → kembali ke pembeli · Dibuang. */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Kondisi Barang *</Label>
                 <Select value={form.item_condition || 'Baik'} onValueChange={v => setForm({ ...form, item_condition: v })}>
                   <SelectTrigger data-testid="return-condition-select"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="Baik">Baik — masuk stok jual</SelectItem>
-                    <SelectItem value="Rusak">Rusak — ditahan di karantina</SelectItem>
+                    <SelectItem value="Baik">Baik (laporan pembeli)</SelectItem>
+                    <SelectItem value="Rusak">Rusak (laporan pembeli)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Qty Barang Kembali *</Label>
+                <Label>Qty Diajukan Kembali *</Label>
                 <Input type="number" min={1} value={form.qty || 1}
                   onChange={e => setForm({ ...form, qty: Math.max(1, parseInt(e.target.value || '1', 10)) })}
                   data-testid="return-qty-input" />
@@ -676,9 +749,10 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
             <div className="rounded-md border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-3 py-2 text-xs text-sky-900 dark:text-sky-200 flex items-start gap-2">
               <Warehouse size={14} className="mt-0.5 shrink-0" />
               <span>
-                Setelah disimpan, <strong>Retur Fisik di Gudang dibuat otomatis</strong> dan stok
-                langsung disesuaikan: kondisi <strong>Baik</strong> masuk Area Produk Jadi (ikut stok jual),
-                kondisi <strong>Rusak</strong> masuk Area Karantina (tidak dijual).
+                Setelah disimpan, <strong>Retur Fisik di Gudang dibuat otomatis (menunggu paket)</strong>.
+                Stok <strong>belum</strong> bergerak: Gudang menerima paket &amp; mengisi qty aktual, memeriksa
+                kondisinya, lalu memutuskan (Terima → stok jual, Rusak → karantina, Tolak → dikembalikan ke
+                pembeli, Dibuang). Omzet setelah retur di rekap juga baru berkurang setelah keputusan itu.
               </span>
             </div>
             <div className="space-y-2">
@@ -718,7 +792,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
           {showDetail && (
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <p className="text-sm"><strong>Order:</strong> {showDetail.order_id}</p>
+                <p className="text-sm"><strong>Order:</strong> {showDetail.order_id || '— (retur tanpa nomor pesanan)'}</p>
                 <p className="text-sm"><strong>Produk:</strong> {showDetail.product}</p>
                 <p className="text-sm"><strong>Harga:</strong> Rp {(showDetail.price || 0).toLocaleString('id-ID')}</p>
                 <p className="text-sm"><strong>Alasan:</strong> {showDetail.reason_label}</p>
@@ -741,7 +815,11 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                           : `+${showDetail.wh_restock_qty || 0} karantina (${showDetail.wh_restock_location_code || 'ZNA-KARANTINA'})`}
                       </Badge>
                     ) : (
-                      <Badge variant="outline">belum masuk stok</Badge>
+                      <Badge variant="outline">
+                        {showDetail.wh_return_status === 'Resolved'
+                          ? `diputuskan: ${showDetail.wh_action_taken || '-'}`
+                          : `menunggu keputusan gudang (${showDetail.wh_return_status || 'Pending'})`}
+                      </Badge>
                     )}
                     {showDetail.wh_link_status && showDetail.wh_link_status !== 'linked' && (
                       <p className="text-xs text-amber-700 dark:text-amber-300 mt-1">{showDetail.wh_link_reason}</p>
@@ -764,7 +842,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                     <div className="text-amber-900 dark:text-amber-200">
                       <strong className="block mb-0.5">Barang belum diterima Gudang</strong>
                       <span className="text-xs">
-                        Retur disetujui {Math.floor(hours)} jam lalu, tapi belum ada entry Retur Fisik di Gudang. Stok FG tidak akan otomatis bertambah. Klik <em>Buat Retur Fisik di Gudang</em> untuk melanjutkan.
+                        Retur disetujui {Math.floor(hours)} jam lalu, tapi belum ada entry Retur Fisik di Gudang. Stok FG hanya bertambah setelah Gudang menerima &amp; memutuskan. Klik <em>Kirim ke Gudang</em> untuk melanjutkan.
                       </span>
                     </div>
                   </div>
@@ -786,7 +864,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                   {actionLoading === showDetail.id
                     ? <Loader2 className="animate-spin mr-1" size={14} />
                     : <Warehouse size={14} className="mr-1" />}
-                  Kirim ke Gudang &amp; Masukkan Stok
+                  Kirim ke Gudang (menunggu paket)
                 </Button>
               )}
 
@@ -821,11 +899,25 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
                       )}
                     </div>
                   )}
-                  <Button onClick={() => handleComplete(showDetail.id)} disabled={actionLoading === showDetail.id} className="w-full">
+                  <Button onClick={() => handleComplete(showDetail.id)} disabled={actionLoading === showDetail.id} className="w-full"
+                    data-testid="btn-complete-return">
                     {actionLoading === showDetail.id && <Loader2 className="animate-spin mr-1" size={14} />}
-                    <CheckCircle2 size={14} className="mr-1" />Selesaikan & Terbitkan Nota Kredit
+                    <CheckCircle2 size={14} className="mr-1" />
+                    {(showDetail.refund_amount || 0) > 0
+                      ? 'Selesaikan & Terbitkan Nota Kredit'
+                      : 'Selesaikan (tanpa nota kredit — refund Rp 0)'}
                   </Button>
                 </div>
+              )}
+              {/* 2026-11-02 — retur selesai tanpa nota kredit (data lama) bisa diterbitkan susulan. */}
+              {showDetail.status === 'completed' && !showDetail.credit_note_id && (showDetail.refund_amount || 0) > 0 && (
+                <Button onClick={() => handleIssueCreditNote(showDetail.id)} disabled={actionLoading === showDetail.id}
+                  variant="outline" className="w-full" data-testid="btn-issue-credit-note">
+                  {actionLoading === showDetail.id
+                    ? <Loader2 className="animate-spin mr-1" size={14} />
+                    : <FileText size={14} className="mr-1" />}
+                  Terbitkan Nota Kredit
+                </Button>
               )}
             </div>
           )}

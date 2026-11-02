@@ -40,6 +40,7 @@ import logging
 import uuid
 import csv
 import io
+from utils.waktu import today_wib, wib_stamp
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/hr/expenses', tags=['Travel-Settlement'])
@@ -49,7 +50,19 @@ GL_TRAVEL_EXPENSE    = '6-3400'   # Biaya Perjalanan Dinas
 GL_EMPLOYEE_ADVANCE  = '1-1610'   # Uang Muka Karyawan
 GL_BANK_DEFAULT      = '1-1201'   # Bank BCA (default)
 
+
+async def _travel_codes(db) -> dict:
+    """2026-11-02 (S2-H butir 7): akun penyelesaian dinas dari peran Profil Posting `employee_travel`;
+    konstanta di atas = bawaan/cadangan bila peran dikosongkan (core/coa_bindings.CONSTANT_SOURCES)."""
+    from routes.rahaza_posting_profiles import role_code
+    return {'expense': await role_code(db, 'employee_travel', 'debit_travel_expense', GL_TRAVEL_EXPENSE),
+            'advance': await role_code(db, 'employee_travel', 'debit_employee_advance', GL_EMPLOYEE_ADVANCE),
+            'bank': await role_code(db, 'employee_travel', 'credit_bank_default', GL_BANK_DEFAULT)}
+
 from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08 · FIN-02
+from routes.rahaza_payroll_shared import (  # 2026-11-02 (K25): pemisahan tugas
+    ensure_not_self_approval, merge_own_failures, split_own_requests,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -102,6 +115,20 @@ async def _gen_settlement_number(db, requested: str = '') -> str:
 
 def _calc_total(items: list) -> float:
     return sum(float(it.get('amount', 0) or 0) for it in items)
+
+
+async def _stale_advance_error(db, doc: dict):
+    """2026-11-02 (P5 butir 8): uang muka di settlement harus SAMA dengan uang muka yang benar-benar
+    dibayar pada dinasnya. Settlement lama yang dibuat sebelum uang muka dibayar (advance 0) akan
+    membayar biaya penuh dari bank padahal uang muka sudah keluar → tolak posting, minta dibuat ulang."""
+    tr = await db.employee_travel_requests.find_one({'id': doc.get('travel_request_id')}, {'_id': 0, 'cash_advance_paid': 1})
+    paid = float((tr or {}).get('cash_advance_paid') or 0)
+    recorded = float(doc.get('advance_received') or 0)
+    if abs(paid - recorded) > 0.01:
+        fmt = lambda v: f"{v:,.0f}".replace(',', '.')  # noqa: E731
+        return (f"Uang muka pada penyelesaian {doc.get('settlement_number')} (Rp {fmt(recorded)}) berbeda dengan "
+                f"uang muka yang sudah dibayar (Rp {fmt(paid)}). Tolak penyelesaian ini lalu buat ulang.")
+    return None
 
 
 def _settlement_type(advance: float, actual: float) -> str:
@@ -169,6 +196,16 @@ async def create_settlement(req_id: str, body: SettlementCreate, user: dict = De
             f"Travel request status '{tr.get('status')}' belum bisa di-settle. "
             "Harus minimal 'approved' atau 'advance_paid'."
         )
+    # 2026-11-02 (P5 butir 8): uang muka yang SUDAH disetujui tetapi BELUM dibayar → tolak. Dulu
+    # settlement dibuat dgn uang muka 0 ("additional" penuh), lalu uang muka tetap dibayar → karyawan
+    # menerima 1.600.000 untuk biaya 800.000 dan 1-1610 tersangkut 800.000.
+    _adv_ok = float(tr.get('cash_advance_approved') or 0)
+    _adv_paid = float(tr.get('cash_advance_paid') or 0)
+    if _adv_ok > 0 and _adv_paid <= 0:
+        _rp = f"{_adv_ok:,.0f}".replace(',', '.')
+        raise HTTPException(400, (
+            f"Uang muka Rp {_rp} untuk {tr.get('trip_number')} sudah disetujui tetapi belum dibayar. "
+            "Keuangan harus membayar uang muka dulu, baru penyelesaian dinas dibuat."))
 
     # Cek apakah sudah ada settlement yang belum di-reject
     existing = await db.employee_travel_settlements.find_one(
@@ -364,7 +401,7 @@ async def export_settlements(
         ])
 
     output.seek(0)
-    filename = f"travel_settlements_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"travel_settlements_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -426,7 +463,7 @@ async def export_outstanding_advances(user: dict = Depends(require_auth)):
         ])
 
     output.seek(0)
-    filename = f"outstanding_advances_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+    filename = f"outstanding_advances_{wib_stamp()}.csv"
 
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -536,10 +573,12 @@ async def approve_settlement(stl_id: str, payload: ApprovePayload, user: dict = 
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'submitted':
         raise HTTPException(400, f"Status '{doc.get('status')}' harus submitted")
+    # 2026-11-02 (K25): pengaju ≠ penyetuju.
+    ensure_not_self_approval(doc, user, what='penyelesaian dinas')
 
     now = _now()
     await db.employee_travel_settlements.update_one(
-        {'id': stl_id},
+        {'id': stl_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
             'approved_by': user.get('id'),
@@ -600,12 +639,17 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     """
     db = get_db()
     role = (user.get('role') or '').lower()
-    if role not in FINANCE_ROLES + ('hr',):  # FIN-02
-        raise HTTPException(403, 'Hanya Finance yang dapat melakukan posting GL')
+    # 2026-11-02 (K25): posting penyelesaian = uang keluar/masuk (bayar tambahan / terima kembalian) →
+    # hanya peran Keuangan; HR tidak lagi (dulu FINANCE_ROLES + 'hr').
+    if role not in FINANCE_ROLES:  # FIN-02
+        raise HTTPException(403, 'Hanya Keuangan yang dapat memposting penyelesaian dinas (pemisahan tugas).')
 
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'approved':
         raise HTTPException(400, f"Status '{doc.get('status')}' harus 'approved' sebelum di-post")
+    _stale = await _stale_advance_error(db, doc)
+    if _stale:
+        raise HTTPException(400, _stale)
 
     total_actual  = float(doc.get('total_actual', 0))
     advance       = float(doc.get('advance_received', 0))
@@ -617,14 +661,16 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
 
     # Determine bank account — RC-05: bank asli = rahaza_cash_accounts (rahaza_bank_accounts phantom)
     bank_acc_id = payload.bank_account_id or doc.get('bank_account_id', '')
-    bank_gl_code = GL_BANK_DEFAULT
+    # 2026-11-02 (S2-H butir 7): akun dari peran Profil Posting `employee_travel` (bawaan = konstanta)
+    gl = await _travel_codes(db)
+    bank_gl_code = gl['bank']
     if bank_acc_id:
         ba = await db.rahaza_cash_accounts.find_one({'id': bank_acc_id}, {'_id': 0})
         if ba and (ba.get('gl_account_code') or ba.get('code')):
             bank_gl_code = ba.get('gl_account_code') or ba.get('code')
 
     now = _now()
-    je_date = date.today()
+    je_date = today_wib()
     memo = f"Settlement Dinas {doc.get('settlement_number')} — {doc.get('employee_name', '')} — {doc.get('destination', '')}"
 
     lines = []
@@ -634,7 +680,7 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     # Line 1: Dr Beban Perjalanan Dinas (full actual amount)
     if total_actual > 0:
         lines.append({
-            'account_code': GL_TRAVEL_EXPENSE,
+            'account_code': gl['expense'],
             'debit': total_actual, 'credit': 0,
             'description': memo, 'cost_center_id': '',
         })
@@ -643,7 +689,7 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     # Line 2: Cr Uang Muka Karyawan (clear advance receivable)
     if advance > 0:
         lines.append({
-            'account_code': GL_EMPLOYEE_ADVANCE,
+            'account_code': gl['advance'],
             'debit': 0, 'credit': advance,
             'description': f'Clear advance {doc.get("trip_number","")}',
             'cost_center_id': '',
@@ -776,7 +822,7 @@ async def outstanding_advances(user: dict = Depends(require_auth)):
                 'pending_settlement': pending_stl,
                 # Days since end_date
                 'days_since_return': (
-                    (date.today() - date.fromisoformat(tr['end_date'])).days
+                    (today_wib() - date.fromisoformat(tr['end_date'])).days
                     if tr.get('end_date') else None
                 ),
             })
@@ -787,7 +833,7 @@ async def outstanding_advances(user: dict = Depends(require_auth)):
     return {
         'total': len(results),
         'total_outstanding': total_outstanding,
-        'gl_account': GL_EMPLOYEE_ADVANCE,
+        'gl_account': (await _travel_codes(db))['advance'],
         'items': results,
     }
 
@@ -842,8 +888,11 @@ class BulkApproveSettlementRequest(BaseModel):
 async def bulk_approve_settlements(body: BulkApproveSettlementRequest, user: dict = Depends(require_auth)):
     """Bulk approve (Finance/HR/Manager) — FASE 5 (T-20): satu implementasi di core.bulk_approve."""
     from core.bulk_approve import bulk_approve
-    return await bulk_approve(get_db(), user, body.settlement_ids, collection="employee_travel_settlements", number_field="settlement_number",
-                              module="travel_settlement", approval_note=body.approval_note or "")
+    db = get_db()
+    ids, own = await split_own_requests(db, "employee_travel_settlements", body.settlement_ids, user)  # K25
+    res = await bulk_approve(db, user, ids, collection="employee_travel_settlements", number_field="settlement_number",
+                             module="travel_settlement", approval_note=body.approval_note or "")
+    return merge_own_failures(res, own, len(body.settlement_ids))
 
 
 class BulkPostSettlementRequest(BaseModel):
@@ -875,34 +924,40 @@ async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = De
                 results['failed'].append({'id': stl_id, 'reason': 'Sudah di-post GL'})
                 continue
 
+            _stale = await _stale_advance_error(db, doc)  # 2026-11-02 (P5 butir 8)
+            if _stale:
+                results['failed'].append({'id': stl_id, 'reason': _stale})
+                continue
+
             # FIN-20b: fungsi _generate_je_number/_create_journal_entry tidak ada → pakai engine _create_posted_je
             from routes.rahaza_posting import _create_posted_je
             advance = float(doc.get('advance_received', 0))
             actual = float(doc.get('total_actual', 0))
             difference = float(doc.get('difference', 0))
 
+            gl = await _travel_codes(db)   # 2026-11-02 (S2-H butir 7): peran profil
             je_lines = [
-                {'account_code': GL_TRAVEL_EXPENSE, 'description': 'Biaya Perjalanan Dinas', 'debit': actual, 'credit': 0},
-                {'account_code': GL_EMPLOYEE_ADVANCE, 'description': 'Clearing Uang Muka', 'debit': 0, 'credit': advance},
+                {'account_code': gl['expense'], 'description': 'Biaya Perjalanan Dinas', 'debit': actual, 'credit': 0},
+                {'account_code': gl['advance'], 'description': 'Clearing Uang Muka', 'debit': 0, 'credit': advance},
             ]
 
             if difference > 0:
                 je_lines.append({
-                    'account_code': GL_BANK_DEFAULT,
+                    'account_code': gl['bank'],
                     'description': 'Kembalian dari karyawan',
                     'debit': difference,
                     'credit': 0
                 })
             elif difference < 0:
                 je_lines.append({
-                    'account_code': GL_BANK_DEFAULT,
+                    'account_code': gl['bank'],
                     'description': 'Bayar tambahan ke karyawan',
                     'debit': 0,
                     'credit': abs(difference)
                 })
 
             je_res = await _create_posted_je(
-                db, date.today(), f'Settlement {doc.get("trip_number")} — {doc.get("destination")}',
+                db, today_wib(), f'Settlement {doc.get("trip_number")} — {doc.get("destination")}',
                 source_module='travel_settlement', source_ref=doc.get('settlement_number') or stl_id,
                 lines_raw=je_lines, user=user,
             )

@@ -408,10 +408,31 @@ async def apply_status(db, order, new_status: str, *, user: dict | None = None,
                            doc.get('order_id'), doc.get('account_id'),
                            previous, new_status, exc_info=True)
 
+    # ── 2026-11-02 (K6) — BATAL SETELAH DIKIRIM ⇒ PENGAJUAN RETUR FISIK "RTS" ──
+    # Paket yang sudah diambil kurir lalu dibatalkan (gagal kirim / batal setelah
+    # kirim — dari impor status maupun aksi manual) akan KEMBALI ke gudang. Dulu
+    # tidak ada pekerjaan gudang sama sekali, jadi barangnya tidak pernah tercatat.
+    # Sekarang: satu pengajuan Retur Fisik Pending per baris (alur K1 — stok baru
+    # masuk saat gudang menerima & memutuskan). Gagal membuatnya tidak membatalkan
+    # perubahan status, tetapi berjejak di log.
+    rts = None
+    if new_status == 'cancelled' and previous != new_status:
+        try:
+            from core import returns_bridge as _rb
+            stamped = any(update.get(k) for k in _rb.SHIPPED_STAMPS)
+            if _rb.was_shipped(doc) or stamped:
+                rts = await _rb.ensure_rts_returns(
+                    db, {**doc, **update}, actor=user,
+                    reason=(note or platform_status or '').strip())
+        except Exception:
+            logger.warning('[order_status] pengajuan Retur Fisik RTS GAGAL dibuat untuk '
+                           'order=%s (%s→cancelled)', doc.get('order_id'), previous,
+                           exc_info=True)
+
     return {'ok': True, 'order_id': doc['id'], 'order_ref': doc.get('order_id'),
             'previous_status': previous, 'new_status': new_status,
             'released': released, 'changed': previous != new_status,
-            'touched_catalog_items': sorted(touched)}
+            'touched_catalog_items': sorted(touched), 'rts': rts}
 
 
 async def release_for_delete(db, order: dict, *, source: str = 'delete') -> dict:

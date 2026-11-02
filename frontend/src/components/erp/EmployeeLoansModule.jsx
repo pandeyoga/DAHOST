@@ -6,6 +6,10 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, thisMonthWIB, addMonthsYM, toWIBDate } from '@/lib/waktu';
+
+// Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di dialog ini).
 
 const fmt = formatRupiah;
 
@@ -67,7 +71,7 @@ export default function EmployeeLoansModule({ token }) {
         headers,
         body: JSON.stringify({
           repayment_amount: Number(repayForm.repayment_amount),
-          repayment_date: repayForm.repayment_date || new Date().toISOString().split('T')[0],
+          repayment_date: repayForm.repayment_date || todayWIB(),
           notes: repayForm.notes
         })
       });
@@ -97,9 +101,7 @@ export default function EmployeeLoansModule({ token }) {
   const activeLoans = loans.filter(l => l.status === 'active');
   const totalOutstanding = activeLoans.reduce((s, l) => s + (l.outstanding_balance || 0), 0);
   const totalPaidThisMonth = loans.filter(l => {
-    const d = new Date(l.disbursed_at || '');
-    const now = new Date();
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear() && l.status === 'paid_off';
+    return toWIBDate(l.disbursed_at).slice(0, 7) === thisMonthWIB() && l.status === 'paid_off';
   }).length;
   const { page, setPage, totalPages, total, paged } = useClientPagination(loans, 10);
 
@@ -120,8 +122,8 @@ export default function EmployeeLoansModule({ token }) {
               loan_amount: 0,
               installment_amount: 0,
               installment_count: 12,
-              disbursement_date: new Date().toISOString().split('T')[0],
-              first_deduction_period: new Date(new Date().setMonth(new Date().getMonth() + 1)).toISOString().slice(0, 7),
+              disbursement_date: todayWIB(),
+              first_deduction_period: addMonthsYM(thisMonthWIB(), 1),
               notes: ''
             })} className="h-9" data-testid="loan-disburse-btn">
               <Plus className="w-3.5 h-3.5 mr-1.5" />Cairkan Pinjaman
@@ -210,12 +212,12 @@ export default function EmployeeLoansModule({ token }) {
               </div>
               <div>
                 <label className="text-xs uppercase text-muted-foreground">Jumlah Pinjaman (Rp)</label>
-                <GlassInput type="number" value={disburseForm.loan_amount} onChange={e => setDisburseForm(f => ({ ...f, loan_amount: Number(e.target.value) }))} data-testid="loan-amount" />
+                <MoneyInput glass value={disburseForm.loan_amount} onChange={e => setDisburseForm(f => ({ ...f, loan_amount: Number(e.target.value) }))} data-testid="loan-amount" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs uppercase text-muted-foreground">Cicilan/Bulan (Rp)</label>
-                  <GlassInput type="number" value={disburseForm.installment_amount} onChange={e => setDisburseForm(f => ({ ...f, installment_amount: Number(e.target.value) }))} data-testid="loan-installment" />
+                  <MoneyInput glass value={disburseForm.installment_amount} onChange={e => setDisburseForm(f => ({ ...f, installment_amount: Number(e.target.value) }))} data-testid="loan-installment" />
                 </div>
                 <div>
                   <label className="text-xs uppercase text-muted-foreground">Jumlah Cicilan</label>
@@ -249,7 +251,7 @@ export default function EmployeeLoansModule({ token }) {
             <div className="space-y-3">
               <div>
                 <label className="text-xs uppercase text-muted-foreground">Jumlah Bayar (Rp)</label>
-                <GlassInput type="number" value={repayForm.repayment_amount} onChange={e => setRepayForm(f => ({ ...f, repayment_amount: e.target.value }))} data-testid="repay-amount" />
+                <MoneyInput glass value={repayForm.repayment_amount} onChange={e => setRepayForm(f => ({ ...f, repayment_amount: e.target.value }))} data-testid="repay-amount" />
               </div>
               <div>
                 <label className="text-xs uppercase text-muted-foreground">Tanggal Bayar</label>

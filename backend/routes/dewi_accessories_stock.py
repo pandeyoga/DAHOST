@@ -285,13 +285,19 @@ async def receive_stock(request: Request):
         notes=body.get("notes", "") or f"Penerimaan {qty_in_base_unit} {item.get('unit', '')}",
     )
     effective_cost = cost_info["new_unit_cost"] or unit_cost_in
+    # 2026-11-02 (audit g.md No.24/No.26) — nilai PENERIMAAN = harga beli × qty, bukan
+    # HPP rata-rata baru. Dulu terima 100 m @20.000 sesudah 100 m @15.000 dijurnal
+    # 100 × 17.500 = 1.750.000, padahal GRNI yang akan ditagih supplier 2.000.000 (sama
+    # seperti GR kain, warehouse.py). Rata-rata bergerak tetap hanya untuk HPP master.
+    # Tanpa harga beli → tetap memakai HPP master (perilaku lama). Akun tidak diubah.
+    receipt_cost = unit_cost_in if unit_cost_in > 0 else effective_cost
     mv = await _log_movement(
         db, user,
         material_id=acc_id, mv_type="receive", qty=qty_in_base_unit,
         notes=body.get("notes", ""),
         related_ref=body.get("reference", ""),
         related_type="receive",
-        unit_cost=effective_cost,
+        unit_cost=receipt_cost,
     )
     # Jurnal persediaan (Dr Persediaan / Cr AP Clearing) — non-fatal & TRANSPARAN:
     # bila HPP belum ada, penerimaan tetap tercatat tapi FE diberi tahu jurnal gagal.
@@ -301,7 +307,7 @@ async def receive_stock(request: Request):
     if effective_cost <= 0:
         await accessory_valuation.notify_unvalued(
             db, material=item, movement_type="receive", qty=qty_in_base_unit, actor=user)
-    if mv and effective_cost > 0:
+    if mv and receipt_cost > 0:
         try:
             res = await post_inventory_receive(db, mv, user)
             je = {"posted": bool(res.get("ok")), "je_id": res.get("je_id"),
@@ -326,7 +332,8 @@ async def receive_stock(request: Request):
         "old_unit_cost": cost_info["old_unit_cost"],
         "cost_changed": cost_info["changed"],
         "cost_method": cost_info["method"],
-        "value": round(qty_in_base_unit * effective_cost, 2),
+        "receipt_unit_cost": round(receipt_cost, 4),
+        "value": round(qty_in_base_unit * receipt_cost, 2),
         "stock_value": round(new_stock * effective_cost, 2),
         "je": je,
     }

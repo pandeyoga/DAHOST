@@ -365,6 +365,72 @@ def eval_approval(doc: dict, user: dict, chain: list, *, stage=None,
 
 
 # ── Notifikasi ──────────────────────────────────────────────────────────────
+# 2026-11-02 — PENERIMA = ORANG YANG BENAR-BENAR BISA MENYETUJUI TAHAP INI.
+# Audit runtime 2026-11-02: penerima dulu dihitung dari DAFTAR PERAN tahap,
+# padahal gerbang /approve memakai `eval_approval` (izin dinamis, larangan
+# pembuat menyetujui sendiri, larangan dua tahap, batas departemen). Akibatnya:
+#   · PR Rp100rb admin gudang → 4 penerima (termasuk PEMOHON SENDIRI), keempatnya
+#     DITOLAK gerbang; 3 orang yang bisa menyetujui tidak diberi tahu;
+#   · tahap keuangan dikirim juga ke orang yang baru menyetujui tahap dept;
+#   · tahap final dialamatkan ke director/cfo/ceo/owner yang tidak punya user ⇒
+#     tidak terlihat siapa pun, padahal superadmin bisa menyetujui (override).
+# Sekarang setiap user aktif dinilai dengan `eval_approval` yang SAMA dengan
+# kotak persetujuan (`pending_for_user`). Penyetuju sah diutamakan; bila tahap
+# itu tidak punya penyetuju sah, notifikasi jatuh ke admin/owner yang bisa
+# menyetujui lewat override (tercatat), supaya tidak ada tahap yang tak terlihat.
+# Pemohon dan penyetuju tahap sebelumnya TIDAK PERNAH menerima "menunggu
+# persetujuan Anda".
+
+# Koleksi per pintu modul — dokumen dibaca ulang supaya `approval_steps` yang
+# baru saja ditulis pemanggil ikut dinilai (pemanggil mengirim salinan lama).
+_MODULE_COLLECTION = {
+    "proc-requests": "dewi_procurement_requests",
+    "proc-accessory-pr": ACC_PR_COLLECTION,
+    "proc-purchase-orders": PO_COLLECTION,
+}
+
+
+async def _load_perms(role: str, user_id):
+    """(izin role, izin tambahan) — sama dengan `auth.require_auth`."""
+    from auth import FIXED_ROLE_PERMS, _load_rbac
+    if role in FIXED_ROLE_PERMS:
+        return list(FIXED_ROLE_PERMS[role]), []
+    return await _load_rbac(role, user_id)
+
+
+async def _as_request_user(u: dict) -> dict:
+    """Dokumen `users` → bentuk user yang dipakai gerbang (izin terisi)."""
+    role = (u.get("role") or "").lower()
+    role_perms, extra = await _load_perms(role, u.get("id"))
+    return {"id": u.get("id"), "role": role, "department": u.get("department") or "",
+            "_role_perms": list(role_perms), "_extra_permissions": list(extra),
+            "_permissions": sorted(set(role_perms) | set(extra))}
+
+
+async def stage_approver_ids(db, doc: dict, stage: str, chain: list, *,
+                             roles_map: dict | None = None):
+    """(user_id penerima, lewat_override?) untuk tahap `stage` dokumen `doc`."""
+    from utils.notif_recipients import ACTIVE_USER_FILTER
+    from core.authz import EXTERNAL_ROLES
+    flt = {**ACTIVE_USER_FILTER, "role": {"$nin": list(EXTERNAL_ROLES)}}
+    rows = await db.users.find(flt, {"_id": 0, "id": 1, "role": 1, "department": 1}
+                               ).to_list(None)
+    skip = {doc.get("requested_by")} | approved_actor_ids(doc)
+    legit, override = [], []
+    for r in rows:
+        uid = r.get("id")
+        if not uid or uid in skip:
+            continue
+        ev = eval_approval(doc, await _as_request_user(r), chain, stage=stage,
+                           roles_map=roles_map)
+        if not ev["can_approve"]:
+            continue
+        (override if ev["is_override"] else legit).append(uid)
+    if legit:
+        return sorted(legit), False
+    return sorted(override), bool(override)
+
+
 async def notify_stage_approvers(db, doc: dict, stage: str, chain: list, *,
                                  module_id: str = "proc-requests",
                                  number: str = "", title: str = "",
@@ -382,39 +448,41 @@ async def notify_stage_approvers(db, doc: dict, stage: str, chain: list, *,
     try:
         from utils.notif_unified import notif_insert
         roles = list((roles_map or STAGE_ROLES).get(stage, ()))
-        if not roles:
-            return
-        rows = await db.users.find(
-            {"role": {"$in": roles}, "status": {"$ne": "inactive"}},
-            {"_id": 0, "id": 1, "department": 1},
-        ).to_list(500)
-        ids = [r["id"] for r in rows if r.get("id")]
-        # Tahap departemen: utamakan approver di departemen dokumen (bila ada yang
-        # cocok), supaya notifikasi tidak menyiram semua manager di perusahaan.
-        pdept = (doc.get("department") or "").strip()
-        if stage == STAGE_DEPT and pdept:
-            same = [r["id"] for r in rows
-                    if r.get("id") and (r.get("department") or "").strip() == pdept]
-            if same:
-                ids = same
+        coll = _MODULE_COLLECTION.get(module_id)
+        if coll and doc.get("id"):
+            fresh = await db[coll].find_one({"id": doc["id"]}, {"_id": 0})
+            if fresh:
+                doc = {**doc, **fresh}
+        ids, via_override = await stage_approver_ids(db, doc, stage, chain,
+                                                     roles_map=roles_map)
         idx = chain.index(stage) + 1 if stage in chain else 1
         rp = f"Rp {float(doc.get(value_field) or 0):,.0f}".replace(",", ".")
         body = (f"{number} — {title}\n"
                 f"Nilai: {rp}\n"
                 f"Menunggu {labels.get(stage, stage)} "
                 f"(tahap {idx} dari {len(chain)})")
+        if via_override:
+            body += ("\nBelum ada penyetuju untuk tahap ini; Anda dapat memutuskan "
+                     "sebagai admin (tercatat sebagai override).")
         await notif_insert(
             db, type="rahaza", subtype="procurement_approval", severity="warning",
             title=f"{kind_label} menunggu persetujuan Anda",
             body=body,
             target_user_ids=ids or None,
-            # Bila belum ada satu pun pengguna berperan itu, jangan buang
+            # Bila tidak ada satu pun pengguna yang bisa menyetujui, jangan buang
             # notifikasinya — alamatkan ke perannya supaya muncul begitu ada.
             target_roles=None if ids else roles,
             source_type="procurement_request", source_id=doc.get("id"),
             source_ref=number,
+            # 2026-11-02 (K30) — "Perlu Tindakan": tertutup otomatis begitu tahap
+            # `stage` diputuskan (utils/notif_unified._procurement_open). Kabar ke
+            # pemohon (`notify_requester`) & notifikasi tahap berikut memicu
+            # pemeriksaan ulang seketika lewat `notif_insert`.
+            kind="action",
+            source_collection=coll or _MODULE_COLLECTION.get("proc-requests"),
             meta={"link_module": module_id, "pr_id": doc.get("id"),
                   "request_number": number, "stage": stage,
+                  "via_override": via_override,
                   "dedup_key": f"pr-approval:{doc.get('id')}:{stage}"},
         )
     except Exception as e:  # noqa: BLE001

@@ -4,6 +4,7 @@ import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { MoneyInput } from '@/components/ui/money-input';
 
 export default function RahazaCostCentersModule({ token }) {
   const [rows, setRows] = useState([]);
@@ -89,7 +90,7 @@ function CCEditor({ value, onClose, onSave }) {
           <div><label className="text-xs uppercase text-muted-foreground">Kode</label><GlassInput value={s.code} onChange={e => upd('code', e.target.value.toUpperCase())} disabled={!!s.id} data-testid="cc-code" /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Nama</label><GlassInput value={s.name} onChange={e => upd('name', e.target.value)} data-testid="cc-name" /></div>
           <div><label className="text-xs uppercase text-muted-foreground">Kategori</label><GlassInput value={s.category} onChange={e => upd('category', e.target.value)} placeholder="produksi | gudang | umum | ..." /></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Overhead Rate per Pcs (Rp)</label><GlassInput type="number" min={0} step={100} value={s.overhead_rate_per_pcs || 0} onChange={e => upd('overhead_rate_per_pcs', Number(e.target.value))} data-testid="cc-overhead" /></div>
+          <div><label className="text-xs uppercase text-muted-foreground">Overhead Rate per Pcs (Rp)</label><MoneyInput glass value={s.overhead_rate_per_pcs || 0} onChange={e => upd('overhead_rate_per_pcs', Number(e.target.value))} data-testid="cc-overhead" /></div>
         </div>
         <div className="flex gap-2 mt-6 justify-end">
           <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button>

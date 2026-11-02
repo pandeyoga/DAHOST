@@ -134,11 +134,8 @@ EXEMPT_SERIES = {
         "Pintu pinjaman legacy ditutup HTTP 410 (sesi #27); pinjaman kanonik = "
         "Kasbon & Pinjaman (dewi_kasbon_requests.request_number_pinjaman). Fungsi "
         "lama disimpan sebagai rujukan migrasi, tidak dipasang di router.",
-    ("production_material_returns", "ref_no"):
-        "Menu 'Retur Material' (prod-material-returns) DI-DEPRECATE pemilik — "
-        "material diurus lewat 'Kirim Material CMT'. Tidak ada layar yang "
-        "membuatnya & koleksinya kosong, jadi menawarkan setelan nomor untuk "
-        "dokumen ini akan menjadi setelan yang berbohong.",
+    # 2026-11-02 (K10): pengecualian `production_material_returns.ref_no` DICABUT — layar Retur Material
+    # hidup lagi dan seri nomornya kembali terdaftar di katalog.
 }
 
 # SESI #19 — FORM yang wajib membaca kebijakan (bukan sekadar backend yang menegakkan):

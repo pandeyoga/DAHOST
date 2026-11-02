@@ -24,6 +24,7 @@ from core import marketing_sales_shape as _shape
 # F6 (sesi #9) — layar daftar WAJIB berlingkup toko: staf pemegang satu toko
 # tidak boleh melihat omzet/tugas delapan toko lain di laporan harian & bulanan.
 from core import marketing_account_scope as _scope
+from utils.waktu import today_wib, wib_day_bounds_utc, now_wib
 
 router = APIRouter(prefix="/api/marketing/reports", tags=["marketing-reports"])
 
@@ -52,10 +53,10 @@ async def daily_report(
     if date:
         target_date = date[:10]
     else:
-        target_date = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        target_date = (today_wib() - timedelta(days=1)).isoformat()   # kemarin menurut WIB (No.54a)
 
     # Today for task queries
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = wib_day_bounds_utc()[0]   # awal hari WIB dalam UTC (No.54a); dulu 00:00 UTC
 
     # Akun aktif YANG BOLEH DILIHAT pemakai ini (F6)
     accounts = await _scope.visible_accounts(db, user, base={"status": "active"})
@@ -168,7 +169,7 @@ async def monthly_report(
     """
     user = await require_auth(request)
     db  = get_db()
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y   = year  or now.year
     m   = month or now.month
 
@@ -316,7 +317,7 @@ async def export_monthly_report_pdf(
         if hasattr(monthly_report, '__wrapped__') else None
 
     # Call the internal function directly
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y = year  or now.year
     m = month or now.month
     db = get_db()

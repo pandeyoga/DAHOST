@@ -11,6 +11,7 @@ import uuid
 import re
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/lms", tags=["LMS"])
 
@@ -302,7 +303,7 @@ async def update_progress(
         upd["passed"] = passed
         
         if passed and not enroll.get("certificate_issued"):
-            cert_no = f"CERT-{enroll['course_id'][:6].upper()}-{enroll['employee_id'][:6].upper()}-{now_utc().strftime('%Y%m')}"
+            cert_no = f"CERT-{enroll['course_id'][:6].upper()}-{enroll['employee_id'][:6].upper()}-{fmt_wib('%Y%m')}"
             upd["certificate_issued"] = True
             upd["certificate_no"] = cert_no
 

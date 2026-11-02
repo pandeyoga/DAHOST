@@ -8,6 +8,7 @@ P3 TD-010 Phase B (Session #11.12): writes now go to the unified SSOT
 (endpoints, request/response shape) preserved via reshape helpers.
 """
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Query, HTTPException
@@ -181,6 +182,37 @@ class CreateNotifRequest(BaseModel):
     metadata: dict = {}
 
 
+# Hash internal aplikasi: `#modul`, `#modul=tab`, `#/comm/channel/<id>`; tanpa `//`.
+_INTERNAL_LINK = re.compile(r'^#(?!.*//)[A-Za-z0-9/][A-Za-z0-9_\-/=&.?%]*$')
+
+
+def validate_manual_notification(user: dict, body: 'CreateNotifRequest', target_exists: bool):
+    """Aturan pembuatan notifikasi lewat API (2026-11-02).
+
+    Audit runtime 2026-11-02: `tim_packing` dan vendor CMT (`cmt_vendor`) bisa
+    membuat notifikasi ke superadmin/HR berjudul bebas dengan tautan ke situs
+    LUAR (`https://…/login`) — bahan phishing yang tampil di bel resmi ERP.
+    Sekarang:
+      · peran eksternal (core.authz.EXTERNAL_ROLES) ditolak;
+      · tautan hanya hash internal aplikasi (`#modul…`) atau kosong;
+      · penerima wajib user yang benar-benar ada;
+      · jenis wajib salah satu NOTIF_TYPES.
+    Melempar HTTPException; fungsi murni supaya bisa diuji tanpa DB.
+    """
+    from core.authz import EXTERNAL_ROLES
+    role = (user.get('role') or '').lower()
+    if not role or role in EXTERNAL_ROLES:
+        raise HTTPException(403, 'Peran Anda tidak boleh membuat notifikasi.')
+    if body.notif_type not in NOTIF_TYPES:
+        raise HTTPException(400, f'notif_type tidak dikenal. Pilihan: {NOTIF_TYPES}')
+    url = (body.source_url or '').strip()
+    if url and not _INTERNAL_LINK.match(url):
+        raise HTTPException(400, 'Tautan notifikasi hanya boleh tautan internal aplikasi (diawali #).')
+    if not target_exists:
+        raise HTTPException(404, 'Penerima notifikasi tidak ditemukan.')
+    return url
+
+
 @router.post('')
 async def create_notification_api(
     body: CreateNotifRequest,
@@ -189,6 +221,11 @@ async def create_notification_api(
 ):
     """Create a notification (admin/system use). Target = self if not specified."""
     target = body.target_user_id or user['id']
+    exists = bool(await db.users.find_one({'id': target}, {'_id': 0, 'id': 1}))
+    body.source_url = validate_manual_notification(user, body, exists)
+    # Jejak pengirim — supaya notifikasi buatan tangan tidak bisa menyamar anonim.
+    body.metadata = {**(body.metadata or {}), 'created_by': user.get('id'),
+                     'created_by_name': user.get('name') or user.get('email') or ''}
     doc = await create_notification(
         db,
         user_id=target,

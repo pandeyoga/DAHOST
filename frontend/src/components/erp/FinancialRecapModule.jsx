@@ -5,6 +5,7 @@ import { TrendingUp, TrendingDown, RefreshCw, DollarSign, ArrowUpCircle, ArrowDo
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from './EmptyState';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, daysAgoWIB, monthStartWIB } from '@/lib/waktu';
 
 const FILTER_OPTIONS = [
   { label: 'Hari Ini', value: 'today' },
@@ -15,15 +16,13 @@ const FILTER_OPTIONS = [
   { label: 'Custom', value: 'custom' },
 ];
 
-// FIN-01: tanggal lokal (WIB), bukan toISOString() yang bergeser mundur sehari
-const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// FIN-01 / No.54(a): tanggal kalender WIB dari lib/waktu (bukan zona perangkat, bukan UTC).
 function getDateRange(filter) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (filter === 'today') return { date_from: ymd(today), date_to: ymd(today) };
-  if (filter === '7d') { const d = new Date(today); d.setDate(d.getDate() - 7); return { date_from: ymd(d), date_to: ymd(today) }; }
-  if (filter === '28d') { const d = new Date(today); d.setDate(d.getDate() - 28); return { date_from: ymd(d), date_to: ymd(today) }; }
-  if (filter === 'month') { const d = new Date(now.getFullYear(), now.getMonth(), 1); return { date_from: ymd(d), date_to: ymd(today) }; }
+  const today = todayWIB();
+  if (filter === 'today') return { date_from: today, date_to: today };
+  if (filter === '7d') return { date_from: daysAgoWIB(7), date_to: today };
+  if (filter === '28d') return { date_from: daysAgoWIB(28), date_to: today };
+  if (filter === 'month') return { date_from: monthStartWIB(), date_to: today };
   return {};
 }
 
@@ -78,7 +77,7 @@ export default function FinancialRecapModule({ token }) {
   const KPI_CARDS = [
     { label: 'Total Nilai Penjualan', value: fmt(r.total_sales_value), sub: `${r.total_buyer_invoices || 0} buyer invoice`, icon: <TrendingUp className="w-5 h-5" />, bg: 'bg-gradient-to-br from-emerald-500 to-emerald-600', text: 'text-emerald-500' },
     { label: 'Total Biaya Vendor', value: fmt(r.total_vendor_cost), sub: `${r.total_vendor_invoices || 0} vendor invoice`, icon: <TrendingDown className="w-5 h-5" />, bg: 'bg-gradient-to-br from-amber-500 to-amber-600', text: 'text-amber-700 dark:text-amber-500' },
-    { label: 'Cash In (Dari Customer)', value: fmt(r.total_cash_in), sub: 'Total pembayaran diterima', icon: <ArrowDownCircle className="w-5 h-5" />, bg: 'bg-gradient-to-br from-blue-500 to-blue-600', text: 'text-primary' },
+    { label: 'Cash In (Dari Customer)', value: fmt(r.total_cash_in), sub: r.cash_in_breakdown ? `Piutang ${fmt(r.cash_in_breakdown.ar_payments)} · Penjualan Langsung ${fmt(r.cash_in_breakdown.direct_sales)}` : 'Total pembayaran diterima', icon: <ArrowDownCircle className="w-5 h-5" />, bg: 'bg-gradient-to-br from-blue-500 to-blue-600', text: 'text-primary' },
     { label: 'Cash Out (Ke Vendor)', value: fmt(r.total_cash_out), sub: 'Total pembayaran dikeluarkan', icon: <ArrowUpCircle className="w-5 h-5" />, bg: 'bg-gradient-to-br from-red-500 to-red-600', text: 'text-red-700 dark:text-red-500' },
     { label: 'Piutang Outstanding (AR)', value: fmt(r.accounts_receivable_outstanding), sub: 'Belum diterima dari buyer', icon: <DollarSign className="w-5 h-5" />, bg: 'bg-gradient-to-br from-purple-500 to-purple-600', text: 'text-purple-500' },
     { label: 'Hutang Outstanding (AP)', value: fmt(r.accounts_payable_outstanding), sub: 'Belum dibayar ke vendor', icon: <DollarSign className="w-5 h-5" />, bg: 'bg-gradient-to-br from-rose-500 to-rose-600', text: 'text-rose-500' },
@@ -134,18 +133,27 @@ export default function FinancialRecapModule({ token }) {
         ))}
       </div>
 
-      {/* Gross Margin Highlight */}
-      <div className={`rounded-xl p-5 border ${r.gross_margin >= 0 ? 'bg-gradient-to-r from-emerald-50 to-blue-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold text-foreground">Est. Gross Margin</p>
-            <p className={`text-3xl font-bold mt-1 ${r.gross_margin >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{fmt(r.gross_margin)}</p>
-            <p className="text-sm text-muted-foreground mt-1">Nilai Penjualan − Biaya Vendor</p>
+      {/* 2026-11-02 (K20): kartu AR − AP TETAP (rumus uji owner T1) tetapi BUKAN laba — label diganti &
+          lencana "Profitable/Loss" dihapus. Di sebelahnya kartu laba kotor dari buku besar (rumus L/R). */}
+      <div className="rounded-xl p-5 border bg-[var(--card-surface)] border-border">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="flex items-center justify-between gap-3" data-testid="recap-ar-ap-diff">
+            <div>
+              <p className="text-sm font-semibold text-foreground">{r.gross_margin_label || 'Selisih tagihan pelanggan − tagihan pemasok (bukan laba)'}</p>
+              <p className="text-3xl font-bold mt-1 text-foreground">{fmt(r.gross_margin)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Σ tagihan pelanggan (AR, termasuk PPN) − Σ tagihan pemasok (AP). Pembelian bahan yang belum terjual ikut mengurangi.</p>
+            </div>
+            <div className="text-center px-4 py-3 rounded-xl bg-[var(--glass-bg)] shrink-0">
+              <p className="text-xs text-muted-foreground">% dari tagihan pelanggan</p>
+              <p className="text-2xl font-bold text-foreground">{grossMarginPct}%</p>
+            </div>
           </div>
-          <div className={`text-center px-6 py-4 rounded-xl ${r.gross_margin >= 0 ? 'bg-emerald-100' : 'bg-red-100'}`}>
-            <p className="text-xs text-muted-foreground">Margin %</p>
-            <p className={`text-3xl font-bold ${r.gross_margin >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>{grossMarginPct}%</p>
-            <p className={`text-xs mt-0.5 ${r.gross_margin >= 0 ? 'text-emerald-600' : 'text-red-700 dark:text-red-500'}`}>{r.gross_margin >= 0 ? 'Profitable' : 'Loss'}</p>
+          <div className="flex items-center justify-between gap-3 md:border-l md:border-border md:pl-4" data-testid="recap-gl-gross-profit">
+            <div>
+              <p className="text-sm font-semibold text-foreground">{r.gl_gross_profit_label || 'Laba kotor (buku besar)'}</p>
+              <p className={`text-3xl font-bold mt-1 ${(r.gl_gross_profit || 0) >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-600'}`}>{fmt(r.gl_gross_profit)}</p>
+              <p className="text-xs text-muted-foreground mt-1">Pendapatan bersih {fmt(r.gl_revenue)} − HPP {fmt(r.gl_cogs)} · tanpa PPN, termasuk pencairan marketplace · sama dengan Laporan Laba/Rugi periode ini.</p>
+            </div>
           </div>
         </div>
         {/* Cash Flow Summary */}
@@ -185,8 +193,8 @@ export default function FinancialRecapModule({ token }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="month" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={fmtShort} />
-                <Tooltip formatter={(v, n) => [fmt(v), n === 'sales' ? 'Penjualan' : n === 'cost' ? 'Biaya Vendor' : 'Margin']} />
-                <Legend formatter={(v) => v === 'sales' ? 'Penjualan' : v === 'cost' ? 'Biaya Vendor' : 'Margin'} />
+                <Tooltip formatter={(v, n) => [fmt(v), n === 'sales' ? 'Penjualan' : n === 'cost' ? 'Biaya Vendor' : 'Selisih AR−AP']} />
+                <Legend formatter={(v) => v === 'sales' ? 'Penjualan' : v === 'cost' ? 'Biaya Vendor' : 'Selisih AR−AP'} />
                 <Bar dataKey="sales" fill="#10b981" name="sales" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="cost" fill="#f59e0b" name="cost" radius={[4, 4, 0, 0]} />
               </BarChart>
@@ -202,8 +210,8 @@ export default function FinancialRecapModule({ token }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis dataKey="month" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 9 }} tickFormatter={fmtShort} />
-                <Tooltip formatter={(v, n) => [fmt(v), n === 'cash_in' ? 'Cash In' : n === 'cash_out' ? 'Cash Out' : 'Margin']} />
-                <Legend formatter={(v) => v === 'cash_in' ? 'Cash In' : v === 'cash_out' ? 'Cash Out' : 'Margin'} />
+                <Tooltip formatter={(v, n) => [fmt(v), n === 'cash_in' ? 'Cash In' : n === 'cash_out' ? 'Cash Out' : 'Selisih AR−AP']} />
+                <Legend formatter={(v) => v === 'cash_in' ? 'Cash In' : v === 'cash_out' ? 'Cash Out' : 'Selisih AR−AP'} />
                 <Line type="monotone" dataKey="cash_in" stroke="#3b82f6" strokeWidth={2} dot={{ r: 4 }} name="cash_in" />
                 <Line type="monotone" dataKey="cash_out" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} name="cash_out" />
                 <Line type="monotone" dataKey="margin" stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" dot={{ r: 3 }} name="margin" />

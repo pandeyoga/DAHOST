@@ -2,9 +2,11 @@
  * CreateAssetDialog — Form to register new asset (incl. warranty & insurance).
  * Extracted from AssetManagementPortal.jsx (Phase 2 refactor)
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
@@ -13,7 +15,7 @@ import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../../docn
 
 export function CreateAssetDialog({ open, onClose, token, categories, onCreated }) {
   const [form, setForm] = useState({
-    name: '', category_id: '', purchase_date: new Date().toISOString().slice(0, 10),
+    name: '', category_id: '', purchase_date: todayWIB(),
     purchase_cost: '', residual_value: '', useful_life_months: '',
     serial_number: '', brand: '', model: '', location: '', department: '', notes: '',
     // Warranty
@@ -23,6 +25,19 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
   });
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  // 2026-11-02 (K18): registri induk = Keuangan › Aset Tetap. Portal Aset menaut aset Keuangan
+  // (nilai buku & penyusutan diambil dari sana) dan TIDAK lagi membuat jurnal.
+  const [finAssets, setFinAssets] = useState([]);
+  const [fixedAssetId, setFixedAssetId] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    apicall('GET', '/api/assets/finance-registry', token).then(d => setFinAssets(Array.isArray(d) ? d : [])).catch(() => setFinAssets([]));
+  }, [open, token]);
+  const pickFinance = (id) => {
+    setFixedAssetId(id);
+    const f = finAssets.find(x => x.id === id);
+    if (f) setForm(p => ({ ...p, name: p.name || f.name, purchase_cost: String(f.purchase_cost || ''), purchase_date: f.purchase_date || p.purchase_date }));
+  };
   // SESI #27 — kebijakan penomoran Nomor Aset Inventaris. `KATEGORI` mengikuti
   // kategori terpilih supaya pratinjau nomor = nomor yang benar-benar akan lahir.
   const catCode = (categories || []).find(c => c.id === form.category_id)?.code || '';
@@ -38,6 +53,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
       const data = await apicall('POST', '/api/assets', token, {
         ...form,
         ...docNumberPayload(numPolicy, 'asset_number', assetNo),
+        fixed_asset_id: fixedAssetId || undefined,
         purchase_cost: Number(form.purchase_cost),
         residual_value: form.residual_value ? Number(form.residual_value) : undefined,
         useful_life_months: form.useful_life_months ? Number(form.useful_life_months) : undefined,
@@ -61,6 +77,15 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
         </DialogHeader>
         <div className="grid grid-cols-2 gap-3 py-2">
           <div className="col-span-2">
+            <label className="text-xs font-medium text-muted-foreground">Tautkan ke Aset Tetap Keuangan</label>
+            <select value={fixedAssetId} onChange={e => pickFinance(e.target.value)} data-testid="asset-finance-link"
+              className="mt-1 w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+              <option value="">— Belum ditaut (catatan operasional saja) —</option>
+              {finAssets.map(f => <option key={f.id} value={f.id}>{f.code} · {f.name} · nilai buku Rp {Number(f.book_value || 0).toLocaleString('id-ID')}</option>)}
+            </select>
+            <p className="text-[11px] text-muted-foreground mt-1">Harga, penyusutan & nilai buku diambil dari registri Keuangan. Aset baru didaftarkan dulu di Keuangan › Aset Tetap (atau lewat penerimaan barang).</p>
+          </div>
+          <div className="col-span-2">
             <label className="text-xs font-medium text-muted-foreground">Nama Aset *</label>
             <Input placeholder="Laptop Dell XPS 13..." value={form.name}
               onChange={e => set('name', e.target.value)} className="mt-1" data-testid="asset-name-input" />
@@ -83,12 +108,12 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Harga Beli (Rp) *</label>
-            <Input type="number" placeholder="5000000" value={form.purchase_cost}
+            <MoneyInput placeholder="5.000.000" value={form.purchase_cost}
               onChange={e => set('purchase_cost', e.target.value)} className="mt-1" data-testid="asset-cost-input" />
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Nilai Residu (Rp)</label>
-            <Input type="number" placeholder="Otomatis 5%" value={form.residual_value}
+            <MoneyInput placeholder="Otomatis 5%" value={form.residual_value}
               onChange={e => set('residual_value', e.target.value)} className="mt-1" />
           </div>
           <div>
@@ -168,7 +193,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Nilai Pertanggungan (Rp)</label>
-            <Input type="number" placeholder="50000000" value={form.insurance_value}
+            <MoneyInput placeholder="50.000.000" value={form.insurance_value}
               onChange={e => set('insurance_value', e.target.value)} className="mt-1" />
           </div>
         </div>
@@ -177,7 +202,7 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
             policy={numPolicy} value={assetNo} onChange={setAssetNo}
             testId="asset-inv-docnum" label="Nomor Aset" />
         </div>
-        <p className="text-xs text-muted-foreground">*Journal pembelian akan dibuat otomatis sebagai draft.</p>
+        <p className="text-xs text-muted-foreground">*Portal Aset tidak membuat jurnal. Jurnal perolehan, penyusutan & pelepasan hanya dari registri Keuangan.</p>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={loading} data-testid="create-asset-submit">

@@ -14,6 +14,8 @@ import QuickCompleteModal from './QuickCompleteModal';
 import { BizBadge } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 const CLOSE_REASONS = ['Under Production', 'Over Production', 'Price Adjustment', 'Customer Agreement', 'Other'];
@@ -248,7 +250,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
   const openCreate = () => {
     setEditData(null);
     setFormError(null);
-    setForm({ po_number: '', customer_name: isInternal ? 'Gudang FG Sendiri' : '', buyer_id: '', vendor_id: '', po_date: new Date().toISOString().split('T')[0], deadline: '', delivery_deadline: '', notes: '', items: [], po_accessories: [] });
+    setForm({ po_number: '', customer_name: isInternal ? 'Gudang FG Sendiri' : '', buyer_id: '', vendor_id: '', po_date: todayWIB(), deadline: '', delivery_deadline: '', notes: '', items: [], po_accessories: [] });
     setShowModal(true);
   };
 
@@ -525,9 +527,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         customer_name: poData.customer_name || '',
         buyer_id: poData.buyer_id || '',
         vendor_id: poData.vendor_id || '',
-        po_date: poData.po_date ? new Date(poData.po_date).toISOString().split('T')[0] : '',
-        deadline: poData.deadline ? new Date(poData.deadline).toISOString().split('T')[0] : '',
-        delivery_deadline: poData.delivery_deadline ? new Date(poData.delivery_deadline).toISOString().split('T')[0] : '',
+        po_date: toWIBDate(poData.po_date),
+        deadline: toWIBDate(poData.deadline),
+        delivery_deadline: toWIBDate(poData.delivery_deadline),
         status: poData.status || 'Draft',
         notes: poData.notes || '',
         items: mappedItems,
@@ -618,12 +620,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     { key: 'total_qty', label: 'Total Qty', render: (v) => v?.toLocaleString('id-ID') },
     { key: 'deadline', label: 'Deadline Prod.', render: (v) => {
       if (!v) return '-';
-      const isOverdue = new Date(v) < new Date();
+      const isOverdue = toWIBDate(v) < todayWIB();
       return <span className={isOverdue ? 'text-red-600 font-medium' : ''}>{fmtDate(v)}</span>;
     }},
     { key: 'delivery_deadline', label: 'Deadline Kirim', render: (v) => {
       if (!v) return '-';
-      const isOverdue = new Date(v) < new Date();
+      const isOverdue = toWIBDate(v) < todayWIB();
       return <span className={isOverdue ? 'text-orange-600 font-medium' : 'text-muted-foreground'}>{fmtDate(v)}</span>;
     }},
     { key: 'status', label: 'Status / Workflow', render: (v, row) => (
@@ -1044,11 +1046,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       {!isInternal && (<>
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">Selling Price (Rp)</label>
-                        <input type="number" min="0" className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85000" data-testid={`po-item-${idx}-selling`} />
+                        <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85.000" data-testid={`po-item-${idx}-selling`} />
                       </div>
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">CMT Price (Rp)</label>
-                        <input type="number" min="0" className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35000" data-testid={`po-item-${idx}-rate`} />
+                        <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35.000" data-testid={`po-item-${idx}-rate`} />
                       </div>
                       </>)}
                     </div>
@@ -1326,7 +1328,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           <td className="px-3 py-2 text-right font-bold">{it.qty?.toLocaleString('id-ID')}</td>
                           <td className="px-3 py-2 text-right text-emerald-700">{fmt(it.selling_price_snapshot)}</td>
                           <td className="px-3 py-2 text-right text-amber-700">{fmt(it.cmt_price_snapshot)}</td>
-                          <td className={`px-3 py-2 text-right font-medium ${marginPcs >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmt(marginPcs)}</td>
+                          <td className={`px-3 py-2 text-right font-medium ${isInternal ? 'text-muted-foreground' : marginPcs >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{isInternal ? '—' : fmt(marginPcs)}</td>
                         </tr>
                       );
                     })}</tbody>
@@ -1335,13 +1337,35 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       <td className="px-3 py-2 text-right">{detailData.items.reduce((s,i)=>s+(i.qty||0),0).toLocaleString('id-ID')} pcs</td>
                       <td className="px-3 py-2 text-right text-emerald-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>
                       <td className="px-3 py-2 text-right text-amber-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
-                      <td className="px-3 py-2 text-right text-blue-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
+                      <td className="px-3 py-2 text-right text-blue-700">{isInternal ? '—' : fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
                     </tr></tfoot>
                   </table>
                 </div>
 
+                {/* 2026-11-02 (K16): PO INTERNAL tidak punya harga jual — "Est. Gross Margin"
+                    = 0 − CMT selalu negatif (−150.000) dan menyesatkan. Tampilkan HPP batch
+                    nyata (bahan BOM warna varian + jahit SPK) dari /cost-check. */}
+                {isInternal && (
+                  <div className="grid grid-cols-3 gap-3" data-testid="po-internal-hpp">
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <p className="text-xs text-amber-600 font-medium">Bahan (BOM warna varian)</p>
+                      <p className="text-xl font-bold text-amber-700 mt-1">{fmt((costCheck?.items || []).reduce((s, i) => s + (i.material_cost || 0) * (Number(i.qty) || 0), 0))}</p>
+                      <p className="text-xs text-amber-500 mt-0.5">Harga bahan × qty</p>
+                    </div>
+                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                      <p className="text-xs text-amber-600 font-medium">Biaya Jahit CMT (SPK)</p>
+                      <p className="text-xl font-bold text-amber-700 mt-1">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</p>
+                      <p className="text-xs text-amber-500 mt-0.5">Tarif jahit × qty</p>
+                    </div>
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                      <p className="text-xs text-blue-600 font-medium">Estimasi HPP Batch</p>
+                      <p className="text-xl font-bold text-blue-700 mt-1" data-testid="po-internal-hpp-batch">{costCheck ? fmt(costCheck.estimated_batch_value) : '…'}</p>
+                      <p className="text-xs text-blue-500 mt-0.5">PO internal = stok sendiri; margin lahir saat barang terjual</p>
+                    </div>
+                  </div>
+                )}
                 {/* Financial Summary */}
-                {(() => {
+                {!isInternal && (() => {
                   const totalSales = detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0);
                   const totalCMT = detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0);
                   const grossMargin = totalSales - totalCMT;

@@ -2,7 +2,7 @@
 
 LITERAL paths (under /predictive-maintenance) — must register before /{asset_id}.
 """
-from datetime import date, datetime
+from datetime import datetime
 from typing import Optional
 from dateutil.relativedelta import relativedelta
 from fastapi import Request, HTTPException, Query
@@ -10,6 +10,7 @@ from fastapi import Request, HTTPException, Query
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _uid, _now, _ser, _safe_avg_interval_days
+from utils.waktu import today_wib
 
 
 @router.get("/predictive-maintenance/alerts")
@@ -24,7 +25,7 @@ async def predictive_maintenance_alerts(
     """Categorized alerts: overdue, upcoming, stale, high_frequency, predicted."""
     await require_auth(request)
     db = get_db()
-    today = date.today()
+    today = today_wib()
     today_iso = today.isoformat()
 
     asset_filter = {"status": {"$ne": "disposed"}}

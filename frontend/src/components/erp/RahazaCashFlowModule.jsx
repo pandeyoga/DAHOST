@@ -6,10 +6,9 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const startOfMonth = () => { const d = new Date(); d.setDate(1); return d.toISOString().slice(0, 10); };
 
 function ActivityGroup({ label, items, total, testId, tone }) {
   const toneClass = total >= 0 ? 'text-emerald-300' : 'text-rose-300';
@@ -26,7 +25,7 @@ function ActivityGroup({ label, items, total, testId, tone }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-              <th className="py-2 px-5 text-left">Kategori</th>
+              <th className="py-2 px-5 text-left">Kategori (sumber jurnal)</th>
               <th className="py-2 px-3 text-right">Masuk</th>
               <th className="py-2 px-3 text-right">Keluar</th>
               <th className="py-2 px-5 text-right">Net</th>
@@ -35,7 +34,7 @@ function ActivityGroup({ label, items, total, testId, tone }) {
           <tbody>
             {items.map(r => (
               <tr key={r.category} className="border-b border-[var(--glass-border)] last:border-0" data-testid={`${testId}-row-${r.category}`}>
-                <td className="py-2 px-5 text-sm">{r.label} <span className="text-[10px] text-muted-foreground">({r.count})</span></td>
+                <td className="py-2 px-5 text-sm" title={(r.source_modules || []).join(', ')}>{r.label} <span className="text-[10px] text-muted-foreground">({r.count})</span></td>
                 <td className="py-2 px-3 text-right font-mono text-xs text-emerald-300">{r.inflow > 0 ? fmt(r.inflow) : ''}</td>
                 <td className="py-2 px-3 text-right font-mono text-xs text-rose-300">{r.outflow > 0 ? fmt(r.outflow) : ''}</td>
                 <td className={`py-2 px-5 text-right font-mono text-sm ${r.net >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{fmt(r.net)}</td>
@@ -88,12 +87,14 @@ function AccountGroup({ code, group }) {
 }
 
 export default function RahazaCashFlowModule({ token }) {
-  const [view, setView] = useState('category');
+  // 2026-11-02 (audit No.46): bawaan = "Per Akun" dari buku besar. K19: tampilan kategori kini juga
+  // dari buku besar (kategori = sumber jurnal), jadi kas awal/akhir kedua tampilan sama dengan GL.
+  const [view, setView] = useState('account');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [from, setFrom] = useState(startOfMonth());
-  const [to, setTo] = useState(todayISO());
+  const [from, setFrom] = useState(monthStartWIB());
+  const [to, setTo] = useState(todayWIB());
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {
@@ -140,7 +141,7 @@ export default function RahazaCashFlowModule({ token }) {
         icon={Wallet}
         eyebrow="Accounting Core · F3"
         title="Laporan Arus Kas"
-        subtitle="Cash Flow Statement — metode direct dari ledger pergerakan kas. Grouping: Operasi / Investasi / Pendanaan."
+        subtitle="Cash Flow Statement — kedua tampilan dari buku besar: Per Akun (akun lawan) dan Per Kategori (sumber jurnal yang menyentuh kas/bank). Grouping: Operasi / Investasi / Pendanaan."
         actions={
           <>
             <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="cf-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
@@ -157,8 +158,8 @@ export default function RahazaCashFlowModule({ token }) {
           <span className="text-xs text-muted-foreground">s/d</span>
           <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-8 w-36" data-testid="cf-to" />
           <div className="flex gap-1 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-0.5 ml-auto">
-            <button onClick={() => setView('category')} className={view === 'category' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-category">Per Kategori Mutasi</button>
             <button onClick={() => setView('account')} className={view === 'account' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-account">Per Akun (OPR/INV/PND)</button>
+            <button onClick={() => setView('category')} className={view === 'category' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-category">Per Kategori Mutasi</button>
           </div>
         </div>
       </GlassCard>

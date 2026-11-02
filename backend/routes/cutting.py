@@ -199,29 +199,27 @@ async def _stock_locations(db, material_id: str) -> list[dict]:
 
 async def _default_location(db, location_id: Optional[str] = None,
                             material_id: Optional[str] = None) -> tuple[str, str]:
-    """Tentukan lokasi order cutting.
+    """Lokasi order cutting = lokasi yang DIPILIH pengguna (wajib).
 
-    Prioritas: (1) yang dipilih user, (2) lokasi dengan stok TERBANYAK untuk material
-    tersebut, (3) lokasi bernama 'Gudang…', (4) lokasi aktif pertama.
+    2026-11-02 — No.18(a) owner: pengguna wajib memilih lokasi. Dulu bila kosong/salah
+    dipakai berturut-turut: stok terbanyak → lokasi bernama 'Gudang…' → lokasi aktif
+    pertama. Dialog Order Cutting sudah mewajibkan "Gudang Sumber Kain" (saran stok
+    terbanyak tampil & bisa diubah di layar), jadi tebakan diam-diam di sini dicabut.
+    `material_id` dipertahankan di tanda tangan untuk kompatibilitas pemanggil.
     """
-    if location_id:
-        loc = await db.rahaza_locations.find_one({"id": location_id}, {"_id": 0})
-        if loc:
-            return loc["id"], loc.get("name") or loc.get("code") or ""
-        z = await db.wh_zones.find_one({"id": location_id}, {"_id": 0})
-        if z:
-            return z["id"], z.get("name") or z.get("code") or ""
-    if material_id:
-        locs = await _stock_locations(db, material_id)
-        if locs:
-            return locs[0]["location_id"], locs[0]["location_name"]
-    loc = await db.rahaza_locations.find_one(
-        {"active": True, "name": {"$regex": "gudang", "$options": "i"}}, {"_id": 0}, sort=[("code", 1)])
-    if not loc:
-        loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0}, sort=[("code", 1)])
-    if not loc:
-        raise HTTPException(400, "Belum ada lokasi gudang (rahaza_locations). Buat lokasi dulu.")
-    return loc["id"], loc.get("name") or loc.get("code") or ""
+    location_id = (location_id or "").strip()
+    if not location_id:
+        raise HTTPException(400, "location_id wajib diisi — pilih Gudang Sumber Kain untuk order cutting ini.")
+    loc = await db.rahaza_locations.find_one({"id": location_id}, {"_id": 0})
+    if loc:
+        return loc["id"], loc.get("name") or loc.get("code") or ""
+    z = await db.wh_zones.find_one({"id": location_id}, {"_id": 0})
+    if z:
+        return z["id"], z.get("name") or z.get("code") or ""
+    pos = await db.wh_positions.find_one({"id": location_id}, {"_id": 0})
+    if pos:
+        return pos["id"], pos.get("label") or pos.get("barcode") or pos.get("code") or ""
+    raise HTTPException(400, "Gudang Sumber Kain yang dipilih tidak ditemukan di Struktur Gudang.")
 
 
 async def _enrich(db, o: dict) -> dict:
@@ -336,7 +334,7 @@ async def list_rolls(request: Request, material_id: str):
 @router.get("/bom-requirement")
 async def bom_requirement(request: Request, model_id: str, size_id: Optional[str] = None,
                           variant_id: Optional[str] = None, qty_pcs: float = 0,
-                          input_material_id: Optional[str] = None):
+                          input_material_id: Optional[str] = None, color: Optional[str] = None):
     """Kebutuhan bahan menurut BOM untuk rencana potongan (dipakai dialog Order Cutting).
 
     KENAPA: sebelum ini `planned_input_qty` (rencana pemakaian kain) DITEBAK manual
@@ -350,7 +348,7 @@ async def bom_requirement(request: Request, model_id: str, size_id: Optional[str
     db = get_db()
     data = await product_costing.bom_requirement_for_cutting(
         db, model_id=model_id, size_id=size_id, variant_id=variant_id,
-        qty_pcs=_f(qty_pcs), input_material_id=input_material_id)
+        qty_pcs=_f(qty_pcs), input_material_id=input_material_id, color=color)
     return serialize_doc(data)
 
 
@@ -798,7 +796,10 @@ async def create_order(request: Request):
     bom_panel = None
     _size_id = (variant or {}).get("size_id") or (size_doc or {}).get("id") or ""
     if _size_id:
-        _bom = await product_costing.find_active_bom(db, model_id, _size_id)
+        # 2026-11-02 (F1b): potongan yang dihasilkan = potongan BOM WARNA varian ini
+        # (dulu BOM warna mana pun → potongan CRL tercatat sebagai BRG).
+        _bom = await product_costing.find_active_bom(
+            db, model_id, _size_id, product_costing.color_of(variant) or output_color)
         for _ln in (_bom or {}).get("materials") or []:
             if cut_panel_master.is_panel_line(_ln):
                 bom_panel = await db.rahaza_materials.find_one(

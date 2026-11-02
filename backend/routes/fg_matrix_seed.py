@@ -15,23 +15,29 @@ def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
 
 
-async def seed_fg_matrix_demo():
+async def seed_fg_matrix_demo(location_id: str | None = None):
     """Create sample FG materials + stock for matrix view demo."""
     db = get_db()
-    
+
     existing = await db.rahaza_materials.count_documents({"type": "fg", "code": {"$regex": "^DEMO-"}})
     if existing > 0:
         return {"status": "already_seeded", "existing_count": existing}
-    
-    # Ensure a default location exists
-    default_loc = await db.rahaza_locations.find_one({"active": True}, {"_id": 0})
-    if not default_loc:
-        default_loc = {
-            "id": _uid(), "code": "FG-MAIN", "name": "FG Warehouse Main",
-            "active": True, "created_at": _now(), "updated_at": _now(),
-        }
-        await db.rahaza_locations.insert_one(default_loc)
-    loc_id = default_loc["id"]
+
+    # 2026-11-02 — No.18(a): stok demo tidak lagi jatuh ke "lokasi aktif pertama" (di seed
+    # = KTR-PST Kantor Pusat). Lokasi = yang dikirim pemanggil, atau gudang FG kanonik
+    # (lokasi berperan 'fg' — SSOT yang sama dengan stok FG produksi). Bila tidak ada
+    # keduanya, seeder berhenti dengan pesan jelas, bukan mengarang lokasi.
+    from core import location_resolver
+    from core.production_qty_ledger import resolve_fg_location_id
+    loc_id = (location_id or "").strip()
+    if loc_id and not await location_resolver.location_exists(db, loc_id):
+        return {"status": "error", "error": "location_id tidak ditemukan di Struktur Gudang."}
+    if not loc_id:
+        loc_id = await resolve_fg_location_id(db)
+    if not loc_id:
+        return {"status": "error",
+                "error": "Lokasi gudang FG belum ada — tandai satu lokasi berperan 'fg' di Master "
+                         "Lokasi, atau kirim location_id."}
     
     # Demo data: 3 models × multiple colors × multiple sizes
     demo_data = [

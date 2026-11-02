@@ -28,7 +28,10 @@ import { UomSelect, UomConversionHint, baseUnitOf, toBaseQty } from './uom/UomPi
 import AccessoryValuationTab from './accessory/AccessoryValuationTab';
 // F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
 import { tone } from '@/lib/tone';
+import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+// 2026-11-02 (K9): tab Stok Opname = layar Sesi Opname bersama (mesin tunggal), terfilter aksesoris
+import WMSOpnameScanModule from './WMSOpnameScanModule';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -381,7 +384,7 @@ function MasterTab({ token, onRefreshDash }) {
               {/* FASE G+: harga satuan — dasar nilai selisih opname & jurnal keuangan */}
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Harga Satuan / HPP (Rp)</label>
-                <input type="number" min="0" step="1" value={form.unit_cost}
+                <MoneyInput unstyled value={form.unit_cost}
                   onChange={e=>setForm({...form,unit_cost:e.target.value})}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                   placeholder="0" data-testid="acc-unit-cost-input" />
@@ -452,7 +455,7 @@ function MasterTab({ token, onRefreshDash }) {
                     <b className="text-foreground">{moveUnit || showMove.unit}</b>{' '}
                     — opsional
                   </label>
-                  <input type="number" min="0" step="0.01" value={moveForm.unit_cost}
+                  <MoneyInput unstyled decimals={2} value={moveForm.unit_cost}
                     onChange={e=>setMoveForm({...moveForm,unit_cost:e.target.value})}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                     placeholder="kosongkan bila harga tidak berubah" data-testid="move-unit-cost-input" />
@@ -791,427 +794,13 @@ function RequestInternalTab({ token, items }) {
 }
 
 // ─── TAB 3: STOK OPNAME ─────────────────────────────────────────────────────
-// FASE 10 — DIALOG NATIVE DIHAPUS TOTAL.
-// Sebelumnya tab ini memakai `window.prompt()` (alasan menolak opname) +
-// `window.confirm()`/`alert()` untuk ajukan/batalkan/setujui. Masalahnya nyata:
-//   * `prompt()` diblokir sebagian browser (mis. di dalam iframe/preview) ⇒ user
-//     tidak bisa menolak opname sama sekali;
-//   * tidak bisa diberi validasi ("alasan wajib"), tidak bisa di-styling, dan
-//     tidak bisa diotomasi oleh test browser;
-//   * hasil `alert()` panjang (peringatan item tanpa HPP) tidak terbaca rapi.
-// Sekarang semua memakai SATU modal seragam (`OpnameActionModal`) + banner
-// umpan balik di halaman, gaya sama dengan modal Scrap & Set HPP.
-const OPNAME_DIALOGS = {
-  submit: {
-    title: 'Ajukan Opname untuk Approval',
-    tone: 'amber',
-    confirmLabel: 'Ajukan',
-    body: ('Sesi opname akan dikirim ke supervisor untuk disetujui. Penyesuaian stok & '
-      + 'posting jurnal keuangan BARU diterapkan setelah approval — jadi angka Anda '
-      + 'masih bisa diperiksa dulu.'),
-  },
-  cancel: {
-    title: 'Batalkan Sesi Opname',
-    tone: 'red',
-    confirmLabel: 'Batalkan Sesi',
-    body: ('Sesi ini akan ditutup dan hitungan fisik yang sudah diisi tidak dipakai. '
-      + 'Stok TIDAK berubah. Anda bisa memulai sesi baru kapan saja.'),
-  },
-  approve: {
-    title: 'Setujui Opname',
-    tone: 'emerald',
-    confirmLabel: 'Setujui & Terapkan',
-    body: ('Selisih stok akan di-adjust dan jurnal penyesuaian di-posting ke keuangan. '
-      + 'Item yang harga satuannya (HPP) masih 0 tidak menghasilkan jurnal — akan '
-      + 'diberitahukan setelah proses selesai.'),
-  },
-  reject: {
-    title: 'Tolak Opname',
-    tone: 'red',
-    confirmLabel: 'Tolak Opname',
-    reasonRequired: true,
-    reasonLabel: 'Alasan menolak',
-    reasonPlaceholder: 'Contoh: hitungan rak B belum dicek ulang, selisih 200 pcs tidak wajar...',
-    body: ('Sesi dikembalikan ke petugas tanpa mengubah stok. Alasan wajib diisi supaya '
-      + 'petugas tahu apa yang harus diperbaiki (tersimpan sebagai jejak audit).'),
-  },
-};
-
-const OPNAME_TONE = {
-  amber: 'bg-amber-600 hover:brightness-110',
-  red: 'bg-red-600 hover:brightness-110',
-  emerald: 'bg-emerald-600 hover:brightness-110',
-};
-
-function OpnameActionModal({ dialog, onClose, onConfirm }) {
-  const [reason, setReason] = useState('');
-  const [error, setError] = useState('');
-  const cfg = OPNAME_DIALOGS[dialog?.kind] || {};
-  if (!dialog) return null;
-
-  const submit = () => {
-    if (cfg.reasonRequired && !reason.trim()) {
-      setError('Alasan wajib diisi agar petugas tahu apa yang harus diperbaiki.');
-      return;
-    }
-    setError('');
-    onConfirm(reason.trim());
-  };
-
-  return (
-    <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4"
-      onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-md p-6"
-        onClick={e => e.stopPropagation()}
-        data-testid={`opname-${dialog.kind}-modal`}>
-        <h3 className="text-lg font-bold mb-1">{cfg.title}</h3>
-        {dialog.refNumber && (
-          <p className="text-sm text-muted-foreground mb-3 font-mono">{dialog.refNumber}</p>
-        )}
-        <p className="text-sm text-muted-foreground mb-4">{cfg.body}</p>
-        {cfg.reasonRequired && (
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground block" htmlFor="opname-reason-input">
-              {cfg.reasonLabel} *
-            </label>
-            <textarea id="opname-reason-input" rows={3} value={reason} autoFocus
-              onChange={e => { setReason(e.target.value); if (error) setError(''); }}
-              placeholder={cfg.reasonPlaceholder}
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-y"
-              data-testid={`opname-${dialog.kind}-reason`} />
-            {error && (
-              <div className="text-xs text-red-700 dark:text-red-400"
-                data-testid={`opname-${dialog.kind}-error`}>{error}</div>
-            )}
-          </div>
-        )}
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose}
-            className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5"
-            data-testid={`opname-${dialog.kind}-cancel`}>
-            Kembali
-          </button>
-          <button onClick={submit} disabled={dialog.busy}
-            className={`flex-1 py-2 text-white rounded-lg text-sm disabled:opacity-50 ${OPNAME_TONE[cfg.tone] || OPNAME_TONE.emerald}`}
-            data-testid={`opname-${dialog.kind}-confirm`}>
-            {dialog.busy ? 'Memproses...' : cfg.confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// 2026-11-02 (keputusan owner K9 — "dipisahkan saja pakai mesin yang sama"): tab ini dulu punya
+// mesin opname sendiri (stok sistem = total SEMUA lokasi, baris tak dihitung dilewati, satu jurnal
+// per material, tidak buta). Menu Portal Aksesoris tetap ada, tetapi menampilkan layar Sesi Opname
+// bersama (mesin tunggal `core/opname_engine.py`) terfilter jenis aksesoris: hitung buta, per lokasi,
+// "belum dihitung" ≠ 0, satu jurnal per sesi ke 1-1402. Sesi lama tampil sebagai arsip baca-saja.
 function StokOpnameTab({ token }) {
-  const [sessions, setSessions] = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [active, setActive]     = useState(null);
-  const [lines, setLines]       = useState([]);
-  const [saving, setSaving]     = useState(false);
-  const [busyId, setBusyId]     = useState(null);
-  const [err, setErr]           = useState('');
-  // Umpan balik di halaman (pengganti alert()) + modal seragam (pengganti prompt/confirm)
-  const [msg, setMsg]           = useState('');
-  const [warnBox, setWarnBox]   = useState(null); // {text, items:[]}
-  const [dialog, setDialog]     = useState(null); // {kind, session, refNumber, busy}
-  // ROADMAP P1 — satuan hitung fisik per baris (mis. petugas menghitung "3 pak")
-  const [lineUom, setLineUom]   = useState({});   // acc_id → kode satuan
-  const { options: uomOpts } = useUomOptions(lines.map(l => l.acc_id));
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await api('GET', '/api/acc/opname', token);
-      setSessions(Array.isArray(data) ? data : []);
-    } catch(e) { setErr(e.message); }
-    finally { setLoading(false); }
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const openSession = async (s) => {
-    setErr(''); setMsg(''); setWarnBox(null);
-    try {
-      const detail = await api('GET', `/api/acc/opname/${s.id}`, token);
-      setActive(detail);
-      setLines(detail.lines || []);
-    } catch(e) { setErr(e.message); }
-  };
-
-  const startOpname = async () => {
-    setSaving(true); setErr('');
-    try {
-      const session = await api('POST', '/api/acc/opname', token, { notes: 'Opname manual' });
-      setActive(session);
-      setLines(session.lines || []);
-      load();
-    } catch(e) { setErr(e.message); }
-    finally { setSaving(false); }
-  };
-
-  const updateCount = async (line, val) => {
-    const opt = uomOpts[line.acc_id];
-    const base = baseUnitOf(opt, line.unit || '');
-    const chosen = lineUom[line.acc_id] || base;
-    const raw = parseFloat(val);
-    if (!Number.isFinite(raw)) return;
-    const qtyBase = (chosen && chosen !== base)
-      ? toBaseQty(opt, raw, chosen) : raw;
-    if (qtyBase == null) {
-      setErr(`Satuan '${chosen}' belum punya faktor konversi — lengkapi kemasannya di Master Aksesoris.`);
-      return;
-    }
-    try {
-      const body = { acc_id: line.acc_id, counted_qty: raw, notes: '' };
-      if (chosen && chosen !== base) body.counted_uom = chosen;
-      await api('PUT', `/api/acc/opname/${active.id}/count`, token, body);
-      setLines(prev => prev.map(l => l.acc_id === line.acc_id
-        ? { ...l, counted_qty: qtyBase, counted_input_qty: raw, counted_input_uom: chosen,
-            diff: qtyBase - parseFloat(l.system_qty) }
-        : l));
-    } catch(e) { setErr(e.message); }
-  };
-
-  // ── SEMUA AKSI LEWAT SATU MODAL SERAGAM ───────────────────────────────────
-  const askDialog = (kind, session) => {
-    setErr(''); setMsg(''); setWarnBox(null);
-    setDialog({ kind, session, refNumber: session?.ref_number || active?.ref_number || '' });
-  };
-
-  const runDialog = async (reason) => {
-    if (!dialog) return;
-    const { kind, session } = dialog;
-    const sid = session?.id || active?.id;
-    setDialog(d => ({ ...d, busy: true }));
-    setErr(''); setMsg(''); setWarnBox(null);
-    if (kind === 'approve' || kind === 'reject') setBusyId(sid);
-    else setSaving(true);
-    try {
-      if (kind === 'submit') {
-        await api('POST', `/api/acc/opname/${sid}/submit`, token, {});
-        setActive(null); setLines([]);
-        setMsg('Opname diajukan untuk persetujuan supervisor. Stok belum berubah.');
-      } else if (kind === 'cancel') {
-        await api('POST', `/api/acc/opname/${sid}/cancel`, token, {});
-        setActive(null); setLines([]);
-        setMsg('Sesi opname dibatalkan. Stok tidak berubah.');
-      } else if (kind === 'approve') {
-        const res = await api('POST', `/api/acc/opname/${sid}/approve`, token, {});
-        setMsg(`Opname ${dialog.refNumber} disetujui · ${res.adjustments_made || 0} penyesuaian `
-          + `stok diterapkan · ${res.je_posted || 0} jurnal keuangan di-posting.`);
-        const warns = [];
-        // Baris yang stoknya GAGAL disesuaikan HARUS terlihat — ini paling parah
-        // (selisihnya tidak pernah diterapkan), jadi ditaruh paling atas.
-        if ((res.stock_failed || 0) > 0) {
-          warns.push({
-            text: `${res.stock_failed} item GAGAL disesuaikan stoknya — selisih pada baris ini `
-              + 'TIDAK diterapkan. Penyebab tersering: stok tercatat kurang dari jumlah yang '
-              + 'dikurangi. Periksa item di bawah, lalu buat opname ulang untuk baris tersebut.',
-            items: (res.stock_failed_items || []).map(x => ({
-              label: x.code || x.name, delta: x.delta,
-            })),
-          });
-        }
-        if ((res.je_failed || 0) > 0) {
-          warns.push({
-            text: `${res.je_failed} item TIDAK ber-jurnal karena harga satuan (HPP) masih 0. `
-              + 'Stok sudah disesuaikan; lengkapi HPP di tab Valuasi HPP agar nilai selisih '
-              + 'masuk ke keuangan.',
-            items: (res.je_failed_items || []).map(x => ({
-              label: x.code || x.name, delta: x.delta,
-            })),
-          });
-        }
-        if (warns.length) {
-          setWarnBox({
-            text: warns.map(w => w.text).join(' '),
-            items: warns.flatMap(w => w.items),
-          });
-        }
-      } else if (kind === 'reject') {
-        await api('POST', `/api/acc/opname/${sid}/reject`, token, { reason });
-        setMsg(`Opname ${dialog.refNumber} ditolak. Alasan tersimpan: "${reason}". `
-          + 'Stok tidak berubah dan petugas bisa menghitung ulang.');
-      }
-      setDialog(null);
-      load();
-    } catch(e) {
-      setErr(e.message);
-      setDialog(d => (d ? { ...d, busy: false } : null));
-    }
-    finally { setSaving(false); setBusyId(null); }
-  };
-
-  const feedback = (
-    <>
-      {err && (
-        <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-lg px-4 py-2"
-          data-testid="opname-feedback-error">{err}</div>
-      )}
-      {msg && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2"
-          data-testid="opname-feedback-msg">{msg}</div>
-      )}
-      {warnBox && (
-        <div className="text-sm bg-amber-100 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/25 rounded-lg px-4 py-3"
-          data-testid="opname-feedback-warning">
-          <div className="flex items-start gap-2 text-amber-800 dark:text-amber-300">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            <div>
-              <div>{warnBox.text}</div>
-              {warnBox.items.length > 0 && (
-                <ul className="mt-1.5 text-xs space-y-0.5">
-                  {warnBox.items.map((x, i) => (
-                    <li key={i} className="font-mono">
-                      • {x.label} ({x.delta > 0 ? '+' : ''}{fmtNum(x.delta)})
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
-  );
-
-  if (active) return (
-    <div className="space-y-5">
-      <OpnameActionModal dialog={dialog} onClose={() => setDialog(null)} onConfirm={runDialog} />
-      {feedback}
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-bold text-lg">{active.ref_number}</h3>
-          <p className="text-sm text-muted-foreground">{active.counted_items || 0}/{active.total_items} item sudah dihitung · <span className="text-foreground/70">selisih diterapkan setelah <strong>approval supervisor</strong></span></p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => askDialog('cancel', active)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5" data-testid="cancel-opname-btn">Batalkan</button>
-          <button onClick={() => askDialog('submit', active)} disabled={saving} className="px-4 py-1.5 bg-amber-600 text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="submit-opname-btn">
-            {saving ? 'Memproses...' : 'Ajukan untuk Approval'}
-          </button>
-        </div>
-      </div>
-      <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-        <table className="w-full text-sm min-w-[600px]">
-          <thead className="bg-[var(--glass-bg)] border-b border-border">
-            <tr>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Kode</th>
-              <th className="text-left px-4 py-3 text-muted-foreground font-medium">Nama</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Stok Sistem</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Jumlah Fisik</th>
-              <th className="text-right px-4 py-3 text-muted-foreground font-medium">Selisih</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map(ln => (
-              <tr key={ln.acc_id} className={`border-b border-border ${ln.diff !== null && ln.diff !== 0 ? 'bg-amber-100 dark:bg-amber-500/5' : ''}`}>
-                <td className="px-4 py-2 font-mono text-xs text-muted-foreground">{ln.acc_code}</td>
-                <td className="px-4 py-2">{ln.acc_name}</td>
-                <td className="px-4 py-2 text-right font-medium">{fmtNum(ln.system_qty)} <span className="text-xs text-muted-foreground">{ln.unit}</span></td>
-                <td className="px-4 py-2 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <input type="number" min="0" step="0.0001"
-                      defaultValue={ln.counted_input_qty ?? ln.counted_qty ?? ''}
-                      onBlur={e => { if(e.target.value !== '') updateCount(ln, e.target.value); }}
-                      className="w-24 border border-border rounded px-2 py-1 text-sm bg-[var(--card-surface)] text-right" placeholder="Hitung..."
-                      data-testid={`opname-count-${ln.acc_id}`} />
-                    <UomSelect opt={uomOpts[ln.acc_id]} fallbackUnit={ln.unit}
-                      value={lineUom[ln.acc_id] || baseUnitOf(uomOpts[ln.acc_id], ln.unit)}
-                      onChange={e => setLineUom(p => ({ ...p, [ln.acc_id]: e.target.value }))}
-                      testId={`opname-uom-${ln.acc_id}`} className="w-20 shrink-0" />
-                  </div>
-                  {lineUom[ln.acc_id] && lineUom[ln.acc_id] !== baseUnitOf(uomOpts[ln.acc_id], ln.unit) && (
-                    <UomConversionHint opt={uomOpts[ln.acc_id]} qty={ln.counted_input_qty ?? ln.counted_qty}
-                      unit={lineUom[ln.acc_id]} fallbackUnit={ln.unit}
-                      className="text-right mt-0.5" testId={`opname-uom-hint-${ln.acc_id}`} />
-                  )}
-                </td>
-                <td className={`px-4 py-2 text-right font-medium ${ln.diff > 0 ? 'text-emerald-600 dark:text-emerald-400' : ln.diff < 0 ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}`}>
-                  {ln.diff !== null ? (ln.diff > 0 ? `+${fmtNum(ln.diff)}` : fmtNum(ln.diff)) : '-'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-
-  const blockStart = sessions.some(s => s.status === 'Active' || s.status === 'Submitted');
-  return (
-    <div className="space-y-5">
-      <OpnameActionModal dialog={dialog} onClose={() => setDialog(null)} onConfirm={runDialog} />
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="font-semibold">Sesi Stok Opname Aksesoris</h3>
-          <p className="text-sm text-muted-foreground">Hitung fisik → <strong>ajukan</strong> → <strong>approval supervisor</strong> → auto-adjust selisih &amp; posting jurnal keuangan. <span className="text-foreground/70">Domain <strong>Aksesoris</strong> — terpisah dari opname Material/Kain.</span></p>
-        </div>
-        <button onClick={startOpname} disabled={saving || blockStart} className="flex items-center gap-2 px-4 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="start-opname-btn">
-          <ClipboardCheck className="w-4 h-4" /> Mulai Opname Baru
-        </button>
-      </div>
-      {feedback}
-
-      <div className="space-y-3">
-        {loading ? (
-          <div className="space-y-2">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
-        ) : sessions.length === 0 ? <EmptyState icon={ClipboardCheck} title="Belum ada sesi opname" description="Buat sesi baru untuk mulai menghitung stok fisik aksesoris." />
-        : sessions.map(s => (
-          <div key={s.id} className="bg-[var(--card-surface)] border border-border rounded-xl p-4 flex items-center justify-between gap-4">
-            <div>
-              <div className="font-medium flex items-center gap-2">
-                {s.ref_number}
-                <Badge status={s.status} label={s.status === 'Submitted' ? 'Menunggu Approval' : undefined} />
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                Oleh {s.started_by} · {fmtDate(s.started_at)} · {s.counted_items}/{s.total_items} item
-                {(s.total_variance_items ?? 0) > 0 && <> · <span className="text-amber-600 dark:text-amber-400">{s.total_variance_items} selisih</span></>}
-              </div>
-              {s.status === 'Completed' && (
-                <div className="text-xs mt-1 space-y-0.5" data-testid={`opname-summary-${s.id}`}>
-                  <div className="text-emerald-600 dark:text-emerald-400">
-                    Disetujui {s.approved_by ? `oleh ${s.approved_by}` : ''} · {s.adjustments_made ?? 0} penyesuaian · {s.je_posted || 0} jurnal keuangan · nilai selisih Rp {fmtNum(s.total_variance_value || 0)}
-                  </div>
-                  {(s.stock_failed ?? 0) > 0 && (
-                    <div className="text-red-700 dark:text-red-400" data-testid={`opname-stock-warning-${s.id}`}
-                      title={(s.stock_failed_items || []).map(x => `${x.code || x.name}: ${x.reason}`).join('\n')}>
-                      ⛔ {s.stock_failed} item GAGAL disesuaikan — selisihnya <strong>tidak diterapkan</strong> (stok tercatat kurang dari jumlah yang dikurangi). Perlu opname ulang untuk baris tersebut.
-                    </div>
-                  )}
-                  {(s.je_failed ?? 0) > 0 && (
-                    <div className="text-amber-700 dark:text-amber-400" data-testid={`opname-je-warning-${s.id}`}
-                      title={(s.je_failed_items || []).map(x => `${x.code || x.name}: ${x.reason}`).join('\n')}>
-                      ⚠ {s.je_failed} item belum ber-jurnal (harga satuan/HPP material masih 0) — stok sudah disesuaikan, isi <strong>unit_cost</strong> material lalu opname berikutnya akan ter-posting.
-                    </div>
-                  )}
-                </div>
-              )}
-              {s.status === 'Rejected' && s.reject_reason && (
-                <div className="text-xs text-red-700 dark:text-red-400 mt-1">Ditolak: {s.reject_reason}</div>
-              )}
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {s.status === 'Active' && (
-                <button onClick={()=>openSession(s)} className="px-3 py-1.5 bg-primary/10 text-primary rounded-lg text-sm hover:bg-primary/20" data-testid={`open-opname-${s.id}`}>
-                  Lanjutkan
-                </button>
-              )}
-              {s.status === 'Submitted' && (
-                <>
-                  <button onClick={()=>askDialog('reject', s)} disabled={busyId===s.id} className="px-3 py-1.5 border border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400 rounded-lg text-sm hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50" data-testid={`reject-opname-${s.id}`}>
-                    Tolak
-                  </button>
-                  <button onClick={()=>askDialog('approve', s)} disabled={busyId===s.id} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid={`approve-opname-${s.id}`}>
-                    {busyId===s.id ? 'Memproses...' : 'Setujui'}
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return <WMSOpnameScanModule token={token} kind="aksesoris" />;
 }
 
 // ─── PENUNJUK ARAH: PEMINJAMAN (tab lama dilepas di FASE 10) ─────────────────
@@ -1454,7 +1043,7 @@ function PurchaseRequestTab({ token, items }) {
                     </SmartNativeSelect>
                     <input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)} className="w-14 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Qty" />
                     <span className="text-xs text-muted-foreground">{ln.unit}</span>
-                    <input type="number" min="0" value={ln.estimated_price} onChange={e=>updateLine(i,'estimated_price',+e.target.value)} className="w-24 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Harga Est." />
+                    <MoneyInput unstyled value={ln.estimated_price} onChange={e=>updateLine(i,'estimated_price',+e.target.value)} className="w-24 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Harga Est." />
                     {lines.length>1 && <button onClick={()=>removeLine(i)}><X className="w-4 h-4 text-muted-foreground" /></button>}
                   </div>
                 ))}

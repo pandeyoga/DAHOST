@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 
@@ -53,7 +54,7 @@ export default function BadDebtWriteOffModule({ token }) {
         headers,
         body: JSON.stringify({
           reason: writeOffTarget.reason,
-          write_off_date: writeOffTarget.write_off_date || new Date().toISOString().split('T')[0]
+          write_off_date: writeOffTarget.write_off_date || todayWIB()
         })
       });
       if (r.ok) {

@@ -13,7 +13,18 @@ Endpoints:
   PUT  /api/rahaza/channel-gl-mapping/{id}     — update channel
   DELETE /api/rahaza/channel-gl-mapping/{id}   — hapus channel
   POST /api/rahaza/channel-gl-mapping/seed-da  — seed default DA channels
+
+2026-11-02 (D3) — keputusan owner: "Peta Akun Channel seharusnya tidak ada".
+COA per toko marketplace sudah ada di master toko (`marketing_platform_accounts`:
+`coa_revenue_code`, `ar_account_code`) dan dipakai jurnal pencairan/penarikan;
+penjualan non-marketplace lewat Portal Penjualan memakai profil posting
+`ar_invoice` (4-1100), bukan peta ini. Karena itu untuk toko MARKETPLACE peta ini
+kini BACA-SAJA: GET tetap jalan (baris diberi `read_only`), sedangkan tulis
+(POST/PUT/DELETE) dan seed-da menjawab 410 dengan pesan yang menunjuk tempat yang
+benar. Menu "Peta Akun Channel" juga dilepas dari Portal Keuangan.
 """
+
+import re
 
 from fastapi import APIRouter, HTTPException, Request
 from database import get_db
@@ -39,6 +50,33 @@ async def _require_fin(request: Request) -> dict:
     if role in FINANCE_ROLES + ("manager",):  # T-08
         return user
     raise HTTPException(403, "Akses ditolak — Finance/Admin only.")
+
+
+# ─── 2026-11-02 (D3) — peta untuk toko marketplace = BACA-SAJA ────────────────
+MARKETPLACE_PLATFORMS = ("shopee", "tiktok", "tiktokshop", "tiktok_shop", "tokopedia",
+                         "lazada", "blibli")
+GONE_MESSAGE = (
+    "Peta Akun Channel untuk toko marketplace sudah dihentikan (keputusan owner D3: "
+    "COA per toko, tidak ada peta COA kedua). Akun pendapatan & piutang toko diatur "
+    "di master toko (Marketing › Kelola Akun) dan dipakai jurnal pencairan/penarikan. "
+    "Penjualan di luar marketplace dicatat lewat Portal Penjualan.")
+
+
+def is_marketplace_platform(platform) -> bool:
+    return (platform or "").strip().lower() in MARKETPLACE_PLATFORMS
+
+
+async def _is_store_key(db, channel_key) -> bool:
+    key = (channel_key or "").strip()
+    if not key:
+        return False
+    return bool(await db.marketing_platform_accounts.find_one(
+        {"account_code": {"$regex": f"^{re.escape(key)}$", "$options": "i"}}, {"_id": 0, "id": 1}))
+
+
+async def _reject_if_marketplace(db, *, platform=None, channel_key=None) -> None:
+    if is_marketplace_platform(platform) or await _is_store_key(db, channel_key):
+        raise HTTPException(410, GONE_MESSAGE)
 
 
 # ─── Seed Data: DA Channels ──────────────────────────────────────────────────
@@ -82,6 +120,16 @@ async def list_channels(request: Request):
     docs = await db.rahaza_channel_gl_mapping.find(
         {"active": True}, {"_id": 0}
     ).sort([("platform", 1), ("channel_label", 1)]).to_list(200)
+    # 2026-11-02 (D3) — bentuk respons tetap daftar (pembaca lama tidak rusak);
+    # baris toko marketplace ditandai baca-saja beserta alasannya.
+    store_codes = {str(c).upper() for c in
+                   await db.marketing_platform_accounts.distinct("account_code") if c}
+    for d in docs:
+        ro = (is_marketplace_platform(d.get("platform"))
+              or str(d.get("channel_key") or "").upper() in store_codes)
+        d["read_only"] = ro
+        if ro:
+            d["read_only_reason"] = GONE_MESSAGE
     return docs
 
 
@@ -94,6 +142,7 @@ async def create_channel(request: Request):
     channel_key = (body.get("channel_key") or "").strip().lower().replace(" ", "_")
     if not channel_key:
         raise HTTPException(400, "channel_key wajib.")
+    await _reject_if_marketplace(db, platform=body.get("platform"), channel_key=channel_key)  # D3
     existing = await db.rahaza_channel_gl_mapping.find_one({"channel_key": channel_key})
     if existing:
         raise HTTPException(409, f"channel_key '{channel_key}' sudah ada.")
@@ -121,6 +170,9 @@ async def update_channel(cid: str, request: Request):
     doc = await db.rahaza_channel_gl_mapping.find_one({"id": cid})
     if not doc:
         raise HTTPException(404, "Channel tidak ditemukan.")
+    # D3 — baris toko marketplace (atau mengubah baris menjadi marketplace) ditolak.
+    await _reject_if_marketplace(db, platform=doc.get("platform"), channel_key=doc.get("channel_key"))
+    await _reject_if_marketplace(db, platform=body.get("platform"))
     upd = {
         "channel_label":  body.get("channel_label", doc.get("channel_label")),
         "platform":       body.get("platform", doc.get("platform")),
@@ -143,6 +195,7 @@ async def delete_channel(cid: str, request: Request):
     doc = await db.rahaza_channel_gl_mapping.find_one({"id": cid})
     if not doc:
         raise HTTPException(404, "Channel tidak ditemukan.")
+    await _reject_if_marketplace(db, platform=doc.get("platform"), channel_key=doc.get("channel_key"))  # D3
     await db.rahaza_channel_gl_mapping.update_one(
         {"id": cid},
         {"$set": {"active": False, "updated_at": _now(), "updated_by": user["id"]}}
@@ -153,24 +206,10 @@ async def delete_channel(cid: str, request: Request):
 # ─── Seed DA ─────────────────────────────────────────────────────────────────
 @router.post("/seed-da")
 async def seed_da_channels(request: Request):
-    """Seed 13 channel default CV. Dewi Aditya. Idempotent — skip yang sudah ada."""
-    user = await _require_fin(request)
-    db = get_db()
-    existing_keys: set = set()
-    async for d in db.rahaza_channel_gl_mapping.find({}, {"channel_key": 1}):
-        existing_keys.add(d["channel_key"])
-    inserted = 0
-    skipped = 0
-    for channel_key, channel_label, platform, debit_ar, credit_revenue in DA_CHANNELS:
-        if channel_key in existing_keys:
-            skipped += 1
-            continue
-        doc = {
-            "id": _uid(), "channel_key": channel_key, "channel_label": channel_label,
-            "platform": platform, "debit_ar": debit_ar, "credit_revenue": credit_revenue,
-            "active": True, "created_at": _now(), "updated_at": _now(),
-            "created_by": user["id"], "created_by_name": user.get("name", ""),
-        }
-        await db.rahaza_channel_gl_mapping.insert_one(doc)
-        inserted += 1
-    return {"ok": True, "inserted": inserted, "skipped": skipped, "total": len(DA_CHANNELS)}
+    """Seed 13 channel default CV. Dewi Aditya. Idempotent — skip yang sudah ada.
+
+    2026-11-02 (D3) — DIHENTIKAN (410): 11 dari 13 baris adalah toko marketplace
+    dan 6 di antaranya menunjuk akun pendapatan yang sudah nonaktif (audit No.8).
+    """
+    await _require_fin(request)
+    raise HTTPException(410, GONE_MESSAGE)

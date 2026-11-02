@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import apiFetch from '@/lib/apiFetch';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -192,7 +193,7 @@ function GeneratorTab() {
             </div>
             <div>
               <Label className="text-xs font-medium">Harga (Rp)</Label>
-              <Input className="mt-1 h-9 text-sm" type="number" placeholder="85000" value={form.price} onChange={e => handleChange('price', e.target.value)} data-testid="caption-price" />
+              <MoneyInput className="mt-1 h-9 text-sm" placeholder="85.000" value={form.price} onChange={e => handleChange('price', e.target.value)} data-testid="caption-price" />
               {form.master && Number(form.master.retail_price_master || 0) > 0
                 && Number(form.price || 0) > 0
                 && Number(form.price) !== Number(form.master.retail_price_master) && (

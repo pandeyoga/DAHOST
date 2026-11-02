@@ -12,18 +12,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Progress } from '@/components/ui/progress';
 import {
-  Package, Edit, ArrowRight, Trash2, Barcode, QrCode, Printer,
+  Package, Edit, ArrowRight, Trash2, Printer,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apicall, fmtCurrency, fmtDate, API } from '../utils';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, thisMonthWIB, toWIBDate, daysAheadWIB } from '@/lib/waktu';
 import { StatusBadge } from '../components/StatusBadge';
 import { STATUS_CONFIG } from '../constants';
 
 export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRefresh, onTransferClick, onRequestDisposalClick }) {
   const [detail, setDetail] = useState(assetProp);
-  const [deprPeriod, setDeprPeriod] = useState(new Date().toISOString().slice(0, 7));
+  const [deprPeriod, setDeprPeriod] = useState(thisMonthWIB());
   const [assignForm, setAssignForm] = useState({ user_id: '', user_name: '', notes: '' });
-  const [maintForm, setMaintForm] = useState({ type: 'corrective', description: '', cost: '', performed_by: '', maintenance_date: new Date().toISOString().slice(0, 10), status: 'completed' });
+  const [maintForm, setMaintForm] = useState({ type: 'corrective', description: '', cost: '', performed_by: '', maintenance_date: todayWIB(), status: 'completed' });
   const [activeTab, setActiveTab] = useState('info');
   const [loading, setLoading] = useState(false);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -139,7 +141,7 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
       const d = await apicall('GET', `/api/assets/${asset.id}/maintenance`, token);
       setMaintenance(Array.isArray(d) ? d : []);
       await reloadDetail();
-      setMaintForm({ type: 'corrective', description: '', cost: '', performed_by: '', maintenance_date: new Date().toISOString().slice(0, 10), status: 'completed' });
+      setMaintForm({ type: 'corrective', description: '', cost: '', performed_by: '', maintenance_date: todayWIB(), status: 'completed' });
     } catch { toast.error('Gagal'); }
     finally { setLoading(false); }
   };
@@ -148,7 +150,7 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
     if (!window.confirm(`Yakin ingin melepas aset ${asset.asset_number}?`)) return;
     setLoading(true);
     try {
-      const d = await apicall('POST', `/api/assets/${asset.id}/dispose`, token, { disposal_date: new Date().toISOString().slice(0,10), disposal_value: 0, reason: 'Disposal' });
+      const d = await apicall('POST', `/api/assets/${asset.id}/dispose`, token, { disposal_date: todayWIB(), disposal_value: 0, reason: 'Disposal' });
       if (d.ok) { toast.success('Aset berhasil dilepas'); onRefresh(); onClose(); }
       else toast.error(d.detail || 'Gagal');
     } catch { toast.error('Gagal'); }
@@ -250,20 +252,13 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
             {/* Barcode & QR Actions */}
             <div className="space-y-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Label & Barcode</p>
-              <div className="grid grid-cols-2 gap-2">
-                <Button variant="outline" size="sm" className="w-full" onClick={() => {
-                  const url = `${API}/api/assets/${asset.id}/barcode`;
-                  window.open(url, '_blank');
-                }} data-testid="view-barcode-btn">
-                  <Barcode size={14} className="mr-1" /> Lihat Barcode
-                </Button>
-                <Button variant="outline" size="sm" className="w-full" onClick={() => {
-                  const url = `${API}/api/assets/${asset.id}/qrcode`;
-                  window.open(url, '_blank');
-                }} data-testid="view-qr-btn">
-                  <QrCode size={14} className="mr-1" /> Lihat QR Code
-                </Button>
-              </div>
+              {/* 2026-11-02: barcode & QR terpisah (PNG) dihapus — label aset tunggal memakai kode registri
+                  Aset Tetap (Keuangan); aset yang belum tertaut ditolak dengan pesan. */}
+              {!asset.fixed_asset_id && (
+                <p className="text-xs text-amber-700 dark:text-amber-400" data-testid="asset-label-unlinked">
+                  Tautkan aset ini ke registri Aset Tetap (Keuangan) dulu — kode label = kode registri.
+                </p>
+              )}
               <div className="flex gap-2">
                 <Button variant="outline" size="sm" className="flex-1" onClick={() => {
                   const url = `${API}/api/assets/${asset.id}/label-pdf?template=standard`;
@@ -334,12 +329,12 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground">Expired</span>
                     <span className={`font-medium ${
-                      new Date(asset.warranty_expiry_date) < new Date() ? 'text-destructive' :
-                      new Date(asset.warranty_expiry_date) < new Date(Date.now() + 30*86400000) ? 'text-amber-600' :
+                      toWIBDate(asset.warranty_expiry_date) < todayWIB() ? 'text-destructive' :
+                      toWIBDate(asset.warranty_expiry_date) < daysAheadWIB(30) ? 'text-amber-600' :
                       'text-foreground'
                     }`}>{fmtDate(asset.warranty_expiry_date)}
-                      {new Date(asset.warranty_expiry_date) < new Date() ? ' ⚠️ EXPIRED' :
-                       new Date(asset.warranty_expiry_date) < new Date(Date.now() + 30*86400000) ? ' ⏰ <30 hari' : ''}
+                      {toWIBDate(asset.warranty_expiry_date) < todayWIB() ? ' ⚠️ EXPIRED' :
+                       toWIBDate(asset.warranty_expiry_date) < daysAheadWIB(30) ? ' ⏰ <30 hari' : ''}
                     </span>
                   </div>
                 )}
@@ -375,12 +370,12 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
                   <div className="flex justify-between text-xs">
                     <span className="text-muted-foreground">Expired</span>
                     <span className={`font-medium ${
-                      new Date(asset.insurance_expiry_date) < new Date() ? 'text-destructive' :
-                      new Date(asset.insurance_expiry_date) < new Date(Date.now() + 30*86400000) ? 'text-amber-600' :
+                      toWIBDate(asset.insurance_expiry_date) < todayWIB() ? 'text-destructive' :
+                      toWIBDate(asset.insurance_expiry_date) < daysAheadWIB(30) ? 'text-amber-600' :
                       'text-foreground'
                     }`}>{fmtDate(asset.insurance_expiry_date)}
-                      {new Date(asset.insurance_expiry_date) < new Date() ? ' ⚠️ EXPIRED' :
-                       new Date(asset.insurance_expiry_date) < new Date(Date.now() + 30*86400000) ? ' ⏰ <30 hari' : ''}
+                      {toWIBDate(asset.insurance_expiry_date) < todayWIB() ? ' ⚠️ EXPIRED' :
+                       toWIBDate(asset.insurance_expiry_date) < daysAheadWIB(30) ? ' ⏰ <30 hari' : ''}
                     </span>
                   </div>
                 )}
@@ -483,7 +478,7 @@ export function AssetDetailDrawer({ asset: assetProp, token, open, onClose, onRe
                 </Select>
                 <Input placeholder="Deskripsi pemeliharaan..." value={maintForm.description}
                   onChange={e => setMaintForm(p => ({ ...p, description: e.target.value }))} />
-                <Input type="number" placeholder="Biaya (Rp)" value={maintForm.cost}
+                <MoneyInput placeholder="Biaya (Rp)" value={maintForm.cost}
                   onChange={e => setMaintForm(p => ({ ...p, cost: e.target.value }))} />
                 <Input placeholder="Dilakukan oleh" value={maintForm.performed_by}
                   onChange={e => setMaintForm(p => ({ ...p, performed_by: e.target.value }))} />

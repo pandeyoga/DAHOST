@@ -831,6 +831,24 @@ function App() {
     syncModuleHash(moduleId);
   }, []);
 
+  // 2026-11-02 — PINTU NAVIGASI UNTUK BEL NOTIFIKASI (event `erp:navigate-module`).
+  // Bel tinggal di TopBar yang hanya meneruskan id modul ke `handleModuleChange`,
+  // sehingga id rekaman (`link_id`), `link_params`, dan tab hub dibuang dan
+  // perpindahan portal tidak terjadi. Lewat event ini bel memakai mesin yang SAMA
+  // dengan tombol "lanjut" di modul (`handleNavigate`: pindah portal + tab hub +
+  // `deepLinkParams`) tanpa mengubah TopBar. `detail.handled` memberi tahu bel
+  // apakah tujuan dikenal (false = id tidak ada di MODULE_REGISTRY).
+  useEffect(() => {
+    const onNotifNavigate = (e) => {
+      const d = e?.detail || {};
+      if (!d.moduleId || !MODULE_REGISTRY[d.moduleId]) { d.handled = false; return; }
+      d.handled = true;
+      handleNavigate(d.moduleId, d.params || {});
+    };
+    window.addEventListener('erp:navigate-module', onNotifNavigate);
+    return () => window.removeEventListener('erp:navigate-module', onNotifNavigate);
+  }, [handleNavigate]);
+
   // ── Memoize headers to prevent infinite re-render in child components ──
   // MUST be before any conditional returns (Rules of Hooks)
   const headers = useMemo(() => (token ? { Authorization: `Bearer ${token}` } : {}), [token]);

@@ -36,7 +36,7 @@ async def status(request: Request):
         full = await db.rahaza_journal_entries.find_one({"id": je["id"]}, {"_id": 0, "lines": 1})
         lines = (full or {}).get("lines") or []
     return {"journal": serialize_doc(je) if je else None, "lines": lines, "balance_accounts": acc_count,
-            "relation_sheets": [{"sheet": s, "control_account": c} for s, c, _ in ob.RELATION_SHEETS]}
+            "relation_sheets": [{"sheet": s, "control_account": c} for s, c, _ in await ob.relation_sheets(db)]}
 
 
 @router.get("/template")

@@ -10,6 +10,7 @@ import {
 import { GlassCard } from '@/components/ui/glass';
 import { toast } from 'sonner';
 import { formatRupiah as rp } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 import { WithdrawalImportPanel, previewWithdrawalFile } from './WithdrawalImportPanel';
 import { BankSelect } from './PayoutBankLinks';
 
@@ -180,7 +181,7 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
             </label>
             <label className="text-xs space-y-1">
               <span className="text-foreground/60">Nominal (menurut mutasi bank)</span>
-              <input type="number" step="1" data-testid="wd-input-amount" value={form.amount}
+              <MoneyInput unstyled data-testid="wd-input-amount" value={form.amount}
                 onChange={(e) => setForm({ ...form, amount: e.target.value })}
                 className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm text-right tabular-nums font-semibold" />
             </label>

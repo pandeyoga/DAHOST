@@ -5,6 +5,75 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
 
+// 2026-11-02 (K35) — penomoran akun pendapatan per toko (entity `store_revenue`).
+const STORE_REV_FORMATS = [
+  { value: '{prefix}{seq}', label: '4-111x — pola lama (maks. 9 toko per platform)' },
+  { value: '{parent}-{seq:02d}', label: '4-1110-01 — urut 2 digit (maks. 99)' },
+  { value: '{parent}-{seq:03d}', label: '4-1110-001 — urut 3 digit (maks. 999)' },
+  { value: '{parent}-{store_code}', label: '4-1110-SHP-09 — sub-akun ber-kode toko' },
+];
+const STORE_REV_PLATFORMS = [['shopee', 'Shopee'], ['tiktok', 'TikTok'], ['tokopedia', 'Tokopedia']];
+
+function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
+  const [preview, setPreview] = useState(null);
+  const fmt = cfg.code_format || '{prefix}{seq}';
+  const groups = cfg.parent_by_platform || {};
+  const revenueGroups = accounts.filter((a) => (a.type || '').toUpperCase() === 'REVENUE');
+  const runPreview = async () => {
+    try {
+      const r = await fetch(`/api/rahaza/coa-auto/store-revenue/preview?code_format=${encodeURIComponent(fmt)}&platform=shopee&store_code=SHP-XX`, { headers });
+      setPreview(await r.json());
+    } catch (e) { setPreview({ ok: false, error: e.message }); }
+  };
+  return (
+    <GlassCard className="p-4 space-y-3" data-testid="coa-auto-card-store_revenue">
+      <div className="flex items-center gap-2">
+        <Landmark className="w-4 h-4 text-primary" />
+        <div>
+          <div className="font-semibold text-sm text-foreground">{cfg.label || 'Akun Pendapatan per Toko'}</div>
+          <div className="text-xs text-muted-foreground">
+            Dipakai saat toko marketplace BARU dibuat. Toko lama tidak diubah. Simpan kode ke: <code>coa_revenue_code</code>
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+        <div>
+          <label className="text-xs text-muted-foreground mb-1 block">Format Nomor Akun</label>
+          <SmartNativeSelect value={fmt} onChange={(e) => onChange('code_format', e.target.value)}
+            className="w-full h-9 rounded-lg border border-[var(--glass-border)] bg-background px-3 text-sm"
+            data-testid="coa-auto-store-format">
+            {STORE_REV_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </SmartNativeSelect>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={runPreview} className="h-9 border border-[var(--glass-border)]" data-testid="coa-auto-store-preview">
+            <Eye className="w-3.5 h-3.5 mr-1.5" /> Nomor berikutnya (Shopee)
+          </Button>
+          {preview && (
+            <span className="text-xs font-mono" data-testid="coa-auto-store-preview-result">
+              {preview.ok ? preview.next_code : (preview.error || preview.detail || 'gagal')}
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {STORE_REV_PLATFORMS.map(([p, label]) => (
+          <div key={p}>
+            <label className="text-xs text-muted-foreground mb-1 block">Kelompok {label}</label>
+            <SmartNativeSelect value={groups[p] || ''}
+              onChange={(e) => onChange('parent_by_platform', { ...groups, [p]: e.target.value })}
+              className="w-full h-9 rounded-lg border border-[var(--glass-border)] bg-background px-3 text-sm"
+              data-testid={`coa-auto-store-group-${p}`}>
+              <option value="">— bawaan —</option>
+              {revenueGroups.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
+            </SmartNativeSelect>
+          </div>
+        ))}
+      </div>
+    </GlassCard>
+  );
+}
+
 /**
  * Phase 5 — Auto-Create COA Subledger (settings + backfill).
  * Finance dapat: aktif/matikan auto-akun per jenis entitas, pilih akun parent (kontrol),
@@ -61,7 +130,9 @@ export default function RahazaCoaAutoModule({ token }) {
     try {
       const payload = { entity_types: {} };
       Object.entries(settings.entity_types).forEach(([k, v]) => {
-        payload.entity_types[k] = { enabled: !!v.enabled, parent_code: v.parent_code };
+        payload.entity_types[k] = k === 'store_revenue'
+          ? { code_format: v.code_format, parent_by_platform: v.parent_by_platform || {} }
+          : { enabled: !!v.enabled, parent_code: v.parent_code };
       });
       const r = await fetch('/api/rahaza/coa-auto/settings', {
         method: 'PUT', headers, body: JSON.stringify(payload),
@@ -132,6 +203,12 @@ export default function RahazaCoaAutoModule({ token }) {
       )}
 
       {settings && Object.entries(settings.entity_types).map(([key, cfg]) => {
+        if (key === 'store_revenue') {
+          return (
+            <StoreRevenueCard key={key} cfg={cfg} accounts={accounts} headers={headers}
+              onChange={(field, value) => patchEntity(key, field, value)} />
+          );
+        }
         const res = backfillResult[key];
         return (
           <GlassCard key={key} className="p-4 space-y-3" data-testid={`coa-auto-card-${key}`}>

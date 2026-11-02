@@ -7,27 +7,67 @@ RC-28 (SSOT MASTER REPAIR PLAN PART 4):
   - rahaza_invoices (phantom) -> rahaza_ar_invoices (field: issue_date/total/status)
   - rahaza_payments (phantom) -> rahaza_cash_movements direction 'in'
     category ar_payment/ar_receipt (pembayaran masuk nyata)
-  - marketing_live_sessions: field SSOT gmv + session_date bertipe STRING "YYYY-MM-DD"
+
+2026-11-02 (audit A §6.1/§6.3, perbaikan konteks AI yang pasti salah):
+  - Faktur AR berstatus draft / batal / void TIDAK dihitung (dulu semua status ikut,
+    sehingga draft Rp5 jt & faktur batal terbaca sebagai pendapatan).
+  - Tanggal faktur = `issue_date`, atau `invoice_date` untuk faktur maklon; nilai =
+    `total`, atau `total_amount` untuk faktur maklon (dua skema yang hidup di data).
+  - Maklon TIDAK lagi dijumlahkan dua kali di forecast: faktur maklon sudah ada di
+    `rahaza_ar_invoices` (`source_module='maklon_po'`), jadi `maklon_rp` hanya rincian.
+  - Live selling = ESTIMASI marketing (D1): diberi label estimasi dan TIDAK masuk
+    `total_rp`. Data nyata menyimpan `session_date` sebagai datetime dan nilai di
+    `revenue` (bukan `gmv`), sehingga dulu selalu terbaca 0.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
+# Status faktur yang BUKAN pendapatan (belum terbit / dibatalkan).
+EXCLUDED_AR_STATUSES = ["draft", "cancelled", "canceled", "void", "voided"]
+
+_AR_DATE = {"$ifNull": ["$issue_date", "$invoice_date"]}
+_AR_AMOUNT = {"$toDouble": {"$ifNull": ["$total", {"$ifNull": ["$total_amount", 0]}]}}
+
+LIVE_ESTIMATE_NOTE = "ESTIMASI marketing (bukan angka akuntansi, tidak masuk GL)"
+
+
+def _ar_valid_match(since_date: str) -> dict:
+    """Filter faktur AR sah sejak tanggal (YYYY-MM-DD), dua skema tanggal."""
+    return {
+        "status": {"$nin": EXCLUDED_AR_STATUSES},
+        "$or": [
+            {"issue_date": {"$gte": since_date}},
+            {"issue_date": {"$in": [None, ""]}, "invoice_date": {"$gte": since_date}},
+        ],
+    }
+
+
+def _live_match(since: datetime) -> dict:
+    """`session_date` bisa datetime (data nyata) atau string YYYY-MM-DD (skema lama)."""
+    return {"$or": [
+        {"session_date": {"$gte": since}},
+        {"session_date": {"$gte": since.strftime("%Y-%m-%d")}},
+    ]}
+
+
+_LIVE_VALUE = {"$toDouble": {"$ifNull": ["$gmv", {"$ifNull": ["$revenue", 0]}]}}
+
 
 async def daily_finance_metrics(db, *, since_iso: str) -> dict:
-    """Return invoice rollup since `since_iso`.
+    """Return invoice rollup since `since_iso` (faktur sah saja).
 
     Output keys: invoice_count, paid_count, total_invoiced_rp.
     """
     pipeline = [
-        {"$match": {"issue_date": {"$gte": since_iso[:10]}}},
+        {"$match": _ar_valid_match(since_iso[:10])},
         {"$group": {
             "_id": None,
             "invoice_count": {"$sum": 1},
             "paid_count": {
                 "$sum": {"$cond": [{"$eq": ["$status", "paid"]}, 1, 0]},
             },
-            "total_invoiced_rp": {"$sum": {"$toDouble": {"$ifNull": ["$total", 0]}}},
+            "total_invoiced_rp": {"$sum": _AR_AMOUNT},
         }},
     ]
     rows = await db.rahaza_ar_invoices.aggregate(pipeline).to_list(1)
@@ -42,93 +82,89 @@ async def daily_finance_metrics(db, *, since_iso: str) -> dict:
 
 
 async def daily_live_session_revenue(db, *, since: datetime) -> dict:
-    """Aggregate marketing live session revenue since timestamp."""
-    since_str = since.strftime("%Y-%m-%d")
+    """ESTIMASI omzet live marketing sejak `since` (D1: bukan pendapatan akuntansi)."""
     pipeline = [
-        {"$match": {"session_date": {"$gte": since_str}}},
+        {"$match": _live_match(since)},
         {"$group": {
             "_id": None,
             "session_count": {"$sum": 1},
-            "revenue_rp": {"$sum": {"$toDouble": {"$ifNull": ["$gmv", 0]}}},
+            "revenue_rp": {"$sum": _LIVE_VALUE},
         }},
     ]
     rows = await db.marketing_live_sessions.aggregate(pipeline).to_list(1)
     if not rows:
-        return {"session_count": 0, "revenue_rp": 0.0}
+        return {"session_count": 0, "revenue_rp": 0.0, "is_estimate": True, "note": LIVE_ESTIMATE_NOTE}
     r = rows[0]
     return {
         "session_count": int(r.get("session_count") or 0),
         "revenue_rp": float(r.get("revenue_rp") or 0.0),
+        "is_estimate": True,
+        "note": LIVE_ESTIMATE_NOTE,
     }
 
 
 async def monthly_revenue_rollup(
-    db, *, since_iso: str, lmo_adapter, since_datetime: datetime,
+    db, *, since_iso: str, lmo_adapter=None, since_datetime: datetime,
 ) -> list[dict]:
-    """Return monthly revenue rollup combining invoices, maklon, and live sessions.
+    """Rekap pendapatan bulanan untuk forecast.
 
-    Returns: list[{month, invoice_rp, maklon_rp, live_rp, total_rp}] sorted asc.
+    Returns: list[{month, invoice_rp, maklon_rp, total_rp, live_estimasi_rp, live_is_estimate}]
+    sorted asc. `total_rp` = pendapatan akuntansi (= invoice_rp). `maklon_rp` adalah
+    BAGIAN dari invoice_rp (rincian). `live_estimasi_rp` = estimasi marketing, tidak
+    dijumlahkan. `lmo_adapter` tidak dipakai lagi (dulu sumber hitungan ganda maklon);
+    parameter dipertahankan agar pemanggil lama tetap jalan.
     """
-    # Invoice monthly
     inv_pipeline = [
-        {"$match": {"issue_date": {"$gte": since_iso[:10]}}},
+        {"$match": _ar_valid_match(since_iso[:10])},
         {"$project": {
             "_id": 0,
-            "month": {"$substr": ["$issue_date", 0, 7]},
-            "total": {"$toDouble": {"$ifNull": ["$total", 0]}},
+            "month": {"$substr": [_AR_DATE, 0, 7]},
+            "total": _AR_AMOUNT,
+            "is_maklon": {"$eq": ["$source_module", "maklon_po"]},
         }},
-        {"$group": {"_id": "$month", "total": {"$sum": "$total"}}},
+        {"$group": {
+            "_id": "$month",
+            "total": {"$sum": "$total"},
+            "maklon": {"$sum": {"$cond": ["$is_maklon", "$total", 0]}},
+        }},
     ]
     inv_rows = await db.rahaza_ar_invoices.aggregate(inv_pipeline).to_list(60)
 
-    # Maklon monthly (via SSOT view)
-    mak_pipeline = [
-        {"$match": {"stage": "invoiced", "updated_at": {"$gte": since_iso}}},
-        {"$project": {
-            "_id": 0,
-            "month": {"$substr": ["$updated_at", 0, 7]},
-            "total": {"$toDouble": {"$ifNull": ["$total_price", 0]}},
-        }},
-        {"$group": {"_id": "$month", "total": {"$sum": "$total"}}},
-    ]
-    mak_rows = await lmo_adapter(db).aggregate(mak_pipeline).to_list(60)
-
-    # Live sessions monthly — session_date STRING "YYYY-MM-DD"
+    live_month = {"$cond": [
+        {"$eq": [{"$type": "$session_date"}, "date"]},
+        {"$dateToString": {"format": "%Y-%m", "date": "$session_date", "timezone": "Asia/Jakarta"}},
+        {"$substr": [{"$toString": "$session_date"}, 0, 7]},
+    ]}
     live_pipeline = [
-        {"$match": {"session_date": {"$gte": since_datetime.strftime("%Y-%m-%d")}}},
-        {"$project": {
-            "_id": 0,
-            "month": {"$substr": ["$session_date", 0, 7]},
-            "revenue": {"$toDouble": {"$ifNull": ["$gmv", 0]}},
-        }},
+        {"$match": _live_match(since_datetime)},
+        {"$project": {"_id": 0, "month": live_month, "revenue": _LIVE_VALUE}},
         {"$group": {"_id": "$month", "total": {"$sum": "$revenue"}}},
     ]
     live_rows = await db.marketing_live_sessions.aggregate(live_pipeline).to_list(60)
 
     monthly: dict[str, dict[str, float]] = {}
+
+    def _slot(m: str) -> dict:
+        return monthly.setdefault(m, {"invoice": 0.0, "maklon": 0.0, "live": 0.0})
+
     for r in inv_rows:
         m = r.get("_id") or ""
         if m:
-            monthly.setdefault(m, {"invoice": 0.0, "maklon": 0.0, "live": 0.0})
-            monthly[m]["invoice"] = float(r.get("total") or 0)
-    for r in mak_rows:
-        m = r.get("_id") or ""
-        if m:
-            monthly.setdefault(m, {"invoice": 0.0, "maklon": 0.0, "live": 0.0})
-            monthly[m]["maklon"] = float(r.get("total") or 0)
+            _slot(m)["invoice"] = float(r.get("total") or 0)
+            _slot(m)["maklon"] = float(r.get("maklon") or 0)
     for r in live_rows:
         m = r.get("_id") or ""
         if m:
-            monthly.setdefault(m, {"invoice": 0.0, "maklon": 0.0, "live": 0.0})
-            monthly[m]["live"] = float(r.get("total") or 0)
+            _slot(m)["live"] = float(r.get("total") or 0)
 
     return [
         {
             "month": m,
             "invoice_rp": round(v["invoice"]),
             "maklon_rp": round(v["maklon"]),
-            "live_rp": round(v["live"]),
-            "total_rp": round(v["invoice"] + v["maklon"] + v["live"]),
+            "total_rp": round(v["invoice"]),
+            "live_estimasi_rp": round(v["live"]),
+            "live_is_estimate": True,
         }
         for m, v in sorted(monthly.items())
     ]
@@ -136,14 +172,15 @@ async def monthly_revenue_rollup(
 
 async def fraud_detection_signals(db, *, since_iso: str, since_dt: datetime) -> dict:
     """Compute statistical signals for fraud detection (no full-doc fetch)."""
+    match = _ar_valid_match(since_iso[:10])
     # Invoice basic stats via aggregation
     inv_stats_pipeline = [
-        {"$match": {"issue_date": {"$gte": since_iso[:10]}}},
+        {"$match": match},
         {"$group": {
             "_id": None,
             "count": {"$sum": 1},
-            "avg": {"$avg": {"$toDouble": {"$ifNull": ["$total", 0]}}},
-            "stdDev": {"$stdDevPop": {"$toDouble": {"$ifNull": ["$total", 0]}}},
+            "avg": {"$avg": _AR_AMOUNT},
+            "stdDev": {"$stdDevPop": _AR_AMOUNT},
         }},
     ]
     inv_stats_rows = await db.rahaza_ar_invoices.aggregate(inv_stats_pipeline).to_list(1)
@@ -156,21 +193,17 @@ async def fraud_detection_signals(db, *, since_iso: str, since_dt: datetime) -> 
     if std > 0:
         threshold_low = avg - 3 * std
         threshold_high = avg + 3 * std
-        cursor = db.rahaza_ar_invoices.find(
-            {
-                "issue_date": {"$gte": since_iso[:10]},
-                "$or": [
-                    {"total": {"$lt": threshold_low}},
-                    {"total": {"$gt": threshold_high}},
-                ],
-            },
-            {"_id": 0, "id": 1, "issue_date": 1, "total": 1, "status": 1},
-        ).limit(20)
+        cursor = db.rahaza_ar_invoices.aggregate([
+            {"$match": match},
+            {"$project": {"_id": 0, "id": 1, "status": 1, "amount": _AR_AMOUNT}},
+            {"$match": {"$or": [{"amount": {"$lt": threshold_low}}, {"amount": {"$gt": threshold_high}}]}},
+            {"$limit": 20},
+        ])
         async for inv in cursor:
             outliers.append({
                 "type": "invoice_anomaly",
                 "id": inv.get("id"),
-                "total": float(inv.get("total") or 0),
+                "total": float(inv.get("amount") or 0),
                 "expected_range": f"{round(avg - 2 * std):,} - {round(avg + 2 * std):,}",
             })
 

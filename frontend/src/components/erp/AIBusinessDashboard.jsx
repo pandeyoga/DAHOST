@@ -18,7 +18,13 @@ const RISK_COLOR = {
   low:    'text-green-600 bg-green-50 border-green-200',
   medium: 'text-yellow-600 bg-yellow-50 border-yellow-200',
   high:   'text-red-600 bg-red-50 border-red-200',
+  critical: 'text-red-700 bg-red-100 border-red-300',
+  tidak_dapat_dinilai: 'text-muted-foreground bg-muted border-border',
 };
+
+// 2026-11-02: jawaban AI yang gagal/terpotong TIDAK lagi ditampilkan sebagai "LOW".
+const NOT_ASSESSED = 'tidak_dapat_dinilai';
+const levelLabel = (v) => (v === NOT_ASSESSED ? 'TIDAK DAPAT DINILAI' : (v || '-').toUpperCase());
 
 const CAPACITY_COLOR = {
   under:  'text-blue-600 bg-blue-50',
@@ -102,7 +108,8 @@ function DailySummaryTab() {
                 { icon: Factory,   label: 'WO Selesai',    value: summary.metrics.produksi?.work_order_selesai },
                 { icon: DollarSign,label: 'Total Invoice', value: fmtRp(summary.metrics.keuangan?.total_invoiced_rp) },
                 { icon: CheckCircle2,label: 'Maklon Done',  value: summary.metrics.maklon?.order_selesai },
-                { icon: TrendingUp,label: 'Live Revenue',  value: fmtRp(summary.metrics.marketing?.revenue_live_rp) },
+                // 2026-11-02 (D1): omzet live = estimasi marketing, bukan angka akuntansi
+                { icon: TrendingUp,label: 'Estimasi Omzet Live (bukan akuntansi)', value: fmtRp(summary.metrics.marketing_estimasi?.estimasi_omzet_live_rp) },
                 { icon: AlertTriangle,label: 'Stok Rendah', value: summary.metrics.alert?.stok_rendah },
                 { icon: Clock,     label: 'Isu Hadir',     value: summary.metrics.sdm?.isu_kehadiran },
               ].map((m, i) => (
@@ -241,7 +248,7 @@ function RevenueForecastTab() {
                 {result.historical.slice(-6).map((m, i) => (
                   <div key={i} className="flex justify-between text-sm py-1 border-b border-border last:border-0">
                     <span className="text-muted-foreground">{m.month}</span>
-                    <span className="font-medium">{fmtRp(m.total_rp)}</span>
+                    <span className="font-medium" title="Pendapatan akuntansi (faktur sah). Estimasi live tidak dijumlahkan.">{fmtRp(m.total_rp)}</span>
                   </div>
                 ))}
               </div>
@@ -306,7 +313,7 @@ function FraudDetectionTab() {
           <div className={`p-4 rounded-lg border ${RISK_COLOR[result.ai_analysis.risk_level] || 'border-border'}`}>
             <div className="flex items-center gap-2 mb-2">
               <Shield className="h-5 w-5" />
-              <p className="font-bold">Risk Level: {result.ai_analysis.risk_level?.toUpperCase()}</p>
+              <p className="font-bold">Risk Level: {levelLabel(result.ai_analysis.risk_level)}</p>
             </div>
             {result.ai_analysis.overall_assessment && (
               <p className="text-sm leading-relaxed">{result.ai_analysis.overall_assessment}</p>
@@ -391,7 +398,7 @@ function ProductionOptimizerTab() {
         <div className="space-y-4">
           {/* Capacity Status */}
           <div className={`p-3 rounded-lg ${CAPACITY_COLOR[result.optimization.capacity_status] || 'bg-muted'}`}>
-            <p className="font-bold">Kapasitas: {result.optimization.capacity_status?.toUpperCase()}</p>
+            <p className="font-bold">Kapasitas: {levelLabel(result.optimization.capacity_status)}</p>
             {result.optimization.efficiency_score != null && (
               <p className="text-sm">Efficiency Score: {result.optimization.efficiency_score}%</p>
             )}

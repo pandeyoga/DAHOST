@@ -3,6 +3,7 @@ import { Target, Plus, Trash2, RefreshCw, Calculator } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -33,6 +34,8 @@ export default function MaklonHppModule({ token }) {
   const [marginPct, setMarginPct] = useState('20');
   const [notes, setNotes] = useState('');
   const [result, setResult] = useState(null);
+  // 2026-11-02 (K16): HPP Jahit maklon dari ANGKA NYATA (tagihan CMT + aksesoris DA + permak)
+  const [actual, setActual] = useState(null);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -53,10 +56,12 @@ export default function MaklonHppModule({ token }) {
     const o = orders.find(x => x.id === oid);
     setSelectedOrder(o);
     setResult(null);
+    setActual(null);
     try {
       const r = await fetch(`/api/dewi/maklon/hpp/${oid}`, { headers });
       if (r.ok) {
         const d = await r.json();
+        setActual(d.source === 'actual' ? d : null);
         setComponents(d.components || []);
         setOverheadPct(String(d.overhead_pct || 15));
         setMarginPct(String(d.profit_margin_pct || 20));
@@ -137,7 +142,43 @@ export default function MaklonHppModule({ token }) {
         </Select>
       </GlassCard>
 
-      {selectedOrder && (
+      {selectedOrder && actual && (
+        <GlassCard className="p-5 space-y-4" data-testid="hpp-actual">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground/80">HPP Jahit dari angka nyata — {actual.po_number}</h3>
+            <p className="text-xs text-foreground/50">Komponen dibaca otomatis: tagihan CMT (tarif PO/SPK), aksesoris milik DA (Material Issue), dan permak. Kain milik klien bukan biaya DA.</p>
+          </div>
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-foreground/60">
+              <th className="py-1">Komponen</th><th className="py-1 text-right">Qty</th><th className="py-1 text-right">Harga Satuan</th><th className="py-1 text-right">Subtotal</th>
+            </tr></thead>
+            <tbody>
+              {(actual.components || []).map((c, i) => (
+                <tr key={i} className="border-t border-foreground/10" data-testid={`hpp-actual-comp-${i}`}>
+                  <td className="py-1.5">{c.name}</td>
+                  <td className="py-1.5 text-right">{Number(c.qty || 0).toLocaleString('id-ID')} {c.unit}</td>
+                  <td className="py-1.5 text-right">{fmt(c.unit_cost)}</td>
+                  <td className="py-1.5 text-right font-semibold">{fmt(c.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+            <div><p className="text-xs text-foreground/60">Total biaya DA</p><p className="font-semibold">{fmt(actual.total_hpp)}</p></div>
+            <div><p className="text-xs text-foreground/60">HPP per pcs ({Number(actual.qty_basis || 0).toLocaleString('id-ID')} pcs lolos QC)</p><p className="font-semibold text-primary">{fmt(actual.hpp_per_pcs)}</p></div>
+            <div><p className="text-xs text-foreground/60">Tagihan klien (qty diterima)</p><p className="font-semibold">{fmt(actual.revenue)}</p></div>
+            <div><p className="text-xs text-foreground/60">Margin nyata</p>
+              <p className={`font-bold ${actual.margin < 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`} data-testid="hpp-actual-margin">{fmt(actual.margin)} ({Number(actual.margin_pct || 0).toFixed(2)}%)</p></div>
+          </div>
+          {(actual.gaps || []).length > 0 && (
+            <ul className="text-xs text-amber-700 dark:text-amber-300 list-disc pl-4">
+              {actual.gaps.map((g, i) => <li key={i}>{g}</li>)}
+            </ul>
+          )}
+        </GlassCard>
+      )}
+
+      {selectedOrder && !actual && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4">
           {/* Components editor */}
           <GlassCard className="p-5">
@@ -174,7 +215,7 @@ export default function MaklonHppModule({ token }) {
                     </div>
                     <div>
                       {i === 0 && <Label className="text-[10px]">Harga Satuan</Label>}
-                      <Input type="number" value={c.unit_cost} onChange={e => updateComp(i, 'unit_cost', e.target.value)} />
+                      <MoneyInput decimals={2} value={c.unit_cost} onChange={e => updateComp(i, 'unit_cost', e.target.value)} />
                     </div>
                     <div className="text-right font-semibold">
                       {i === 0 && <Label className="text-[10px]">Subtotal</Label>}

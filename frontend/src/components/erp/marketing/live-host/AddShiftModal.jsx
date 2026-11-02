@@ -9,12 +9,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { getPlatformConfig } from '../AccountBadge';
 import { API } from './utils';
+import { todayWIB } from '@/lib/waktu';
 
 export default function AddShiftModal({ hosts, accounts, authH, onClose, onSuccess }) {
   const [form, setForm] = useState({
     host_id: '',
     account_id: '',
-    date: new Date().toISOString().split('T')[0],
+    date: todayWIB(),
     shift_type: 'morning',
     shift_start_time: '09:00',
     shift_end_time: '13:00',

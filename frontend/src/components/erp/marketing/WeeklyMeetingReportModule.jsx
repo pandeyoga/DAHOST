@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/select';
 import { PageHeader } from '../moduleAtoms';
 import { toast } from 'sonner';
+import { todayWIB, toWIBDate, addDaysISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const rp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
@@ -35,18 +36,17 @@ const KANAL = [
   ['search', 'Pencarian'], ['organic', 'Organik'], ['other', 'Lainnya'],
 ];
 
-/** Senin minggu itu, dihitung dari WAKTU LOKAL pemakai.
+/** Senin minggu itu menurut KALENDER WIB (lib/waktu), apa pun zona perangkat.
  *  `toISOString()` mengembalikan tanggal UTC — di Asia/Jakarta (UTC+7) sebelum
  *  pukul 07.00 itu masih tanggal SEBELUMNYA, jadi pada hari Senin pagi laporan
- *  yang terbuka adalah MINGGU LALU. Rapat mingguan justru dibuka Senin pagi. */
+ *  yang terbuka adalah MINGGU LALU. Rapat mingguan justru dibuka Senin pagi.
+ *  `d` = tanggal 'YYYY-MM-DD' atau instan (Date/ISO). */
 function mondayOf(d) {
-  const x = new Date(d);
-  if (Number.isNaN(x.getTime())) return '';
-  const wd = (x.getDay() + 6) % 7;          // 0 = Senin
-  x.setDate(x.getDate() - wd);
-  const mm = String(x.getMonth() + 1).padStart(2, '0');
-  const dd = String(x.getDate()).padStart(2, '0');
-  return `${x.getFullYear()}-${mm}-${dd}`;
+  const iso = toWIBDate(d);
+  if (!iso) return '';
+  const [y, m, day] = iso.split('-').map(Number);
+  const wd = (new Date(Date.UTC(y, m - 1, day)).getUTCDay() + 6) % 7;   // 0 = Senin
+  return addDaysISO(iso, -wd);
 }
 
 function Delta({ d }) {
@@ -76,7 +76,7 @@ function Tile({ label, value, sub, tone = '', testId }) {
 }
 
 export default function WeeklyMeetingReportModule({ token }) {
-  const [weekStart, setWeekStart] = useState(() => mondayOf(new Date()));
+  const [weekStart, setWeekStart] = useState(() => mondayOf(todayWIB()));
   const [accountId, setAccountId] = useState('');
   const [accounts, setAccounts] = useState([]);
   const [data, setData] = useState(null);
@@ -113,11 +113,7 @@ export default function WeeklyMeetingReportModule({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const shift = (days) => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + days);
-    setWeekStart(mondayOf(d));
-  };
+  const shift = (days) => setWeekStart(mondayOf(addDaysISO(weekStart, days)));
 
   const download = async (fmt) => {
     setBusy(fmt);

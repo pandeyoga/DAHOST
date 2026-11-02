@@ -19,13 +19,14 @@ Collection:
     - notes
 """
 import uuid
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Query, Request, HTTPException
 from database import get_db
 from auth import require_auth
 from core.authz import only  # T-01 2.3
 from core.roles import MGMT_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/dewi/ai-actions", tags=["dewi-ai-actions"])
 
@@ -75,8 +76,8 @@ async def get_stats(request: Request):
     pipeline = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
     stats = {d["_id"]: d["count"] async for d in db.dewi_ai_actions.aggregate(pipeline)}
     # Due soon (open, due within 3 days)
-    today = date.today().isoformat()
-    in_3 = (date.today() + timedelta(days=3)).isoformat()
+    today = today_wib().isoformat()
+    in_3 = (today_wib() + timedelta(days=3)).isoformat()
     due_soon = await db.dewi_ai_actions.count_documents({
         "status": {"$in": ["open", "in_progress"]},
         "due_date": {"$gte": today, "$lte": in_3},

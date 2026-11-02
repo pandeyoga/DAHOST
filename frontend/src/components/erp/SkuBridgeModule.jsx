@@ -31,6 +31,7 @@ import {
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -295,13 +296,13 @@ function CreateMasterDialog({ row, onClose, onDone }) {
           <>
             <div>
               <Label className="text-xs">Harga jual resmi (opsional)</Label>
-              <Input type="number" value={form.retail_price}
+              <MoneyInput value={form.retail_price}
                      onChange={(e) => setForm({ ...form, retail_price: e.target.value })}
                      placeholder="0" data-testid="cm-price" />
             </div>
             <div>
               <Label className="text-xs">HPP (opsional)</Label>
-              <Input type="number" value={form.hpp}
+              <MoneyInput value={form.hpp}
                      onChange={(e) => setForm({ ...form, hpp: e.target.value })}
                      placeholder="0" data-testid="cm-hpp" />
             </div>

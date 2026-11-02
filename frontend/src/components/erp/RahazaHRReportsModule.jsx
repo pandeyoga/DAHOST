@@ -5,6 +5,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
+import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL;
 
@@ -41,12 +42,8 @@ export default function RahazaHRReportsModule({ token }) {
   const [showFilters, setShowFilters] = useState(true);
   
   // Filters
-  const [dateFrom, setDateFrom] = useState(() => {
-    const date = new Date();
-    date.setDate(1);
-    return date.toISOString().split('T')[0];
-  });
-  const [dateTo, setDateTo] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dateFrom, setDateFrom] = useState(() => monthStartWIB());
+  const [dateTo, setDateTo] = useState(() => todayWIB());
   const [departmentId, setDepartmentId] = useState('');
   const [locationId, setLocationId] = useState('');
   const [shiftId, setShiftId] = useState('');

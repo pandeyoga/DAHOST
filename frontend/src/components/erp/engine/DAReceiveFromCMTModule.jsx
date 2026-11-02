@@ -31,6 +31,7 @@ import Modal from './Modal';
 import StaffEntryBadge from './StaffEntryBadge';
 import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
 import { apiGet, apiPost, apiPut, apiFetch } from '../../../lib/api';
+import { MoneyInput } from '../../ui/money-input';
 
 // W5 — kolom yang tercentang saat dialog pertama kali dibuka: VERSI KIRIM MURNI.
 // Kolom hasil QC (Qty Terima / Qty Reject) tetap tersedia tapi harus dicentang
@@ -851,7 +852,7 @@ export default function DAReceiveFromCMTModule() {
               </label>
               <label className="block">
                 <span className="text-[11px] font-semibold text-muted-foreground">Ongkos / pcs (Rp)</span>
-                <input type="number" min={0} value={rwCost} onChange={e => setRwCost(e.target.value)}
+                <MoneyInput unstyled value={rwCost} onChange={e => setRwCost(e.target.value)}
                   className="mt-1 w-full h-9 px-2 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground" />
               </label>
               <label className="block">

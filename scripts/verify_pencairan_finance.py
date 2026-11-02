@@ -66,6 +66,13 @@ def det(d):
     return json.dumps(d, ensure_ascii=False, default=str)[:300]
 
 
+def ref_q(number):
+    """2026-11-02: kunci jurnal pencairan/penarikan kini `<nomor>@<id dokumen>` (audit
+    K-1/K-2: dua toko boleh bernomor sama, jadi nomor saja tidak unik). Kunci lama
+    (nomor mentah) tetap dicocokkan agar jurnal lama ikut terhitung."""
+    return {"$regex": f"^{re.escape(number)}(@|$)"}
+
+
 def call(method, path, token=None, body=None):
     req = urllib.request.Request(
         f"{API}{path}", data=json.dumps(body).encode() if body is not None else None,
@@ -197,7 +204,7 @@ def main() -> int:  # noqa: C901
             bad("B1", f"toko tanpa COA tidak ditolak dengan jelas (HTTP {st})", det(r))
 
         je_before = db.rahaza_journal_entries.count_documents(
-            {"source_module": "marketplace_settlement", "source_ref": f"{TAG}-1"})
+            {"source_module": "marketplace_settlement", "source_ref": ref_q(f"{TAG}-1")})
         if je_before == 0:
             ok("B2", "tidak ada jurnal yang lahir dari penolakan itu "
                      "(tidak ada jurnal separuh)")
@@ -294,7 +301,7 @@ def main() -> int:  # noqa: C901
 
         st, r = call("POST", f"/api/marketing/settlements/{sid}/journal", fin_tok)
         n_je = db.rahaza_journal_entries.count_documents(
-            {"source_module": "marketplace_settlement", "source_ref": f"{TAG}-1",
+            {"source_module": "marketplace_settlement", "source_ref": ref_q(f"{TAG}-1"),
              "status": {"$ne": "voided"}})
         if st == 200 and r.get("already") and n_je == 1:
             ok("E1", "tekan 'Buat jurnal' dua kali tetap 1 jurnal")
@@ -308,8 +315,8 @@ def main() -> int:  # noqa: C901
             bad("E2", f"pencairan berjurnal bisa dihapus (HTTP {st})", det(r))
 
         st, r = call("POST", f"/api/marketing/settlements/{sid}/post", fin_tok)
-        je = db.rahaza_journal_entries.find_one({"source_ref": f"{TAG}-1"})
-        mirrored = db.rahaza_journal_lines.count_documents({"source_ref": f"{TAG}-1"})
+        je = db.rahaza_journal_entries.find_one({"source_ref": ref_q(f"{TAG}-1")})
+        mirrored = db.rahaza_journal_lines.count_documents({"source_ref": ref_q(f"{TAG}-1")})
         if st == 200 and (je or {}).get("status") == "posted" and mirrored > 0:
             ok("E3", f"tombol Posting memindahkan draf ke buku besar "
                      f"({mirrored} baris cermin GL)")
@@ -317,7 +324,7 @@ def main() -> int:  # noqa: C901
             bad("E3", f"posting draf gagal (HTTP {st}, status={(je or {}).get('status')}, "
                       f"cermin={mirrored})", det(r))
         st, r = call("POST", f"/api/marketing/settlements/{sid}/post", fin_tok)
-        again = db.rahaza_journal_lines.count_documents({"source_ref": f"{TAG}-1"})
+        again = db.rahaza_journal_lines.count_documents({"source_ref": ref_q(f"{TAG}-1")})
         if st == 200 and r.get("already") and again == mirrored:
             ok("E4", "posting dua kali tidak menggandakan baris buku besar")
         else:

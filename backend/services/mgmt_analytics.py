@@ -22,6 +22,7 @@ from datetime import date, datetime, timedelta
 from fastapi import HTTPException
 
 from core.production_qty_ledger import ledger_view
+from utils.waktu import today_wib
 
 MAX_DOCS = 20000
 
@@ -36,7 +37,7 @@ LEDGER_KEYS = ("produced", "declared", "accepted", "reject", "rework_open",
 
 
 def today() -> date:
-    return date.today()
+    return today_wib()
 
 
 def norm_domain(v: str | None) -> str:

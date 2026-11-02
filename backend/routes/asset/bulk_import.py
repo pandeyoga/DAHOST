@@ -8,6 +8,7 @@ import json as _json
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _uid, _now, _gen_asset_number
+from utils.waktu import today_wib
 
 
 @router.post("/bulk-import/preview")
@@ -64,11 +65,11 @@ async def bulk_import_execute(request: Request):
                 continue
             purchase_date_str = str(row.get("purchase_date", "")).strip()
             if not purchase_date_str:
-                purchase_date_str = date.today().isoformat()
+                purchase_date_str = today_wib().isoformat()
             try:
                 purchase_date = date.fromisoformat(purchase_date_str[:10]).isoformat()
             except Exception:
-                purchase_date = date.today().isoformat()
+                purchase_date = today_wib().isoformat()
 
             try:
                 raw_cost = str(row.get("purchase_cost", "0")).replace(",", "").strip()
@@ -239,7 +240,7 @@ async def bulk_import_execute_file(request: Request, file: UploadFile = File(...
             try:
                 purchase_date = date.fromisoformat(purchase_date_str[:10]).isoformat()
             except Exception:
-                purchase_date = date.today().isoformat()
+                purchase_date = today_wib().isoformat()
             try:
                 purchase_cost = float(str(mapped.get("purchase_cost", "0")).replace(",", "") or "0")
             except Exception:

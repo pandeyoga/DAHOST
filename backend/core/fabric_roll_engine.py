@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException
+from utils.waktu import wib_date_str, wib_date_of
 
 log = logging.getLogger(__name__)
 
@@ -206,8 +207,8 @@ async def create_rolls_from_receipt(db, receipt: dict, item: dict, material: dic
             "weight_kg": qty if is_weight else 0.0,
             "remaining_m": 0.0 if is_weight else qty,
             "remaining_kg": qty if is_weight else 0.0,
-            "received_date": (receipt.get("created_at") or _now().isoformat())[:10]
-            if isinstance(receipt.get("created_at"), str) else _now().date().isoformat(),
+            "received_date": wib_date_of(receipt.get("created_at")) or wib_date_str()
+            if isinstance(receipt.get("created_at"), str) else wib_date_str(),
             "po_no": receipt.get("po_number") or "",
             # QC roll mengikuti hasil inspeksi baris GR — roll yang datang dari baris
             # ber-reject tidak boleh diam-diam berstatus 'pass'.

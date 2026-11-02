@@ -51,7 +51,9 @@ _FORBIDDEN_SCHEDULE = (
 )
 
 # Jenis mutasi yang relevan untuk laporan valuasi aksesoris.
-_VALUED_TYPES = ("receive", "issue", "scrap", "opname_adjust", "adjust")
+# 2026-11-02 (K9): + "opname" — mutasi mesin opname tunggal (core/opname_engine) bertipe `opname`
+# (dulu `opname_adjust`); tanpa ini selisih opname aksesoris hilang dari kartu stok bernilai.
+_VALUED_TYPES = ("receive", "issue", "scrap", "opname_adjust", "opname", "adjust")
 
 
 @router.get("/valuation")
@@ -89,7 +91,7 @@ async def get_valued_movements(request: Request,
             "id": r.get("id"),
             "created_at": r.get("created_at"),
             "material_id": r.get("material_id"),
-            "material_code": (r.get("material") or {}).get("code", ""),
+            "material_code": r.get("material_code") or (r.get("material") or {}).get("code", ""),
             "material_name": r.get("material_name") or (r.get("material") or {}).get("name", ""),
             "unit": r.get("unit") or (r.get("material") or {}).get("unit", ""),
             "movement_type": r.get("movement_type"),

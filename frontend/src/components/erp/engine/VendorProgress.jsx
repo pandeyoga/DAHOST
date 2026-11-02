@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import Modal from './Modal';
 import { MiniBar } from './VendorShared';
 import { apiGet, apiPost } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 export default function VendorProgress({ token, user }) {
   const [jobs, setJobs] = useState([]);
@@ -15,7 +16,7 @@ export default function VendorProgress({ token, user }) {
   const [childJobItems, setChildJobItems] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [selectedItem, setSelectedItem] = useState(null);
-  const [form, setForm] = useState({ progress_date: new Date().toISOString().split('T')[0], completed_quantity: '', notes: '' });
+  const [form, setForm] = useState({ progress_date: todayWIB(), completed_quantity: '', notes: '' });
   const [loading, setLoading] = useState(false);
 
   useEffect(() => { fetchJobs(); }, []);
@@ -51,7 +52,7 @@ export default function VendorProgress({ token, user }) {
 
   const openProgress = (item) => {
     setSelectedItem(item);
-    setForm({ progress_date: new Date().toISOString().split('T')[0], completed_quantity: '', notes: '' });
+    setForm({ progress_date: todayWIB(), completed_quantity: '', notes: '' });
     setShowModal(true);
   };
 

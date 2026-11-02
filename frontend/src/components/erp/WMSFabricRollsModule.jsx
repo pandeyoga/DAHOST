@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -80,6 +81,10 @@ export default function WMSFabricRollsModule({ token }) {
   }, [view]);
   const [viewDialog, setViewDialog] = useState(null); // {roll, movements}
   const [createDialog, setCreateDialog] = useState(false);
+  // Unit cost dialog Buat Roll = MoneyInput terkendali (teks tampilannya bertitik ribuan,
+  // jadi tidak dibaca lewat FormData). Kembali ke 0 setiap dialog dibuka.
+  const [createUnitCost, setCreateUnitCost] = useState('0');
+  useEffect(() => { if (createDialog) setCreateUnitCost('0'); }, [createDialog]);
   const [issueDialog, setIssueDialog] = useState(null); // {roll}
   const [putawayDialog, setPutawayDialog] = useState(null); // {roll}
   const [aiAnalysisDialog, setAiAnalysisDialog] = useState(null); // AI insights
@@ -179,6 +184,24 @@ export default function WMSFabricRollsModule({ token }) {
     }
   };
 
+  // 2026-11-02 (Paket 3a): label roll (Code128 = nomor roll) dulu hanya ada sebagai
+  // endpoint tanpa tombol di layar mana pun. PDF diambil dengan header Authorization
+  // (bukan token sesi di URL) lalu dibuka di tab baru.
+  const printRollLabel = async (roll) => {
+    try {
+      const r = await fetch(`${API}/api/wms/fabric-rolls/${roll.id}/label-pdf`, { headers: { Authorization: headers.Authorization } });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.detail || `HTTP ${r.status}`);
+      }
+      const url = URL.createObjectURL(await r.blob());
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      toast.error(`Gagal mencetak label roll: ${e.message || e}`);
+    }
+  };
+
   const handleView = async (roll) => {
     try {
       const r = await fetch(`${API}/api/wms/fabric-rolls/${roll.id}`, { headers });
@@ -209,7 +232,7 @@ export default function WMSFabricRollsModule({ token }) {
       length_m: parseFloat(fd.get('length_m')) || 0,
       weight_kg: parseFloat(fd.get('weight_kg')) || 0,
       po_no: fd.get('po_no') || '',
-      unit_cost: parseFloat(fd.get('unit_cost')) || 0,
+      unit_cost: parseFloat(createUnitCost) || 0,
       notes: fd.get('notes') || '',
     };
     try {
@@ -640,6 +663,12 @@ export default function WMSFabricRollsModule({ token }) {
                               data-testid={`issue-btn-${roll.roll_no}`}>
                               Issue
                             </Button>
+                            <Button size="sm" variant="outline" title="Cetak label barcode roll"
+                              className="h-7 px-2 text-xs border-foreground/10"
+                              onClick={(e) => { e.stopPropagation(); printRollLabel(roll); }}
+                              data-testid={`label-btn-${roll.roll_no}`}>
+                              <Printer className="w-3 h-3" />
+                            </Button>
                           </div>
                         </td>
                       </tr>
@@ -729,6 +758,16 @@ export default function WMSFabricRollsModule({ token }) {
                     <Truck className="w-3 h-3 mr-1" />
                     Issue
                   </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    title="Cetak label barcode roll"
+                    className="border-foreground/10 hover:bg-foreground/5 text-xs"
+                    onClick={(e) => { e.stopPropagation(); printRollLabel(roll); }}
+                    data-testid={`label-btn-grid-${roll.roll_no}`}
+                  >
+                    <Printer className="w-3 h-3" />
+                  </Button>
                 </div>
               </div>
             ))}
@@ -812,7 +851,7 @@ export default function WMSFabricRollsModule({ token }) {
               </div>
               <div>
                 <Label>Unit Cost</Label>
-                <Input name="unit_cost" type="number" step="0.01" defaultValue="0" className="bg-foreground/5 border-foreground/10" data-testid="input-unit-cost" />
+                <MoneyInput decimals={2} value={createUnitCost} onChange={(e) => setCreateUnitCost(e.target.value)} className="bg-foreground/5 border-foreground/10" data-testid="input-unit-cost" />
               </div>
               <div className="col-span-2">
                 <Label>Notes</Label>

@@ -1,12 +1,12 @@
 """WMS AI Insights — Phase 0 OPTIMIZED.
 
 AI-powered analytics for WMS modules. Standardised to Claude (Anthropic)
-via Emergent Universal Key. Uses DB-level aggregations to avoid over-fetching.
+lewat lapisan tunggal `services.ai` (2026-11-02; bukan lagi Emergent Universal Key).
+Uses DB-level aggregations to avoid over-fetching.
 """
 from __future__ import annotations
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -15,20 +15,12 @@ from pydantic import BaseModel
 
 from auth import require_auth
 from database import get_db
-from services.ai import SystemPrompts, call_claude, LLMUnavailable
+from services.ai import SystemPrompts, call_claude, LLMUnavailable, ai_status
 from services.ai_aggregates import wms_aggregates as wms_agg
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms/ai", tags=["wms-ai-insights"])
 
-_LLM_KEY_PRESENT = bool(os.environ.get("EMERGENT_LLM_KEY"))
-if _LLM_KEY_PRESENT:
-    logger.info("WMS AI insights enabled (Claude via Emergent key).")
-else:
-    logger.warning(
-        "EMERGENT_LLM_KEY belum dikonfigurasi — /api/wms/ai/* tetap aktif "
-        "tetapi akan mengembalikan 503 saat dipanggil."
-    )
 
 
 class QualityAnalysisRequest(BaseModel):
@@ -223,12 +215,15 @@ async def predict_cycle_variances(
 
 @router.get("/health")
 async def ai_health_check(request: Request):
+    """2026-11-02: status JUJUR dari services.ai (dulu membaca env EMERGENT & model lama)."""
     await require_auth(request)
-    available = bool(os.environ.get("EMERGENT_LLM_KEY"))
+    import ai_cost_tracker as _t
+    st = await ai_status()
     return {
-        "ai_service": "available" if available else "unavailable",
-        "model": "claude-sonnet-4-5-20250929",
-        "provider": "anthropic via Emergent Universal Key (emergentintegrations)",
+        "ai_service": "available" if st["available"] else "unavailable",
+        "message": st["message"],
+        "model": _t.TIER_MODELS[_t.DEFAULT_TIER][1],
+        "provider": "anthropic",
     }
 
 

@@ -61,7 +61,7 @@ def test_01_discount_tax_after_discount_and_ar_posted(H):
     assert codes["4-1300"] == (20_000, 0) and codes["4-1100"] == (0, 400_000) and codes["2-1400"] == (0, 41_800)
     inv = db.rahaza_ar_invoices.find_one({"id": d["ar_invoice_id"]})
     assert inv["subtotal"] == 380_000 and inv["total"] == 421_800 and inv["gl_ar_account_code"].startswith("1-1301")
-    assert d["cogs_total"] == 160_000 and d["cogs_basis"] == "fifo_batch"
+    assert d["cogs_total"] == 160_000 and d["cogs_basis"] == "wac"   # 2026-11-02 (owner No.26a)
     assert _stock() == 6 and _bal()
 
 

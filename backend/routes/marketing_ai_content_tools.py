@@ -1,25 +1,23 @@
 """
-Session 12 — P1-4 & P1-5: AI Content Tools
+Session 12 — P1-4: AI Content Tools
 A) AI Content Generator (caption + hashtag dengan template per platform)
-B) AI Image Generator (text-to-image, aspect ratio custom)
+
+2026-11-02 (keputusan owner No.61a + No.60): AI Image Generator (OpenAI gpt-image-1
+lewat Emergent, di luar pelacak biaya) DIHAPUS beserta impor `emergentintegrations`
+level modul. Caption kini lewat lapisan tunggal `services.ai` (Claude).
 """
 import uuid
 import logging
-import os
-import base64
 from datetime import datetime, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Query, Request, HTTPException
 from pydantic import BaseModel, Field
 from database import get_db
 from auth import require_auth
-from ai_llm import LlmChat, UserMessage
-from emergentintegrations.llm.openai.image_generation import OpenAIImageGeneration
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/ai-content", tags=["marketing-ai-content"])
-
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 
 def _now():
@@ -105,10 +103,10 @@ async def generate_caption(payload: CaptionGenerateIn, request: Request):
     """
     P1-4: Generate caption + hashtag menggunakan AI dengan template per platform.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
+    # 2026-11-02: gerbang tunggal services.ai (dulu 500 "EMERGENT_LLM_KEY not configured").
+    await require_ai("marketing-caption", user_id=user.get("id"))
     
     platform = payload.platform.lower()
     if platform not in PLATFORM_TEMPLATES:
@@ -181,14 +179,9 @@ HASHTAG:
     
     try:
         # Generate with AI
-        llm = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"caption-gen-{uuid.uuid4()}",
-            system_message="You are a professional marketing content creator."
-        ).with_model("standard")
-        
-        user_message = UserMessage(text=prompt)
-        response = await llm.send_message(user_message)
+        response = await ai_text("marketing-caption",
+                                 "You are a professional marketing content creator.",
+                                 prompt, tier="standard", user_id=user.get("id"))
         
         # Parse response
         lines = response.strip().split("\n")
@@ -242,96 +235,15 @@ HASHTAG:
             "content_id": doc["content_id"]
         })
         
+    except AIError as e:
+        raise ai_http_error(e)
     except Exception as e:
         logger.exception(f"[ai-content] caption generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Caption generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Pembuatan caption gagal. Silakan coba lagi.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  P1-5: AI IMAGE GENERATOR (GPT Image 1)
-# ═══════════════════════════════════════════════════════════════════════════
-
-class ImageGenerateIn(BaseModel):
-    prompt: str = Field(..., description="Image generation prompt")
-    aspect_ratio: Optional[str] = Field("square", description="square, portrait, landscape")
-    mode: Optional[str] = Field("generate", description="generate, variation (future: edit)")
-
-
-ASPECT_RATIO_MAP = {
-    "square": "1024x1024",
-    "portrait": "1024x1792",
-    "landscape": "1792x1024"
-}
-
-
-@router.post("/generate-image")
-async def generate_image(payload: ImageGenerateIn, request: Request):
-    """
-    P1-5: Generate product image menggunakan GPT Image 1.
-    Mode: generate (text-to-image), variation (future enhancement)
-    """
-    await require_auth(request)
-    
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(status_code=500, detail="EMERGENT_LLM_KEY not configured")
-    
-    aspect_ratio = payload.aspect_ratio.lower()
-    if aspect_ratio not in ASPECT_RATIO_MAP:
-        raise HTTPException(status_code=400, detail=f"Aspect ratio '{payload.aspect_ratio}' not supported")
-    
-    size = ASPECT_RATIO_MAP[aspect_ratio]
-    
-    try:
-        if payload.mode == "generate":
-            # Text-to-image generation
-            image_gen = OpenAIImageGeneration(api_key=EMERGENT_LLM_KEY)
-            images = await image_gen.generate_images(
-                prompt=payload.prompt,
-                model="gpt-image-1",
-                number_of_images=1
-            )
-            
-            if not images or len(images) == 0:
-                raise HTTPException(status_code=500, detail="No image was generated")
-            
-            # Convert to base64
-            image_base64 = base64.b64encode(images[0]).decode('utf-8')
-            
-            # Save to DB for history
-            db = get_db()
-            doc = {
-                "content_id": str(uuid.uuid4()),
-                "type": "image",
-                "prompt": payload.prompt,
-                "aspect_ratio": aspect_ratio,
-                "size": size,
-                "mode": payload.mode,
-                "generated_at": _now(),
-                "generated_by": "AI",
-                "image_size_kb": len(images[0]) / 1024
-            }
-            await db.marketing_ai_content_history.insert_one(doc)
-            
-            return ok(data={
-                "image_base64": image_base64,
-                "content_id": doc["content_id"],
-                "size": size,
-                "aspect_ratio": aspect_ratio,
-                "image_size_kb": doc["image_size_kb"]
-            })
-            
-        elif payload.mode == "variation":
-            # Future: Variation mode (requires base image input)
-            raise HTTPException(status_code=501, detail="Variation mode not yet implemented")
-        
-        else:
-            raise HTTPException(status_code=400, detail=f"Mode '{payload.mode}' not supported")
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception(f"[ai-content] image generation error: {e}")
-        raise HTTPException(status_code=500, detail=f"Image generation failed: {str(e)}")
+# P1-5 AI IMAGE GENERATOR — DIHAPUS 2026-11-02 (keputusan owner No.61a).
+# Endpoint POST /generate-image tidak ada lagi (route tidak terdaftar → 404).
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ from core import marketing_account_scope as _scope
 from auth import require_auth
 from routes.shared import require_perm  # T-01 2.3
 from utils.query_guards import q_date
+from utils.waktu import wib_date_str, now_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/orders", tags=["marketing-orders"])
@@ -40,12 +41,9 @@ def _now() -> datetime:
 # Karena `order_date` dokumen impor NAIVE (tanpa tzinfo), pintu manual memakai
 # bentuk yang sama: jam dinding WIB tanpa tzinfo. `created_at`/`updated_at` tetap
 # UTC ber-tz (itu jejak audit, bukan tanggal bisnis).
-WIB = timezone(timedelta(hours=7))
-
-
 def _now_wib_wall() -> datetime:
-    """Jam dinding WIB **tanpa tzinfo** — bentuk kanonik `order_date`."""
-    return datetime.now(WIB).replace(tzinfo=None)
+    """Jam dinding WIB **tanpa tzinfo** — bentuk kanonik `order_date` (delegasi ke SSOT utils.waktu)."""
+    return now_wib().replace(tzinfo=None)
 
 
 def _wib_day_start() -> datetime:
@@ -583,6 +581,9 @@ class OrderItemBody(BaseModel):
     product_name: Optional[str] = ""
     qty: int = Field(default=1, ge=0)
     price: float = Field(default=0.0, ge=0)
+    # 2026-11-02 (K5) — harga SEBELUM diskon penjual per baris (harga coret). Tanpa ini
+    # `revenue_gross` order manual = omzet sesudah diskon (uji audit: 215.998, mestinya 240.000).
+    price_original: Optional[float] = Field(default=None, ge=0)
     variant: Optional[str] = ""
     # ── K-8b (2026-08-10) — TAUTAN MASTER PER BARIS ───────────────────────────
     # Dulu hanya baris PERTAMA yang ditautkan & direservasi, jadi order 3 produk
@@ -739,6 +740,10 @@ async def _resolve_order_link(db, *, catalog_item_id=None, variant_id=None,
     return out
 
 
+# 2026-11-02 (K6) — reservasi stok order manual DIMATIKAN (lihat docstring create_order).
+RESERVE_MANUAL_ORDERS = False
+
+
 @router.post("", status_code=201)
 async def create_order(body: OrderCreateBody, request: Request):
     """Create a manual order in marketing_orders SSOT.
@@ -751,6 +756,12 @@ async def create_order(body: OrderCreateBody, request: Request):
     **M10** — stok langsung **DIRESERVASI** saat order masuk. Dulu reservasi baru
     terjadi di `allocate`, sehingga ada jendela di mana stok yang sama bisa
     dijual dua kali. Stok tidak cukup ⇒ **409** (bukan diterima lalu oversell).
+
+    **2026-11-02 (K6)** — reservasi untuk order manual DIMATIKAN (keputusan owner):
+    order manual tidak dikirim lewat Fulfillment gudang, jadi reservasinya dulu
+    menggantung selamanya (audit No.11: delivered tetap reserved). `reserve_stock`
+    dari klien DIABAIKAN. Reservasi lama dilepas lewat
+    ``scripts/release_manual_order_reservations.py`` (dry-run dulu).
     """
     await require_auth(request)
     user = _get_user(request)
@@ -785,6 +796,8 @@ async def create_order(body: OrderCreateBody, request: Request):
             'catalog_item_id': body.catalog_item_id,
             'variant_id': body.variant_id,
             'fg_material_id': body.fg_material_id,
+            # 2026-11-02 (K5) — harga coret mode satu-baris
+            'price_original': float(body.price_original or 0) or None,
         }]
     else:
         lines = raw_items
@@ -842,11 +855,15 @@ async def create_order(body: OrderCreateBody, request: Request):
             _qty = quantity if flat_mode else int(_ln.get('qty') or 0)
             _price = float(_ln.get('price') or 0) or (price_final if _i == 0 else 0.0) \
                 or _lk['harga_jual']
+            # 2026-11-02 (K5) — harga sebelum diskon penjual; tidak boleh < harga jual.
+            _orig = float(_ln.get('price_original') or 0) or (
+                price_original if (flat_mode or _i == 0) else 0.0) or _price
             _row = {
                 'sku_code':      (_ln.get('sku_code') or _lk['variant_sku'] or ''),
                 'product_name':  (_ln.get('product_name') or _lk['product_name'] or ''),
                 'qty':           _qty,
                 'price':         _price,
+                'price_original': round(max(_orig, _price), 2),
                 'variant':       (_ln.get('variant') or _lk['variation'] or ''),
                 # tautan master per baris — diisi SERVER, tak bisa dikarang klien
                 'catalog_item_id':    _lk['catalog_item_id'],
@@ -858,7 +875,7 @@ async def create_order(body: OrderCreateBody, request: Request):
                 'reserved_qty':       0.0,
                 'reserved_rows':      [],
             }
-            if body.reserve_stock and _qty > 0:
+            if RESERVE_MANUAL_ORDERS and body.reserve_stock and _qty > 0:
                 try:
                     rsv = await _cstock.reserve_sellable(
                         db, _lk['fg_material_id'], _qty,
@@ -1008,7 +1025,7 @@ async def create_order(body: OrderCreateBody, request: Request):
     except Exception:
         logger.exception('[order] rekap harian gagal dihitung ulang setelah order '
                          'manual dibuat order_id=%s account_id=%s tanggal=%s',
-                         order_ref, doc.get('account_id'), now.date().isoformat())
+                         order_ref, doc.get('account_id'), wib_date_str(now))
     return serialize(doc)
 
 
@@ -1060,6 +1077,22 @@ class StatusUpdateBody(BaseModel):
     tracking_number: Optional[str] = None
 
 
+def cancel_after_ship_block(order: dict, new_status: str, note: Optional[str]) -> Optional[str]:
+    """2026-11-02 (K6) — membatalkan pesanan yang SUDAH DIKIRIM wajib beralasan.
+
+    Pembatalan itu melahirkan pengajuan Retur Fisik "RTS" ke gudang (lihat
+    `core.order_status.apply_status`), jadi aksi massal "Batal" tidak boleh lagi
+    menyapu pesanan terkirim tanpa alasan. → pesan penolakan, atau ``None``."""
+    from core import returns_bridge as _rb
+    if new_status != "cancelled" or str(order.get("status") or "") == "cancelled":
+        return None
+    if _rb.was_shipped(order) and not (note or "").strip():
+        return (f"Pesanan {order.get('order_id') or ''} sudah dikirim. Pembatalan setelah kirim "
+                "wajib disertai alasan (mis. gagal kirim / paket ditolak) — sistem akan membuat "
+                "pengajuan Retur Fisik RTS ke Gudang; stok bertambah setelah gudang menerima paketnya.")
+    return None
+
+
 @router.patch("/{order_id}/status")
 async def update_order_status(
     order_id: str,
@@ -1081,6 +1114,9 @@ async def update_order_status(
     order = await db.marketing_orders.find_one({"id": order_id}, {"_id": 0})
     if not order:
         raise HTTPException(404, "Order not found")
+    why = cancel_after_ship_block(order, body.status, body.note)
+    if why:
+        raise HTTPException(400, why)
 
     try:
         res = await _apply_status(
@@ -1128,6 +1164,10 @@ async def bulk_update_status(body: BulkStatusBody, request: Request):
         order = await db.marketing_orders.find_one({"id": oid}, {"_id": 0})
         if not order:
             failed.append({"order_id": oid, "reason": "Order tidak ditemukan."})
+            continue
+        why = cancel_after_ship_block(order, body.status, body.note)
+        if why:
+            failed.append({"order_id": oid, "order_ref": order.get("order_id"), "reason": why})
             continue
         try:
             res = await _apply_status(db, order, body.status, user=user, note=body.note,

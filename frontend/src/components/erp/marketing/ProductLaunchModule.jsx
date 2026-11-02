@@ -11,6 +11,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -28,6 +29,7 @@ import MasterProductSelect from '../pickers/MasterProductSelect';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 
 import { formatRupiah } from '@/lib/format';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -489,7 +491,7 @@ export default function ProductLaunchModule({ token }) {
                   {sortedItems.map(item => {
                     const sc = STATUS_CONFIG[item.status] || STATUS_CONFIG.planning;
                     const Icon = sc.icon;
-                    const today = new Date().toISOString().split('T')[0];
+                    const today = todayWIB();
                     const isPast = item.launch_date < today;
                     const isToday = item.launch_date === today;
                     return (
@@ -626,7 +628,7 @@ export default function ProductLaunchModule({ token }) {
             </div>
             <div>
               <Label>Harga Asli (Rp)</Label>
-              <Input type="number" min="0" value={form.original_price} onChange={e => setForm(f => ({...f, original_price: e.target.value}))}
+              <MoneyInput value={form.original_price} onChange={e => setForm(f => ({...f, original_price: e.target.value}))}
                 placeholder="0" className="mt-1" data-testid="launch-original-price" />
               {/* K-3a — harga per platform BOLEH menimpa harga resmi master,
                   tetapi selisihnya harus TERLIHAT, bukan diam-diam. */}
@@ -642,17 +644,17 @@ export default function ProductLaunchModule({ token }) {
             </div>
             <div>
               <Label>Harga Pasang / Listing (Rp)</Label>
-              <Input type="number" min="0" value={form.listing_price} onChange={e => setForm(f => ({...f, listing_price: e.target.value}))}
+              <MoneyInput value={form.listing_price} onChange={e => setForm(f => ({...f, listing_price: e.target.value}))}
                 placeholder="0" className="mt-1" />
             </div>
             <div>
               <Label>Harga Flash Sale (Rp)</Label>
-              <Input type="number" min="0" value={form.flash_sale_price} onChange={e => setForm(f => ({...f, flash_sale_price: e.target.value}))}
+              <MoneyInput value={form.flash_sale_price} onChange={e => setForm(f => ({...f, flash_sale_price: e.target.value}))}
                 placeholder="0" className="mt-1" />
             </div>
             <div>
               <Label>Harga Coret (Rp)</Label>
-              <Input type="number" min="0" value={form.cross_price} onChange={e => setForm(f => ({...f, cross_price: e.target.value}))}
+              <MoneyInput value={form.cross_price} onChange={e => setForm(f => ({...f, cross_price: e.target.value}))}
                 placeholder="0" className="mt-1" />
             </div>
             <div className="col-span-2">

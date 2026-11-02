@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, Package, FileText, TruckIcon, Upload, Download, Building2, Tag } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
 import { toast } from 'sonner';
@@ -66,7 +68,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     vendor_name: '',
     vendor_contact: '',
     vendor_address: '',
-    po_date: new Date().toISOString().split('T')[0],
+    po_date: todayWIB(),
     expected_delivery_date: '',
     notes: '',
     items: [],
@@ -137,7 +139,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
       vendor_name: '',
       vendor_contact: '',
       vendor_address: '',
-      po_date: new Date().toISOString().split('T')[0],
+      po_date: todayWIB(),
       expected_delivery_date: '',
       notes: '',
       items: [],
@@ -838,13 +840,12 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                       </div>
                       <div className="col-span-4 md:col-span-2">
                         {idx === 0 && <label className="block text-xs font-medium mb-1">Harga / satuan</label>}
-                        <GlassInput
-                          type="number"
-                          step="0.01"
+                        <MoneyInput
+                          decimals={2}
                           value={item.unit_cost_input}
                           onChange={e => updateItem(item.id, 'unit_cost_input', parseFloat(e.target.value) || 0)}
                           placeholder="0"
-                          className="text-right"
+                          className="h-10 rounded-[var(--radius-sm)] bg-[var(--input-surface)] border-[var(--glass-border)] text-right"
                           data-testid={`po-form-item-cost-${idx}`}
                         />
                       </div>

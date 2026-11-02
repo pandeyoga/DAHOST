@@ -279,6 +279,14 @@ async def material_receive(request: Request):
     if not await location_resolver.location_exists(db, location_id):
         raise HTTPException(404, "Location tidak ditemukan.")
     _mtype = (mat.get("type") or "").lower()
+    try:
+        cost_in = float(body.get("unit_cost") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "unit_cost harus berupa angka.")
+    if cost_in < 0:
+        raise HTTPException(400, "unit_cost tidak boleh negatif.")
+    # Stok SEBELUM barang masuk — dasar rata-rata bergerak (dibaca sebelum `add`, sama dgn GR).
+    qty_before_receipt = float(await stock_service.get_onhand(material_id, db=db) or 0)
     await stock_service.add(
         material_id, location_id, qty,
         meta={"material_type": _mtype or None, "material_code": mat.get("code"),
@@ -289,9 +297,23 @@ async def material_receive(request: Request):
         actor={"id": str(user.get("id") or ""), "email": user.get("email", "")},
         db=db,
     )
+    # 2026-11-02 (audit g.md No.26 kebocoran #2) — penerimaan bernilai lewat jalur ini
+    # memperbarui HPP master dengan RATA-RATA BERGERAK, sama seperti Penerimaan Barang (GR,
+    # warehouse.py). Dulu HPP tetap (uji: 55.000, seharusnya 55.735,29) padahal jurnalnya
+    # memakai harga masuk. FG dikecualikan: nilainya lewat lapisan HPP batch, bukan unit_cost.
+    cost_result = None
+    if cost_in > 0 and _mtype != "fg":
+        try:
+            from core import accessory_valuation
+            cost_result = await accessory_valuation.apply_receipt_cost(
+                db, material_id, qty, cost_in, qty_before=qty_before_receipt,
+                actor={"id": user.get("id"), "name": user.get("name", "")},
+                notes=f"Penerimaan Material (Stok & Pergerakan){' · ' + str(body.get('ref_id')) if body.get('ref_id') else ''}")
+        except Exception as e:  # noqa: BLE001 — HPP tidak boleh menggagalkan penerimaan
+            log.error(f"material-receive HPP gagal (material_id={material_id}): {e}")
     mv = await _log_movement(db, user,
         type="receive", material_id=material_id, qty=qty,
-        unit_cost=float(body.get("unit_cost") or 0),
+        unit_cost=cost_in,
         from_location_id=None, to_location_id=location_id,
         ref_type=body.get("ref_type") or "receiving", ref_id=body.get("ref_id") or None,
         notes=body.get("notes") or "",
@@ -305,6 +327,8 @@ async def material_receive(request: Request):
         posting_result = {"ok": False, "error": str(e)}
     mv_refresh = await db.rahaza_material_movements.find_one({"id": mv["id"]}, {"_id": 0})
     mv_refresh["_posting_result"] = posting_result
+    if cost_result is not None:
+        mv_refresh["_cost_result"] = cost_result
     return serialize_doc(mv_refresh)
 
 
@@ -321,6 +345,9 @@ async def material_transfer(request: Request):
         raise HTTPException(400, "material_id, from_location_id, to_location_id, qty(>0) wajib.")
     if from_loc == to_loc:
         raise HTTPException(400, "Lokasi asal dan tujuan tidak boleh sama.")
+    # 2026-11-02 (No.18): lokasi tujuan harus ada — jangan membuat baris stok di lokasi fiktif.
+    if not await location_resolver.location_exists(db, to_loc):
+        raise HTTPException(400, "Lokasi tujuan tidak ditemukan di Struktur Gudang.")
     try:
         await stock_service.move(
             material_id, from_loc, to_loc, qty,
@@ -349,6 +376,11 @@ async def material_adjust(request: Request):
     reason = body.get("reason") or ""
     if not (material_id and location_id) or delta == 0:
         raise HTTPException(400, "material_id, location_id, qty (≠0) wajib.")
+    # 2026-11-02 (audit g.md No.18) — dulu lokasi diketik sebagai UUID dan tidak dicek:
+    # salah ketik membuat baris stok di "lokasi" yang tidak ada (stok hilang dari layar
+    # per lokasi tetapi tetap terhitung di total).
+    if not await location_resolver.location_exists(db, location_id):
+        raise HTTPException(400, "Lokasi tidak ditemukan di Struktur Gudang — pilih lokasi dari daftar.")
     cur = await db.rahaza_material_stock.find_one({"material_id": material_id, "location_id": location_id}) or {"qty": 0}
     if float(cur.get("qty") or 0) + delta < 0:
         raise HTTPException(400, "Penyesuaian akan membuat stok negatif.")
@@ -372,3 +404,30 @@ async def material_adjust(request: Request):
     mv_refresh = await db.rahaza_material_movements.find_one({"id": mv["id"]}, {"_id": 0})
     mv_refresh["_posting_result"] = posting_result
     return serialize_doc(mv_refresh)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PENGINGAT STOK MINUS (No.29a owner, 2026-11-02) — tidak memblokir apa pun.
+# Job harian 07:15 WIB didaftarkan saat modul ini dimuat (sebelum penjadwal start).
+# ──────────────────────────────────────────────────────────────────────────────
+from core import negative_stock_reminder as _neg_reminder  # noqa: E402
+
+_neg_reminder.register_scheduler_job()
+
+
+@router.get("/material-stock/negative-reminder/preview")
+async def negative_reminder_preview(request: Request):
+    """Isi pengingat stok minus hari ini (tanpa mengirim)."""
+    await require_auth(request)
+    db = get_db()
+    rows = await _neg_reminder.negative_rows(db)
+    digest = _neg_reminder.build_digest(rows)
+    return serialize_doc({**digest, "roles": await _neg_reminder.warehouse_roles(db)})
+
+
+@router.post("/material-stock/negative-reminder/send")
+async def negative_reminder_send(request: Request, force: bool = False):
+    """Kirim pengingat stok minus sekarang (idempoten per hari; `force` untuk kirim ulang)."""
+    await _require_admin(request)
+    db = get_db()
+    return serialize_doc(await _neg_reminder.send_daily_reminder(db, force=force))

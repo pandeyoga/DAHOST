@@ -2,7 +2,6 @@
 Content Calendar Module — Backend Routes
 Phase 3 Week 8: Jadwal konten multi-platform dengan AI hook generation
 """
-import os
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta, date
@@ -15,16 +14,16 @@ from core import marketing_account_scope as _scope
 from database import get_db
 from auth import require_auth
 from routes.shared import require_portal
-from ai_llm import LlmChat, UserMessage
+from services.ai import AIError, ai_http_error, ai_text, require_ai
 import json
 import calendar
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_CS_ROLES  # T-01 2.3
+from utils.waktu import now_wib, wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/content-calendar", tags=["marketing-content-calendar"])
 
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 CONTENT_TYPES = [
     "foto_produk", "video_produk", "reels_tiktok", "live_streaming",
@@ -97,7 +96,7 @@ async def seed_content_calendar_if_empty():
     statuses = ["posted", "posted", "posted", "scheduled", "scheduled", "draft"]
 
     entries = []
-    base = _now().replace(day=1)
+    base = now_wib().replace(day=1)   # tanggal kalender WIB (No.54a)
     for i in range(30):
         day_offset = random.randint(-5, 25)
         post_date = (base + timedelta(days=day_offset)).date()
@@ -260,7 +259,7 @@ async def get_platforms(request: Request):
 async def get_summary(request: Request,
                       account_id: str = Query(default="")):
     user = await require_auth(request)
-    await seed_content_calendar_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
     _sq = await _scope.scope_filter(
         db, user, {"account_id": account_id} if account_id else {})
@@ -272,7 +271,7 @@ async def get_summary(request: Request,
     cancelled = await db.marketing_content_calendar.count_documents({**_sq, "status": "cancelled"})
 
     # This month
-    now = _now()
+    now = now_wib()   # bulan berjalan WIB — `date` entri = tanggal kalender (No.54a)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     now.strftime("%Y-%m")
     this_month = await db.marketing_content_calendar.count_documents(
@@ -308,10 +307,10 @@ async def get_monthly(
     platform: str = Query(default="")
 ):
     user = await require_auth(request)
-    await seed_content_calendar_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
-    now = _now()
+    now = now_wib()   # periode bawaan = bulan berjalan WIB (No.54a)
     y = year  or now.year
     m = month or now.month
 
@@ -344,7 +343,7 @@ async def list_entries(
     date_to:   str = Query(default=""),
 ):
     user = await require_auth(request)
-    await seed_content_calendar_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     q = await _scope.scope_filter(
@@ -466,24 +465,20 @@ async def update_status(entry_id: str, request: Request):
 
 @router.post("/{entry_id}/ai-hook")
 async def generate_ai_hook(entry_id: str, request: Request):
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     entry = await db.marketing_content_calendar.find_one({"id": entry_id}, {"_id": 0})
     if not entry:
         raise HTTPException(404, "Entry not found")
 
-    if not EMERGENT_LLM_KEY:
-        raise HTTPException(503, "AI not configured")
+    # 2026-11-02: gerbang tunggal services.ai (dulu 503 "AI not configured").
+    await require_ai("marketing-content-hook", user_id=user.get("id"), db=db, tier="light")
 
     ct_label = CONTENT_TYPE_LABELS.get(entry.get("content_type", ""), entry.get("content_type", ""))
     platform = entry.get("platform", "")
     account  = entry.get("account_name", "")
 
-    chat = LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=f"content-hook-{entry_id[:8]}",
-        system_message="Kamu adalah copywriter ahli untuk marketplace Indonesia (Shopee, TikTok Shop, Tokopedia). Buat caption/hook yang menarik, singkat, relevan untuk audiens Indonesia. Respond ONLY with valid JSON."
-    ).with_model("openai", "gpt-4o-mini")
+    ai_system_msg = "Kamu adalah copywriter ahli untuk marketplace Indonesia (Shopee, TikTok Shop, Tokopedia). Buat caption/hook yang menarik, singkat, relevan untuk audiens Indonesia. Respond ONLY with valid JSON."
 
     prompt = (
         f"Buat 3 variasi hook/judul konten untuk:\n"
@@ -495,7 +490,7 @@ async def generate_ai_hook(entry_id: str, request: Request):
     )
 
     try:
-        response = await chat.send_message(UserMessage(text=prompt))
+        response = await ai_text("marketing-content-hook", ai_system_msg, prompt, tier="light", user_id=user.get("id"))
         clean = response.strip()
         if clean.startswith("```"):
             clean = clean.split("```")[1]
@@ -514,8 +509,10 @@ async def generate_ai_hook(entry_id: str, request: Request):
             }}
         )
         return {"success": True, "result": result, "applied_hook": best_hook}
-    except Exception as e:
-        raise HTTPException(500, f"AI hook generation failed: {e}")
+    except AIError as e:
+        raise ai_http_error(e)
+    except Exception:
+        raise HTTPException(502, "Hasil hook AI tidak dapat dibaca. Silakan coba lagi.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -582,7 +579,7 @@ async def set_content_kpi(entry_id: str, body: ContentKpiIn, request: Request):
         # Konten yang KPI-nya sudah ada jelas sudah terbit; status "draft" pada baris
         # yang punya angka nyata adalah kontradiksi yang membuat rekap salah hitung.
         upd["status"] = "posted"
-        upd["published_at"] = entry.get("published_at") or now.date().isoformat()
+        upd["published_at"] = entry.get("published_at") or wib_date_str(now)
     await db.marketing_content_calendar.update_one({"id": entry_id}, {"$set": upd})
     return {"success": True, "data": serialize({**entry, **upd})}
 

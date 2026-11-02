@@ -25,6 +25,8 @@ import { apiGet, apiPost } from '../../lib/api';
 import { BizBadge } from './engine/BusinessTypeBadge';
 import StaffEntryBadge from './engine/StaffEntryBadge';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
@@ -91,7 +93,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
   const [posting, setPosting] = useState('');
   const [payOpen, setPayOpen] = useState(false);
   const [cashAccounts, setCashAccounts] = useState([]);
-  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: new Date().toISOString().slice(0, 10), reference_no: '' });
+  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: todayWIB(), reference_no: '' });
   const [disbursements, setDisbursements] = useState([]);
   useEffect(() => {
     apiGet('/rahaza/cash-accounts').then(d => setCashAccounts(Array.isArray(d) ? d : [])).catch(() => {});
@@ -307,18 +309,18 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           <table className="w-full text-sm">
             <thead className="bg-muted/40 border-b border-border">
               <tr>
-                {['Kode', 'Vendor CMT', 'Sumber', 'Periode', 'Pcs', 'Nilai', 'Status', 'Jurnal GL', 'Aksi'].map(h => (
+                {['Kode', 'Vendor CMT', 'Sumber', 'Periode', 'Pcs', 'Nilai', 'Selisih Belum Selesai', 'Status', 'Jurnal GL', 'Aksi'].map(h => (
                   <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-border/50">
               {loading ? (
-                <tr><td colSpan={9} className="text-center py-10 text-muted-foreground">
+                <tr><td colSpan={10} className="text-center py-10 text-muted-foreground">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" /> Memuat tagihan…
                 </td></tr>
               ) : paged.length === 0 ? (
-                <tr><td colSpan={9} className="text-center py-12 text-muted-foreground" data-testid="cmt-billing-empty">
+                <tr><td colSpan={10} className="text-center py-12 text-muted-foreground" data-testid="cmt-billing-empty">
                   <Receipt className="w-10 h-10 mx-auto mb-2 opacity-25" />
                   <p className="font-medium">
                     {(partnerId || status || search.trim())
@@ -366,6 +368,21 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   <td className="px-3 py-2.5 text-xs">{fmtDate(r.period_from)} – {fmtDate(r.period_to)}</td>
                   <td className="px-3 py-2.5 tabular-nums">{fmtNum(r.total_pcs)}</td>
                   <td className="px-3 py-2.5 tabular-nums font-semibold">{fmtRp(r.amount)}</td>
+                  {/* 2026-11-02 (K17 butir 6): tagihan TIDAK diubah otomatis saat koreksi QC /
+                      selisih — angkanya ditandai untuk Keuangan dan ditampilkan di sini. */}
+                  <td className="px-3 py-2.5 text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
+                    {Number(r.variance_unresolved_qty || 0) > 0 ? (
+                      <span className="inline-flex flex-col text-amber-800">
+                        <span className="font-semibold tabular-nums">{fmtNum(r.variance_unresolved_qty)} pcs</span>
+                        {Number(r.overbilled_pcs || 0) > 0 && <span>lebih tagih {fmtNum(r.overbilled_pcs)} pcs ({fmtRp(r.overbilled_amount)})</span>}
+                        {Number(r.open_short_qty || 0) > 0 && <span>belum sampai {fmtNum(r.open_short_qty)} pcs</span>}
+                      </span>
+                    ) : r.variance_flagged ? (
+                      <span className="inline-flex items-center gap-1 text-amber-700" title={(r.variance_reasons || []).join('; ') || r.variance_reason || ''}>
+                        <AlertTriangle className="w-3.5 h-3.5" /> ditandai
+                      </span>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </td>
                   <td className="px-3 py-2.5"><StatusPill status={r.status} /></td>
                   <td className="px-3 py-2.5 text-xs">
                     {r.gl_posted
@@ -430,6 +447,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   <div><p className="text-xs text-muted-foreground">Reject</p><p className="font-semibold">{fmtNum(detail.bill?.total_rejected)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Penalti</p><p className="font-semibold">{fmtRp(detail.bill?.penalty)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Domain</p><p className="font-semibold capitalize">{detail.bill?.business_type}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Selisih belum selesai</p><p className="font-semibold">{fmtNum(detail.bill?.variance_unresolved_qty || 0)} pcs</p></div>
                 </div>
 
                 {detail.bill?.variance_flagged && (
@@ -537,7 +555,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                             {cashAccounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
                           </SmartNativeSelect>
                         </div>
-                        <Input type="number" placeholder="Jumlah (kosong = sisa)" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} data-testid="cmt-pay-amount" />
+                        <MoneyInput placeholder="Jumlah (kosong = sisa)" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} data-testid="cmt-pay-amount" />
                         <Input type="date" value={payForm.payment_date} onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))} data-testid="cmt-pay-date" />
                         <Input placeholder="No. referensi" value={payForm.reference_no} onChange={e => setPayForm(f => ({ ...f, reference_no: e.target.value }))} data-testid="cmt-pay-ref" />
                         <div className="flex gap-2 justify-end">

@@ -11,6 +11,9 @@ import { PageHeader } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
 import { toast } from 'sonner';
 import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
+import { MoneyInput } from '@/components/ui/money-input';
+
+// Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
 // F3 — kategori TIDAK LAGI hardcode. Dulu daftar ini hidup di 4 tempat berbeda
 // dengan isi berbeda (Master Produk · Buyer Catalog Maklon · AI Quote · seeder),
@@ -634,13 +637,13 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground">HPP dasar (Rp)</label>
-                <GlassInput type="number" min="0" value={form.base_hpp}
+                <MoneyInput glass value={form.base_hpp}
                   onChange={(e) => setForm({ ...form, base_hpp: e.target.value })} data-testid="model-form-base-hpp" />
                 <p className="text-[10px] text-muted-foreground mt-1">Dipakai bila belum ada HPP dari R&D.</p>
               </div>
               <div>
                 <label className="text-xs text-muted-foreground">Harga jual resmi (Rp)</label>
-                <GlassInput type="number" min="0" value={form.retail_price}
+                <MoneyInput glass value={form.retail_price}
                   onChange={(e) => setForm({ ...form, retail_price: e.target.value })} data-testid="model-form-retail-price" />
                 <p className="text-[10px] text-muted-foreground mt-1">Jadi nilai awal harga di katalog.</p>
               </div>

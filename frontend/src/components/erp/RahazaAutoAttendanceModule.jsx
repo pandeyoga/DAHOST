@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { todayWIB } from '@/lib/waktu';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -563,7 +564,7 @@ function LiveFeedTab({ headers }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayWIB();
       const params = new URLSearchParams({ status: 'all', from_date: today, to_date: today });
       const r = await axios.get(`${BACKEND}/api/rahaza/attendance/approvals?${params}`, { headers });
       let data = r.data || [];

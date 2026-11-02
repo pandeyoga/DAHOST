@@ -8,6 +8,14 @@ Inilah dokumen yang dicocokkan ke MUTASI BANK (rekonsiliasi) — bukan laporan d
 Aturan: nominal penarikan tidak boleh melebihi saldo platform yang tercatat
 (Σ dana dilepas − Σ penarikan lain). Kalau dilanggar, berarti ada laporan dana
 dilepas yang belum dicatat — itu yang harus diisi dulu, bukan saldonya dibiarkan minus.
+
+2026-11-02 (K3) — saldo yang dipakai HANYA dari dana dilepas yang jurnalnya SUDAH
+DIPOSTING (`core.platform_balance.withdrawable_balance`). Penarikan yang memakai saldo
+dari pencairan belum dijurnal/diposting ditolak 400 "posting dulu pencairan toko ini" —
+di pencatatan, impor, pembuatan jurnal, DAN posting jurnal penarikan.
+2026-11-02 (K4) — rekening tujuan satu pintu (Tautan Rekening Bank per Toko). Penarikan
+yang belum dijurnal memakai rekening TAUTAN TERBARU saat dijurnal, kecuali Finance
+sengaja memilih rekening lain untuk penarikan itu (`cash_code_source = override`).
 """
 from __future__ import annotations
 
@@ -24,7 +32,9 @@ from core import payout_banks as _banks
 from core import platform_balance as _bal
 from core import withdrawal_import as _wimport
 from database import get_db
-from routes.marketing_settlements import _je_still_binding, _now, _require_finance, _rp, _ser
+from routes.marketing_settlements import (_je_still_binding, _now, _require_finance, _rp, _ser,
+                                          _doc_receivable_codes, assert_linked_je_owned, doc_je_ref,
+                                          find_doc_je)
 
 router = APIRouter(prefix="/api/marketing/withdrawals", tags=["marketing-withdrawals"])
 
@@ -67,28 +77,77 @@ async def _resolve_cash(db, account: dict, cash_code: str) -> Optional[str]:
     return code
 
 
+def cash_source_for(cash_code_input: str) -> str:
+    """2026-11-02 (K4) — `override` bila Finance memilih rekening khusus untuk penarikan
+    ini; selain itu `store_default` (ikut tautan rekening toko TERBARU saat dijurnal)."""
+    return "override" if (cash_code_input or "").strip() else "store_default"
+
+
+def journal_cash_code(doc: dict, account: dict) -> str:
+    """Rekening debit jurnal penarikan (K4): rekening pilihan khusus dipertahankan;
+    selebihnya rekening tautan toko TERBARU — bukan cap lama saat penarikan dicatat.
+    Dokumen lama tanpa `cash_code_source` diperlakukan sebagai ikut tautan toko."""
+    if (doc or {}).get("cash_code_source") == "override" and (doc.get("cash_code") or "").strip():
+        return doc["cash_code"].strip()
+    return ((account or {}).get("coa_cash_code") or (doc or {}).get("cash_code") or "").strip()
+
+
+def _unposted_text(bal: dict, limit: int = 5) -> str:
+    rows = bal.get("unposted") or []
+    parts = [f"{r.get('settlement_id') or r.get('id')} ({r.get('state')}, {_rp(r.get('net_payout'))})"
+             for r in rows[:limit]]
+    return ", ".join(parts) + (f" dan {len(rows) - limit} lainnya" if len(rows) > limit else "")
+
+
+def withdrawal_block_message(account: dict, amount: float, bal: dict) -> Optional[str]:
+    """K3 — pesan penolakan bila ``amount`` melebihi saldo yang BOLEH ditarik, atau None."""
+    avail = float(bal.get("available") or 0)
+    if amount - avail <= 0.01:
+        return None
+    name = account.get("account_name") or account.get("account_code") or "-"
+    if amount - float(bal.get("document_available") or 0) <= 0.01 and bal.get("unposted"):
+        return (f"Penarikan {_rp(amount)} memakai saldo dari pencairan yang BELUM dijurnal/diposting. "
+                f"Saldo toko '{name}' yang boleh ditarik baru {_rp(avail)} (dari pencairan yang sudah "
+                f"diposting). Posting dulu pencairan toko ini: {_unposted_text(bal)} — di Saldo & "
+                "Pencairan Marketplace → 'Buat jurnal' → 'Posting'.")
+    return (f"Penarikan {_rp(amount)} melebihi saldo platform toko '{name}' yang tercatat "
+            f"({_rp(avail)} dari pencairan yang sudah diposting). Catat dulu laporan dana dilepas "
+            "(Penghasilan/Settlement) yang belum masuk lalu posting jurnalnya — saldo tidak boleh minus.")
+
+
 async def _annotate_rows(db, account: dict, rows: list) -> list:
     """Tandai baris yang sudah tercatat & yang membuat saldo minus (kumulatif)."""
     refs = [r["reference"] for r in rows if r.get("reference")]
     existing = {d["reference"] for d in await db[COLL].find(
         {"account_id": account["id"], "reference": {"$in": refs}}, {"_id": 0, "reference": 1}).to_list(5000)} if refs else set()
-    avail = await _bal.available_balance(db, account["id"])
+    bal = await _bal.withdrawable_balance(db, account["id"])      # 2026-11-02 (K3)
+    avail = bal["available"]
     running = 0.0
+    seen = set()
     for r in rows:
         if r.get("reference") and r["reference"] in existing:
             r.update({"ok": False, "reason": "sudah tercatat (referensi sama)", "duplicate": True})
+        # 2026-11-02 (No.2a): referensi unik per toko juga DI DALAM satu berkas impor.
+        elif r.get("reference") and r["reference"] in seen and r.get("ok"):
+            r.update({"ok": False, "reason": "referensi sama muncul dua kali di berkas ini", "duplicate": True})
+        if r.get("reference") and r.get("ok"):
+            seen.add(r["reference"])
         if r.get("ok"):
             running += float(r.get("amount") or 0)
             if running - avail > 0.01:
-                r.update({"ok": False, "reason": f"melebihi saldo platform ({_rp(avail)}) — catat dana dilepas dulu"})
+                r.update({"ok": False, "reason": (
+                    f"melebihi saldo yang sudah diposting ({_rp(avail)}) — posting dulu pencairan toko ini"
+                    if bal.get("unposted") else
+                    f"melebihi saldo platform ({_rp(avail)}) — catat dana dilepas dulu")})
     return rows
 
 
 def _new_doc(account: dict, user, withdrawal_date: str, amount: float, reference: str, notes: str,
-             cash_code: Optional[str] = None) -> dict:
+             cash_code: Optional[str] = None, cash_code_source: str = "store_default") -> dict:
     doc = {
         "id": str(uuid.uuid4()), "account_id": account["id"], "withdrawal_date": withdrawal_date,
         "cash_code": cash_code,
+        "cash_code_source": cash_code_source,      # 2026-11-02 (K4)
         "amount": round(float(amount), 2), "reference": (reference or "").strip() or None, "notes": notes or "",
         "je_id": None, "je_number": None, "je_status": None,
         "bank_txn_id": None, "bank_session_id": None, "bank_txn_date": None,
@@ -132,7 +191,9 @@ async def import_preview(request: Request, file: UploadFile = File(...), account
     if account_id:
         account = await _scope.require_account(db, account_id)
         parsed["rows"] = await _annotate_rows(db, account, parsed["rows"])
-        parsed["available_balance"] = await _bal.available_balance(db, account_id)
+        _wb = await _bal.withdrawable_balance(db, account_id)     # 2026-11-02 (K3)
+        parsed["available_balance"] = _wb["available"]
+        parsed["unposted_settlements"] = _wb["unposted"]
         parsed["cash_code"] = (account.get("coa_cash_code") or "").strip() or None
     parsed["total_ok"] = round(sum(r["amount"] or 0 for r in parsed["rows"] if r["ok"]), 2)
     parsed["ok_count"] = sum(1 for r in parsed["rows"] if r["ok"])
@@ -158,7 +219,8 @@ async def import_commit(body: ImportCommitIn, request: Request):
             skipped.append({"reference": r["reference"], "amount": r["amount"], "reason": r["reason"]})
             continue
         doc = _new_doc(account, user, r["withdrawal_date"], r["amount"], r["reference"] or "",
-                       f"Impor {body.filename or 'laporan penarikan'}", cash)
+                       f"Impor {body.filename or 'laporan penarikan'}", cash,
+                       cash_source_for(body.cash_code or ""))
         await db[COLL].insert_one(doc)
         created.append(_ser(doc))
     return {"ok": True, "created": created, "skipped": skipped,
@@ -189,15 +251,19 @@ async def _coa_for(db, account: dict, cash_code: str = "") -> dict:
     return {"receivable": recv, "cash": cash}
 
 
-async def _check_balance(db, account: dict, amount: float, exclude_id: str = ""):
-    avail = await _bal.available_balance(db, account["id"], exclude_id)
-    if amount - avail > 0.01:
-        raise HTTPException(
-            400, f"Penarikan {_rp(amount)} melebihi saldo platform toko "
-                 f"'{account.get('account_name')}' yang tercatat ({_rp(avail)}). Catat dulu "
-                 f"laporan dana dilepas (Penghasilan/Settlement) yang belum masuk — saldo tidak "
-                 f"boleh minus.")
-    return avail
+async def _check_balance(db, account: dict, amount: float, exclude_id: str = "", *,
+                         journal_stage: bool = False):
+    """K3 (2026-11-02) — saldo dari pencairan yang SUDAH DIPOSTING saja.
+
+    ``journal_stage`` (buat/posting jurnal penarikan): yang ditolak adalah penarikan yang
+    saldonya bergantung pada pencairan BELUM diposting (mis. jurnal pencairannya di-void
+    setelah penarikan dicatat). Kekurangan saldo dokumen murni sudah dijaga saat penarikan
+    dicatat/diubah/diimpor."""
+    bal = await _bal.withdrawable_balance(db, account["id"], exclude_id)
+    msg = withdrawal_block_message(account, amount, bal)
+    if msg and (not journal_stage or bal.get("unposted")):
+        raise HTTPException(400, msg)
+    return bal["available"]
 
 
 @router.get("/bank-options")
@@ -209,19 +275,25 @@ async def list_bank_options(request: Request):
 
 @router.put("/accounts/{account_id}/payout-bank")
 async def set_payout_bank(account_id: str, body: PayoutBankIn, request: Request):
-    """Finance menautkan rekening pencairan default toko (dipakai penarikan & jurnal)."""
+    """Finance menautkan rekening pencairan default toko (dipakai penarikan & jurnal).
+
+    2026-11-02 (K4) — SATU PINTU rekening tujuan per toko. Logikanya di
+    `core.finance_sync.set_store_cash_code` (dipakai juga impor Excel master)."""
     user = await _require_finance(request)
     db = get_db()
     account = await _scope.require_account(db, account_id)
-    code = (body.coa_cash_code or "").strip()
-    if not await _banks.is_bank_code(db, code):
-        raise HTTPException(400, f"Rekening '{code}' tidak ada di daftar Kas & Bank / COA kas-bank aktif.")
-    await db.marketing_platform_accounts.update_one({"id": account_id}, {"$set": {
-        "coa_cash_code": code, "coa_cash_source": "finance",
-        "coa_cash_updated_by": user.get("email") if isinstance(user, dict) else None,
-        "updated_at": _now()}})
-    return {"ok": True, "account_id": account_id, "coa_cash_code": code,
-            "message": f"Rekening pencairan '{account.get('account_name')}' ditautkan ke {code}."}
+    from core.finance_sync import set_store_cash_code
+    try:
+        res = await set_store_cash_code(db, account, body.coa_cash_code, user=user, source="finance")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    pending = await db[COLL].count_documents({"account_id": account_id, "je_id": {"$in": [None, ""]},
+                                              "cash_code_source": {"$ne": "override"}})
+    return {"ok": True, "account_id": account_id, "coa_cash_code": res["code"],
+            "pending_withdrawals_follow": pending,
+            "message": (f"Rekening pencairan '{account.get('account_name')}' ditautkan ke {res['code']}."
+                        + (f" {pending} penarikan yang belum dijurnal akan memakai rekening ini saat "
+                           "dijurnal." if pending else ""))}
 
 
 @router.get("")
@@ -270,7 +342,8 @@ async def create_withdrawal(body: WithdrawalIn, request: Request):
         raise HTTPException(409, f"Penarikan '{ref}' untuk toko ini sudah pernah dicatat.")
     await _check_balance(db, account, body.amount)
     cash = await _resolve_cash(db, account, body.cash_code or "")
-    doc = _new_doc(account, user, body.withdrawal_date, body.amount, ref, body.notes or "", cash)
+    doc = _new_doc(account, user, body.withdrawal_date, body.amount, ref, body.notes or "", cash,
+                   cash_source_for(body.cash_code or ""))
     await db[COLL].insert_one(doc)
     return {"ok": True, "data": _ser(doc)}
 
@@ -289,10 +362,16 @@ async def update_withdrawal(wid: str, body: WithdrawalIn, request: Request):
         raise HTTPException(400, f"Nominal sudah TERTAUT ke mutasi bank tanggal {cur.get('bank_txn_date')} "
                                  f"({_rp(cur.get('amount'))}). Lepas tautannya di Rekonsiliasi Bank dulu.")
     account = await _scope.require_account(db, body.account_id)
+    # 2026-11-02 (No.2a): edit dulu tidak mengecek (toko, referensi) → dua dokumen bernomor sama.
+    new_ref = (body.reference or "").strip() or cur.get("reference")
+    if new_ref and await db[COLL].find_one(
+            {"account_id": body.account_id, "reference": new_ref, "id": {"$ne": wid}}, {"_id": 0, "id": 1}):
+        raise HTTPException(409, f"Penarikan '{new_ref}' untuk toko ini sudah pernah dicatat.")
     await _check_balance(db, account, body.amount, exclude_id=wid)
     upd = body.dict()
     upd.update({"amount": round(float(body.amount), 2), "reference": (body.reference or "").strip() or cur.get("reference"),
-                "cash_code": await _resolve_cash(db, account, body.cash_code or ""), "updated_at": _now()})
+                "cash_code": await _resolve_cash(db, account, body.cash_code or ""),
+                "cash_code_source": cash_source_for(body.cash_code or ""), "updated_at": _now()})
     if cur.get("je_id"):
         upd.update({"je_id": None, "je_number": None, "je_status": None, "je_voided_ref": cur.get("je_number")})
     _scope.stamp_account(upd, account)
@@ -318,18 +397,21 @@ async def delete_withdrawal(wid: str, request: Request):
 
 @router.post("/{wid}/journal")
 async def create_draft_journal(wid: str, request: Request):
-    """Dr Bank toko / Cr Piutang Toko — DRAFT, idempoten per `reference`."""
+    """Dr Bank toko / Cr Piutang Toko — DRAFT, idempoten per DOKUMEN (referensi + id, 2026-11-02)."""
     user = await _require_finance(request)
     db = get_db()
     doc = await db[COLL].find_one({"id": wid}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Penarikan tidak ditemukan.")
     account = await _scope.require_account(db, doc["account_id"])
-    coa = await _coa_for(db, account, doc.get("cash_code") or "")
+    # 2026-11-02 (K4) — rekening tautan TERBARU (kecuali pilihan khusus penarikan ini).
+    coa = await _coa_for(db, account, journal_cash_code(doc, account))
 
-    from routes.rahaza_posting import _create_posted_je, _find_existing_je
+    from routes.rahaza_posting import _create_posted_je
 
-    existing = await _find_existing_je(db, SOURCE_MODULE, doc["reference"])
+    # 2026-11-02 (K-2): jurnal MILIK dokumen ini — referensi sama di toko lain bukan miliknya.
+    existing = await find_doc_je(db, SOURCE_MODULE, doc,
+                                 await _doc_receivable_codes(db, doc, (coa["receivable"],)))
     if existing:
         await db[COLL].update_one({"id": wid}, {"$set": {
             "je_id": existing["id"], "je_number": existing["je_number"],
@@ -339,6 +421,9 @@ async def create_draft_journal(wid: str, request: Request):
                 "message": f"Penarikan ini sudah punya jurnal {existing['je_number']} ({existing['status']})."}
 
     amt = round(float(doc["amount"]), 2)
+    # 2026-11-02 (K3) — jurnal penarikan ditolak bila saldo yang dipakai berasal dari
+    # pencairan yang belum dijurnal/diposting (urutan: pencairan diposting DULU).
+    await _check_balance(db, account, amt, exclude_id=wid, journal_stage=True)
     lines = [
         {"account_code": coa["cash"], "debit": amt, "credit": 0,
          "description": f"Penarikan saldo {doc['platform']} ke bank ({doc['reference']})"},
@@ -348,13 +433,13 @@ async def create_draft_journal(wid: str, request: Request):
     res = await _create_posted_je(
         db, je_date=date.fromisoformat(str(doc["withdrawal_date"])[:10]),
         memo=f"Penarikan saldo {doc['platform']} — {doc.get('account_name') or ''} ({doc['reference']})",
-        source_module=SOURCE_MODULE, source_ref=doc["reference"],
+        source_module=SOURCE_MODULE, source_ref=doc_je_ref(doc["reference"], doc["id"]),  # 2026-11-02 K-2
         lines_raw=lines, user=user, status="draft")
     if not res.get("ok"):
         raise HTTPException(400, res.get("error") or "Gagal membuat jurnal.")
     await db[COLL].update_one({"id": wid}, {"$set": {
         "je_id": res["je_id"], "je_number": res["je_number"], "je_status": "draft",
-        "coa_used": coa, "updated_at": _now()}})
+        "cash_code": coa["cash"], "coa_used": coa, "updated_at": _now()}})
     return {"ok": True, "je_id": res["je_id"], "je_number": res["je_number"], "je_status": "draft",
             "coa_used": coa,
             "message": f"Jurnal DRAFT {res['je_number']} dibuat: Dr {coa['cash']} / Cr {coa['receivable']}. "
@@ -376,19 +461,30 @@ async def post_withdrawal_journal(wid: str, request: Request):
     je = await db.rahaza_journal_entries.find_one({"id": doc["je_id"]})
     if not je:
         raise HTTPException(404, f"Jurnal {doc.get('je_number')} sudah tidak ada.")
+    await assert_linked_je_owned(db, COLL, doc, je)  # 2026-11-02 (K-2): jangan posting jurnal toko lain
     if je.get("status") == "posted":
         await db[COLL].update_one({"id": wid}, {"$set": {"je_status": "posted"}})
         return {"ok": True, "already": True, "je_number": je["je_number"], "je_status": "posted",
                 "message": f"Jurnal {je['je_number']} sudah diposting."}
     if je.get("status") != "draft":
         raise HTTPException(400, f"Hanya jurnal draf yang bisa diposting. Status sekarang: {je.get('status')}.")
+    # 2026-11-02 (K3) — pencairan yang jadi sumber saldo bisa di-void/belum diposting
+    # setelah draf penarikan dibuat: cek ulang tepat sebelum masuk buku besar.
+    _acc = await _scope.require_account(db, doc["account_id"])
+    await _check_balance(db, _acc, round(float(doc.get("amount") or 0), 2), exclude_id=wid,
+                         journal_stage=True)
     await _check_period_open(db, date.fromisoformat(str(je["date"])[:10]))
+    # 2026-11-02 (S2-H butir 8): validasi ULANG akun draf (aturan yang sama dengan Buku Jurnal).
+    from routes.rahaza_journals import revalidate_draft_lines
+    lines, total_d, total_c = await revalidate_draft_lines(db, je)
     _res = await db.rahaza_journal_entries.update_one(
         {"id": je["id"], "status": "draft"},  # FIN-17: atomik
-        {"$set": {"status": "posted", "posted_at": _now(), "posted_by": (user or {}).get("id"), "updated_at": _now()}})
+        {"$set": {"status": "posted", "posted_at": _now(), "posted_by": (user or {}).get("id"), "updated_at": _now(),
+                  "lines": lines, "total_debit": total_d, "total_credit": total_c}})
     if _res.modified_count == 0:
         raise HTTPException(409, "Jurnal sudah diposting oleh permintaan lain.")
     je["status"] = "posted"
+    je["lines"] = lines
     await _mirror_lines(db, je)
     await db[COLL].update_one({"id": wid}, {"$set": {"je_status": "posted", "updated_at": _now()}})
     return {"ok": True, "je_number": je["je_number"], "je_status": "posted",

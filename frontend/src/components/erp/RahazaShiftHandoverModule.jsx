@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, ClipboardCheck, Clock, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Eye, RefreshCw, Calendar, BadgeCheck, X, Download, Upload, Image, Trash2 } from 'lucide-react';
 import { Combobox } from './Combobox';
+import { todayWIB } from '@/lib/waktu';
 
 const STATUS_LABEL = { present: 'Hadir', absent: 'Alpha', late: 'Terlambat' };
 const STATUS_COLOR = { present: 'text-emerald-400', absent: 'text-red-400', late: 'text-amber-400' };
@@ -26,7 +27,7 @@ export default function RahazaShiftHandoverModule({ token }) {
   const [signOffNotes, setSignOffNotes] = useState('');
   const [signOffSaving, setSignOffSaving] = useState(false);
   const [form, setForm] = useState({
-    shift_id: '', date: new Date().toISOString().slice(0, 10), notes: '',
+    shift_id: '', date: todayWIB(), notes: '',
     checklist: [
       { key: 'production_target', label: 'Target produksi tercapai?', type: 'boolean', value: false, notes: '' },
       { key: 'quality_issues', label: 'Ada masalah quality?', type: 'boolean', value: false, notes: '' },

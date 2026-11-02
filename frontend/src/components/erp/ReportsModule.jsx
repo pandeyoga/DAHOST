@@ -4,6 +4,7 @@ import { Download, FileText, BarChart2, TrendingUp, CreditCard, Factory, Truck, 
 import PaginationBar from './PaginationBar';
 import { PdfColumnPicker } from './pdf/PdfColumnPicker';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB } from '@/lib/waktu';
 
 const REPORT_TYPES = [
   { id: 'production', label: 'Laporan Produksi', icon: Factory, description: 'PO + item + buku kuantitas (produksi/diterima/reject)', color: 'blue' },
@@ -158,7 +159,7 @@ export default function ReportsModule({ token }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        a.download = `laporan_${activeReport}_${todayWIB()}.xlsx`;
         a.click();
         URL.revokeObjectURL(url);
       } else {
@@ -180,7 +181,7 @@ export default function ReportsModule({ token }) {
         ws['!cols'] = colWidths;
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, activeReport);
-        XLSX.writeFile(wb, `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.xlsx`);
+        XLSX.writeFile(wb, `laporan_${activeReport}_${todayWIB()}.xlsx`);
       }
     } catch (e) {
       console.error('Excel export error:', e);
@@ -206,7 +207,7 @@ export default function ReportsModule({ token }) {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.pdf`;
+        a.download = `laporan_${activeReport}_${todayWIB()}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
       } else {
@@ -233,7 +234,7 @@ export default function ReportsModule({ token }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `laporan_${activeReport}_${new Date().toISOString().split('T')[0]}.csv`;
+    a.download = `laporan_${activeReport}_${todayWIB()}.csv`;
     a.click();
   };
 

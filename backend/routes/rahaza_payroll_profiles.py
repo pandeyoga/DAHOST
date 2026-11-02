@@ -22,6 +22,7 @@ import csv
 import logging
 from datetime import datetime, timezone, date, timedelta
 from typing import Optional
+from utils.waktu import today_wib
 
 log = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ def _date_range_filter(from_iso: str, to_iso: str) -> dict:
 async def _generate_run_number(db) -> str:
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1)
     from utils.counters import gen_prefixed_number
-    today = date.today().strftime("%Y%m%d")
+    today = today_wib().strftime("%Y%m%d")
     return await gen_prefixed_number(db, "rahaza_payroll_runs", "run_number", f"PR-{today}-", 3)
 
 

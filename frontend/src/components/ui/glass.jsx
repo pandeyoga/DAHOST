@@ -79,18 +79,20 @@ export const GlassTable = ({ children, className, ...props }) => {
  * GlassInput — text input dengan background glass halus.
  * Focus ring sudah otomatis dari global :focus-visible.
  */
+/** Kelas kotak input glass — dipakai GlassInput dan MoneyInput `glass` (satu sumber). */
+export const GLASS_INPUT_CLASS = cn(
+  'flex h-10 w-full rounded-[var(--radius-sm)] border px-3 py-2',
+  'bg-[var(--input-surface)] border-[var(--glass-border)]',
+  'text-sm text-foreground placeholder:text-muted-foreground',
+  'disabled:opacity-60 disabled:cursor-not-allowed',
+  'transition-[background-color,border-color] duration-150 ease-brand',
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-transparent',
+);
+
 export const GlassInput = ({ className, ...props }) => {
   return (
     <input
-      className={cn(
-        'flex h-10 w-full rounded-[var(--radius-sm)] border px-3 py-2',
-        'bg-[var(--input-surface)] border-[var(--glass-border)]',
-        'text-sm text-foreground placeholder:text-muted-foreground',
-        'disabled:opacity-60 disabled:cursor-not-allowed',
-        'transition-[background-color,border-color] duration-150 ease-brand',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-transparent',
-        className
-      )}
+      className={cn(GLASS_INPUT_CLASS, className)}
       {...props}
     />
   );

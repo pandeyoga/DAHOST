@@ -1053,7 +1053,7 @@ async def ai_assist(session_id: str, request: Request):
     menimpa yang sudah pasti, satu jawaban model yang berubah cukup untuk
     memindahkan kolom uang ke kolom lain tanpa ada yang sadar.
     """
-    await require_auth(request)
+    user = await require_auth(request)
     db = get_db()
     s = await _load_session(db, session_id)
     st = get_source_type(s["source_type"])
@@ -1063,12 +1063,14 @@ async def ai_assist(session_id: str, request: Request):
     if not unmapped:
         return {"ok": True, "suggestion": [], "message": "Semua kolom sudah terpetakan"}
 
-    key = os.environ.get("EMERGENT_LLM_KEY", "")
-    if not key:
-        raise HTTPException(503, "Bantuan AI tidak tersedia (EMERGENT_LLM_KEY belum "
-                                 "diatur). Pemetaan manual tetap bisa dipakai.")
+    # 2026-11-02: gerbang tunggal services.ai — pesan ramah tanpa nama variabel env.
+    from services.ai import AIError, LLMUnavailable, ai_status, ai_text
+    from ai_cost_tracker import record_ai_failure
+    _st = await ai_status(db)
+    if not _st["available"]:
+        await record_ai_failure("smart-import", _st["code"], user_id=user.get("id"), tier="light")
+        raise LLMUnavailable(f"{_st['message']} Pemetaan manual tetap bisa dipakai.")
     try:
-        from ai_llm import LlmChat, UserMessage
         fields_txt = "\n".join(
             f"- {f.name} :: {f.label} ({f.kind})" +
             (f" pilihan: {', '.join(f.choices)}" if f.choices else "")
@@ -1082,19 +1084,20 @@ async def ai_assist(session_id: str, request: Request):
             "Jawab HANYA JSON array: [{\"column\":\"...\",\"field\":\"nama_field_sistem_atau_null\","
             "\"confidence\":0.0-1.0,\"reason\":\"alasan singkat\"}]"
         )
-        chat = LlmChat(api_key=key, session_id=f"import-map-{session_id}",
-                       system_message="Kamu pemeta kolom berkas impor. Jawab JSON saja.")
-        chat.with_model("openai", "gpt-4o-mini")
-        reply = await chat.send_message(UserMessage(text=prompt))
+        reply = await ai_text("smart-import", "Kamu pemeta kolom berkas impor. Jawab JSON saja.",
+                              prompt, tier="light", user_id=user.get("id"))
         txt = (reply or "").strip()
         if txt.startswith("```"):
             txt = txt.split("```")[1]
             txt = txt[4:] if txt.lower().startswith("json") else txt
         suggestion = json.loads(txt)
+    except AIError as e:
+        logger.warning("ai_assist gagal untuk sesi %s: %s", session_id, e.code)
+        raise HTTPException(e.status_code, f"{e} Pemetaan manual tetap bisa dipakai.") from None
     except Exception as e:
         logger.warning("ai_assist gagal untuk sesi %s: %s", session_id, e)
-        raise HTTPException(502, f"Bantuan AI gagal: {e}. Pemetaan manual tetap "
-                                 f"bisa dipakai.") from None
+        raise HTTPException(502, "Usulan AI tidak dapat dibaca. Pemetaan manual tetap "
+                                 "bisa dipakai.") from None
 
     valid = {f.name for f in st.input_fields}
     taken = {m["field"] for m in mapping if m.get("field")
@@ -1399,7 +1402,7 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         d.setdefault("status", "new")
         # Impor TIDAK memesan stok: order lama sudah dikirim, dan memesan stok untuk
         # order lama akan mengunci barang yang sebenarnya sudah keluar.
-        d["fulfillment_status"], _fs_reason = _fstat.initial_status(d)
+        d["fulfillment_status"], _fs_reason = import_fulfillment_status(d)
         d["fulfillment_status_reason"] = _fs_reason
         d["allocations"] = []
         d["items"] = []
@@ -1482,7 +1485,7 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         d["revenue_label"] = "sebelum potongan platform"
         d.setdefault("status", "new")
         d.setdefault("courier", "lainnya")
-        d["fulfillment_status"], _fs_reason = _fstat.initial_status(d)
+        d["fulfillment_status"], _fs_reason = import_fulfillment_status(d)
         d["fulfillment_status_reason"] = _fs_reason
         d["stock_reserved"] = False
         d["allocations"] = []
@@ -1644,8 +1647,16 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
                         f"tersimpan tapi tidak tertaut order")
         d.setdefault("status", "pending")
         d.setdefault("refund_type", "full_refund")
-        if d.get("refund_type") == "full_refund" and not d.get("refund_amount"):
-            d["refund_amount"] = _num("price")
+        # 2026-11-02 (butir 11, No.14a) — NOMINAL REFUND AKTUAL dari kolom berkas
+        # ("Total Pengembalian Dana"/"Refund amount") bila ada; dulu refund penuh =
+        # harga SATUAN (qty diabaikan) dan nominal di berkas tidak pernah dipakai.
+        d["refund_amount"], d["refund_amount_source"], _rw = import_refund_amount(d)
+        if _rw:
+            warn.append(_rw)
+        # form menulis `qty`, impor `quantity` — keduanya diisi supaya jembatan
+        # Retur Fisik & rekap membaca angka yang sama.
+        d["qty"] = max(int(_num("quantity", 1) or 1), 1)
+        d.setdefault("quantity", d["qty"])
 
     elif st.key == "reviews":
         _it = refidx.get("items_by_name", {}).get(scope.norm(d.get("product")))
@@ -3354,6 +3365,15 @@ async def commit(session_id: str, request: Request, body: Optional[CommitIn] = N
         except Exception:
             logger.exception("gagal menyimpan sidik format impor (sesi=%s)", session_id)
 
+    # ── 2026-11-02 (K1 + butir 11) — RETUR HASIL IMPOR lewat pintu yang SAMA ─────
+    # Dulu impor "Retur & Refund" tidak memanggil jembatan retur sama sekali (audit
+    # No.4: wh_returns +0) dan tidak menyentuh rekap. Sekarang setiap retur impor
+    # (kecuali ditolak/batal) mendapat pekerjaan Retur Fisik PENDING — stok tetap
+    # menunggu keputusan gudang (K1) — dan rekap tanggal returnya dihitung ulang.
+    returns_bridge_result = None
+    if st.key == "returns" and (inserted or updated):
+        returns_bridge_result = await _after_returns_import(db, session_id, user)
+
     # ── F2 — REKAP HARIAN TURUNAN dihitung ulang untuk tanggal yang terdampak ─
     rollup_result = None
     if st.key == "marketplace_orders" and (inserted or updated):
@@ -3379,7 +3399,97 @@ async def commit(session_id: str, request: Request, body: Optional[CommitIn] = N
             "row_notes": row_notes[:200],
             "daily_rollup": ({k: v for k, v in rollup_result.items() if k != "details"}
                              if rollup_result else None),
+            "returns_bridge": returns_bridge_result,
             "message": _commit_message(st, len(inserted), updated, rejected)}
+
+
+def import_fulfillment_status(order: dict) -> tuple:
+    """2026-11-02 (K6) — pesanan hasil IMPOR Seller Center TIDAK masuk antrean
+    Fulfillment gudang: barangnya dikirim lewat Seller Center (D4). Batal/retur tetap
+    ditandai batal; selebihnya `not_required`."""
+    st, why = _fstat.initial_status(order)
+    if st == _fstat.CANCELLED:
+        return st, why
+    return _fstat.NOT_REQUIRED, ("pesanan impor dikirim lewat Seller Center — tidak "
+                                 "masuk antrean Fulfillment gudang (K6)")
+
+
+def import_refund_amount(d: dict) -> tuple:
+    """2026-11-02 (butir 11) — nominal refund baris impor retur → ``(nominal, sumber, peringatan)``.
+
+    * kolom nominal refund di berkas terisi (termasuk 0) → dipakai apa adanya (`berkas`);
+    * tukar barang / tanpa refund → 0;
+    * refund penuh tanpa kolom → harga × qty (aturan yang sama dengan form, No.14a);
+    * refund sebagian tanpa kolom → 0 + peringatan (sistem tidak lagi menebak 70%).
+    """
+    def _f(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+    raw = d.get("refund_amount")
+    amt = _f(raw) if raw not in (None, "") else None
+    rt = d.get("refund_type") or "full_refund"
+    if amt is not None and amt >= 0:
+        return round(amt, 2), "berkas", ""
+    if rt in ("replacement", "exchange", "no_refund"):
+        return 0.0, "tanpa_refund", ""
+    price = _f(d.get("price")) or 0.0
+    qty = max(int(_f(d.get("quantity")) or 1), 1)
+    if rt == "full_refund":
+        return round(price * qty, 2), "harga_x_qty", ""
+    return 0.0, "belum_diisi", ("Refund sebagian tanpa kolom nominal refund — isi Nominal "
+                                "Refund Aktual di modul Retur (sistem tidak menebak 70%).")
+
+
+async def _after_returns_import(db, session_id: str, user: dict) -> dict:
+    """Retur hasil impor → pekerjaan Retur Fisik Pending (K1) + hitung ulang rekap."""
+    from core import marketing_returns as _mret
+    from core import returns_bridge as _rb
+    rows = await db.marketing_returns.find({"_import_session_id": session_id},
+                                           {"_id": 0}).to_list(20000)
+    out = {"scanned": len(rows), "wh_created": 0, "wh_existing": 0, "failed": 0}
+    for r in rows:
+        if str(r.get("status") or "").lower() in _rb.SKIP_STATUSES:
+            continue
+        try:
+            res = await _rb.ensure_wh_return(db, r, actor=user, auto_restock=False)
+            out["wh_created" if res.get("created") else "wh_existing"] += 1
+        except Exception as e:  # noqa: BLE001
+            out["failed"] += 1
+            logger.error("[impor-retur] pekerjaan gudang gagal dibuat untuk %s: %s", r.get("id"), e)
+            await db.marketing_returns.update_one({"id": r.get("id")}, {"$set": {
+                "wh_sync_ok": False, "wh_sync_error": str(e)[:300], "wh_sync_at": _now()}})
+    try:
+        out["rekap"] = await _mret.refresh_rekap_for_docs(db, *rows,
+                                                          actor=user.get("email", "system"))
+    except Exception:
+        logger.exception("gagal menghitung ulang rekap sesudah impor retur (sesi=%s)", session_id)
+    return out
+
+
+async def _before_returns_rollback(db, session_id: str, ids: list, user: dict) -> dict:
+    """Sebelum retur hasil impor dihapus: pekerjaan gudang yang BELUM diputuskan
+    dibatalkan (K1); bila ada yang SUDAH diputuskan, rollback DITOLAK."""
+    from core import returns_bridge as _rb
+    rows = await db.marketing_returns.find({"id": {"$in": ids}, "_import_session_id": session_id},
+                                           {"_id": 0}).to_list(20000)
+    decided = []
+    for r in rows:
+        wh = await _rb.find_linked_wh(db, r)
+        if wh and _rb.is_decided(wh):
+            decided.append(wh.get("return_code") or wh.get("id"))
+    if decided:
+        raise HTTPException(400, (
+            f"{len(decided)} retur dari impor ini sudah diputuskan gudang "
+            f"({', '.join(decided[:5])}{'…' if len(decided) > 5 else ''}) dan sudah "
+            "menggerakkan stok/jurnal. Balik dulu keputusannya di Gudang › Retur Fisik."))
+    n = 0
+    for r in rows:
+        res = await _rb.cancel_for_marketing_return(db, r, actor=user, reason="impornya dibatalkan")
+        n += 1 if res.get("state") == "cancelled" else 0
+    return {"cancelled": n, "docs": [{"account_id": r.get("account_id"), "date": r.get("date")}
+                                     for r in rows]}
 
 
 @router.post("/sessions/{session_id}/rollback")
@@ -3419,6 +3529,9 @@ async def rollback(session_id: str, request: Request):
                                      f"setelah commit")
     st = get_source_type(s["source_type"])
     ids = s.get("committed_ids") or []
+    returns_cancelled = None
+    if st.key == "returns" and ids:
+        returns_cancelled = await _before_returns_rollback(db, session_id, ids, user)
     # F2 — tanggal terdampak dicatat SEBELUM dokumen dihapus, kalau tidak
     # rekap harian akan tetap memuat omzet dari pesanan yang sudah tidak ada.
     touched: set = set()
@@ -3471,10 +3584,19 @@ async def rollback(session_id: str, request: Request):
     await log_activity(user.get("id", ""), user.get("name", ""),
                        f"Rollback impor {st.label}: " + " · ".join(parts),
                        "marketing-data-import", session_id)
+    if returns_cancelled is not None:
+        try:
+            from core import marketing_returns as _mret
+            await _mret.refresh_rekap_for_docs(db, *returns_cancelled["docs"],
+                                               actor=user.get("email", "system"))
+        except Exception:
+            logger.exception("gagal menghitung ulang rekap sesudah rollback retur (sesi=%s)",
+                             session_id)
     return {"ok": True, "deleted": res.deleted_count,
             "restore": restore,
             "daily_rollup": ({k: v for k, v in rolled.items() if k != "details"}
                              if rolled else None),
+            "warehouse_cancelled": (returns_cancelled or {}).get("cancelled"),
             "message": " · ".join(parts)}
 
 

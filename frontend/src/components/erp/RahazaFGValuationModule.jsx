@@ -5,14 +5,14 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
 import CronJobCard from './CronJobCard';
+import { todayWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
-const todayISO = () => new Date().toISOString().slice(0, 10);
 
 export default function RahazaFGValuationModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [asOf, setAsOf] = useState(todayISO());
+  const [asOf, setAsOf] = useState(todayWIB());
   const [backfill, setBackfill] = useState(null);
   const [busy, setBusy] = useState(false);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -42,7 +42,7 @@ export default function RahazaFGValuationModule({ token }) {
   const exportCSV = () => {
     if (!data?.rows) return;
     const csv = [
-      ['Kode', 'Nama', 'Stok Fisik', 'Qty Lapisan', 'Selisih Qty', 'HPP Rata-rata', 'Nilai Lapisan', 'Belum Berjurnal', 'Qty Tanpa Biaya'],
+      ['Kode', 'Nama', 'Stok Fisik', 'Qty Lapisan', 'Selisih Qty', 'WAC / pcs', 'Nilai WAC', 'Belum Berjurnal', 'Qty Tanpa Biaya'],
       ...data.rows.map(r => [r.code, r.name, r.stock_qty, r.layer_qty, r.qty_diff, r.avg_unit_cost, r.layer_value, r.unposted_value, r.uncosted_qty]),
     ].map(r => r.map(c => typeof c === 'string' && c.includes(',') ? `"${c}"` : c).join(',')).join('\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -55,8 +55,8 @@ export default function RahazaFGValuationModule({ token }) {
       <PageHeader
         icon={Boxes}
         eyebrow="Portal Finance · Laporan"
-        title="Nilai Persediaan Barang Jadi (Lapisan FIFO vs GL 1-1404)"
-        subtitle="Kartu stok FG dari lapisan HPP batch dibandingkan saldo akun Persediaan Barang Jadi. Selisih dijelaskan: lapisan belum berjurnal & lapisan tanpa biaya."
+        title="Nilai Persediaan Barang Jadi (WAC vs GL 1-1404)"
+        subtitle="Stok FG × rata-rata bergerak (WAC, keputusan owner No.26a) dibandingkan saldo akun Persediaan Barang Jadi. Selisih dijelaskan: lapisan belum berjurnal & stok tanpa biaya."
         actions={
           <>
             <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="fgval-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
@@ -74,9 +74,9 @@ export default function RahazaFGValuationModule({ token }) {
       </GlassCard>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Nilai Lapisan FIFO" value={`Rp ${fmt(t.layer_value)}`} accent="primary" testId="fgval-kpi-layer" />
+        <StatTile label="Nilai WAC" value={`Rp ${fmt(t.layer_value)}`} accent="primary" testId="fgval-kpi-layer" />
         <StatTile label={`Saldo GL 1-1404 (${data?.as_of || asOf})`} value={`Rp ${fmt(t.gl_balance)}`} testId="fgval-kpi-gl" />
-        <StatTile label="Selisih (Lapisan − GL)" value={`Rp ${fmt(t.difference)}`} accent={Math.abs(t.difference || 0) < 1 ? 'success' : 'danger'} testId="fgval-kpi-diff" />
+        <StatTile label="Selisih (WAC − GL)" value={`Rp ${fmt(t.difference)}`} accent={Math.abs(t.difference || 0) < 1 ? 'success' : 'danger'} testId="fgval-kpi-diff" />
         <StatTile label="Belum Berjurnal (WIP→FG)" value={`Rp ${fmt(t.unposted_value)} · ${t.unposted_layers || 0} lapisan`} accent={t.unposted_layers ? 'danger' : 'success'} testId="fgval-kpi-unposted" />
       </div>
 
@@ -119,8 +119,8 @@ export default function RahazaFGValuationModule({ token }) {
                 <th className="text-right px-3 py-2">Stok Fisik</th>
                 <th className="text-right px-3 py-2">Qty Lapisan</th>
                 <th className="text-right px-3 py-2">Selisih Qty</th>
-                <th className="text-right px-3 py-2">HPP Rata-rata</th>
-                <th className="text-right px-3 py-2">Nilai Lapisan</th>
+                <th className="text-right px-3 py-2">WAC / pcs</th>
+                <th className="text-right px-3 py-2">Nilai WAC</th>
                 <th className="text-right px-3 py-2">Belum Berjurnal</th>
               </tr>
             </thead>

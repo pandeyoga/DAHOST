@@ -55,8 +55,11 @@ export default function SalesPerformanceDashboard({ token }) {
     setOverviewLoading(true);
     try {
       const params = {};
-      if (startDate) params.start_date = new Date(startDate).toISOString();
-      if (endDate) params.end_date = new Date(endDate).toISOString();
+      // Kirim tanggal kalender apa adanya ('YYYY-MM-DD'). Dulu diubah jadi instan
+      // tengah malam UTC → backend tidak mengenalinya sebagai "tanggal saja", sehingga
+      // seluruh hari tanggal akhir ikut terbuang dari rentang.
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
       if (platformFilter) params.platform = platformFilter;
       if (accountFilter) params.account_id = accountFilter;
       const res = await axios.get(`${API}/api/marketing/performance/overview`, { params, headers: authH });

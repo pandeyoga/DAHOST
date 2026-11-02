@@ -44,7 +44,11 @@ QUARANTINE_ROLE = "karantina"
 ACTION_RELEASE = "release"
 ACTION_RETURN = "return_supplier"
 ACTION_SCRAP = "scrap"
-VALID_ACTIONS = (ACTION_RELEASE, ACTION_RETURN, ACTION_SCRAP)
+# 2026-11-02 (K11): barang keluar karantina lewat dokumen Retur Pembelian (RTP). Disposisi
+# `return_supplier` lama (tanpa dokumen penyelesaian) tetap terbaca sebagai "Retur lama tanpa
+# penyelesaian"; jalur retur permak CMT (dewi_cmt_permak) tetap memakai ACTION_RETURN.
+ACTION_PURCHASE_RETURN = "purchase_return"
+VALID_ACTIONS = (ACTION_RELEASE, ACTION_RETURN, ACTION_SCRAP, ACTION_PURCHASE_RETURN)
 
 
 def _now():
@@ -225,12 +229,15 @@ async def quarantine_in(db, *, material_id: str, qty: float, unit: str = "pcs",
 # ─────────────────────────────────────────────────────────────────────────────
 async def quarantine_out(db, *, item: dict, action: str, qty: float,
                          to_location_id: str | None = None,
-                         actor: dict | None = None, notes: str = "") -> dict:
+                         actor: dict | None = None, notes: str = "",
+                         extra: dict | None = None) -> dict:
     """Terapkan disposisi pada stok karantina. Return dict info mutasi.
 
     release          → move karantina → `to_location_id` (stok kembali tersedia)
     return_supplier  → issue keluar dari karantina (barang keluar gudang)
+    purchase_return  → issue keluar lewat dokumen Retur Pembelian (2026-11-02, K11)
     scrap            → issue keluar dari karantina (dibuang)
+    `extra` (opsional) ikut tersimpan di riwayat disposisi (mis. nomor RTP).
     """
     if action not in VALID_ACTIONS:
         raise ValueError(f"action tidak dikenal: {action}")
@@ -299,6 +306,7 @@ async def quarantine_out(db, *, item: dict, action: str, qty: float,
         "at": _now(),
         "by": (actor or {}).get("name", ""),
         "by_id": (actor or {}).get("id", ""),
+        **(extra or {}),
     }
     await db[QUARANTINE_COLL].update_one(
         {"id": item["id"]},
@@ -492,6 +500,66 @@ async def summary(db) -> dict:
         "unblocked_qty": audit["total_shortfall"],
         "unblocked_groups": [g for g in audit["groups"] if g.get("shortfall", 0) > 1e-6],
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# QTY BERNILAI (2026-11-02 — audit g.md No.20; dipindah dari routes/wms_quarantine.py
+# supaya penerimaan GR, lepas reject, Retur Pembelian, dan revaluasi HPP memakai SATU
+# definisi "qty karantina yang sudah/belum masuk nilai persediaan").
+# `valued_qty` = bagian sisa karantina yang sudah ada di nilai persediaan (GL).
+# ─────────────────────────────────────────────────────────────────────────────
+def split_valued(qty: float, valued_remaining: float) -> tuple[float, float]:
+    """(bagian bernilai, bagian belum bernilai) dari `qty` yang didisposisi (fungsi murni).
+    Bagian bernilai dipakai lebih dulu."""
+    q = max(0.0, float(qty or 0))
+    v = min(q, max(0.0, float(valued_remaining or 0)))
+    return round(v, 4), round(q - v, 4)
+
+
+def valued_remaining_of(item: dict, *, legacy_flipped: bool = False) -> float:
+    """Qty sisa karantina yang SUDAH bernilai (fungsi murni).
+
+    * item baru: `valued_qty` (dibatasi sisa);
+    * item lama tanpa `valued_qty`: `valued=True` → seluruh sisa, kecuali bendera itu
+      hasil bug lepas-sebagian (`legacy_flipped`) → 0.
+    """
+    remaining = max(0.0, float(item.get("remaining_qty") or 0))
+    if item.get("valued_qty") is not None:
+        return round(min(remaining, max(0.0, float(item.get("valued_qty") or 0))), 4)
+    if item.get("valued") and not legacy_flipped:
+        return round(remaining, 4)
+    return 0.0
+
+
+async def valued_remaining(db, item: dict) -> float:
+    """Qty sisa bernilai satu item karantina (mengenali bendera lama hasil bug lepas-sebagian)."""
+    legacy_flipped = False
+    if item.get("valued_qty") is None and item.get("valued"):
+        # Item lama: bendera `valued=True` yang dipasang oleh "lepas" (bug lama) dikenali
+        # dari jurnal kapitalisasi lepasnya — barang yang sejak awal bernilai tidak pernah
+        # punya jurnal `quarantine_release`.
+        legacy_flipped = bool(await db.rahaza_material_movements.find_one(
+            {"reference_type": "quarantine", "reference_id": item["id"],
+             "adjustment_reason": "quarantine_release"}, {"_id": 0, "id": 1}))
+    return valued_remaining_of(item, legacy_flipped=legacy_flipped)
+
+
+async def unvalued_qty(db, material_id: str) -> float:
+    """Σ qty karantina TERBUKA yang belum masuk nilai persediaan (reject GR) untuk satu material."""
+    total = 0.0
+    async for it in db[QUARANTINE_COLL].find({"material_id": material_id, "status": "open"}, {"_id": 0}):
+        total += max(0.0, _r(it.get("remaining_qty")) - await valued_remaining(db, it))
+    return _r(total)
+
+
+async def valued_onhand(db, material_id: str) -> float:
+    """Qty fisik yang ADA DI NILAI PERSEDIAAN (GL) = on-hand − karantina belum bernilai.
+
+    2026-11-02 (K11/No.26): dipakai sebagai `qty_lama` rata-rata bergerak (GR, lepas reject =
+    penerimaan susulan) dan qty revaluasi Set HPP (K12). Dulu on-hand mentah dipakai sehingga
+    reject GR yang belum bernilai ikut membobot WAC (uji T1: 55.000 vs benar 55.263,16)."""
+    onhand = float(await stock_service.get_onhand(material_id, db=db) or 0)
+    return _r(onhand - await unvalued_qty(db, material_id))
 
 
 async def quarantine_qty_map(db, material_ids=None) -> dict:

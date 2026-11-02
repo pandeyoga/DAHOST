@@ -14,12 +14,13 @@ Satu endpoint dipakai dua portal:
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 
 from auth import require_auth
 from database import get_db
+from utils.waktu import today_wib, wib_date_of
 
 router = APIRouter(prefix="/api/prod", tags=["production-dashboard"])
 
@@ -60,7 +61,7 @@ async def production_dashboard(
     user: dict = Depends(require_auth),
 ):
     db = get_db()
-    since = (date.today() - timedelta(days=days)).isoformat()
+    since = (today_wib() - timedelta(days=days)).isoformat()
     pos, po_map = await _po_scope(db, business_type)
     po_ids = list(po_map.keys())
 
@@ -147,7 +148,7 @@ async def production_dashboard(
     receipts = await db.cmt_receipts.find(rq, {"_id": 0, "id": 1, "status": 1, "total_actual": 1,
                                                "total_rejected": 1, "approved_at": 1,
                                                "receipt_date": 1, "cmt_name": 1}).to_list(5000)
-    today_iso = date.today().isoformat()
+    today_iso = today_wib().isoformat()
     qc = {"draft": 0, "submitted": 0, "approved": 0, "rejected": 0,
           "qty_diterima": 0, "qty_ditolak": 0, "pcs_hari_ini": 0,
           "menunggu_qty": 0, "vendor_aktif": len({r.get("cmt_name") for r in receipts if r.get("cmt_name")})}
@@ -158,7 +159,7 @@ async def production_dashboard(
         if st == "approved":
             qc["qty_diterima"] += ok
             qc["qty_ditolak"] += rej
-            if str(r.get("approved_at") or "")[:10] == today_iso:
+            if wib_date_of(r.get("approved_at")) == today_iso:
                 qc["pcs_hari_ini"] += ok
         elif st in ("draft", "submitted"):
             qc["menunggu_qty"] += ok

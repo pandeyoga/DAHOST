@@ -7,12 +7,12 @@ Endpoints:
   POST /{asset_id}/maintenance
   GET  /{asset_id}/maintenance
 """
-from datetime import date
 from fastapi import Request, HTTPException
 
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _uid, _now, _ser
+from utils.waktu import today_wib
 
 
 @router.post("/{asset_id}/assign")
@@ -37,7 +37,7 @@ async def assign_asset(asset_id: str, request: Request):
         "assigned_to_name": assign_to_name,
         "assigned_by_id": user["id"],
         "assigned_by_name": user.get("name", ""),
-        "assigned_date": (body.get("assigned_date") or date.today().isoformat())[:10],
+        "assigned_date": (body.get("assigned_date") or today_wib().isoformat())[:10],
         "returned_date": None,
         "notes": (body.get("notes") or "").strip(),
         "status": "active",
@@ -58,7 +58,7 @@ async def unassign_asset(asset_id: str, request: Request):
     asset = await db.dewi_assets.find_one({"id": asset_id})
     if not asset:
         raise HTTPException(404, "Aset tidak ditemukan.")
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     await db.dewi_asset_assignments.update_many(
         {"asset_id": asset_id, "status": "active"},
         {"$set": {"status": "returned", "returned_date": today}},
@@ -96,7 +96,7 @@ async def add_maintenance(asset_id: str, request: Request):
         "description": (body.get("description") or "").strip(),
         "cost": float(body.get("cost") or 0),
         "performed_by": (body.get("performed_by") or "").strip(),
-        "maintenance_date": (body.get("maintenance_date") or date.today().isoformat())[:10],
+        "maintenance_date": (body.get("maintenance_date") or today_wib().isoformat())[:10],
         "next_scheduled": body.get("next_scheduled"),
         "status": body.get("status", "completed"),
         "notes": (body.get("notes") or "").strip(),

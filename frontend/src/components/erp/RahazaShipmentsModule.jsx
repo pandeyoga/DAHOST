@@ -10,6 +10,8 @@ import { toast } from 'sonner';
 import { PageHeader, StatTile, StatusBadge } from './moduleAtoms';
 import { DataTable } from './DataTableV2';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB } from '@/lib/waktu';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PT Rahaza ERP — Shipments / Surat Jalan (Phase 14.3)
@@ -234,7 +236,7 @@ export default function RahazaShipmentsModule({ token, onNavigate }) {
           emptyTitle="Belum ada shipment"
           emptyDescription='Klik "Shipment Baru" untuk membuat Surat Jalan dari order yang sudah confirmed.'
           emptyIcon={Truck}
-          exportFilename={`shipments-${new Date().toISOString().slice(0, 10)}.csv`}
+          exportFilename={`shipments-${todayWIB()}.csv`}
           rowActions={(r) => (
             <div className="inline-flex items-center gap-2 flex-wrap">
               <button
@@ -305,7 +307,7 @@ export default function RahazaShipmentsModule({ token, onNavigate }) {
 
 // ─── Create Modal ────────────────────────────────────────────────────────────
 function CreateShipmentModal({ orders, workOrders, customers, onClose, onCreate }) {
-  const today = new Date().toISOString().split('T')[0];
+  const today = todayWIB();
   const [order_id, setOrderId] = useState('');
   const [shipment_date, setShipDate] = useState(today);
   const [driver_name, setDriver] = useState('');
@@ -553,14 +555,11 @@ function CreateShipmentModal({ orders, workOrders, customers, onClose, onCreate 
                           />
                         </div>
                         <div className="col-span-3">
-                          <GlassInput
-                            type="number"
-                            min={0}
-                            step="1000"
+                          <MoneyInput
                             disabled={!sel}
                             value={sel?.unit_price ?? 0}
                             onChange={(e) => updateItem(wo.id, { unit_price: Number(e.target.value) })}
-                            className="h-8 text-xs text-right"
+                            className="h-8 rounded-[var(--radius-sm)] bg-[var(--input-surface)] border-[var(--glass-border)] text-xs text-right"
                             placeholder="0"
                           />
                         </div>

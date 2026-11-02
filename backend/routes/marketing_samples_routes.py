@@ -187,7 +187,7 @@ class SampleUpdate(BaseModel):
 async def get_summary(request: Request,
                       account_id: str = Query(default="")):
     user = await require_auth(request)
-    await seed_samples_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
     _sq = await _scope.scope_filter(
         db, user, {"account_id": account_id} if account_id else {})
@@ -245,7 +245,7 @@ async def list_samples(
     search: str = Query(default=""),
 ):
     user = await require_auth(request)
-    await seed_samples_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     q = await _scope.scope_filter(

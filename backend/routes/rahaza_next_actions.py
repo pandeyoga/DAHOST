@@ -32,10 +32,11 @@ Aturan dismiss/snooze tersimpan di localStorage client (backend stateless).
 from fastapi import APIRouter, Request
 from database import get_db
 from auth import require_auth
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import logging
 from utils.query_guards import q_int
+from utils.waktu import today_wib, wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/next-actions", tags=["Next Actions"])
@@ -46,7 +47,7 @@ def _now() -> str:
 
 
 def _today_iso() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 async def _count(db, collection: str, filter_: dict) -> int:
@@ -213,7 +214,7 @@ async def rule_orders_due_soon(db, portal: str) -> Optional[dict]:
     """Order dengan due_date <= 3 hari & belum completed."""
     if portal not in ("production", "management"):
         return None
-    today = date.today()
+    today = today_wib()
     limit = (today + timedelta(days=3)).isoformat()
     orders = await db.rahaza_orders.find(
         {"status": {"$nin": ["completed", "closed", "cancelled"]},
@@ -244,7 +245,7 @@ async def rule_orders_overdue(db, portal: str) -> Optional[dict]:
     """Order overdue: due_date < today & belum completed."""
     if portal not in ("production", "management"):
         return None
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     orders = await db.rahaza_orders.find(
         {"status": {"$nin": ["completed", "closed", "cancelled"]},
          "due_date": {"$lt": today, "$nin": [None, ""]}},
@@ -336,9 +337,12 @@ async def rule_qc_fail_rate_today(db, portal: str) -> Optional[dict]:
     """QC fail-rate hari ini > 8%."""
     if portal not in ("production", "management"):
         return None
-    start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc).isoformat()
+    # Awal hari WIB dalam UTC (No.54a) — dulu tengah malam UTC (= 07:00 WIB). `timestamp` disimpan
+    # sebagai datetime BSON; dulu dibandingkan dengan string ⇒ aturan ini tidak pernah menyala.
+    start = wib_day_bounds_utc()[0]
     events = await db.rahaza_wip_events.find(
-        {"event_type": {"$in": ["qc_pass", "qc_fail"]}, "timestamp": {"$gte": start}},
+        {"event_type": {"$in": ["qc_pass", "qc_fail"]},
+         "$or": [{"timestamp": {"$gte": start}}, {"timestamp": {"$gte": start.isoformat()}}]},
         {"_id": 0, "event_type": 1, "qty": 1}
     ).to_list(500)
     total_pass = sum(float(e.get("qty") or 0) for e in events if e["event_type"] == "qc_pass")
@@ -432,6 +436,46 @@ RULES = [
 
 SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2, "success": 3}
 
+# ─── 2026-11-02 — SARING PER PERAN ───────────────────────────────────────────
+# Dulu SEMUA kartu tampil untuk siapa pun yang membuka dasbor portal (mis. tim_packing melihat
+# "Setup dasar belum lengkap" & "Material di bawah stok minimum"). Kini setiap aturan punya peta
+# peran dari SSOT (core/roles + PORTAL_ACCESS lewat `alert_roles_for_portal`, yaitu peran NYATA
+# portal ∩ peran domain), dan portal yang diminta divalidasi terhadap akses efektif user.
+SUPER_ROLES = ("superadmin", "admin", "owner")
+
+
+def rule_roles() -> dict:
+    """{nama aturan: set peran yang boleh melihat kartunya}."""
+    from core import roles as _r
+    from routes.shared import PORTAL_ACCESS
+    from utils.notif_unified import alert_roles_for_portal
+    setup = set(SUPER_ROLES)
+    prod = setup | set(_r.MGMT_ROLES) | set(alert_roles_for_portal("production"))
+    stock = prod | set(alert_roles_for_portal("warehouse"))
+    planning = prod | set(PORTAL_ACCESS.get("management") or [])
+    return {
+        "rule_setup_empty": setup,
+        "rule_empty_database_hint": prod,
+        "rule_wo_missing_bom": prod,
+        "rule_orders_overdue": planning,
+        "rule_low_stock_materials": stock,
+        "rule_qc_fail_rate_today": planning,
+        "rule_wo_without_mi": stock,
+        "rule_wo_missing_bundles": prod,
+        "rule_lines_without_assignment_today": prod,
+        "rule_orders_without_wo": prod,
+        "rule_assignments_missing_operator": prod,
+        "rule_orders_due_soon": planning,
+        "rule_draft_mi_stale": stock,
+    }
+
+
+def rules_for_role(role: str, rules=None) -> list:
+    """Aturan yang berlaku untuk satu peran (aturan tanpa peta = hanya super)."""
+    role = (role or "").lower()
+    peta = rule_roles()
+    return [r for r in (rules or RULES) if role in peta.get(r.__name__, set(SUPER_ROLES))]
+
 
 @router.get("")
 async def get_next_actions(request: Request):
@@ -448,8 +492,19 @@ async def get_next_actions(request: Request):
     portal = (sp.get("portal") or "production").lower()
     limit = q_int(sp.get("limit"), default=8, name="limit", minimum=1, maximum=15, clamp=True)
 
+    # 2026-11-02 — portal yang diminta harus termasuk akses efektif user (peran + izin per modul)
+    from routes.shared import resolve_role_access
+    access = await resolve_role_access(db, dict(user))
+    role = access.get("role") or (user.get("role") or "").lower()
+    meta = {"portal": portal, "generated_at": _now(), "rule_count": 0,
+            "user": user.get("name") or user.get("email"), "role": role}
+    if not access.get("is_super") and portal not in (access.get("portals") or []):
+        return {"actions": [], "meta": {**meta, "portal_denied": True}}
+    rules = rules_for_role(role)
+    meta["rule_count"] = len(rules)
+
     cards = []
-    for rule in RULES:
+    for rule in rules:
         try:
             card = await rule(db, portal)
             if card:
@@ -462,12 +517,4 @@ async def get_next_actions(request: Request):
     # Sort by severity then by count desc
     cards.sort(key=lambda c: (SEVERITY_ORDER.get(c.get("severity"), 9), -int(c.get("count") or 0)))
 
-    return {
-        "actions": cards[:limit],
-        "meta": {
-            "portal": portal,
-            "generated_at": _now(),
-            "rule_count": len(RULES),
-            "user": user.get("name") or user.get("email"),
-        }
-    }
+    return {"actions": cards[:limit], "meta": meta}

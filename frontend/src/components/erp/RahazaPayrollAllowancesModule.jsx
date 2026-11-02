@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
@@ -290,10 +291,18 @@ function AllowanceDialog({ initial, departments, employees, onSave, onClose }) {
             </div>
             <div className="space-y-1">
               <Label>{form.calc_type === 'percentage_gross' ? 'Persentase (%)' : 'Jumlah (Rp)'}</Label>
-              <Input type="number" min={0} step={form.calc_type === 'percentage_gross' ? 0.1 : 1000}
-                value={form.amount}
-                onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
-                data-testid="allowance-amount" />
+              {/* Kolom yang sama melayani % (persen tetap input angka) dan Rp (MoneyInput, No.45). */}
+              {form.calc_type === 'percentage_gross' ? (
+                <Input type="number" min={0} step={0.1}
+                  value={form.amount}
+                  onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
+                  data-testid="allowance-amount" />
+              ) : (
+                <MoneyInput
+                  value={form.amount}
+                  onChange={e => setForm(f => ({ ...f, amount: parseFloat(e.target.value) || 0 }))}
+                  data-testid="allowance-amount" />
+              )}
             </div>
           </div>
 

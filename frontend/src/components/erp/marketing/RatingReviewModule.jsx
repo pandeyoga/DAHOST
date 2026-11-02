@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -17,6 +18,7 @@ import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import { ActiveAccountBar } from './ActiveAccountBar';
 import axios from 'axios';
 import { CatalogItemSelect } from './pickers/MarketingPickers';
+import AISuggestionPanel from '../AISuggestionPanel';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -32,13 +34,8 @@ import ExportCsvButton from '@/components/ui/export-csv-button';
 
 const REVIEW_HEADS = ['Tanggal', 'Rating', 'Platform', 'Order ID', 'Toko', 'Produk',
   'Isi ulasan', 'Kategori', 'Status', 'Balasan', 'Aksi'];
-const fmtDate = (v) => {
-  if (!v) return '—';
-  const s = String(v);
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  const d = new Date(s);
-  return Number.isNaN(d.getTime()) ? s.slice(0, 10) : d.toISOString().slice(0, 10);
-};
+// Tanggal kalender WIB: 'YYYY-MM-DD' dibiarkan, instan (created_at) dibaca dalam WIB.
+const fmtDate = (v) => (v ? (toWIBDate(v) || String(v).slice(0, 10)) : '—');
 const STATUS_CONFIG = {
   pending:  { label: 'Menunggu', color: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300', icon: AlertCircle },
   reviewed: { label: 'Direspon',  color: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300', icon: CheckCircle2 },
@@ -186,7 +183,7 @@ export default function RatingReviewModule({ token }) {
       });
     } else {
       setEditTarget(null);
-      setForm({ ...EMPTY_FORM, date: new Date().toISOString().split('T')[0] });
+      setForm({ ...EMPTY_FORM, date: todayWIB() });
     }
     setShowForm(true);
   };
@@ -248,11 +245,16 @@ export default function RatingReviewModule({ token }) {
     }
   };
 
+  // K28 (2026-11-02): AI hanya membuat USULAN kategori; detail dibuka agar pengguna
+  // menekan Terima/Ubah/Tolak (kategori resmi berubah di server saat diterima).
   const handleAICategorize = async (reviewId) => {
     try {
       setAiLoading(reviewId);
       const res = await axios.post(`${API}/api/marketing/reviews/${reviewId}/ai-categorize`, {}, { headers: authH });
-      toast({ title: 'AI Sukses', description: `Kategori: ${res.data.result?.category || 'N/A'}` });
+      const cat = res.data.ai_suggestion?.values?.category;
+      toast({ title: 'Usulan AI dibuat', description: `Usulan kategori: ${categories.find(c => c.value === cat)?.label || cat || 'N/A'} — tinjau lalu Terima/Ubah/Tolak` });
+      const detailRes = await axios.get(`${API}/api/marketing/reviews/${reviewId}`, { headers: authH });
+      setShowDetail(detailRes.data?.data || detailRes.data);
       fetchReviews(currentPage);
     } catch (e) {
       toast({ title: 'AI Error', description: e.response?.data?.detail || e.message, variant: 'destructive' });
@@ -660,6 +662,21 @@ export default function RatingReviewModule({ token }) {
                 <p className="text-sm"><strong>Order:</strong> {showDetail.order_id}</p>
                 <p className="text-sm"><strong>Produk:</strong> {showDetail.product}</p>
                 <p className="text-sm"><strong>Review:</strong> {showDetail.review_text}</p>
+                <p className="text-sm"><strong>Kategori resmi:</strong> {showDetail.category_label || showDetail.category || '—'}</p>
+                {showDetail.ai_suggestion && (
+                  <AISuggestionPanel
+                    suggestion={showDetail.ai_suggestion}
+                    fields={[{ key: 'category', label: 'Kategori', options: categories }]}
+                    decideUrl={`${API}/api/marketing/reviews/${showDetail.id}/ai-suggestion`}
+                    headers={authH}
+                    testId="review-ai-suggestion"
+                    onDecided={async () => {
+                      const res = await axios.get(`${API}/api/marketing/reviews/${showDetail.id}`, { headers: authH });
+                      setShowDetail(res.data?.data || res.data);
+                      fetchReviews(currentPage);
+                    }}
+                  />
+                )}
                 {showDetail.response_text && (
                   <div className="p-3 bg-muted rounded-md">
                     <p className="text-xs text-muted-foreground mb-1">Response:</p>

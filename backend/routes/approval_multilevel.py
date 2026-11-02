@@ -34,6 +34,7 @@ from services.approval_chain_service import (
 )
 from utils.counters import next_counter
 import logging
+from utils.waktu import wib_day_bounds_utc
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/approvals", tags=["multi-level-approval"])
@@ -326,7 +327,8 @@ async def approval_summary(request: Request):
     my_pending_list = await get_pending_for_user(db, role, user_id, 200)
     approved_today = await db.approval_requests.count_documents({
         "status": "approved",
-        "completed_at": {"$gte": datetime.now(timezone.utc).strftime("%Y-%m-%d")},
+        # completed_at = ISO UTC → batas "hari ini" WIB dinyatakan dalam UTC (No.54a)
+        "completed_at": {"$gte": wib_day_bounds_utc()[0].isoformat()},
     })
     by_type = await db.approval_requests.aggregate([
         {"$group": {"_id": "$type", "count": {"$sum": 1}, "pending": {"$sum": {"$cond": [{"$eq": ["$status", "pending"]}, 1, 0]}}}},

@@ -28,6 +28,7 @@ from core import location_resolver  # FASE F+: master lokasi KANONIK (wh_zones +
 from core import quarantine  # FASE 6 (INV-8): qty reject GR → lokasi KARANTINA (blocked)
 from core import fabric_roll_engine  # FASE H-5: roll kain LAHIR dari penerimaan (nomor otomatis)
 from core import accessory_valuation  # 2026-08-21: HPP terbentuk dari HARGA PEMBELIAN (WAC)
+from core.purchase_returns import gr_line_price  # 2026-11-02 (K11): satu definisi harga baris GR
 from datetime import datetime, timezone
 import uuid
 import logging
@@ -84,6 +85,27 @@ async def _record_material_movement(db, material_id: str, location_id: str, loca
     }
     await db.rahaza_material_movements.insert_one(dict(doc))
     return doc
+
+
+async def _fill_prices_from_po(db, po_id, items: list) -> None:
+    """Baris GR ber-PO tanpa harga → harga baris PO (`unit_cost`, satuan dasar). Mengubah `items`."""
+    if not po_id or not any(it.get("material_id") and gr_line_price(it) <= 0 for it in items):
+        return
+    po = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0, "items": 1}) or {}
+    by_item, by_mat = {}, {}
+    for pi in po.get("items") or []:
+        c = float(pi.get("unit_cost") or 0)
+        if c <= 0:
+            continue
+        if pi.get("id"):
+            by_item[pi["id"]] = c
+        if pi.get("material_id"):
+            by_mat.setdefault(pi["material_id"], c)
+    for it in items:
+        if it.get("material_id") and gr_line_price(it) <= 0:
+            c = by_item.get(it.get("po_item_id")) or by_mat.get(it.get("material_id"))
+            if c:
+                it["unit_cost"] = c
 
 
 # ── Locations / Bin ───────────────────────────────────────────────────────────
@@ -221,6 +243,8 @@ async def create_receiving(request: Request):
             "sku": item.get("sku", ""),
             # Sprint 1.1: material_id links to rahaza_materials for sync bridge
             "material_id": item.get("material_id") or None,
+            # 2026-11-02 (K11): tautan baris PO (harga PO, 3-way match per baris, Retur Pembelian)
+            "po_item_id": item.get("po_item_id") or None,
             "material_name": item.get("material_name") or item.get("product_name", ""),
             "expected_qty": expected_qty,
             "received_qty": received_qty,
@@ -270,7 +294,16 @@ async def update_receiving(receipt_id: str, request: Request):
     
     body = await request.json()
     updates = {}
-    
+
+    # 2026-11-02 (audit No.44b): GR 'received' sudah menambah stok, jurnal persediaan, aset tetap &
+    # qty diterima PO. Mundur ke draft/inspecting lalu 'received' lagi menggandakan semuanya
+    # (uji: stok 5→10, jurnal & aset dobel). Koreksi lewat retur ke pemasok / penyesuaian stok.
+    if existing.get("status") == "received" and "status" in body and body.get("status") != "received":
+        raise HTTPException(
+            400, f"GR {existing.get('receipt_number') or receipt_id} sudah diterima (received); status "
+                 f"tidak bisa dikembalikan ke '{body.get('status')}'. Koreksi lewat retur ke pemasok "
+                 f"atau penyesuaian stok.")
+
     if "status" in body:
         updates["status"] = body["status"]
     if "items" in body:
@@ -339,6 +372,23 @@ async def update_receiving(receipt_id: str, request: Request):
                 "`location_id` (atau pilih 'Lokasi Tujuan' di layar) supaya stok "
                 "yang masuk mendarat di rak yang jelas.",
             )
+
+        # ── HARGA WAJIB (2026-11-02, K11 — owner: penerimaan tanpa PO BOLEH, harga WAJIB) ──
+        # GR dari PO yang barisnya tanpa harga (mis. dibuat dari layar Penerimaan lewat pilih PO)
+        # mengambil harga baris PO. GR TANPA PO wajib berharga: dulu form manual tanpa kolom harga
+        # → persediaan Rp 0 di GL, HPP tidak bergerak, dan faktur yang datang masuk beban umum.
+        await _fill_prices_from_po(db, existing.get("po_id"), items_to_process)
+        if not existing.get("po_id"):
+            no_price = [it.get("sku") or it.get("product_name") or it.get("material_name") or "?"
+                        for it in items_to_process
+                        if it.get("material_id") and float(it.get("received_qty") or 0) > 0
+                        and gr_line_price(it) <= 0]
+            if no_price:
+                raise HTTPException(
+                    400,
+                    "Harga satuan wajib diisi untuk penerimaan tanpa PO — baris tanpa harga: "
+                    + ", ".join(no_price[:5]) + ". Harga ini menjadi nilai persediaan, HPP rata-rata, "
+                    "dan dasar tagihan pemasok.")
 
         # ── P1.C: Anti over-receive validation ─────────────────────────────
         # Jika GR linked ke PO dan enforce_po_qty=True, validasi bahwa net_qty
@@ -455,6 +505,7 @@ async def update_receiving(receipt_id: str, request: Request):
 
         quarantined_total = 0.0
         quarantine_records = []
+        rejected_doc_total = 0.0
         for item in items_to_process:
             received_qty = float(item.get("received_qty", 0) or 0)
             rejected_qty = float(item.get("rejected_qty", 0) or 0)
@@ -483,7 +534,9 @@ async def update_receiving(receipt_id: str, request: Request):
                 # bayangan / GR "received" tanpa stok. User bisa retry.
                 # Stok SEBELUM barang masuk — dipakai menghitung HPP rata-rata
                 # bergerak di bawah (harus dibaca sebelum `add`, bukan sesudah).
-                qty_before_receipt = float(await stock_service.get_onhand(material_id, db=db) or 0)
+                # 2026-11-02 (K11/No.26): hanya qty yang ADA DI NILAI PERSEDIAAN — reject GR di
+                # karantina (belum bernilai) tidak ikut membobot WAC (uji T1: 55.000 → 55.263,16).
+                qty_before_receipt = float(await quarantine.valued_onhand(db, material_id) or 0)
                 await stock_service.add(
                     material_id, loc_id, net_qty,
                     meta={
@@ -514,7 +567,7 @@ async def update_receiving(receipt_id: str, request: Request):
                         existing.get("receipt_number", ""),
                         f"GR {existing.get('receipt_number', '')} — {pname} dari {existing.get('supplier_name', existing.get('source_type', ''))}",
                         user,
-                        unit_cost=float(item.get("unit_price") or item.get("unit_cost") or 0),
+                        unit_cost=gr_line_price(item),
                         material_name=pname,
                     )
                 except Exception as e:
@@ -541,7 +594,7 @@ async def update_receiving(receipt_id: str, request: Request):
                 # dengan **rata-rata bergerak** (SSOT core/accessory_valuation) —
                 # berlaku untuk SEMUA jenis barang (kain, aksesoris, benang, dll),
                 # bukan hanya aksesoris seperti sebelumnya.
-                cost_in = float(item.get("unit_price") or item.get("unit_cost") or 0)
+                cost_in = gr_line_price(item)
                 if cost_in > 0:
                     try:
                         res_cost = await accessory_valuation.apply_receipt_cost(
@@ -568,13 +621,24 @@ async def update_receiving(receipt_id: str, request: Request):
                     item["roll_ids"] = [r["id"] for r in made]
                     item["roll_numbers"] = [r["roll_no"] for r in made]
 
+            # ── 2026-11-02 (K11): pisahkan alasan reject — hanya alasan FISIK yang masuk karantina.
+            # Alasan dokumen/kuantitas (kurang dari PO, terlambat, dokumen) TIDAK menambah stok;
+            # hanya dicatat di baris GR. PO tetap terbuka untuk sisanya (PO dihitung qty bersih).
+            from routes.rahaza_grn_qc import split_reject_qty
+            phys_qty, doc_qty = split_reject_qty(item.get("reject_reasons") or [], rejected_qty)
+            if doc_qty > 0:
+                item["rejected_doc_qty"] = doc_qty
+                item["reject_doc_note"] = (
+                    f"{doc_qty:g} {unit} ditolak karena alasan dokumen/kuantitas — tidak masuk stok "
+                    "maupun karantina; sisa PO tetap terbuka.")
+                rejected_doc_total += doc_qty
             # ── FASE 6: reject masuk KARANTINA (non-fatal, GR tetap 'received') ──
-            if rejected_qty > 0:
+            if phys_qty > 0:
                 try:
                     qdoc = await quarantine.quarantine_in(
                         db,
                         material_id=material_id,
-                        qty=rejected_qty,
+                        qty=phys_qty,
                         unit=unit,
                         source={
                             "type": "goods_receipt",
@@ -590,18 +654,23 @@ async def update_receiving(receipt_id: str, request: Request):
                         valued=False,
                         notes=f"Reject saat penerimaan GR {existing.get('receipt_number','')}",
                         actor={"id": user.get("id"), "name": user.get("name"), "email": user.get("email", "")},
+                        # 2026-11-02 (K11): harga GR asal = harga bawaan lepas reject / Retur Pembelian
+                        unit_cost=gr_line_price(item) or None,
                     )
-                    item["quarantined_qty"] = rejected_qty
+                    item["quarantined_qty"] = phys_qty
                     item["quarantine_item_id"] = qdoc["id"]
-                    quarantined_total += rejected_qty
-                    quarantine_records.append({"material_id": material_id, "qty": rejected_qty,
+                    quarantined_total += phys_qty
+                    quarantine_records.append({"material_id": material_id, "qty": phys_qty,
                                                "quarantine_item_id": qdoc["id"]})
-                    logger.info(f"GR reject → karantina: material_id={material_id} {rejected_qty} {unit}")
+                    logger.info(f"GR reject → karantina: material_id={material_id} {phys_qty} {unit}")
                 except Exception as e:
                     logger.error(f"GR quarantine gagal (material_id={material_id}): {e}")
 
-        if quarantine_records:
+        if quarantine_records or rejected_doc_total > 0:
             updates["items"] = items_to_process
+        if rejected_doc_total > 0:
+            updates["reject_doc_summary"] = {"total_qty": round(rejected_doc_total, 4), "at": now()}
+        if quarantine_records:
             updates["quarantine_summary"] = {
                 "total_qty": round(quarantined_total, 4),
                 "records": quarantine_records,
@@ -656,7 +725,11 @@ async def update_receiving(receipt_id: str, request: Request):
         except Exception as e:
             logger.error(f"Failed to capitalize assets from GR: {e}")
             # Non-fatal: log warning but don't break the receive flow
-    
+        # 2026-11-02 (K11): baris yang diterima SELALU disimpan (harga dari PO, catatan reject
+        # dokumen, qty karantina) — tagihan dari GR & Retur Pembelian membaca harga baris ini.
+        updates["items"] = items_to_process
+        updates["received_at"] = existing.get("received_at") or now()
+
     await db.warehouse_receiving.update_one({"id": receipt_id}, {"$set": updates})
     await log_activity(user["id"], user["name"], "update", "warehouse_receiving",
                        f"{existing.get('receipt_number', '')} → {body.get('status', 'updated')}")
@@ -821,19 +894,28 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
     2. Create fixed asset record di rahaza_fixed_assets
     3. Auto-post GL: Dr. Fixed Asset / Cr. AP Clearing
     4. Link GRN item dengan asset_id
+
+    2026-11-02 (K18): pendaftaran lewat SATU pintu registri Keuangan
+    (`routes.rahaza_fixed_assets.register_fixed_asset`) — validasi, akun kategori, jadwal penyusutan,
+    dan jurnal perolehan (Dr akun aset kategori / Cr Hutang Belum Ditagih) sama dengan form Aset Tetap.
+    Dulu aset GR tanpa jadwal penyusutan & selalu Dr 1-2500. Idempoten per baris GR (`grn_item_id`).
     """
-    from routes.rahaza_posting import post_asset_acquisition
-    
+    from routes.rahaza_fixed_assets import register_fixed_asset
+    from utils.waktu import today_wib
+
     assets_created = []
-    
+
     for item in items:
         # Check if this is an asset item
         if item.get("item_type", "material") != "asset":
             continue
-        
+
         net_qty = float(item.get("received_qty", 0)) - float(item.get("rejected_qty", 0))
         if net_qty <= 0:
             continue
+        if item.get("id") and await db.rahaza_fixed_assets.find_one(
+                {"grn_id": receipt_id, "grn_item_id": item.get("id")}, {"_id": 1}):
+            continue  # sudah dikapitalisasi (penerimaan ulang tidak menggandakan aset/jurnal)
         
         # Get asset parameters
         unit_price = float(item.get("unit_price", 0))
@@ -865,22 +947,25 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
             "lain-lain": 60,  # 5 years default
         }
         useful_life = useful_life_map.get(asset_category, 60)
-        
-        # Create fixed asset
-        asset_doc = {
-            "id": new_id(),
-            "code": asset_code,
+
+        # Create fixed asset — registri yang SAMA dengan form Keuangan (K18)
+        payload = {
             "name": item.get("product_name", "Unnamed Asset"),
             "category": asset_category,
+            "acquisition_type": "purchase",
+            "funding_source": "grni",
+            "_system_gr": True,
             "serial_number": item.get("serial_number", ""),
-            "purchase_date": now().date().isoformat(),
+            "purchase_date": today_wib().isoformat(),
             "purchase_cost": total_cost,
             "residual_value": 0,  # Default: no residual
             "useful_life_months": useful_life,
             "depreciation_method": "straight_line" if useful_life > 0 else "none",
-            "status": "active",
             "location": grn.get("location_name", ""),
+            "supplier": grn.get("supplier_name", ""),
             "notes": f"Auto-created from GR {grn.get('receipt_number', '')} - {item.get('product_name', '')}",
+        }
+        extra = {
             "grn_id": receipt_id,
             "grn_number": grn.get("receipt_number", ""),
             "grn_item_id": item.get("id", ""),
@@ -889,25 +974,24 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
             "supplier_name": grn.get("supplier_name", ""),
             "qty_received": net_qty,
             "unit": item.get("unit", "pcs"),
-            "created_at": now(),
             "updated_at": now(),
-            "created_by": user.get("id", "system"),
             "created_by_name": user.get("name", "system"),
         }
-        
-        await db.rahaza_fixed_assets.insert_one(asset_doc)
-        logger.info(f"✅ Fixed asset created: {asset_code} - {asset_doc['name']} (Rp {total_cost:,.0f})")
-        
-        # Auto-post GL: Dr. Fixed Asset / Cr. AP Clearing
-        posting_result = None
         try:
-            asset_refresh = await db.rahaza_fixed_assets.find_one({"id": asset_doc["id"]}, {"_id": 0})
-            posting_result = await post_asset_acquisition(db, asset_refresh, user)
-            logger.info(f"✅ Asset GL posted: {asset_code} - JE {posting_result.get('je_number', 'N/A')}")
-        except Exception as e:
-            logger.exception(f"Asset GL posting failed for {asset_code}")
-            posting_result = {"ok": False, "error": str(e)}
-        
+            asset_doc = await register_fixed_asset(db, payload, user, code=asset_code, extra=extra)
+        except HTTPException as e:
+            # Penerimaan stok tetap jalan; kapitalisasi ditandai gagal supaya Keuangan menindaklanjuti.
+            logger.warning(f"Kapitalisasi aset GR {grn.get('receipt_number', '')} gagal: {e.detail}")
+            await db.warehouse_receiving.update_one(
+                {"id": receipt_id, "items.id": item.get("id")},
+                {"$set": {"items.$.capitalize_error": str(e.detail), "items.$.capitalized": False}})
+            assets_created.append({"asset_id": None, "asset_code": asset_code, "asset_name": payload["name"],
+                                   "total_cost": total_cost, "posting_result": {"ok": False, "error": str(e.detail)}})
+            continue
+        posting_result = asset_doc.get("_posting_result")
+        logger.info(f"✅ Fixed asset created: {asset_code} - {asset_doc['name']} (Rp {total_cost:,.0f}) "
+                    f"JE {(posting_result or {}).get('je_number', 'N/A')}")
+
         # Update GRN item dengan asset_id
         await db.warehouse_receiving.update_one(
             {"id": receipt_id, "items.id": item.get("id")},
@@ -916,9 +1000,10 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
                 "items.$.asset_code": asset_code,
                 "items.$.capitalized": True,
                 "items.$.capitalized_at": now(),
+                "items.$.capitalize_error": None,
             }}
         )
-        
+
         assets_created.append({
             "asset_id": asset_doc["id"],
             "asset_code": asset_code,

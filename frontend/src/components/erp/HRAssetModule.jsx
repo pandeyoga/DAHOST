@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Package, Plus, Edit2, Trash2, RefreshCw, Search, Tag,
   UserCheck, ArrowLeftRight, Printer, CheckCircle2, Clock,
-  AlertCircle, X, Save, Loader2, QrCode, Filter, Download,
+  AlertCircle, X, Save, Loader2, Filter, Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,6 +15,8 @@ import { toast } from 'sonner';
 import { EmptyState } from './EmptyState';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const asset = (path, opts = {}) => fetch(`${API}/api/dewi/assets${path}`, { cache: 'no-store', ...opts });
@@ -214,15 +216,7 @@ export default function HRAssetModule({ token }) {
     if (selectedEmp) loadEmpAssets(selectedEmp.id);
   };
 
-  const handlePrintLabel = (a) => {
-    const url = `${API}/api/dewi/assets/${a.asset_id}/label`;
-    window.open(`${url}?token=${token}`, '_blank');
-  };
-
-  const handlePrintBulk = () => {
-    const params = filterCat ? `?category=${encodeURIComponent(filterCat)}` : '';
-    window.open(`${API}/api/dewi/assets/labels/bulk${params}`, '_blank');
-  };
+  // 2026-11-02 (registri aset tunggal): cetak label dipindah ke Portal Aset / Keuangan › Aset Tetap.
 
   const filteredEmps = employees.filter(e =>
     empSearch ? (e.name.toLowerCase().includes(empSearch.toLowerCase()) ||
@@ -279,9 +273,9 @@ export default function HRAssetModule({ token }) {
                 {STATUSES.map(s => <SelectItem key={s} value={s}>{STATUS_CFG[s]?.label || s}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Button variant="outline" size="sm" onClick={handlePrintBulk} title="Cetak semua label">
-              <Printer className="w-4 h-4 mr-1" /> Cetak Semua Label
-            </Button>
+            <span className="text-xs text-muted-foreground" data-testid="hr-asset-label-moved">
+              <Printer className="w-3.5 h-3.5 inline mr-1" />Label aset dicetak dari Portal Aset (kode registri Aset Tetap)
+            </span>
           </div>
 
           {/* Asset table */}
@@ -320,10 +314,6 @@ export default function HRAssetModule({ token }) {
                     <td className="px-4 py-3 text-sm">{fmtRp(a.purchase_price)}</td>
                     <td className="px-4 py-3">
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                        <Button size="icon" variant="ghost" className="h-7 w-7" title="Cetak Label"
-                          onClick={() => handlePrintLabel(a)} data-testid={`print-label-${a.asset_id}`}>
-                          <QrCode className="w-3.5 h-3.5" />
-                        </Button>
                         {a.status === 'Available' && (
                           <Button size="icon" variant="ghost" className="h-7 w-7 text-blue-600 dark:text-blue-400" title="Tugaskan"
                             onClick={() => setAssignDialog({ asset: a, mode: 'assign' })}
@@ -392,7 +382,7 @@ export default function HRAssetModule({ token }) {
                     <td className="px-4 py-3 text-xs">{a.assigned_date}</td>
                     <td className="px-4 py-3 text-xs">
                       {a.expected_return_date
-                        ? <span className={new Date(a.expected_return_date) < new Date() ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}>
+                        ? <span className={toWIBDate(a.expected_return_date) < todayWIB() ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground'}>
                             {a.expected_return_date}
                           </span>
                         : '—'}
@@ -563,7 +553,7 @@ function AssetFormDialog({ initial, onSave, onClose }) {
             </div>
             <div className="space-y-1">
               <Label>Harga Beli (Rp)</Label>
-              <Input type="number" value={form.purchase_price} min={0}
+              <MoneyInput value={form.purchase_price}
                 onChange={e => setForm(f => ({ ...f, purchase_price: parseFloat(e.target.value) || 0 }))} />
             </div>
           </div>
@@ -589,9 +579,9 @@ function AssignDialog({ data, employees, onAssign, onReturn, onClose }) {
     asset_id: asset.asset_id,
     employee_id: '',
     employee_name: '',
-    assigned_date: new Date().toISOString().split('T')[0],
+    assigned_date: todayWIB(),
     expected_return_date: '',
-    return_date: new Date().toISOString().split('T')[0],
+    return_date: todayWIB(),
     condition: 'Baik',
     notes: '',
   });

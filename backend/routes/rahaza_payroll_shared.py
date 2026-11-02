@@ -28,8 +28,12 @@ from datetime import date, datetime, timedelta, timezone
 
 from auth import require_auth
 from fastapi import HTTPException, Request
+from utils.waktu import today_wib, WIB
 
 log = logging.getLogger(__name__)
+
+# 2026-11-02 (P5): keputusan owner No.54(a) — tanggal bisnis = WIB, tidak bergantung TZ container.
+# `WIB` di-impor dari SSOT utils.waktu (tetap tersedia sebagai `rahaza_payroll_shared.WIB`).
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS
@@ -155,7 +159,7 @@ async def _require_hr(request: Request):
 async def _generate_run_number(db) -> str:
     """Generate unique run number: PR-YYYYMMDD-NNN (RC-5 fix: atomic counter)."""
     from utils.counters import gen_prefixed_number
-    today = date.today().strftime("%Y%m%d")
+    today = today_wib().strftime("%Y%m%d")
     return await gen_prefixed_number(db, "rahaza_payroll_runs", "run_number", f"PR-{today}-", 3)
 
 
@@ -226,7 +230,6 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
               else (r.get("hours_worked") or 0))
         for r in att_rows
     )
-    total_ot = sum(float(r.get("overtime_hours") or 0) for r in att_rows)
     days_hadir = sum(1 for r in att_rows if r.get("status") == "hadir")
     total_late_minutes = sum(int(r.get("late_minutes") or 0) for r in att_rows)
     days_late = sum(1 for r in att_rows if int(r.get("late_minutes") or 0) > 0)
@@ -237,20 +240,43 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "break_minutes": total_break_minutes, "permit_minutes": total_permit_minutes,
     })
 
-    # ─── LEMBUR YANG DISETUJUI ────────────────────────────────────────────────
+    # ─── LEMBUR: absensi + pengajuan DISETUJUI, satu sumber per HARI ──────────
+    # 2026-11-02 (K24): dulu `overtime_hours` absensi dan jam pengajuan disetujui DIJUMLAH berdua,
+    # sehingga satu lembur bisa terbayar dua kali bila keduanya terisi. Sekarang pengajuan disetujui
+    # adalah sumber resmi untuk tanggalnya; jam lembur absensi pada tanggal yang SAMA dilewati
+    # (dicatat di source_refs). Absensi tanpa pengajuan pada hari itu tetap dihitung.
+    ot_entries: list = []
     try:
         ot_approved = await db.rahaza_overtime_requests.find({
             "employee_id": emp_id,
             "status": "approved",
             "date": _date_range_filter(period_from, period_to),
         }, {"_id": 0}).to_list(500)
-        for ot in ot_approved:
-            hours = float(ot.get("hours") or 0)
-            multiplier = float(ot.get("rate_multiplier") or 1.5)
-            total_ot += hours * (multiplier / 1.5) if multiplier else hours
         source_refs["overtime_request_count"] = len(ot_approved)
     except Exception as e:  # noqa: BLE001
+        ot_approved = []
         log.warning(f"Overtime request aggregation failed for {emp_id}: {e}")
+    req_dates = {str(o.get("date") or "")[:10] for o in ot_approved}
+    att_ot_skipped = 0.0
+    for r in att_rows:
+        h = float(r.get("overtime_hours") or 0)
+        if h <= 0:
+            continue
+        if str(r.get("date") or "")[:10] in req_dates:
+            att_ot_skipped += h
+            continue
+        ot_entries.append({"date": str(r.get("date") or "")[:10], "source": "absensi", "hours": h,
+                           "multiplier": None})
+    for ot in ot_approved:
+        hours = float(ot.get("hours") or 0)
+        if hours <= 0:
+            continue
+        ot_entries.append({"date": str(ot.get("date") or "")[:10], "source": "pengajuan", "hours": hours,
+                           "multiplier": float(ot.get("rate_multiplier") or 1.5)})
+    if att_ot_skipped:
+        source_refs["overtime_attendance_hours_skipped"] = round(att_ot_skipped, 2)
+    # Jam ternormalisasi setara 1,5× (rumus lama, dipakai bila tarif Profil Gaji > 0).
+    total_ot = sum(e["hours"] * (e["multiplier"] / 1.5 if e["multiplier"] else 1) for e in ot_entries)
 
     # ─── PENDAPATAN per skema ─────────────────────────────────────────────────
     if scheme == "pcs":
@@ -323,7 +349,53 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         })
 
     earnings_total = sum(e["amount"] for e in earnings)
-    overtime_amount = round(total_ot * ot_rate) if total_ot > 0 else 0
+    applicable_allowances = await _get_applicable_allowances(db, emp)
+
+    # ─── NILAI LEMBUR (K24, 2026-11-02) ───────────────────────────────────────
+    # 1) Tarif Profil Gaji (`overtime_rate`) > 0 → rumus lama: jam ternormalisasi × tarif.
+    # 2) Tarif 0 → aturan cadangan `rahaza_payroll_settings.overtime`: 1/173 × upah tetap (gaji pokok
+    #    bulanan + tunjangan TETAP bernominal tetap), per hari jam ke-1 × 1,5 dan berikutnya × 2;
+    #    pengajuan berpengali selain 1,5 (hari libur 2×/3×) memakai pengali pengajuan itu apa adanya.
+    #    Hanya skema bulanan (upah tetap per bulan terdefinisi).
+    # 3) Selain itu lembur tidak dibayar dan slip diberi `overtime_warning` (tampil di layar run gaji).
+    overtime_amount = 0
+    overtime_basis = "none"
+    overtime_base_hourly = 0.0
+    overtime_warning = None
+    ot_hours_raw = sum(e["hours"] for e in ot_entries)
+    if total_ot > 0 and ot_rate > 0:
+        overtime_amount = round(total_ot * ot_rate)
+        overtime_basis = "profile"
+    elif ot_hours_raw > 0:
+        try:
+            from routes.rahaza_payroll_settings import get_overtime_settings
+            from routes.rahaza_payroll_tax import overtime_tier_factor
+            ot_cfg = await get_overtime_settings(db)
+        except Exception as e:  # noqa: BLE001
+            ot_cfg = {"basis": "manual"}
+            log.warning(f"Overtime settings unavailable for {emp_id}: {e}")
+        upah_tetap_ot = earnings_total + sum(
+            float(al.get("amount") or 0) for al in applicable_allowances
+            if al.get("is_fixed_wage") and (al.get("calc_type") or "fixed") == "fixed")
+        if ot_cfg.get("basis") == "upah_tetap_div_173" and scheme == "monthly" and upah_tetap_ot > 0:
+            m1 = float(ot_cfg.get("first_hour_multiplier") or 1.5)
+            m2 = float(ot_cfg.get("next_hours_multiplier") or 2.0)
+            overtime_base_hourly = upah_tetap_ot / float(ot_cfg.get("divisor") or 173)
+            factor = 0.0
+            for e in ot_entries:
+                mult = e["multiplier"]
+                if mult is None or abs(mult - 1.5) < 1e-9:
+                    e["factor"] = round(overtime_tier_factor(e["hours"], m1, m2), 4)
+                else:
+                    e["factor"] = round(e["hours"] * mult, 4)
+                factor += e["factor"]
+            overtime_amount = round(overtime_base_hourly * factor)
+            overtime_basis = "upah_tetap_div_173"
+            source_refs["overtime_factor"] = round(factor, 4)
+        else:
+            overtime_warning = (f"Ada {ot_hours_raw:g} jam lembur tetapi tarif lembur Profil Gaji = 0 dan aturan "
+                                "cadangan tidak berlaku (bukan skema bulanan / basis 'manual') — lembur TIDAK dibayar. "
+                                "Isi tarif lembur di Profil Gaji atau Pengaturan Payroll.")
 
     # ─── TUNJANGAN ────────────────────────────────────────────────────────────
     allowance_items: list = []
@@ -331,7 +403,7 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
     fixed_wage_allowance = 0.0   # dasar iuran BPJS (upah tetap)
     base_for_pct = earnings_total + overtime_amount
 
-    for al in await _get_applicable_allowances(db, emp):
+    for al in applicable_allowances:
         amt_cfg = float(al.get("amount") or 0)
         calc_type = al.get("calc_type") or "fixed"
         warning = None
@@ -462,12 +534,20 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
     #     Dasar iuran BPJS = UPAH TETAP (gaji pokok + tunjangan tetap), sesuai
     #     PP 84/2013 & praktik di sheet THP user: 1% × (pokok + tunj. jabatan).
     #     PPh21 tetap memakai bruto (seluruh penghasilan) sesuai UU PPh.
+    #     2026-11-02 (K22/K23): kepesertaan PER PROGRAM (resolve_bpjs_programs) dan tarif/plafon/kelas
+    #     risiko JKK dari `rahaza_payroll_settings.bpjs`. Iuran PERUSAHAAN ikut dihitung & disimpan di
+    #     slip (`bpjs_employer`) — bukan potongan; dijurnal saat finalisasi bila saklar owner menyala.
     bpjs_pph = {"deductions": [], "total_deductions": 0.0}
+    bpjs_employer = {"kes": 0, "jht": 0, "jp": 0, "jkk": 0, "jkm": 0, "kes_total": 0, "tk_total": 0, "total": 0}
+    bpjs_programs = {"kes": False, "jht": False, "jp": False, "jkk_jkm": False}
     try:
-        from routes.rahaza_payroll_tax import compute_full_tax_and_bpjs
-        apply_bpjs = bool(emp.get("bpjs_kesehatan_number") or emp.get("bpjs_ketenagakerjaan_number"))
+        from routes.rahaza_payroll_tax import compute_full_tax_and_bpjs, resolve_bpjs_programs
+        bpjs_programs = resolve_bpjs_programs(emp)
+        apply_bpjs = any(bpjs_programs.values())
         apply_pph21 = bool(emp.get("npwp_number"))
         if scheme in ("monthly", "bulanan") and (apply_bpjs or apply_pph21):
+            from routes.rahaza_payroll_settings import get_bpjs_settings
+            bpjs_cfg = await get_bpjs_settings(db)
             gross_after = gross - float(source_refs.get("lwop_amount") or 0)
             upah_tetap = earnings_total + fixed_wage_allowance
             bpjs_pph = compute_full_tax_and_bpjs(
@@ -475,13 +555,23 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
                 ptkp_code=emp.get("tax_ptkp") or "TK/0",
                 apply_bpjs=apply_bpjs,
                 apply_pph21=apply_pph21,
-                include_ketenagakerjaan=bool(emp.get("bpjs_ketenagakerjaan_number")),
-                jkk_risk_tier="very_low",
+                include_ketenagakerjaan=bool(bpjs_programs["jht"] or bpjs_programs["jp"] or bpjs_programs["jkk_jkm"]),
+                jkk_risk_tier=bpjs_cfg.get("jkk_risk_tier") or "very_low",
                 bpjs_base=max(0.0, upah_tetap) or None,
+                programs=bpjs_programs,
+                bpjs_cfg=bpjs_cfg,
             )
             deductions = deductions + list(bpjs_pph.get("deductions") or [])
             deductions_total += float(bpjs_pph.get("total_deductions") or 0)
             source_refs["bpjs_base_upah_tetap"] = round(upah_tetap)
+            b = bpjs_pph.get("bpjs") or {}
+            if apply_bpjs:
+                bpjs_employer = {
+                    "kes": b.get("kes_comp", 0), "jht": b.get("jht_comp", 0), "jp": b.get("jp_comp", 0),
+                    "jkk": b.get("jkk_comp", 0), "jkm": b.get("jkm_comp", 0),
+                    "kes_total": b.get("kes_company", 0), "tk_total": b.get("tk_company", 0),
+                    "total": b.get("total_company", 0), "jkk_risk_tier": b.get("jkk_risk_tier"),
+                }
     except Exception as e:  # noqa: BLE001
         log.warning(f"PPh21/BPJS calculation failed for {emp_id}: {e}")
 
@@ -542,8 +632,16 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "earnings": earnings,
         "earnings_total": earnings_total,
         "overtime_hours": round(total_ot, 2),
-        "overtime_rate": ot_rate,
+        "overtime_rate": ot_rate if overtime_basis != "upah_tetap_div_173" else round(overtime_base_hourly, 2),
         "overtime_amount": overtime_amount,
+        # 2026-11-02 (K24): asal tarif lembur + rincian per hari + peringatan tarif 0
+        "overtime_basis": overtime_basis,
+        "overtime_base_hourly": round(overtime_base_hourly, 2),
+        "overtime_entries": ot_entries,
+        "overtime_warning": overtime_warning,
+        # 2026-11-02 (K22/K23): kepesertaan BPJS yang dipakai + iuran perusahaan (informasi & jurnal)
+        "bpjs_programs": bpjs_programs,
+        "bpjs_employer": bpjs_employer,
         "allowances": allowance_items,
         "allowance_total": round(allowance_total),
         "total_hours_worked": round(total_hours, 2),
@@ -560,3 +658,194 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "source_refs": source_refs,
         "notes": "",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HELPER BERSAMA SDM ↔ KEUANGAN (2026-11-02, paket P5)
+# Dipakai payroll, kasbon, uang muka dinas, penyelesaian dinas, dan klaim biaya
+# supaya aturan "tanggal WIB", "rekening = kas/bank nyata", "run tidak ganda", dan
+# "notifikasi ke pemohon" punya SATU definisi, bukan salinan per modul.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _today_wib() -> date:
+    """Tanggal hari ini menurut WIB (No.54(a)) — delegasi ke SSOT utils.waktu.today_wib."""
+    return today_wib()
+
+
+def parse_ymd(value, *, field: str = "tanggal", default: date | None = None) -> date:
+    """'YYYY-MM-DD' → date. Kosong → `default` (bawaan: hari ini WIB). Format salah → HTTP 400.
+
+    2026-11-02: dulu tanggal transaksi yang diisi pengguna (tanggal cair/bayar) diabaikan dan
+    jurnal selalu bertanggal hari ini — kasbon cair 15 Okt tercatat 1 Nov (laporan Okt meleset)."""
+    if value in (None, ""):
+        return default or today_wib()
+    try:
+        return date.fromisoformat(str(value).strip()[:10])
+    except ValueError:
+        raise HTTPException(400, f"Format {field} harus YYYY-MM-DD (diterima: {value!r}).")
+
+
+def employee_is_active(emp: dict | None) -> bool:
+    """Karyawan dianggap aktif kecuali `active` eksplisit False (data master SDM)."""
+    return emp is not None and emp.get("active") is not False
+
+
+def periods_overlap(a_from: str, a_to: str, b_from: str, b_to: str) -> bool:
+    """Dua periode ISO (YYYY-MM-DD) beririsan (batas inklusif)."""
+    return str(a_from)[:10] <= str(b_to)[:10] and str(b_from)[:10] <= str(a_to)[:10]
+
+
+async def find_duplicate_run_conflicts(db, period_from: str, period_to: str, profiles: list,
+                                       exclude_run_id: str | None = None) -> list:
+    """Slip yang SUDAH ada di run lain (status ≠ cancelled) untuk karyawan + skema yang sama dan
+    periode beririsan.
+
+    2026-11-02 (P5 butir 1): dulu run kedua Okt dibuat & difinalisasi → 6-2100 = 2× 58.170.500.
+    Dicek per karyawan+skema (bukan sekadar tanggal header) supaya run parsial (mis. hanya Satria)
+    juga tidak bisa digaji dua kali, dan periode tumpang-tindih (30 Sep–31 Okt vs 1–31 Okt) ikut tertangkap."""
+    q = {"status": {"$ne": "cancelled"}, "period_from": {"$lte": period_to}, "period_to": {"$gte": period_from}}
+    if exclude_run_id:
+        q["id"] = {"$ne": exclude_run_id}
+    runs = await db.rahaza_payroll_runs.find(
+        q, {"_id": 0, "id": 1, "run_number": 1, "period_from": 1, "period_to": 1, "status": 1}).to_list(500)
+    runs = [r for r in runs if periods_overlap(period_from, period_to, r.get("period_from"), r.get("period_to"))]
+    if not runs or not profiles:
+        return []
+    scheme_of = {p["employee_id"]: p.get("pay_scheme") for p in profiles}
+    run_map = {r["id"]: r for r in runs}
+    slips = await db.rahaza_payslips.find(
+        {"run_id": {"$in": list(run_map)}, "employee_id": {"$in": list(scheme_of)}},
+        {"_id": 0, "run_id": 1, "employee_id": 1, "employee_name": 1, "pay_scheme": 1}).to_list(5000)
+    out = []
+    for s in slips:
+        want = scheme_of.get(s.get("employee_id"))
+        # slip lama tanpa pay_scheme dianggap skema yang sama (lebih aman menolak daripada gaji ganda)
+        if s.get("pay_scheme") in (None, "", want):
+            r = run_map[s["run_id"]]
+            out.append({"employee_id": s.get("employee_id"), "employee_name": s.get("employee_name") or "",
+                        "pay_scheme": want, "run_id": r["id"], "run_number": r.get("run_number"),
+                        "run_status": r.get("status"), "period_from": r.get("period_from"),
+                        "period_to": r.get("period_to")})
+    return out
+
+
+async def list_payment_cash_accounts(db) -> list:
+    """Rekening kas/bank AKTIF yang nyata (master Kas & Bank) dan akun GL-nya postable.
+
+    2026-11-02 (P5 butir 7): pengganti daftar hard-code di layar (berisi 1-1200 = akun header
+    dan 1-1203 = tidak ada di bagan akun)."""
+    from core.fin_statements import cash_account_codes
+    codes = await cash_account_codes(db)
+    postable = {a["code"]: a async for a in db.rahaza_coa_accounts.find(
+        {"code": {"$in": sorted(codes)}, "active": True, "is_group": {"$ne": True}}, {"_id": 0, "code": 1, "name": 1})}
+    rows = await db.rahaza_cash_accounts.find({"active": True}, {"_id": 0}).sort("code", 1).to_list(500)
+    return [{"id": r.get("id"), "code": r.get("code"), "name": r.get("name") or postable[r["gl_account_code"]].get("name"),
+             "gl_account_code": r.get("gl_account_code"), "type": r.get("type") or "",
+             "bank_name": r.get("bank_name") or "", "account_number": r.get("account_number") or ""}
+            for r in rows if r.get("gl_account_code") in postable]
+
+
+async def resolve_payment_account(db, *, cash_account_id: str | None = None, gl_code: str | None = None,
+                                  default_code: str | None = None, purpose: str = "Pembayaran") -> dict:
+    """SATU pintu memilih rekening uang keluar/masuk. Return {gl_code, name, cash_account_id}.
+
+    Urutan: rekening yang dipilih (`cash_account_id`) → kode akun yang dikirim → bawaan profil.
+    Ditolak (HTTP 400) bila bukan akun kas/bank postable — 2026-11-02 (P5 butir 4/7): dulu
+    pembayaran gaji ke 6-2900 (akun beban) diterima, dan rekening pilihan pengguna diabaikan."""
+    from core.fin_statements import cash_account_codes
+    acc_id = (cash_account_id or "").strip()
+    code = (gl_code or "").strip()
+    ca = None
+    if acc_id:
+        ca = await db.rahaza_cash_accounts.find_one({"id": acc_id}, {"_id": 0})
+        if not ca or ca.get("active") is False:
+            raise HTTPException(400, f"{purpose}: rekening yang dipilih tidak ditemukan atau tidak aktif.")
+        code = (ca.get("gl_account_code") or "").strip()
+        if not code:
+            raise HTTPException(400, f"{purpose}: rekening '{ca.get('name')}' belum tertaut ke akun GL "
+                                     "(sinkronkan di Keuangan → Kas & Bank).")
+    if not code:
+        code = (default_code or "").strip()
+    if not code:
+        raise HTTPException(400, f"{purpose}: rekening kas/bank wajib dipilih.")
+    coa = await db.rahaza_coa_accounts.find_one({"code": code, "active": True}, {"_id": 0, "name": 1, "is_group": 1})
+    if not coa:
+        raise HTTPException(400, f"{purpose}: akun GL '{code}' tidak ditemukan atau tidak aktif.")
+    if coa.get("is_group"):
+        raise HTTPException(400, f"{purpose}: akun '{code} {coa.get('name', '')}' adalah akun header — "
+                                 "pilih rekening kas/bank yang spesifik.")
+    if code not in await cash_account_codes(db):
+        raise HTTPException(400, f"{purpose}: akun '{code} {coa.get('name', '')}' bukan akun kas/bank. "
+                                 "Uang hanya boleh keluar/masuk lewat rekening kas atau bank.")
+    if not ca:
+        ca = await db.rahaza_cash_accounts.find_one({"gl_account_code": code, "active": {"$ne": False}},
+                                                    {"_id": 0, "id": 1, "name": 1})
+    return {"gl_code": code, "name": (ca or {}).get("name") or coa.get("name") or code,
+            "cash_account_id": (ca or {}).get("id")}
+
+
+def is_own_request(doc: dict | None, user: dict | None, own_employee_ids=()) -> bool:
+    """True bila `user` adalah pengaju/pemilik dokumen (kasbon, dinas, penyelesaian dinas, klaim).
+
+    Dicocokkan: employee_id / created_by = id akun login, submitted_by = email login, atau
+    employee_id ∈ id karyawan milik akun login (`own_employee_ids`)."""
+    if not doc or not user:
+        return False
+    uid = user.get("id")
+    if uid and uid in {doc.get("employee_id"), doc.get("created_by")}:
+        return True
+    email = str(user.get("email") or "").strip().lower()
+    if email and email == str(doc.get("submitted_by") or "").strip().lower():
+        return True
+    return bool(own_employee_ids) and doc.get("employee_id") in set(own_employee_ids)
+
+
+def ensure_not_self_approval(doc: dict, user: dict, *, own_employee_ids=(), what: str = "pengajuan") -> None:
+    """K25 (keputusan owner 2026-11-02): pemisahan tugas uang keluar — pengaju ≠ penyetuju.
+    Penyetuju TIDAK boleh menyetujui miliknya sendiri (berlaku untuk semua peran)."""
+    if is_own_request(doc, user, own_employee_ids):
+        raise HTTPException(403, (f"Pemisahan tugas: Anda tidak boleh menyetujui {what} milik/ajuan Anda sendiri. "
+                                  "Minta penyetuju lain."))
+
+
+async def split_own_requests(db, collection: str, ids, user: dict):
+    """K25: pisahkan dokumen milik/ajuan penyetuju sendiri dari persetujuan MASSAL (core.bulk_approve
+    tidak memeriksa pemisahan tugas). Return (ids_boleh, [{id, reason}])."""
+    ok, own = [], []
+    for doc_id in ids or []:
+        doc = await db[collection].find_one({"id": doc_id}, {"_id": 0, "employee_id": 1, "created_by": 1,
+                                                             "submitted_by": 1})
+        if doc and is_own_request(doc, user):
+            own.append({"id": doc_id, "reason": "Pemisahan tugas: tidak boleh menyetujui ajuan sendiri"})
+        else:
+            ok.append(doc_id)
+    return ok, own
+
+
+def merge_own_failures(res: dict, own: list, total: int) -> dict:
+    """Gabungkan dokumen yang ditolak split_own_requests ke hasil bulk_approve."""
+    if own:
+        res.setdefault("results", {}).setdefault("failed", []).extend(own)
+        res["failed_count"] = len(res["results"]["failed"])
+    res["total"] = total
+    return res
+
+
+async def notify_requester(db, *, user_id: str | None, subtype: str, title: str, body: str,
+                           link_module: str, source_type: str, source_id: str, source_ref: str | None = None,
+                           severity: str = "info") -> bool:
+    """Notifikasi personal ke user pemohon (kasbon/klaim/dinas disetujui/ditolak). Tidak pernah raise.
+
+    2026-11-02 (P5 butir 12): dulu hanya approver yang diberi tahu saat pengajuan masuk; pemohon
+    tidak pernah tahu hasilnya. `link_module` wajib id menu Portal Saya yang benar-benar ada."""
+    if not user_id:
+        return False
+    try:
+        from utils.notif_unified import notif_insert
+        await notif_insert(db, type="rahaza", subtype=subtype, severity=severity, user_id=str(user_id),
+                           title=title, body=body, source_type=source_type, source_id=source_id,
+                           source_ref=source_ref, status="sent", meta={"link_module": link_module})
+        return True
+    except Exception:  # noqa: BLE001 — notifikasi tidak boleh menggagalkan transaksi
+        log.exception("[notif] gagal mengirim notifikasi %s ke user %s", subtype, user_id)
+        return False

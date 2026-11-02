@@ -16,6 +16,7 @@ from datetime import datetime, timezone, timedelta, date
 from database import get_db
 from auth import JWT_SECRET, hash_password, verify_password
 from utils.data_quality import SkipTracker
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 from routes._maklon_adapter import po_to_legacy_order
@@ -271,7 +272,7 @@ async def client_dashboard(client: dict = Depends(require_client_auth)):
         'balance_amount': {'$gt': 0},
     }).to_list(length=200)
     total_outstanding = round(sum(float(i.get('balance_amount', 0) or 0) for i in outstanding_invoices), 2)
-    today = datetime.now(timezone.utc).date()
+    today = today_wib()
     overdue_count = 0
     # 2026-08-07 — DULU invoice yang tanggalnya rusak di-`continue` DIAM-DIAM di
     # PORTAL KLIEN. Efeknya klien melihat "0 tagihan terlambat" padahal ada; ini

@@ -18,6 +18,12 @@
  *   formatRupiahShort(1500000)            -> "Rp 1,5 jt"
  *   formatDateID('2026-07-19')            -> "19 Jul 2026"
  *   formatDateTimeID('2026-07-19T08:30')  -> "19 Jul 2026, 08.30"
+ *   (tanggal & jam selalu ditampilkan dalam WIB — keputusan owner No.54(a))
+ *
+ * Input uang (No.45: pengguna mengetik angka saja, titik ribuan muncul sendiri):
+ *   moneyTyping('1500000')        -> { plain: '1500000', display: '1.500.000' }
+ *   moneyTyping('12,5', { decimals: 2 }) -> { plain: '12.5', display: '12,5' }
+ *   moneyDisplay(1500000)         -> '1.500.000'
  */
 
 export const LOCALE = 'id-ID';
@@ -93,7 +99,8 @@ export function formatDateID(value, opts = {}) {
   if (Number.isNaN(d.getTime())) return opts.fallback ?? '—';
   const { fallback, ...rest } = opts;
   const options = Object.keys(rest).length ? rest : { day: '2-digit', month: 'short', year: 'numeric' };
-  return d.toLocaleDateString(LOCALE, options);
+  // No.54(a): tanggal selalu dibaca dalam WIB, apa pun zona waktu perangkat.
+  return d.toLocaleDateString(LOCALE, { timeZone: 'Asia/Jakarta', ...options });
 }
 
 /**
@@ -106,6 +113,7 @@ export function formatDateTimeID(value, opts = {}) {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return opts.fallback ?? '—';
   return d.toLocaleString(LOCALE, {
+    timeZone: 'Asia/Jakarta',
     day: '2-digit', month: 'short', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
@@ -160,6 +168,89 @@ export function parseIDNumber(value, opts = {}) {
 /** Alias — parse string Rupiah ke number. */
 export const parseRupiah = parseIDNumber;
 
+// ── Input uang dengan pemisah ribuan otomatis (keputusan owner No.45) ─────────
+// Dipakai komponen `components/ui/money-input.jsx`. Nilai yang disimpan form tetap
+// string angka POLOS bergaya JS ('1500000', '12.5'); yang dilihat pengguna bergaya
+// id-ID ('1.500.000', '12,5').
+
+const MAX_INT_DIGITS = 15; // batas aman Number.MAX_SAFE_INTEGER
+
+function groupThousands(intDigits) {
+  return intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+}
+
+/**
+ * Nilai polos (number atau string '1500000' / '12.5') → teks tampilan input ('1.500.000' / '12,5').
+ * Kosong/tidak valid → ''.
+ */
+export function moneyDisplay(value, opts = {}) {
+  const { decimals = 0 } = opts;
+  if (value === null || value === undefined || value === '') return '';
+  const n = typeof value === 'number' ? value : Number(String(value).trim());
+  if (!Number.isFinite(n)) return '';
+  const neg = n < 0;
+  const abs = Math.abs(n);
+  let [intPart, frac = ''] = (decimals > 0 ? String(Number(abs.toFixed(decimals))) : String(Math.round(abs))).split('.');
+  if (intPart.includes('e')) return String(n); // angka sangat besar — biarkan apa adanya
+  const out = groupThousands(intPart) + (frac ? `,${frac}` : '');
+  return neg ? `-${out}` : out;
+}
+
+/**
+ * Teks yang sedang DIKETIK pengguna → { plain, display }.
+ *   - titik selalu dianggap pemisah ribuan (pengguna tidak perlu mengetiknya);
+ *   - koma = desimal (hanya bila `decimals` > 0). Titik yang BARU DIKETIK di keyboard
+ *     HP tanpa koma diubah jadi koma oleh komponen, bukan di sini — supaya menghapus
+ *     satu digit dari '1.500' tetap menjadi '150', bukan '1,50';
+ *   - nol di depan dibuang, desimal dipotong sesuai `decimals`;
+ *   - minus hanya bila `allowNegative`.
+ * `plain` = '' bila kosong; '-' / '0,' sementara tetap dipertahankan di `display`.
+ */
+export function moneyTyping(text, opts = {}) {
+  const { decimals = 0, allowNegative = false } = opts;
+  let s = String(text ?? '').replace(/\s|rp/gi, '');
+  const neg = allowNegative && s.trim().startsWith('-');
+  s = s.replace(/[^0-9.,]/g, '');
+
+  let intRaw = s;
+  let fracRaw = null;
+  const ci = decimals > 0 ? s.indexOf(',') : -1;
+  if (ci >= 0) {
+    intRaw = s.slice(0, ci);
+    fracRaw = s.slice(ci + 1);
+  }
+  let intDigits = intRaw.replace(/\D/g, '').replace(/^0+(?=\d)/, '').slice(0, MAX_INT_DIGITS);
+  const fracDigits = fracRaw === null ? null : fracRaw.replace(/\D/g, '').slice(0, decimals);
+
+  if (!intDigits && fracDigits !== null) intDigits = '0';
+  if (!intDigits) return { plain: '', display: neg ? '-' : '' };
+
+  const sign = neg ? '-' : '';
+  const display = sign + groupThousands(intDigits) + (fracDigits !== null ? `,${fracDigits}` : '');
+  const plain = sign + intDigits + (fracDigits ? `.${fracDigits}` : '');
+  return { plain, display };
+}
+
+/**
+ * Posisi kursor setelah format ulang: letakkan kursor setelah `count` karakter
+ * bermakna (digit, koma, minus) — sehingga titik ribuan yang muncul/hilang tidak
+ * membuat kursor melompat.
+ */
+export function moneyCaret(display, count) {
+  if (count <= 0) return 0;
+  let seen = 0;
+  for (let i = 0; i < display.length; i += 1) {
+    if (/[0-9,-]/.test(display[i])) seen += 1;
+    if (seen >= count) return i + 1;
+  }
+  return display.length;
+}
+
+/** Jumlah karakter bermakna (digit, koma, minus) di kiri posisi `pos`. */
+export function moneyMeaningfulBefore(text, pos) {
+  return (String(text).slice(0, pos).match(/[0-9,-]/g) || []).length;
+}
+
 const formatUtils = {
   LOCALE,
   formatNumber,
@@ -171,6 +262,8 @@ const formatUtils = {
   formatDateTimeID,
   parseIDNumber,
   parseRupiah,
+  moneyDisplay,
+  moneyTyping,
 };
 
 export default formatUtils;

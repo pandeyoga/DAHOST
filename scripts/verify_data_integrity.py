@@ -19,6 +19,8 @@ Invariants (SSOT: memory/INVARIANTS.md):
   INV-MKL-1  maklon PO amount_paid <= total_value
   INV-REF-1  referential: material_stock.material_id -> materials; ar_payments -> ar_invoices
   INV-NUM-1  no negative money/qty in key financial collections
+  INV-COA-REF (2026-11-02) rujukan konfigurasi → akun Bagan Akun ada, aktif, dan bukan grup bila
+             target posting (registri `backend/core/coa_bindings.integrity_report`).
   INV-CMTVEN-1..4 (F13) CMT vendor master = SATU master. Dua master yang tidak
              beririsan (`vendor_partners` vs `dewi_cmt_partners`) membuat satu kolom
              `dewi_cmt_payments.cmt_partner_id` berisi id dari dua ruang-id ⇒ hutang
@@ -76,6 +78,38 @@ def _trail_int(s):
     """Extract trailing integer of a doc number, e.g. 'JE-2026-0051' -> 51."""
     m = re.search(r"(\d+)\s*$", str(s or ""))
     return int(m.group(1)) if m else None
+
+
+def coa_ref_violations(rep: dict) -> tuple:
+    """2026-11-02 (S2-H butir 10) — laporan `core.coa_bindings.integrity_report` → (gagal, peringatan).
+    Gagal: rujukan konfigurasi (profil posting, toko, rekening, Auto Akun, relasi, pemetaan GL, aset,
+    anggaran, kode program) ke akun yang TIDAK ADA, NONAKTIF, atau GRUP padahal target posting.
+    Peringatan: cadangan kode program yang akan terpakai karena peran profilnya kosong."""
+    fails = ([f"tidak ada: {r['code']} ← {r['refs'][0] if r.get('refs') else '-'}" for r in rep.get("dangling_refs") or []]
+             + [f"nonaktif: {r['code']} ← {r['refs'][0] if r.get('refs') else '-'}" for r in rep.get("inactive_targets") or []]
+             + [f"grup: {r['code']} ← {r['refs'][0] if r.get('refs') else '-'}" for r in rep.get("group_targets") or []])
+    warns = [f"{w['role']} kosong → cadangan {w['code']} ({w['source']})" for w in rep.get("fallback_warnings") or []]
+    return fails, warns
+
+
+async def check_coa_ref(db):
+    """INV-COA-REF — memakai SATU registri keterikatan akun (backend/core/coa_bindings.py), bukan
+    daftar sendiri. Modul backend gagal dimuat ⇒ WARN (gerbang tidak ikut menebak)."""
+    try:
+        backend = str(ROOT / "backend")
+        if backend not in sys.path:
+            sys.path.insert(0, backend)
+        from core.coa_bindings import integrity_report
+        rep = await integrity_report(db)
+    except Exception as e:  # noqa: BLE001
+        _report("INV-COA-REF rujukan konfigurasi → akun ada/aktif/bisa diposting",
+                [f"registri tidak bisa dijalankan: {e}"], 0, warn_only=True)
+        return None
+    fails, warns = coa_ref_violations(rep)
+    _report("INV-COA-REF rujukan konfigurasi → akun ada/aktif/bisa diposting", fails, rep.get("checked_refs", 0))
+    _report("INV-COA-REF-2 peran profil kosong → cadangan kode program terpakai", warns,
+            len(rep.get("fallback_warnings") or []) or 1, warn_only=True)
+    return rep
 
 
 async def run():
@@ -386,6 +420,10 @@ async def run():
             seen_code[ck] = v["id"]
     _report("INV-CMTVEN-4 vendor_partners bebas duplikat nama/kode (laporan "
             "pembayaran CMT tidak menggandakan vendor)", v_cv4, len(vps))
+
+    # ---------------- BAGAN AKUN: RUJUKAN KONFIGURASI ----------------
+    print(f"\n{C}{B}Bagan Akun — rujukan konfigurasi{X}")
+    await check_coa_ref(db)
 
     # ---------------- SUMMARY ----------------
     print(f"\n{B}{'='*64}{X}\n  {G}PASS {results['pass']}{X} | {Y}WARN {results['warn']}{X} | {R}FAIL {results['fail']}{X}\n{B}{'='*64}{X}")

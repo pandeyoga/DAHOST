@@ -8,9 +8,10 @@ Centralizes common patterns used across route modules:
 - Sequential code generation with date prefix
 - Safe numeric coercion
 """
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import uuid
+from utils.waktu import today_wib
 
 
 def _uid() -> str:
@@ -25,7 +26,7 @@ def _now() -> datetime:
 
 def _today_iso() -> str:
     """Return today's date in ISO format YYYY-MM-DD."""
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _clean(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -50,7 +51,7 @@ async def _next_code(db, prefix: str, coll: str, field: str) -> str:
     For production use cases needing guaranteed uniqueness, use a counter collection
     with find_one_and_update + $inc (see dewi_maklon_billing._next_invoice_number).
     """
-    today = date.today().strftime('%Y%m%d')
+    today = today_wib().strftime('%Y%m%d')
     base = f"{prefix}-{today}-"
     docs = await db[coll].count_documents({field: {"$regex": f"^{base}"}})
     return f"{base}{str(docs + 1).zfill(3)}"

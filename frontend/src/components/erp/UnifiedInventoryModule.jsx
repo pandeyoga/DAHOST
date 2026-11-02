@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import { todayWIB } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -428,7 +429,7 @@ export default function UnifiedInventoryModule({ token }) {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `stok-barang-${new Date().toISOString().split('T')[0]}.csv`;
+      a.download = `stok-barang-${todayWIB()}.csv`;
       a.click();
       toast.success(`${allItems.length} item di-export ke CSV`);
     } catch (e) {

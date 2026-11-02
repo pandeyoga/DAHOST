@@ -56,6 +56,7 @@ from datetime import date, datetime
 from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException
+from utils.waktu import today_wib
 
 __all__ = [
     "q_int",
@@ -184,7 +185,7 @@ def q_year_month(
 
     Mengembalikan `(year, month)` yang DIJAMIN aman dipakai `date(year, month, 1)`.
     """
-    today = date.today()
+    today = today_wib()
     y = q_int(year, default=today.year, name=year_name, minimum=MIN_YEAR, maximum=MAX_YEAR)
     m = q_int(month, default=today.month, name=month_name, minimum=1, maximum=12)
     return int(y), int(m)  # type: ignore[arg-type]
@@ -197,7 +198,7 @@ def q_period(raw: Any, *, name: str = "month", default: Optional[str] = None) ->
     """
     value = raw if (raw is not None and str(raw).strip() != "") else default
     if value is None:
-        today = date.today()
+        today = today_wib()
         return today.year, today.month
     s = str(value).strip()
     parts = s.split("-")

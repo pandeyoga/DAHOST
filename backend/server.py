@@ -13,6 +13,7 @@ import os
 import logging
 from datetime import datetime, timezone
 import time
+from utils.waktu import today_wib
 
 app = FastAPI(
     title="CV. Dewi Aditya — ERP API",
@@ -647,6 +648,52 @@ _DENY_EXTERNAL_AND_MKT = [_Depends(_deny_roles(*_EXT_ROLES, *_MKT_ROLES))]
 # Router yang sudah sadar-vendor/klien (menjaga peran eksternal sendiri) tetapi tidak untuk peran marketing.
 _DENY_MKT = [_Depends(_deny_roles(*_MKT_ROLES))]
 
+# ── 2026-11-02 (audit No.57) — gerbang portal pemilik data + penjaga per-path ──
+# Data HR AI / AI Business / Dashboard Eksekutif dulu terbuka untuk SEMUA peran
+# internal (hanya `require_auth`). Gerbangnya memakai SSOT `require_portal`
+# (PORTAL_ACCESS + roles.portals + izin; superadmin/admin/owner selalu lolos).
+from routes.shared import require_portal_dep as _require_portal_dep
+
+
+def _on_paths(dep, only=(), skip=()):
+    """Jalankan `dep` hanya untuk route tertentu pada router campuran.
+
+    Dipakai bila satu router memuat endpoint dengan pemilik berbeda (mis.
+    dashboard_router memuat /api/vendor/dashboard milik portal vendor CMT).
+    `only`/`skip` = path template route (persis seperti di dekorator).
+    """
+    only_set, skip_set = set(only), set(skip)
+
+    async def _dep(request: Request):
+        route = request.scope.get("route")
+        path = getattr(route, "path", None) or request.url.path
+        if path in skip_set or (only_set and path not in only_set):
+            return
+        await dep(request)
+    _dep.__name__ = f"on_paths[{getattr(dep, '__name__', 'dep')}]"
+    return _dep
+
+
+# dashboard_router: /api/vendor/dashboard SAH dipakai portal vendor CMT
+# (VendorDashboard.jsx) → dikecualikan dari tolak-eksternal; /api/dashboard
+# (Dashboard Eksekutif: revenue, AR, AP) khusus pemegang Portal Manajemen.
+_DASHBOARD_GUARD = [
+    _Depends(_on_paths(_deny_roles(*_EXT_ROLES), skip=("/api/vendor/dashboard",))),
+    _Depends(_on_paths(_require_portal_dep("management"), only=("/api/dashboard",))),
+]
+# rahaza_reports_router: ringkasan payroll (total bruto/potongan/neto run terakhir)
+# khusus pemegang portal Manajemen/SDM/Keuangan; endpoint lain cukup tolak-eksternal.
+_REPORTS_GUARD = _DENY_EXTERNAL + [
+    _Depends(_on_paths(_require_portal_dep("management", "hr", "finance"),
+                       only=("/api/rahaza/management/payroll-summary",))),
+]
+# rahaza_payroll_payslips_router: peran marketing (pic_toko/marketing_kol/cs_staff) tetap
+# ditolak untuk daftar/detail/bundel slip, KECUALI unduh PDF slip miliknya sendiri
+# (swalayan Portal Saya; handler memeriksa kepemilikan lewat employee_identity).
+_PAYSLIPS_GUARD = _DENY_EXTERNAL + [
+    _Depends(_on_paths(_deny_roles(*_MKT_ROLES), skip=("/api/rahaza/payslips/{pid}/pdf",))),
+]
+
 # Register all active routers
 app.include_router(auth_router)
 app.include_router(master_data_router, dependencies=_DENY_MKT)
@@ -666,7 +713,7 @@ app.include_router(admin_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.access_sync import router as access_sync_router
 app.include_router(access_sync_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(invoice_edit_requests_router, dependencies=_DENY_EXTERNAL_AND_MKT)
-app.include_router(dashboard_router)
+app.include_router(dashboard_router, dependencies=_DASHBOARD_GUARD)  # 2026-11-02 audit No.57
 # P2 Refactor: operations.py split — include all sub-routers (deprecated accessories omitted)
 # Sprint A.0: Re-enable operations_router for deprecated accessory NOOP endpoints
 app.include_router(operations_router, dependencies=_DENY_EXTERNAL)
@@ -706,12 +753,12 @@ app.include_router(rahaza_payroll_allowances_router, dependencies=_DENY_EXTERNAL
 app.include_router(rahaza_payroll_settings_router, dependencies=_DENY_EXTERNAL_AND_MKT)  # FASE 15: aturan potongan terlambat & bonus kehadiran
 app.include_router(rahaza_payroll_profiles_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 app.include_router(rahaza_payroll_runs_router, dependencies=_DENY_EXTERNAL_AND_MKT)
-app.include_router(rahaza_payroll_payslips_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+app.include_router(rahaza_payroll_payslips_router, dependencies=_PAYSLIPS_GUARD)  # 2026-11-02: PDF slip sendiri utk peran marketing
 app.include_router(rahaza_finance_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 from routes.rahaza_payment_receipt import router as rahaza_payment_receipt_router  # noqa: E402
 app.include_router(rahaza_payment_receipt_router, dependencies=_DENY_MKT)
 app.include_router(rahaza_hpp_router, dependencies=_DENY_MKT)
-app.include_router(rahaza_reports_router)
+app.include_router(rahaza_reports_router, dependencies=_REPORTS_GUARD)  # 2026-11-02 audit No.57: vendor CMT baca AR/payroll
 app.include_router(notifications_unified_router)  # Must come before rahaza_notifications to win path race
 app.include_router(rahaza_notifications_router)
 app.include_router(rahaza_audit_router, dependencies=_DENY_EXTERNAL_AND_MKT)
@@ -1011,7 +1058,7 @@ from routes.unified_inventory import router as unified_inventory_router
 app.include_router(unified_inventory_router, dependencies=_DENY_MKT)
 # Phase 7 — Reporting & Dashboard (Daily/Monthly/Per-PO/Actual-vs-Target)
 from routes.dewi_phase7_reports import router as dewi_phase7_reports_router
-app.include_router(dewi_phase7_reports_router)
+app.include_router(dewi_phase7_reports_router, dependencies=_DENY_EXTERNAL)  # 2026-11-02 audit No.57
 
 # Phase 3 Week 8-10: Content Calendar, Discounts, Product Launches
 from routes.marketing_content_calendar_routes import router as marketing_content_calendar_router
@@ -1229,6 +1276,9 @@ app.include_router(cashflow_ai_router, dependencies=_DENY_EXTERNAL)
 # Blueprint §3.7 — Return & Refund Portal Gudang
 from routes.dewi_wh_returns import router as dewi_wh_returns_router
 app.include_router(dewi_wh_returns_router, dependencies=_DENY_EXTERNAL)
+# 2026-11-02 (K15) — Gudang → OUTBOUND → Scan Keluar Penjualan (scan harian, HPP WAC per lembar)
+from routes.wh_scan_out import router as wh_scan_out_router
+app.include_router(wh_scan_out_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
 # Blueprint §2.7 — CMT Packing & Stok Opname
 from routes.dewi_cmt_packing import router as dewi_cmt_packing_router
@@ -1280,12 +1330,15 @@ app.include_router(dewi_warehouse_smart_router, dependencies=_DENY_EXTERNAL_AND_
 
 # Session 14 — AI Business Intelligence
 from routes.dewi_ai_business import router as dewi_ai_business_router
-app.include_router(dewi_ai_business_router, dependencies=_DENY_EXTERNAL_AND_MKT)
+# 2026-11-02 (audit No.57) — AI Business (ringkasan/prediksi omzet, fraud) milik Portal Manajemen.
+app.include_router(dewi_ai_business_router,
+                   dependencies=_DENY_EXTERNAL_AND_MKT + [_Depends(_require_portal_dep("management"))])
 
 # Session 15 — HR AI & Portal Saya Extensions
 from routes.dewi_hr_ai import router as dewi_hr_ai_router
 from routes.dewi_portal_saya_ext import router as dewi_portal_saya_ext_router
-app.include_router(dewi_hr_ai_router, dependencies=_DENY_EXTERNAL)
+# 2026-11-02 (audit No.57) — HR AI (daftar karyawan, risiko resign, coaching) milik portal SDM.
+app.include_router(dewi_hr_ai_router, dependencies=_DENY_EXTERNAL + [_Depends(_require_portal_dep("hr"))])
 app.include_router(dewi_portal_saya_ext_router, dependencies=_DENY_EXTERNAL)
 # RC-29: mount ganda dewi_portal_saya_hr_router (tanpa prefix /api) DIHAPUS —
 # mount kanonik sudah via routes/dewi_portal_saya.py (nested /api/portal/*).
@@ -1433,8 +1486,6 @@ app.include_router(data_transfer_router, dependencies=_DENY_MKT)
 
 # ─── Financial Recap Endpoint ────────────────────────────────────────────────
 # Re-implements the deleted /api/financial-recap for FinancialRecapModule.jsx
-from datetime import date as _date, timedelta
-from dateutil.relativedelta import relativedelta
 
 @app.get("/api/financial-recap", tags=["financial-recap"])
 async def financial_recap(
@@ -1449,79 +1500,17 @@ async def financial_recap(
     from routes.shared import require_portal
     await require_portal(request, "finance")  # RBAC: data keuangan wajib portal finance (BUG-RBAC-1)
     db = get_db()
-    today = _date.today()
+    today = today_wib()
 
     # FIN-01 (temuan 2026-09-23): baca kolom yang BENAR-BENAR ditulis penulisnya.
     #   pembayaran → `date` (fallback payment_date) · AP → `total` (fallback total_amount)
     #   beredar → status kanonik OPEN_STATUSES, kolom `balance`/`amount_due` · penjualan tanpa draft/void/written_off
     #   tanpa tanggal ("Semua") → seluruh periode, bukan 30 hari terakhir.
+    # 2026-11-02 (K20): isi dipindah ke core.recap_finance.compute_financial_recap (bisa diuji tanpa server):
+    #   label AR−AP "bukan laba", kartu laba kotor buku besar, kas masuk + Penjualan Langsung.
     from routes.rahaza_ar_canonical import OPEN_STATUSES
-    from core.recap_finance import open_balance_expr, recap_open_statuses, sum_invoices, sum_payments
-
-    date_filter = {}
-    if date_from:
-        date_filter["$gte"] = date_from
-    if date_to:
-        date_filter["$lte"] = date_to
-    excluded = ["cancelled", "draft", "void", "written_off"]
-
-    total_sales, total_ar_invoices = await sum_invoices(db.rahaza_ar_invoices, date_filter, excluded)
-    total_vendor, total_ap_invoices = await sum_invoices(db.rahaza_ap_invoices, date_filter, excluded)
-    total_cash_in = await sum_payments(db.rahaza_ar_payments, date_filter)
-    total_cash_out = await sum_payments(db.rahaza_ap_payments, date_filter)
-
-    open_statuses = recap_open_statuses(OPEN_STATUSES)
-    ar_out_agg = await db.rahaza_ar_invoices.aggregate([
-        {"$match": {"status": {"$in": open_statuses}}},
-        {"$group": {"_id": None, "total": {"$sum": open_balance_expr()}}},
-    ]).to_list(1)
-    ar_outstanding = ar_out_agg[0]["total"] if ar_out_agg else 0
-    ap_out_agg = await db.rahaza_ap_invoices.aggregate([
-        {"$match": {"status": {"$in": open_statuses}}},
-        {"$group": {"_id": None, "total": {"$sum": open_balance_expr()}}},
-    ]).to_list(1)
-    ap_outstanding = ap_out_agg[0]["total"] if ap_out_agg else 0
-
-    # Gross margin
-    gross_margin = total_sales - total_vendor
-    gross_margin_pct = round((gross_margin / total_sales * 100), 1) if total_sales > 0 else 0
-
-    # Monthly trend (last 6 months)
-    monthly_trend = []
-    for i in range(5, -1, -1):
-        m_date = today - relativedelta(months=i)
-        m_str = m_date.strftime("%Y-%m")
-        m_label = m_date.strftime("%b %Y")
-        m_start = f"{m_str}-01"
-        m_end = (m_date + relativedelta(months=1) - timedelta(days=1)).strftime("%Y-%m-%d")
-        m_filter = {"$gte": m_start, "$lte": m_end}
-        ms, _ = await sum_invoices(db.rahaza_ar_invoices, m_filter, excluded)
-        mc, _ = await sum_invoices(db.rahaza_ap_invoices, m_filter, excluded)
-        monthly_trend.append({
-            "month": m_label,
-            "sales": ms,
-            "cost": mc,
-            "margin": ms - mc,
-            "cash_in": await sum_payments(db.rahaza_ar_payments, m_filter),
-            "cash_out": await sum_payments(db.rahaza_ap_payments, m_filter),
-        })
-    return {
-        "total_sales_value": total_sales,
-        "total_vendor_cost": total_vendor,
-        "total_buyer_invoices": total_ar_invoices,
-        "total_vendor_invoices": total_ap_invoices,
-        "total_cash_in": total_cash_in,
-        "total_cash_out": total_cash_out,
-        "total_adjustments": 0,
-        "accounts_receivable_outstanding": ar_outstanding,
-        "accounts_payable_outstanding": ap_outstanding,
-        "gross_margin": gross_margin,
-        "gross_margin_pct": gross_margin_pct,
-        "monthly_trend": monthly_trend,
-        "garment_summary": [],
-        "date_from": date_from,
-        "date_to": date_to,
-    }
+    from core.recap_finance import compute_financial_recap
+    return await compute_financial_recap(db, date_from, date_to, today, OPEN_STATUSES)
 
 # ─── API v1 PATH REWRITER MIDDLEWARE ────────────────────────────────────────
 # E-6/E-7: Provides /api/v1/* aliases for the legacy per-module paths.

@@ -139,7 +139,7 @@ async def live_summary(request: Request,
                       account_id: Optional[str] = Query(None)):
     user = await require_auth(request)
     db = get_db()
-    await seed_live_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     # F14/F16 — SSOT nama field: `core.marketing_live_fields`.
     # Sebelum ini pipeline menjumlahkan `$gmv`/`$total_orders`/`$cr_rate` yang
@@ -223,7 +223,7 @@ async def list_sessions(
 ):
     user = await require_auth(request)
     db = get_db()
-    await seed_live_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     query = {}
     if account_id:
@@ -278,7 +278,7 @@ async def performance_trend(
 ):
     user = await require_auth(request)
     db = get_db()
-    await seed_live_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
 
     start_dt = _now() - timedelta(days=days)
 
@@ -344,9 +344,9 @@ async def _lp_ready(db):
     if not _LP_INDEXES_READY:
         await _LP.ensure_indexes(db)
         _LP_INDEXES_READY = True
-    # Sesi demo diberi rincian sekali (lihat _LP.seed_demo_products) supaya layar
-    # "Produk Terlaris saat Live" tidak tampak rusak di basis data baru.
-    await _LP.seed_demo_products(db)
+    # 2026-11-02 — dulu di sini sesi demo diberi rincian produk karangan
+    # (`_LP.seed_demo_products`) setiap layar dibuka; dihentikan karena data fiktif
+    # terus muncul di data go-live. Fungsi ini kini hanya memastikan indeks.
 
 
 class LiveProductLineIn(BaseModel):

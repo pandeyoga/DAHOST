@@ -35,13 +35,17 @@ from utils.notif_unified import (
     notif_count_unread, serialize_notif,
     notif_audience_query, notif_count_unread_for, notif_is_unread_for,
     notif_list_for, notif_mark_all_read_for, notif_mark_read_for,
-    VALID_TYPES, VALID_SEVERITIES,
+    normalize_link_module, VALID_TYPES, VALID_SEVERITIES,
+    LEGACY_DUP_SUBTYPES, action_of, dedupe_legacy_copies, kind_of, purge_notifications,
+    resolved_label, run_action_resolver,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/notifications/unified", tags=["notifications-unified"])
 
 # Role yang boleh melihat inbox orang lain / seluruh notifikasi (audit & bantuan).
+# K32 (keputusan owner 2026-11-02): HR TETAP boleh membaca semua inbox — jangan
+# dicabut (dikunci uji tests/unit/test_s2g_notif_inbox.py).
 ADMIN_VIEW_ROLES = set(SUPER_ROLES) | {"hr", "manager_hr", "hr_manager"}
 
 
@@ -93,9 +97,21 @@ async def list_unified(
         effective_uid = uid
 
     return {
+        # 2026-11-02 — `link_module` (sudah dipetakan ke id hidup) & `link_id`
+        # diangkat ke akar supaya Portal Saya bisa membuka layar terkait seperti
+        # bel; waktu ber-zona lewat serialize_notif → iso_utc.
+        # 2026-11-02 (K30) — `kind`, tombol `action`, dan status penutupan ikut dikirim.
         'items': [{**serialize_notif(it),
-                   'read': not notif_is_unread_for(it, user)} for it in items],
+                   'read': not notif_is_unread_for(it, user),
+                   'link_module': normalize_link_module(
+                       it.get('link_module') or (it.get('meta') or {}).get('link_module')) or '',
+                   'link_id': it.get('source_id') or (it.get('meta') or {}).get('link_id'),
+                   'kind': kind_of(it),
+                   'action': action_of(it),
+                   'resolved_label': resolved_label(it.get('resolved_reason'))}
+                  for it in items],
         'count': len(items),
+        'has_more': len(items) >= limit,
         'limit': limit,
         'skip':  skip,
         'filter': {
@@ -186,3 +202,100 @@ async def mark_all_read(
     modified = await notif_mark_all_read_for(
         db, user, type=type if (type and type in VALID_TYPES) else None)
     return {'ok': True, 'modified': modified}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PERAWATAN (2026-11-02, K30/K31) — hanya admin/owner/superadmin.
+#   POST /maintenance/resolve                 jalankan resolver "Perlu Tindakan" sekarang
+#   POST /maintenance/purge?dry_run=true      retensi (info dibaca & action tertutup > X hari)
+#   POST /maintenance/dedupe-legacy?dry_run=true&subtypes=contract_expiry,sla_breach
+#        pembersihan SEKALI-JALAN salinan duplikat lama berkunci sama
+# ─────────────────────────────────────────────────────────────────────────────
+async def _require_super(request: Request) -> dict:
+    user = await require_auth(request)
+    if (user.get('role') or '').lower() not in SUPER_ROLES:
+        raise HTTPException(403, 'Hanya admin/owner yang boleh menjalankan perawatan notifikasi.')
+    return user
+
+
+@router.post("/maintenance/resolve")
+async def maintenance_resolve(request: Request):
+    await _require_super(request)
+    return {'ok': True, **await run_action_resolver(get_db())}
+
+
+@router.post("/maintenance/purge")
+async def maintenance_purge(request: Request, dry_run: bool = Query(True),
+                            days: Optional[int] = Query(None, ge=7, le=3650)):
+    await _require_super(request)
+    return {'ok': True, **await purge_notifications(get_db(), days=days, dry_run=dry_run)}
+
+
+@router.post("/maintenance/dedupe-legacy")
+async def maintenance_dedupe(request: Request, dry_run: bool = Query(True),
+                             subtypes: Optional[str] = Query(None)):
+    await _require_super(request)
+    picked = tuple(s.strip() for s in (subtypes or '').split(',') if s.strip()) or LEGACY_DUP_SUBTYPES
+    return {'ok': True, **await dedupe_legacy_copies(get_db(), subtypes=picked, dry_run=dry_run)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB TERJADWAL BARU (2026-11-02) — didaftarkan ke `utils.scheduler.JOB_REGISTRY`
+# saat modul rute ini dimuat (sebelum `start_scheduler()`), pola yang sama dengan
+# `core/negative_stock_reminder.register_scheduler_job` — berkas penjadwal tidak diubah.
+# ─────────────────────────────────────────────────────────────────────────────
+async def _record_run(job_id: str, fn):
+    from datetime import datetime, timezone
+    db = get_db()
+    started = datetime.now(timezone.utc)
+    res = await db.dewi_scheduler_runs.insert_one({'job_id': job_id, 'started_at': started, 'status': 'running'})
+    try:
+        out = await fn(db)
+        await db.dewi_scheduler_runs.update_one({'_id': res.inserted_id}, {'$set': {
+            'status': 'success', 'finished_at': datetime.now(timezone.utc),
+            'message': str(out)[:500]}})
+        return out
+    except Exception as e:  # noqa: BLE001
+        logger.exception('[scheduler] %s gagal', job_id)
+        await db.dewi_scheduler_runs.update_one({'_id': res.inserted_id}, {'$set': {
+            'status': 'failed', 'finished_at': datetime.now(timezone.utc), 'error': str(e)}})
+        raise
+
+
+async def job_notif_resolve_actions():
+    """K30 — tutup notifikasi "Perlu Tindakan" yang tindakannya sudah selesai."""
+    return await _record_run('notif_resolve_actions', run_action_resolver)
+
+
+async def job_notif_retention():
+    """K31 — hapus pemberitahuan dibaca & action tertutup yang melewati retensi."""
+    async def _purge(db):
+        return await purge_notifications(db)
+    return await _record_run('notif_retention', _purge)
+
+
+def register_scheduler_jobs() -> bool:
+    try:
+        from utils.scheduler import JOB_REGISTRY
+    except Exception:  # noqa: BLE001 — penjadwal opsional (uji unit tanpa apscheduler)
+        logger.debug('utils.scheduler tidak tersedia — job notifikasi tidak dijadwalkan', exc_info=True)
+        return False
+    JOB_REGISTRY.setdefault('notif_resolve_actions', {
+        'fn': job_notif_resolve_actions,
+        'description': ('Tutup otomatis notifikasi "Perlu Tindakan" (PR/cuti/klaim disetujui, stok '
+                        'kembali normal, dst.) dan isi jenis notifikasi lama. Ringan & idempoten.'),
+        'cron': {'minute': '*/5'},
+        'cron_label': 'Setiap 5 menit',
+    })
+    JOB_REGISTRY.setdefault('notif_retention', {
+        'fn': job_notif_retention,
+        'description': ('Retensi notifikasi: hapus pemberitahuan yang sudah dibaca & tindakan yang '
+                        'sudah tertutup setelah N hari (Aturan Notifikasi, bawaan 90). Tindakan '
+                        'terbuka tidak pernah dihapus.'),
+        'cron': {'hour': 2, 'minute': 30},
+        'cron_label': 'Setiap hari pukul 02:30 WIB',
+    })
+    return True
+
+
+register_scheduler_jobs()

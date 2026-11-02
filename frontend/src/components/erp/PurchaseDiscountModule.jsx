@@ -6,6 +6,8 @@ import { PageHeader, StatTile } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, toWIBDate, addDaysISO, daysBetweenISO } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 
@@ -24,17 +26,17 @@ export default function PurchaseDiscountModule({ token }) {
         const data = await r.json();
         // Enrich with early payment discount eligibility
         const enriched = data.map(inv => {
-          const issueDate = new Date(inv.issue_date);
-          const discountDeadline = new Date(issueDate);
-          discountDeadline.setDate(issueDate.getDate() + 10); // Assume 10 days discount period
-          const daysLeft = Math.ceil((discountDeadline - new Date()) / (1000 * 60 * 60 * 24));
+          // Tanggal kalender WIB (No.54(a)): batas diskon = tanggal faktur + 10 hari.
+          const issueDate = toWIBDate(inv.issue_date);
+          const discountDeadline = issueDate ? addDaysISO(issueDate, 10) : ''; // Assume 10 days discount period
+          const daysLeft = discountDeadline ? daysBetweenISO(todayWIB(), discountDeadline) : 0;
           const isEligible = daysLeft > 0;
           const discountPercent = 2; // 2% early payment discount
           const discountAmount = isEligible ? Math.round(inv.balance * discountPercent / 100) : 0;
           return {
             ...inv,
             discount_eligible: isEligible,
-            discount_deadline: discountDeadline.toISOString().split('T')[0],
+            discount_deadline: discountDeadline,
             discount_days_left: daysLeft,
             discount_percent: discountPercent,
             discount_amount: discountAmount
@@ -66,7 +68,7 @@ export default function PurchaseDiscountModule({ token }) {
           amount: Number(paymentForm.amount),
           discount_amount: Number(paymentForm.discount_amount) || 0,
           account_id: paymentForm.account_id,
-          date: paymentForm.date || new Date().toISOString().split('T')[0],
+          date: paymentForm.date || todayWIB(),
           notes: paymentForm.notes
         })
       });
@@ -243,8 +245,8 @@ export default function PurchaseDiscountModule({ token }) {
             <div className="space-y-3">
               <div>
                 <label className="text-xs uppercase text-muted-foreground">Jumlah Bayar (Rp)</label>
-                <GlassInput
-                  type="number"
+                <MoneyInput
+                  glass
                   value={paymentForm.amount}
                   onChange={e => setPaymentForm(f => ({ ...f, amount: e.target.value, discount_applied: false }))}
                   data-testid="pd-amount"

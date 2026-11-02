@@ -4,6 +4,7 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -388,7 +389,7 @@ function ClientDialog({ data, headers, onClose, onSuccess }) {
             <div className="space-y-1 col-span-2"><Label>Email PIC</Label><Input type="email" value={form.pic_email} onChange={e => set('pic_email', e.target.value)} /></div>
             <div className="space-y-1 col-span-2"><Label>Alamat</Label><Input value={form.address} onChange={e => set('address', e.target.value)} /></div>
             <div className="space-y-1"><Label>Kota</Label><Input value={form.city} onChange={e => set('city', e.target.value)} /></div>
-            <div className="space-y-1"><Label>Rate Standar (Rp/pcs)</Label><Input type="number" value={form.standard_rate_per_pcs} onChange={e => set('standard_rate_per_pcs', e.target.value)} /></div>
+            <div className="space-y-1"><Label>Rate Standar (Rp/pcs)</Label><MoneyInput value={form.standard_rate_per_pcs} onChange={e => set('standard_rate_per_pcs', e.target.value)} /></div>
             <div className="space-y-1"><Label>Payment Terms</Label><Select value={form.payment_terms} onValueChange={v => set('payment_terms', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="net_7">Net 7</SelectItem><SelectItem value="net_14">Net 14</SelectItem><SelectItem value="net_30">Net 30</SelectItem><SelectItem value="net_60">Net 60</SelectItem></SelectContent></Select></div>
             <div className="space-y-1"><Label>Quality Standard</Label><Select value={form.quality_standard} onValueChange={v => set('quality_standard', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">Standard</SelectItem><SelectItem value="premium">Premium</SelectItem><SelectItem value="luxury">Luxury</SelectItem></SelectContent></Select></div>
           </div>

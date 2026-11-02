@@ -76,6 +76,22 @@ DOC_NUMBER_REGISTRY = [
     {"key": "rahaza_shipments.shipment_number", "label": "Pengiriman", "group": "Gudang",
      "auto_only": True, "alasan_otomatis": 'Koleksi warisan (SSOT surat jalan pindah ke Gudang) — tidak ada layar penulisnya.',
      "default_format": "SHP-{YYYY}{MM}{DD}-{SEQ:3}", "tokens": []},
+    # 2026-11-02 (K12) — Set HPP (revaluasi persediaan). Dokumen lahir saat tombol "Set HPP"
+    # disimpan (core/accessory_valuation.set_unit_cost → jurnal revaluasi).
+    {"key": "rahaza_inventory_revaluations.reval_number", "label": "Revaluasi HPP (Set HPP)", "group": "Gudang",
+     "auto_only": True,
+     "alasan_otomatis": 'Nomor lahir saat HPP persediaan di-set ulang (Set HPP) — dokumen pendamping '
+                        'jurnal revaluasi, tidak ada kolom nomor di layarnya.',
+     "default_format": "RVL-{YYYY}{MM}-{SEQ:4}", "tokens": []},
+    # 2026-11-02 (K15) — Lembar Scan Keluar Penjualan: SATU lembar per (tanggal, lokasi), jadi
+    # nomornya TANPA nomor urut (tanggal + kode lokasi sudah unik; lembar kedua di hari yang sama
+    # mendapat akhiran -2, -3 …). Tanggal = tanggal lembar (WIB), bukan jam cetak.
+    {"key": "wh_scan_out_sheets.number", "label": "Lembar Scan Keluar Penjualan", "group": "Gudang",
+     "auto_only": True, "sequenced": False,
+     "alasan_otomatis": 'Lembar lahir otomatis saat scan pertama hari itu di sebuah lokasi.',
+     "default_format": "SKP-{YYYY}{MM}{DD}-{LOKASI}", "tokens": ["LOKASI"],
+     "catatan": "LOKASI = kode lokasi gudang. Lembar kedua di tanggal & lokasi yang sama diberi "
+                "akhiran -2, -3, … oleh sistem."},
 
     # ── PENGADAAN ─────────────────────────────────────────────────────────────
     # SESI #19 (2026-08-17) — PR Pengadaan DITEGAKKAN (permintaan owner).
@@ -89,6 +105,13 @@ DOC_NUMBER_REGISTRY = [
     {"key": "acc_purchase_requests.pr_number", "label": "Permintaan Beli Aksesoris", "group": "Pengadaan",
      "policy_enforced": True,
      "default_format": "ACC-PR-{SEQ:4}", "tokens": []},
+    # 2026-11-02 (K11) — Retur Pembelian (dokumen Pengadaan). Nomor dibuat sistem saat retur disimpan
+    # (routes/rahaza_purchase_returns.create_purchase_return).
+    {"key": "rahaza_purchase_returns.rtp_number", "label": "Retur Pembelian", "group": "Pengadaan",
+     "auto_only": True,
+     "alasan_otomatis": 'Nomor dibuat sistem saat Retur Pembelian disimpan (dari Karantina QC atau '
+                        'layar Retur Pembelian) — form tidak punya kolom nomor.',
+     "default_format": "RTP-{YYYY}{MM}-{SEQ:4}", "tokens": []},
 
     # ── PRODUKSI & MAKLON ─────────────────────────────────────────────────────
     # FASE G (2026-08-16) — DUA entri di bawah BARU. Nomor PO produksi (sumber
@@ -142,13 +165,17 @@ DOC_NUMBER_REGISTRY = [
                         'CMT" — satu penerimaan memakai satu nomor selamanya, jadi tidak '
                         'ada layar yang mengetiknya.',
      "default_format": "SJ-CMT/{YYYY}/{MM}/{SEQ:4}", "tokens": []},
-    # SESI #27 — "Retur Material Produksi" (`production_material_returns.ref_no`) DIHAPUS
-    # dari katalog: menu `prod-material-returns` sudah DI-DEPRECATE pemilik (duplikasi —
-    # material diurus di "Kirim Material CMT", lihat catatan portalNav.js), tidak ada satu
-    # pun layar yang membuatnya, dan koleksinya kosong. Menawarkan setelan Otomatis/Manual
-    # untuk dokumen yang tak bisa dibuat siapa pun = setelan yang berbohong. Jalur
-    # tulisnya masih ada di kode dan tercatat sebagai PENGECUALIAN BERALASAN pada gate
-    # INV-F25 (G12) supaya tidak hilang dari radar.
+    # SESI #27 — "Retur Material Produksi" dulu DIHAPUS dari katalog (menu di-deprecate, tak ada layar).
+    # 2026-11-02 (K10) — DIPASANG LAGI: layar Retur Material hidup kembali sebagai satu-satunya jalur
+    # koreksi Surat Jalan material yang bahannya sudah keluar (hapus SJ dikunci). Pengecualian G12
+    # dicabut; nomornya otomatis (jalur tulis belum lewat kebijakan Otomatis/Manual).
+    {"key": "production_material_returns.ref_no", "label": "Retur Material Produksi", "group": "Produksi",
+     "auto_only": True,
+     "alasan_otomatis": 'Nomor dibuat sistem saat retur material diajukan dari layar Retur Material '
+                        '(form tidak punya kolom nomor).',
+     "default_format": "PMR/{YYYY}/{MM}/{SEQ:4}", "tokens": [],
+     "catatan": "Retur bahan dari produksi/CMT ke gudang (stok kembali + jurnal balik). BERBEDA dari "
+                "Retur Produksi (barang jadi dari buyer)."},
     {"key": "production_returns.return_number", "label": "Retur Produksi (barang dari buyer)",
      "group": "Produksi", "policy_enforced": True,
      "default_format": "RTN-{SEQ:4}", "tokens": [],
@@ -220,6 +247,11 @@ DOC_NUMBER_REGISTRY = [
     {"key": "rahaza_credit_notes.cn_number", "label": "Nota Kredit", "group": "Keuangan",
      "auto_only": True, "alasan_otomatis": 'Dibuat sistem saat retur penjualan disetujui.',
      "default_format": "CN-{YYYY}{MM}{DD}-{SEQ:3}", "tokens": []},
+    # 2026-11-02 (K11) — Nota Debit pemasok atas Retur Pembelian (layar Nota Debit, Keuangan).
+    {"key": "rahaza_debit_notes.dn_number", "label": "Nota Debit Pemasok", "group": "Keuangan",
+     "auto_only": True,
+     "alasan_otomatis": 'Nomor dibuat sistem saat Keuangan menerbitkan Nota Debit atas Retur Pembelian.',
+     "default_format": "ND-{YYYY}{MM}-{SEQ:4}", "tokens": []},
     {"key": "rahaza_bank_transfers.ref_number", "label": "Transfer Bank", "group": "Keuangan",
      "policy_enforced": True,
      "catatan": "Nomor dokumen transfer internal (bukan nomor referensi bank).",

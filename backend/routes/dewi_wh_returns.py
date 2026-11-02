@@ -48,9 +48,21 @@ CONDITIONS     = ["Baik", "Rusak", "Rusak Ringan", "Rusak Berat", "Tidak Layak J
 CAUSES         = ["Kesalahan Gudang", "Kesalahan Customer", "Kesalahan Ekspedisi", "Lainnya"]
 # W4 (sesi #29) — "Karantina (Rusak)" DITAMBAH sebagai aksi resmi: barang rusak
 # tetap harus tercatat fisiknya, tetapi TIDAK boleh menambah stok jual.
-ACTIONS        = ["Restock ke Gudang", "Karantina (Rusak)", "Reshipment",
-                  "Appeal Platform", "Dibuang / Dispose", "Donasi"]
-STATUS_FLOW    = ["Pending", "Received", "Inspected", "Resolved", "Cancelled"]
+# 2026-11-02 (K1) — keputusan "Tolak → dikembalikan ke pembeli" ditambah (tanpa stok/jurnal).
+ACTIONS        = ["Restock ke Gudang", "Karantina (Rusak)", _rb.ACTION_REJECT_TO_BUYER,
+                  "Reshipment", "Appeal Platform", "Dibuang / Dispose", "Donasi"]
+# 2026-11-02 (K1) — "Reversed": keputusan dibalik (jurnal pembalik + stok keluar berjejak).
+STATUS_FLOW    = ["Pending", "Received", "Inspected", "Resolved", "Cancelled", "Reversed"]
+
+
+async def _refresh_mkt_rekap(db, marketing_return_id, user) -> None:
+    """2026-11-02 (K36) — retur mengurangi omzet rekap HANYA setelah keputusan gudang:
+    setiap kali keputusan dibuat/dibatalkan/dibalik, rekap tanggal retur dihitung ulang."""
+    if not marketing_return_id:
+        return
+    from core import marketing_returns as _mret
+    await _mret.refresh_rekap_for_return_ids(
+        db, [marketing_return_id], actor=(user or {}).get("email") or (user or {}).get("name") or "gudang")
 
 CHANNELS = ["Shopee", "Tokopedia", "TikTok Shop", "Lazada", "Instagram", "WhatsApp", "Lainnya"]
 
@@ -177,10 +189,12 @@ async def sync_from_marketing(request: Request):
         body = await request.json()
     except Exception:  # noqa: BLE001
         body = {}
+    # 2026-11-02 (K1) — sinkron HANYA membuat pekerjaan Pending; `auto_restock` dari body
+    # diabaikan (stok & jurnal hanya lahir dari keputusan gudang per retur).
     res = await _rb.sync_all(
         db, actor=user,
         dry_run=bool(body.get("dry_run")),
-        auto_restock=body.get("auto_restock", True) is not False,
+        auto_restock=False,
         condition=body.get("condition"),
         limit=int(body.get("limit") or 500))
     return {"success": True, "data": res}
@@ -295,6 +309,8 @@ async def create_return(request: Request):
         "created_by": user["name"], "created_at": _now(), "updated_at": _now()
     }
     await db.wh_returns.insert_one(doc)
+    doc.pop("_id", None)
+    await _rb.notify_pending(db, doc, actor=user)   # 2026-11-02 (K30): pembuatnya tidak ikut menerima
     return JSONResponse(serialize_doc(doc), status_code=201)
 
 
@@ -334,6 +350,7 @@ async def delete_return(return_id: str, request: Request):
     if doc.get("status") != "Pending":
         raise HTTPException(400, "Hanya return berstatus Pending yang bisa dihapus")
     await db.wh_returns.delete_one({"id": return_id})
+    await _rb.close_pending_notifs(db, return_id)   # 2026-11-02 (K30): sumber hilang → tertutup
     return {"ok": True}
 
 
@@ -356,12 +373,24 @@ async def receive_return(return_id: str, request: Request):
     if doc["status"] != "Pending":
         raise HTTPException(400, f"Status saat ini '{doc['status']}' — harus Pending untuk di-receive")
 
+    # 2026-11-02 (K1) — qty AKTUAL yang benar-benar ada di paket (bawaan = qty pengajuan).
+    # Inilah batas qty keputusan (restock/karantina) di langkah Selesaikan.
+    raw_rq = body.get("received_qty")
+    try:
+        received_qty = int(doc.get("qty") or 1) if raw_rq in (None, "") else int(float(raw_rq))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Qty diterima harus berupa angka bulat.")
+    if received_qty < 0:
+        raise HTTPException(400, "Qty diterima tidak boleh negatif.")
+
     timeline_entry = {
         "status": "Received", "at": _now(), "by": user["name"],
-        "note": body.get("unboxing_condition_notes", "Barang diterima dari ekspedisi")
+        "note": (f"Qty aktual diterima: {received_qty} (pengajuan {doc.get('qty') or 0}) · "
+                 + (body.get("unboxing_condition_notes") or "Barang diterima dari ekspedisi"))
     }
     upd = {
         "status": "Received",
+        "received_qty": received_qty,
         "received_at": _now(), "received_by": user["name"],
         "unboxing_condition_notes": body.get("unboxing_condition_notes", ""),
         "unboxing_photo_notes": body.get("unboxing_photo_notes", ""),
@@ -372,6 +401,8 @@ async def receive_return(return_id: str, request: Request):
         "$set": upd, "$push": {"timeline": timeline_entry}
     })
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
+    if result and result.get("source_marketing_return_id"):   # 2026-11-02 (K1) — layar Toko ikut tahu
+        await _rb._stamp_marketing(db, result["source_marketing_return_id"], result)
     return serialize_doc(result)
 
 
@@ -422,6 +453,8 @@ async def inspect_return(return_id: str, request: Request):
         "$set": upd, "$push": {"timeline": timeline_entry}
     })
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
+    if result and result.get("source_marketing_return_id"):   # 2026-11-02 (K1)
+        await _rb._stamp_marketing(db, result["source_marketing_return_id"], result)
     return serialize_doc(result)
 
 
@@ -433,9 +466,13 @@ async def resolve_return(return_id: str, request: Request):
                               (satu pintu) + baris ledger; lokasi ditentukan
                               kondisi barang (Baik → ZNA-FG, Rusak → karantina)
     - Karantina (Rusak)     → stok masuk ZNA-KARANTINA (tidak boleh dijual)
+    - Ditolak — Dikembalikan ke Pembeli → TANPA stok/jurnal (2026-11-02, K1)
     - Reshipment            → input resi baru
     - Appeal Platform       → update appeal_status
     - Dibuang / Dispose     → catat alasan
+
+    2026-11-02 (K1): inilah KEPUTUSAN gudang — satu-satunya titik stok & jurnal retur
+    lahir. Qty restock/karantina dibatasi qty yang DITERIMA (langkah Terima).
     """
     user = await require_auth(request)
     db = get_db()
@@ -449,8 +486,15 @@ async def resolve_return(return_id: str, request: Request):
     action = body.get("action_taken", doc.get("recommended_action", ""))
     if not action:
         raise HTTPException(400, "action_taken wajib diisi")
+    if action not in ACTIONS:
+        raise HTTPException(400, f"Keputusan harus salah satu dari: {', '.join(ACTIONS)}")
 
-    restock_qty = int(body.get("restock_qty", doc.get("qty", 1)) or 0)
+    restock_qty = 0
+    if action in (_rb.ACTION_RESTOCK, _rb.ACTION_QUARANTINE, _rb.ACTION_DISPOSE):
+        try:
+            restock_qty = _rb.decision_qty(doc, body.get("restock_qty"))
+        except _rb.ReturnBridgeError as e:
+            raise HTTPException(400, str(e))
 
     # ── W4 (sesi #29) — RESTOCK LEWAT SATU PINTU STOK ─────────────────────────
     # SEBELUM ini blok inilah yang membuat pemilik merasa menu ini "usang":
@@ -479,9 +523,28 @@ async def resolve_return(return_id: str, request: Request):
             restock_error = str(e)
             logger.error("[retur-gudang] restock %s gagal: %s", return_id, e)
 
+    # ── 2026-11-02 (K40) — keputusan "Dibuang": dicatat sebagai BEBAN ────────────
+    # Barang tidak masuk stok; nilai HPP-nya (qty × WAC saat keputusan) direklas Dr 6-1300 /
+    # Cr 5-1000 lewat penilai yang SAMA dengan retur rusak (`_value_damaged(disposed=True)`).
+    # Hasil `loss_*` (termasuk `loss_je_id`) disimpan supaya Balik Keputusan ikut membuat
+    # jurnal pembaliknya. Retur yang belum tertaut master FG tidak bisa dinilai → dicatat.
+    dispose_patch = {}
+    if action == _rb.ACTION_DISPOSE:
+        mid = doc.get("material_id") or doc.get("fg_material_id")
+        if mid:
+            dispose_patch = await _rb._value_damaged(db, doc, mid, restock_qty, user, disposed=True)
+        else:
+            dispose_patch = {"loss_kind": "disposed", "loss_je_id": None, "loss_post_error": (
+                "Retur belum tertaut master barang jadi — nilai kerugian 'Dibuang' tidak bisa dijurnal. "
+                "Tautkan ulang retur ini lalu Balik Keputusan & putuskan lagi.")}
+        dispose_patch["disposed_qty"] = restock_qty
+
     timeline_entry = {
         "status": "Resolved", "at": _now(), "by": user["name"],
-        "note": f"Aksi: {action} | {body.get('action_notes', '')}"
+        "note": f"Aksi: {action} | {body.get('action_notes', '')}" + (
+            f" | {restock_qty} pcs dibuang, beban Rp {dispose_patch['loss_amount']:,.0f}"
+            f" ({dispose_patch.get('loss_je_number') or 'jurnal gagal'})"
+            if dispose_patch.get("loss_amount") else "")
     }
     upd = {
         "status": "Resolved",
@@ -493,11 +556,13 @@ async def resolve_return(return_id: str, request: Request):
         "restock_qty": (restock_result or {}).get("qty", doc.get("restock_qty", 0))
         if restock_result else doc.get("restock_qty", 0),
         "restock_error": restock_error or "",
+        **dispose_patch,
         "updated_at": _now()
     }
     await db.wh_returns.update_one({"id": return_id}, {
         "$set": upd, "$push": {"timeline": timeline_entry}
     })
+    await _rb.close_pending_notifs(db, return_id)   # 2026-11-02 (K30): Perlu Tindakan gudang selesai
 
     # RC-FLOW-UX-11a (opsi B): callback ke marketing_returns bila retur ini
     # berasal dari retur Toko (link `source_marketing_return_id`). Update
@@ -541,6 +606,8 @@ async def resolve_return(return_id: str, request: Request):
                 {"id": return_id},
                 {"$set": {"mkt_sync_ok": False, "mkt_sync_error": str(e)[:300],
                           "mkt_sync_at": _now()}})
+        # 2026-11-02 (K36) — keputusan gudang inilah yang membuat retur mengurangi omzet rekap.
+        await _refresh_mkt_rekap(db, src_mkt_id, user)
 
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
     out = serialize_doc(result)
@@ -565,6 +632,9 @@ async def resolve_return(return_id: str, request: Request):
 async def quick_restock(return_id: str, request: Request):
     """Terima + inspeksi + selesaikan + tambah stok dalam SATU klik.
 
+    2026-11-02 (K1): ini KEPUTUSAN gudang (qty AKTUAL wajib ≤ qty diterima/pengajuan),
+    bukan lagi jalur otomatis dari Marketing.
+
     Alur 3 langkah (Pending→Received→Inspected→Resolved) tetap ditulis di timeline
     supaya jejak auditnya sama lengkap, tetapi petugas gudang tidak perlu membuka
     tiga formulir untuk satu barang retur yang jelas kondisinya.
@@ -585,6 +655,9 @@ async def quick_restock(return_id: str, request: Request):
         raise HTTPException(404, "Return tidak ditemukan")
     if doc.get("status") == "Cancelled":
         raise HTTPException(400, "Return sudah dibatalkan")
+    if doc.get("status") not in _rb.OPEN_STATUSES:
+        raise HTTPException(400, f"Retur berstatus '{doc.get('status')}' — sudah diputuskan. "
+                                 "Gunakan 'Balik Keputusan' bila keputusannya salah.")
     if doc.get("restocked"):
         raise HTTPException(400, (
             f"Stok retur ini sudah ditambahkan sebelumnya "
@@ -606,6 +679,7 @@ async def quick_restock(return_id: str, request: Request):
             note=body.get("note", ""))
     except _rb.ReturnBridgeError as e:
         raise HTTPException(400, str(e))
+    await _refresh_mkt_rekap(db, doc.get("source_marketing_return_id"), user)   # 2026-11-02 (K36)
 
     return {
         "success": True,
@@ -682,4 +756,40 @@ async def cancel_return(return_id: str, request: Request):
         "$push": {"timeline": timeline_entry}
     })
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
+    if result and result.get("source_marketing_return_id"):   # 2026-11-02 (K1)
+        await _rb._stamp_marketing(db, result["source_marketing_return_id"], result)
+    await _rb.close_pending_notifs(db, return_id)   # 2026-11-02 (K30)
     return serialize_doc(result)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K1) — BALIK KEPUTUSAN: jurnal pembalik + stok keluar berjejak
+# ══════════════════════════════════════════════════════════════════════════════
+@router.post("/returns/{return_id}/reverse-decision", dependencies=only(*WAREHOUSE_ROLES))
+async def reverse_decision(return_id: str, request: Request):
+    """Balik keputusan gudang yang SUDAH dibukukan (Resolved).
+
+    Body: {reason: str (wajib), reopen: bool (bawaan true)}
+      · stok yang dulu masuk dikeluarkan lagi (ledger `wh_return_reversal`);
+      · jurnal balik HPP / kerugian rusak dibalik dengan JURNAL PEMBALIK;
+      · bila ``reopen`` — pekerjaan baru berstatus Received dibuka untuk diputuskan ulang
+        (mis. Marketing menolak setelah barang terlanjur di-restock → putuskan "Ditolak —
+        Dikembalikan ke Pembeli").
+    """
+    user = await require_auth(request)
+    db = get_db()
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    try:
+        res = await _rb.reverse_decision(db, return_id, actor=user,
+                                         reason=str(body.get("reason") or ""),
+                                         reopen=body.get("reopen", True) is not False)
+    except _rb.ReturnBridgeError as e:
+        raise HTTPException(400, str(e))
+    await _refresh_mkt_rekap(db, (res.get("wh_return") or {}).get("source_marketing_return_id"), user)
+    return {"success": True, "message": res.get("message", ""),
+            "stock_out": res.get("stock_out"), "journals": res.get("journals") or [],
+            "data": serialize_doc(res.get("wh_return") or {}),
+            "reopened": serialize_doc(res.get("reopened")) if res.get("reopened") else None}

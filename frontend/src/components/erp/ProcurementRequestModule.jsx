@@ -17,6 +17,7 @@ import {
   Table2, LayoutGrid, ArrowUpDown,
 } from 'lucide-react';
 import { formatRupiah } from '@/lib/format';
+import { MoneyInput } from '@/components/ui/money-input';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite from '@/components/ui/pagination-lite';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
@@ -367,7 +368,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
                              onChange={e => setItem(i,'unit',e.target.value)}
                              data-testid={`pr-item-uom-${i}`} />
                     )}
-                    <input type="number" min="0" className={inp} placeholder="Estimasi Harga" value={it.estimated_price}
+                    <MoneyInput unstyled className={inp} placeholder="Estimasi Harga" value={it.estimated_price}
                            onChange={e => setItem(i,'estimated_price',e.target.value)}
                            data-testid={`pr-item-price-${i}`} />
                   </div>

@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from core import marketing_sales_shape as _shape
+from utils.waktu import today_wib, wib_date_str, fmt_wib
 
 def _uid():
     return str(uuid.uuid4())
@@ -177,8 +178,7 @@ def _is_pic_role(user) -> bool:
 
 def _generate_task_code():
     """Generate unique task code: TSK-YYYYMMDD-XXXX"""
-    now = _now()
-    date_str = now.strftime("%Y%m%d")
+    date_str = fmt_wib("%Y%m%d")   # nomor dokumen = tanggal WIB (No.54a)
     random_suffix = str(uuid.uuid4())[:8].upper()
     return f"TSK-{date_str}-{random_suffix}"
 
@@ -208,8 +208,8 @@ async def _recalculate_health_score(db, account_id: str):
     Rincian per pilar disimpan (`health_breakdown`) supaya layar bisa menjawab
     "kenapa skornya segitu" tanpa menghitung ulang di browser.
     """
-    date_to = _now().strftime("%Y-%m-%d")
-    date_from = (_now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    date_to = wib_date_str()
+    date_from = (today_wib() - timedelta(days=30)).isoformat()
 
     sales_data = await db.marketing_sales_data.find({
         "account_id": account_id,

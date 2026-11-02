@@ -16,6 +16,7 @@ from database import get_db
 from auth import require_auth
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/product-launches", tags=["marketing-product-launches"])
@@ -165,7 +166,7 @@ async def seed_product_launches_if_empty():
         derived = await _resolve_master_model(db, m["id"])
 
         days_offset = random.randint(-7, 30)
-        launch_date = (now + timedelta(days=days_offset)).strftime("%Y-%m-%d")
+        launch_date = (today_wib() + timedelta(days=days_offset)).isoformat()
         plats = random.sample(all_platforms, random.randint(1, min(3, len(all_platforms))))
         status = statuses[i % len(statuses)]
         if days_offset < 0 and status in ("planning", "ready"):
@@ -270,7 +271,7 @@ class LaunchUpdate(BaseModel):
 @router.get("/summary")
 async def get_summary(request: Request):
     user = await require_auth(request)
-    await seed_product_launches_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     # F6 — peluncuran bisa LINTAS-TOKO, jadi "milik saya" = pemilik ATAU sasaran.
@@ -283,7 +284,7 @@ async def get_summary(request: Request):
     counts = {s: 0 for s in LAUNCH_STATUSES}
     by_platform = {}
     upcoming_30 = 0
-    today = _now().date()
+    today = today_wib()
     in_30 = today + timedelta(days=30)
 
     for d in all_docs:
@@ -329,7 +330,7 @@ async def list_launches(
     date_to:   str = Query(default=""),
 ):
     user = await require_auth(request)
-    await seed_product_launches_if_empty()
+    # 2026-11-02 — seeder demo tidak lagi dipanggil saat GET (data fiktif terus muncul di data go-live).
     db = get_db()
 
     q = {}

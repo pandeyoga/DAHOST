@@ -147,6 +147,8 @@ export default function ExecutiveReportModule({ user, headers }) {
   const [aiNarrative, setAiNarrative] = useState('');
   const [aiMeta, setAiMeta] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  // 2026-11-02 (K33): akses diatur owner di Manajemen Role (izin mod.fin_exec_report.view).
+  const [denied, setDenied] = useState('');
   const { toast } = useToast();
   const authH = useMemo(() => headers || {}, [headers]);
 
@@ -162,7 +164,12 @@ export default function ExecutiveReportModule({ user, headers }) {
       setSummary(sumRes.data);
       setKpiComparison(cmpRes.data?.data || []);
       setTrend(trendRes.data?.data || []);
+      setDenied('');
     } catch (e) {
+      if (e.response?.status === 403) {
+        setDenied(e.response?.data?.detail || 'Akses Laporan Eksekutif tidak diizinkan untuk peran Anda.');
+        return;
+      }
       toast({ title: 'Error', description: e.response?.data?.detail || 'Gagal load laporan', variant: 'destructive' });
     } finally {
       setLoading(false);
@@ -215,6 +222,19 @@ export default function ExecutiveReportModule({ user, headers }) {
     { id: 'hr',         label: 'SDM' },
     { id: 'trend',      label: 'Trend Multi-KPI' },
   ];
+
+  if (denied) {
+    return (
+      <div className="p-4 md:p-6 text-foreground" data-testid="exec-report-denied">
+        <Card className="border-amber-300 dark:border-amber-800">
+          <CardContent className="p-6 space-y-2">
+            <p className="font-semibold">Laporan Eksekutif tidak tersedia untuk peran Anda</p>
+            <p className="text-sm text-muted-foreground">{denied}</p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 md:p-6 space-y-5 text-foreground">

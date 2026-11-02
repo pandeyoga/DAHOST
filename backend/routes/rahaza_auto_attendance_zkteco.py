@@ -6,11 +6,12 @@ import logging
 import uuid
 import json
 import os
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
 from auth import require_auth, serialize_doc
 from dotenv import load_dotenv
+from utils.waktu import today_wib
 
 load_dotenv()
 
@@ -39,12 +40,11 @@ router = APIRouter(tags=["rahaza-auto-attendance-zkteco"])
 RP_ID = os.environ.get("WEBAUTHN_RP_ID", "analytics-builds.preview.emergentagent.com")
 RP_NAME = os.environ.get("WEBAUTHN_RP_NAME", "Dewi Aditya ERP")
 ORIGIN = os.environ.get("WEBAUTHN_ORIGIN", "https://fresh-context-1.preview.emergentagent.com")
-EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
-def _today_iso(): return date.today().isoformat()
+def _today_iso(): return today_wib().isoformat()
 
 
 

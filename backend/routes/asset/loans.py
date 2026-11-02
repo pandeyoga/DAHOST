@@ -30,6 +30,7 @@ from database import get_db
 from utils.counters import gen_prefixed_number
 
 from ._helpers import router, _uid, _now, _ser
+from utils.waktu import today_wib
 
 LOAN_COLL = "dewi_asset_loans"
 
@@ -54,7 +55,7 @@ VALID_CONDITIONS = tuple(_CONDITION_TO_STATUS.keys())
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return today_wib().isoformat()
 
 
 def _d(s):
@@ -69,7 +70,7 @@ def _d(s):
 
 def _decorate(loan: dict, today: date | None = None) -> dict:
     """Tambah field turunan: overdue, days_overdue, days_out. Dihitung saat baca."""
-    today = today or date.today()
+    today = today or today_wib()
     out = _ser(dict(loan))
     exp = _d(out.get("expected_return_date"))
     start = _d(out.get("loan_date")) or today
@@ -105,7 +106,7 @@ async def list_asset_loans(request: Request):
                     {"borrower_name": rx}, {"borrower_divisi": rx}, {"purpose": rx}]
 
     docs = await db[LOAN_COLL].find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
-    today = date.today()
+    today = today_wib()
     rows = [_decorate(d, today) for d in docs]
     if sp.get("overdue") in ("1", "true", "yes"):
         rows = [r for r in rows if r["is_overdue"]]
@@ -117,7 +118,7 @@ async def asset_loans_summary(request: Request):
     """KPI untuk header modul Peminjaman Alat."""
     await require_auth(request)
     db = get_db()
-    today = date.today()
+    today = today_wib()
     month_prefix = today.isoformat()[:7]
 
     active = await db[LOAN_COLL].find({"status": "active"}, {"_id": 0}).to_list(1000)

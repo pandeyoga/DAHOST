@@ -5,7 +5,8 @@ Replaces .find().to_list(500) patterns with $group pipelines.
 from __future__ import annotations
 
 import re
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
+from utils.waktu import today_wib
 
 
 async def daily_wip_output(db, *, d_start: str, d_end: str) -> int:
@@ -58,7 +59,7 @@ async def active_alerts(db, *, limit: int = 5) -> list[dict]:
 
 async def wo_backlog(db) -> dict:
     """Counts for active and overdue WOs."""
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     # T-03 (FASE 3): SSOT production_jobs via core.wo_reader
     from core.wo_reader import count_wos
     active = await count_wos(db, statuses=["released", "in_progress"])
@@ -92,7 +93,7 @@ async def smart_search(db, *, query: str, today_iso: str | None = None, limit: i
     Avoids the previous pattern of `.find({}).to_list(500)` then filtering in Python.
     """
     q = (query or "").strip()
-    today_iso = today_iso or date.today().isoformat()
+    today_iso = today_iso or today_wib().isoformat()
     results: list[dict] = []
     if not q:
         return results

@@ -20,6 +20,7 @@ from core.enrichment import enrich_with_product_photos
 from core.cmt_override import (apply_scope, effective_vendor_id, resolve_override,
                                stamp as ov_stamp)
 import logging
+from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 
@@ -455,15 +456,16 @@ async def create_vendor_shipment(request: Request):
     # surat jalan yang baru dibuat DIBATALKAN kembali (tidak meninggalkan dokumen
     # setengah jadi — pelajaran surat jalan yatim di Fase E).
     material_issue = None
-    # HANYA untuk produksi INTERNAL. Pada MAKLON, material adalah milik KLIEN dan
-    # datang lewat kiriman klien — bukan stok gudang DA. Aturan ini bukan tebakan:
-    # `production_internal_adapter.create_mi_draft_from_job()` sudah menolak job
-    # maklon dengan alasan yang sama ("maklon: material dari klien via shipment").
-    # Memotong stok DA untuk maklon justru akan MENGHILANGKAN kain milik DA yang
-    # tidak pernah dikirim.
+    # Pada MAKLON, KAIN/bahan adalah milik KLIEN dan datang lewat kiriman klien — bukan
+    # stok gudang DA (`production_internal_adapter.create_mi_draft_from_job()` menolak job
+    # maklon dengan alasan yang sama). 2026-11-02 (K14 / P-7): TETAPI aksesoris MILIK DA di
+    # BOM maklon (`ownership='cv_da_stock'`) tetap dikeluarkan lewat MI sebagai biaya DA —
+    # dulu seluruh surat jalan maklon dikecualikan sehingga stok aksesoris DA tidak turun dan
+    # biayanya hilang. Mesin & aturan stok kurang SAMA dengan internal
+    # (`core.material_issue_engine.issue_for_maklon_shipment`); kain klien tidak di-MI.
+    _is_maklon_ship = shipment_business_type == 'maklon'
     _is_material_out = (
-        shipment_business_type != 'maklon'
-        and body.get('shipment_type', 'NORMAL') in ('NORMAL', 'ADDITIONAL', 'REPLACEMENT')
+        body.get('shipment_type', 'NORMAL') in ('NORMAL', 'ADDITIONAL', 'REPLACEMENT')
         and not is_vendor(user)
     )
     if _is_material_out:
@@ -477,8 +479,12 @@ async def create_vendor_shipment(request: Request):
             await release_number(db, 'vendor_shipments.shipment_number', shipment['shipment_number'])
 
         try:
-            material_issue = await mie.issue_for_vendor_shipment(
-                db, shipment, inserted_items, user)
+            if _is_maklon_ship:
+                material_issue = await mie.issue_for_maklon_shipment(
+                    db, shipment, inserted_items, user)
+            else:
+                material_issue = await mie.issue_for_vendor_shipment(
+                    db, shipment, inserted_items, user)
         except mie.MaterialShortage as e:
             await _rollback_shipment()
             lines = '; '.join(
@@ -582,6 +588,18 @@ async def update_vendor_shipment(sid: str, request: Request):
     await log_activity(user['id'], user['name'], 'Update', 'Vendor Shipment', f"Updated shipment: {sid}")
     return serialize_doc(await db.vendor_shipments.find_one({'id': sid}, {'_id': 0}))
 
+async def shipment_issued_mis(db, sid: str) -> list:
+    """MI (surat jalan ini + SJ anaknya) yang bahannya SUDAH keluar gudang dan belum diretur penuh.
+    2026-11-02 (K10). Status MI tetap 'issued' setelah retur (dibaca HPP & gerbang produksi);
+    retur dicatat di `return_status` ('partial' | 'full') oleh Retur Material."""
+    child_ids = [c['id'] for c in await db.vendor_shipments.find(
+        {'parent_shipment_id': sid}, {'_id': 0, 'id': 1}).to_list(None)]
+    rows = await db.rahaza_material_issues.find(
+        {'vendor_shipment_id': {'$in': [sid] + child_ids}, 'status': 'issued'},
+        {'_id': 0, 'id': 1, 'mi_number': 1, 'return_status': 1}).to_list(None)
+    return [m for m in rows if m.get('return_status') != 'full']
+
+
 @router.delete("/vendor-shipments/{sid}")
 async def delete_vendor_shipment(sid: str, request: Request):
     user = await require_auth(request)
@@ -590,6 +608,25 @@ async def delete_vendor_shipment(sid: str, request: Request):
     db = get_db()
     doc = await db.vendor_shipments.find_one({'id': sid})
     if not doc: raise HTTPException(404, 'Not found')
+    # ── 2026-11-02 (K10, audit g.md No.28): hapus DIKUNCI setelah bahan dikeluarkan ──────────
+    # Dulu hapus SJ hanya menghapus dokumen + job; Material Issue, potongan stok, dan jurnal
+    # Dr WIP / Cr persediaan TETAP ⇒ MI yatim, dan SJ ulang memotong stok DUA kali. Bahan yang
+    # sudah keluar dikembalikan lewat Retur Material (stok kembali + jurnal balik + status MI).
+    blocking = await shipment_issued_mis(db, sid)
+    if blocking:
+        nums = ', '.join(m.get('mi_number') or m.get('id') for m in blocking)
+        raise HTTPException(
+            400,
+            f"Surat jalan {doc.get('shipment_number') or sid} tidak bisa dihapus: bahan sudah dikeluarkan "
+            f"dari gudang lewat Material Issue {nums}. Gunakan Retur Material untuk mengembalikan bahan "
+            "ke gudang (stok kembali, jurnal dibalik, status MI diperbarui); setelah semua bahan diretur, "
+            "surat jalan boleh dihapus.")
+    # MI yang belum keluar (draft/menunggu approval) ikut dibatalkan — tidak meninggalkan MI yatim
+    child_ids = [c['id'] for c in await db.vendor_shipments.find({'parent_shipment_id': sid}, {'_id': 0, 'id': 1}).to_list(None)]
+    await db.rahaza_material_issues.update_many(
+        {'vendor_shipment_id': {'$in': [sid] + child_ids}, 'status': {'$in': ['draft', 'pending_approval']}},
+        {'$set': {'status': 'cancelled', 'cancel_reason': f"Surat jalan {doc.get('shipment_number')} dihapus",
+                  'updated_at': now()}})
     inspections = await db.vendor_material_inspections.find({'shipment_id': sid}).to_list(None)
     for insp in inspections:
         await db.vendor_material_inspection_items.delete_many({'inspection_id': insp['id']})
@@ -854,7 +891,7 @@ async def create_inspection(request: Request):
         try:
             from utils.counters import gen_prefixed_number as _gen
             code = await _gen(db, 'dewi_cmt_component_requests', 'request_code',
-                              f"REQ-KRG-{now().strftime('%y%m%d')}-", 3)
+                              f"REQ-KRG-{fmt_wib('%y%m%d')}-", 3)
             req_items = [{
                 'component_type': m.get('product_name') or m.get('sku', '') or 'material',
                 'size': m.get('size', ''), 'color': m.get('color', ''),

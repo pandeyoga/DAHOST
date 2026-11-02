@@ -290,8 +290,18 @@ export default function SupplierInvoiceModule({ token }) {
   const approve = async (inv) => {
     setSending(true);
     try {
-      await apiPost(token, `/api/rahaza/ap-invoices/${inv.id}/send`, {});
-      toast.success(`Faktur ${inv.invoice_number} disetujui & dicatat ke buku besar`);
+      const out = await apiPost(token, `/api/rahaza/ap-invoices/${inv.id}/send`, {});
+      // 2026-11-02 (audit Tambahan B): "dicatat ke buku besar" hanya bila posting GL benar-benar sukses.
+      const posting = out?._posting_result;
+      if (posting?.ok) {
+        toast.success(`Faktur ${inv.invoice_number} disetujui & dicatat ke buku besar`);
+      } else {
+        toast.warning(
+          `Faktur ${inv.invoice_number} disetujui, tetapi BELUM tercatat ke buku besar: `
+          + `${posting?.error || 'hasil posting tidak diketahui'}. Perbaiki penyebabnya lalu posting ulang.`,
+          { duration: 10000 },
+        );
+      }
       setDetail(null);
       await load();
     } catch (e) {

@@ -9,6 +9,7 @@ import { AccountBadge, getPlatformConfig } from './marketing/AccountBadge';
 // F10 (sesi #10) — angka omzet harian wajib bisa dibawa keluar layar (rapat/akuntansi).
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
@@ -38,6 +39,7 @@ import { PageHeader } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
 const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
@@ -57,7 +59,7 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
   const [saveError, setSaveError] = useState('');          // pesan galat yang MENETAP
   const [form, setForm] = useState({
     account_id: '',
-    date: new Date().toISOString().slice(0, 10),
+    date: todayWIB(),
     revenue: '',
     orders: '',
     aov: '',
@@ -89,7 +91,7 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
       setActiveTab('total');
       setForm({
         account_id: preSelectedAccountId || '',
-        date: new Date().toISOString().slice(0, 10),
+        date: todayWIB(),
         revenue: '',
         orders: '',
         aov: '',
@@ -408,21 +410,24 @@ function SalesDataEntryDialog({ open, onOpenChange, onSaved, token, accounts, pr
   );
 }
 
-function NumField({ label, value, onChange, testId, step = '0.01', disabled = false, hint }) {
+// `money` = kolom nominal Rupiah (Revenue/AOV/GMV) → MoneyInput (titik ribuan otomatis,
+// No.45). Kolom lain (orders, %, rating, jam, hitungan) tetap input angka biasa.
+function NumField({ label, value, onChange, testId, step = '0.01', disabled = false, hint, money = false }) {
+  const Field = money ? MoneyInput : GlassInput;
   return (
     <div>
       <Label className="text-xs flex items-center gap-1">
         {label}
         {disabled && <Lock size={9} className="text-amber-500" />}
       </Label>
-      <GlassInput
-        type="number"
-        step={step}
+      <Field
+        type={money ? undefined : 'number'}
+        step={money ? undefined : step}
         value={value}
         onChange={e => onChange(e.target.value)}
         disabled={disabled}
         readOnly={disabled}
-        className={disabled ? 'opacity-60 cursor-not-allowed' : undefined}
+        className={[money ? 'h-10' : '', disabled ? 'opacity-60 cursor-not-allowed' : ''].filter(Boolean).join(' ') || undefined}
         data-testid={testId}
       />
       {disabled && hint && (
@@ -441,10 +446,10 @@ function CommonMetricsForm({ form, setForm, lockedMetrics = false }) {
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <NumField label="Revenue (Rp)" testId="sd-revenue" value={form.revenue} onChange={v => setForm(f => ({ ...f, revenue: v }))} disabled={lockedMetrics} hint={lockHint} />
+        <NumField money label="Revenue (Rp)" testId="sd-revenue" value={form.revenue} onChange={v => setForm(f => ({ ...f, revenue: v }))} disabled={lockedMetrics} hint={lockHint} />
         <NumField label="Orders" testId="sd-orders" value={form.orders} onChange={v => setForm(f => ({ ...f, orders: v }))} disabled={lockedMetrics} hint={lockHint} />
-        <NumField label="AOV" testId="sd-aov" value={form.aov} onChange={v => setForm(f => ({ ...f, aov: v }))} />
-        <NumField label="GMV" testId="sd-gmv" value={form.gmv} onChange={v => setForm(f => ({ ...f, gmv: v }))} />
+        <NumField money label="AOV" testId="sd-aov" value={form.aov} onChange={v => setForm(f => ({ ...f, aov: v }))} />
+        <NumField money label="GMV" testId="sd-gmv" value={form.gmv} onChange={v => setForm(f => ({ ...f, gmv: v }))} />
           <NumField label="Conversion Rate (%)" testId="sd-cr" value={form.conversion_rate} onChange={v => setForm(f => ({ ...f, conversion_rate: v }))} />
       </div>
       <details className="rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)] px-3 py-2">
@@ -552,12 +557,9 @@ export default function SalesDataEntryModule({ token }) {
     }
     setRecomputing(true);
     try {
-      const to = new Date();
-      const from = new Date(Date.now() - 60 * 864e5);
-      const iso = (d) => d.toISOString().slice(0, 10);
       const res = await fetch(
         `/api/marketing/sales/recompute?account_id=${filter.account_id}`
-        + `&date_from=${iso(from)}&date_to=${iso(to)}&force=${force}`,
+        + `&date_from=${daysAgoWIB(60)}&date_to=${todayWIB()}&force=${force}`,
         { method: 'POST', headers });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.detail || 'Gagal menghitung ulang');

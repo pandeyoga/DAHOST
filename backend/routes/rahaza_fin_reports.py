@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, Request, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from database import get_db
 from auth import require_auth, serialize_doc
-from datetime import date
 from typing import Optional
 import io
 
@@ -16,6 +15,7 @@ from core.fin_statements import (
     compute_trial_balance, compute_worksheet, compute_profit_loss_monthly, compute_balance_sheet_monthly,
     compute_cash_flow_by_account, xlsx_profit_loss_monthly, xlsx_balance_sheet_monthly, xlsx_worksheet, xlsx_cash_flow,
 )
+from utils.waktu import today_wib
 
 router = APIRouter(prefix="/api/rahaza/finance/reports", tags=["rahaza-fin-reports"],
                    dependencies=[Depends(require_portal_dep("finance"))])  # FIN-04: laporan keuangan hanya portal keuangan
@@ -36,7 +36,7 @@ async def trial_balance(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not to_date:
         to_date = as_of or today
     return await compute_trial_balance(db, from_date, to_date, show_zero)
@@ -51,7 +51,7 @@ async def worksheet(
 ):
     """Neraca lajur: saldo awal · mutasi · saldo akhir · kolom Laba Rugi · kolom Neraca + baris laba bersih penyeimbang."""
     await require_auth(request)
-    return await compute_worksheet(get_db(), from_date, to_date or date.today().isoformat(), show_zero)
+    return await compute_worksheet(get_db(), from_date, to_date or today_wib().isoformat(), show_zero)
 
 
 @router.get("/profit-loss-monthly")
@@ -80,7 +80,7 @@ async def export_xlsx(
     """Ekspor Excel memakai perhitungan yang SAMA dengan layar (core.fin_statements)."""
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if report in ("profit-loss-monthly", "balance-sheet-monthly"):
         y = year or int(today[:4])
         if report == "profit-loss-monthly":
@@ -108,7 +108,7 @@ async def general_ledger(
     """Return all lines for a specific account within a date range, with running balance."""
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not to_date:
         to_date = today
     acc = await db.rahaza_coa_accounts.find_one({"code": account_code}, {"_id": 0})
@@ -207,13 +207,26 @@ async def profit_loss(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not to_date:
         to_date = today
     if not from_date:
         from_date = f"{today[:4]}-01-01"
+    return await compute_profit_loss(db, from_date, to_date)
 
-    match = {"date": {"$gte": from_date, "$lte": to_date}, "source_module": {"$ne": "year_end_close"}}  # M-09: jurnal penutup bukan L/R
+
+async def compute_profit_loss(db, from_date: Optional[str], to_date: Optional[str]) -> dict:
+    """SATU rumus Laba/Rugi buku besar (2026-11-02, K20/K33): dipakai layar L/R, kartu
+    "Laba kotor (buku besar)" di Rekap Keuangan, dan laba bersih Laporan Eksekutif supaya
+    ketiganya tidak pernah beda angka. `from_date`/`to_date` None = tanpa batas sisi itu."""
+    rng = {}
+    if from_date:
+        rng["$gte"] = from_date
+    if to_date:
+        rng["$lte"] = to_date
+    match = {"source_module": {"$ne": "year_end_close"}}  # M-09: jurnal penutup bukan L/R
+    if rng:
+        match["date"] = rng
     per_acc = await _aggregate_by_account(db, match)
 
     # Get all leaf accounts for types of interest
@@ -307,7 +320,7 @@ async def balance_sheet(
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     if not as_of:
         as_of = today
 
@@ -476,18 +489,45 @@ async def cash_flow(
     to_date: Optional[str] = Query(None, alias="to"),
 ):
     """F3: Cash Flow Statement (metode direct).
-    Sumber utama: rahaza_cash_movements (category-based grouping ke Operating/Investing/Financing) —
-    agregasi di Mongo (tanpa batas 500 baris). Ditambah `by_account`: arus kas dari akun lawan jurnal
-    yang menyentuh akun kas/bank, dikelompokkan lewat tag OPR/INV/PND akun (ala sheet Arus-K).
+    2026-11-02 (K19): kedua tampilan dari buku besar — `activities` per kategori `source_module` jurnal
+    yang menyentuh akun kas/bank (Operating/Investing/Financing), `by_account` per akun lawan dengan tag
+    OPR/INV/PND akun (ala sheet Arus-K). Kas awal & akhir keduanya = saldo GL akun kas/bank.
     """
     await require_auth(request)
     db = get_db()
-    today = date.today().isoformat()
+    today = today_wib().isoformat()
     return await _cash_flow_data(db, from_date or f"{today[:4]}-01-01", to_date or today)
 
 
+@router.get("/cash-mutations")
+async def cash_mutations(
+    request: Request,
+    account_id: Optional[str] = Query(None),
+    gl_account_code: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
+):
+    """2026-11-02 (K19): daftar mutasi rekening Kas & Bank DITURUNKAN DARI GL (baris jurnal akun
+    rekening) — dipakai panel "Mutasi" di layar Kas & Bank. `rahaza_cash_movements` hanya metadata."""
+    await require_auth(request)
+    db = get_db()
+    acc = None
+    if account_id:
+        acc = await db.rahaza_cash_accounts.find_one({"id": account_id}, {"_id": 0})
+        if not acc:
+            raise HTTPException(404, "Rekening tidak ditemukan.")
+    code = (acc or {}).get("gl_account_code") or gl_account_code
+    if not code:
+        raise HTTPException(400, "Rekening belum tertaut akun GL — tekan 'Sinkron Bagan Akun & GL' dulu.")
+    from routes.rahaza_posting import cash_mutations_from_gl
+    out = await cash_mutations_from_gl(db, code, from_date, to_date, account_id=(acc or {}).get("id"))
+    out["account"] = {"id": (acc or {}).get("id"), "code": (acc or {}).get("code") or code,
+                      "name": (acc or {}).get("name")}
+    return serialize_doc(out)
+
+
 INVESTING_CATS = {"asset_purchase", "asset_sale", "investment"}
-FINANCING_CATS = {"loan_proceeds", "loan_repayment", "owner_investment", "owner_withdrawal", "dividend"}
+FINANCING_CATS = {"loan_proceeds", "loan_repayment", "owner_investment", "owner_withdrawal", "dividend", "opening_balance"}
 
 
 def _bucket(cat: str) -> str:
@@ -500,48 +540,57 @@ def _bucket(cat: str) -> str:
 
 
 async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
-    # 1) Agregasi kategori × arah langsung di Mongo — dulu to_list(500) memotong data pada volume nyata
-    pipe = [{"$match": {"date": {"$gte": from_date, "$lte": to_date}}},
-            {"$group": {"_id": {"cat": {"$ifNull": ["$category", "other_operating"]}, "dir": "$direction"},
-                        "amount": {"$sum": {"$ifNull": ["$amount", 0]}}, "count": {"$sum": 1}}}]
+    """2026-11-02 (K19): tampilan "Per Kategori" DITURUNKAN DARI GL — baris buku besar akun kas/bank
+    (`core.fin_statements.cash_account_codes`, sama dengan tampilan Per Akun), kategori dari
+    `source_module` jurnal (routes.rahaza_posting.cash_category). Dulu Σ `rahaza_cash_movements`:
+    transfer/kasbon/payroll/jurnal manual/impor tidak ada, kas awal = saldo GL HARI INI − Σ mutasi
+    (audit No.46: kas awal 1.700.000 padahal riil 0). Kini kas awal/akhir = saldo GL per tanggal.
+    Jurnal `opening_balance` (saldo awal go-live) = kas awal, bukan arus periode (sama dgn Per Akun)."""
+    from core.fin_statements import cash_account_codes
+    from routes.rahaza_posting import cash_accounts_with_gl, cash_category, cash_category_label
+    codes = sorted(await cash_account_codes(db))
     activities = {"operating": {}, "investing": {}, "financing": {}}
-    async for r in db.rahaza_cash_movements.aggregate(pipe):
-        cat = r["_id"]["cat"] or "other_operating"
-        slot = activities[_bucket(cat)].setdefault(cat, {"inflow": 0.0, "outflow": 0.0, "net": 0.0, "count": 0})
-        amt = float(r.get("amount") or 0)
-        if r["_id"]["dir"] == "out":
-            slot["outflow"] += amt
-            slot["net"] -= amt
-        else:
-            slot["inflow"] += amt
-            slot["net"] += amt
-        slot["count"] += int(r.get("count") or 0)
+    if codes:
+        pipe = [{"$match": {"account_code": {"$in": codes}, "date": {"$gte": from_date, "$lte": to_date},
+                            "source_module": {"$ne": "opening_balance"}}},
+                {"$group": {"_id": {"$ifNull": ["$source_module", "other"]}, "debit": {"$sum": "$debit"},
+                            "credit": {"$sum": "$credit"}, "count": {"$sum": 1}}}]
+        async for r in db.rahaza_journal_lines.aggregate(pipe):
+            cat = cash_category(r.get("_id"))
+            slot = activities[_bucket(cat)].setdefault(cat, {"inflow": 0.0, "outflow": 0.0, "net": 0.0, "count": 0,
+                                                              "sources": set()})
+            d, c = float(r.get("debit") or 0), float(r.get("credit") or 0)
+            slot["inflow"] += d
+            slot["outflow"] += c
+            slot["net"] += d - c
+            slot["count"] += int(r.get("count") or 0)
+            slot["sources"].add(r.get("_id") or "other")
 
     def _format_bucket(b):
-        rows = [{"category": cat, "label": cat.replace("_", " ").title(), "inflow": round(s["inflow"], 2),
-                 "outflow": round(s["outflow"], 2), "net": round(s["net"], 2), "count": s["count"]} for cat, s in b.items()]
+        rows = [{"category": cat, "label": cash_category_label(cat), "inflow": round(s["inflow"], 2),
+                 "outflow": round(s["outflow"], 2), "net": round(s["net"], 2), "count": s["count"],
+                 "source_modules": sorted(s["sources"])} for cat, s in b.items()]
         rows.sort(key=lambda r: r["category"])
         return {"items": rows, "total": round(sum(r["net"] for r in rows), 2)}
 
     operating, investing, financing = (_format_bucket(activities[k]) for k in ("operating", "investing", "financing"))
     net_change = round(operating["total"] + investing["total"] + financing["total"], 2)
 
-    # 2) Kas awal & akhir — saldo dari Buku Besar (Iter 122); opening = saldo kini − Σ mutasi sejak from_date
-    from routes.rahaza_posting import cash_accounts_with_gl
-    cash_accs = await cash_accounts_with_gl(db, {})
-    closing_cash_now = sum(float(a.get("balance") or 0) for a in cash_accs)
-    delta_since_from = 0.0
-    async for r in db.rahaza_cash_movements.aggregate([
-        {"$match": {"date": {"$gte": from_date}}},
-        {"$group": {"_id": "$direction", "amount": {"$sum": {"$ifNull": ["$amount", 0]}}}}]):
-        delta_since_from += -float(r["amount"] or 0) if r["_id"] == "out" else float(r["amount"] or 0)
-    opening_cash = closing_cash_now - delta_since_from
+    # Kas awal = saldo GL akun kas sebelum from_date + jurnal saldo awal go-live s.d. to_date (rumus Per Akun)
+    opening_cash = 0.0
+    if codes:
+        async for r in db.rahaza_journal_lines.aggregate([
+            {"$match": {"account_code": {"$in": codes},
+                        "$or": [{"date": {"$lt": from_date}}, {"source_module": "opening_balance", "date": {"$lte": to_date}}]}},
+                {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
+            opening_cash = round(float(r.get("d") or 0) - float(r.get("c") or 0), 2)
     closing_cash = round(opening_cash + net_change, 2)
+    cash_accs = await cash_accounts_with_gl(db, {})
 
     by_account = await compute_cash_flow_by_account(db, from_date, to_date)
 
     return {
-        "meta": {"from": from_date, "to": to_date, "method": "direct"},
+        "meta": {"from": from_date, "to": to_date, "method": "direct", "category_source": "gl_source_module"},
         "activities": {
             "operating": {"label": "Aktivitas Operasi", **operating},
             "investing": {"label": "Aktivitas Investasi", **investing},
@@ -564,90 +613,143 @@ async def _cash_flow_data(db, from_date: str, to_date: str) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# M-01 (Iter 116) — Nilai Persediaan Barang Jadi dari lapisan FIFO vs saldo GL 1-1404
+# M-01 (Iter 116) — Nilai Persediaan Barang Jadi vs saldo GL 1-1404
+# 2026-11-02 (owner No.26a): nilai = Σ stok bernilai × WAC (bukan lagi lapisan FIFO)
 # ═══════════════════════════════════════════════════════════════════════════════
 FG_INVENTORY_ACCOUNT = "1-1404"
 
 
 @router.get("/fg-inventory-valuation")
 async def fg_inventory_valuation(request: Request, as_of: Optional[str] = Query(None)):
-    """Kartu stok FG (fg_cost_layers qty_remaining × unit_cost) per SKU, dibandingkan
-    dengan saldo GL 1-1404 sampai `as_of` (default hari ini). Lapisan = posisi SAAT INI;
-    GL = per tanggal. Selisih dijelaskan: lapisan belum berjurnal (WIP→FG belum diposting),
-    lapisan tanpa biaya, dan stok fisik tanpa lapisan."""
+    """Nilai persediaan FG per SKU = stok FG milik DA yang bernilai × WAC (core/fg_cost_layers),
+    dibandingkan dengan saldo GL 1-1404 sampai `as_of` (default hari ini). Stok & WAC =
+    posisi SAAT INI; GL = per tanggal. Selisih dijelaskan: penerimaan bernilai yang belum
+    berjurnal (WIP→FG belum diposting) dan stok tanpa biaya (WAC 0 / penerimaan Rp 0)."""
     await require_auth(request)
     db = get_db()
-    return await compute_fg_valuation(db, as_of or date.today().isoformat())
+    return await compute_fg_valuation(db, as_of or today_wib().isoformat())
+
+
+def fg_valuation_status(*, difference: float, unexplained: float, uncosted_qty: float) -> dict:
+    """Status rekonsiliasi Nilai Persediaan FG (fungsi murni, 2026-11-02 / P-1).
+
+    Dulu `reconciled`/`explained` hanya melihat selisih rupiah. Barang FG yang stoknya
+    ada tetapi biayanya Rp 0 (`uncosted_qty` > 0) membuat nilai stok DAN GL sama-sama
+    0 → selisih 0 → "aman", padahal nilainya macet di WIP dan HPP jualnya 0. Sekarang
+    stok tanpa biaya = TIDAK beres dan tidak terjelaskan, supaya alarm harian menyala.
+    """
+    issues = []
+    if uncosted_qty > 0:
+        issues.append(f"{uncosted_qty:g} pcs FG tanpa biaya (WAC 0 atau penerimaan Rp 0) — nilainya belum "
+                      "pindah dari WIP dan HPP penjualannya 0. Periksa BOM & biaya jahit SPK batch tersebut.")
+    if abs(unexplained) >= 1:
+        issues.append(f"Selisih Rp {unexplained:,.0f} antara Σ stok × WAC dan GL 1-1404 belum terjelaskan.")
+    no_uncosted = not (uncosted_qty > 0)
+    return {"reconciled": abs(difference) < 1 and no_uncosted,
+            "explained": abs(unexplained) < 1 and no_uncosted,
+            "issues": issues}
+
+
+def fg_valuation_row(*, qty: float, wac: float, layers: list, wac_initialized: bool) -> dict:
+    """Satu baris laporan (fungsi murni). `layers` = semua lapisan SKU ini (jejak batch).
+
+    * nilai = qty bernilai × WAC (Σ stok × WAC, keputusan owner No.26a);
+    * `unposted_value` = penerimaan bernilai tanpa JE 1-1404 (semua lapisan, termasuk yang
+      jejaknya sudah habis — nilainya sudah masuk WAC tetapi tidak pernah masuk GL);
+    * `uncosted_qty` = stok tanpa biaya: seluruh stok bila WAC 0, selain itu lapisan Rp 0
+      yang masih tersisa (penerimaan Rp 0 tidak mengubah WAC — aturan bahan)."""
+    open_rows = [ly for ly in layers if float(ly.get("qty_remaining") or 0) > 0]
+    layer_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows)
+    trail_value = sum(float(ly.get("qty_remaining") or 0) * float(ly.get("unit_cost") or 0) for ly in open_rows)
+    zero_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows if float(ly.get("unit_cost") or 0) <= 0)
+    unposted = [ly for ly in layers if not ly.get("gl_je_id") and float(ly.get("total_cost") or 0) > 0]
+    if qty > 0 and wac <= 0:
+        uncosted = qty
+    else:
+        uncosted = min(zero_qty, max(qty, 0.0))
+    value = round(qty * wac, 2)
+    return {"stock_qty": round(qty, 2), "wac_unit_cost": round(wac, 4), "value": value,
+            "wac_initialized": wac_initialized,
+            # nama lama dipertahankan untuk layar (RahazaFGValuationModule): nilainya kini WAC
+            "avg_unit_cost": round(wac, 2), "layer_value": value,
+            "layer_qty": round(layer_qty, 2), "qty_diff": round(qty - layer_qty, 2),
+            "trail_value": round(trail_value, 2),
+            "unposted_layers": len(unposted),
+            "unposted_value": round(sum(float(ly.get("total_cost") or 0) for ly in unposted), 2),
+            "uncosted_qty": round(uncosted, 2), "layers_open": len(open_rows)}
 
 
 async def compute_fg_valuation(db, as_of_date: str) -> dict:
     """Inti laporan M-01 — dipakai endpoint di atas DAN cron `fg-valuation-check`."""
-    layers = await db.fg_cost_layers.find({}, {"_id": 0}).to_list(20000)
-    per_mat: dict = {}
-    unposted_value, unposted_layers, uncosted_qty = 0.0, 0, 0
+    from core import fg_cost_layers as fcl
+    from core.catalog_stock import blocked_location_ids
+    from core.stock_schema import read_qty
+    layers = await db.fg_cost_layers.find({}, {"_id": 0}).to_list(50000)
+    by_mat: dict = {}
     for ly in layers:
-        mid = ly.get("material_id") or ""
-        rem = float(ly.get("qty_remaining") or 0)
-        uc = float(ly.get("unit_cost") or 0)
-        m = per_mat.setdefault(mid, {"material_id": mid, "sku": ly.get("sku") or "", "layer_qty": 0.0, "layer_value": 0.0,
-                                     "layers_open": 0, "uncosted_qty": 0.0, "unposted_value": 0.0, "stock_qty": 0.0})
-        if rem > 0:
-            m["layer_qty"] += rem
-            m["layer_value"] += rem * uc
-            m["layers_open"] += 1
-            if uc <= 0:
-                m["uncosted_qty"] += rem
-                uncosted_qty += rem
-        if not ly.get("gl_je_id") and float(ly.get("total_cost") or 0) > 0:
-            # belum ada JE WIP→FG utk lapisan ini → GL 1-1404 belum memuat nilainya
-            unposted_layers += 1
-            unposted_value += float(ly.get("total_cost") or 0)
-            m["unposted_value"] += float(ly.get("total_cost") or 0)
+        by_mat.setdefault(ly.get("material_id") or "", []).append(ly)
+    fg_ids = [m["id"] async for m in db.rahaza_materials.find({"type": "fg"}, {"_id": 0, "id": 1})]
+    cat_ids = [r["_id"] for r in await db.rahaza_material_stock.aggregate([
+        {"$match": {"inventory_category": "fg_internal"}}, {"$group": {"_id": "$material_id"}}]).to_list(50000)]
+    ids = sorted({i for i in list(by_mat) + fg_ids + cat_ids if i})
+    mats = {m["id"]: m async for m in db.rahaza_materials.find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "code": 1, "name": 1, fcl.WAC_FIELD: 1, fcl.WAC_COMPONENTS: 1,
+                               "wac_source": 1})}
+    blocked = await blocked_location_ids(db)
+    qty_by: dict = {}
+    phys_by: dict = {}
+    async for s in db.rahaza_material_stock.find({"material_id": {"$in": ids}}, {"_id": 0}):
+        mid = s.get("material_id")
+        phys_by[mid] = phys_by.get(mid, 0.0) + read_qty(s)
+        if fcl.is_valued_row(s, blocked):
+            qty_by[mid] = qty_by.get(mid, 0.0) + read_qty(s)
 
-    stock_rows = await db.rahaza_material_stock.aggregate([
-        {"$match": {"inventory_category": "fg_internal"}},
-        {"$group": {"_id": "$material_id", "qty": {"$sum": {"$ifNull": ["$qty", 0]}}}},
-    ]).to_list(20000)
-    for s in stock_rows:
-        mid = s["_id"] or ""
-        m = per_mat.setdefault(mid, {"material_id": mid, "sku": "", "layer_qty": 0.0, "layer_value": 0.0,
-                                     "layers_open": 0, "uncosted_qty": 0.0, "unposted_value": 0.0, "stock_qty": 0.0})
-        m["stock_qty"] = float(s.get("qty") or 0)
-
-    mats = {m["id"]: m async for m in db.rahaza_materials.find({"id": {"$in": [k for k in per_mat if k]}},
-                                                              {"_id": 0, "id": 1, "code": 1, "name": 1})}
     rows = []
-    for mid, m in per_mat.items():
+    for mid in ids:
         info = mats.get(mid) or {}
-        m["code"] = info.get("code") or m["sku"] or mid[:8]
-        m["name"] = info.get("name") or ""
-        m["avg_unit_cost"] = round(m["layer_value"] / m["layer_qty"], 2) if m["layer_qty"] > 0 else 0.0
-        m["qty_diff"] = round(m["stock_qty"] - m["layer_qty"], 2)
-        for k in ("layer_qty", "layer_value", "uncosted_qty", "unposted_value", "stock_qty"):
-            m[k] = round(m[k], 2)
-        if m["layer_qty"] or m["stock_qty"] or m["unposted_value"]:
-            rows.append(m)
-    rows.sort(key=lambda r: -r["layer_value"])
+        ly = by_mat.get(mid) or []
+        initialized = isinstance(info.get(fcl.WAC_COMPONENTS), dict)
+        # FG yang belum pernah dinilai WAC: pratinjau WAC awal (rumus migrasi), tanpa menulis
+        wac = (float(info.get(fcl.WAC_FIELD) or 0) if initialized
+               else fcl.initial_wac_from_layers(ly)["unit_cost"])
+        qty = float(qty_by.get(mid, 0.0))
+        r = fg_valuation_row(qty=qty, wac=wac, layers=ly, wac_initialized=initialized)
+        if not (r["stock_qty"] or r["layer_qty"] or r["unposted_value"]):
+            continue
+        r.update({"material_id": mid, "code": info.get("code") or (ly[0].get("sku") if ly else "") or mid[:8],
+                  "name": info.get("name") or "", "sku": info.get("code") or "",
+                  "physical_qty": round(phys_by.get(mid, 0.0), 2),
+                  "wac_source": info.get("wac_source") or ("preview_from_layers" if ly else "none")})
+        rows.append(r)
+    rows.sort(key=lambda r: -abs(r["value"]))
 
     agg = await _aggregate_by_account(db, {"date": {"$lte": as_of_date}, "account_code": FG_INVENTORY_ACCOUNT})
     a = agg.get(FG_INVENTORY_ACCOUNT) or {}
     gl_balance = round(float(a.get("debit") or 0) - float(a.get("credit") or 0), 2)
-    layer_value = round(sum(r["layer_value"] for r in rows), 2)
-    difference = round(layer_value - gl_balance, 2)
+    value = round(sum(r["value"] for r in rows), 2)
+    unposted_value = round(sum(r["unposted_value"] for r in rows), 2)
+    uncosted_qty = round(sum(r["uncosted_qty"] for r in rows), 2)
+    difference = round(value - gl_balance, 2)
     explained = round(difference - unposted_value, 2)
+    status = fg_valuation_status(difference=difference, unexplained=explained, uncosted_qty=uncosted_qty)
     return {
-        "as_of": as_of_date, "gl_account": FG_INVENTORY_ACCOUNT,
+        "as_of": as_of_date, "gl_account": FG_INVENTORY_ACCOUNT, "basis": "wac",
         "rows": rows,
-        "totals": {"stock_qty": round(sum(r["stock_qty"] for r in rows), 2), "layer_qty": round(sum(r["layer_qty"] for r in rows), 2),
-                   "layer_value": layer_value, "gl_balance": gl_balance, "difference": difference,
-                   "unposted_layers": unposted_layers, "unposted_value": round(unposted_value, 2),
-                   "uncosted_qty": round(uncosted_qty, 2), "unexplained_difference": explained},
-        "reconciled": abs(difference) < 1,
-        "explained": abs(explained) < 1,
+        "totals": {"stock_qty": round(sum(r["stock_qty"] for r in rows), 2),
+                   "layer_qty": round(sum(r["layer_qty"] for r in rows), 2),
+                   "value": value, "layer_value": value, "gl_balance": gl_balance, "difference": difference,
+                   "unposted_layers": sum(r["unposted_layers"] for r in rows), "unposted_value": unposted_value,
+                   "uncosted_qty": uncosted_qty, "unexplained_difference": explained,
+                   "wac_not_initialized": sum(1 for r in rows if not r["wac_initialized"])},
+        "reconciled": status["reconciled"],
+        "explained": status["explained"],
+        "issues": status["issues"],
         "notes": [
-            "Nilai lapisan = Σ qty_remaining × unit_cost (FIFO, posisi saat ini).",
+            "Nilai = Σ stok FG milik DA yang bernilai (semua lokasi kecuali karantina/terblokir) × WAC "
+            "(rata-rata bergerak, keputusan owner No.26a). Kolom lama 'layer_value'/'avg_unit_cost' kini berisi angka WAC.",
             "Saldo GL = Dr − Cr akun 1-1404 sampai tanggal as_of.",
-            "unposted_value = lapisan bernilai yang belum punya JE WIP→FG (jalankan Backfill WIP→FG).",
-            "uncosted_qty = stok berlapisan tetapi unit_cost 0 (harga bahan/upah PO belum terisi).",
+            "unposted_value = penerimaan bernilai yang belum punya JE WIP→FG (jalankan Backfill WIP→FG).",
+            "uncosted_qty = stok tanpa biaya (WAC 0, atau penerimaan Rp 0 yang masih ada di jejak lapisan).",
+            "layer_qty = sisa jejak lapisan batch (analitik, bukan dasar nilai); qty_diff = stok − jejak.",
         ],
     }

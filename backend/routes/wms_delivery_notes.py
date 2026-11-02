@@ -66,6 +66,7 @@ from utils.pdf_common import (
 )
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from utils.waktu import fmt_wib
 
 try:
     from reportlab.lib import colors
@@ -140,7 +141,7 @@ async def _next_sj_number(db, sj_type: str) -> str:
     lewat `create_sj` memakai `issue_number` supaya kebijakan Otomatis/Manual owner
     benar-benar berlaku — lihat catatan di `data/doc_number_registry.py`.
     """
-    prefix = f"{sj_type}/{_now().strftime('%Y/%m')}/"
+    prefix = f"{sj_type}/{fmt_wib('%Y/%m')}/"
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1 -> dup/E11000)
     return await gen_prefixed_number(db, "wh_delivery_notes", "sj_number", prefix, 4,
                                      ctx={"TIPE": sj_type}, config_key=SJ_DOCNUM_KEY)

@@ -8,6 +8,7 @@ import { DataTable } from './DataTableV2';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { toast } from 'sonner';
 import { typeToCategory } from '@/lib/itemTaxonomy';
+import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk Jadi).
 const CAT_ICON = { bahan: Scale, aksesoris: Gem, fg: Archive };
@@ -28,7 +29,8 @@ function uniqOptions(rows, field) {
 
 // U7: Check if expiry date is within 30 days
 function expiryWarning(expiry_date) {  if (!expiry_date) return null;
-  const days = Math.floor((new Date(expiry_date) - new Date()) / 86400000);
+  // hari kalender WIB: kedaluwarsa baru 'lewat' setelah tanggalnya habis, bukan sejak 07:00 WIB
+  const days = daysBetweenISO(todayWIB(), toWIBDate(expiry_date));
   if (days < 0) return { label: 'Kedaluwarsa', cls: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-400/10' };
   if (days <= 30) return { label: `${days}h lagi`, cls: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-400/10' };
   return null;
@@ -417,7 +419,7 @@ export default function RahazaStockModule({ token }) {
         emptyTitle="Belum ada stok"
         emptyDescription='Mulai dari "Penerimaan" untuk menambah stok ke lokasi.'
         emptyIcon={Package}
-        exportFilename={`material-stock-${new Date().toISOString().slice(0,10)}.csv`}
+        exportFilename={`material-stock-${todayWIB()}.csv`}
       />
 
       {/* Movements ledger */}
@@ -450,6 +452,8 @@ export default function RahazaStockModule({ token }) {
                     {m.type === 'issue'    && <span className="text-red-600 dark:text-red-300">Issue</span>}
                     {m.type === 'transfer' && <span className="text-primary">Transfer</span>}
                     {m.type === 'adjust'   && <span className="text-amber-600 dark:text-amber-300">Adjust</span>}
+                    {/* 2026-11-02 (K9): mutasi mesin opname tunggal */}
+                    {m.type === 'opname'   && <span className="text-sky-600 dark:text-sky-300">Opname</span>}
                   </td>
                   <td className="px-3 py-1.5 text-foreground">{m.material_code}</td>
                   <td className="px-3 py-1.5 text-right font-mono font-semibold text-foreground">{Number(m.qty).toFixed(3)} {m.unit || ''}</td>

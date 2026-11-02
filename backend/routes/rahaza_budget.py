@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Request, HTTPException, UploadFile, File
 from database import get_db
 from auth import require_auth, serialize_doc
 from routes.shared import get_pagination_params, paginated_response
-from datetime import datetime, timezone, date
+from datetime import datetime, timezone
 from typing import Optional
 import uuid
 import logging
@@ -30,6 +30,7 @@ import io
 from core.authz import only  # T-01 2.3
 from core.roles import FINANCE_ROLES  # T-01 2.3
 from routes.shared import require_portal_dep  # FIN-04
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/rahaza/finance", tags=["rahaza-budget"],
@@ -71,7 +72,7 @@ async def create_budget(request: Request):
     db = get_db()
     body = await request.json()
     name = (body.get("name") or "").strip()
-    year = int(body.get("year") or date.today().year)
+    year = int(body.get("year") or today_wib().year)
     if not name:
         raise HTTPException(400, "Nama budget wajib diisi")
     doc = {
@@ -308,6 +309,25 @@ async def delete_budget_item(bid: str, iid: str, request: Request):
 
 
 # ─── VARIANCE REPORT ────────────────────────────────────────────────────────
+INCOME_TYPES = {"REVENUE", "OTHER_INCOME"}
+
+
+def budget_row_figures(budgeted: float, debit: float, credit: float, acc_type: str) -> dict:
+    """2026-11-02 (audit No.53): realisasi bertanda menurut tipe akun.
+    Pendapatan (REVENUE/OTHER_INCOME): aktual = kredit − debit (positif); di atas target = baik.
+    Biaya/lainnya: aktual = debit − kredit; di bawah anggaran = baik (perilaku lama).
+    `variance` selalu bertanda "menguntungkan" (> 0 = baik) sehingga warna layar tetap satu aturan."""
+    is_income = (acc_type or "").upper() in INCOME_TYPES
+    actual = round((credit - debit) if is_income else (debit - credit), 2)
+    variance = round((actual - budgeted) if is_income else (budgeted - actual), 2)
+    var_pct = round((variance / budgeted * 100) if budgeted != 0 else 0, 1)
+    if is_income:
+        status = "above_target" if variance > 0 else ("below_target" if variance < 0 else "on_target")
+    else:
+        status = "over" if variance < 0 else ("under" if variance > 0 else "on_target")
+    return {"kind": "revenue" if is_income else "expense", "actual": actual, "variance": variance,
+            "variance_pct": var_pct, "status": status}
+
 
 @router.get("/budgets/{bid}/variance")
 async def budget_variance(bid: str, request: Request):
@@ -320,7 +340,7 @@ async def budget_variance(bid: str, request: Request):
     budget = await db.rahaza_budgets.find_one({"id": bid}, {"_id": 0})
     if not budget:
         raise HTTPException(404, "Budget tidak ditemukan")
-    budget.get("year", date.today().year)
+    budget.get("year", today_wib().year)
     # Get all budget items
     items = await db.rahaza_budget_items.find({"budget_id": bid}, {"_id": 0}).sort("month", 1).to_list(length=10000)
     if not items:
@@ -333,10 +353,12 @@ async def budget_variance(bid: str, request: Request):
     # FIN-08: baris buku besar menulis account_code + period_code (bukan account_id/journal_date).
     # Petakan account_id item anggaran → code, lalu agregasi per (code, period). Jalur cadangan
     # rahaza_expenses DIHAPUS (account_id di sana = rekening kas, dan pengeluaran sudah terjurnal → dobel).
-    actual_map = {}  # (account_id, month) → actual_amount
+    actual_map = {}  # (account_id, month) → (debit, credit)
+    type_by_id = {}
     if acc_ids and months:
-        accs = await db.rahaza_coa_accounts.find({"id": {"$in": acc_ids}}, {"_id": 0, "id": 1, "code": 1}).to_list(len(acc_ids))
+        accs = await db.rahaza_coa_accounts.find({"id": {"$in": acc_ids}}, {"_id": 0, "id": 1, "code": 1, "type": 1}).to_list(len(acc_ids))
         code_to_id = {a["code"]: a["id"] for a in accs if a.get("code")}
+        type_by_id = {a["id"]: a.get("type") or "" for a in accs}
         if code_to_id:
             agg = await db.rahaza_journal_lines.aggregate([
                 {"$match": {"account_code": {"$in": list(code_to_id)}, "period_code": {"$in": months}}},
@@ -345,7 +367,8 @@ async def budget_variance(bid: str, request: Request):
             ]).to_list(length=100000)
             for row in agg:
                 key = (code_to_id[row["_id"]["code"]], row["_id"]["period"])
-                actual_map[key] = actual_map.get(key, 0) + (float(row["debit"]) - float(row["credit"]))
+                d0, c0 = actual_map.get(key, (0.0, 0.0))
+                actual_map[key] = (d0 + float(row["debit"]), c0 + float(row["credit"]))
 
     # Build variance rows
     rows = []
@@ -353,9 +376,9 @@ async def budget_variance(bid: str, request: Request):
         acc_id    = item.get("account_id", "")
         month_key = item.get("month", "")
         budgeted  = float(item.get("amount_budgeted") or 0)
-        actual    = round(actual_map.get((acc_id, month_key), 0), 2)
-        variance  = round(budgeted - actual, 2)
-        var_pct   = round((variance / budgeted * 100) if budgeted != 0 else 0, 1)
+        _d, _c    = actual_map.get((acc_id, month_key), (0.0, 0.0))
+        fig       = budget_row_figures(budgeted, _d, _c, type_by_id.get(acc_id, ""))
+        actual, variance, var_pct = fig["actual"], fig["variance"], fig["variance_pct"]
         rows.append({
             "item_id":        item["id"],
             "account_id":     acc_id,
@@ -368,13 +391,23 @@ async def budget_variance(bid: str, request: Request):
             "actual":         actual,  # alias (uji owner T5 / klien lain)
             "variance":       variance,
             "variance_pct":   var_pct,
-            "status":         ("over" if variance < 0 else ("under" if variance > 0 else "on_target")),
+            "status":         fig["status"],
+            "kind":           fig["kind"],
         })
 
     total_budgeted = round(sum(r["amount_budgeted"] for r in rows), 2)
     total_actual   = round(sum(r["amount_actual"]   for r in rows), 2)
-    total_var      = round(total_budgeted - total_actual, 2)
+    # 2026-11-02: Σ selisih bertanda "menguntungkan" (untuk anggaran biaya saja = budget − aktual, sama
+    # dengan sebelumnya); pendapatan & biaya juga dipisah di `by_kind`.
+    total_var      = round(sum(r["variance"] for r in rows), 2)
     total_var_pct  = round((total_var / total_budgeted * 100) if total_budgeted != 0 else 0, 1)
+    by_kind = {}
+    for r in rows:
+        k = by_kind.setdefault(r["kind"], {"budgeted": 0.0, "actual": 0.0, "variance": 0.0})
+        k["budgeted"] += r["amount_budgeted"]
+        k["actual"] += r["amount_actual"]
+        k["variance"] += r["variance"]
+    by_kind = {k: {f: round(v, 2) for f, v in d.items()} for k, d in by_kind.items()}
     return {
         "budget": serialize_doc(budget),
         "rows":   rows,
@@ -383,6 +416,7 @@ async def budget_variance(bid: str, request: Request):
             "total_actual":   total_actual,
             "total_variance": total_var,
             "total_variance_pct": total_var_pct,
+            "by_kind": by_kind,
         },
     }
 
@@ -461,7 +495,7 @@ async def import_budget_excel(bid: str, request: Request, file: UploadFile = Fil
 async def budget_summary(request: Request, year: Optional[int] = None):
     await require_auth(request)
     db = get_db()
-    cur_year = year or date.today().year
+    cur_year = year or today_wib().year
     budgets = await db.rahaza_budgets.find({"year": cur_year}, {"_id": 0}).to_list(50)
     result = []
     for b in budgets:

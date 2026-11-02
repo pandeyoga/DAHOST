@@ -74,6 +74,7 @@ from core import platform_balance as _bal
 from core import settlement_import as _simport
 from database import get_db
 from routes.shared import require_portal
+from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/marketing/settlements", tags=["marketing-settlements"])
@@ -130,6 +131,34 @@ COA = {
 }
 # Potongan iklan dari pencairan = iklan platform itu sendiri (6-1100 kini akun induk).
 ADS_BY_PLATFORM = {"shopee": "6-1112", "tiktok": "6-1110", "tiktokshop": "6-1110", "tokopedia": "6-1113"}
+
+# 2026-11-02 (S2-H butir 7): akun POTONGAN dibaca dari peran Profil Posting `marketplace_settlement`
+# (bawaan = konstanta di atas, jadi perilaku sama sampai Finance mengubah profil). Konstanta tetap
+# menjadi cadangan bila peran dikosongkan (core/coa_bindings.CONSTANT_SOURCES, reads_profile=True).
+PROFILE_EVENT = "marketplace_settlement"
+COA_ROLES = {"returns": "debit_returns", "discount": "debit_discount", "platform_fee": "debit_platform_fee",
+             "ads": "debit_ads_default", "other": "credit_other_income", "other_expense": "debit_other_expense"}
+ADS_ROLES = {"shopee": "debit_ads_shopee", "tiktok": "debit_ads_tiktok", "tiktokshop": "debit_ads_tiktok",
+             "tokopedia": "debit_ads_tokopedia"}
+
+
+async def deduction_codes(db) -> tuple:
+    """({kunci COA: kode efektif}, {kunci: 'profil'|'global'}) — peran profil, cadangan konstanta."""
+    from routes.rahaza_posting_profiles import role_code
+    eff, sources = dict(COA), {k: "global" for k in COA}
+    for key, role in COA_ROLES.items():
+        code = await role_code(db, PROFILE_EVENT, role, None)
+        if code:
+            eff[key], sources[key] = code, "profil"
+    return eff, sources
+
+
+async def ads_code_for(db, platform: str) -> str | None:
+    """Akun iklan per platform: peran profil `debit_ads_<platform>`, cadangan ADS_BY_PLATFORM."""
+    from routes.rahaza_posting_profiles import role_code
+    p = (platform or "").lower()
+    role = ADS_ROLES.get(p)
+    return await role_code(db, PROFILE_EVENT, role, ADS_BY_PLATFORM.get(p)) if role else None
 
 # Field uang + arahnya terhadap `net_payout`. Satu daftar ini dipakai oleh
 # perhitungan selisih DAN pembuat jurnal, jadi keduanya mustahil berbeda.
@@ -199,9 +228,8 @@ ACCOUNT_COA_ROLES = {
 async def _resolve_coa(db, account: dict) -> dict:
     """Peta akun EFEKTIF untuk satu laporan dana dilepas. Melempar 400 bila toko
     belum punya akun piutang toko/pendapatan sendiri — TIDAK diam-diam memakai kontrol."""
-    eff = dict(COA)
-    sources = {k: "global" for k in COA}
-    ads = ADS_BY_PLATFORM.get((account.get("platform") or "").lower())
+    eff, sources = await deduction_codes(db)   # 2026-11-02 (S2-H butir 7): peran profil
+    ads = await ads_code_for(db, account.get("platform"))
     if ads and await db.rahaza_coa_accounts.find_one({"code": ads, "active": True, "is_group": {"$ne": True}}, {"_id": 0}):
         eff["ads"], sources["ads"] = ads, "platform"
     missing = []
@@ -238,6 +266,81 @@ async def _resolve_coa(db, account: dict) -> dict:
     return {"codes": eff, "sources": sources}
 
 
+# ── KUNCI JURNAL PER DOKUMEN (2026-11-02, audit K-1/K-2) ─────────────────────
+# Dulu `source_ref` jurnal = nomor platform SAJA. Nomor hanya unik PER TOKO (keputusan
+# owner No.1/No.2), jadi toko B dengan nomor yang sama "menemukan" jurnal toko A
+# (jawaban `already`), dananya tidak pernah masuk buku dan GL per toko salah (D3).
+# Kunci baru = nomor + id dokumen. Jurnal LAMA yang ber-kunci nomor mentah tetap dikenali,
+# tetapi HANYA oleh dokumen yang benar-benar dicatatnya (baris akun saldo toko itu +
+# nominal dokumen) — dipakai bersama `marketing_withdrawals.py`.
+def doc_je_ref(number: str, doc_id: str) -> str:
+    return f"{(number or '').strip()}@{doc_id}"
+
+
+def doc_je_identity(doc: dict) -> tuple:
+    """(nomor, nominal, sisi baris akun saldo toko) — pencairan: Dr saldo toko sebesar
+    net_payout; penarikan: Cr saldo toko sebesar amount."""
+    if "settlement_id" in doc:
+        return doc.get("settlement_id") or "", float(doc.get("net_payout") or 0), "debit"
+    return doc.get("reference") or "", float(doc.get("amount") or 0), "credit"
+
+
+def legacy_je_owned(je: dict, receivable_codes, amount: float, side: str,
+                    account_name: str = "") -> bool:
+    """Jurnal kunci-lama (nomor mentah) milik dokumen ini? Ya bila memuat baris akun saldo
+    toko dokumen ini dengan nominal dokumen di sisi yang benar."""
+    codes = {c for c in (receivable_codes or ()) if c}
+    amt = round(float(amount or 0), 2)
+    for ln in je.get("lines") or []:
+        if ln.get("account_code") in codes and abs(round(float(ln.get(side) or 0), 2) - amt) < 0.01:
+            return True
+    # Nominal 0 tidak menulis baris saldo toko → jatuh ke nama toko di memo.
+    return amt == 0 and bool(account_name) and f"— {account_name} (" in (je.get("memo") or "")
+
+
+def je_owned_by_doc(je: dict, doc: dict, receivable_codes) -> bool:
+    number, amount, side = doc_je_identity(doc)
+    ref = je.get("source_ref") or ""
+    if ref.endswith(f"@{doc.get('id')}"):
+        return True
+    if ref == number:
+        return legacy_je_owned(je, receivable_codes, amount, side, doc.get("account_name") or "")
+    return True  # kunci lain yang tidak dikenal: konservatif, tetap dianggap mengikat
+
+
+async def _doc_receivable_codes(db, doc: dict, extra=()) -> set:
+    acc = await db.marketing_platform_accounts.find_one(
+        {"id": doc.get("account_id")}, {"_id": 0, "ar_account_code": 1, "coa_receivable_code": 1}) or {}
+    return {c for c in (_bal.receivable_code(acc), ((doc.get("coa_used") or {}).get("receivable")), *extra) if c}
+
+
+async def find_doc_je(db, source_module: str, doc: dict, receivable_codes) -> Optional[dict]:
+    """Jurnal aktif MILIK dokumen ini (kunci baru, lalu kunci lama yang terbukti miliknya)."""
+    from routes.rahaza_posting import _find_existing_je
+    number, amount, side = doc_je_identity(doc)
+    je = await _find_existing_je(db, source_module, doc_je_ref(number, doc["id"]))
+    if je:
+        return je
+    legacy = await _find_existing_je(db, source_module, number)
+    if legacy and legacy_je_owned(legacy, receivable_codes, amount, side, doc.get("account_name") or ""):
+        return legacy
+    return None
+
+
+async def assert_linked_je_owned(db, coll: str, doc: dict, je: dict):
+    """Tautan `je_id` warisan K-1/K-2 bisa menunjuk jurnal TOKO LAIN. Jangan posting jurnal
+    itu atas nama dokumen ini: lepas tautannya dan minta 'Buat jurnal' lagi."""
+    if je_owned_by_doc(je, doc, await _doc_receivable_codes(db, doc)):
+        return
+    await db[coll].update_one({"id": doc["id"]}, {"$set": {
+        "je_id": None, "je_number": None, "je_status": None,
+        "je_mislinked_ref": je.get("je_number"), "updated_at": _now()}})
+    raise HTTPException(
+        409, f"Jurnal {je.get('je_number')} ternyata milik toko lain dengan nomor yang sama "
+             f"(bug lama: kunci jurnal hanya nomor). Tautannya sudah dilepas — tekan "
+             f"'Buat jurnal' untuk membuat jurnal dokumen ini sendiri.")
+
+
 def _with_math(doc: dict) -> dict:
     """Tambahkan hasil pemeriksaan aritmetika — SELALU, bukan hanya saat gagal."""
     expected = _expected_net(doc)
@@ -266,7 +369,8 @@ async def coa_map(request: Request):
     await require_auth(request)
     db = get_db()
     out = []
-    for role, code in COA.items():
+    eff, _src = await deduction_codes(db)   # 2026-11-02: kode efektif (peran profil), bukan konstanta
+    for role, code in eff.items():
         acc = await db.rahaza_coa_accounts.find_one(
             {"code": code}, {"_id": 0, "code": 1, "name": 1, "type": 1, "active": 1})
         out.append({"role": role, "code": code,
@@ -400,7 +504,7 @@ async def summary_by_account(request: Request, month: str = Query(default="")):
     months = [m["_id"] for m in months_raw if m.get("_id")]
     if month and not re.fullmatch(r"\d{4}-\d{2}", month):
         raise HTTPException(400, "Format bulan harus YYYY-MM")
-    month = month or (months[0] if months else date.today().strftime("%Y-%m"))
+    month = month or (months[0] if months else today_wib().strftime("%Y-%m"))
 
     rows = await db[COLL].aggregate([
         {"$match": {**q, "settlement_date": {"$regex": f"^{month}"}}},
@@ -535,6 +639,10 @@ async def create_settlement(body: SettlementIn, request: Request):
     user = await _require_finance(request)
     db = get_db()
     account = await _scope.require_account(db, body.account_id)
+    # 2026-11-02: nomor dirapikan (spasi) supaya "PCR-1 " tidak lolos dari cek duplikat.
+    body.settlement_id = (body.settlement_id or "").strip()
+    if not body.settlement_id:
+        raise HTTPException(400, "Nomor pencairan wajib diisi.")
 
     # Kunci duplikat = (toko, nomor pencairan). SENGAJA TANPA `platform`:
     # `_scope.stamp_account()` menimpa `platform` dengan platform milik toko,
@@ -575,10 +683,15 @@ async def _je_still_binding(db, doc: dict) -> bool:
     je_id = doc.get("je_id")
     if not je_id:
         return False
-    je = await db.rahaza_journal_entries.find_one({"id": je_id}, {"_id": 0, "status": 1})
+    je = await db.rahaza_journal_entries.find_one(
+        {"id": je_id}, {"_id": 0, "status": 1, "source_ref": 1, "lines": 1, "memo": 1})
     if not je:
         return False          # jurnalnya sudah tidak ada (draft dihapus Finance)
-    return je.get("status") != "voided"
+    if je.get("status") == "voided":
+        return False
+    # 2026-11-02 (K-1/K-2): tautan warisan ke jurnal TOKO LAIN bernomor sama tidak mengikat
+    # dokumen ini — kalau mengikat, dokumen itu terkunci tanpa pernah punya jurnal sendiri.
+    return je_owned_by_doc(je, doc, await _doc_receivable_codes(db, doc))
 
 
 @router.put("/{sid}")
@@ -600,7 +713,22 @@ async def update_settlement(sid: str, body: SettlementIn, request: Request):
                  f"Batalkan/void jurnalnya dulu di Portal Finance sebelum "
                  f"mengubah angkanya — kalau tidak, jurnal dan sumbernya akan "
                  f"menyebut angka yang berbeda.")
+    # 2026-11-02 (audit No.1): edit dulu melewati cek duplikat (toko, nomor) dan bisa
+    # memindah toko tanpa memperbarui nama/platform. Aturannya sama dengan saat membuat.
+    account = await _scope.require_account(db, body.account_id)
+    body.settlement_id = (body.settlement_id or "").strip()
+    if not body.settlement_id:
+        raise HTTPException(400, "Nomor pencairan wajib diisi.")
+    dup = await db[COLL].find_one({
+        "account_id": body.account_id, "settlement_id": body.settlement_id, "id": {"$ne": sid},
+    }, {"_id": 0, "id": 1, "settlement_date": 1})
+    if dup:
+        raise HTTPException(
+            409, f"Pencairan '{body.settlement_id}' untuk toko ini sudah pernah dicatat "
+                 f"(tanggal {dup.get('settlement_date')}). Satu pencairan yang tercatat dua "
+                 f"kali akan menggandakan pendapatan.")
     upd = body.dict()
+    _scope.stamp_account(upd, account)
     # Dana dilepas yang sudah DITARIK sebagian tidak boleh dikecilkan di bawah penarikannya —
     # saldo platform akan negatif dan penarikan yang sudah tercatat kehilangan sumbernya.
     new_net = round(float(upd.get("net_payout") or 0), 2)
@@ -686,9 +814,11 @@ async def create_draft_journal(sid: str, request: Request):
             f"'Potongan lain' atau 'Penyesuaian' beserta keterangannya — supaya "
             f"biaya yang belum dikenal punya NAMA, bukan hilang.")
 
-    from routes.rahaza_posting import _create_posted_je, _find_existing_je
+    from routes.rahaza_posting import _create_posted_je
 
-    existing = await _find_existing_je(db, SOURCE_MODULE, doc["settlement_id"])
+    # 2026-11-02 (K-1): cari jurnal MILIK dokumen ini, bukan jurnal apa pun bernomor sama.
+    existing = await find_doc_je(db, SOURCE_MODULE, doc,
+                                 await _doc_receivable_codes(db, doc, (ACC["receivable"],)))
     if existing:
         await db[COLL].update_one({"id": sid}, {"$set": {
             "je_id": existing["id"], "je_number": existing["je_number"],
@@ -738,7 +868,7 @@ async def create_draft_journal(sid: str, request: Request):
         memo=f"Dana dilepas {doc['platform']} ke saldo toko — {doc.get('account_name') or ''} "
              f"({doc['settlement_id']})",
         source_module=SOURCE_MODULE,
-        source_ref=doc["settlement_id"],
+        source_ref=doc_je_ref(doc["settlement_id"], doc["id"]),  # 2026-11-02: unik per dokumen (K-1)
         lines_raw=lines,
         user=user,
         status="draft",
@@ -790,8 +920,17 @@ async def reconcile(
             raise HTTPException(404, f"Pencairan '{settlement_id}' tidak ditemukan.")
         _with_math(focus)
         account_id = focus.get("account_id") or account_id
-        date_from = focus.get("period_from") or focus.get("settlement_date") or date_from
-        date_to = focus.get("period_to") or focus.get("settlement_date") or date_to
+        # 2026-11-02 (K5) — periode WAJIB. Dulu bila kosong dipakai tanggal dana dilepas
+        # (satu hari) dan selisihnya tidak berarti apa-apa (uji audit PCR-1004).
+        if not (focus.get("period_from") and focus.get("period_to")):
+            raise HTTPException(400, (
+                f"Periode pesanan pencairan {focus.get('settlement_id')} belum diisi. Ubah "
+                "pencairan ini dan isi 'Periode dari' & 'sampai' (tanggal pesanan yang dicairkan), "
+                "lalu cocokkan lagi."))
+        date_from = focus.get("period_from")
+        date_to = focus.get("period_to")
+    elif not (date_from and date_to):
+        raise HTTPException(400, "Periode wajib diisi: tanggal dari & sampai (K5).")
 
     sq: dict = {}
     vis = await _scope.visible_account_ids(db, user)
@@ -820,7 +959,8 @@ async def reconcile(
                     "gross": {"$sum": "$gross_sales"},
                     "net": {"$sum": "$net_payout"},
                     "ded": {"$sum": "$total_deductions"},
-                    "refunds": {"$sum": "$refunds"}}},
+                    "refunds": {"$sum": "$refunds"},
+                    "seller_discount": {"$sum": "$seller_discount"}}},
     ]).to_list(1)
     s = sagg[0] if sagg else {}
 
@@ -861,6 +1001,16 @@ async def reconcile(
                     "revenue_product": {"$sum": "$revenue_product"}}},
     ]).to_list(1)
     o = oagg[0] if oagg else {}
+    # 2026-11-02 (K5) — omzet pesanan RETUR (tidak akan cair) dipisah, dan refund parsial
+    # retur modul atas pesanan periode ini (pesanan yang tidak berstatus retur/batal).
+    ragg = await db.marketing_orders.aggregate([
+        {"$match": {**oq, "status": "returned"}},
+        {"$group": {"_id": None, "n": {"$sum": 1},
+                    "revenue_product": {"$sum": "$revenue_product"}}},
+    ]).to_list(1)
+    r_ = ragg[0] if ragg else {}
+    returned_product = round(float(r_.get("revenue_product") or 0), 2)
+    partial = await _partial_refunds_for_orders(db, oq)
 
     gross = round(float(s.get("gross") or 0), 2)
     omzet_gross = round(float(o.get("revenue_gross") or 0), 2)
@@ -879,29 +1029,12 @@ async def reconcile(
     cancelled_count = await db.marketing_orders.count_documents(
         {**{k: v for k, v in oq.items() if k != "status"},
          "status": {"$in": list(CANCELLED_STATUSES)}})
-    named = []
-    if abs(gap_gross) < 0.01:
-        named.append({"name": "cocok", "amount": 0.0,
-                      "label": "Bruto pencairan sama dengan omzet bruto periode.",
-                      "action": "Tidak ada yang perlu ditelusuri."})
-    elif gap_gross < 0:
-        named.append({
-            "name": "pesanan_belum_cair", "amount": round(-gap_gross, 2),
-            "label": "Pesanan sudah tercatat tetapi uangnya belum ikut dicairkan "
-                     "di pencairan ini.",
-            "action": "Wajar bila pesanan akhir periode baru cair di pencairan "
-                      "berikutnya. Telusuri bila angkanya tidak menyusut pada "
-                      "pencairan sesudahnya.",
-        })
-    else:
-        named.append({
-            "name": "cair_tanpa_pesanan", "amount": round(gap_gross, 2),
-            "label": "Uang cair lebih besar daripada omzet pesanan yang tercatat "
-                     "pada periode ini.",
-            "action": "Biasanya karena pesanan periode itu BELUM diimpor ke "
-                      "Marketing, atau pencairan memuat lebih dari satu periode. "
-                      "Impor dulu pesanannya sebelum menyimpulkan selisih.",
-        })
+    # 2026-11-02 (K5) — PEMBANDING UTAMA: omzet SETELAH diskon penjual (Σ SKU Subtotal
+    # After Discount) vs (bruto pencairan − diskon penjual). Selisihnya dipecah & dinamai.
+    seller_discount = round(float(s.get("seller_discount") or 0), 2)
+    paid_basis = round(gross - seller_discount, 2)
+    breakdown = breakdown_gap(paid_basis, omzet_product, returned_product, partial["total"])
+    named = list(breakdown["named"])
     if cancelled_count:
         named.append({
             "name": "pesanan_batal_dikecualikan", "amount": 0.0,
@@ -959,9 +1092,26 @@ async def reconcile(
                 "order_amount": "nilai yang dibayar pembeli",
             },
         },
+        "primary": {
+            # 2026-11-02 (K5) — angka yang dibandingkan (keputusan owner).
+            "label": ("Omzet pesanan SETELAH diskon penjual vs (bruto pencairan − diskon penjual)"),
+            "omzet_after_discount": omzet_product,
+            "settlement_gross": gross,
+            "settlement_seller_discount": seller_discount,
+            "settlement_basis": paid_basis,
+            "gap": breakdown["gap"],
+            "returned_orders": int(r_.get("n") or 0),
+            "returned_revenue_product": returned_product,
+            "partial_refund_count": partial["count"],
+            "partial_refund_total": partial["total"],
+            "settlement_refunds_reported": round(float(s.get("refunds") or 0), 2),
+            "components": breakdown["components"],
+        },
         "gap": {
-            # Pembanding yang paling setara: bruto platform vs bruto marketing.
+            # Pembanding lama (bruto vs bruto) tetap dilaporkan untuk jejak.
             "gross_vs_revenue_gross": round(gross - omzet_gross, 2),
+            # 2026-11-02 (K5) — pembanding utama
+            "after_discount_vs_basis": breakdown["gap"],
             "net_vs_revenue_product": round(
                 float(s.get("net") or 0) - omzet_product, 2),
             # Selisih yang SUDAH DIBERI NAMA — inilah yang dibaca layar Finance.
@@ -969,7 +1119,8 @@ async def reconcile(
             "cancelled_orders_excluded": cancelled_count,
             "why": ("Selisih WAJAR terjadi karena: (1) pencairan tertinggal "
                     "beberapa hari dari tanggal pesanan, (2) pesanan yang "
-                    "dibatalkan/retur tidak ikut dicairkan, dan (3) satu "
+                    "dibatalkan tidak dihitung dan pesanan retur/refund parsial "
+                    "tidak akan cair (dipecah sendiri di atas), dan (3) satu "
                     "pencairan bisa memuat beberapa periode. Yang perlu "
                     "ditelusuri adalah selisih yang TIDAK bisa dijelaskan oleh "
                     "ketiga hal itu. Angka omzet ditampilkan dalam tiga definisi "
@@ -977,6 +1128,76 @@ async def reconcile(
                     "satunya dipilih agar 'cocok'."),
         },
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-02 (K5) — PECAHAN SELISIH REKONSILIASI (murni, diuji tanpa DB)
+# ══════════════════════════════════════════════════════════════════════════════
+def breakdown_gap(settlement_basis: float, omzet_after_discount: float,
+                  returned_product: float, partial_refunds: float) -> dict:
+    """Pecah selisih (bruto pencairan − diskon penjual) − omzet setelah diskon menjadi:
+
+      * ``retur_tidak_cair``   — omzet pesanan berstatus retur (tidak akan pernah cair);
+      * ``refund_parsial``     — refund sebagian atas pesanan periode ini;
+      * ``belum_cair``         — sisa kekurangan (wajar bila tertinggal ke pencairan berikutnya);
+      * ``cair_tanpa_pesanan`` — kelebihan uang cair tanpa pesanan tercatat.
+
+    Identitas yang selalu berlaku:
+      basis = omzet − retur − refund_parsial − belum_cair + cair_tanpa_pesanan
+    """
+    basis = round(float(settlement_basis or 0), 2)
+    omzet = round(float(omzet_after_discount or 0), 2)
+    ret = round(max(float(returned_product or 0), 0.0), 2)
+    ref = round(max(float(partial_refunds or 0), 0.0), 2)
+    gap = round(basis - omzet, 2)
+    residual = round(omzet - ret - ref - basis, 2)
+    comp = {"retur_tidak_cair": ret, "refund_parsial": ref,
+            "belum_cair": max(0.0, residual), "cair_tanpa_pesanan": max(0.0, -residual)}
+    named = []
+    if abs(gap) < 0.01 and not ret and not ref:
+        named.append({"name": "cocok", "amount": 0.0,
+                      "label": "Bruto pencairan − diskon penjual sama dengan omzet setelah diskon periode.",
+                      "action": "Tidak ada yang perlu ditelusuri."})
+    if ret:
+        named.append({"name": "retur_tidak_cair", "amount": ret,
+                      "label": "Omzet pesanan yang DIRETUR — uangnya tidak akan pernah cair.",
+                      "action": "Bukan keterlambatan platform; jangan ditunggu di pencairan berikutnya."})
+    if ref:
+        named.append({"name": "refund_parsial", "amount": ref,
+                      "label": "Refund sebagian (nominal aktual retur modul) atas pesanan periode ini.",
+                      "action": "Cocokkan dengan baris 'Refund' di laporan platform."})
+    if comp["belum_cair"] >= 0.01:
+        named.append({"name": "belum_cair", "amount": comp["belum_cair"],
+                      "label": "Pesanan sudah tercatat tetapi uangnya belum ikut dicairkan di pencairan ini.",
+                      "action": "Wajar bila pesanan akhir periode baru cair di pencairan berikutnya. "
+                                "Telusuri bila angkanya tidak menyusut pada pencairan sesudahnya."})
+    if comp["cair_tanpa_pesanan"] >= 0.01:
+        named.append({"name": "cair_tanpa_pesanan", "amount": comp["cair_tanpa_pesanan"],
+                      "label": "Uang cair lebih besar daripada omzet pesanan yang tercatat pada periode ini.",
+                      "action": "Biasanya pesanan periode itu BELUM diimpor ke Marketing, atau pencairan "
+                                "memuat lebih dari satu periode. Impor dulu pesanannya."})
+    return {"gap": gap, "components": comp, "named": named}
+
+
+async def _partial_refunds_for_orders(db, order_query: dict) -> dict:
+    """Σ refund parsial (nominal aktual, No.14a) retur modul atas pesanan periode ini yang
+    TIDAK berstatus retur/batal (anti-dobel dengan `retur_tidak_cair`)."""
+    q = {**{k: v for k, v in order_query.items() if k != "status"},
+         "status": {"$nin": list(CANCELLED_STATUSES) + ["returned"]}}
+    orders = await db.marketing_orders.find(q, {"_id": 0, "id": 1, "order_id": 1,
+                                                "account_id": 1}).to_list(50000)
+    if not orders:
+        return {"count": 0, "total": 0.0}
+    oids = sorted({o.get("order_id") for o in orders if o.get("order_id")})
+    ids = sorted({o.get("id") for o in orders if o.get("id")})
+    accs = sorted({o.get("account_id") for o in orders if o.get("account_id")})
+    ors = ([{"order_id": {"$in": oids}}] if oids else []) + ([{"order_ref_id": {"$in": ids}}] if ids else [])
+    rows = await db.marketing_returns.find(
+        {"account_id": {"$in": accs}, "refund_type": "partial_refund",
+         "status": {"$nin": ["rejected", "cancelled"]}, "$or": ors},
+        {"_id": 0, "refund_amount": 1}).to_list(50000) if ors else []
+    return {"count": len(rows),
+            "total": round(sum(max(float(r.get("refund_amount") or 0), 0.0) for r in rows), 2)}
 
 
 # ── POSTING JURNAL DRAF (sesi #37) ───────────────────────────────────────────
@@ -1001,6 +1222,7 @@ async def post_settlement_journal(sid: str, request: Request):
     je = await db.rahaza_journal_entries.find_one({"id": doc["je_id"]})
     if not je:
         raise HTTPException(404, f"Jurnal {doc.get('je_number')} sudah tidak ada.")
+    await assert_linked_je_owned(db, COLL, doc, je)  # 2026-11-02 (K-1): jangan posting jurnal toko lain
     if je.get("status") == "posted":
         await db[COLL].update_one({"id": sid}, {"$set": {"je_status": "posted"}})
         return {"ok": True, "already": True, "je_number": je["je_number"],
@@ -1011,13 +1233,19 @@ async def post_settlement_journal(sid: str, request: Request):
         raise HTTPException(400, f"Hanya jurnal draf yang bisa diposting. "
                                  f"Status sekarang: {je.get('status')}.")
     await _check_period_open(db, date.fromisoformat(str(je["date"])[:10]))
+    # 2026-11-02 (S2-H butir 8): akun bisa dihapus/dinonaktifkan/dijadikan grup sesudah draf dibuat —
+    # validasi ULANG lewat aturan yang sama dengan Buku Jurnal (nama/tipe akun ikut disegarkan).
+    from routes.rahaza_journals import revalidate_draft_lines
+    lines, total_d, total_c = await revalidate_draft_lines(db, je)
     _res = await db.rahaza_journal_entries.update_one(
         {"id": je["id"], "status": "draft"},  # FIN-17: atomik
         {"$set": {"status": "posted", "posted_at": _now(),
-                  "posted_by": (user or {}).get("id"), "updated_at": _now()}})
+                  "posted_by": (user or {}).get("id"), "updated_at": _now(),
+                  "lines": lines, "total_debit": total_d, "total_credit": total_c}})
     if _res.modified_count == 0:
         raise HTTPException(409, "Jurnal sudah diposting oleh permintaan lain.")
     je["status"] = "posted"
+    je["lines"] = lines
     await _mirror_lines(db, je)
     await db[COLL].update_one({"id": sid}, {"$set": {
         "je_status": "posted", "updated_at": _now()}})
@@ -1052,6 +1280,7 @@ async def get_settlement(sid: str, request: Request):
     recv = _bal.receivable_code(account)
     coa_ready = bool(recv and (account.get("coa_revenue_code") or "").strip())
     binding = await _je_still_binding(db, doc)
+    _ded, _ = await deduction_codes(db)   # 2026-11-02: kode efektif (peran profil)
     return {
         "ok": True,
         "data": _ser(doc),
@@ -1061,7 +1290,7 @@ async def get_settlement(sid: str, request: Request):
             "receivable": recv or None,
             "cash": account.get("coa_cash_code") or None,
             "revenue": account.get("coa_revenue_code") or None,
-            "deduction_accounts": {k: v for k, v in COA.items()
+            "deduction_accounts": {k: v for k, v in _ded.items()
                                    if k not in ("receivable", "revenue")},
             "note": ("Dana bersih masuk ke akun saldo platform (piutang toko) dan pendapatan "
                      "diambil dari akun toko; akun potongan (retur, diskon, fee platform, "
@@ -1076,6 +1305,6 @@ async def get_settlement(sid: str, request: Request):
             # (satu aturan, dipakai bersama PUT/DELETE lewat `_je_still_binding`).
             "edit": not binding,
             "journal": bool(doc.get("math_verified")) and not binding and coa_ready,
-            "post": doc.get("je_status") == "draft",
+            "post": binding and doc.get("je_status") == "draft",
         },
     }

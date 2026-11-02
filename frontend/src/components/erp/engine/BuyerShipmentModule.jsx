@@ -12,6 +12,7 @@ import ImportExportPanel from './ImportExportPanel';
 import BuyerReceiptVarianceReport from './BuyerReceiptVarianceReport';
 import { BizBadge, BizFilter, matchBiz } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
+import { todayWIB } from '../../../lib/waktu';
 
 export default function BuyerShipmentModule({ userRole, hasPerm = () => false, portalId }) {
   // Pemisahan data per proses bisnis: Portal Produksi = internal, Portal Maklon = maklon.
@@ -33,7 +34,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
   const [form, setForm] = useState({
     shipment_number: '',
     po_id: '',
-    shipment_date: new Date().toISOString().split('T')[0],
+    shipment_date: todayWIB(),
     notes: '',
     items: [],
     // Phase B: DA dispatch wajib pilih source_receipt_ids (approved cmt_receipts)
@@ -302,7 +303,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     setShowModal(true);
     setContinueShip(null);
     setConsolidate(false); setConsBuyer(''); setConsReceipts([]); setReceiptLinesCache({});
-    setForm({ shipment_number: '', po_id: '', shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [], source_receipt_ids: [] });
+    setForm({ shipment_number: '', po_id: '', shipment_date: todayWIB(), notes: '', items: [], source_receipt_ids: [] });
     setAvailableReceipts([]); resetCapacity();
   };
 
@@ -316,7 +317,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     setContinueShip(row);
     setConsolidate(false); setConsBuyer(''); setConsReceipts([]); setReceiptLinesCache({});
     setForm({ shipment_number: row.shipment_number || '', po_id: '',
-      shipment_date: new Date().toISOString().split('T')[0], notes: '', items: [], source_receipt_ids: [] });
+      shipment_date: todayWIB(), notes: '', items: [], source_receipt_ids: [] });
     setAvailableReceipts([]); resetCapacity();
     try {
       const det = await apiGet(`/buyer-shipments/${row.id}`);
@@ -447,7 +448,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8;' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `kekurangan-kirim-buyer-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `kekurangan-kirim-buyer-${todayWIB()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success(`${rows.length} baris diunduh`);
@@ -1435,11 +1436,11 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             {!consolidate && form.po_id && selectedPO?.business_type === 'internal' && (
               <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900" data-testid="internal-dispatch-info">
                 <div className="text-sm font-semibold">PO Produksi Internal — serah terima hasil produksi ke gudang stok sendiri</div>
-                Tidak perlu CMT Receipt. Batas qty = <strong>hasil produksi − sudah diserahkan</strong>.
+                Tidak perlu memilih CMT Receipt. Batas qty = <strong>lolos QC (atau hasil produksi sendiri) − sudah diserahkan</strong>.
                 Dokumen ini hanya mencatat serah terima: stok FG sudah bertambah lewat <em>Terima FG dari CMT</em>/scan-in,
                 jadi <strong>stok tidak dikurangi dan HPP tidak dibukukan</strong> — HPP lahir saat barang terjual (marketplace/penjualan langsung).
                 {capLoading ? ' Menghitung sisa bisa diserahkan…'
-                  : capTotals ? <> Sisa bisa diserahkan <strong>{Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs</strong> (diproduksi {Number(capTotals.internal_produced || 0).toLocaleString('id-ID')} − sudah diserahkan {Number(capTotals.dispatched || 0).toLocaleString('id-ID')}).</>
+                  : capTotals ? <> Sisa bisa diserahkan <strong>{Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs</strong> (lolos QC {Number(capTotals.accepted_total ?? capTotals.internal_produced ?? 0).toLocaleString('id-ID')} − sudah diserahkan {Number(capTotals.dispatched || 0).toLocaleString('id-ID')}).</>
                   : null}
               </div>
             )}

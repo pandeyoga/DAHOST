@@ -86,13 +86,29 @@ def _qty_expr():
     return {"$ifNull": ["$qty", 0]}
 
 
+# 2026-11-02 — atribut IDENTITAS baris (pemilik & jenis stok). Hanya diisi saat baris
+# BARU dibuat (atau atributnya masih kosong); penulis berikutnya TIDAK boleh menimpanya.
+# Dulu restock 2 pcs retur menimpa baris 34 pcs `fg_internal/cv_da` menjadi
+# `finished_goods/own` → 36 pcs lenyap dari Penjualan Langsung, Fulfillment, dan
+# Laporan Nilai FG (audit g.md No.26, m.md No.7).
+_IDENTITY_FIELDS = ("ownership", "inventory_category")
+
+
 def _meta_set(meta: dict | None) -> dict:
-    """Bangun fragmen $set utk metadata yang disediakan caller (overwrite)."""
+    """Bangun fragmen $set (aggregation pipeline) utk metadata dari caller.
+
+    Atribut deskriptif (kode, nama, satuan, …) ditimpa seperti dulu; atribut identitas
+    (`_IDENTITY_FIELDS`) memakai `$ifNull` sehingga nilai baris lama dipertahankan.
+    """
     out = {}
     if not meta:
         return out
     for k in _META_FIELDS:
-        if meta.get(k) is not None:
+        if meta.get(k) is None:
+            continue
+        if k in _IDENTITY_FIELDS:
+            out[k] = {"$ifNull": [f"${k}", {"$literal": meta[k]}]}
+        else:
             out[k] = meta[k]
     return out
 

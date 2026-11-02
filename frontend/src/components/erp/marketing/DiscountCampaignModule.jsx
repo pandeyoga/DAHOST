@@ -10,6 +10,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -427,12 +428,18 @@ export default function DiscountCampaignModule({ token }) {
             </div>
             <div>
               <Label>Nilai Diskon</Label>
-              <Input type="number" min="0" value={form.discount_value} onChange={e => setForm(f => ({...f, discount_value: e.target.value}))}
-                placeholder="0" className="mt-1" />
+              {/* Satuan "Nominal (Rp)" = uang → MoneyInput; persen/unit tetap angka biasa. */}
+              {form.discount_unit === 'nominal' ? (
+                <MoneyInput value={form.discount_value} onChange={e => setForm(f => ({...f, discount_value: e.target.value}))}
+                  placeholder="0" className="mt-1" />
+              ) : (
+                <Input type="number" min="0" value={form.discount_value} onChange={e => setForm(f => ({...f, discount_value: e.target.value}))}
+                  placeholder="0" className="mt-1" />
+              )}
             </div>
             <div>
               <Label>Min. Pembelian (Rp)</Label>
-              <Input type="number" min="0" value={form.min_purchase} onChange={e => setForm(f => ({...f, min_purchase: e.target.value}))}
+              <MoneyInput value={form.min_purchase} onChange={e => setForm(f => ({...f, min_purchase: e.target.value}))}
                 placeholder="0" className="mt-1" />
             </div>
             <div>

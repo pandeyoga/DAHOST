@@ -4,8 +4,13 @@
  * Barang yang DITOLAK QC tidak lagi hilang tanpa jejak: qty reject masuk ke
  * lokasi KARANTINA (stok fisik tercatat tapi DIBLOKIR — tidak bisa dipakai
  * produksi/penjualan), lalu ditindaklanjuti lewat 3 disposisi:
- *   • Lepas ke Stok      → lolos re-inspeksi / setelah rework
- *   • Retur ke Supplier  → dikembalikan ke pemasok
+ *   • Lepas ke Stok      → lolos re-inspeksi / setelah rework. Reject GR yang dilepas =
+ *                          PENERIMAAN SUSULAN (2026-11-02, K11): Dr persediaan / Cr GRNI pada
+ *                          harga GR/PO (harga potongan diketik Keuangan), bisa ditagih pemasok.
+ *   • Buat Retur Pembelian → dokumen RTP (Pengadaan) dengan penyelesaian tukar / nota debit /
+ *                          refund / diterima dengan diskon / dimusnahkan (K11) — menggantikan
+ *                          tombol "Retur supplier" lama. Disposisi lama tampil sebagai
+ *                          "Retur lama tanpa penyelesaian".
  *   • Scrap (Buang)      → write-off (jurnal kerugian bila barang sudah bernilai)
  *
  * Sumber data: /api/wms/quarantine (+ /summary, /location, /reject-categories)
@@ -21,6 +26,7 @@ import {
 } from 'lucide-react';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PurchaseReturnCreateModal } from './procurement/PurchaseReturnModule';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -74,11 +80,6 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
       desc: 'Barang lolos re-inspeksi / sudah di-rework. Stok akan kembali TERSEDIA di lokasi tujuan.',
       needLoc: true,
     },
-    return_supplier: {
-      title: 'Retur ke Supplier', color: 'bg-sky-600',
-      desc: 'Barang dikeluarkan dari gudang untuk dikembalikan ke pemasok.',
-      needLoc: false,
-    },
     scrap: {
       title: 'Scrap (Buang)', color: 'bg-red-600',
       desc: 'Barang dibuang. Bila barang sudah masuk nilai persediaan, jurnal kerugian (write-off) akan di-posting otomatis.',
@@ -87,10 +88,16 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
   }[action];
 
   const [qty, setQty] = useState(item.remaining_qty);
-  const [toLoc, setToLoc] = useState((locations[0] && locations[0].id) || '');
+  // 2026-11-02 — No.18(a): tidak ada lokasi bawaan (dulu item pertama = zona uji "ZU").
+  const [toLoc, setToLoc] = useState('');
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  // 2026-11-02 (K11): lepas reject GR = penerimaan susulan — harga bawaan = harga GR/PO;
+  // harga potongan hanya boleh diketik Keuangan (backend menolak bila bukan Keuangan).
+  const lateReceipt = action === 'release' && item.source?.type === 'goods_receipt'
+    && Number(item.valued_remaining_qty || 0) < Number(item.remaining_qty || 0) - 1e-6;
+  const [price, setPrice] = useState(item.unit_cost || '');
 
   const submit = async () => {
     const q = parseFloat(qty);
@@ -99,7 +106,9 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
     if (CONF.needLoc && !toLoc) { setErr('Pilih lokasi tujuan'); return; }
     setBusy(true); setErr('');
     try {
-      await onSubmit({ qty: q, to_location_id: CONF.needLoc ? toLoc : undefined, notes });
+      const payload = { qty: q, to_location_id: CONF.needLoc ? toLoc : undefined, notes };
+      if (lateReceipt && price !== '' && Number(price) !== Number(item.unit_cost || 0)) payload.unit_price = Number(price);
+      await onSubmit(payload);
     } catch (e) { setErr(e.message); setBusy(false); }
   };
 
@@ -130,11 +139,12 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
 
           {CONF.needLoc && (
             <div>
-              <label className="text-xs text-muted-foreground block mb-1">Lokasi Tujuan</label>
+              <label className="text-xs text-muted-foreground block mb-1">Lokasi Tujuan *</label>
               <SmartNativeSelect value={toLoc} onChange={(e) => setToLoc(e.target.value)}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                 data-testid="quarantine-action-location">
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.name || l.code}</option>)}
+                <option value="">— Pilih lokasi tujuan —</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
               </SmartNativeSelect>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Lokasi karantina ({quarantineLoc?.name || 'Area Karantina QC'}) tidak bisa dipilih sebagai tujuan.
@@ -149,6 +159,17 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
               placeholder="Alasan / keterangan tindak lanjut..." data-testid="quarantine-action-notes" />
           </div>
 
+          {lateReceipt && (
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">
+                Harga satuan (Rp) — bawaan harga GR/PO; harga potongan hanya diketik Keuangan
+              </label>
+              <input type="number" min="0" step="any" value={price} onChange={(e) => setPrice(e.target.value)}
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
+                data-testid="quarantine-action-price" />
+            </div>
+          )}
+
           {!item.valued && action !== 'release' && (
             <div className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2">
               <Info className="w-3 h-3 inline mr-1" />
@@ -156,7 +177,15 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
               jadi tidak ada jurnal keuangan yang dibuat.
             </div>
           )}
-          {!item.valued && action === 'release' && (
+          {lateReceipt && (
+            <div className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2">
+              <Info className="w-3 h-3 inline mr-1" />
+              Dicatat sebagai <strong>penerimaan susulan</strong> pada GR {item.source?.number || ''}: Persediaan (Dr) /
+              Hutang Belum Ditagih GRNI (Cr) sebesar qty × harga, HPP rata-rata diperbarui, dan qty ini
+              bisa ditagih pemasok lewat Tagihan dari GR.
+            </div>
+          )}
+          {!item.valued && action === 'release' && !lateReceipt && (
             <div className="text-[11px] text-muted-foreground bg-[var(--glass-bg)] border border-border rounded-lg px-3 py-2">
               <Info className="w-3 h-3 inline mr-1" />
               Barang akan <strong>dikapitalisasi</strong> ke nilai persediaan (jurnal penyesuaian otomatis).
@@ -279,19 +308,24 @@ export default function QuarantineModule({ token: tokenProp }) {
   // server, jadi tak ada satu pun layar yang bisa menunjukkannya.
   const [needsAction, setNeedsAction] = useState(false);
   const [retrying, setRetrying] = useState('');
+  // 2026-11-02 (K11): "Buat Retur Pembelian" menggantikan "Retur supplier"; tab retur lama
+  const [rtpItem, setRtpItem] = useState(null);
+  const [legacyOnly, setLegacyOnly] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setErr('');
     try {
+      const qs = legacyOnly ? 'legacy_returns=true'
+        : `status=${status}${needsAction ? '&needs_action=true' : ''}`;
       const [list, sm] = await Promise.all([
-        api('GET', `/api/wms/quarantine?status=${status}${needsAction ? '&needs_action=true' : ''}`, token),
+        api('GET', `/api/wms/quarantine?${qs}`, token),
         api('GET', '/api/wms/quarantine/summary', token),
       ]);
       setItems(Array.isArray(list) ? list : []);
       setSummary(sm || null);
     } catch (e) { setErr(e.message); }
     finally { setLoading(false); }
-  }, [token, status, needsAction]);
+  }, [token, status, needsAction, legacyOnly]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -312,15 +346,23 @@ export default function QuarantineModule({ token: tokenProp }) {
 
   const doAction = async (payload) => {
     const { item, action } = modal;
-    const path = action === 'release' ? 'release' : (action === 'return_supplier' ? 'return-supplier' : 'scrap');
+    const path = action === 'release' ? 'release' : 'scrap';
     const res = await api('POST', `/api/wms/quarantine/${item.id}/${path}`, token, payload);
     setModal(null);
     const p = res.posting || {};
     const jeMsg = p.je_number ? ` · jurnal ${p.je_number} di-posting`
       : (p.skipped ? ' · tanpa jurnal keuangan' : (p.ok === false ? ` · jurnal GAGAL: ${p.error || ''}` : ''));
-    setToast(`${action === 'release' ? 'Dilepas ke stok' : action === 'return_supplier' ? 'Diretur ke supplier' : 'Di-scrap'} ${fmtNum(payload.qty)} ${item.unit}${jeMsg}`);
+    const lateMsg = res.late_receipt ? ` · penerimaan susulan @ ${fmtRp(res.unit_price)} (bisa ditagih)` : '';
+    setToast(`${action === 'release' ? 'Dilepas ke stok' : 'Di-scrap'} ${fmtNum(payload.qty)} ${item.unit}${jeMsg}${lateMsg}`);
     load();
     setTimeout(() => setToast(''), 6000);
+  };
+
+  const dispLabel = (d) => {
+    if (d.action === 'release') return 'Dilepas';
+    if (d.action === 'purchase_return') return `Retur Pembelian ${d.rtp_number || ''}`;
+    if (d.action === 'return_supplier') return d.purchase_return_id ? 'Retur supplier' : 'Retur lama tanpa penyelesaian';
+    return d.purchase_return_id ? `Dimusnahkan (${d.rtp_number || 'RTP'})` : 'Scrap';
   };
 
   // Coba blokir ulang ketersediaan — supaya daftar "Perlu Tindakan Manual" bisa
@@ -349,7 +391,7 @@ export default function QuarantineModule({ token: tokenProp }) {
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             Barang <strong>reject QC</strong> ditahan di sini — stok tercatat tapi <strong>diblokir</strong> (tidak bisa dipakai produksi/penjualan)
-            sampai ada keputusan: lepas ke stok, retur supplier, atau scrap.
+            sampai ada keputusan: lepas ke stok, buat Retur Pembelian, atau scrap.
           </p>
           {locInfo && (
             <p className="text-xs text-muted-foreground mt-1">
@@ -446,14 +488,22 @@ export default function QuarantineModule({ token: tokenProp }) {
 
       {/* Tab: semua vs hanya yang perlu tindakan manual */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border">
-        <button onClick={() => setNeedsAction(false)}
-          className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${!needsAction
+        <button onClick={() => { setNeedsAction(false); setLegacyOnly(false); }}
+          className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${!needsAction && !legacyOnly
             ? 'border-violet-600 text-violet-700 dark:text-violet-400'
             : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           data-testid="quarantine-tab-all">
           Semua Item Karantina
         </button>
-        <button onClick={() => { setStatus('open'); setNeedsAction(true); }}
+        {/* 2026-11-02 (K11): retur supplier lama (sebelum dokumen Retur Pembelian) — diselesaikan manual */}
+        <button onClick={() => { setNeedsAction(false); setLegacyOnly(true); }}
+          className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${legacyOnly
+            ? 'border-sky-600 text-sky-700 dark:text-sky-400'
+            : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+          data-testid="quarantine-tab-legacy-returns">
+          Retur Lama Tanpa Penyelesaian
+        </button>
+        <button onClick={() => { setStatus('open'); setLegacyOnly(false); setNeedsAction(true); }}
           className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 flex items-center gap-2 ${needsAction
             ? 'border-red-600 text-red-700 dark:text-red-400'
             : 'border-transparent text-muted-foreground hover:text-foreground'}`}
@@ -520,6 +570,13 @@ export default function QuarantineModule({ token: tokenProp }) {
                 <td className="px-4 py-3">
                   <div className="font-medium">{it.material_name || '-'}</div>
                   <div className="font-mono text-xs text-muted-foreground">{it.material_code}</div>
+                  {Number(it.legacy_return_qty || 0) > 0 && (
+                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-sky-100 dark:bg-sky-500/15 text-sky-800 dark:text-sky-300"
+                      title="Retur ke pemasok sebelum ada dokumen Retur Pembelian — belum tercatat penyelesaiannya (tukar / nota debit / refund). Selesaikan manual bersama Keuangan."
+                      data-testid={`quarantine-legacy-return-${it.id}`}>
+                      <Undo2 className="w-3 h-3" /> Retur lama tanpa penyelesaian · {fmtNum(it.legacy_return_qty)} {it.unit}
+                    </span>
+                  )}
                   {it.availability_blocked === false ? (
                     <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-red-600 text-white"
                       title={`Barang reject ini MASIH terhitung tersedia sebanyak ${fmtNum(it.availability_shortfall)} ${it.unit} — bisa ikut dipakai produksi atau terkirim ke pembeli.`}
@@ -575,10 +632,11 @@ export default function QuarantineModule({ token: tokenProp }) {
                         data-testid={`quarantine-release-${it.id}`}>
                         <PackageCheck className="w-3.5 h-3.5" /> Lepas
                       </button>
-                      <button onClick={() => setModal({ item: it, action: 'return_supplier' })}
+                      <button onClick={() => setRtpItem(it)}
                         className="px-2.5 py-1.5 text-xs bg-sky-600 text-white rounded-lg hover:brightness-110 flex items-center gap-1"
+                        title="Dokumen Retur Pembelian: tukar barang / potong tagihan / refund / diterima dengan diskon / dimusnahkan"
                         data-testid={`quarantine-return-${it.id}`}>
-                        <Undo2 className="w-3.5 h-3.5" /> Retur
+                        <Undo2 className="w-3.5 h-3.5" /> Buat Retur Pembelian
                       </button>
                       <button onClick={() => setModal({ item: it, action: 'scrap' })}
                         className="px-2.5 py-1.5 text-xs border border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-1"
@@ -590,7 +648,7 @@ export default function QuarantineModule({ token: tokenProp }) {
                     <div className="text-right text-xs text-muted-foreground" data-testid={`quarantine-history-${it.id}`}>
                       {(it.dispositions || []).map((d) => (
                         <div key={d.id}>
-                          {d.action === 'release' ? 'Dilepas' : d.action === 'return_supplier' ? 'Retur supplier' : 'Scrap'} {fmtNum(d.qty)} · {d.by || '-'}
+                          {dispLabel(d)} {fmtNum(d.qty)} · {d.by || '-'}
                         </div>
                       ))}
                     </div>
@@ -619,6 +677,15 @@ export default function QuarantineModule({ token: tokenProp }) {
       {showManual && (
         <ManualModal token={token} locations={storageLocs} onClose={() => setShowManual(false)}
           onSaved={() => { setShowManual(false); load(); }} />
+      )}
+      {rtpItem && (
+        <PurchaseReturnCreateModal token={token} quarantineItem={rtpItem} onClose={() => setRtpItem(null)}
+          onSaved={(doc) => {
+            setRtpItem(null);
+            setToast(`Retur Pembelian ${doc?.rtp_number || ''} dibuat (Draft) — kirim/proses dari layar Retur Pembelian (Portal Pengadaan).`);
+            load();
+            setTimeout(() => setToast(''), 8000);
+          }} />
       )}
     </div>
   );

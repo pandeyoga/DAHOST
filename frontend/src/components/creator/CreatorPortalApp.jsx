@@ -21,6 +21,8 @@ import {
   Package, X, Plus, Loader2, CheckCircle2, Calendar, Trophy,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { MoneyInput } from '@/components/ui/money-input';
+import { todayWIB, thisMonthWIB, addDaysISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const CREATOR_TOKEN_KEY = 'creator_portal_token';
@@ -28,7 +30,6 @@ const CREATOR_USER_KEY = 'creator_portal_user';
 
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
-const todayISO = () => new Date().toISOString().split('T')[0];
 const formatDate = (d) => {
   if (!d) return '—';
   try {
@@ -435,7 +436,7 @@ function CreatorSessionsPage({ token }) {
 function SessionInputModal({ token, onClose, onSaved }) {
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState({
-    account_id: '', date: todayISO(), platform: 'shopee', session_name: '',
+    account_id: '', date: todayWIB(), platform: 'shopee', session_name: '',
     revenue: 0, orders: 0, viewers: 0, peak_viewers: 0, duration_minutes: 0, items: [], notes: '',
   });
   const [saving, setSaving] = useState(false);
@@ -514,7 +515,7 @@ function SessionInputModal({ token, onClose, onSaved }) {
         <input data-testid="session-input-name" value={form.session_name} onChange={(e) => set('session_name', e.target.value)} placeholder="cth: Live Sore Flash Sale" className={inputCls} />
       </Field>
       <Field label="Omzet / Revenue (Rp)">
-        <input type="number" min="0" inputMode="numeric" data-testid="session-input-revenue" value={form.revenue} onChange={(e) => set('revenue', e.target.value)} className={inputCls} />
+        <MoneyInput unstyled data-testid="session-input-revenue" value={form.revenue} onChange={(e) => set('revenue', e.target.value)} className={inputCls} />
         <p className="text-[11px] text-teal-600 mt-1">{fmtRp(Number(form.revenue) || 0)}</p>
       </Field>
       <div className="grid grid-cols-3 gap-2">
@@ -548,7 +549,7 @@ function SessionInputModal({ token, onClose, onSaved }) {
 }
 
 function CreatorWeeklyCard({ token }) {
-  const [weekEnd, setWeekEnd] = useState(new Date().toISOString().slice(0, 10));
+  const [weekEnd, setWeekEnd] = useState(() => todayWIB());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -569,12 +570,10 @@ function CreatorWeeklyCard({ token }) {
   // tidak pernah bisa dicocokkan dengan layar. Tetapi maju ke pekan yang BELUM
   // terjadi dilarang: angka 0 di pekan masa depan akan dibaca sebagai "performa
   // saya nol".
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = todayWIB();
   const atCurrentWeek = weekEnd >= todayStr;
   const shiftWeek = (days) => {
-    const d = new Date(`${weekEnd}T00:00:00`);
-    d.setDate(d.getDate() + days);
-    const next = d.toISOString().slice(0, 10);
+    const next = addDaysISO(weekEnd, days);
     setWeekEnd(next > todayStr ? todayStr : next);
   };
 
@@ -662,7 +661,7 @@ function CreatorWeeklyCard({ token }) {
 // PERFORMA
 // ═══════════════════════════════════════════════════════════════════════════════
 function CreatorPerformancePage({ token }) {
-  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => thisMonthWIB());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
