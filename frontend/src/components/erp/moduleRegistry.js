@@ -122,7 +122,6 @@ const AccrualsModule = lazyRetry(() => import('./AccrualsModule'));
 const AssetDepreciationModule = lazyRetry(() => import('./AssetDepreciationModule'));
 const BadDebtWriteOffModule = lazyRetry(() => import('./BadDebtWriteOffModule'));
 const AssetDisposalModule = lazyRetry(() => import('./AssetDisposalModule'));
-const PurchaseDiscountModule = lazyRetry(() => import('./PurchaseDiscountModule'));
 // W-T2.1 de-dup: EmployeeLoansModule (hr-employee-loans, Pinjaman Legacy) tidak lagi dipakai.
 // Data 3 pinjaman legacy sudah dimigrasi ke dewi_kasbon_requests (type=pinjaman).
 // 'hr-employee-loans' → makeRedirect('hr-kasbon'). Koleksi rahaza_employee_loans diarsip (tidak di-drop).
@@ -902,7 +901,8 @@ export const MODULE_REGISTRY = {
   'fin-asset-depreciation':    makeRedirect('fin-acctg-adjust-hub', 'depreciation'),
   'fin-bad-debt-writeoff':     makeRedirect('fin-acctg-adjust-hub', 'baddebt'),
   'fin-asset-disposal':        makeRedirect('fin-acctg-adjust-hub', 'disposal'),
-  'fin-purchase-discount':     makeRedirect('fin-acctg-adjust-hub', 'discount'),
+  // 2026-11-03: bayar hutang (+ potongan pemasok) satu pintu di Faktur Supplier
+  'fin-purchase-discount':     makeRedirect('proc-ap-invoices'),
 
   // HR · Phase B — Employee Loans Module (W-T2.1: legacy → redirect ke Kasbon & Pinjaman kanonik)
   'hr-employee-loans':         makeRedirect('hr-kasbon'),

@@ -824,6 +824,11 @@ async def record_ap_payment(iid: str, request: Request):
     if (inv.get("status") or "").lower() == "draft":
         # B-11: pembayaran atas invoice draft dulu ikut memposting invoice diam-diam
         raise HTTPException(400, "Invoice masih draft — approve/kirim (send) invoice terlebih dahulu sebelum mencatat pembayaran.")
+    account_id = body.get("account_id")
+    # 2026-11-03 (uji tugas): rekening yang dikirim tapi tidak ada/nonaktif dulu diam-diam diabaikan →
+    # pembayaran terjurnal ke rekening bawaan profil. Tolak sebelum hutang berkurang.
+    if account_id and not await db.rahaza_cash_accounts.find_one({"id": account_id, "active": {"$ne": False}}, {"_id": 0, "id": 1}):
+        raise HTTPException(400, "Rekening kas/bank tidak ditemukan atau nonaktif. Pilih rekening dari daftar.")
     # ── R10 concurrency hardening (TOCTOU-safe): atomic conditional payment (CC3).
     updated = await db.rahaza_ap_invoices.find_one_and_update(
         {
@@ -856,7 +861,6 @@ async def record_ap_payment(iid: str, request: Request):
             raise HTTPException(400, f"Tidak bisa mencatat pembayaran untuk invoice berstatus '{_st}'.")
         raise HTTPException(400, "Pembayaran + diskon melebihi sisa hutang invoice.")
     inv = updated
-    account_id = body.get("account_id")
     payment_date = body.get("date") or _today_iso()
     movement_id = None
     if account_id:
