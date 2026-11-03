@@ -3,9 +3,25 @@
  * Hero kecil untuk CRUD modules: title + subtitle (optional) + actions.
  * Konsisten di seluruh modul, dual-theme aware.
  */
+import { createContext, useContext } from 'react';
 import { cn } from '@/lib/utils';
 
+/**
+ * 2026-11-04 (audit Keuangan "judul bertumpuk"): modul yang dirender sebagai tab di dalam hub yang
+ * meminta `compactHeaders` tidak mengulang judul/penjelasan — judul hub + nama tab sudah menjelaskan.
+ * PageHeader lalu hanya menampilkan tombol aksinya. Modul dengan header buatan sendiri dapat membaca
+ * konteks ini lewat `useInCompactHub()`.
+ */
+export const CompactHubContext = createContext(false);
+export const useInCompactHub = () => useContext(CompactHubContext);
+
 export function PageHeader({ icon: Icon, eyebrow, title, subtitle, actions, className, testId }) {
+  const compact = useContext(CompactHubContext);
+  if (compact) {
+    return actions
+      ? <div data-testid={testId} className={cn('flex items-center justify-end gap-2 flex-wrap', className)}>{actions}</div>
+      : null;
+  }
   return (
     <div
       data-testid={testId}
@@ -89,7 +105,17 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
  * StatusBadge \u2014 pill badge untuk status lifecycle (draft/sent/paid/finalized/etc).
  * Auto-map common statuses to colors; accepts custom tone override.
  */
-export function StatusBadge({ status, tone, className, testId }) {
+// 2026-11-04 (audit Keuangan tahap 2): kode status yang maknanya sama di semua portal ditampilkan
+// dalam bahasa Indonesia. Kode bermakna ganda ('sent' = terbit/terkirim, 'issued') TIDAK diterjemahkan
+// di sini — layar yang memakainya mengirim `label` sendiri (mis. `finStatus()` di lib/financeLabels).
+const STATUS_LABEL_ID = {
+  draft: 'Draf', approved: 'Disetujui', rejected: 'Ditolak', pending: 'Menunggu', posted: 'Terposting',
+  paid: 'Lunas', partial_paid: 'Dibayar sebagian', overdue: 'Lewat jatuh tempo', cancelled: 'Dibatalkan',
+  voided: 'Dibatalkan', void: 'Dibatalkan', completed: 'Selesai', written_off: 'Dihapusbukukan',
+  closed: 'Ditutup', locked: 'Dikunci',
+};
+
+export function StatusBadge({ status, label, tone, className, testId }) {
   const s = (status || '').toLowerCase();
   const autoTone =
     s === 'draft' ? 'muted' :
@@ -120,7 +146,7 @@ export function StatusBadge({ status, tone, className, testId }) {
         className
       )}
     >
-      {status || '-'}
+      {label || STATUS_LABEL_ID[s] || status || '-'}
     </span>
   );
 }

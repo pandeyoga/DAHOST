@@ -1105,19 +1105,19 @@ export const MODULE_HELP = {
    * ════════════════════════════════════════════════════════════════ */
 
   'finance-dashboard': {
-    title: 'Dashboard Keuangan',
+    title: 'Beranda Keuangan',
     icon: Gauge,
-    purpose: 'Ringkasan posisi keuangan PT Rahaza — kas, piutang, hutang, P&L bulan ini, dan arus kas. Untuk monitoring keuangan level manajer.',
-    whoUses: 'Manajer Keuangan, Direktur, Akuntan',
+    purpose: 'Posisi uang hari ini dan pekerjaan yang menunggu: kas & bank, saldo di toko marketplace, piutang reseller, hutang pemasok & CMT, laba bulan ini dibanding bulan lalu. Menggantikan Dashboard dan Rekap Keuangan.',
+    whoUses: 'Staf & Manajer Keuangan, Direktur',
     sections: [
-      'KPI Keuangan — kas, piutang, hutang',
-      'P&L Singkat — pendapatan vs beban bulan ini',
-      'Arus Kas — ringkasan cash flow',
-      'Invoice Jatuh Tempo — AR yang perlu ditagih',
+      'Empat angka utama — klik untuk membuka menu rinciannya',
+      'Perlu ditindaklanjuti — tagihan lewat jatuh tempo, kasbon menunggu dicairkan, rekonsiliasi & periode yang belum selesai',
+      'Laba bulan ini — dari rumus yang sama dengan Laba Rugi',
+      'Dana marketplace bulan ini dan saldo per toko',
     ],
     tips: [
-      'Monitor rasio piutang/hutang secara berkala',
-      'Dashboard diperbarui real-time saat ada posting jurnal',
+      'Kerjakan baris merah di "Perlu ditindaklanjuti" lebih dulu',
+      'Tren per bulan ada di Laporan › Laba Rugi › Per bulan',
     ],
   },
 
@@ -1150,24 +1150,6 @@ export const MODULE_HELP = {
   // Session #11.17: 'fin-payments' help entry REMOVED — payment workflows now flow
   // through fin-ar-invoices (AR receipts) + fin-ap-aging (AP payments).
 
-  'fin-recap': {
-    title: 'Rekap Keuangan',
-    icon: BarChart4,
-    purpose: 'Ringkasan keuangan periodik — total revenue, total beban, margin, dan perbandingan antar periode. Dashboard keuangan yang lebih detail dari dashboard utama.',
-    whoUses: 'Manajer Keuangan, Direktur',
-    sections: [
-      'Rekap Periode — pilih bulan/kuartal/tahun',
-      'Komparasi — bandingkan dua periode',
-      'Breakdown — detail per kategori revenue/beban',
-    ],
-    buttons: [
-      { label: 'Export Excel', icon: Download, action: 'Unduh rekap ke Excel', when: 'Laporan bulanan untuk manajemen' },
-    ],
-    tips: [
-      'Bandingkan bulan ini vs bulan lalu untuk identifikasi tren',
-      'Margin kotor < 20% perlu investigasi biaya produksi',
-    ],
-  },
 
   'fin-cost-centers': {
     title: 'Pusat Biaya',
@@ -1188,23 +1170,23 @@ export const MODULE_HELP = {
   },
 
   'fin-ar-invoices': {
-    title: 'Invoice AR (Piutang)',
+    title: 'Faktur Penjualan',
     icon: FileText,
-    purpose: 'Kelola invoice piutang ke pelanggan dalam sistem Rahaza. Berbeda dengan Invoice Penjualan umum — ini khusus untuk sistem AR Rahaza yang terintegrasi dengan pengiriman.',
-    whoUses: 'Akuntan, Manajer Keuangan',
+    purpose: 'Daftar faktur piutang reseller dan maklon. Faktur dibuat di Portal Penjualan › Nota Penjualan (stok keluar + HPP + faktur) atau di Maklon; di sini Keuangan menerbitkan draf dan mencatat pembayaran.',
+    whoUses: 'Akuntan, Staf & Manajer Keuangan',
     sections: [
-      'Daftar Invoice AR — semua invoice dengan status pembayaran',
-      'Buat Invoice AR — dari pengiriman yang sudah selesai',
-      'Cetak/Download PDF',
+      'Daftar faktur — status, total, dan sisa tagihan',
+      'Pembayaran — cicilan atau pelunasan ke rekening yang dipilih',
+      'Statement pelanggan — ringkasan tagihan, pembayaran, dan sisa per periode',
     ],
     buttons: [
-      { label: 'Buat Invoice AR', icon: Plus, action: 'Buat invoice berdasarkan shipment ke pelanggan', when: 'Setelah pengiriman ke pelanggan selesai' },
-      { label: 'Catat Pembayaran', icon: CheckCircle2, action: 'Input pembayaran masuk dari pelanggan', when: 'Pelanggan sudah bayar' },
-      { label: 'Cetak PDF', icon: Printer, action: 'Download invoice sebagai PDF', when: 'Kirim ke pelanggan' },
+      { label: 'Terbitkan', icon: CheckCircle2, action: 'Terbitkan faktur draf dan catat ke buku besar', when: 'Faktur draf dari Maklon sudah benar' },
+      { label: 'Bayar', icon: CheckCircle2, action: 'Catat uang yang diterima; rekening penerima wajib dipilih', when: 'Pelanggan sudah membayar (sebagian atau penuh)' },
+      { label: 'Riwayat', icon: Eye, action: 'Lihat pembayaran dan nomor jurnalnya', when: 'Mengecek pembayaran yang sudah masuk' },
     ],
     tips: [
-      'Semua nominal dalam format Rp. dengan pemisah ribuan titik',
-      'Invoice yang jatuh tempo muncul di dashboard dengan highlight merah',
+      'Penjualan reseller dari stok dibuat lewat Nota Penjualan supaya stok dan HPP ikut tercatat',
+      'Pembayaran tidak bisa melebihi sisa tagihan',
     ],
   },
 
@@ -1229,22 +1211,20 @@ export const MODULE_HELP = {
   },
 
   'fin-expenses': {
-    title: 'Beban & Biaya Operasional',
+    title: 'Pengeluaran',
     icon: FileText,
-    purpose: 'Catat dan kelola pengeluaran operasional perusahaan — listrik, air, telepon, pemeliharaan, supplies kantor, dan biaya lain-lain.',
-    whoUses: 'Akuntan, Admin Keuangan',
+    purpose: 'Catat biaya operasional perusahaan — listrik, air, telepon, pemeliharaan, keperluan kantor, dan biaya lain. Jurnal terbentuk otomatis ke akun beban yang dipilih.',
+    whoUses: 'Akuntan, Staf Keuangan',
     sections: [
-      'Daftar Beban — semua pengeluaran per periode',
-      'Input Beban — catat beban baru',
-      'Analisis — beban per kategori',
+      'Daftar pengeluaran — tanggal, akun beban, deskripsi, jumlah',
+      'Tambah pengeluaran — akun beban dan rekening pembayar wajib dipilih',
     ],
     buttons: [
-      { label: 'Catat Beban', icon: Plus, action: 'Input beban baru dengan kategori dan akun', when: 'Ada pengeluaran yang perlu dicatat' },
-      { label: 'Upload Bukti', icon: Upload, action: 'Lampirkan kwitansi/invoice pendukung', when: 'Dokumentasi pengeluaran' },
+      { label: 'Tambah', icon: Plus, action: 'Catat pengeluaran baru: akun beban (bisa dicari, mis. ketik "listrik"), jumlah, rekening yang membayar', when: 'Ada biaya yang dibayar' },
     ],
     tips: [
-      'Kategorisasi beban yang konsisten memudahkan analisis pengeluaran',
-      'Upload bukti transaksi untuk keperluan audit',
+      'Pilih akun beban yang paling sesuai; rincian biaya di Laba Rugi berasal dari pilihan ini',
+      'Kategori hanya untuk menyaring daftar, tidak menentukan akun jurnal',
     ],
   },
 

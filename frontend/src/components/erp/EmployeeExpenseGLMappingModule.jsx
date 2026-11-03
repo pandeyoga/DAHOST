@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Pencil, Trash2, Check, X, AlertCircle, Database, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Check, X, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,7 +17,6 @@ const BACKEND_URL = import.meta.env.REACT_APP_BACKEND_URL || process.env.REACT_A
 export default function EmployeeExpenseGLMappingModule() {
   const [mappings, setMappings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [seeding, setSeeding] = useState(false);
   const [showDialog, setShowDialog] = useState(false);
   const [editingMapping, setEditingMapping] = useState(null);
   const [coaAccounts, setCoaAccounts] = useState([]);
@@ -159,28 +158,6 @@ export default function EmployeeExpenseGLMappingModule() {
     }
   };
 
-  const handleSeedDefault = async () => {
-    setSeeding(true);
-    try {
-      const token = localStorage.getItem('erp_token');
-      const res = await fetch(`${BACKEND_URL}/api/hr/expenses/gl-mappings/seed-default`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        toast.success(`${data.message}`);
-        await fetchMappings();
-      } else {
-        toast.error(data.detail || 'Gagal seed mapping');
-      }
-    } catch (err) {
-      toast.error('Koneksi bermasalah');
-    } finally {
-      setSeeding(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -200,15 +177,6 @@ export default function EmployeeExpenseGLMappingModule() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={handleSeedDefault}
-            disabled={seeding}
-            data-testid="seed-gl-mapping-btn"
-          >
-            {seeding ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Database className="h-4 w-4 mr-2" />}
-            Seed Default Mapping
-          </Button>
           <Button onClick={handleCreate} data-testid="create-mapping-btn">
             <Plus className="h-4 w-4 mr-2" />
             Tambah Mapping

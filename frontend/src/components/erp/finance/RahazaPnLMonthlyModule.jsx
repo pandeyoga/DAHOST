@@ -34,7 +34,6 @@ export default function RahazaPnLMonthlyModule({ token }) {
     <div className="space-y-5" data-testid="pnl12-page">
       <PageHeader
         icon={CalendarRange}
-        eyebrow="Portal Finance · Laporan"
         title="Laba Rugi 12 Bulan"
         subtitle="Satu tabel Jan–Des seperti sheet Laba-12: pendapatan, HPP, beban, laba bersih per bulan, total tahun, dan akumulasi s/d bulan. Angka dari buku besar (jurnal posted), jurnal penutup tidak ikut."
         actions={

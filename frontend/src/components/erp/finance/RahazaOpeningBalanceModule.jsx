@@ -183,7 +183,6 @@ export default function RahazaOpeningBalanceModule({ token, user }) {
     <div className="space-y-5" data-testid="ob-page">
       <PageHeader
         icon={ShieldCheck}
-        eyebrow="Portal Finance · Master Akuntansi"
         title="Saldo Awal Neraca (Go-Live)"
         subtitle="Pindahkan neraca penutup pembukuan lama ke sistem: unduh template, isi debit/kredit per akun (+ rincian piutang/hutang per relasi), unggah untuk diperiksa, lalu posting SATU jurnal pembuka yang terkunci."
         actions={<Button variant="ghost" onClick={fetchStatus} className="h-9 border border-[var(--glass-border)]" data-testid="ob-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>}

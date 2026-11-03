@@ -40,7 +40,6 @@ export default function RahazaWorksheetModule({ token }) {
     <div className="space-y-5" data-testid="worksheet-page">
       <PageHeader
         icon={Columns3}
-        eyebrow="Portal Finance · Laporan"
         title="Neraca Lajur"
         subtitle="Kertas kerja 10 kolom seperti sheet N-Lajur: saldo awal · mutasi · saldo akhir, lalu tiap akun dipisah ke kolom Laba Rugi atau Neraca. Baris laba/rugi bersih menyeimbangkan kedua pasangan kolom."
         actions={

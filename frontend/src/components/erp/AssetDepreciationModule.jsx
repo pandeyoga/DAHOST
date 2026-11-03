@@ -84,7 +84,6 @@ export default function AssetDepreciationModule({ token }) {
     <div className="space-y-5" data-testid="asset-depreciation-page">
       <PageHeader
         icon={Calculator}
-        eyebrow="Portal Finance · Fixed Assets"
         title="Depresiasi Aset (Batch)"
         subtitle="Jalankan batch depreciation untuk periode tertentu. Sistem akan otomatis posting jurnal depresiasi."
         actions={

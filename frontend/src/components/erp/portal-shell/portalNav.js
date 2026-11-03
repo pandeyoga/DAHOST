@@ -49,8 +49,8 @@ import {
   // Warehouse
   Archive, PackageMinus, PackagePlus, ArrowRightLeft, MapPin, Sparkles, Lock, Award,
   // Finance — Accounting Core
-  FolderTree, BookCheck, Scale, Book, CalendarRange, Settings2,
-  FileText, Hourglass, Wallet,
+  BookCheck, Scale, CalendarRange, Settings2,
+  FileText, Wallet,
   // Finance — Operasional (Session #11.17: Files/CreditCard/FilePlus removed — unused after legacy finance cleanup)
   ReceiptText, Landmark, Receipt, PieChart, Calculator, HandCoins,
   Banknote, BarChart3, Shield, ShieldAlert, ShieldCheck,
@@ -79,7 +79,7 @@ import {
   // Employee Expense Management (EEM)
   CreditCard, Plane, Database,
   // Penomoran Dokumen & SKU
-  Hash, ListTree } from 'lucide-react';
+  Hash, ListTree, ScrollText } from 'lucide-react';
 
 // Portal labels shown as badge next to brand (top-left). Click brand to go back to selector.
 export const PORTAL_LABEL = {
@@ -119,6 +119,8 @@ export const PORTAL_NAV = {
           { id: 'management-dashboard',  label: 'Dashboard Eksekutif', icon: LayoutDashboard },
           { id: 'mgmt-overview',         label: 'Ringkasan Bisnis',    icon: TrendingUp },
           { id: 'reports-hub',           label: 'Pusat Laporan',       icon: FileSpreadsheet },
+          // 2026-11-04 (owner): dipindah dari portal Keuangan — ringkasan lintas modul untuk pimpinan
+          { id: 'fin-executive-report',  label: 'Laporan Eksekutif',   icon: Award },
           { id: 'phase7-reports',        label: 'Laporan Maklon',      icon: BarChart3 },
           { id: 'mgmt-reports',          label: 'Laporan Umum',        icon: FileSpreadsheet },
           { id: 'rnd-dashboard',         label: 'Ringkasan RnD',       icon: FlaskConical },
@@ -170,6 +172,8 @@ export const PORTAL_NAV = {
           { id: 'sync-audit',           label: 'Sinkronisasi Data',  icon: ShieldCheck },
           { id: 'mgmt-backup-restore',  label: 'Backup Data',        icon: Archive },
           { id: 'sys-doc-numbering',    label: 'Penomoran Dokumen',  icon: Hash },
+          // 2026-11-04 (owner, audit Keuangan): tombol perawatan data keuangan dari layar kerja Keuangan
+          { id: 'sys-finance-maintenance', label: 'Perawatan Data Keuangan', icon: Wrench },
           { id: 'maklon-config',        label: 'Konfigurasi Maklon', icon: Settings2 },
           { id: 'maklon-notifications', label: 'Notifikasi Maklon',  icon: Bell },
           { id: 'mgmt-help',            label: 'Panduan Sistem',     icon: BookOpen },
@@ -484,76 +488,80 @@ export const PORTAL_NAV = {
   // Tidak ada pintu dihapus; hanya relokasi + 4 label diperjelas.
   finance: {
     title: 'Keuangan',
+    // 2026-11-04 (keputusan owner, audit Keuangan tahap 3): 8 grup menggantikan IA v3 (arah uang).
+    // SATU section bergrup → semua grup tampil di menu samping (dulu 7 pill atas, 3 tersembunyi di 1440px).
+    // Aturan: satu menu = satu jenis dokumen; cara melihatnya (daftar/umur/per bulan) = tab di dalamnya.
+    // Id lama tetap resolve lewat redirect di moduleRegistry (deep-link aman).
     sections: [
       {
-        label: 'RINGKASAN & LAPORAN',
-        items: [
-          { id: 'finance-dashboard',    label: 'Dashboard Keuangan', icon: LineChart },
-          { id: 'fin-recap',            label: 'Rekap Keuangan',     icon: BarChart3 },
-          { id: 'fin-reports-hub',      label: 'Laporan Keuangan',   icon: FileSpreadsheet },
-          { id: 'fin-executive-report', label: 'Laporan Eksekutif',  icon: Award },
-        ],
-      },
-      {
-        label: 'PENJUALAN & PENERIMAAN',
-        // 2026-11-02 (D3) — pintu 'Peta Akun Channel' (`fin-channel-gl`) DILEPAS dari
-        // menu atas keputusan owner: "Peta Akun Channel seharusnya tidak ada" (peta
-        // COA kedua). COA per toko ada di master toko (Marketing › Kelola Akun);
-        // penjualan non-marketplace lewat Portal Penjualan (profil `ar_invoice`).
-        // Modulnya tetap terdaftar (baca-saja) untuk deep-link lama.
-        items: [
-          { id: 'fin-marketplace-settlement', label: 'Saldo & Pencairan Marketplace', icon: Banknote },
-          { id: 'fin-ar-360',                 label: 'Aging Piutang',         icon: Scale },
-        ],
-      },
-      {
-        // 2026-09-24 — pertanyaan owner "menu hutang CMT / AP di Finance ada di mana?":
-        // sebelumnya tersebar (Pengadaan → Faktur Supplier, Produksi → Invoice CMT) dan
-        // Aging Hutang tidak punya menu sama sekali. Satu bagian HUTANG di Finance.
-        label: 'HUTANG (AP)',
-        items: [
-          { id: 'fin-ap-aging',     label: 'Aging Hutang',            icon: Scale },
-          { id: 'proc-ap-invoices', label: 'Faktur Supplier (Bahan)', icon: ReceiptText },
-          { id: 'prod-cmt-billing', label: 'Invoice Vendor CMT',      icon: Banknote },
-          // 2026-11-02 (K11): Nota Debit diterbitkan Keuangan (DebitNoteModule)
-          { id: 'fin-debit-notes',  label: 'Nota Debit',              icon: ReceiptText },
-        ],
-      },
-      {
-        label: 'KAS & BANK',
-        items: [
-          { id: 'fin-cash',          label: 'Kas & Bank',        icon: Landmark },
-          { id: 'fin-petty-cash',    label: 'Kas Kecil',         icon: Wallet },
-          { id: 'fin-bank-transfer', label: 'Transfer Bank',     icon: ArrowRightLeft },
-          { id: 'fin-bank-recon',    label: 'Rekonsiliasi Bank', icon: Hourglass },
-          { id: 'fin-ai-cashflow',   label: 'Prediksi Kas',      icon: Brain },
-        ],
-      },
-      {
-        label: 'PENGELUARAN & KARYAWAN',
-        items: [
-          { id: 'fin-expenses',         label: 'Pengeluaran & Klaim',          icon: Receipt },
-          { id: 'fin-kasbon',           label: 'Kasbon & Pinjaman',            icon: HandCoins },
-          { id: 'fin-settlement-queue', label: 'Penyelesaian Perjalanan Dinas', icon: FileText },
-        ],
-      },
-      {
-        label: 'AKUNTANSI',
-        items: [
-          { id: 'fin-journal-hub',           label: 'Jurnal',                       icon: BookCheck },
-          { id: 'fin-acctg-adjust-hub',      label: 'Penyesuaian Akhir Periode',    icon: Calculator },
-          { id: 'fin-approval',              label: 'Persetujuan Perubahan Invoice', icon: ShieldAlert },
-          { id: 'fin-accounting-master-hub', label: 'Master Akuntansi',             icon: FolderTree },
-        ],
-      },
-      {
-        label: 'ANGGARAN, BIAYA & ASET',
-        items: [
-          { id: 'fin-budget',       label: 'Anggaran',       icon: PieChart },
-          { id: 'fin-cost-centers', label: 'Pusat Biaya',    icon: Book },
-          { id: 'fin-hpp',          label: 'HPP',            icon: Calculator },
-          { id: 'fin-hpp-produk',   label: 'HPP per Potong', icon: Calculator },
-          { id: 'fin-fixed-assets', label: 'Aset Tetap',     icon: Package },
+        label: 'KEUANGAN',
+        groups: [
+          {
+            label: 'Beranda',
+            items: [
+              // Beranda menggantikan Dashboard (tautan) + Rekap (AR−AP; K20 diganti keputusan 2026-11-04)
+              { id: 'finance-dashboard', label: 'Beranda Keuangan', icon: Gauge },
+            ],
+          },
+          {
+            label: 'Penjualan & Piutang',
+            // Faktur DIBUAT di Portal Penjualan (Nota Penjualan) & Maklon — di sini terbit + terima bayar.
+            items: [
+              { id: 'fin-marketplace-settlement', label: 'Marketplace',      icon: Store },
+              { id: 'fin-ar-hub',                 label: 'Piutang Reseller', icon: ScrollText },
+            ],
+          },
+          {
+            label: 'Pembelian & Hutang',
+            items: [
+              { id: 'fin-ap-hub',      label: 'Hutang Pemasok & CMT', icon: ReceiptText },
+              { id: 'fin-debit-notes', label: 'Nota Debit (Retur)',   icon: RotateCcw },
+            ],
+          },
+          {
+            label: 'Kas & Bank',
+            items: [
+              { id: 'fin-cash',          label: 'Rekening & Mutasi',       icon: Landmark },
+              { id: 'fin-bank-transfer', label: 'Transfer Antar Rekening', icon: ArrowRightLeft },
+              { id: 'fin-bank-recon',    label: 'Rekonsiliasi Bank',       icon: ClipboardCheck },
+            ],
+          },
+          {
+            label: 'Biaya & Karyawan',
+            items: [
+              { id: 'fin-expenses',         label: 'Pengeluaran & Klaim', icon: Receipt },
+              { id: 'fin-kasbon',           label: 'Kasbon & Uang Muka',  icon: HandCoins },
+              { id: 'fin-settlement-queue', label: 'Perjalanan Dinas',    icon: Plane },
+            ],
+          },
+          {
+            label: 'Laporan',
+            // satu laporan per pertanyaan; "per bulan" / "akhir tiap bulan" = pilihan tampilan
+            items: [
+              { id: 'fin-pnl',          label: 'Laba Rugi',        icon: BarChart3 },
+              { id: 'fin-bs',           label: 'Neraca',           icon: Scale },
+              { id: 'fin-cashflow',     label: 'Arus Kas',         icon: TrendingUp },
+              { id: 'fin-gl',           label: 'Buku Besar',       icon: BookOpen },
+              { id: 'fin-fg-valuation', label: 'Nilai Persediaan', icon: Package },
+            ],
+          },
+          {
+            label: 'Akuntansi',
+            items: [
+              { id: 'fin-journal-hub',      label: 'Jurnal',                       icon: BookCheck },
+              { id: 'fin-acctg-adjust-hub', label: 'Akrual & Tutup Buku',          icon: CalendarRange },
+              { id: 'fin-fixed-assets',     label: 'Aset Tetap',                   icon: Building2 },
+              { id: 'fin-budget',           label: 'Anggaran',                     icon: PieChart },
+              { id: 'fin-hpp',              label: 'HPP',                          icon: Calculator },
+              { id: 'fin-approval',         label: 'Persetujuan Perubahan Faktur', icon: ShieldAlert },
+            ],
+          },
+          {
+            label: 'Pengaturan',
+            items: [
+              { id: 'fin-settings-hub', label: 'Pengaturan Keuangan', icon: Settings2 },
+            ],
+          },
         ],
       },
     ],

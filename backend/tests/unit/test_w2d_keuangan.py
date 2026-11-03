@@ -449,6 +449,18 @@ def test_k19_daftar_mutasi_turunan_gl_semua_jalur(cash_db):
     assert ar["ref_label"] == "SL-001" and ar["movement_id"] == "mv-1"                    # metadata mutasi lama
 
 
+def test_mutasi_rekening_per_halaman_total_utuh_dan_saldo_bersambung(cash_db):
+    """2026-11-04: dulu 2000 baris TERTUA → mutasi terbaru hilang & total hanya dari baris terbaca."""
+    full = run(rp.cash_mutations_from_gl(cash_db, "1-1201", "2026-10-01", "2026-10-31", account_id="bca"))
+    p1 = run(rp.cash_mutations_from_gl(cash_db, "1-1201", "2026-10-01", "2026-10-31", account_id="bca", page_size=4))
+    p2 = run(rp.cash_mutations_from_gl(cash_db, "1-1201", "2026-10-01", "2026-10-31", account_id="bca", page=2, page_size=4))
+    assert [r["running_balance"] for r in p1["rows"] + p2["rows"]] == [r["running_balance"] for r in full["rows"]]
+    assert len(p1["rows"]) == 4 and len(p2["rows"]) == 2 and p2["count"] == 6
+    assert (p2["total_in"], p2["total_out"], p2["closing"]) == (full["total_in"], full["total_out"], full["closing"])
+    oldest = p2["rows"][-1]                     # saldo sesudah baris tertua = saldo awal + mutasinya
+    assert oldest["running_balance"] == 5_000_000 + (oldest["amount"] if oldest["direction"] == "in" else -oldest["amount"])
+
+
 def test_k19_arus_kas_kategori_dari_gl_kas_awal_sama_per_akun(cash_db):
     d = run(frep._cash_flow_data(cash_db, "2026-10-01", "2026-10-31"))
     t = d["totals"]
@@ -465,9 +477,9 @@ def test_k19_arus_kas_kategori_dari_gl_kas_awal_sama_per_akun(cash_db):
 def test_k19_endpoint_mutasi_rekening_tanpa_gl(cash_db, monkeypatch):
     monkeypatch.setattr(frep, "require_auth", _ok_user)
     with pytest.raises(HTTPException) as e:
-        run(frep.cash_mutations(fm.FakeRequest(), account_id="kas", gl_account_code=None, from_date=None, to_date=None))
+        run(frep.cash_mutations(fm.FakeRequest(), account_id="kas", gl_account_code=None, from_date=None, to_date=None, page=1, page_size=50))
     assert e.value.status_code == 400
-    out = run(frep.cash_mutations(fm.FakeRequest(), account_id="mdr", gl_account_code=None, from_date=None, to_date=None))
+    out = run(frep.cash_mutations(fm.FakeRequest(), account_id="mdr", gl_account_code=None, from_date=None, to_date=None, page=1, page_size=50))
     assert out["count"] == 1 and out["rows"][0]["category"] == "transfer" and out["account"]["name"] == "Mandiri"
 
 

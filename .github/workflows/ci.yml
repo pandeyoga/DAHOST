@@ -29,6 +29,7 @@ jobs:
           python3 scripts/audit_authz.py --gate
           python3 scripts/check_collection_writers.py --gate
           python3 scripts/check_unbounded_queries.py --gate
+          python3 scripts/guardrails/check_finance_ui.py   # menu & tampilan Portal Keuangan (2026-11-04)
 
   frontend:
     runs-on: ubuntu-latest

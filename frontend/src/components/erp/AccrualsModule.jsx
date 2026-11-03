@@ -95,7 +95,6 @@ export default function AccrualsModule({ token }) {
     <div className="space-y-5" data-testid="accruals-page">
       <PageHeader
         icon={FileText}
-        eyebrow="Portal Finance · Accounting"
         title="Pencatatan Akrual"
         subtitle="Catat pendapatan & beban yang sudah terjadi tapi belum tercatat di periode berjalan."
         actions={

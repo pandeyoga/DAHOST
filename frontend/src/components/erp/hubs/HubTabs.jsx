@@ -1,5 +1,6 @@
 import React, { Suspense, useState } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../ui/tabs';
+import { CompactHubContext } from '../moduleAtoms';
 
 /**
  * BACKLOG-A (T3.3/T3.4/T3.5/T3.6/T3.9) — Hub generik konsolidasi modul.
@@ -12,7 +13,12 @@ const Spinner = () => (
   </div>
 );
 
-export default function HubTabs({ hubId, title, subtitle, tabs, ...rest }) {
+/**
+ * `compactHeaders` (2026-11-04, hub Keuangan): modul di dalam tab tidak mengulang judul & penjelasannya
+ * (lihat CompactHubContext di moduleAtoms) — dulu judul hub + penjelasan + tab + judul modul + penjelasan
+ * menumpuk sehingga angka pertama baru muncul di tengah layar.
+ */
+export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders = false, ...rest }) {
   const [tab, setTab] = useState(() => {
     try {
       const saved = sessionStorage.getItem(`hub_tab_${hubId}`);
@@ -52,9 +58,11 @@ export default function HubTabs({ hubId, title, subtitle, tabs, ...rest }) {
         {tabs.map((t) => (
           <TabsContent key={t.key} value={t.key} className="mt-4">
             {tab === t.key && (
-              <Suspense fallback={<Spinner />}>
-                <t.Component {...rest} />
-              </Suspense>
+              <CompactHubContext.Provider value={compactHeaders}>
+                <Suspense fallback={<Spinner />}>
+                  <t.Component {...rest} {...(t.props || {})} />
+                </Suspense>
+              </CompactHubContext.Provider>
             )}
           </TabsContent>
         ))}

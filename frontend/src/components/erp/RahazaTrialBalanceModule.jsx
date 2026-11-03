@@ -56,7 +56,6 @@ export default function RahazaTrialBalanceModule({ token }) {
     <div className="space-y-5" data-testid="rahaza-tb-page">
       <PageHeader
         icon={Scale}
-        eyebrow="Portal Finance · Laporan"
         title="Trial Balance (Neraca Saldo)"
         subtitle="Laporan saldo semua akun untuk verifikasi double-entry. Debit harus sama dengan Credit."
         actions={

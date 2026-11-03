@@ -45,20 +45,25 @@ ACTION_LABELS = {
 _INACTIVE_KEEPS = {"delete", "change_code", "change_type", "make_leaf"}
 _CFG = frozenset({"delete", "deactivate", "make_group", "change_code"})
 
-# Tautan layar pengaturan (dipakai laci rincian): modul App + tab hub.
-_SCR_PROFIL = {"module": "fin-accounting-master-hub", "tab": "posting", "label": "Profil Posting"}
-_SCR_AUTO = {"module": "fin-accounting-master-hub", "tab": "coa-auto", "label": "Auto Akun (Subledger)"}
-_SCR_GLMAP = {"module": "fin-accounting-master-hub", "tab": "glmap", "label": "Pemetaan GL"}
-_SCR_COA = {"module": "fin-accounting-master-hub", "tab": "coa", "label": "Bagan Akun"}
+# Tautan layar pengaturan (dipakai laci rincian): modul App + tab hub (+ `view` di dalam tab).
+# 2026-11-04 (menu Keuangan 8 grup): Master Akuntansi → Pengaturan Keuangan; tiga layar pemetaan
+# disatukan di tab "Pemetaan akun otomatis"; rekening toko pindah dari halaman Pencairan.
+_SCR_PROFIL = {"module": "fin-settings-hub", "tab": "mapping", "view": "posting",
+               "label": "Pemetaan akun otomatis › Jurnal otomatis per transaksi"}
+_SCR_AUTO = {"module": "fin-settings-hub", "tab": "mapping", "view": "subledger",
+             "label": "Pemetaan akun otomatis › Akun per pemasok/pelanggan/toko"}
+_SCR_GLMAP = {"module": "fin-settings-hub", "tab": "mapping", "view": "claims",
+              "label": "Pemetaan akun otomatis › Akun klaim biaya karyawan"}
+_SCR_COA = {"module": "fin-settings-hub", "tab": "coa", "label": "Bagan Akun"}
 _SCR_TOKO = {"module": "marketing-accounts", "label": "Kelola Akun toko (Tautan Finance)"}
-_SCR_PAYOUT = {"module": "fin-marketplace-settlement", "label": "Tautan Rekening Bank per Toko"}
-_SCR_KAS = {"module": "fin-cash", "label": "Rekening Kas & Bank"}
-_SCR_PETTY = {"module": "fin-petty-cash", "label": "Kas Kecil"}
+_SCR_PAYOUT = {"module": "fin-settings-hub", "tab": "storebank", "label": "Pengaturan Keuangan › Rekening toko"}
+_SCR_KAS = {"module": "fin-cash", "label": "Rekening & Mutasi"}
+_SCR_PETTY = {"module": "fin-cash", "label": "Rekening & Mutasi (kas kecil)"}
 _SCR_ASET = {"module": "fin-fixed-assets", "label": "Aset Tetap"}
 _SCR_ASET_KAT = {"module": "asset-management", "label": "Manajemen Aset › Kategori"}
 _SCR_BUDGET = {"module": "fin-budget", "label": "Anggaran"}
 _SCR_JURNAL = {"module": "fin-journal-hub", "label": "Buku Jurnal"}
-_SCR_GL = {"module": "fin-general-ledger", "label": "Buku Besar"}
+_SCR_GL = {"module": "fin-gl", "tab": "ledger", "label": "Buku Besar"}
 ENTITY_SCREENS = {
     "vendor_partners": {"module": "vendor-admin", "label": "Vendor CMT"},
     "dewi_cmt_partners": {"module": "vendor-admin", "label": "Vendor CMT (lama)"},

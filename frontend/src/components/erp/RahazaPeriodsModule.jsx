@@ -65,7 +65,6 @@ export default function RahazaPeriodsModule({ token }) {
     <div className="space-y-5" data-testid="rahaza-periods-page">
       <PageHeader
         icon={CalendarRange}
-        eyebrow="Portal Finance · Accounting Core"
         title="Periode Akuntansi (Fiscal Periods)"
         subtitle="Kelola periode bulanan: Open (default), Closed (stop posting), Locked (final audit, irreversible). Periode closed/locked memblokir posting jurnal di tanggal tersebut."
         actions={

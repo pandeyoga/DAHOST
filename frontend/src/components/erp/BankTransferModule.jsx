@@ -300,8 +300,8 @@ export default function BankTransferModule() {
         headers: { Authorization: `Bearer ${token()}` },
       });
       const d = await r.json();
-      if (d.ok || d.already_posted) { toast.success('Retry GL berhasil.'); fetchTransfers(); }
-      else toast.error(`Retry gagal: ${d.error}`);
+      if (d.ok || d.already_posted) { toast.success('Jurnal berhasil dibuat.'); fetchTransfers(); }
+      else toast.error(`Jurnal gagal: ${d.error}`);
     } catch { toast.error('Koneksi bermasalah'); }
   };
 
@@ -325,9 +325,9 @@ export default function BankTransferModule() {
       {/* Header */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-bold text-foreground">Transfer Bank Antar Rekening</h1>
+          <h1 className="text-xl font-bold text-foreground">Transfer Antar Rekening</h1>
           <p className="text-sm text-muted-foreground">
-            Auto-posting GL: Dr Bank Tujuan / Cr Bank Sumber. Tidak perlu input jurnal manual.
+            Memindah uang antar rekening sendiri (mis. bank → Kas Kecil). Jurnal terbentuk otomatis.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -347,37 +347,14 @@ export default function BankTransferModule() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
-        <Card className="shadow-[var(--shadow-card)]">
-          <CardContent className="pt-4">
-            <p className="text-xs text-muted-foreground">Total Transfer</p>
-            <p className="text-lg font-bold">{total}</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-[var(--shadow-card)]">
-          <CardContent className="pt-4">
-            <p className="text-xs text-muted-foreground">GL Terposting</p>
-            <p className="text-lg font-bold text-emerald-500">
-              {transfers.filter(t => t.gl_posted).length}
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-[var(--shadow-card)]">
-          <CardContent className="pt-4">
-            <p className="text-xs text-muted-foreground">Unposted</p>
-            <p className={`text-lg font-bold ${unpostedCount > 0 ? 'text-rose-500' : 'text-muted-foreground'}`}>
-              {unpostedCount}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
+      {/* 2026-11-04: 3 kartu hitungan dilepas — jumlah ada di daftar, yang belum terjurnal di peringatan bawah */}
+      <p className="text-xs text-muted-foreground" data-testid="transfer-count">{total} transfer</p>
 
       {/* Unposted Alert */}
       {unpostedCount > 0 && (
         <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600">
           <AlertCircle size={14} />
-          <span>{unpostedCount} transfer belum terposting ke GL. Klik tombol Retry di baris yang bermasalah.</span>
+          <span>{unpostedCount} transfer belum masuk buku besar. Tekan “Coba lagi” di baris yang bermasalah.</span>
         </div>
       )}
 
@@ -418,7 +395,7 @@ export default function BankTransferModule() {
                     <TableHead className="text-xs uppercase"></TableHead>
                     <TableHead className="text-xs uppercase">Ke</TableHead>
                     <TableHead className="text-xs uppercase text-right">Jumlah</TableHead>
-                    <TableHead className="text-xs uppercase">GL Status</TableHead>
+                    <TableHead className="text-xs uppercase">Jurnal</TableHead>
                     <TableHead className="text-xs uppercase">Status</TableHead>
                     {canManage && <TableHead className="w-24 text-xs uppercase">Aksi</TableHead>}
                   </TableRow>
@@ -460,7 +437,7 @@ export default function BankTransferModule() {
                                 data-testid={`retry-posting-${tf.id}`}
                                 onClick={() => handleRetry(tf.id)}
                               >
-                                <RotateCcw size={11} /> Retry
+                                <RotateCcw size={11} /> Coba lagi
                               </Button>
                             )}
                             {tf.status !== 'voided' && (

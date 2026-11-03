@@ -77,7 +77,6 @@ export default function BadDebtWriteOffModule({ token }) {
     <div className="space-y-5" data-testid="bad-debt-page">
       <PageHeader
         icon={ShieldAlert}
-        eyebrow="Portal Finance · AR Management"
         title="Hapus Buku Piutang Macet"
         subtitle="Kelola piutang overdue dan write-off piutang yang tidak tertagih. Sistem otomatis posting jurnal bad debt expense."
         actions={

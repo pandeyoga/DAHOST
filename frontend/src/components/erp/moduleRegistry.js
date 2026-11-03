@@ -77,7 +77,19 @@ const EnginePOClosure            = lazyRetry(() => import('./engine/POClosureMod
 // Dashboards
 const ManagementDashboard = lazyRetry(() => import('./ManagementDashboard'));
 const WarehouseDashboard  = lazyRetry(() => import('./WarehouseDashboard'));
-const FinanceDashboard    = lazyRetry(() => import('./FinanceDashboard'));
+const FinanceHomeModule   = lazyRetry(() => import('./finance/FinanceHomeModule'));  // 2026-11-04: Beranda Keuangan
+// 2026-11-04 (owner, audit Keuangan tahap 3-4): menu Keuangan 8 grup — hub per jenis dokumen/laporan
+const FinanceMarketplaceHub   = lazyRetry(() => import('./hubs/FinanceMarketplaceHub'));
+const FinanceARHub            = lazyRetry(() => import('./hubs/FinanceARHub'));
+const FinanceAPHub            = lazyRetry(() => import('./hubs/FinanceAPHub'));
+const FinancePnLHub           = lazyRetry(() => import('./hubs/FinancePnLHub'));
+const FinanceBalanceSheetHub  = lazyRetry(() => import('./hubs/FinanceBalanceSheetHub'));
+const FinanceCashFlowHub      = lazyRetry(() => import('./hubs/FinanceCashFlowHub'));
+const FinanceLedgerHub        = lazyRetry(() => import('./hubs/FinanceLedgerHub'));
+const FinanceAssetsHub        = lazyRetry(() => import('./hubs/FinanceAssetsHub'));
+const FinanceHppHub           = lazyRetry(() => import('./hubs/FinanceHppHub'));
+const FinanceSettingsHub      = lazyRetry(() => import('./hubs/FinanceSettingsHub'));
+const RahazaFGValuationModule = lazyRetry(() => import('./RahazaFGValuationModule'));
 // Sprint 1.2: Replace placeholder with real HR Dashboard
 const HRDashboard = lazyRetry(() => import('./HRDashboard'));
 const HRApprovalInboxModule = lazyRetry(() => import('./HRApprovalInboxModule'));   // Phase 26 — P2 HR Approval Inbox
@@ -118,10 +130,6 @@ const AccessoriesDashboard = lazyRetry(() => import('./AccessoriesDashboard'));
 const AccessoriesReports   = lazyRetry(() => import('./AccessoriesReports'));
 
 // Phase B: 8 Frontend UI Modules (Finance, HR, Warehouse) - Added 2026-06-01
-const AccrualsModule = lazyRetry(() => import('./AccrualsModule'));
-const AssetDepreciationModule = lazyRetry(() => import('./AssetDepreciationModule'));
-const BadDebtWriteOffModule = lazyRetry(() => import('./BadDebtWriteOffModule'));
-const AssetDisposalModule = lazyRetry(() => import('./AssetDisposalModule'));
 // W-T2.1 de-dup: EmployeeLoansModule (hr-employee-loans, Pinjaman Legacy) tidak lagi dipakai.
 // Data 3 pinjaman legacy sudah dimigrasi ke dewi_kasbon_requests (type=pinjaman).
 // 'hr-employee-loans' → makeRedirect('hr-kasbon'). Koleksi rahaza_employee_loans diarsip (tidak di-drop).
@@ -147,16 +155,12 @@ const StockSchemaHealthModule = lazyRetry(() => import('./StockSchemaHealthModul
 // Backend routes were deleted in Session #11.16 Phase D (finance.py + dewi_kol.py).
 // Use SSOT modules: fin-ar-invoices (AR Invoices), fin-ar-360 (AR Aging),
 // fin-ap-aging (AP Aging), maklon-billing (Maklon Invoices).
-const FinancialRecapModule     = lazyRetry(() => import('./FinancialRecapModule'));
 const ThreeWayMatchModule      = lazyRetry(() => import('./ThreeWayMatchModule'));     // Phase 27 — 3-way match dashboard
-const ARLifecycleModule        = lazyRetry(() => import('./ARLifecycleModule'));       // Phase 30 — AR 360° (Aging + Customer Statement)
 const ApprovalModule           = lazyRetry(() => import('./ApprovalModule'));
 // Finance · Bank Reconciliation (P1)
 const BankReconciliation       = lazyRetry(() => import('./finance/BankReconciliation'));
 // SESI #37 — Pencairan Marketplace: FORM & JURNAL milik Portal Keuangan
 // (keputusan pemilik). Layar Marketing (`MarketingSettlementsView`) tetap baca-saja.
-const FinanceSettlementModule  = lazyRetry(() => import('./finance/FinanceSettlementModule'));
-const CashFlowAI               = lazyRetry(() => import('./finance/CashFlowAI'));
 
 // Produksi · Master Data Rajut (PT Rahaza)
 const RahazaLocationsModule = lazyRetry(() => import('./RahazaLocationsModule'));
@@ -183,13 +187,9 @@ const RahazaMaterialIssueModule    = lazyRetry(() => import('./RahazaMaterialIss
 const RahazaAttendanceModule       = lazyRetry(() => import('./RahazaAttendanceModule'));
 const RahazaPayrollProfilesModule  = lazyRetry(() => import('./RahazaPayrollProfilesModule'));
 const RahazaPayrollRunModule       = lazyRetry(() => import('./RahazaPayrollRunModule'));
-const RahazaCostCentersModule      = lazyRetry(() => import('./RahazaCostCentersModule'));
-const RahazaARInvoicesModule       = lazyRetry(() => import('./RahazaARInvoicesModule'));
 const FinChannelGLMappingModule    = lazyRetry(() => import('./FinChannelGLMappingModule'));
 const RahazaCashAccountsModule     = lazyRetry(() => import('./RahazaCashAccountsModule'));
 const RahazaExpensesModule         = lazyRetry(() => import('./RahazaExpensesModule'));
-const RahazaHPPModule              = lazyRetry(() => import('./RahazaHPPModule'));
-const ProductCostingModule         = lazyRetry(() => import('./costing/ProductCostingModule'));  // HPP per potong & per model
 const SewingCostModule             = lazyRetry(() => import('./costing/SewingCostModule'));      // sesi #34: biaya jahit SPK + HPP batch FIFO
 const ManagementOverviewModule     = lazyRetry(() => import('./ManagementOverviewModule'));
 // O1.1 — RahazaShipmentsModule tidak lagi dipakai (prod-shipments → redirect wms-delivery-notes). Diarsip kelak.
@@ -197,11 +197,6 @@ const ManagementOverviewModule     = lazyRetry(() => import('./ManagementOvervie
 const RahazaSOPModule              = lazyRetry(() => import('./RahazaSOPModule'));
 
 // Finance · Accounting Core (Phase F1)
-const RahazaCOAModule             = lazyRetry(() => import('./RahazaCOAModule'));
-const RahazaJournalEntryModule    = lazyRetry(() => import('./RahazaJournalEntryModule'));
-const RahazaTrialBalanceModule    = lazyRetry(() => import('./RahazaTrialBalanceModule'));
-const RahazaPeriodsModule         = lazyRetry(() => import('./RahazaPeriodsModule'));
-const RahazaGeneralLedgerModule   = lazyRetry(() => import('./RahazaGeneralLedgerModule'));
 
 // Finance · Accounting Core (Phase F2)
 const RahazaPostingProfilesModule = lazyRetry(() => import('./RahazaPostingProfilesModule'));
@@ -209,17 +204,12 @@ const RahazaPostingProfilesModule = lazyRetry(() => import('./RahazaPostingProfi
 // Phase 7: Marketing AR Bridge & Admin Setup Panel
 const MarketingARBridgeModule     = lazyRetry(() => import('./MarketingARBridgeModule'));
 const AdminSetupPanelModule       = lazyRetry(() => import('./AdminSetupPanelModule'));
+const FinanceMaintenanceModule    = lazyRetry(() => import('./finance/FinanceMaintenanceModule'));  // 2026-11-04
 
-const RahazaPnLModule             = lazyRetry(() => import('./RahazaPnLModule'));
 const RahazaHRReportsModule       = lazyRetry(() => import('./RahazaHRReportsModule'));
-const RahazaBalanceSheetModule    = lazyRetry(() => import('./RahazaBalanceSheetModule'));
-const RahazaJournalListModule     = lazyRetry(() => import('./RahazaJournalListModule'));
-const RahazaAPAgingModule         = lazyRetry(() => import('./RahazaAPAgingModule'));
 
 // Finance · Accounting Core (Phase F3)
-const RahazaCashFlowModule        = lazyRetry(() => import('./RahazaCashFlowModule'));
 const BudgetModule                = lazyRetry(() => import('./BudgetModule'));
-const FixedAssetsModule           = lazyRetry(() => import('./FixedAssetsModule'));
 
 // Session 13 — SLA, Management Tools, Smart Warehouse
 const MaklonSLADashboard         = lazyRetry(() => import('./MaklonSLADashboard'));
@@ -269,8 +259,6 @@ const ProductionAnalyticsHub      = lazyRetry(() => import('./hubs/ProductionAna
 const ProductionMasterProcessHub  = lazyRetry(() => import('./hubs/ProductionMasterProcessHub'));
 const ProductionMasterProductHub  = lazyRetry(() => import('./hubs/ProductionMasterProductHub'));
 const RnDMasterProductHub         = lazyRetry(() => import('./hubs/RnDMasterProductHub')); // 2026-09-12: Kategori·Varian·BOM·Ukuran·Warna → RnD
-const FinanceReportsHub           = lazyRetry(() => import('./hubs/FinanceReportsHub'));
-const FinanceAccountingMasterHub  = lazyRetry(() => import('./hubs/FinanceAccountingMasterHub'));
 // IA v2.1 fase-2/3 — hub konsolidasi Manajemen, SDM, Marketing.
 const ManagementAccessHub  = lazyRetry(() => import('./hubs/ManagementAccessHub'));
 const ManagementSystemHub  = lazyRetry(() => import('./hubs/ManagementSystemHub'));
@@ -300,7 +288,7 @@ const WorkspaceHub                = lazyRetry(() => import('./WorkspaceHub'));
 // Phase 12 — Kasbon & Pinjaman Karyawan
 const KasbonStaffModule           = lazyRetry(() => import('./KasbonStaffModule'));
 const HRKasbonModule              = lazyRetry(() => import('./HRKasbonModule'));
-const FinanceKasbonModule         = lazyRetry(() => import('./FinanceKasbonModule'));
+const FinanceKasbonHub            = lazyRetry(() => import('./hubs/FinanceKasbonHub'));   // 2026-11-04: kasbon + uang muka
 
 // Phase 8 — DA KPI System
 const HRKPIModule                 = lazyRetry(() => import('./HRKPIModule'));
@@ -594,7 +582,6 @@ const EmployeeTravelSettlementModule = lazyRetry(() => import('./EmployeeTravelS
 const FinanceExpenseHub = lazyRetry(() => import('./hubs/FinanceExpenseHub'));  // RC-FLOW-UX de-dup: 2 pintu expense → 1 hub ber-tab
 const EmployeeExpenseGLMappingModule = lazyRetry(() => import('./EmployeeExpenseGLMappingModule'));
 const EmployeeExpenseCategoryMasterModule = lazyRetry(() => import('./EmployeeExpenseCategoryMasterModule')); // Phase 5D
-const PettyCashModule      = lazyRetry(() => import('./PettyCashModule'));      // Phase 6B
 const BankTransferModule   = lazyRetry(() => import('./BankTransferModule'));   // Phase 6C
 
 // Module map — id → component. IDs MUST be unique.
@@ -604,7 +591,7 @@ export const MODULE_REGISTRY = {
   'production-dashboard': ProductionDashboardModule,
   'prod-control-tower':   ProductionControlTowerModule,    // Phase 28 — Unified daily ops dashboard
   'warehouse-dashboard':  WarehouseDashboard,
-  'finance-dashboard':    FinanceDashboard,
+  'finance-dashboard':    FinanceHomeModule,
   // Sprint 1.2: Real HR Dashboard
   'hr-dashboard':         HRDashboard,
   'hr-inbox':             HRApprovalInboxModule,    // Phase 26 — Unified HR Approval Inbox
@@ -621,11 +608,13 @@ export const MODULE_REGISTRY = {
   'hr-expense-approval':      makeRedirect('hr-expense-hub', 'approval'),
   'hr-per-diem-config':       makeRedirect('hr-expense-hub', 'perdiem'),
   'fin-expense-settlement':   makeRedirect('fin-expenses', 'settlement'),  // RC-FLOW-UX de-dup: buka tab settlement di hub fin-expenses (deep-link aman)
-  'fin-settlement-queue':     EmployeeTravelSettlementModule, // Finance settlement queue (entry point for Finance)
+  // 2026-11-04 (audit Keuangan): dari menu Keuangan langsung ke antrean (dulu "Settlement Saya" milik staf)
+  'fin-settlement-queue':     withProps(EmployeeTravelSettlementModule, { defaultTab: 'queue' }),
   'fin-gl-mapping-config':    EmployeeExpenseGLMappingModule, // GL Mapping Configuration (Finance/Admin)
   'fin-expense-category-master': EmployeeExpenseCategoryMasterModule, // Master Kategori Expense (Phase 5D)
-  'fin-petty-cash':     PettyCashModule,    // Kas Kecil / Petty Cash (Phase 6B)
-  'fin-marketplace-settlement': FinanceSettlementModule,  // SESI #37 — pencairan marketplace (input + jurnal)
+  // 2026-11-04 (owner): Kas Kecil = rekening biasa di Rekening & Mutasi; uang muka → Kasbon & Uang Muka
+  'fin-petty-cash':     makeRedirect('fin-cash'),
+  'fin-marketplace-settlement': FinanceMarketplaceHub,  // 2026-11-04: 3 tab (saldo · dana dilepas · penarikan)
   'fin-bank-transfer':  BankTransferModule, // Transfer Bank Antar Rekening (Phase 6C)
   // Sprint 1.3: Master Karyawan exposed in HR portal
   'hr-employees':         HREmployeeModule,
@@ -686,12 +675,12 @@ export const MODULE_REGISTRY = {
   // REMOVED in Session #11.17 (post Phase D). Backend routes already 404 (Session #11.16 Phase D).
   // Use SSOT routes instead: fin-ar-invoices, fin-ar-360, fin-ap-aging, maklon-billing.
   'fin-3way-match':    ThreeWayMatchModule,         // Phase 27 — PO ↔ GR ↔ AP 3-way reconciliation
-  'fin-ar-360':        ARLifecycleModule,           // Phase 30 — AR 360° (Aging matrix + customer statement)
+  'fin-ar-360':        makeRedirect('fin-ar-hub', 'aging'),   // 2026-11-04 → Piutang Reseller › Umur piutang
   'fin-approval':      ApprovalModule,
-  'fin-recap':         FinancialRecapModule,
+  'fin-recap':         makeRedirect('finance-dashboard'),  // 2026-11-04 (owner): Rekap digabung ke Beranda
   // Finance · Bank Reconciliation (P1)
   'fin-bank-recon':    BankReconciliation,
-  'fin-ai-cashflow':   CashFlowAI,
+  'fin-ai-cashflow':   makeRedirect('fin-cashflow', 'forecast'),  // 2026-11-04 → Arus Kas › Perkiraan
 
   // Produksi · Master Data (Fase 3)
   'prod-locations': RahazaLocationsModule,   // deeplink backward compat
@@ -824,17 +813,19 @@ export const MODULE_REGISTRY = {
   'hr-reports':          RahazaHRReportsModule,
 
   // Finance · Enhanced (Fase 8.5)
-  'fin-cost-centers':  RahazaCostCentersModule,
-  'fin-ar-invoices':   RahazaARInvoicesModule,
+  'fin-cost-centers':  makeRedirect('fin-settings-hub', 'costcenter'),  // 2026-11-04 → Pengaturan Keuangan
+  'fin-ar-invoices':   makeRedirect('fin-ar-hub', 'invoices'),  // 2026-11-04 → Piutang Reseller › Faktur
+  'fin-ar-hub':        FinanceARHub,
+  'fin-ap-hub':        FinanceAPHub,
   'fin-channel-gl':    FinChannelGLMappingModule,   // P3 — Channel GL Mapping (revenue routing)
   'fin-cash':          RahazaCashAccountsModule,
   'fin-expenses':      FinanceExpenseHub,  // RC-FLOW-UX de-dup: hub ber-tab (Pengeluaran + Klaim Disbursement)
 
   // Finance · HPP (Fase 9)
-  'fin-hpp':           RahazaHPPModule,
+  'fin-hpp':           FinanceHppHub,  // 2026-11-04: HPP aktual + HPP per potong satu menu
   // 2026-08-23 — HPP per Potong & per Model: HPP produk lahir dari BOM × harga
   // pembelian + upah CMT + upah cutting/internal (bukan ketikan master).
-  'fin-hpp-produk':    ProductCostingModule,
+  'fin-hpp-produk':    makeRedirect('fin-hpp', 'unit'),
   // sesi #34 — pintu INPUT biaya jahit per SKU/pcs di SPK + viewer HPP batch (FIFO).
   'prod-sewing-cost':  SewingCostModule,
 
@@ -856,12 +847,13 @@ export const MODULE_REGISTRY = {
   'prod-sop': RahazaSOPModule,
 
   // Finance · Accounting Core (Phase F1)
-  'fin-coa':               RahazaCOAModule,
+  'fin-coa':               makeRedirect('fin-settings-hub', 'coa'),
   'fin-journal-hub':       FinanceJournalHub,       // BACKLOG-A T3.3
 
   // IA v2.1 — Hub konsolidasi Keuangan (menu = hub; moduleId lama tetap sbg deep-link standalone)
-  'fin-reports-hub':            FinanceReportsHub,
-  'fin-accounting-master-hub':  FinanceAccountingMasterHub,
+  'fin-reports-hub':            makeRedirect('fin-pnl'),  // 2026-11-04: 10 tab → 5 menu laporan
+  'fin-accounting-master-hub':  makeRedirect('fin-settings-hub'),  // 2026-11-04 → Pengaturan Keuangan
+  'fin-settings-hub':           FinanceSettingsHub,
 
   // IA v2.1 fase-2/3 — hub konsolidasi (deep-link moduleId lama tetap ada di registry)
   'mgmt-access-hub':   ManagementAccessHub,
@@ -870,27 +862,31 @@ export const MODULE_REGISTRY = {
   'hr-shift-hub':      HRShiftHub,
   'hr-leave-hub':      HRLeaveHub,
   'marketing-kol-hub': MarketingKOLHub,
-  'fin-journal-entry':     makeRedirect('fin-journal-hub', 'entry'),   // T3.3 → hub
-  'fin-trial-balance':     RahazaTrialBalanceModule,
-  'fin-general-ledger':    RahazaGeneralLedgerModule,
-  'fin-periods':           RahazaPeriodsModule,
+  'fin-journal-entry':     makeRedirect('fin-journal-hub', 'list'),    // T3.3 → hub (2026-11-04: satu daftar)
+  'fin-trial-balance':     makeRedirect('fin-gl', 'tb'),
+  'fin-general-ledger':    makeRedirect('fin-gl', 'ledger'),
+  'fin-gl':                FinanceLedgerHub,  // 2026-11-04: Neraca Saldo + Lajur + Buku Besar
+  'fin-periods':           makeRedirect('fin-acctg-adjust-hub', 'periods'),
 
   // Finance · Accounting Core (Phase F2)
   'fin-posting-profiles':  RahazaPostingProfilesModule,
-  'fin-pnl':               RahazaPnLModule,
-  'fin-balance-sheet':     RahazaBalanceSheetModule,
+  'fin-pnl':               FinancePnLHub,  // 2026-11-04: Total periode / Per bulan
+  'fin-balance-sheet':     makeRedirect('fin-bs', 'date'),
+  'fin-bs':                FinanceBalanceSheetHub,
   'fin-journal-list':      makeRedirect('fin-journal-hub', 'list'),    // T3.3 → hub
-  'fin-ap-aging':          RahazaAPAgingModule,
+  'fin-ap-aging':          makeRedirect('fin-ap-hub', 'aging'),  // 2026-11-04 → Hutang Pemasok & CMT › Umur hutang
 
   // Finance · Accounting Core (Phase F3)
-  'fin-cash-flow':         RahazaCashFlowModule,
+  'fin-cash-flow':         makeRedirect('fin-cashflow', 'actual'),
+  'fin-cashflow':          FinanceCashFlowHub,
+  'fin-fg-valuation':      RahazaFGValuationModule,
   // 2026-09-12 — laporan ala Excel akuntan (deep-link → tab hub)
-  'fin-worksheet':         makeRedirect('fin-reports-hub', 'worksheet'),
-  'fin-pnl-monthly':       makeRedirect('fin-reports-hub', 'pnl12'),
-  'fin-balance-sheet-monthly': makeRedirect('fin-reports-hub', 'bs12'),
-  'fin-opening-balance':   makeRedirect('fin-accounting-master-hub', 'opening'),
+  'fin-worksheet':         makeRedirect('fin-gl', 'worksheet'),
+  'fin-pnl-monthly':       makeRedirect('fin-pnl', 'monthly'),
+  'fin-balance-sheet-monthly': makeRedirect('fin-bs', 'monthly'),
+  'fin-opening-balance':   makeRedirect('fin-settings-hub', 'opening'),
   'fin-budget':            BudgetModule,
-  'fin-fixed-assets':      FixedAssetsModule,
+  'fin-fixed-assets':      FinanceAssetsHub,  // 2026-11-04: daftar + penyusutan + pelepasan
   'fin-executive-report':  ExecutiveReportModule,      // Phase 3 — Executive Report Hub
   'reports-hub':           ReportsHubModule,           // WS-B(b) — Pusat Laporan terpusat
 
@@ -898,18 +894,18 @@ export const MODULE_REGISTRY = {
   // PHASE B (6.1.4 #4): 5 menu jurnal-otomatis → 1 hub "Penyesuaian Akuntansi". Deep-link tab aman.
   'fin-acctg-adjust-hub':      FinanceAccountingAdjustHub,
   'fin-accruals':              makeRedirect('fin-acctg-adjust-hub', 'accruals'),
-  'fin-asset-depreciation':    makeRedirect('fin-acctg-adjust-hub', 'depreciation'),
-  'fin-bad-debt-writeoff':     makeRedirect('fin-acctg-adjust-hub', 'baddebt'),
-  'fin-asset-disposal':        makeRedirect('fin-acctg-adjust-hub', 'disposal'),
+  'fin-asset-depreciation':    makeRedirect('fin-fixed-assets', 'depreciation'),
+  'fin-bad-debt-writeoff':     makeRedirect('fin-ar-hub', 'writeoff'),
+  'fin-asset-disposal':        makeRedirect('fin-fixed-assets', 'disposal'),
   // 2026-11-03: bayar hutang (+ potongan pemasok) satu pintu di Faktur Supplier
-  'fin-purchase-discount':     makeRedirect('proc-ap-invoices'),
+  'fin-purchase-discount':     makeRedirect('fin-ap-hub', 'bills'),
 
   // HR · Phase B — Employee Loans Module (W-T2.1: legacy → redirect ke Kasbon & Pinjaman kanonik)
   'hr-employee-loans':         makeRedirect('hr-kasbon'),
 
   // Phase 12 — Kasbon & Pinjaman Karyawan
   'hr-kasbon':                 HRKasbonModule,
-  'fin-kasbon':                FinanceKasbonModule,
+  'fin-kasbon':                FinanceKasbonHub,
 
   // Warehouse · Phase B — Inventory Adjustments
   // RC-IA-warehouse-3: jalur adjust RESMI (rahaza/material-adjust + posting GL). Kini tab di wms-stock-hub.
@@ -935,6 +931,7 @@ export const MODULE_REGISTRY = {
   // Phase 7: Marketing AR Bridge & Admin Setup
   'marketing-ar-bridge': MarketingARBridgeModule,
   'admin-setup-panel': AdminSetupPanelModule,
+  'sys-finance-maintenance': FinanceMaintenanceModule,  // Adm. Sistem › Perawatan Data Keuangan
 
   'prod-fpy':              makeRedirect('prod-progress'),  // K5 (Phase C)
   'prod-downtime':              RahazaDowntimeModule,

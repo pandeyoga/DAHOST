@@ -4,7 +4,6 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
-import CronJobCard from './CronJobCard';
 import { todayWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
@@ -13,8 +12,6 @@ export default function RahazaFGValuationModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [asOf, setAsOf] = useState(todayWIB());
-  const [backfill, setBackfill] = useState(null);
-  const [busy, setBusy] = useState(false);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchData = useCallback(async () => {
@@ -26,18 +23,6 @@ export default function RahazaFGValuationModule({ token }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, asOf]);
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  const runBackfill = async (dryRun) => {
-    if (!dryRun && !window.confirm('Posting jurnal WIP→Barang Jadi untuk semua Terima FG dari CMT (PO internal) yang belum berjurnal?')) return;
-    setBusy(true);
-    try {
-      const r = await fetch(`/api/prod/cmt-receipts/backfill-wip-fg?dry_run=${dryRun}`, { method: 'POST', headers });
-      const d = await r.json();
-      if (!r.ok) { alert(d.detail || 'Error'); return; }
-      setBackfill(d);
-      if (!dryRun) fetchData();
-    } finally { setBusy(false); }
-  };
 
   const exportCSV = () => {
     if (!data?.rows) return;
@@ -54,19 +39,18 @@ export default function RahazaFGValuationModule({ token }) {
     <div className="space-y-5" data-testid="rahaza-fgval-page">
       <PageHeader
         icon={Boxes}
-        eyebrow="Portal Finance · Laporan"
-        title="Nilai Persediaan Barang Jadi (WAC vs GL 1-1404)"
-        subtitle="Stok FG × rata-rata bergerak (WAC, keputusan owner No.26a) dibandingkan saldo akun Persediaan Barang Jadi. Selisih dijelaskan: lapisan belum berjurnal & stok tanpa biaya."
+        title="Nilai Persediaan Barang Jadi"
+        subtitle="Stok barang jadi × harga rata-rata, dibandingkan saldo akun Persediaan Barang Jadi di buku besar."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="fgval-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportCSV} className="h-9 border border-[var(--glass-border)]" disabled={!data?.rows?.length} data-testid="fgval-export"><Download className="w-3.5 h-3.5 mr-1.5" />Export CSV</Button>
+            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="fgval-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="ghost" onClick={exportCSV} className="h-9 border border-[var(--glass-border)]" disabled={!data?.rows?.length} data-testid="fgval-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
           </>
         }
       />
 
       <GlassCard className="p-4 flex items-center gap-3 flex-wrap">
-        <span className="text-xs text-muted-foreground">Saldo GL per</span>
+        <span className="text-xs text-muted-foreground">Saldo buku besar per</span>
         <GlassInput type="date" value={asOf} onChange={e => setAsOf(e.target.value)} className="h-8 w-36" data-testid="fgval-asof" />
         <span className={`text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded border ${data?.reconciled ? 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25' : data?.explained ? 'text-amber-300 bg-amber-400/10 border-amber-400/25' : 'text-red-300 bg-red-400/10 border-red-400/25'}`} data-testid="fgval-status">
           {data?.reconciled ? 'Cocok dengan GL' : data?.explained ? 'Selisih terjelaskan (lapisan belum berjurnal)' : 'Selisih belum terjelaskan'}
@@ -74,37 +58,19 @@ export default function RahazaFGValuationModule({ token }) {
       </GlassCard>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Nilai WAC" value={`Rp ${fmt(t.layer_value)}`} accent="primary" testId="fgval-kpi-layer" />
-        <StatTile label={`Saldo GL 1-1404 (${data?.as_of || asOf})`} value={`Rp ${fmt(t.gl_balance)}`} testId="fgval-kpi-gl" />
-        <StatTile label="Selisih (WAC − GL)" value={`Rp ${fmt(t.difference)}`} accent={Math.abs(t.difference || 0) < 1 ? 'success' : 'danger'} testId="fgval-kpi-diff" />
-        <StatTile label="Belum Berjurnal (WIP→FG)" value={`Rp ${fmt(t.unposted_value)} · ${t.unposted_layers || 0} lapisan`} accent={t.unposted_layers ? 'danger' : 'success'} testId="fgval-kpi-unposted" />
+        <StatTile label="Nilai persediaan (harga rata-rata)" value={`Rp ${fmt(t.layer_value)}`} accent="primary" testId="fgval-kpi-layer" />
+        <StatTile label="Saldo buku besar" value={`Rp ${fmt(t.gl_balance)}`} testId="fgval-kpi-gl" />
+        <StatTile label="Selisih" value={`Rp ${fmt(t.difference)}`} accent={Math.abs(t.difference || 0) < 1 ? 'success' : 'danger'} testId="fgval-kpi-diff" />
+        <StatTile label="Belum dijurnal" value={`Rp ${fmt(t.unposted_value)} · ${t.unposted_layers || 0} lapisan`} accent={t.unposted_layers ? 'danger' : 'success'} testId="fgval-kpi-unposted" />
       </div>
 
-      {(t.unposted_layers > 0 || backfill) && (
-        <GlassCard className="p-4" data-testid="fgval-backfill-card">
-          <div className="flex flex-wrap items-center gap-3">
-            <BookCheck className="w-4 h-4 text-amber-300" />
-            <div className="text-sm">
-              <span className="font-semibold">Backfill WIP→FG:</span> Terima FG dari CMT (PO internal) yang sudah selesai QC tetapi belum punya jurnal Dr 1-1404 / Cr 1-1403.
-            </div>
-            <div className="ml-auto flex gap-2">
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => runBackfill(true)} data-testid="fgval-backfill-preview">Lihat kandidat</Button>
-              <Button size="sm" disabled={busy || !(backfill?.candidates > 0) || !backfill?.dry_run} onClick={() => runBackfill(false)} data-testid="fgval-backfill-run">Posting sekarang</Button>
-            </div>
-          </div>
-          {backfill && (
-            <div className="mt-3 text-xs text-foreground/70" data-testid="fgval-backfill-result">
-              {backfill.dry_run ? `${backfill.candidates} kandidat · Rp ${fmt(backfill.total_value)}` : `${backfill.posted} jurnal diposting · Rp ${fmt(backfill.total_value)}`}
-              {backfill.rows?.slice(0, 10).map(r => (
-                <div key={r.receipt_id} className="font-mono">{r.receipt_code} · {r.po_number} · {r.layers} lapisan · Rp {fmt(r.value)} → {r.result}{r.je_number ? ` (${r.je_number})` : ''}{r.error ? ` — ${r.error}` : ''}</div>
-              ))}
-            </div>
-          )}
-        </GlassCard>
+      {t.unposted_layers > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300" data-testid="fgval-unposted-hint">
+          <BookCheck className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{t.unposted_layers} lapisan barang jadi dari CMT belum dijurnal. Minta admin menjalankan
+            “Jurnal WIP → Barang Jadi yang tertinggal” di Adm. Sistem › Perawatan Data Keuangan.</span>
+        </div>
       )}
-
-      <CronJobCard job="fg-valuation-check" title="Rekonsiliasi otomatis" description="setiap hari 07:00 WIB; Finance diberi notifikasi bila selisih belum terjelaskan"
-        renderResult={(r) => `selisih Rp ${fmt(r.difference)} · belum terjelaskan Rp ${fmt(r.unexplained_difference)}${r.notified ? ' · notifikasi terkirim' : ''}`} onRan={fetchData} />
 
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (

@@ -16,6 +16,7 @@ from utils.counters import gen_prefixed_number  # noqa: F401  (dipakai jalur lai
 from core.doc_number_policy import issue_number
 from pymongo.errors import DuplicateKeyError
 import math  # FIN-15
+import re
 import uuid
 from datetime import datetime, timezone, date
 from typing import Optional
@@ -246,20 +247,48 @@ async def list_journals(
     status: Optional[str] = None,
     source: Optional[str] = None,
     limit: int = 200,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    q: Optional[str] = None,
+    account_code: Optional[str] = None,
 ):
+    """Daftar jurnal. Tanpa `page` → daftar biasa (perilaku lama, maks 500).
+
+    2026-11-04 (audit Keuangan): dengan `page` → paginasi server {items, total, status_counts}. Dulu
+    layar Jurnal merender semua jurnal sekaligus (±24 layar untuk 4 bulan) dan dua daftar (Jurnal Umum
+    dan Daftar Jurnal) sama-sama dipotong diam-diam di 500 baris."""
     await require_auth(request)
     db = get_db()
-    q = {}
+    flt: dict = {}
     if from_date and to_date:
-        q["date"] = {"$gte": from_date, "$lte": to_date}
-    if status:
-        q["status"] = status
+        flt["date"] = {"$gte": from_date, "$lte": to_date}
+    elif from_date:
+        flt["date"] = {"$gte": from_date}
+    elif to_date:
+        flt["date"] = {"$lte": to_date}
     if source:
-        q["source_module"] = source
-    rows = await db.rahaza_journal_entries.find(q, {"_id": 0}).sort([("date", -1), ("je_number", -1)]).limit(limit).to_list(500)
+        flt["source_module"] = source
+    if q:
+        rx = {"$regex": re.escape(q.strip()), "$options": "i"}
+        flt["$or"] = [{"je_number": rx}, {"memo": rx}, {"source_ref": rx}]
+    if account_code:
+        line_q = {"account_code": account_code.strip(), **({"date": flt["date"]} if "date" in flt else {})}
+        flt["id"] = {"$in": list(set(await db.rahaza_journal_lines.distinct("je_id", line_q)))}
+    with_status = {**flt, **({"status": status} if status else {})}
+    if page is None:
+        rows = await db.rahaza_journal_entries.find(with_status, {"_id": 0}).sort([("date", -1), ("je_number", -1)]).limit(limit).to_list(500)
+        for r in rows:
+            r["hub_voidable"] = hub_void_error(r) is None
+        return serialize_doc(rows)
+    total = await db.rahaza_journal_entries.count_documents(with_status)
+    rows = await db.rahaza_journal_entries.find(with_status, {"_id": 0}).sort([("date", -1), ("je_number", -1)]) \
+        .skip((page - 1) * page_size).limit(page_size).to_list(page_size)
     for r in rows:
         r["hub_voidable"] = hub_void_error(r) is None
-    return serialize_doc(rows)
+    counts = await db.rahaza_journal_entries.aggregate([
+        {"$match": flt}, {"$group": {"_id": "$status", "n": {"$sum": 1}}}]).to_list(20)
+    return {"items": serialize_doc(rows), "total": total, "page": page, "page_size": page_size,
+            "status_counts": {str(c["_id"] or "draft"): c["n"] for c in counts}}
 
 
 @router.get("/{je_id}")

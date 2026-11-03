@@ -64,7 +64,7 @@ export default function ApprovalModule({ token, userRole }) {
 
   const handleApprove = async () => {
     if (!selectedRequest) return;
-    if (!confirm(`Approve request edit untuk invoice ${selectedRequest.invoice_number}?`)) return;
+    if (!confirm(`Setujui perubahan faktur ${selectedRequest.invoice_number}?`)) return;
     setActionLoading(true);
     try {
       const res = await fetch(`/api/invoice-edit-requests/${selectedRequest.id}/approve`, {
@@ -96,7 +96,7 @@ export default function ApprovalModule({ token, userRole }) {
       alert('Catatan/alasan reject wajib diisi');
       return;
     }
-    if (!confirm(`Reject request edit untuk invoice ${selectedRequest.invoice_number}?`)) return;
+    if (!confirm(`Tolak perubahan faktur ${selectedRequest.invoice_number}?`)) return;
     setActionLoading(true);
     try {
       const res = await fetch(`/api/invoice-edit-requests/${selectedRequest.id}/reject`, {
@@ -244,15 +244,15 @@ export default function ApprovalModule({ token, userRole }) {
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground" data-testid="approval-module-title">Invoice Edit Approval</h1>
-          <p className="text-muted-foreground text-sm mt-1">Review dan approve/reject request perubahan invoice dari admin</p>
+          <h1 className="text-2xl font-bold text-foreground" data-testid="approval-module-title">Persetujuan Perubahan Faktur</h1>
+          <p className="text-muted-foreground text-sm mt-1">Setujui atau tolak permintaan perubahan faktur yang diajukan admin.</p>
         </div>
         <button
           onClick={fetchRequests}
           className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm hover:bg-[var(--glass-bg)]"
           data-testid="approval-refresh-button"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
         </button>
       </div>
 
@@ -261,10 +261,10 @@ export default function ApprovalModule({ token, userRole }) {
         <div className="flex items-start gap-2">
           <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <div>
-            <p className="font-semibold">Approval Workflow:</p>
-            <p className="mt-1">1. Admin ERP membuat <strong>Request Edit Invoice</strong> (invoice tidak langsung berubah).</p>
-            <p>2. Superadmin/Admin review request → <strong>Setujui</strong> (invoice auto-update + histori tercatat) atau <strong>Tolak</strong>.</p>
-            <p>3. Semua perubahan tersimpan di <strong>Invoice Change History</strong> untuk audit trail.</p>
+            <p className="font-semibold">Alurnya:</p>
+            <p className="mt-1">1. Admin mengajukan perubahan faktur (faktur belum berubah).</p>
+            <p>2. Superadmin/Admin memeriksa → <strong>Setujui</strong> (faktur diperbarui dan riwayatnya dicatat) atau <strong>Tolak</strong>.</p>
+            <p>3. Semua perubahan tersimpan di riwayat perubahan faktur untuk pemeriksaan.</p>
           </div>
         </div>
       </div>
@@ -279,14 +279,14 @@ export default function ApprovalModule({ token, userRole }) {
               className={`px-3 py-1.5 rounded-lg text-sm border ${filterStatus === status ? 'bg-teal-600 text-foreground border-teal-600' : 'border-border text-muted-foreground hover:bg-[var(--glass-bg)]'}`}
               data-testid={`filter-status-${status || 'all'}`}
             >
-              {status || 'Semua'}
+              {({ Pending: 'Menunggu', Approved: 'Disetujui', Rejected: 'Ditolak' })[status] || 'Semua'}
             </button>
           ))}
         </div>
         <div className="ml-auto">
           <input
             type="text"
-            placeholder="Cari invoice number, requester..."
+            placeholder="Cari no. faktur atau pengaju…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && fetchRequests()}
@@ -438,7 +438,7 @@ export default function ApprovalModule({ token, userRole }) {
                     data-testid="approve-button"
                   >
                     <CheckCircle className="w-4 h-4" />
-                    {actionLoading ? 'Processing...' : 'Approve'}
+                    {actionLoading ? 'Memproses…' : 'Setujui'}
                   </button>
                   <button
                     onClick={handleReject}
@@ -447,7 +447,7 @@ export default function ApprovalModule({ token, userRole }) {
                     data-testid="reject-button"
                   >
                     <XCircle className="w-4 h-4" />
-                    {actionLoading ? 'Processing...' : 'Reject'}
+                    {actionLoading ? 'Memproses…' : 'Tolak'}
                   </button>
                 </div>
               </div>

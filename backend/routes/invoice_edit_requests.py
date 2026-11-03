@@ -24,7 +24,7 @@ import logging
 
 log = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Query
 
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
@@ -89,7 +89,8 @@ def _build_change_summary(before: dict, after: dict) -> str:
 # LIST
 # ──────────────────────────────────────────────────────────────────────────────
 @router.get("")
-async def list_requests(request: Request, status: Optional[str] = None, q: Optional[str] = None):
+async def list_requests(request: Request, status: Optional[str] = None, q: Optional[str] = None,
+                        limit: int = Query(2000, ge=1, le=5000)):
     await require_auth(request)
     db = get_db()
     query = {}
@@ -104,7 +105,7 @@ async def list_requests(request: Request, status: Optional[str] = None, q: Optio
                 {"requested_by_name": {"$regex": needle, "$options": "i"}},
                 {"requested_by": {"$regex": needle, "$options": "i"}},
             ]
-    rows = await db.invoice_edit_requests.find(query, {"_id": 0}).sort("requested_at", -1).to_list(500)
+    rows = await db.invoice_edit_requests.find(query, {"_id": 0}).sort("requested_at", -1).to_list(limit)
     return serialize_doc(rows)
 
 

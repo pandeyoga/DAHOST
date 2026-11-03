@@ -24,6 +24,14 @@ Prefix: /api/finance/petty-cash
   - Akun beban pengeluaran kas kecil TIDAK lagi bawaan 6-2400 ATK: dari pemetaan kategori
     (employee_expense_gl_mappings); bila kategori tidak terpetakan, akun WAJIB dipilih.
   - Tipe "return" lama hanya untuk uang muka LAMA (tanpa karyawan, dulu langsung dibebankan).
+
+2026-11-04 (keputusan owner — Kas Kecil disatukan):
+  - Kas Kecil = rekening kas biasa di Rekening & Mutasi (akun GL yang sama, 1-1101). Pengeluaran lewat
+    menu Pengeluaran, pengisian lewat Transfer Antar Rekening. Layar dana kas kecil tidak lagi di menu.
+  - Uang muka karyawan pindah ke menu Kasbon & Uang Muka: `POST /advances` dibayar dari REKENING mana saja
+    (`cash_account_id`, tanpa dana). Jurnal sama (Dr 1-1610 / Cr akun rekening); sisa uang saat
+    pertanggungjawaban kembali ke rekening yang dipilih (bawaan: rekening asal).
+  - Data dana lama tetap terbaca (riwayat, uang muka terbuka); skrip `scripts/migrate_petty_cash_merge.py`.
 """
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
@@ -94,6 +102,18 @@ class AdvanceSettleIn(BaseModel):
     returned_amount: float = Field(0.0, ge=0)
     settle_date: Optional[str] = None
     memo: Optional[str] = None
+    # 2026-11-04: rekening penerima sisa uang; kosong ⇒ rekening asal uang muka (atau dana kas kecil lama)
+    return_cash_account_id: Optional[str] = None
+
+
+class AdvanceCreateIn(BaseModel):
+    """2026-11-04: uang muka karyawan dari rekening kas/bank (tanpa dana kas kecil)."""
+    cash_account_id: str
+    employee_id: str
+    amount: float = Field(..., gt=0)
+    txn_date: Optional[str] = None
+    memo: Optional[str] = None
+    settle_days: int = Field(0, ge=0, le=365)   # batas hari pertanggungjawaban; 0 = tanpa batas
 
 
 class FundSettingsIn(BaseModel):
@@ -204,10 +224,14 @@ async def _post_petty_cash_txn(db, txn: dict, user: dict) -> dict:
     # FIN-05(a): akun kas kecil dari Profil Posting (bawaan 1-1101), bukan konstanta legacy '1-110'
     _pc_map = await get_mapping(db, 'petty_cash_replenish')
     petty_cash_code = _pc_map.get('debit_petty_cash') or '1-1101'
+    # 2026-11-04: uang muka dari rekening (tanpa dana) — akun kas = akun GL rekening yang dipilih
+    if txn_type in ('advance', 'advance_settlement') and txn.get('cash_gl_code'):
+        petty_cash_code = txn['cash_gl_code']
 
     if txn_type == 'advance' and txn.get('employee_id'):
         adv_code = txn.get('advance_account_code') or await _employee_advance_code(db)
-        memo = f"Uang Muka Kas Kecil — {txn.get('employee_name') or txn.get('payee') or ''}: {txn.get('memo') or ''}".strip(': ')
+        _lbl = 'Uang Muka Karyawan' if txn.get('cash_gl_code') else 'Uang Muka Kas Kecil'
+        memo = f"{_lbl} — {txn.get('employee_name') or txn.get('payee') or ''}: {txn.get('memo') or ''}".strip(': ')
         lines = [
             {'account_code': adv_code, 'debit': round(amount, 2), 'credit': 0, 'description': memo},
             {'account_code': petty_cash_code, 'debit': 0, 'credit': round(amount, 2), 'description': memo},
@@ -588,7 +612,7 @@ def _advance_view(t: dict, fund_days: dict, today: date) -> dict:
     except ValueError:
         age = None
     due = t.get('due_date')
-    if not due and fund_days.get(t.get('fund_id')) and age is not None:
+    if not due and t.get('fund_id') and fund_days.get(t.get('fund_id')) and age is not None:
         due = (date.fromisoformat(str(t.get('txn_date'))[:10]) + timedelta(days=fund_days[t['fund_id']])).isoformat()
     return {
         'id': t['id'], 'fund_id': t.get('fund_id'), 'txn_date': t.get('txn_date'),
@@ -599,6 +623,8 @@ def _advance_view(t: dict, fund_days: dict, today: date) -> dict:
         'advance_status': t.get('advance_status') or 'open', 'gl_je_number': t.get('gl_je_number'),
         'age_days': age, 'due_date': due, 'overdue': bool(due and today.isoformat() > due),
         'settlements': t.get('settlements') or [],
+        'cash_account_id': t.get('cash_account_id'), 'cash_account_name': t.get('cash_account_name') or '',
+        'source': 'rekening' if t.get('cash_gl_code') else 'kas_kecil',
     }
 
 
@@ -620,7 +646,7 @@ async def list_advances(
         q['fund_id'] = fund_id
     if status == 'open':
         q['open_amount'] = {'$gt': 0.009}
-    rows = await db.rahaza_petty_cash_txns.find(q, {'_id': 0}).sort('txn_date', 1).to_list(2000)
+    rows = [t async for t in db.rahaza_petty_cash_txns.find(q, {'_id': 0}).sort('txn_date', 1)]
     funds = await db.rahaza_petty_cash_funds.find({}, {'_id': 0, 'id': 1, 'advance_settle_days': 1}).to_list(200)
     fund_days = {f['id']: int(f.get('advance_settle_days') or 0) for f in funds}
     today = today_wib()
@@ -635,6 +661,46 @@ async def list_advances(
         g['overdue_count'] += 1 if it['overdue'] else 0
     return {'items': items, 'by_employee': sorted(groups.values(), key=lambda g: -g['total_open']),
             'total_open': round(sum(i['open_amount'] for i in items), 2)}
+
+
+@router.post('/advances')
+async def create_advance(body: AdvanceCreateIn, user: dict = Depends(require_auth)):
+    """2026-11-04: uang muka karyawan dari rekening kas/bank (menu Kasbon & Uang Muka).
+    Jurnal Dr Uang Muka Karyawan (1-1610) / Cr akun rekening; dibebankan saat pertanggungjawaban."""
+    if user.get('role') not in ALL_ROLES:
+        raise HTTPException(403, 'Hanya Finance/Kasir yang bisa mencatat uang muka karyawan.')
+    db = get_db()
+    from routes.rahaza_payroll_shared import resolve_payment_account
+    acc = await resolve_payment_account(db, cash_account_id=body.cash_account_id, purpose='Uang muka karyawan')
+    emp = await db.rahaza_employees.find_one({'id': (body.employee_id or '').strip()},
+                                             {'_id': 0, 'id': 1, 'name': 1, 'employee_code': 1, 'active': 1})
+    if not emp or emp.get('active') is False:
+        raise HTTPException(400, 'Karyawan penerima uang muka tidak ditemukan atau nonaktif.')
+    txn_date = (body.txn_date or str(today_wib()))[:10]
+    try:
+        d0 = date.fromisoformat(txn_date)
+    except ValueError:
+        raise HTTPException(400, 'Format txn_date harus YYYY-MM-DD.')
+    due = (d0 + timedelta(days=body.settle_days)).isoformat() if body.settle_days > 0 else None
+    txn_doc = {
+        'id': _uid(), 'fund_id': None, 'txn_type': 'advance', 'amount': float(body.amount), 'txn_date': txn_date,
+        'category': '', 'payee': emp.get('name') or '', 'memo': body.memo or '',
+        'cash_account_id': acc.get('cash_account_id'), 'cash_account_name': acc.get('name'), 'cash_gl_code': acc['gl_code'],
+        'employee_id': emp['id'], 'employee_name': emp.get('name') or '', 'employee_code': emp.get('employee_code') or '',
+        'advance_account_code': await _employee_advance_code(db),
+        'settled_amount': 0.0, 'open_amount': float(body.amount), 'advance_status': 'open',
+        'due_date': due, 'settlements': [],
+        'gl_posted': False, 'gl_je_id': None, 'gl_je_number': None, 'gl_error': None,
+        'created_at': _now(), 'created_by': user['id'], 'created_by_name': user.get('name', user.get('email', '')),
+    }
+    await db.rahaza_petty_cash_txns.insert_one(txn_doc)
+    posting = await _post_petty_cash_txn(db, txn_doc, user)
+    if not posting.get('ok'):
+        await db.rahaza_petty_cash_txns.delete_one({'id': txn_doc['id']})
+        raise HTTPException(400, f"Uang muka dibatalkan: jurnal gagal ({posting.get('error')}).")
+    await log_activity(user['id'], user.get('name', ''), 'EMPLOYEE_ADVANCE', 'petty_cash_txn', txn_doc['id'])
+    fresh = await db.rahaza_petty_cash_txns.find_one({'id': txn_doc['id']}, {'_id': 0})
+    return {'ok': True, 'advance': _ser(fresh), 'gl_posting': posting}
 
 
 @router.post('/advances/{txn_id}/settle')
@@ -663,9 +729,19 @@ async def settle_advance(txn_id: str, body: AdvanceSettleIn, user: dict = Depend
         raise HTTPException(400, 'Isi minimal satu nota atau sisa uang yang dikembalikan.')
     if total > open_amt + 0.01:
         raise HTTPException(400, f'Nota + sisa ({total:,.0f}) melebihi uang muka terbuka ({open_amt:,.0f}).')
-    fund = await _get_fund_or_404(db, adv['fund_id'])
-    if returned > 0 and fund.get('status') != 'active':
-        raise HTTPException(400, 'Dana kas kecil sudah tidak aktif — sisa uang tidak bisa dikembalikan ke dana ini.')
+    # 2026-11-04: sisa uang kembali ke rekening (pilihan / asal). Uang muka dana lama tanpa pilihan
+    # tetap kembali ke dana kas kecilnya (akun GL kas kecil yang sama).
+    ret_gl, ret_acc = adv.get('cash_gl_code'), {}
+    if returned > 0 and body.return_cash_account_id:
+        from routes.rahaza_payroll_shared import resolve_payment_account
+        ret_acc = await resolve_payment_account(db, cash_account_id=body.return_cash_account_id,
+                                                purpose='Pengembalian sisa uang muka')
+        ret_gl = ret_acc['gl_code']
+    fund = None
+    if adv.get('fund_id') and not ret_gl:
+        fund = await _get_fund_or_404(db, adv['fund_id'])
+        if returned > 0 and fund.get('status') != 'active':
+            raise HTTPException(400, 'Dana kas kecil sudah tidak aktif — pilih rekening penerima sisa uang.')
     settle_date = (body.settle_date or str(today_wib()))[:10]
     try:
         date.fromisoformat(settle_date)
@@ -686,6 +762,8 @@ async def settle_advance(txn_id: str, body: AdvanceSettleIn, user: dict = Depend
         'employee_id': adv.get('employee_id'), 'employee_name': adv.get('employee_name'),
         'payee': adv.get('employee_name') or '', 'items': items, 'returned_amount': returned,
         'category': '', 'memo': body.memo or '',
+        **({'cash_gl_code': ret_gl, 'cash_account_id': ret_acc.get('cash_account_id') or adv.get('cash_account_id')}
+           if ret_gl else {}),
         'gl_posted': False, 'gl_je_id': None, 'gl_je_number': None, 'gl_error': None,
         'created_at': now, 'created_by': user['id'], 'created_by_name': user.get('name', user.get('email', '')),
     }
@@ -700,7 +778,7 @@ async def settle_advance(txn_id: str, body: AdvanceSettleIn, user: dict = Depend
         '$set': {'advance_status': 'settled' if left <= 0.01 else 'partial', 'updated_at': now},
         '$push': {'settlements': {'txn_id': stl['id'], 'date': settle_date, 'amount': total, 'returned': returned,
                                   'je_number': posting.get('je_number')}}})
-    if returned > 0:
+    if returned > 0 and fund:
         await db.rahaza_petty_cash_funds.update_one({'id': adv['fund_id']},
                                                     {'$inc': {'current_balance': returned}, '$set': {'updated_at': now}})
     await log_activity(user['id'], user.get('name', ''), 'PETTY_CASH_ADVANCE_SETTLE', 'petty_cash_txn', stl['id'])

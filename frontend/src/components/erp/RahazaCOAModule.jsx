@@ -584,7 +584,7 @@ function IntegrityBanner({ data, openScreen }) {
               {(data.fallback_warnings || []).map((w) => (
                 <li key={`fb-${w.role}-${w.code}`} className="rounded border border-amber-500/30 p-2 text-[12px]">
                   Peran <span className="font-mono">{w.role}</span> kosong → program memakai <span className="font-mono">{w.code}</span> {w.name || ''} ({w.label}).
-                  <button type="button" onClick={() => openScreen({ module: 'fin-accounting-master-hub', tab: 'posting', label: 'Profil Posting' }, w.role.split('.')[0])} className="text-primary ml-2 hover:underline">Isi di Profil Posting</button>
+                  <button type="button" onClick={() => openScreen({ module: 'fin-settings-hub', tab: 'mapping', view: 'posting', label: 'Pemetaan akun otomatis' }, w.role.split('.')[0])} className="text-primary ml-2 hover:underline">Isi di Pemetaan akun otomatis</button>
                 </li>
               ))}
               {(data.sync_skipped || []).map((x) => (
@@ -741,10 +741,13 @@ export default function RahazaCOAModule({ token, onNavigate }) {
 
   const openScreen = useCallback((scr, refId) => {
     if (!scr?.module) return;
-    if (scr.tab === 'posting' && refId) { try { sessionStorage.setItem('pp_focus_event', refId); } catch { /* noop */ } }
+    if (scr.view === 'posting' && refId) { try { sessionStorage.setItem('pp_focus_event', refId); } catch { /* noop */ } }
+    // 2026-11-04: Bagan Akun & pemetaan sama-sama di Pengaturan Keuangan; tampilan di dalam tab
+    // "Pemetaan akun otomatis" dipilih lewat petunjuk ini (dibaca AccountMappingModule).
+    if (scr.view) { try { sessionStorage.setItem('account_mapping_view', scr.view); } catch { /* noop */ } }
     setUsageAcc(null); setDelAcc(null);
     setTimeout(() => {
-      if (scr.module === 'fin-accounting-master-hub' && scr.tab) {
+      if (scr.module === 'fin-settings-hub' && scr.tab) {
         const trig = document.querySelector(`[data-testid="hub-tab-${scr.tab}"]`);
         if (trig) {
           trig.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));

@@ -684,11 +684,16 @@ async def _movement_meta_index(db, account_id: Optional[str], je_ids: list) -> d
 
 
 async def cash_mutations_from_gl(db, gl_code: str, from_date: Optional[str] = None, to_date: Optional[str] = None,
-                                 account_id: Optional[str] = None, limit: int = 2000) -> dict:
+                                 account_id: Optional[str] = None, page: int = 1, page_size: int = 50) -> dict:
     """K19: daftar mutasi rekening = baris buku besar akun `gl_code` (jurnal POSTED; void menghapus cermin).
 
-    Return {opening, rows (terbaru dulu, dengan saldo berjalan), total_in, total_out, closing, count}.
-    Kategori dari `source_module` jurnal; `rahaza_cash_movements` hanya menambah keterangan."""
+    Return {opening, rows (terbaru dulu, dengan saldo berjalan), total_in, total_out, closing, count, page...}.
+    Kategori dari `source_module` jurnal; `rahaza_cash_movements` hanya menambah keterangan.
+
+    2026-11-04 (audit Keuangan): dulu 2000 baris TERTUA diambil lalu dibalik — rekening ramai kehilangan
+    mutasi TERBARU, dan total masuk/keluar/saldo hanya dari baris yang terbaca. Sekarang total dihitung
+    di database atas seluruh rentang, baris diambil per halaman dari yang terbaru, dan saldo berjalan
+    dihitung mundur dari saldo akhir."""
     rng = {}
     if from_date:
         rng["$gte"] = from_date
@@ -697,24 +702,37 @@ async def cash_mutations_from_gl(db, gl_code: str, from_date: Optional[str] = No
     q = {"account_code": gl_code}
     if rng:
         q["date"] = rng
-    lines = await db.rahaza_journal_lines.find(q, {"_id": 0}).sort([("date", 1), ("created_at", 1)]).to_list(limit)
+    page = max(int(page or 1), 1)
+    page_size = min(max(int(page_size or 50), 1), 500)
+    skip = (page - 1) * page_size
+    newest_first = [("date", -1), ("created_at", -1), ("id", -1)]
+
+    async def _sum(match: dict, extra: Optional[list] = None) -> tuple:
+        pipe = [{"$match": match}] + (extra or []) + [
+            {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}, "n": {"$sum": 1}}}]
+        async for r in db.rahaza_journal_lines.aggregate(pipe):
+            return float(r.get("d") or 0), float(r.get("c") or 0), int(r.get("n") or 0)
+        return 0.0, 0.0, 0
+
     opening = 0.0
     if from_date:
-        async for r in db.rahaza_journal_lines.aggregate([
-                {"$match": {"account_code": gl_code, "date": {"$lt": from_date}}},
-                {"$group": {"_id": None, "d": {"$sum": "$debit"}, "c": {"$sum": "$credit"}}}]):
-            opening = round(float(r.get("d") or 0) - float(r.get("c") or 0), 2)
+        d0, c0, _ = await _sum({"account_code": gl_code, "date": {"$lt": from_date}})
+        opening = round(d0 - c0, 2)
+    t_in, t_out, count = await _sum(q)
+    closing = round(opening + t_in - t_out, 2)
+    # saldo sesudah baris terbaru di halaman ini = saldo akhir − Σ(baris yang lebih baru, di halaman sebelumnya)
+    newer_d, newer_c = 0.0, 0.0
+    if skip:
+        newer_d, newer_c, _ = await _sum(q, [{"$sort": dict(newest_first)}, {"$limit": skip}])
+    lines = await db.rahaza_journal_lines.find(q, {"_id": 0}).sort(newest_first).skip(skip).to_list(page_size)
     je_ids = sorted({ln.get("je_id") for ln in lines if ln.get("je_id")})
     heads = {h["id"]: h async for h in db.rahaza_journal_entries.find(
         {"id": {"$in": je_ids}}, {"_id": 0, "id": 1, "memo": 1, "je_number": 1, "source_ref": 1})} if je_ids else {}
     meta = await _movement_meta_index(db, account_id, je_ids)
-    running = opening
-    rows, t_in, t_out = [], 0.0, 0.0
+    running = round(closing - (newer_d - newer_c), 2)
+    rows = []
     for ln in lines:
         d, c = float(ln.get("debit") or 0), float(ln.get("credit") or 0)
-        running = round(running + d - c, 2)
-        t_in += d
-        t_out += c
         head = heads.get(ln.get("je_id")) or {}
         src_ref = ln.get("source_ref") or head.get("source_ref") or ""
         mv = meta.get(ln.get("je_id")) or next((meta[t] for t in str(src_ref).split(":") if t and t in meta), None) or {}
@@ -730,10 +748,10 @@ async def cash_mutations_from_gl(db, gl_code: str, from_date: Optional[str] = No
             "notes": mv.get("notes") or "", "movement_id": mv.get("id"),
             "running_balance": running,
         })
-    rows.reverse()
+        running = round(running - d + c, 2)
     return {"gl_account_code": gl_code, "from": from_date, "to": to_date, "opening": round(opening, 2),
-            "total_in": round(t_in, 2), "total_out": round(t_out, 2), "closing": round(running, 2),
-            "count": len(rows), "truncated": len(lines) >= limit, "rows": rows}
+            "total_in": round(t_in, 2), "total_out": round(t_out, 2), "closing": closing,
+            "count": count, "page": page, "page_size": page_size, "truncated": False, "rows": rows}
 
 
 # ───────────────────────── RETUR RUSAK → KERUGIAN (Iter 122) ──────────────────

@@ -14,7 +14,7 @@ const API = process.env.REACT_APP_BACKEND_URL;
 const LIMIT = 15;
 
 export const STATUS_CFG = {
-  draft:       { label: 'Draft',     color: 'bg-muted text-foreground border-border' },
+  draft:       { label: 'Draf',      color: 'bg-muted text-foreground border-border' },
   in_progress: { label: 'Diproses',  color: 'bg-blue-100 text-blue-700 border-blue-200' },
   approved:    { label: 'Disetujui', color: 'bg-green-100 text-green-700 border-green-200' },
 };
@@ -92,11 +92,12 @@ export function SessionList({ headers, onOpen }) {
   const [accounts, setAccounts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [status, setStatus] = useState('');   // 2026-11-04: tab status menggantikan 4 kartu hitungan
 
   const load = useCallback(async () => {
     try {
       const [sRes, sumRes, accRes] = await Promise.all([
-        axios.get(`${API}/api/finance/bank-recon/sessions`, { headers, params: { skip, limit: LIMIT } }),
+        axios.get(`${API}/api/finance/bank-recon/sessions`, { headers, params: { skip, limit: LIMIT, ...(status ? { status } : {}) } }),
         axios.get(`${API}/api/finance/bank-recon/summary`, { headers }),
         axios.get(`${API}/api/rahaza/cash-accounts`, { headers }),
       ]);
@@ -106,7 +107,7 @@ export function SessionList({ headers, onOpen }) {
     } catch (e) {
       toast({ title: 'Gagal memuat', description: e?.response?.data?.detail || e.message, variant: 'destructive' });
     } finally { setLoading(false); }
-  }, [headers, skip, toast]);
+  }, [headers, skip, status, toast]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -125,15 +126,15 @@ export function SessionList({ headers, onOpen }) {
   return (
     <div className="space-y-4">
       {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="inline-flex rounded-lg border border-[var(--glass-border)] p-0.5" data-testid="recon-status-tabs">
           {[
-            ['Total Sesi', summary.total_sessions], ['Draft', summary.draft],
-            ['Diproses', summary.in_progress], ['Disetujui', summary.approved],
-          ].map(([label, val]) => (
-            <Card key={label}><CardContent className="pt-4 pb-3">
-              <p className="text-2xl font-bold">{val}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{label}</p>
-            </CardContent></Card>
+            ['', 'Semua', summary.total_sessions], ['draft', 'Draf', summary.draft],
+            ['in_progress', 'Diproses', summary.in_progress], ['approved', 'Disetujui', summary.approved],
+          ].map(([key, label, val]) => (
+            <button key={key || 'all'} type="button" onClick={() => { setStatus(key); setSkip(0); }}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium ${status === key ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+              {label} <span className="tabular-nums">({val || 0})</span>
+            </button>
           ))}
         </div>
       )}
@@ -145,7 +146,7 @@ export function SessionList({ headers, onOpen }) {
       )}
 
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Daftar Sesi Rekonsiliasi</h3>
+        <h3 className="text-sm font-semibold">Sesi rekonsiliasi</h3>
         <Button data-testid="btn-create-session" size="sm" onClick={() => setShowCreate(v => !v)}>
           <Plus className="w-4 h-4 mr-1" /> Sesi Baru
         </Button>

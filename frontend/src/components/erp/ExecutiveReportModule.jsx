@@ -375,11 +375,13 @@ export default function ExecutiveReportModule({ user, headers }) {
               </CardHeader>
               <CardContent className="text-sm space-y-2">
                 {[
-                  ['Revenue', FMT_IDR(fin.revenue_rp)],
-                  ['Revenue Terbayar', FMT_IDR(fin.paid_revenue_rp)],
-                  ['Total Biaya', FMT_IDR(fin.total_expenses_rp)],
-                  ['Net Income', FMT_IDR(fin.net_income_rp)],
-                  ['AR Overdue', `${FMT_IDR(fin.ar_overdue_rp)} (${fin.ar_overdue_count || 0} inv)`],
+                  // 2026-11-04 (audit Keuangan): "Revenue Terbayar" = bagian faktur reseller periode ini yang
+                  // sudah dibayar — bukan pendapatan buku besar (yang memuat marketplace). Label diperjelas.
+                  ['Pendapatan (buku besar)', FMT_IDR(fin.revenue_rp)],
+                  ['Faktur reseller sudah dibayar', FMT_IDR(fin.paid_revenue_rp)],
+                  ['Total biaya', FMT_IDR(fin.total_expenses_rp)],
+                  ['Laba bersih', FMT_IDR(fin.net_income_rp)],
+                  ['Piutang lewat jatuh tempo', `${FMT_IDR(fin.ar_overdue_rp)} (${fin.ar_overdue_count || 0} faktur)`],
                 ].map(([k, v]) => (
                   <div key={k} className="flex justify-between">
                     <span className="text-muted-foreground/60 dark:text-zinc-400">{k}</span>

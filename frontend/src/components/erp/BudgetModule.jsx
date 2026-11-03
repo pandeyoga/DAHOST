@@ -10,19 +10,19 @@ import { Button } from '@/components/ui/button';
 import Modal from './Modal';
 import PaginationBar from './PaginationBar';
 import { toast } from 'sonner';
-import { formatRupiah } from '@/lib/format';
+import { formatRupiah, formatPercent } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { thisYearWIB } from '@/lib/waktu';
 
 const STATUS_MAP = {
-  draft:    { label: 'Draft',    color: 'bg-secondary text-muted-foreground' },
-  approved: { label: 'Approved', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
+  draft:    { label: 'Draf',     color: 'bg-secondary text-muted-foreground' },
+  approved: { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
   locked:   { label: 'Terkunci', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
 };
 
 // 2026-11-02: status variance dari backend — pendapatan (above/below_target) vs biaya (under/over)
 const BUDGET_STATUS_LABEL = {
-  over: 'Over Budget', under: 'Under Budget', on_target: 'On Target',
+  over: 'Melebihi anggaran', under: 'Di bawah anggaran', on_target: 'Sesuai anggaran',
   above_target: 'Di Atas Target', below_target: 'Di Bawah Target',
 };
 
@@ -111,7 +111,7 @@ export default function BudgetModule({ token }) {
       method: 'POST', headers, body: JSON.stringify(budgetForm),
     });
     if (r.ok) {
-      toast.success('Budget berhasil dibuat');
+      toast.success('Anggaran dibuat');
       setModalBudget(false);
       fetchBudgets(1);
       setBudgetForm({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
@@ -124,14 +124,14 @@ export default function BudgetModule({ token }) {
   const deleteBudget = async (bid) => {
     if (!window.confirm('Hapus budget ini?')) return;
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}`, { method: 'DELETE', headers });
-    if (r.ok) { toast.success('Budget dihapus'); fetchBudgets(page); }
+    if (r.ok) { toast.success('Anggaran dihapus'); fetchBudgets(page); }
     else { const e = await r.json(); toast.error(e.detail || 'Gagal hapus'); }
   };
 
   const changeStatus = async (bid, action) => {
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}/${action}`, { method: 'POST', headers });
     if (r.ok) {
-      toast.success(`Budget berhasil di-${action}`);
+      toast.success(({ approve: 'Anggaran disetujui', lock: 'Anggaran dikunci', unlock: 'Kunci anggaran dibuka' })[action] || 'Status anggaran diperbarui');
       const updated = await fetch(`/api/rahaza/finance/budgets/${bid}`, { headers });
       if (updated.ok) setSelected(await updated.json());
       fetchBudgets(page);
@@ -203,15 +203,15 @@ export default function BudgetModule({ token }) {
       <div className="space-y-5" data-testid="budget-variance-page">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="sm" onClick={() => { setView('detail'); }}>&larr; Kembali ke Detail</Button>
-          <h2 className="text-lg font-semibold">Variance Report — {vb?.name}</h2>
+          <h2 className="text-lg font-semibold">Anggaran vs realisasi — {vb?.name}</h2>
         </div>
         {/* Summary cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
           {[
-            { label: 'Total Budget', value: fmtRp(summary.total_budgeted), icon: <BarChart2 className="w-4 h-4" />, color: 'text-blue-500' },
-            { label: 'Total Aktual', value: fmtRp(summary.total_actual), icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-500' },
-            { label: 'Variance', value: fmtRp(summary.total_variance), icon: summary.total_variance >= 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />, color: summary.total_variance >= 0 ? 'text-emerald-500' : 'text-red-700 dark:text-red-500' },
-            { label: '% Variance', value: `${summary.total_variance_pct}%`, icon: <Minus className="w-4 h-4" />, color: 'text-muted-foreground' },
+            { label: 'Total anggaran', value: fmtRp(summary.total_budgeted), icon: <BarChart2 className="w-4 h-4" />, color: 'text-blue-500' },
+            { label: 'Total realisasi', value: fmtRp(summary.total_actual), icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-500' },
+            { label: 'Selisih', value: fmtRp(summary.total_variance), icon: summary.total_variance >= 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />, color: summary.total_variance >= 0 ? 'text-emerald-500' : 'text-red-700 dark:text-red-500' },
+            { label: '% selisih', value: formatPercent(summary.total_variance_pct, 1), icon: <Minus className="w-4 h-4" />, color: 'text-muted-foreground' },
           ].map(c => (
             <GlassCard key={c.label} className="p-4">
               <div className={`flex items-center gap-1.5 text-xs text-muted-foreground mb-1 ${c.color}`}>{c.icon} {c.label}</div>
@@ -265,10 +265,10 @@ export default function BudgetModule({ token }) {
             </div>
           </div>
           <div className="flex gap-2 flex-wrap">
-            {selected.status === 'draft' && <Button size="sm" onClick={() => changeStatus(selected.id, 'approve')} className="bg-blue-600 hover:bg-blue-700 text-foreground"><CheckCircle className="w-3.5 h-3.5 mr-1" />Approve</Button>}
-            {selected.status === 'approved' && <Button size="sm" onClick={() => changeStatus(selected.id, 'lock')} className="bg-green-600 hover:bg-green-700 text-foreground"><Lock className="w-3.5 h-3.5 mr-1" />Lock</Button>}
+            {selected.status === 'draft' && <Button size="sm" onClick={() => changeStatus(selected.id, 'approve')} className="bg-blue-600 hover:bg-blue-700 text-foreground"><CheckCircle className="w-3.5 h-3.5 mr-1" />Setujui</Button>}
+            {selected.status === 'approved' && <Button size="sm" onClick={() => changeStatus(selected.id, 'lock')} className="bg-green-600 hover:bg-green-700 text-foreground"><Lock className="w-3.5 h-3.5 mr-1" />Kunci</Button>}
             {(selected.status === 'approved' || selected.status === 'locked') && <Button size="sm" variant="outline" onClick={() => changeStatus(selected.id, 'reopen')}><Unlock className="w-3.5 h-3.5 mr-1" />Reopen</Button>}
-            {selected.status !== 'locked' && <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}><Upload className="w-3.5 h-3.5 mr-1" />Import Excel</Button>}
+            {selected.status !== 'locked' && <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}><Upload className="w-3.5 h-3.5 mr-1" />Impor Excel</Button>}
             {selected.status !== 'locked' && <Button size="sm" onClick={() => setModalItem(true)}><Plus className="w-3.5 h-3.5 mr-1" />Tambah Item</Button>}
             <Button size="sm" variant="outline" onClick={() => fetchVariance(selected.id)} disabled={loading}><BarChart2 className="w-3.5 h-3.5 mr-1" />Variance</Button>
           </div>
@@ -364,11 +364,11 @@ export default function BudgetModule({ token }) {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Anggaran (Budget)</h2>
-          <p className="text-xs text-muted-foreground">Kelola budget per tahun, departemen, dan pusat biaya</p>
+          <h2 className="text-lg font-semibold">Anggaran</h2>
+          <p className="text-xs text-muted-foreground">Anggaran per tahun, departemen, dan pusat biaya, dibandingkan dengan realisasinya.</p>
         </div>
         <Button onClick={() => { setModalBudget(true); fetchMeta(); }} data-testid="btn-new-budget">
-          <Plus className="w-4 h-4 mr-1.5" /> Buat Budget Baru
+          <Plus className="w-4 h-4 mr-1.5" /> Anggaran baru
         </Button>
       </div>
 
@@ -387,8 +387,8 @@ export default function BudgetModule({ token }) {
             <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
               className="border border-border rounded px-2 py-1 text-sm bg-[var(--card-surface)]">
               <option value="">Semua</option>
-              <option value="draft">Draft</option>
-              <option value="approved">Approved</option>
+              <option value="draft">Draf</option>
+              <option value="approved">Disetujui</option>
               <option value="locked">Terkunci</option>
             </select>
           </div>
@@ -479,7 +479,7 @@ export default function BudgetModule({ token }) {
               <GlassInput placeholder="Opsional" value={budgetForm.notes} onChange={e => setBudgetForm(f => ({...f, notes: e.target.value}))} />
             </div>
             <div className="flex gap-2 pt-1">
-              <Button onClick={createBudget} className="flex-1" data-testid="btn-submit-budget">Buat Budget</Button>
+              <Button onClick={createBudget} className="flex-1" data-testid="btn-submit-budget">Simpan anggaran</Button>
               <Button variant="outline" onClick={() => setModalBudget(false)} className="flex-1">Batal</Button>
             </div>
           </div>

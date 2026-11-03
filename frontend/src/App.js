@@ -122,6 +122,27 @@ const LEGACY_MODULE_TO_PORTAL = {
   // BACKLOG-A: id lama modul yang dikonsolidasi ke hub (redirect di moduleRegistry)
   'fin-journal-entry': 'finance',
   'fin-journal-list': 'finance',
+  // 2026-11-04: menu Keuangan 8 grup — id lama yang tidak lagi di menu (redirect di moduleRegistry)
+  'fin-recap': 'finance',
+  'fin-reports-hub': 'finance',
+  'fin-ar-360': 'finance',
+  'fin-ar-invoices': 'finance',
+  'fin-ap-aging': 'finance',
+  'fin-ai-cashflow': 'finance',
+  'fin-petty-cash': 'finance',
+  'fin-accounting-master-hub': 'finance',
+  'fin-cost-centers': 'finance',
+  'fin-hpp-produk': 'finance',
+  'fin-trial-balance': 'finance',
+  'fin-general-ledger': 'finance',
+  'fin-balance-sheet': 'finance',
+  'fin-cash-flow': 'finance',
+  'fin-coa': 'finance',
+  'fin-periods': 'finance',
+  'fin-worksheet': 'finance',
+  'fin-pnl-monthly': 'finance',
+  'fin-balance-sheet-monthly': 'finance',
+  'fin-opening-balance': 'finance',
   'hr-ai-insights': 'hr',
   'hr-attrition': 'hr',
   'hr-skill-gap': 'hr',
@@ -208,7 +229,7 @@ const LEGACY_MODULE_TO_PORTAL = {
   // 2026-07-25 — 4 id yang TIDAK tertolong heuristik prefix di bawah
   // (`portalFromModulePrefix`) karena namanya tidak berawalan portal. Tanpa entri
   // ini deep-link-nya mendarat di "Pilih Portal". Lihat `scripts/audit_deeplink_portals.py`.
-  'admin-setup-panel': 'management',
+  'admin-setup-panel': 'sysadmin',  // 2026-11-04: dibuka dari Adm. Sistem › Perawatan Data Keuangan
   'ai-business-dashboard': 'management',
   'procurement-requests': 'procurement',   // alias `fin-procurement-requests` (Pengadaan P2P)
   'fin-procurement-requests': 'procurement',

@@ -321,14 +321,17 @@ def test_stok_rendah_kritis_pakai_stock_thresholds(monkeypatch):
 
 
 def test_ap_jatuh_tempo_sertakan_partial_paid_overdue(monkeypatch):
+    """2026-11-04: hutang dari SSOT `core.payables` (pemasok + CMT); kas dari buku besar."""
     from routes import dewi_cashflow_ai as cf
     db = FakeDB()
-    run(cf._build_context(db))
-    ap_finds = [c[1] for c in db.rahaza_ap_invoices.calls if c[0] == "find" and "due_date" in (c[1] or {})
-                and isinstance(c[1]["due_date"], dict)]
-    assert ap_finds, "query AP jatuh tempo 30 hari tidak ditemukan"
+    ctx = run(cf._build_context(db))
+    ap_finds = [c[1] for c in db.rahaza_ap_invoices.calls if c[0] == "find"]
+    assert ap_finds, "query hutang pemasok tidak ditemukan"
     st = ap_finds[-1]["status"]["$in"]
     assert "partial_paid" in st and "overdue" in st
+    assert any(c[0] == "find" for c in db.dewi_cmt_payments.calls), "tagihan CMT tidak ikut dihitung"
+    assert not db.rahaza_cash_movements.calls, "arus kas harus dari buku besar, bukan catatan mutasi lama"
+    assert "cash_balance" in ctx
 
 
 def test_cashflow_tanpa_kunci_pesan_ramah(monkeypatch):

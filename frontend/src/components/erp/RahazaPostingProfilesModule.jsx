@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { RefreshCw, Save, Sparkles, Settings2, BookOpen, AlertCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
+import { RefreshCw, Save, Settings2, BookOpen, AlertCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
@@ -90,15 +90,6 @@ export default function RahazaPostingProfilesModule({ token }) {
     return out;
   }, [profiles, byCode]);
   const problemEvents = useMemo(() => new Set(problems.map((x) => x.et)), [problems]);
-
-  const seedDefaults = async () => {
-    setError(''); setInfo('');
-    const r = await fetch('/api/rahaza/posting-profiles/seed', { method: 'POST', headers });
-    if (!r.ok) { setError(`Seed gagal (HTTP ${r.status})`); return; }
-    const d = await r.json();
-    setInfo(`Profil bawaan dipasang: ${d.inserted} baru, ${d.skipped} sudah ada.`);
-    fetchData();
-  };
 
   const saveProfile = async (event_type) => {
     setSaving(event_type); setError(''); setInfo('');
@@ -198,7 +189,6 @@ export default function RahazaPostingProfilesModule({ token }) {
         </label>
         <div className="flex flex-wrap gap-2">
           <ImportExportToolbar collectionKey="posting_profiles" label="Profil Posting" onImported={fetchData} />
-          <Button variant="ghost" onClick={seedDefaults} className="h-10 border border-[var(--glass-border)]" data-testid="pp-seed"><Sparkles className="w-4 h-4 mr-1.5" />Pasang bawaan</Button>
         </div>
       </div>
 
@@ -207,8 +197,8 @@ export default function RahazaPostingProfilesModule({ token }) {
       ) : profiles.length === 0 ? (
         <GlassCard className="p-12 text-center">
           <BookOpen className="w-10 h-10 mx-auto mb-2 opacity-40" />
-          <p className="text-muted-foreground mb-4">Belum ada profil posting. Pasang profil bawaan untuk memulai.</p>
-          <Button onClick={seedDefaults} data-testid="pp-seed-empty"><Sparkles className="w-4 h-4 mr-1.5" />Pasang bawaan</Button>
+          <p className="text-muted-foreground">Belum ada profil jurnal otomatis. Minta admin menjalankan
+            “Pasang profil jurnal otomatis bawaan” di Adm. Sistem › Perawatan Data Keuangan.</p>
         </GlassCard>
       ) : (
         <div className="space-y-4">
