@@ -1,0 +1,36 @@
+# Dibuat oleh `bash deploy/demo/demo.sh pasang` → deploy/caddy-sites/demo.caddy (tidak masuk git).
+# __DOMAIN__ dan __USER__/__HASH__ diganti skrip. Kata sandi pintu (basic auth) hanya di halaman
+# aplikasi; /api/* TIDAK memakai basic auth karena header Authorization dipakai token login aplikasi
+# (keduanya bentrok) — API tetap terkunci login akun (semua kata sandi demo sudah diganti).
+__DOMAIN__ {
+    encode zstd gzip
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        Referrer-Policy strict-origin-when-cross-origin
+        X-Robots-Tag "noindex, nofollow"
+        -Server
+    }
+
+    handle /api/* {
+        reverse_proxy demo-backend:8001 {
+            header_up X-Forwarded-Proto {scheme}
+            transport http {
+                read_timeout 300s
+            }
+        }
+    }
+
+    handle {
+        basic_auth {
+            __USER__ __HASH__
+        }
+        reverse_proxy demo-frontend:80
+    }
+
+    request_body {
+        max_size 100MB
+    }
+}
