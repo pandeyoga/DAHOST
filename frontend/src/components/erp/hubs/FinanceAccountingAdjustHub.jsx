@@ -1,26 +1,24 @@
-import React, { lazy } from 'react';
+import React from 'react';
 import { lazyRetry } from '../../../lib/lazyRetry';
 import HubTabs from './HubTabs';
 
-// PHASE B (6.1.4 #4) — 5 menu jurnal-otomatis Finance (Operasi Khusus) → 1 hub "Penyesuaian Akuntansi".
-// 2026-11-03: tab "Diskon Pembelian (AP)" dilepas — itu sebenarnya layar BAYAR hutang kedua. Pembayaran
-// (dengan potongan pemasok yang diisi manual) kini satu pintu di Faktur Supplier (proc-ap-invoices).
-const AccrualsModule         = lazyRetry(() => import('../AccrualsModule'));
-const AssetDepreciationModule = lazyRetry(() => import('../AssetDepreciationModule'));
-const BadDebtWriteOffModule  = lazyRetry(() => import('../BadDebtWriteOffModule'));
-const AssetDisposalModule    = lazyRetry(() => import('../AssetDisposalModule'));
+// PHASE B (6.1.4 #4) — dulu 5 menu jurnal-otomatis → 1 hub "Penyesuaian Akuntansi".
+// 2026-11-03: tab "Diskon Pembelian (AP)" dilepas — bayar hutang (+ potongan pemasok) satu pintu di Faktur Supplier.
+// 2026-11-04 (owner, audit tahap 3): hub ini menjadi "Akrual & Tutup Buku". Penyusutan & pelepasan aset
+// pindah ke menu Aset Tetap, hapus buku piutang ke Piutang Reseller; Periode (tutup buku) masuk ke sini
+// dari Master Akuntansi.
+const AccrualsModule      = lazyRetry(() => import('../AccrualsModule'));
+const RahazaPeriodsModule = lazyRetry(() => import('../RahazaPeriodsModule'));
 
 export default function FinanceAccountingAdjustHub(props) {
   return (
     <HubTabs
       hubId="fin-acctg-adjust-hub"
-      title="Penyesuaian Akuntansi"
-      subtitle="Akrual, depresiasi aset, hapus buku piutang, dan pelepasan aset — semua jurnal otomatis dalam satu pintu."
+      title="Akrual & Tutup Buku"
+      compactHeaders
       tabs={[
-        { key: 'accruals', label: 'Pencatatan Akrual', Component: AccrualsModule },
-        { key: 'depreciation', label: 'Depresiasi Aset (Batch)', Component: AssetDepreciationModule },
-        { key: 'baddebt', label: 'Hapus Buku Piutang Macet', Component: BadDebtWriteOffModule },
-        { key: 'disposal', label: 'Pelepasan Aset Tetap', Component: AssetDisposalModule },
+        { key: 'accruals', label: 'Akrual', Component: AccrualsModule },
+        { key: 'periods', label: 'Tutup buku', Component: RahazaPeriodsModule },
       ]}
       {...props}
     />

@@ -28,13 +28,17 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
 
   const labels = data?.meta?.month_labels || [];
   const hasData = data && SECTIONS.some((s) => data.sections[s].accounts.length > 0);
-  const last = (arr) => (arr && arr.length ? arr[arr.length - 1] : 0);
+  // 2026-11-04 (audit Keuangan): kartu = posisi bulan BERJALAN untuk tahun ini (dulu selalu kolom Des,
+  // berlabel "Des 2026" padahal bulan belum sampai Desember).
+  const thisYear = new Date().getFullYear();
+  const idx = year === thisYear ? new Date().getMonth() : 11;
+  const at = (arr) => (arr && arr.length ? (arr[Math.min(idx, arr.length - 1)] ?? 0) : 0);
+  const asOf = `${labels[idx] || ''} ${year}`.trim();
 
   return (
     <div className="space-y-5" data-testid="bs12-page">
       <PageHeader
         icon={Landmark}
-        eyebrow="Portal Finance · Laporan"
         title="Neraca 12 Bulan"
         subtitle="Posisi keuangan per akhir tiap bulan Jan–Des seperti sheet Neraca-12. Setiap kolom harus seimbang: Aset = Liabilitas + Ekuitas (termasuk laba berjalan komputasi)."
         actions={
@@ -55,10 +59,10 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
         )}
       </GlassCard>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label={`Total Aset Des ${year}`} value={fmt(last(data?.sections?.assets?.months))} testId="bs12-kpi-assets" />
-        <StatTile label="Total Liabilitas" value={fmt(last(data?.sections?.liabilities?.months))} testId="bs12-kpi-liab" />
-        <StatTile label="Total Ekuitas" value={fmt(last(data?.sections?.equity?.months))} testId="bs12-kpi-eq" />
-        <StatTile label="Laba Berjalan" value={fmt(last(data?.totals?.current_earnings))} accent="primary" testId="bs12-kpi-earn" />
+        <StatTile label={`Total aset ${asOf}`} value={fmt(at(data?.sections?.assets?.months))} testId="bs12-kpi-assets" />
+        <StatTile label={`Total liabilitas ${asOf}`} value={fmt(at(data?.sections?.liabilities?.months))} testId="bs12-kpi-liab" />
+        <StatTile label={`Total ekuitas ${asOf}`} value={fmt(at(data?.sections?.equity?.months))} testId="bs12-kpi-eq" />
+        <StatTile label={`Laba berjalan ${asOf}`} value={fmt(at(data?.totals?.current_earnings))} accent="primary" testId="bs12-kpi-earn" />
       </div>
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (

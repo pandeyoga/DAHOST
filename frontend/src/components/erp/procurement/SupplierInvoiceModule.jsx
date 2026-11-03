@@ -15,8 +15,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, Banknote, CheckCircle2, ClipboardCheck, FileText, Filter,
-  HandCoins, RefreshCw, Search, Send, Truck,
+  AlertTriangle, CheckCircle2, FileText, Filter,
+  HandCoins, RefreshCw, Search, Send,
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,8 @@ import { currentRole } from '../portalAccess';
 import { isFinanceRole } from '../../../lib/financeRoles';
 import { useTaxProfile } from '../../../lib/taxProfile';
 import { todayWIB } from '../../../lib/waktu';
+import { useInCompactHub } from '../moduleAtoms';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const AP_STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
@@ -39,10 +41,16 @@ const AP_STATUS_META = {
   partial_paid: { label: 'Dibayar Sebagian', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
   paid: { label: 'Lunas', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30' },
   cancelled: { label: 'Dibatalkan', cls: 'bg-muted text-muted-foreground border-border' },
+  // status tagihan CMT (dewi_cmt_payments) — 2026-11-04 satu daftar dengan tagihan pemasok
+  submitted: { label: 'Diajukan', cls: 'bg-muted text-muted-foreground border-border' },
+  pending: { label: 'Menunggu', cls: 'bg-muted text-muted-foreground border-border' },
+  unposted: { label: 'Belum dijurnal', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
+  approved: { label: 'Disetujui · belum dijurnal', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
+  posted: { label: 'Terjurnal', cls: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-400/15 dark:text-blue-300 dark:border-blue-400/30' },
 };
 
 function ApBadge({ status }) {
-  const m = AP_STATUS_META[status] || AP_STATUS_META.draft;
+  const m = AP_STATUS_META[status] || { label: status || '—', cls: 'bg-muted text-muted-foreground border-border' };
   return (
     <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${m.cls}`}>
       {m.label}
@@ -199,10 +207,17 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
     setErr('');
     setSaving(true);
     try {
-      const out = await apiPost(token, `/api/rahaza/ap-invoices/${inv.id}/payment`, {
-        amount: cash, discount_amount: disc, account_id: accountId, date, notes: notes || undefined,
-      });
-      const posting = out?._posting_result;
+      const isCmt = inv.kind === 'cmt';
+      const out = isCmt
+        ? await apiPost(token, `/api/dewi/maklon/finance/cmt-payments/${inv.id}/pay`, {
+          cash_account_id: accountId, amount: cash, payment_date: date, notes: notes || undefined,
+        })
+        : await apiPost(token, `/api/rahaza/ap-invoices/${inv.id}/payment`, {
+          amount: cash, discount_amount: disc, account_id: accountId, date, notes: notes || undefined,
+        });
+      const posting = isCmt
+        ? { ok: !out?.post_error, je_number: out?.gl_je_number, error: out?.post_error }
+        : out?._posting_result;
       if (posting?.ok) {
         toast.success(`Pembayaran ${fmtRp(cash)} untuk ${inv.invoice_number} tercatat · ${posting.je_number}`);
       } else {
@@ -242,16 +257,20 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
             <MoneyInput glass id="ap-pay-amount" value={amount} onChange={(e) => setAmount(e.target.value)}
                         className="text-right" data-testid="ap-pay-amount" />
           </div>
-          <div>
-            <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-discount">Potongan dari pemasok (opsional)</label>
-            <MoneyInput glass id="ap-pay-discount" value={discount} onChange={(e) => setDiscount(e.target.value)}
-                        placeholder="0" className="text-right" data-testid="ap-pay-discount" />
-          </div>
+          {inv.kind !== 'cmt' && (
+            <div>
+              <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-discount">Potongan dari pemasok (opsional)</label>
+              <MoneyInput glass id="ap-pay-discount" value={discount} onChange={(e) => setDiscount(e.target.value)}
+                          placeholder="0" className="text-right" data-testid="ap-pay-discount" />
+            </div>
+          )}
         </div>
-        <p className="text-[11px] text-muted-foreground">
-          Isi potongan hanya bila pemasok memberi potongan tertulis (mis. bayar lebih cepat). Potongan mengurangi hutang
-          tanpa uang keluar dan dicatat sebagai Potongan Pembelian.
-        </p>
+        {inv.kind !== 'cmt' && (
+          <p className="text-[11px] text-muted-foreground">
+            Isi potongan hanya bila pemasok memberi potongan tertulis (mis. bayar lebih cepat). Potongan mengurangi hutang
+            tanpa uang keluar dan dicatat sebagai Potongan Pembelian.
+          </p>
+        )}
         <div>
           <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-notes">Catatan</label>
           <GlassInput id="ap-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)}
@@ -387,10 +406,28 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
   );
 }
 
-export default function SupplierInvoiceModule({ token }) {
-  const [tab, setTab] = useState('pending');
+const CMT_PAYABLE = ['unposted', 'approved', 'posted', 'partial_paid', 'submitted', 'pending'];
+const KIND_LABEL = { ap: 'Bahan & jasa', cmt: 'CMT' };
+
+// tagihan CMT (`/api/production/cmt-billing`) → bentuk baris yang sama dengan faktur pemasok
+const cmtToRow = (p) => ({
+  kind: 'cmt', id: p.id, invoice_number: p.payment_code, vendor_name: p.cmt_name || p.vendor_name,
+  po_numbers: p.po_number ? [p.po_number] : [], issue_date: p.issue_date || p.period_end || p.created_at,
+  total: p.amount, balance: p.outstanding_amount, paid_amount: p.paid_amount,
+  // tagihan CMT lahir 'draft' lalu langsung dijurnal; draft = jurnalnya gagal → hutang nyata yang belum dijurnal
+  status: (p.status || '').toLowerCase() === 'draft' ? 'unposted' : (p.status || '').toLowerCase(), gl_posted: p.gl_posted,
+});
+
+/**
+ * `financeMode` (2026-11-04, menu Keuangan › Hutang Pemasok & CMT): daftar memuat juga tagihan CMT
+ * (penyaring jenis), dibuka di tab Tagihan, tagihan CMT bisa diposting & dibayar dari sini.
+ */
+export default function SupplierInvoiceModule({ token, financeMode = false }) {
+  const compact = useInCompactHub();
+  const [tab, setTab] = useState(financeMode ? 'invoices' : 'pending');
   const [grs, setGrs] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [kindFilter, setKindFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [search, setSearch] = useState('');
@@ -406,19 +443,33 @@ export default function SupplierInvoiceModule({ token }) {
     setLoading(true);
     setErr('');
     try {
-      const [g, inv] = await Promise.all([
+      const [g, inv, cmt] = await Promise.all([
         apiGet(token, EP.grsForInvoice).catch(() => ({ items: [] })),
-        apiGet(token, '/api/rahaza/ap-invoices').catch(() => []),
+        apiGet(token, '/api/rahaza/ap-invoices?limit=5000').catch(() => []),
+        financeMode ? apiGet(token, '/api/production/cmt-billing?business_type=all').catch(() => ({ items: [] })) : Promise.resolve({ items: [] }),
       ]);
       setGrs(g?.items || []);
-      setInvoices(Array.isArray(inv) ? inv : inv?.items || []);
+      const ap = (Array.isArray(inv) ? inv : inv?.items || []).map((i) => ({ ...i, kind: 'ap' }));
+      const cmtRows = (cmt?.items || []).map(cmtToRow);
+      setInvoices([...ap, ...cmtRows].sort((a, b) => String(b.issue_date || '').localeCompare(String(a.issue_date || ''))));
     } catch (e) {
       setErr(e.message);
       toast.error(`Gagal memuat faktur supplier: ${e.message}`);
     } finally { setLoading(false); }
-  }, [token]);
+  }, [token, financeMode]);
 
   useEffect(() => { load(); }, [load]);
+
+  const postCmt = async (row) => {
+    try {
+      const out = await apiPost(token, `/api/dewi/maklon/finance/cmt-payments/${row.id}/post-ap`, {});
+      toast.success(`Tagihan CMT ${row.invoice_number} dijurnal${out?.je_number ? ` · ${out.je_number}` : ''}`);
+      await load();
+    } catch (e) { toast.error(e.message); }
+  };
+  const canPayRow = (r) => (r.kind === 'cmt'
+    ? CMT_PAYABLE.includes(r.status) && Number(r.balance || 0) > 0
+    : canPay(r));
 
   const approve = async (inv) => {
     setSending(true);
@@ -445,30 +496,26 @@ export default function SupplierInvoiceModule({ token }) {
   const filteredInv = useMemo(() => {
     const s = search.trim().toLowerCase();
     return invoices.filter((i) => {
+      if (kindFilter && i.kind !== kindFilter) return false;
       if (statusFilter && i.status !== statusFilter) return false;
       if (!s) return true;
       return [i.invoice_number, i.vendor_name, i.supplier_code, ...(i.po_numbers || [])]
         .filter(Boolean).some((v) => String(v).toLowerCase().includes(s));
     });
-  }, [invoices, search, statusFilter]);
-
-  // draf belum menjadi hutang (belum disetujui & belum dijurnal) — sama dengan Umur Hutang & buku besar
-  const outstanding = invoices
-    .filter((i) => !['draft', 'paid', 'cancelled'].includes(i.status))
-    .reduce((s, i) => s + Number(i.balance ?? i.total ?? 0), 0);
+  }, [invoices, search, statusFilter, kindFilter]);
+  const { page, setPage, totalPages, paged } = useClientPagination(filteredInv, 25);
 
   return (
     <div className="space-y-5" data-testid="supplier-invoice-page">
       <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Faktur Supplier</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Buat faktur hutang dari penerimaan barang, setujui, lalu catat ke buku besar.
-            Qty yang ditolak QC tidak ikut difakturkan.
-          </p>
-        </div>
-        <Button variant="secondary" onClick={load} data-testid="ap-refresh">
-          <RefreshCw className="w-4 h-4 mr-1.5" /> Muat Ulang
+        {!compact ? (
+          <div>
+            <h1 className="text-2xl font-bold text-foreground">Faktur Supplier</h1>
+            <p className="text-muted-foreground text-sm mt-1">Faktur hutang dari penerimaan barang. Qty yang ditolak QC tidak ikut difakturkan.</p>
+          </div>
+        ) : <span />}
+        <Button variant="secondary" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className="w-4 h-4" />
         </Button>
       </div>
 
@@ -478,28 +525,11 @@ export default function SupplierInvoiceModule({ token }) {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          { l: 'Penerimaan siap difakturkan', v: grs.length, i: Truck },
-          { l: 'Faktur draft', v: invoices.filter((i) => i.status === 'draft').length, i: FileText },
-          { l: 'Total faktur', v: invoices.length, i: ClipboardCheck },
-          { l: 'Hutang belum lunas', v: fmtRp(outstanding), i: Banknote },
-        ].map((x) => (
-          <div key={x.l} className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-4">
-            <div className="flex items-center gap-2 mb-1">
-              <x.i className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
-              <span className="text-xs text-muted-foreground line-clamp-1">{x.l}</span>
-            </div>
-            <div className="text-xl font-bold tabular-nums">{x.v}</div>
-          </div>
-        ))}
-      </div>
-
       <div className="flex gap-1 border-b border-[var(--glass-border)]">
-        {[
-          { key: 'pending', label: `Siap Difakturkan (${grs.length})` },
-          { key: 'invoices', label: `Faktur (${invoices.length})` },
-        ].map((t) => (
+        {(financeMode
+          ? [{ key: 'invoices', label: `Tagihan (${invoices.length})` }, { key: 'pending', label: `Penerimaan belum difakturkan (${grs.length})` }]
+          : [{ key: 'pending', label: `Siap Difakturkan (${grs.length})` }, { key: 'invoices', label: `Faktur (${invoices.length})` }]
+        ).map((t) => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)}
             data-testid={`ap-tab-${t.key}`}
             className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.key
@@ -571,6 +601,15 @@ export default function SupplierInvoiceModule({ token }) {
                           value={search} onChange={(e) => setSearch(e.target.value)}
                           data-testid="ap-search" />
             </div>
+            {financeMode && (
+              <SmartNativeSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
+                className="h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+                data-testid="ap-filter-kind">
+                <option value="">Semua jenis</option>
+                <option value="ap">Bahan &amp; jasa</option>
+                <option value="cmt">CMT</option>
+              </SmartNativeSelect>
+            )}
             <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
               className="h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
               data-testid="ap-filter-status">
@@ -578,7 +617,7 @@ export default function SupplierInvoiceModule({ token }) {
               {Object.entries(AP_STATUS_META).map(([v, m]) => <option key={v} value={v}>{m.label}</option>)}
             </SmartNativeSelect>
             <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Filter className="w-3 h-3" /> {filteredInv.length} faktur
+              <Filter className="w-3 h-3" /> {filteredInv.length} {financeMode ? 'tagihan' : 'faktur'}
             </span>
           </div>
 
@@ -588,6 +627,7 @@ export default function SupplierInvoiceModule({ token }) {
                 <thead className="border-b border-[var(--glass-border)]">
                   <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
                     <th className="pb-3 pl-4">No. Faktur</th>
+                    {financeMode && <th className="pb-3">Jenis</th>}
                     <th className="pb-3">Supplier</th>
                     <th className="pb-3">Referensi</th>
                     <th className="pb-3">Tanggal</th>
@@ -599,15 +639,16 @@ export default function SupplierInvoiceModule({ token }) {
                 </thead>
                 <tbody data-testid="ap-invoice-body">
                   {filteredInv.length === 0 && (
-                    <tr><td colSpan="8" className="py-12 text-center text-muted-foreground">
+                    <tr><td colSpan={financeMode ? 9 : 8} className="py-12 text-center text-muted-foreground">
                       <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">Belum ada faktur supplier.</p>
+                      <p className="text-sm">Belum ada tagihan.</p>
                     </td></tr>
                   )}
-                  {filteredInv.map((i, idx) => (
-                    <tr key={i.id} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}
+                  {paged.map((i, idx) => (
+                    <tr key={`${i.kind}-${i.id}`} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}
                         data-testid={`ap-invoice-row-${i.id}`}>
                       <td className="py-3 pl-4 font-mono text-xs">{i.invoice_number}</td>
+                      {financeMode && <td className="py-3 text-xs">{KIND_LABEL[i.kind] || i.kind}</td>}
                       <td className="py-3 text-xs">{i.vendor_name}</td>
                       <td className="py-3 text-[11px] font-mono text-muted-foreground">
                         {(i.po_numbers || []).join(', ') || (i.gr_numbers || []).join(', ') || '—'}
@@ -617,22 +658,31 @@ export default function SupplierInvoiceModule({ token }) {
                       <td className="py-3 text-right font-mono text-xs">{fmtRp(i.balance ?? i.total)}</td>
                       <td className="py-3"><ApBadge status={i.status} /></td>
                       <td className="py-3 pr-4 text-right whitespace-nowrap">
-                        {finance && canPay(i) && (
+                        {finance && i.kind === 'cmt' && !i.gl_posted && !['paid', 'cancelled', 'void'].includes(i.status) && (
+                          <Button size="sm" variant="secondary" onClick={() => postCmt(i)} className="mr-1"
+                                  data-testid={`ap-post-cmt-${i.id}`} title="Catat tagihan CMT ini ke buku besar">
+                            Jurnal
+                          </Button>
+                        )}
+                        {finance && canPayRow(i) && (
                           <Button size="sm" onClick={() => setPaying(i)} className="mr-1"
                                   data-testid={`ap-pay-${i.id}`}>
                             Bayar
                           </Button>
                         )}
-                        <Button variant="ghost" size="sm" onClick={() => setDetail(i)}
-                                data-testid={`ap-view-${i.id}`}>
-                          Detail
-                        </Button>
+                        {i.kind !== 'cmt' && (
+                          <Button variant="ghost" size="sm" onClick={() => setDetail(i)}
+                                  data-testid={`ap-view-${i.id}`}>
+                            Detail
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {totalPages > 1 && <div className="px-4 py-2"><PaginationLite page={page} totalPages={totalPages} total={filteredInv.length} pageSize={25} onPageChange={setPage} /></div>}
           </GlassCard>
         </>
       )}

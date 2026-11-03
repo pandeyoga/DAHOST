@@ -145,7 +145,7 @@ export default function RahazaCashFlowModule({ token }) {
         actions={
           <>
             <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="cf-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportCSV} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="cf-export"><Download className="w-3.5 h-3.5 mr-1.5" />Export CSV</Button>
+            <Button variant="ghost" onClick={exportCSV} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="cf-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
             <Button variant="ghost" onClick={exportXlsx} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="cf-export-xlsx"><FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" />Ekspor Excel</Button>
           </>
         }

@@ -28,6 +28,7 @@ import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import Modal from '../Modal';
+import { useInCompactHub } from '../moduleAtoms';
 import { MoneyInput } from '@/components/ui/money-input';
 import {
   costingApi, fmtRp, fmtNum, fmtPct, SOURCE_LABEL, COST_SOURCE_LABEL,
@@ -57,6 +58,7 @@ function StatusPill({ status }) {
 }
 
 export default function ProductCostingModule({ token, onNavigate }) {
+  const compact = useInCompactHub();
   const [rows, setRows] = useState([]);
   const [totals, setTotals] = useState(null);
   const [settings, setSettings] = useState(null);
@@ -69,6 +71,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
   const [detailBusy, setDetailBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [applyingAll, setApplyingAll] = useState(false);
+  const [totalModels, setTotalModels] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -81,6 +84,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
       const d = await costingApi('GET', `/models?${p}`, token);
       setRows(d.items || []);
       setTotals(d.totals || null);
+      setTotalModels(d.total_models ?? null);
       setSettings(d.settings || null);
       if (targetMargin === '' && d.settings) setTargetMargin(String(d.settings.target_margin_pct ?? 30));
     } catch (e) {
@@ -146,20 +150,22 @@ export default function ProductCostingModule({ token, onNavigate }) {
 
   const stat = (k) => (totals ? (totals[k] ?? 0) : 0);
   const readyCount = useMemo(() => rows.filter(r => r.status === 'ready').length, [rows]);
+  // 2026-11-04 (audit Keuangan tahap 2): 4 kartu hitungan → tab status yang menyaring tabel
+  const [statusTab, setStatusTab] = useState('');
+  const shownRows = useMemo(() => (statusTab ? rows.filter(r => r.status === statusTab) : rows), [rows, statusTab]);
 
   return (
     <div className="space-y-4" data-testid="product-costing-page">
       {/* ── kepala ─────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
-            <Calculator className="w-5 h-5 text-primary" /> HPP per Potong &amp; per Model
-          </h2>
+          {!compact && (
+            <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+              <Calculator className="w-5 h-5 text-primary" /> HPP per Potong &amp; per Model
+            </h2>
+          )}
           <p className="text-sm text-muted-foreground mt-0.5 max-w-3xl">
-            HPP/pcs dihitung dari <strong>BOM × harga bahan hasil pembelian</strong> (rata-rata
-            bergerak) + <strong>upah CMT</strong> + <strong>upah cutting/internal</strong>. Tidak
-            ada angka yang diketik: setiap komponen menyebut asalnya, dan yang belum ada muncul
-            sebagai kekurangan yang bisa langsung diperbaiki.
+            HPP/pcs = BOM × harga beli rata-rata + upah CMT + upah cutting/internal. Komponen yang belum ada muncul sebagai kekurangan.
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
@@ -178,19 +184,25 @@ export default function ProductCostingModule({ token, onNavigate }) {
       </div>
 
       {/* ── ringkasan ──────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="costing-summary">
+      <div className="inline-flex flex-wrap rounded-lg border border-[var(--glass-border)] p-0.5" data-testid="costing-summary">
         {[
-          { k: 'models', label: 'Produk dihitung', v: stat('models'), tone: 'text-foreground' },
-          { k: 'ready', label: 'Siap (semua komponen ada)', v: stat('ready'), tone: 'text-emerald-600 dark:text-emerald-300' },
-          { k: 'partial', label: 'Sebagian (masih ada kekurangan)', v: stat('partial'), tone: 'text-amber-600 dark:text-amber-300' },
-          { k: 'no_bom', label: 'Belum ada BOM', v: stat('no_bom'), tone: 'text-red-500' },
+          { k: 'models', f: '', label: 'Semua', v: stat('models') },
+          { k: 'ready', f: 'ready', label: 'Siap', v: stat('ready') },
+          { k: 'partial', f: 'partial', label: 'Masih ada kekurangan', v: stat('partial') },
+          { k: 'no_bom', f: 'no_bom', label: 'Belum ada BOM', v: stat('no_bom') },
         ].map(c => (
-          <GlassCard key={c.k} className="p-3">
-            <div className={`text-2xl font-bold ${c.tone}`} data-testid={`costing-stat-${c.k}`}>{c.v}</div>
-            <div className="text-xs text-muted-foreground mt-0.5">{c.label}</div>
-          </GlassCard>
+          <button key={c.k} type="button" onClick={() => setStatusTab(c.f)}
+            className={`px-3 py-1.5 rounded-md text-xs font-medium ${statusTab === c.f ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            {c.label} <span className="tabular-nums" data-testid={`costing-stat-${c.k}`}>({c.v})</span>
+          </button>
         ))}
       </div>
+
+      {totalModels != null && totalModels > stat('models') && (
+        <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="costing-truncated">
+          Dihitung {stat('models')} dari {totalModels} model (urut kode). Cari kode/nama untuk melihat model lainnya.
+        </p>
+      )}
 
       {/* ── penjelasan jujur bila belum ada yang siap ──────────────────── */}
       {!loading && stat('ready') === 0 && (
@@ -258,11 +270,11 @@ export default function ProductCostingModule({ token, onNavigate }) {
             <tbody>
               {loading ? (
                 <tr><td colSpan={12} className="text-center py-12 text-muted-foreground">Memuat…</td></tr>
-              ) : rows.length === 0 ? (
+              ) : shownRows.length === 0 ? (
                 <tr><td colSpan={12} className="text-center py-12 text-muted-foreground">
                   Tidak ada produk pada penyaring ini.
                 </td></tr>
-              ) : rows.map(r => (
+              ) : shownRows.map(r => (
                 <tr key={r.model_id}
                   className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]"
                   data-testid={`costing-row-${r.code}`}>

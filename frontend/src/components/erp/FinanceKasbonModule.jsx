@@ -5,10 +5,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
 import {
-  CheckCircle2, DollarSign, TrendingDown, Users,
-  RefreshCw, Search, X, Wallet, Calendar,
-  CreditCard, BarChart3, FileText, AlertCircle, Plus,
-  Table2, LayoutGrid, ArrowUpDown,
+  RefreshCw, Search, X, FileText, Table2, LayoutGrid, ArrowUpDown,
 } from 'lucide-react';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -16,6 +13,7 @@ import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import { todayWIB } from '../../lib/waktu';
+import { useInCompactHub } from './moduleAtoms';
 
 /* F13 (sesi #11) — layar UANG yang tidak bisa dibawa ke rapat.
    Kasbon & pinjaman karyawan dulu hanya bisa dibaca sebagai KARTU: tidak ada
@@ -271,6 +269,7 @@ function ActiveRow({ req, onRepay, onDisburse }) {
 
 // ─── Main Module ──────────────────────────────────────────────────────────────
 export default function FinanceKasbonModule() {
+  const compact = useInCompactHub();
   const [requests, setRequests] = useState([]);
   const [stats, setStats] = useState({});
   const [loading, setLoading] = useState(true);
@@ -291,12 +290,17 @@ export default function FinanceKasbonModule() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [rAll, rStats] = await Promise.all([
-        fetch(`${API}/api/dewi/kasbon/requests?limit=200`, { headers: authH() }),
-        fetch(`${API}/api/dewi/kasbon/stats`, { headers: authH() }),
-      ]);
-      const [dAll, dStats] = await Promise.all([rAll.json(), rStats.json()]);
-      if (dAll.ok) setRequests(dAll.requests || []);
+      // 2026-11-04: dulu `limit=200` — pengajuan ke-201 dst. tidak pernah tampil. Sekarang semua halaman dimuat.
+      const rStats = fetch(`${API}/api/dewi/kasbon/stats`, { headers: authH() }).then(r => r.json());
+      const all = [];
+      for (let page = 1; page <= 50; page += 1) {
+        const d = await fetch(`${API}/api/dewi/kasbon/requests?limit=500&page=${page}`, { headers: authH() }).then(r => r.json());
+        if (!d.ok) break;
+        all.push(...(d.requests || []));
+        if (all.length >= (d.total || 0) || !(d.requests || []).length) break;
+      }
+      setRequests(all);
+      const dStats = await rStats;
       if (dStats.ok) setStats(dStats.stats || {});
     } catch (_e) { /* ignore */ }
     finally { setLoading(false); }
@@ -339,36 +343,33 @@ export default function FinanceKasbonModule() {
     r.deduction_start_period || '',
   ]);
 
-  const statCards = [
-    { label: 'Siap Dicairkan', value: stats.pending_finance || 0, unit: 'pengajuan', icon: DollarSign, color: 'text-blue-500', urgent: (stats.pending_finance||0) > 0 },
-    { label: 'Kasbon Aktif', value: stats.active_count || 0, unit: 'karyawan', icon: Users, color: 'text-emerald-500' },
-    { label: 'Total Outstanding', value: fmt(stats.total_outstanding || 0), unit: '', icon: Wallet, color: 'text-amber-500' },
-    { label: 'Total Dicairkan', value: fmt(stats.total_disbursed_all || 0), unit: '', icon: BarChart3, color: 'text-violet-500' },
-  ];
-
   return (
-    <div className="p-4 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">Finance — Kasbon & Pinjaman</h2>
-          <p className="text-xs text-muted-foreground">Proses pencairan dan monitoring pembayaran</p>
-        </div>
-        <button onClick={load} className="w-9 h-9 rounded-xl border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground">
+    <div className={compact ? 'space-y-4' : 'p-4 space-y-4'}>
+      {/* Header — di dalam hub Kasbon & Uang Muka judulnya sudah di tab */}
+      <div className="flex items-center justify-between gap-3">
+        {!compact ? (
+          <div>
+            <h2 className="text-lg font-semibold text-foreground">Kasbon & Pinjaman</h2>
+            <p className="text-xs text-muted-foreground">Pencairan setelah disetujui HR dan pemantauan sisa pinjaman</p>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground" data-testid="kasbon-summary">
+            Sisa kasbon aktif <strong className="text-foreground">{fmt(stats.total_outstanding || 0)}</strong>
+            {' · '}{stats.active_employees ?? 0} karyawan
+            {(stats.pending_hr || 0) > 0 && <> · {stats.pending_hr} menunggu HR</>}
+          </p>
+        )}
+        <button onClick={load} title="Muat ulang" aria-label="Muat ulang" className="w-9 h-9 shrink-0 rounded-xl border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground">
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        {statCards.map((s, i) => (
-          <div key={i} className={`p-4 rounded-2xl border ${s.urgent ? 'border-blue-500/40 bg-blue-50 dark:bg-blue-500/10' : 'border-[var(--glass-border)] bg-[var(--card-surface)]'}`}>
-            <s.icon className={`w-5 h-5 mb-2 ${s.color}`} />
-            <p className="text-lg font-bold text-foreground">{s.value} <span className="text-xs font-normal text-muted-foreground">{s.unit}</span></p>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-          </div>
-        ))}
-      </div>
+      {!compact && (
+        <p className="text-sm text-muted-foreground" data-testid="kasbon-summary">
+          Sisa kasbon aktif <strong className="text-foreground">{fmt(stats.total_outstanding || 0)}</strong>
+          {' · '}{stats.active_employees ?? 0} karyawan
+          {(stats.pending_hr || 0) > 0 && <> · {stats.pending_hr} menunggu HR</>}
+        </p>
+      )}
 
       {/* Tabs + Search */}
       <div className="flex gap-2 flex-wrap">

@@ -336,7 +336,7 @@ def test_collect_bindings_all_sources():
     one = run(cb.collect_bindings(d, ["6-2900"]))
     assert set(one) == {"6-2900"} and {b["kind"] for b in one["6-2900"]} == kinds["6-2900"]
     prof = next(b for b in allb["4-1300"] if b["kind"] == "profil")
-    assert prof["label"] == "Faktur penjualan (AR) › Diskon penjualan (Dr)" and prof["screen"]["tab"] == "posting"
+    assert prof["label"] == "Faktur penjualan (AR) › Diskon penjualan (Dr)" and prof["screen"]["tab"] == "mapping" and prof["screen"]["view"] == "posting"  # 2026-11-04: Pengaturan Keuangan
 
 
 def test_integrity_report_detects_dangling_inactive_group_and_fallbacks():

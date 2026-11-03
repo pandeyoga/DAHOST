@@ -11,7 +11,7 @@ Scope (MVP):
   - Expenses: entry biaya operasional (manual)
   - Aging Report AR: bucket 0-30, 31-60, 61-90, 90+
 """
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, HTTPException, Depends, Query
 from routes.shared import require_portal_dep
 from database import get_db
 from utils.counters import gen_prefixed_number
@@ -46,6 +46,7 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-finance"],
 AR_STATUS = ["draft", "issued", "sent", "partial_paid", "paid", "overdue", "written_off", "cancelled"]
 AP_STATUS = ["draft", "sent", "partial_paid", "paid", "overdue", "cancelled"]
 AP_DEBIT_TYPES = ("EXPENSE", "COGS", "ASSET", "OTHER_EXPENSE")   # akun yang boleh didebit faktur supplier manual
+EXPENSE_DEBIT_TYPES = ("EXPENSE", "COGS", "OTHER_EXPENSE")       # akun beban yang boleh dipilih di Pengeluaran
 
 
 def _uid(): return str(uuid.uuid4())
@@ -162,6 +163,29 @@ async def _record_payment_doc(db, coll: str, inv: dict, amount: float, account_i
         "created_at": _now(), "created_by": user["id"], "created_by_name": user.get("name", ""),
     })
     return pay_id
+
+
+async def _check_debit_account(db, code: str, allowed_types: tuple, doc_label: str, allowed_label: str):
+    """Akun debit pilihan pengguna harus ada, aktif, bukan header, dan bertipe yang diizinkan."""
+    acc = await db.rahaza_coa_accounts.find_one({"code": code, "active": True}, {"_id": 0, "is_group": 1, "type": 1})
+    if not acc:
+        raise HTTPException(400, f"Akun '{code}' tidak ditemukan atau non-aktif.")
+    if acc.get("is_group"):
+        raise HTTPException(400, f"Akun '{code}' adalah header (non-postable). Pilih akun leaf.")
+    if acc.get("type") not in allowed_types:
+        raise HTTPException(400, f"Akun '{code}' bertipe {acc.get('type')} — {doc_label} hanya boleh "
+                                 f"mendebit {allowed_label}.")
+
+
+async def _reject_unknown_cash_account(db, account_id):
+    """Pembayaran hutang/piutang: `account_id` yang dikirim harus rekening kas/bank yang ada & aktif.
+
+    2026-11-03 (uji tugas): dulu rekening yang tidak ada/nonaktif diam-diam diabaikan — saldo faktur
+    tetap berubah, mutasi kas tidak dibuat, dan jurnal jatuh ke rekening bawaan profil posting.
+    Kosong tetap boleh (pemanggil API lama) dan memakai rekening bawaan seperti sebelumnya."""
+    if account_id and not await db.rahaza_cash_accounts.find_one(
+            {"id": account_id, "active": {"$ne": False}}, {"_id": 0, "id": 1}):
+        raise HTTPException(400, "Rekening kas/bank tidak ditemukan atau nonaktif. Pilih rekening dari daftar.")
 
 
 async def _require_fin(request: Request):
@@ -454,6 +478,8 @@ async def record_ar_payment(iid: str, request: Request):
     inv = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
+    account_id = body.get("account_id")
+    await _reject_unknown_cash_account(db, account_id)  # sebelum piutang berkurang
     # ── R10 concurrency hardening (TOCTOU-safe): state-check + overpay guard live
     # INSIDE the filter; paid/balance/status recomputed atomically via aggregation
     # pipeline. Prevents lost-update & overpay under parallel requests (CC3).
@@ -475,7 +501,6 @@ async def record_ar_payment(iid: str, request: Request):
                                  f"{ar_remaining(inv2):.0f})")
     inv = updated
     # Record cash movement
-    account_id = body.get("account_id")
     payment_date = body.get("date") or _today_iso()
     movement_id = None
     if account_id:
@@ -734,13 +759,14 @@ async def ar_aging(request: Request, source: Optional[str] = None):
 
 # ── AP INVOICES ──────────────────────────────────────────────────────────────
 @router.get("/ap-invoices")
-async def list_ap(request: Request, status: Optional[str] = None):
+async def list_ap(request: Request, status: Optional[str] = None, limit: int = Query(500, ge=1, le=5000)):
     await require_auth(request)
     db = get_db()
     q = {}
     if status:
         q["status"] = status
-    rows = await db.rahaza_ap_invoices.find(q, {"_id": 0}).sort("issue_date", -1).to_list(500)
+    # 2026-11-04: `limit` (dulu tetap 500 → faktur lama hilang diam-diam dari daftar Tagihan)
+    rows = await db.rahaza_ap_invoices.find(q, {"_id": 0}).sort("issue_date", -1).limit(limit).to_list(limit)
     return serialize_doc(rows)
 
 
@@ -763,15 +789,7 @@ async def create_ap(request: Request):
     # mapping 'ap_invoice.debit_expense_default'. `post_ap_invoice` sudah membaca `gl_debit_code`.
     gl_debit_code = str(body.get("gl_debit_code") or "").strip()
     if gl_debit_code:
-        acc = await db.rahaza_coa_accounts.find_one({"code": gl_debit_code, "active": True},
-                                                    {"_id": 0, "is_group": 1, "type": 1})
-        if not acc:
-            raise HTTPException(400, f"Akun '{gl_debit_code}' tidak ditemukan atau non-aktif.")
-        if acc.get("is_group"):
-            raise HTTPException(400, f"Akun '{gl_debit_code}' adalah header (non-postable). Pilih akun leaf.")
-        if acc.get("type") not in AP_DEBIT_TYPES:
-            raise HTTPException(400, f"Akun '{gl_debit_code}' bertipe {acc.get('type')} — faktur supplier hanya boleh "
-                                     f"mendebit akun beban, HPP, atau aset.")
+        await _check_debit_account(db, gl_debit_code, AP_DEBIT_TYPES, "faktur supplier", "akun beban, HPP, atau aset")
     from core.tax_status import get_tax_profile, input_tax_treatment
     treatment = input_tax_treatment(await get_tax_profile(db))  # non-PKP → PPN = bagian harga beli
     invoice_number = await _gen_number(db, "rahaza_ap_invoices", "AP")
@@ -825,10 +843,7 @@ async def record_ap_payment(iid: str, request: Request):
         # B-11: pembayaran atas invoice draft dulu ikut memposting invoice diam-diam
         raise HTTPException(400, "Invoice masih draft — approve/kirim (send) invoice terlebih dahulu sebelum mencatat pembayaran.")
     account_id = body.get("account_id")
-    # 2026-11-03 (uji tugas): rekening yang dikirim tapi tidak ada/nonaktif dulu diam-diam diabaikan →
-    # pembayaran terjurnal ke rekening bawaan profil. Tolak sebelum hutang berkurang.
-    if account_id and not await db.rahaza_cash_accounts.find_one({"id": account_id, "active": {"$ne": False}}, {"_id": 0, "id": 1}):
-        raise HTTPException(400, "Rekening kas/bank tidak ditemukan atau nonaktif. Pilih rekening dari daftar.")
+    await _reject_unknown_cash_account(db, account_id)  # sebelum hutang berkurang
     # ── R10 concurrency hardening (TOCTOU-safe): atomic conditional payment (CC3).
     updated = await db.rahaza_ap_invoices.find_one_and_update(
         {
@@ -989,38 +1004,16 @@ async def retry_post_ap(iid: str, request: Request):
 
 @router.get("/ap-aging")
 async def ap_aging(request: Request):
-    """F2: AP Aging report (bucket 0, 1-30, 31-60, 61-90, 90+)."""
+    """F2: AP Aging report (bucket 0, 1-30, 31-60, 61-90, 90+).
+
+    2026-11-04 (audit Keuangan): SSOT `core.payables` — tagihan pemasok DAN tagihan CMT, tanpa batas
+    500 baris (dulu total salah di atas 500 dan tagihan CMT tidak ikut). Total = hutang yang sudah
+    dijurnal (sama dengan buku besar); tagihan CMT yang belum dijurnal dikembalikan terpisah."""
     await require_auth(request)
     db = get_db()
-    today = today_wib()
-    rows = await db.rahaza_ap_invoices.find(
-        {"status": {"$in": ["sent", "partial_paid", "overdue"]}}, {"_id": 0}
-    ).to_list(500)
-    buckets = {"current": 0, "1_30": 0, "31_60": 0, "61_90": 0, "90_plus": 0}
-    details = []
-    for r in rows:
-        try:
-            due = datetime.strptime(r["due_date"], "%Y-%m-%d").date()
-            days_overdue = (today - due).days
-        except Exception:
-            days_overdue = 0
-        balance = float(r.get("balance") or 0)
-        if days_overdue <= 0:
-            buckets["current"] += balance
-        elif days_overdue <= 30:
-            buckets["1_30"] += balance
-        elif days_overdue <= 60:
-            buckets["31_60"] += balance
-        elif days_overdue <= 90:
-            buckets["61_90"] += balance
-        else:
-            buckets["90_plus"] += balance
-        details.append({**r, "days_overdue": days_overdue})
-    return {
-        "buckets": {k: round(v) for k, v in buckets.items()},
-        "total": round(sum(buckets.values())),
-        "details": serialize_doc(details),
-    }
+    from core.payables import aging, open_payable_rows
+    out = aging(await open_payable_rows(db), today_wib())
+    return serialize_doc(out)
 
 
 # ── CASH ACCOUNTS & MOVEMENTS ────────────────────────────────────────────────
@@ -1183,7 +1176,9 @@ async def list_movements(request: Request, account_id: Optional[str] = None, fro
 
 # ── EXPENSES ─────────────────────────────────────────────────────────────────
 @router.get("/expenses")
-async def list_expenses(request: Request, from_: Optional[str] = None, to: Optional[str] = None, cost_center_id: Optional[str] = None):
+async def list_expenses(request: Request, from_: Optional[str] = None, to: Optional[str] = None, cost_center_id: Optional[str] = None,
+                        limit: int = Query(500, ge=1, le=5000)):
+    # 2026-11-04 (audit Keuangan): layar memilih periode + limit; bila hasil = limit layar memberi peringatan.
     await require_auth(request)
     db = get_db()
     q = {}
@@ -1196,7 +1191,7 @@ async def list_expenses(request: Request, from_: Optional[str] = None, to: Optio
         if to:
             rg["$lte"] = to
         q["date"] = rg
-    rows = await db.rahaza_expenses.find(q, {"_id": 0}).sort("date", -1).to_list(500)
+    rows = await db.rahaza_expenses.find(q, {"_id": 0}).sort("date", -1).to_list(limit)
     # enrich cost center
     ccids = list({r.get("cost_center_id") for r in rows if r.get("cost_center_id")})
     ccs = await db.rahaza_cost_centers.find({"id": {"$in": ccids}}, {"_id": 0}).to_list(500) if ccids else []
@@ -1216,6 +1211,12 @@ async def create_expense(request: Request):
     amount = _to_amount(body.get("amount"))
     if amount <= 0:
         raise HTTPException(400, "amount harus > 0")
+    # 2026-11-04 (owner: akun beban wajib dipilih di layar): akun yang dikirim dicek dulu. Kosong tetap
+    # diterima untuk pemanggil API lama → jatuh ke `expense.debit_expense_default` seperti sebelumnya.
+    gl_debit_code = str(body.get("gl_debit_code") or "").strip()
+    if gl_debit_code:
+        await _check_debit_account(db, gl_debit_code, EXPENSE_DEBIT_TYPES, "pengeluaran", "akun beban atau HPP")
+    await _reject_unknown_cash_account(db, body.get("account_id"))
     doc = {
         "id": _uid(),
         "date": body.get("date") or _today_iso(),
@@ -1224,7 +1225,7 @@ async def create_expense(request: Request):
         "amount": round(amount),
         "cost_center_id": body.get("cost_center_id") or None,
         "account_id": body.get("account_id") or None,
-        "gl_debit_code": body.get("gl_debit_code") or None,  # F2: optional override
+        "gl_debit_code": gl_debit_code or None,  # F2: akun beban pilihan (wajib di layar sejak 2026-11-04)
         "notes": body.get("notes") or "",
         "created_at": _now(), "created_by": user["id"], "created_by_name": user.get("name", ""),
     }

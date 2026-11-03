@@ -1,25 +1,45 @@
+/**
+ * Faktur Penjualan (menu Keuangan › Penjualan & Penerimaan) — daftar faktur piutang (AR) kanonik.
+ *
+ * 2026-11-04 (keputusan owner): faktur DIBUAT di Portal Penjualan (Nota Penjualan — stok FG keluar
+ * + HPP + faktur) dan di Maklon. Layar ini untuk Keuangan: menerbitkan draf, mencatat pembayaran,
+ * melihat riwayat & statement pelanggan. Form "Invoice Baru" (teks bebas, tanpa stok/HPP) dilepas
+ * supaya penjualan reseller tidak bisa tercatat tanpa stok keluar. Endpoint POST /ar-invoices tetap.
+ */
 import { useState, useEffect, useCallback, useReducer, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, RefreshCw, FileText, DollarSign, Calendar, Users, Zap, CheckCircle2, Store, History } from 'lucide-react';
+import { RefreshCw, FileText, DollarSign, Calendar, Users, Store, History } from 'lucide-react';
 import PaymentHistoryModal from './PaymentHistoryModal';
-import SalesTaxFields from './SalesTaxFields';
-import { useTaxProfile, previewOutputTax } from '../../lib/taxProfile';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile, StatusBadge, EmptyState } from './moduleAtoms';
-import { DataTable } from './DataTableV2';
+import { PageHeader, StatusBadge, EmptyState } from './moduleAtoms';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB, monthStartWIB } from '@/lib/waktu';
-import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
-
-// Kotak uang bergaya GlassInput (latar & tinggi sama dengan kolom lain di form ini).
 
 const fmt = formatRupiah;
 
-const _INIT = { invoices: [], customers: [], accounts: [], channels: [], loading: true };
+// Nama status untuk pengguna (server memakai kode Inggris). `issued`/`sent` = sudah terbit, belum lunas.
+const AR_STATUS = {
+  draft:        { label: 'Draf',              tone: 'muted' },
+  sent:         { label: 'Terbit',            tone: 'info' },
+  issued:       { label: 'Terbit',            tone: 'info' },
+  overdue:      { label: 'Lewat jatuh tempo', tone: 'danger' },
+  partial_paid: { label: 'Dibayar sebagian',  tone: 'warning' },
+  paid:         { label: 'Lunas',             tone: 'success' },
+  cancelled:    { label: 'Dibatalkan',        tone: 'muted' },
+  void:         { label: 'Dibatalkan',        tone: 'muted' },
+  written_off:  { label: 'Dihapusbukukan',    tone: 'danger' },
+};
+function ArStatusBadge({ status }) {
+  const m = AR_STATUS[(status || '').toLowerCase()];
+  return m ? <StatusBadge status={m.label} tone={m.tone} /> : <StatusBadge status={status} />;
+}
+
+const _INIT = { invoices: [], customers: [], channels: [], loading: true };
 function _reducer(s, a) {
   if (a.type === 'loaded') return { ...s, ...a.data, loading: false };
   if (a.type === 'loading') return { ...s, loading: true };
@@ -49,10 +69,10 @@ function ChannelBadge({ channel, channels }) {
 }
 
 export default function RahazaARInvoicesModule({ token }) {
-  const [{ invoices, customers, accounts, channels, loading }, dispatch] = useReducer(_reducer, _INIT);
-  const [creating, setCreating] = useState(false);
+  const [{ invoices, customers, channels, loading }, dispatch] = useReducer(_reducer, _INIT);
+  // rekening kas/bank aktif — pemilih bersama yang sama dengan bayar hutang, gaji, kasbon (SSOT)
+  const { accounts, loaded: accountsLoaded } = usePaymentCashAccounts(token);
   const [paying, setPaying] = useState(null);
-  const [quickPayId, setQuickPayId] = useState(null);
   const [historyInv, setHistoryInv] = useState(null);
   const [showStatement, setShowStatement] = useState(false);
   const [error, setError] = useState('');
@@ -68,14 +88,12 @@ export default function RahazaARInvoicesModule({ token }) {
     Promise.all([
       fetch('/api/rahaza/ar-invoices', { headers: h }).then(r => r.json()),
       fetch('/api/rahaza/customers', { headers: h }).then(r => r.json()),
-      fetch('/api/rahaza/cash-accounts', { headers: h }).then(r => r.json()),
       fetch('/api/rahaza/channel-gl-mapping', { headers: h }).then(r => r.json()),
-    ]).then(([inv, cs, acc, chs]) => {
+    ]).then(([inv, cs, chs]) => {
       if (x) return;
       dispatch({ type: 'loaded', data: {
         invoices: Array.isArray(inv) ? inv : [],
         customers: Array.isArray(cs) ? cs : [],
-        accounts: Array.isArray(acc) ? acc : [],
         channels: Array.isArray(chs) ? chs : [],
       }});
     }).catch(() => { if (!x) dispatch({ type: 'loaded', data: {} }); });
@@ -112,70 +130,39 @@ export default function RahazaARInvoicesModule({ token }) {
       if (d._posting_result && !d._posting_result.ok) toast.error(`Pembayaran tercatat, tetapi jurnal GAGAL: ${d._posting_result.error}`);
       else toast.success(`Pembayaran dicatat${d._posting_result?.je_number ? ` · JE ${d._posting_result.je_number}` : ''}.`);
     }
-    else { setError(`Gagal catat pembayaran (HTTP ${r.status})`); }
-  }, [hdrs]);
-
-  const quickPay = useCallback(async (inv) => {
-    setQuickPayId(inv.id);
-    const payload = {
-      amount: inv.balance,
-      account_id: accounts[0]?.id || '',
-      date: todayWIB(),
-      notes: 'Lunas - Bayar Sekarang',
-    };
-    const r = await fetch(`/api/rahaza/ar-invoices/${inv.id}/payment`, {
-      method: 'POST', headers: hdrs, body: JSON.stringify(payload),
-    });
-    if (r.ok) {
+    else {
       const d = await r.json().catch(() => ({}));
-      setTick(t => t + 1);
-      if (d._posting_result && !d._posting_result.ok) toast.error(`${inv.invoice_number} lunas, tetapi jurnal GAGAL: ${d._posting_result.error}`);
-      else toast.success(`${inv.invoice_number} berhasil dilunasi ${fmt(inv.balance)}.`);
-    } else {
-      const d = await r.json().catch(() => ({}));
-      toast.error(d.detail || `Gagal (HTTP ${r.status})`);
+      setError(d.detail || `Gagal catat pembayaran (HTTP ${r.status})`);
     }
-    setQuickPayId(null);
-  }, [hdrs, accounts]);
+  }, [hdrs]);
 
   const unpaidInvoices = invoices.filter(i => i.status !== 'paid' && i.balance > 0);
   const totalOutstanding = unpaidInvoices.reduce((s, i) => s + (i.balance || 0), 0);
-  const totalPaid = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.total || 0), 0);
+  // 2026-11-04: semua uang yang sudah diterima, termasuk cicilan (dulu hanya total faktur yang LUNAS)
+  const totalPaid = invoices.reduce((s, i) => s + Number(i.paid_amount || 0), 0);
 
   return (
     <div className="space-y-5" data-testid="rahaza-ar-invoices-page">
       <PageHeader
         icon={FileText}
-        eyebrow="Portal Keuangan · AR"
-        title="Invoice Penjualan (AR)"
-        subtitle="Kelola piutang pelanggan. Gunakan ⚡ Bayar Sekarang untuk lunas instan, atau buka form untuk pembayaran parsial."
+        title="Faktur Penjualan"
+        subtitle="Faktur piutang reseller dan maklon. Faktur dibuat dari Portal Penjualan › Nota Penjualan atau dari Maklon; di sini draf diterbitkan dan pembayaran dicatat."
         actions={
           <>
             <Button variant="ghost" onClick={() => setShowStatement(true)} className="h-9 border border-[var(--glass-border)] gap-1.5"><Users className="w-3.5 h-3.5" />Statement</Button>
-            <Button variant="ghost" onClick={refresh} className="h-9 border border-[var(--glass-border)]"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={() => setCreating(true)} className="h-9 gap-1.5" data-testid="ar-create-btn"><Plus className="w-3.5 h-3.5" />Invoice Baru</Button>
+            <Button variant="ghost" onClick={refresh} className="h-9 border border-[var(--glass-border)]" title="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
           </>
         }
       />
 
       {error && <div className="bg-[hsl(var(--destructive)/0.12)] border border-[hsl(var(--destructive)/0.22)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]">{error}<button onClick={() => setError('')} className="ml-2 text-xs underline">Tutup</button></div>}
 
-      {/* Outstanding alert banner */}
-      {unpaidInvoices.length > 0 && (
-        <div className="bg-amber-400/8 border border-amber-400/20 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-semibold text-amber-400">{unpaidInvoices.length} invoice belum lunas · Total: {fmt(totalOutstanding)}</p>
-            <p className="text-xs text-foreground/50 mt-0.5">Klik ⚡ di baris invoice untuk lunas instan dengan jumlah penuh.</p>
-          </div>
-        </div>
-      )}
-
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <ARStatTile label="Total Invoice" value={invoices.length} accent="primary" />
-        <ARStatTile label="Belum Lunas" value={unpaidInvoices.length} accent="warning" />
-        <ARStatTile label="Outstanding" value={fmt(totalOutstanding)} accent="danger" />
-        <ARStatTile label="Total Dibayar" value={fmt(totalPaid)} accent="success" />
+        <ARStatTile label="Total faktur" value={invoices.length} accent="primary" />
+        <ARStatTile label="Belum lunas" value={unpaidInvoices.length} accent="warning" />
+        <ARStatTile label="Sisa piutang" value={fmt(totalOutstanding)} accent="danger" />
+        <ARStatTile label="Sudah diterima" value={fmt(totalPaid)} accent="success" />
       </div>
 
       {/* Invoice table */}
@@ -198,7 +185,7 @@ export default function RahazaARInvoicesModule({ token }) {
               {loading ? (
                 <tr><td colSpan={8} className="py-8"><div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg mx-4" />)}</div></td></tr>
               ) : invoices.length === 0 ? (
-                <tr><td colSpan={8} className="py-8"><EmptyState icon={FileText} title="Belum ada invoice" description="Klik 'Invoice Baru' untuk membuat invoice penjualan pertama." /></td></tr>
+                <tr><td colSpan={8} className="py-8"><EmptyState icon={FileText} title="Belum ada faktur" description="Faktur muncul di sini setelah dibuat dari Portal Penjualan › Nota Penjualan atau dari Maklon." /></td></tr>
               ) : invoices.map((inv, idx) => (
                 <tr key={inv.id} className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] transition-colors ${idx % 2 === 0 ? '' : 'bg-[var(--glass-bg)]/20'}`}
                   data-testid={`ar-row-${inv.invoice_number}`}>
@@ -209,7 +196,7 @@ export default function RahazaARInvoicesModule({ token }) {
                   <td className="px-3 py-2"><ChannelBadge channel={inv.sales_channel} channels={channels} /></td>
                   <td className="px-3 py-2 text-xs text-foreground">{inv.customer_name}</td>
                   <td className="px-3 py-2 text-xs text-foreground/70">{inv.issue_date}</td>
-                  <td className="px-3 py-2"><StatusBadge status={inv.status} /></td>
+                  <td className="px-3 py-2"><ArStatusBadge status={inv.status} /></td>
                   <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{fmt(inv.total)}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
                     {inv.balance > 0
@@ -231,35 +218,21 @@ export default function RahazaARInvoicesModule({ token }) {
                       )}
                       {/* Status controls */}
                       {inv.status === 'draft' && (
-                        <button onClick={() => sendInvoice(inv.id)} className="text-[10px] px-2 py-0.5 rounded border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap" data-testid={`ar-send-${inv.id}`}>Kirim</button>
+                        <button onClick={() => sendInvoice(inv.id)} className="text-[10px] px-2 py-0.5 rounded border border-primary/30 bg-primary/10 text-primary hover:bg-primary/20 transition-colors whitespace-nowrap" data-testid={`ar-send-${inv.id}`} title="Terbitkan faktur dan catat ke buku besar">Terbitkan</button>
                       )}
                       {inv.status === 'sent' && (
                         <button onClick={() => changeStatus(inv.id, 'overdue')} className="text-[10px] px-2 py-0.5 rounded border border-amber-400/30 bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 transition-colors whitespace-nowrap">Jatuh Tempo</button>
                       )}
-                      {/* Bayar form (partial) */}
-                      {inv.status !== 'paid' && inv.balance > 0 && (
+                      {/* Bayar — form terisi sisa tagihan; rekening wajib dipilih. 2026-11-04: tombol ⚡ "Lunas"
+                          sekali-klik dilepas karena diam-diam memakai rekening pertama (Kas Kecil). */}
+                      {inv.status !== 'draft' && inv.status !== 'paid' && inv.balance > 0 && (
                         <button
                           onClick={() => setPaying(inv)}
                           className="text-[10px] px-2 py-0.5 rounded border border-[var(--glass-border)] bg-[var(--glass-bg)] text-foreground/70 hover:bg-[var(--glass-bg-hover)] transition-colors whitespace-nowrap"
                           data-testid={`ar-pay-form-${inv.id}`}
-                          title="Buka form pembayaran"
+                          title="Catat pembayaran"
                         >
                           Bayar
-                        </button>
-                      )}
-                      {/* ⚡ Bayar Sekarang — 1-click full payment */}
-                      {inv.status !== 'paid' && inv.balance > 0 && (
-                        <button
-                          onClick={() => quickPay(inv)}
-                          disabled={quickPayId === inv.id}
-                          className="h-7 px-2 rounded border border-emerald-400/30 bg-emerald-400/10 text-emerald-400 hover:bg-emerald-400/20 transition-colors flex items-center gap-1 text-[10px] font-semibold disabled:opacity-50"
-                          data-testid={`ar-quick-pay-${inv.id}`}
-                          title={`Lunas sekarang: ${fmt(inv.balance)}`}
-                        >
-                          {quickPayId === inv.id
-                            ? <RefreshCw className="w-3 h-3 animate-spin" />
-                            : <Zap className="w-3 h-3" />}
-                          Lunas
                         </button>
                       )}
                     </div>
@@ -271,14 +244,12 @@ export default function RahazaARInvoicesModule({ token }) {
         </div>
       </GlassCard>
 
-      {/* Create Invoice Modal */}
-      {creating && <CreateInvoiceModal token={token} customers={customers} channels={channels} onClose={() => setCreating(false)} onCreated={refresh} />}
-
       {/* Payment Modal */}
       {paying && (
         <PaymentModal
           invoice={paying}
           accounts={accounts}
+          accountsLoaded={accountsLoaded}
           onClose={() => setPaying(null)}
           onPay={(payload) => recordPayment(paying.id, payload)}
         />
@@ -308,170 +279,31 @@ function ARStatTile({ label, value, accent }) {
   );
 }
 
-// 2026-11-02: sama dengan backend `marketplace_channel_reason` (rahaza_finance.py)
-const MARKETPLACE_PLATFORMS = ['shopee', 'tiktok', 'tiktokshop', 'tokopedia', 'lazada', 'blibli'];
-function isMarketplaceChannel(c) {
-  const platform = String(c?.platform || '').toLowerCase();
-  const head = String(c?.channel_key || '').toLowerCase().replace(/-/g, '_').split('_')[0];
-  return MARKETPLACE_PLATFORMS.includes(platform) || MARKETPLACE_PLATFORMS.includes(head)
-    || String(c?.debit_ar || '').startsWith('1-1303');
-}
-
-function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) {
-  const today = todayWIB();
-  const [form, setForm] = useState({ customer_id: '', issue_date: today, due_date: '', notes: '', sales_channel: '', discount_amount: 0 });
-  // 2026-11-03: PPN mengikuti saklar Status Pajak (non-PKP = tanpa PPN; PKP = 12% × DPP 11/12)
-  const { profile: taxProfile } = useTaxProfile(token);
-  const [taxF, setTaxF] = useState({ kena_ppn: true, faktur_number: '', faktur_date: '' });
-  const [items, setItems] = useState([{ description: '', qty: 1, unit_price: 0 }]);
-  const [saving, setSaving] = useState(false);
-  const [submitError, setSubmitError] = useState('');
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-  // SESI #27 — nomor invoice AR mengikuti kebijakan Otomatis/Manual milik owner
-  // (ditegakkan sejak sesi #18, tetapi kolomnya belum pernah ada di layar ini).
-  const numPolicy = useDocNumberPolicy('rahaza_ar_invoices.invoice_number', token);
-  const [invNumber, setInvNumber] = useState('');
-
-  // Konvensi tunggal (= backend): DPP = subtotal − diskon; PPN dari Status Pajak; total = DPP + PPN
-  const subtotal = items.reduce((s, i) => s + (Number(i.qty) * Number(i.unit_price)), 0);
-  const discount = Math.min(Number(form.discount_amount) || 0, subtotal);
-  const taxable = Math.max(subtotal - discount, 0);
-  const kenaPpn = !!taxProfile.pkp && taxF.kena_ppn !== false;
-  const tax = previewOutputTax(taxProfile, taxable, kenaPpn);
-  const total = Math.round(taxable + tax);
-
-  const submit = async () => {
-    setSaving(true); setSubmitError('');
-    try {
-      const r = await fetch('/api/rahaza/ar-invoices', {
-        method: 'POST', headers,
-        body: JSON.stringify({ ...form, kena_ppn: kenaPpn, ...(kenaPpn ? { faktur_number: taxF.faktur_number, faktur_date: taxF.faktur_date } : {}),
-                               discount_amount: discount, items,
-                               ...docNumberPayload(numPolicy, 'invoice_number', invNumber) }),
-      });
-      if (r.ok) { onCreated(); onClose(); }
-      else { const d = await r.json().catch(() => ({})); setSubmitError(d.detail || `Gagal membuat invoice (HTTP ${r.status})`); }
-    } finally { setSaving(false); }
-  };
-
-  // 2026-11-02 (D2): channel toko marketplace TIDAK ditawarkan — pendapatan marketplace hanya
-  // lewat pencairan (backend juga menolak). Yang tersisa: channel non-marketplace (mis. maklon).
-  const offlineChannels = channels.filter(c => !isMarketplaceChannel(c));
-  // Group channels by platform
-  const platforms = [...new Set(offlineChannels.map(c => c.platform))].sort();
-  const selectedChannel = offlineChannels.find(c => c.channel_key === form.sales_channel);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <GlassCard className="p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h2 className="text-xl font-bold text-foreground mb-4">Invoice Baru</h2>
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <div className="col-span-2">
-            <label className="text-xs text-muted-foreground uppercase block mb-1">Pelanggan *</label>
-            <SmartNativeSelect value={form.customer_id} onChange={e => setForm({ ...form, customer_id: e.target.value })} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="ar-create-customer">
-              <option value="">— Pilih —</option>
-              {customers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}
-            </SmartNativeSelect>
-          </div>
-          {/* Sales Channel — routing GL otomatis */}
-          <div className="col-span-2">
-            <label className="text-xs text-muted-foreground uppercase block mb-1">
-              Channel Penjualan
-              <span className="normal-case ml-1 text-[10px] text-primary/70">(menentukan akun pendapatan otomatis)</span>
-            </label>
-            <SmartNativeSelect
-              value={form.sales_channel}
-              onChange={e => setForm({ ...form, sales_channel: e.target.value })}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="ar-create-channel"
-            >
-              <option value="">— Default (Maklon/Umum) —</option>
-              {platforms.map(platform => (
-                <optgroup key={platform} label={platform.toUpperCase()}>
-                  {offlineChannels.filter(c => c.platform === platform).map(c => (
-                    <option key={c.channel_key} value={c.channel_key}>{c.channel_label}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </SmartNativeSelect>
-            {selectedChannel && (
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Auto-post: Dr <span className="font-mono text-primary">{selectedChannel.debit_ar}</span> / Cr <span className="font-mono text-primary">{selectedChannel.credit_revenue}</span>
-              </p>
-            )}
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground uppercase block mb-1">Tgl Terbit</label>
-            <GlassInput type="date" value={form.issue_date} onChange={e => setForm({ ...form, issue_date: e.target.value })} />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground uppercase block mb-1">Jatuh Tempo</label>
-            <GlassInput type="date" value={form.due_date} onChange={e => setForm({ ...form, due_date: e.target.value })} />
-          </div>
-        </div>
-        {/* Items */}
-        <div className="space-y-2 mb-4">
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-muted-foreground uppercase">Item Invoice</label>
-            <button onClick={() => setItems(p => [...p, { description: '', qty: 1, unit_price: 0 }])} className="text-xs text-primary hover:underline" data-testid="ar-add-item-btn">+ Tambah Baris</button>
-          </div>
-          {items.map((item, i) => (
-            <div key={i} className="grid grid-cols-12 gap-2 items-center">
-              <input value={item.description} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, description: e.target.value } : x))} placeholder="Deskripsi" className="col-span-6 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground" data-testid={`ar-item-desc-${i}`} />
-              <input type="number" value={item.qty} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, qty: e.target.value } : x))} className="col-span-2 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground text-right font-mono" data-testid={`ar-item-qty-${i}`} />
-              <MoneyInput unstyled value={item.unit_price} onChange={e => setItems(p => p.map((x, j) => j === i ? { ...x, unit_price: e.target.value } : x))} className="col-span-3 h-9 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground text-right font-mono" placeholder="Harga" data-testid={`ar-item-price-${i}`} />
-              <button onClick={() => setItems(p => p.filter((_, j) => j !== i))} className="col-span-1 h-9 grid place-items-center text-red-400 hover:text-red-300 text-lg">×</button>
-            </div>
-          ))}
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <div>
-              <label className="text-xs text-muted-foreground uppercase block mb-1">Diskon (Rp)</label>
-              <MoneyInput glass value={form.discount_amount} onChange={e => setForm({ ...form, discount_amount: e.target.value })} data-testid="ar-create-discount" />
-            </div>
-          </div>
-          <SalesTaxFields profile={taxProfile} value={taxF} onChange={setTaxF} compact testIdPrefix="ar-create-tax" />
-          <div className="text-right text-xs text-muted-foreground space-y-0.5" data-testid="ar-create-summary">
-            <div>Subtotal: <span className="font-mono">{fmt(subtotal)}</span></div>
-            {discount > 0 && <div>Diskon: <span className="font-mono">− {fmt(discount)}</span></div>}
-            <div>DPP: <span className="font-mono">{fmt(taxable)}</span></div>
-            {tax > 0 && <div>PPN 12% × DPP 11/12: <span className="font-mono">{fmt(tax)}</span></div>}
-          </div>
-          <div className="text-right text-sm font-semibold text-foreground" data-testid="ar-create-total">Total: {fmt(total)}</div>
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground uppercase block mb-1">Catatan</label>
-          <GlassInput value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} placeholder="Opsional" />
-        </div>
-        <DocNumberField
-          policy={numPolicy} value={invNumber} onChange={setInvNumber}
-          testId="ar-inv-docnum" label="Nomor Invoice" />
-        {submitError && <div className="text-xs text-red-400 border border-red-400/30 rounded-lg px-3 py-2 mt-3" data-testid="ar-create-error">{submitError}</div>}
-        <div className="flex gap-2 mt-6 justify-end">
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button>
-          <Button onClick={submit} disabled={saving || !form.customer_id} data-testid="ar-create-submit">{saving ? 'Menyimpan...' : 'Buat Invoice'}</Button>
-        </div>
-      </GlassCard>
-    </div>
-  );
-}
-
-function PaymentModal({ invoice, accounts, onClose, onPay }) {
-  const [amount, setAmount] = useState(invoice.balance);
-  const [account_id, setAccount] = useState(accounts[0]?.id || '');
+function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
+  const balance = Number(invoice.balance || 0);
+  const [amount, setAmount] = useState(balance);
+  // 2026-11-04: tanpa rekening bawaan (dulu rekening pertama = Kas Kecil) dan tanpa pilihan
+  // "tidak link ke rekening" — uang dari pelanggan harus masuk ke rekening yang nyata.
+  const [account_id, setAccount] = useState('');
   const [date, setDate] = useState(todayWIB);
   const [notes, setNotes] = useState('');
+  const problem = !account_id ? 'Pilih rekening penerima.'
+    : !(Number(amount) > 0) ? 'Jumlah harus lebih dari 0.'
+      : Number(amount) > balance + 0.5 ? `Jumlah melebihi sisa tagihan (${fmt(balance)}).`
+        : '';
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <GlassCard className="p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
-        <h2 className="text-xl font-bold text-foreground mb-2">Record Pembayaran</h2>
-        <p className="text-xs text-muted-foreground mb-4">{invoice.invoice_number} · Balance: {fmt(invoice.balance)}</p>
+        <h2 className="text-xl font-bold text-foreground mb-2">Catat Pembayaran</h2>
+        <p className="text-xs text-muted-foreground mb-4">{invoice.invoice_number} · {invoice.customer_name} · Sisa: {fmt(balance)}</p>
         <div className="space-y-3">
-          <div><label className="text-xs uppercase text-muted-foreground">Jumlah</label><MoneyInput glass value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Rekening</label><SmartNativeSelect value={account_id} onChange={e => setAccount(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="ar-pay-account"><option value="">— Tidak link ke rekening —</option>{accounts.map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name} (${fmt(a.balance)})`}</option>)}</SmartNativeSelect></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Tanggal</label><GlassInput type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Catatan</label><GlassInput value={notes} onChange={e => setNotes(e.target.value)} /></div>
+          <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-amount">Jumlah diterima</label><MoneyInput glass id="ar-pay-amount" value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
+          <div><label className="text-xs text-muted-foreground">Masuk ke rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={account_id} onChange={setAccount} testId="ar-pay-account" /></div>
+          <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-date">Tanggal</label><GlassInput id="ar-pay-date" type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
+          <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-notes">Catatan</label><GlassInput id="ar-pay-notes" value={notes} onChange={e => setNotes(e.target.value)} placeholder="opsional, mis. no. referensi transfer" /></div>
         </div>
-        <div className="flex gap-2 mt-6 justify-end"><Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button><Button onClick={() => onPay({ amount, account_id, date, notes })} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4 mr-1.5" />Simpan</Button></div>
+        {problem && account_id && <div className="text-xs text-red-400 border border-red-400/30 rounded-lg px-3 py-2 mt-3" data-testid="ar-pay-error">{problem}</div>}
+        <div className="flex gap-2 mt-6 justify-end"><Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button><Button onClick={() => onPay({ amount, account_id, date, notes })} disabled={!!problem} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4 mr-1.5" />Simpan</Button></div>
       </GlassCard>
     </div>
   );

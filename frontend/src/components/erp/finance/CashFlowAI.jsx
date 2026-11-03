@@ -8,11 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Loader2, Brain, TrendingUp, TrendingDown, Minus,
-  RefreshCw, AlertCircle, ArrowRight, ChevronDown, ChevronUp,
-  Banknote, Clock, BarChart3,
+  Loader2, Brain, RefreshCw, ChevronDown, ChevronUp, BarChart3,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { useInCompactHub } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -79,6 +78,7 @@ function AnalysisText({ text }) {
 }
 
 export default function CashFlowAIModule({ token }) {
+  const compact = useInCompactHub();
   const { toast } = useToast();
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -104,16 +104,18 @@ export default function CashFlowAIModule({ token }) {
   const netFlow = ctx ? ctx.cash_in_60 - ctx.cash_out_60 : null;
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-5">
+    <div className={compact ? 'space-y-5' : 'p-6 max-w-4xl mx-auto space-y-5'}>
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <h2 className="text-xl font-bold flex items-center gap-2">
-            <Brain className="w-5 h-5 text-primary" />
-            AI Cash Flow Prediction
-          </h2>
+          {!compact && (
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <Brain className="w-5 h-5 text-primary" />
+              Perkiraan Arus Kas
+            </h2>
+          )}
           <p className="text-sm text-muted-foreground mt-0.5">
-            Prediksi arus kas 30/60/90 hari berbasis AR aging + AP aging + riwayat kas — dianalisis AI (GPT-4o)
+            Perkiraan 30/60/90 hari dari saldo kas, piutang, dan hutang (pemasok + CMT) — dianalisis AI.
           </p>
         </div>
         <Button
@@ -124,47 +126,29 @@ export default function CashFlowAIModule({ token }) {
         >
           {loading
             ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Menganalisis...</>
-            : <><Brain className="w-4 h-4 mr-2" /> {result ? 'Refresh Prediksi' : 'Jalankan Prediksi AI'}</>}
+            : <><Brain className="w-4 h-4 mr-2" /> {result ? 'Hitung ulang' : 'Buat perkiraan'}</>}
         </Button>
       </div>
 
-      {/* Context cards — always show if result available */}
+      {/* Context cards — 2026-11-04: saldo & arus kas dari buku besar, hutang = pemasok + CMT */}
       {ctx && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Card className="bg-blue-50/50 border-blue-200">
-            <CardContent className="pt-3 pb-2">
-              <p className="text-xs text-muted-foreground">Total AR Outstanding</p>
-              <p className="text-base font-bold text-blue-700">{fmtIDR(ctx.total_ar)}</p>
-              <p className="text-xs text-red-600">{fmtIDR(ctx.overdue_ar)} overdue</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-amber-50/50 border-amber-200">
-            <CardContent className="pt-3 pb-2">
-              <p className="text-xs text-muted-foreground">Total AP Outstanding</p>
-              <p className="text-base font-bold text-amber-700">{fmtIDR(ctx.total_ap)}</p>
-              <p className="text-xs text-muted-foreground">Hutang belum bayar</p>
-            </CardContent>
-          </Card>
-          <Card className={`${netFlow >= 0 ? 'bg-emerald-50/50 border-emerald-200' : 'bg-red-50/50 border-red-200'}`}>
-            <CardContent className="pt-3 pb-2">
-              <p className="text-xs text-muted-foreground">Net Cash 60 Hari</p>
-              <p className={`text-base font-bold flex items-center gap-1 ${netFlow >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                {netFlow >= 0
-                  ? <TrendingUp className="w-4 h-4 shrink-0" />
-                  : <TrendingDown className="w-4 h-4 shrink-0" />}
-                {fmtIDR(Math.abs(netFlow))}
-              </p>
-              <p className="text-xs text-muted-foreground">{netFlow >= 0 ? 'Surplus' : 'Defisit'}</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-purple-50/50 border-purple-200">
-            <CardContent className="pt-3 pb-2">
-              <p className="text-xs text-muted-foreground">Order Produksi Aktif</p>
-              <p className="text-base font-bold text-purple-700">{ctx.active_orders}</p>
-              <p className="text-xs text-muted-foreground">Komitmen kas tersisa</p>
-            </CardContent>
-          </Card>
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { l: 'Saldo kas & bank', v: fmtIDR(ctx.cash_balance), sub: 'buku besar hari ini', t: 'cf-ctx-cash' },
+              { l: 'Piutang belum dibayar', v: fmtIDR(ctx.total_ar), sub: `${fmtIDR(ctx.overdue_ar)} lewat jatuh tempo`, t: 'cf-ctx-ar' },
+              { l: 'Hutang belum dibayar', v: fmtIDR(ctx.total_ap), sub: ctx.ap_unposted ? `+ ${fmtIDR(ctx.ap_unposted)} tagihan CMT belum dijurnal` : 'pemasok + CMT', t: 'cf-ctx-ap' },
+              { l: 'Arus kas bersih 60 hari', v: `${netFlow < 0 ? '−' : ''}${fmtIDR(Math.abs(netFlow))}`, sub: `masuk ${fmtIDR(ctx.cash_in_60)} · keluar ${fmtIDR(ctx.cash_out_60)}`, t: 'cf-ctx-net', tone: netFlow < 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400' },
+            ].map((c) => (
+              <div key={c.t} className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3" data-testid={c.t}>
+                <p className="text-xs text-muted-foreground">{c.l}</p>
+                <p className={`text-base font-bold tabular-nums ${c.tone || 'text-foreground'}`}>{c.v}</p>
+                <p className="text-[11px] text-muted-foreground">{c.sub}</p>
+              </div>
+            ))}
+          </div>
+          {ctx.active_orders > 0 && <p className="text-xs text-muted-foreground">{ctx.active_orders} order produksi masih berjalan (kebutuhan kas ke depan).</p>}
+        </>
       )}
 
       {/* Empty state */}
@@ -172,9 +156,9 @@ export default function CashFlowAIModule({ token }) {
         <Card className="border-dashed border-2 border-primary/20">
           <CardContent className="py-12 text-center">
             <Brain className="w-12 h-12 text-primary/30 mx-auto mb-3" />
-            <p className="font-medium text-muted-foreground">Klik "Jalankan Prediksi AI" untuk memulai</p>
+            <p className="font-medium text-muted-foreground">Tekan "Buat perkiraan" untuk memulai</p>
             <p className="text-xs text-muted-foreground mt-1">
-              AI akan menganalisis AR aging, AP aging, dan arus kas 60 hari terakhir
+              AI membaca saldo kas, umur piutang, umur hutang, dan arus kas 60 hari terakhir
             </p>
           </CardContent>
         </Card>
@@ -235,9 +219,9 @@ export default function CashFlowAIModule({ token }) {
           </CardHeader>
           {showContext && (
             <CardContent className="space-y-4">
-              <AgingBars data={ctx.ar_aging} label="AR Aging (Piutang)" />
+              <AgingBars data={ctx.ar_aging} label="Umur piutang" />
               <div className="border-t pt-4">
-                <AgingBars data={ctx.ap_aging} label="AP Aging (Hutang)" />
+                <AgingBars data={ctx.ap_aging} label="Umur hutang (pemasok + CMT)" />
               </div>
               <div className="border-t pt-4 grid grid-cols-2 gap-4 text-sm">
                 <div>

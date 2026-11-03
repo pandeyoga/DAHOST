@@ -60,7 +60,6 @@ export default function RahazaGeneralLedgerModule({ token }) {
     <div className="space-y-5" data-testid="rahaza-gl-page">
       <PageHeader
         icon={BookOpen}
-        eyebrow="Portal Finance · Laporan"
         title="Buku Besar (General Ledger)"
         subtitle="Detail semua transaksi per akun dengan saldo berjalan. Pilih akun dan range tanggal."
         actions={

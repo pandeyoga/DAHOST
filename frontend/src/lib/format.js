@@ -89,6 +89,17 @@ export function formatRupiahShort(value) {
 }
 
 /**
+ * Persen gaya Indonesia: 24.19 → "24,19%" (2026-11-04, audit Keuangan: dulu "24.19%" bertitik).
+ * @param {number|string} value  nilai persen (24.19 berarti 24,19%)
+ * @param {number} [digits=2]    desimal maksimum
+ */
+export function formatPercent(value, digits = 2) {
+  const n = toFiniteNumber(value);
+  if (n === null) return '—';
+  return `${n.toLocaleString(LOCALE, { maximumFractionDigits: digits })}%`;
+}
+
+/**
  * Format tanggal id-ID. Default: "19 Jul 2026".
  * @param {string|number|Date} value
  * @param {Intl.DateTimeFormatOptions & { fallback?: string }} [opts]

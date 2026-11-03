@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { RefreshCw, Save, PlayCircle, Eye, AlertCircle, CheckCircle2, Sparkles, Landmark } from 'lucide-react';
+import { RefreshCw, Save, Eye, AlertCircle, CheckCircle2, Sparkles, Landmark } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
@@ -87,8 +87,6 @@ export default function RahazaCoaAutoModule({ token }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
-  const [busyKey, setBusyKey] = useState('');
-  const [backfillResult, setBackfillResult] = useState({}); // { entity_type: result }
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -148,23 +146,6 @@ export default function RahazaCoaAutoModule({ token }) {
     }
   };
 
-  const runBackfill = async (key, commit) => {
-    setBusyKey(key + (commit ? ':commit' : ':preview')); setError(''); setInfo('');
-    try {
-      const r = await fetch(`/api/rahaza/coa-auto/backfill/${key}?commit=${commit}`, {
-        method: 'POST', headers,
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Backfill gagal');
-      setBackfillResult((prev) => ({ ...prev, [key]: d }));
-      if (commit) setInfo(`Backfill ${key}: ${d.created} akun dibuat, ${d.already_have_account} sudah ada.`);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusyKey('');
-    }
-  };
-
   const accountOptions = accounts
     .filter((a) => !a.is_group) // parent kontrol biasanya postable; tetap tampilkan semua non-group + group
     .concat(accounts.filter((a) => a.is_group));
@@ -209,7 +190,6 @@ export default function RahazaCoaAutoModule({ token }) {
               onChange={(field, value) => patchEntity(key, field, value)} />
           );
         }
-        const res = backfillResult[key];
         return (
           <GlassCard key={key} className="p-4 space-y-3" data-testid={`coa-auto-card-${key}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -251,51 +231,9 @@ export default function RahazaCoaAutoModule({ token }) {
                   ))}
                 </SmartNativeSelect>
               </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  onClick={() => runBackfill(key, false)}
-                  disabled={busyKey.startsWith(key)}
-                  className="h-9 border border-[var(--glass-border)]"
-                  data-testid={`coa-auto-preview-${key}`}
-                >
-                  <Eye className="w-3.5 h-3.5 mr-1.5" /> Pratinjau
-                </Button>
-                <Button
-                  onClick={() => runBackfill(key, true)}
-                  disabled={busyKey.startsWith(key) || !cfg.enabled}
-                  className="h-9"
-                  data-testid={`coa-auto-run-${key}`}
-                  title={cfg.enabled ? '' : 'Aktifkan dulu untuk backfill'}
-                >
-                  <PlayCircle className="w-3.5 h-3.5 mr-1.5" /> Jalankan Backfill
-                </Button>
-              </div>
+              <p className="text-[11px] text-muted-foreground">Akun untuk data lama dibuat admin di Adm. Sistem › Perawatan Data Keuangan.</p>
             </div>
 
-            {res && (
-              <div className="text-xs bg-muted/40 border border-[var(--glass-border)] rounded-lg p-3 space-y-1" data-testid={`coa-auto-result-${key}`}>
-                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  <span>Total entitas: <b>{res.total_entities}</b></span>
-                  <span>Sudah ada akun: <b>{res.already_have_account}</b></span>
-                  <span>{res.committed ? 'Dibuat' : 'Akan dibuat'}: <b>{res.committed ? res.created : res.would_create}</b></span>
-                  <span className={res.committed ? 'text-emerald-600' : 'text-amber-600'}>
-                    {res.committed ? '✓ committed' : 'dry-run (pratinjau)'}
-                  </span>
-                </div>
-                {(res.samples || []).length > 0 && (
-                  <div className="pt-1">
-                    <div className="text-muted-foreground mb-0.5">Contoh:</div>
-                    {res.samples.map((s, i) => (
-                      <div key={i} className="font-mono">• {s.entity} → {s.account}</div>
-                    ))}
-                  </div>
-                )}
-                {(res.errors || []).length > 0 && (
-                  <div className="text-red-500 pt-1">{res.errors.length} error saat backfill.</div>
-                )}
-              </div>
-            )}
           </GlassCard>
         );
       })}

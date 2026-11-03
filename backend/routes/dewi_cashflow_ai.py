@@ -2,7 +2,7 @@
 AI Cash Flow Prediction — CV. Dewi Aditya ERP
 Endpoint: GET /api/finance/ai-cashflow
 
-Aggregates AR aging + AP aging + 60-day cash movements, then calls Claude
+Aggregates AR aging + AP aging (pemasok + CMT) + saldo & arus kas 60 hari dari buku besar, then calls Claude
 (lewat lapisan tunggal `services.ai`, 2026-11-02) to generate a short-term
 cash flow prediction with risks & recommendations.
 """
@@ -14,6 +14,7 @@ import logging
 
 from services.ai import AIError, Pseudonymizer, ai_http_error, ai_text, require_ai
 from utils.waktu import today_wib
+from core.payables import bucket_of
 
 logger = logging.getLogger(__name__)
 
@@ -32,112 +33,74 @@ def _fmt(n: float) -> str:
     return f"Rp {n:,.0f}"
 
 
+AR_OPEN = ['sent', 'issued', 'partial', 'partial_paid', 'overdue']   # FIN-09
+_BUCKET_KEY = {'current': 'current', '1_30': '1-30', '31_60': '31-60', '61_90': '61-90', '90_plus': '90+'}
+
+
 async def _build_context(db) -> dict:
-    """Fetch & aggregate data for the LLM prompt."""
+    """Fetch & aggregate data for the LLM prompt.
+
+    2026-11-04 (owner, audit Keuangan — Prediksi Kas jadi tab "Perkiraan" di Arus Kas):
+      · saldo kas & arus kas 60 hari dari BUKU BESAR (`core.cash_position`) — dulu dari
+        `rahaza_cash_movements` (tanpa jurnal manual/impor/gaji) dan tanpa saldo kas sama sekali;
+      · hutang dari SSOT `core.payables` — tagihan pemasok + tagihan CMT (dulu CMT tidak ikut);
+      · tanpa batas 500 faktur.
+    """
+    from core.cash_position import cash_position
+    from core.payables import aging, open_payable_rows
     today = today_wib()
     sixty_ago = (today - timedelta(days=60)).isoformat()
     today_iso = today.isoformat()
+    next_30 = (today + timedelta(days=30)).isoformat()
 
     # ── AR aging ──
-    ar_invs = await db.rahaza_ar_invoices.find(
-        {'status': {'$in': ['sent', 'issued', 'partial', 'partial_paid', 'overdue']}}, {'_id': 0, 'balance': 1, 'due_date': 1, 'buyer_name': 1, 'customer_name': 1, 'total': 1}  # FIN-09
-    ).to_list(500)
+    ar_invs = [i async for i in db.rahaza_ar_invoices.find(
+        {'status': {'$in': AR_OPEN}},
+        {'_id': 0, 'balance': 1, 'due_date': 1, 'buyer_name': 1, 'customer_name': 1, 'customer_id': 1, 'total': 1})]
     ar_buckets = {'current': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0}
     for inv in ar_invs:
-        bal = float(inv.get('balance', 0))
-        dd = inv.get('due_date', '')
+        bal = float(inv.get('balance', 0) or 0)
         try:
-            diff = (today - date.fromisoformat(dd[:10])).days
-        except Exception:
+            diff = (today - date.fromisoformat(str(inv.get('due_date') or '')[:10])).days
+        except ValueError:
             diff = 0
-        if diff <= 0:
-            ar_buckets['current'] += bal
-        elif diff <= 30:
-            ar_buckets['1-30'] += bal
-        elif diff <= 60:
-            ar_buckets['31-60'] += bal
-        elif diff <= 90:
-            ar_buckets['61-90'] += bal
-        else:
-            ar_buckets['90+'] += bal
-
+        ar_buckets[_BUCKET_KEY[bucket_of(diff)]] += bal
     total_ar = sum(ar_buckets.values())
-    overdue_ar = ar_buckets['1-30'] + ar_buckets['31-60'] + ar_buckets['61-90'] + ar_buckets['90+']
+    overdue_ar = total_ar - ar_buckets['current']
 
-    # ── AP aging ──
-    ap_invs = await db.rahaza_ap_invoices.find(
-        {'status': {'$in': ['sent', 'issued', 'partial', 'partial_paid', 'overdue']}}, {'_id': 0, 'balance': 1, 'due_date': 1, 'vendor_name': 1}  # FIN-09
-    ).to_list(500)
-    ap_buckets = {'current': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0}
-    for inv in ap_invs:
-        bal = float(inv.get('balance', 0))
-        dd = inv.get('due_date', '')
-        try:
-            diff = (today - date.fromisoformat(dd[:10])).days
-        except Exception:
-            diff = 0
-        if diff <= 0:
-            ap_buckets['current'] += bal
-        elif diff <= 30:
-            ap_buckets['1-30'] += bal
-        elif diff <= 60:
-            ap_buckets['31-60'] += bal
-        elif diff <= 90:
-            ap_buckets['61-90'] += bal
-        else:
-            ap_buckets['90+'] += bal
+    # ── AP aging (pemasok + CMT, yang sudah dijurnal — sama dengan buku besar) ──
+    ap = aging(await open_payable_rows(db), today)
+    ap_buckets = {_BUCKET_KEY[k]: v for k, v in ap['buckets'].items()}
+    total_ap = ap['total']
 
-    total_ap = sum(ap_buckets.values())
+    # ── Posisi & arus kas 60 hari dari buku besar ──
+    cash = await cash_position(db, sixty_ago, today_iso)
 
-    # ── Cash movements last 60 days (bank recon approved sessions + journals) ──
-    cash_in_60 = 0.0
-    cash_out_60 = 0.0
-
-    # RC-08: SSOT arus kas aktual = rahaza_cash_movements (direction in/out).
-    # (rahaza_ar_receipts / rahaza_ap_payments = phantom — tak pernah ditulis kode mana pun.)
-    cm_docs = await db.rahaza_cash_movements.find(
-        {'date': {'$gte': sixty_ago}}, {'_id': 0, 'amount': 1, 'direction': 1}
-    ).to_list(1000)
-    cash_in_60 = sum(float(m.get('amount', 0) or 0) for m in cm_docs if m.get('direction') == 'in')
-    cash_out_60 = sum(float(m.get('amount', 0) or 0) for m in cm_docs if m.get('direction') == 'out')
-
-    # Fallback: bank recon transactions from approved sessions
-    if cash_in_60 == 0 and cash_out_60 == 0:
-        sessions = await db.bank_recon_sessions.find(
-            {'status': 'approved'}, {'_id': 0, 'id': 1}
-        ).to_list(50)
-        if sessions:
-            sid_list = [s['id'] for s in sessions]
-            txns = await db.bank_recon_txns.find(
-                {'session_id': {'$in': sid_list}, 'txn_date': {'$gte': sixty_ago}},
-                {'_id': 0, 'amount': 1, 'type': 1}
-            ).to_list(500)
-            cash_in_60  = sum(float(t.get('amount', 0)) for t in txns if t.get('type') == 'debit')
-            cash_out_60 = sum(float(t.get('amount', 0)) for t in txns if t.get('type') == 'credit')
-
-    # ── Upcoming AP due in 30 days ──
-    next_30 = (today + timedelta(days=30)).isoformat()
-    # 2026-11-02: dulu hanya 'sent'/'partial' → AP berstatus partial_paid & overdue
-    # (status kanonik) tidak pernah masuk daftar kewajiban 30 hari ke depan.
-    upcoming_ap = await db.rahaza_ap_invoices.find(
-        {'status': {'$in': ['sent', 'issued', 'partial', 'partial_paid', 'overdue']}, 'due_date': {'$gte': today_iso, '$lte': next_30}},
-        {'_id': 0, 'vendor_name': 1, 'balance': 1, 'due_date': 1}
-    ).sort('due_date', 1).to_list(10)
-
-    # ── Upcoming AR due in 30 days ──
+    # ── Kewajiban & tagihan 30 hari ke depan ──
+    upcoming_ap = sorted(
+        [{'vendor_name': r['vendor_name'], 'balance': r['balance'], 'due_date': r['due_date'], 'kind': r['kind']}
+         for r in ap['details'] if today_iso <= r['due_date'] <= next_30],
+        key=lambda r: r['due_date'])[:10]
     upcoming_ar = await db.rahaza_ar_invoices.find(
-        {'status': {'$in': ['sent', 'issued', 'partial', 'partial_paid', 'overdue']}, 'due_date': {'$gte': today_iso, '$lte': next_30}},  # FIN-09
-        {'_id': 0, 'buyer_name': 1, 'customer_name': 1, 'balance': 1, 'due_date': 1}
+        {'status': {'$in': AR_OPEN}, 'due_date': {'$gte': today_iso, '$lte': next_30}},
+        {'_id': 0, 'buyer_name': 1, 'customer_name': 1, 'customer_id': 1, 'balance': 1, 'due_date': 1}
     ).sort('due_date', 1).to_list(10)
+    cids = list({i.get('customer_id') for i in upcoming_ar if i.get('customer_id') and not i.get('customer_name')})
+    if cids:
+        names = {c['id']: c.get('name') async for c in db.rahaza_customers.find(
+            {'id': {'$in': cids}}, {'_id': 0, 'id': 1, 'name': 1})}
+        for i in upcoming_ar:
+            i.setdefault('customer_name', names.get(i.get('customer_id')))
 
     # ── Active production orders (cash commitment) ──
     active_orders = await db.rahaza_orders.count_documents({'status': {'$in': ['confirmed', 'in_production']}})
 
     return {
         'today': today_iso,
+        'cash_balance': cash['balance'],
         'ar_buckets': ar_buckets, 'total_ar': total_ar, 'overdue_ar': overdue_ar,
-        'ap_buckets': ap_buckets, 'total_ap': total_ap,
-        'cash_in_60': cash_in_60, 'cash_out_60': cash_out_60,
+        'ap_buckets': ap_buckets, 'total_ap': total_ap, 'ap_unposted': ap['unposted_total'],
+        'cash_in_60': cash['cash_in'], 'cash_out_60': cash['cash_out'],
         'upcoming_ar': upcoming_ar, 'upcoming_ap': upcoming_ap,
         'active_orders': active_orders,
     }
@@ -167,15 +130,18 @@ Piutang Usaha (AR) yang belum terbayar:
 - Telat >90 hari    : {_fmt(ar['90+'])}
 - TOTAL AR Outstanding: {_fmt(ctx['total_ar'])}  |  Overdue: {_fmt(ctx['overdue_ar'])}
 
-Hutang Usaha (AP) yang belum dibayar:
+Hutang Usaha (pemasok + CMT) yang belum dibayar:
 - Belum jatuh tempo : {_fmt(ap['current'])}
 - Jatuh tempo 1-30 h: {_fmt(ap['1-30'])}
 - Jatuh tempo 31-60h: {_fmt(ap['31-60'])}
+- Jatuh tempo >60 h : {_fmt(ap['61-90'] + ap['90+'])}
 - TOTAL AP Outstanding: {_fmt(ctx['total_ap'])}
 
-Arus Kas 60 hari terakhir:
-- Kas masuk (penerimaan AR): {_fmt(ctx['cash_in_60'])}
-- Kas keluar (bayar AP): {_fmt(ctx['cash_out_60'])}
+Saldo kas & bank hari ini (buku besar): {_fmt(ctx['cash_balance'])}
+
+Arus Kas 60 hari terakhir (buku besar, tanpa transfer antar rekening):
+- Kas masuk: {_fmt(ctx['cash_in_60'])}
+- Kas keluar: {_fmt(ctx['cash_out_60'])}
 - Net 60 hari: {_fmt(ctx['cash_in_60'] - ctx['cash_out_60'])}
 
 Tagihan AR yang jatuh tempo 30 hari ke depan:
@@ -237,6 +203,8 @@ async def ai_cashflow_prediction(request: Request):
         'analysis': analysis,
         'context': {
             'today': ctx['today'],
+            'cash_balance': ctx['cash_balance'],
+            'ap_unposted': ctx['ap_unposted'],
             'total_ar': ctx['total_ar'],
             'overdue_ar': ctx['overdue_ar'],
             'total_ap': ctx['total_ap'],

@@ -16,7 +16,7 @@ export default function BankReconciliation({ headers }) {
         <div>
           <h2 className="text-lg font-bold">Rekonsiliasi Bank</h2>
           <p className="text-xs text-muted-foreground">
-            Mutasi rekening koran ↔ jurnal GL akun bank · auto-match ±Rp 1.000 & ±3 hari · cek mutasi kas internal vs GL
+            Cocokkan mutasi rekening koran dengan buku besar, per rekening per bulan.
           </p>
         </div>
       </div>

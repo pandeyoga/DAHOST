@@ -79,7 +79,6 @@ export default function AssetDisposalModule({ token }) {
     <div className="space-y-5" data-testid="asset-disposal-page">
       <PageHeader
         icon={PackageMinus}
-        eyebrow="Portal Finance · Fixed Assets"
         title="Pelepasan Aset Tetap"
         subtitle="Kelola disposal aset tetap (penjualan, penghapusan). Sistem otomatis posting jurnal gain/loss disposal."
         actions={

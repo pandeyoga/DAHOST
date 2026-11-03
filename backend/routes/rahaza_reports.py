@@ -1026,18 +1026,23 @@ async def reports_hub_summary(request: Request):
         overdue = [r for r in open_rows
                    if _as_iso_date(r.get("due_date")) and _as_iso_date(r.get("due_date")) < today_iso]
         kpis = [
-            _kpi("Total Ditagihkan", round(invoiced), "currency", f"{len(ar)} invoice AR", "primary"),
+            _kpi("Total Ditagihkan", round(invoiced), "currency", f"{len(ar)} faktur penjualan", "primary"),
             _kpi("Sudah Dibayar", round(paid), "currency",
                  f"{round(paid / invoiced * 100, 1) if invoiced else 0}% tertagih", "success"),
             _kpi("Belum Tertagih", round(outstanding), "currency",
-                 f"{len(open_rows)} invoice terbuka", "warning"),
-            _kpi("Jatuh Tempo", len(overdue), "number", "invoice lewat tanggal", 
+                 f"{len(open_rows)} faktur belum lunas", "warning"),
+            _kpi("Lewat Jatuh Tempo", len(overdue), "number", "faktur lewat tanggal", 
                  "danger" if overdue else "success"),
             _kpi("Tagihan Maklon", round(sum(_f(r.get("total_amount")) for r in mk_inv)), "currency",
                  f"{len(mk_inv)} dokumen (modul maklon)", "info"),
         ]
+        # 2026-11-04 (audit Keuangan): faktur menyimpan `customer_id` + `issue_date` — dulu kolom
+        # PELANGGAN selalu "-" dan TANGGAL kosong karena membaca `customer_name`/`invoice_date`.
+        _cids = list({r.get("customer_id") for r in ar if r.get("customer_id") and not r.get("customer_name")})
+        _cust = {c["id"]: c.get("name") for c in await db.rahaza_customers.find(
+            {"id": {"$in": _cids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(_cids))} if _cids else {}
         tables.append(_table(
-            "ar", "Invoice AR", "Semua invoice piutang, terbaru di atas",
+            "ar", "Faktur Penjualan", "Faktur piutang terbaru",
             [{"key": "no_invoice", "label": "NO INVOICE"}, {"key": "pelanggan", "label": "PELANGGAN"},
              {"key": "tanggal", "label": "TANGGAL", "format": "date"},
              {"key": "total", "label": "TOTAL", "format": "currency"},
@@ -1046,14 +1051,15 @@ async def reports_hub_summary(request: Request):
              {"key": "jatuh_tempo", "label": "JATUH TEMPO", "format": "date"},
              {"key": "status", "label": "STATUS"}],
             sorted([{
-                "no_invoice": r.get("invoice_number"), "pelanggan": r.get("customer_name") or "-",
-                "tanggal": _as_iso_date(r.get("invoice_date")),
+                "no_invoice": r.get("invoice_number"),
+                "pelanggan": r.get("customer_name") or _cust.get(r.get("customer_id")) or "-",
+                "tanggal": _as_iso_date(r.get("issue_date") or r.get("invoice_date")),
                 "total": _f(r.get("total_amount")), "terbayar": _f(r.get("amount_paid")),
                 "sisa": (_f(r.get("amount_due")) if r.get("amount_due") is not None
                          else _f(r.get("total_amount")) - _f(r.get("amount_paid"))),
                 "jatuh_tempo": _as_iso_date(r.get("due_date")), "status": r.get("status"),
             } for r in ar], key=lambda r: r["tanggal"], reverse=True)[:10],
-            "fin-ar-360", "Buka Piutang (AR)", "Belum ada invoice AR."))
+            "fin-ar-hub", "Buka Piutang Reseller", "Belum ada faktur penjualan."))
         tables.append(_table(
             "maklon-inv", "Tagihan Maklon", "Dokumen tagihan dari modul maklon",
             [{"key": "no_invoice", "label": "NO"}, {"key": "klien", "label": "KLIEN"},

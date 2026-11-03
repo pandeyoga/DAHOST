@@ -22,8 +22,7 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageHeader, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
-import CronJobCard from './CronJobCard';
-import { formatRupiah } from '@/lib/format';
+import { formatRupiah, formatPercent } from '@/lib/format';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -40,11 +39,11 @@ function fmtDate(v) {
 }
 function fmtPct(v) {
   if (v === null || v === undefined) return '—';
-  return `${Number(v).toFixed(1)}%`;
+  return formatPercent(v, 1);   // 2026-11-04: koma desimal id-ID (dulu "3.2%")
 }
 
 const BUCKET_LABELS = {
-  current: { label: 'Current',        color: 'text-green-600 dark:text-green-300 bg-green-100 dark:bg-green-500/15 border-green-400 dark:border-green-400/30' },
+  current: { label: 'Belum jatuh tempo', color: 'text-green-600 dark:text-green-300 bg-green-100 dark:bg-green-500/15 border-green-400 dark:border-green-400/30' },
   '1_30':  { label: '1-30 hari',      color: 'text-blue-600 dark:text-blue-300 bg-blue-100 dark:bg-blue-500/15 border-blue-400 dark:border-blue-400/30' },
   '31_60': { label: '31-60 hari',     color: 'text-amber-600 dark:text-amber-300 bg-amber-100 dark:bg-amber-500/15 border-amber-400 dark:border-amber-400/30' },
   '61_90': { label: '61-90 hari',     color: 'text-orange-600 dark:text-orange-300 bg-orange-100 dark:bg-orange-500/15 border-orange-400 dark:border-orange-400/30' },
@@ -172,19 +171,19 @@ function CustomerStatementView({ customerId, headers, onBack }) {
 
       {/* Summary KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPICell label="Total Ditagih" value={fmtRp(data.total_billed)} icon={FileText} tone="blue" sub={`${data.total_invoices} invoice`} />
+        <KPICell label="Total Ditagih" value={fmtRp(data.total_billed)} icon={FileText} tone="blue" sub={`${data.total_invoices} faktur`} />
         <KPICell label="Total Dibayar" value={fmtRp(data.total_paid)} icon={Banknote} tone="green" sub={`${data.total_payments} pembayaran`} />
-        <KPICell label="Outstanding Balance" value={fmtRp(data.closing_balance)} icon={DollarSign} tone={data.closing_balance > 0 ? 'red' : 'green'} />
-        <KPICell label="Open Aging" value={fmtRp(totalAging)} icon={Clock} tone="amber" />
+        <KPICell label="Sisa piutang" value={fmtRp(data.closing_balance)} icon={DollarSign} tone={data.closing_balance > 0 ? 'red' : 'green'} />
+        <KPICell label="Faktur belum lunas" value={fmtRp(totalAging)} icon={Clock} tone="amber" />
       </div>
 
       {/* Aging Snapshot */}
       <GlassCard className="p-4">
         <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-amber-600 dark:text-amber-300" /> Aging Snapshot
+          <BarChart3 className="w-4 h-4 text-amber-600 dark:text-amber-300" /> Umur piutang
         </h4>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <AgingBucket label="Current"    value={aging.current}    total={totalAging} tone="green" />
+          <AgingBucket label="Belum jatuh tempo" value={aging.current} total={totalAging} tone="green" />
           <AgingBucket label="1-30 hari"  value={aging['1_30']}    total={totalAging} tone="blue" />
           <AgingBucket label="31-60 hari" value={aging['31_60']}   total={totalAging} tone="amber" />
           <AgingBucket label="61-90 hari" value={aging['61_90']}   total={totalAging} tone="orange" />
@@ -247,7 +246,7 @@ function CustomerStatementView({ customerId, headers, onBack }) {
                       <td className="py-2 px-2 text-foreground/70">{fmtDate(t.date)}</td>
                       <td className="py-2 px-2">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded ${isInvoice ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-400 dark:border-blue-400/30' : 'bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-300 border border-green-400 dark:border-green-400/30'}`}>
-                          {isInvoice ? 'INVOICE' : 'PAYMENT'}
+                          {isInvoice ? 'FAKTUR' : 'BAYAR'}
                         </span>
                       </td>
                       <td className="py-2 px-2 font-mono text-violet-600 dark:text-violet-300">{t.reference}</td>
@@ -346,8 +345,8 @@ function DashboardView({ headers, onPickCustomer }) {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="AR 360° Dashboard"
-        subtitle="Aging Bucket, Customer Statement, dan Top Debtors — pusat manajemen piutang."
+        title="Umur Piutang"
+        subtitle="Umur piutang per pelanggan, rekening koran pelanggan, dan pelanggan dengan piutang terbesar."
         icon={Scale}
         actions={
           <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="text-muted-foreground hover:text-foreground" data-testid="ar360-refresh">
@@ -356,22 +355,20 @@ function DashboardView({ headers, onPickCustomer }) {
         }
       />
 
-      {/* Top KPI Strip */}
-      <CronJobCard job="mark-overdue" title="Status overdue otomatis (M-07)" description="setiap hari 00:15 WIB invoice AR/AP lewat jatuh tempo ditandai overdue"
-        renderResult={(r) => `${r.ar_marked} AR · ${r.ap_marked} AP ditandai`} onRan={load} />
+      {/* Top KPI Strip — 2026-11-04: tombol jalankan M-07 (tandai lewat jatuh tempo) pindah ke Adm. Sistem */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <KPICell label="Total Outstanding" value={fmtRp(k.total_outstanding)} icon={DollarSign} tone="red" />
-        <KPICell label="Overdue Amount" value={fmtRp(k.total_overdue_amount)} icon={AlertCircle} tone="red" sub={`${fmtPct(k.overdue_pct_of_outstanding)} dari total`} />
-        <KPICell label="Open Invoices" value={fmtNum(k.count_open_invoices)} icon={FileText} tone="blue" sub={`${k.count_overdue_invoices || 0} overdue`} />
-        <KPICell label="Avg Days Overdue" value={`${k.avg_days_overdue || 0} hari`} icon={Clock} tone="amber" />
-        <KPICell label="Unique Debtors" value={fmtNum(k.total_unique_debtors)} icon={Users} tone="violet" />
-        <KPICell label="DSO Estimate" value={k.dso_estimate_days ? `${k.dso_estimate_days} hari` : '—'} icon={TrendingUp} tone="emerald" sub={`Collected 30d: ${fmtRp(k.cash_collected_30d)}`} />
+        <KPICell label="Sisa piutang" value={fmtRp(k.total_outstanding)} icon={DollarSign} tone="red" />
+        <KPICell label="Lewat jatuh tempo" value={fmtRp(k.total_overdue_amount)} icon={AlertCircle} tone="red" sub={`${fmtPct(k.overdue_pct_of_outstanding)} dari sisa piutang`} />
+        <KPICell label="Faktur belum lunas" value={fmtNum(k.count_open_invoices)} icon={FileText} tone="blue" sub={`${k.count_overdue_invoices || 0} lewat jatuh tempo`} />
+        <KPICell label="Rata-rata terlambat" value={`${k.avg_days_overdue || 0} hari`} icon={Clock} tone="amber" sub="ditimbang nilai faktur yang terlambat" />
+        <KPICell label="Pelanggan berutang" value={fmtNum(k.total_unique_debtors)} icon={Users} tone="violet" />
+        <KPICell label="Rata-rata hari tertagih" value={k.dso_estimate_days ? `${fmtNum(k.dso_estimate_days)} hari` : '—'} icon={TrendingUp} tone="emerald" sub={`Diterima 30 hari: ${fmtRp(k.cash_collected_30d)}`} />
       </div>
 
       {/* Bucket Overview */}
       <GlassCard className="p-4">
         <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-cyan-600 dark:text-cyan-300" /> Distribusi Aging
+          <BarChart3 className="w-4 h-4 text-cyan-600 dark:text-cyan-300" /> Sebaran umur piutang
         </h4>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {Object.entries(BUCKET_LABELS).map(([key, m]) => {
@@ -383,7 +380,7 @@ function DashboardView({ headers, onPickCustomer }) {
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
                 <div className={`text-lg font-bold ${m.color.split(' ')[0]} mt-1`}>{fmtRp(val)}</div>
                 <div className="flex items-center justify-between mt-1">
-                  <span className="text-[10px] text-muted-foreground">{cnt} invoice</span>
+                  <span className="text-[10px] text-muted-foreground">{cnt} faktur</span>
                   <span className="text-[10px] font-semibold text-foreground/70">{pct.toFixed(0)}%</span>
                 </div>
                 <div className="h-1 rounded-full bg-foreground/10 mt-1.5 overflow-hidden">
@@ -406,17 +403,17 @@ function DashboardView({ headers, onPickCustomer }) {
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="bg-foreground/5 h-auto p-1">
               <TabsTrigger value="overview" data-testid="ar360-tab-overview">
-                <TrendingUp className="w-3 h-3 mr-1" /> Top Debtors
+                <TrendingUp className="w-3 h-3 mr-1" /> Piutang terbesar
               </TabsTrigger>
               <TabsTrigger value="matrix" data-testid="ar360-tab-matrix">
-                <FileSpreadsheet className="w-3 h-3 mr-1" /> Aging Matrix
+                <FileSpreadsheet className="w-3 h-3 mr-1" /> Per pelanggan
               </TabsTrigger>
             </TabsList>
           </Tabs>
           <div className="flex items-center bg-foreground/5 border border-foreground/10 rounded-md px-3 min-w-[240px]">
             <Search className="w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Cari nama / kode customer..."
+              placeholder="Cari nama / kode pelanggan..."
               value={search}
               onChange={e => setSearch(e.target.value)}
               className="bg-transparent border-0 focus-visible:ring-0 text-sm"
@@ -481,9 +478,9 @@ function TopDebtorsView({ debtors, search, onPickCustomer }) {
                   {d.customer_code && <span className="text-[10px] font-mono text-violet-600 dark:text-violet-300">{d.customer_code}</span>}
                 </div>
                 <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
-                  <span>{d.invoice_count} invoice</span>
+                  <span>{d.invoice_count} faktur</span>
                   {d.oldest_days_overdue > 0 && (
-                    <span className="text-amber-600 dark:text-amber-300">Terlama: {d.oldest_days_overdue} hari overdue</span>
+                    <span className="text-amber-600 dark:text-amber-300">Terlama: terlambat {d.oldest_days_overdue} hari</span>
                   )}
                 </div>
               </div>
@@ -491,7 +488,7 @@ function TopDebtorsView({ debtors, search, onPickCustomer }) {
             <div className="text-right flex-shrink-0">
               <div className="text-base font-bold text-red-600 dark:text-red-300">{fmtRp(d.outstanding)}</div>
               {d.overdue_amount > 0 && (
-                <div className="text-[10px] text-amber-600 dark:text-amber-300">Overdue: {fmtRp(d.overdue_amount)}</div>
+                <div className="text-[10px] text-amber-600 dark:text-amber-300">Lewat jatuh tempo: {fmtRp(d.overdue_amount)}</div>
               )}
             </div>
             <ChevronRight className="w-4 h-4 text-foreground/15 group-hover:text-violet-600 dark:text-violet-400 transition flex-shrink-0" />
@@ -505,7 +502,7 @@ function TopDebtorsView({ debtors, search, onPickCustomer }) {
 function AgingMatrixView({ rows, totals, onPickCustomer }) {
   if (rows.length === 0) {
     return (
-      <EmptyState icon={FileSpreadsheet} title="Tidak ada data aging" description="Data aging piutang akan muncul di sini setelah ada invoice." />
+      <EmptyState icon={FileSpreadsheet} title="Belum ada piutang" description="Umur piutang muncul setelah ada faktur penjualan." />
     );
   }
   return (
@@ -513,8 +510,8 @@ function AgingMatrixView({ rows, totals, onPickCustomer }) {
       <table className="w-full text-xs">
         <thead>
           <tr className="text-muted-foreground border-b border-foreground/10">
-            <th className="text-left py-2 px-2">Customer</th>
-            <th className="text-right py-2 px-2">Current</th>
+            <th className="text-left py-2 px-2">Pelanggan</th>
+            <th className="text-right py-2 px-2">Belum jatuh tempo</th>
             <th className="text-right py-2 px-2">1-30 hari</th>
             <th className="text-right py-2 px-2">31-60 hari</th>
             <th className="text-right py-2 px-2">61-90 hari</th>
@@ -563,7 +560,7 @@ function AgingMatrixView({ rows, totals, onPickCustomer }) {
         </tbody>
         <tfoot>
           <tr className="border-t-2 border-violet-400/40 font-bold">
-            <td className="py-2 px-2 text-foreground">TOTAL ({totals.count || 0} invoice)</td>
+            <td className="py-2 px-2 text-foreground">TOTAL ({totals.count || 0} faktur)</td>
             <td className="py-2 px-2 text-right text-green-600 dark:text-green-300">{fmtRp(totals.current)}</td>
             <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300">{fmtRp(totals['1_30'])}</td>
             <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-300">{fmtRp(totals['31_60'])}</td>

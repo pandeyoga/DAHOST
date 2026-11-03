@@ -983,6 +983,8 @@ async def list_models_cost(db, *, q: str | None = None, only_gaps: bool = False,
         rx = {"$regex": _rx(q), "$options": "i"}
         filt = {"$and": [filt, {"$or": [{"code": rx}, {"name": rx}]}]}
     models = await db.rahaza_models.find(filt, {"_id": 0}).sort("code", 1).to_list(limit)
+    # 2026-11-04 (audit Keuangan): layar memberi tahu bila model lebih banyak dari batas (dulu terpotong diam-diam)
+    total_models = await db.rahaza_models.count_documents(filt) if len(models) >= limit else len(models)
 
     rows = []
     tot = {"models": 0, "ready": 0, "partial": 0, "no_bom": 0, "with_price": 0}
@@ -1028,7 +1030,7 @@ async def list_models_cost(db, *, q: str | None = None, only_gaps: bool = False,
             continue
         rows.append(row)
 
-    return {"items": rows, "count": len(rows), "totals": tot,
+    return {"items": rows, "count": len(rows), "totals": tot, "total_models": total_models, "limit": limit,
             "settings": settings, "computed_at": _now().isoformat()}
 
 

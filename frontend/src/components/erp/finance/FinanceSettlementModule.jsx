@@ -12,6 +12,12 @@
  * Form ada di FINANCE (sesi #37): Marketing hanya melihat (`MarketingSettlementsView`).
  * `net_payout` tahap 1 DIISI TANGAN dari laporan platform — server menghitung
  * "seharusnya berapa" lalu menampilkan SELISIH-nya; selisih ≠ 0 ⇒ jurnal ditolak.
+ *
+ * 2026-11-04 (owner, audit Keuangan tahap 3): satu menu "Marketplace" dengan 3 tab — prop `view`:
+ *   'balances' (saldo per toko + potongan per toko), 'settlements' (dana dilepas), 'withdrawals'
+ *   (penarikan). Dulu keempatnya menumpuk di satu halaman ±7 layar. Tautan rekening per toko pindah
+ *   ke Pengaturan Keuangan › Rekening toko. Daftar dana dilepas berpaginasi server (dulu berhenti di
+ *   50 baris dan kartu menulis "50 laporan").
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -28,11 +34,16 @@ import { SettlementImportPanel, computeValues } from './SettlementImportPanel';
 import { SettlementByStoreCards } from './SettlementByStoreCards';
 import { PlatformBalanceCards, usePlatformBalances } from './PlatformBalanceCards';
 import { PlatformWithdrawalsPanel } from './PlatformWithdrawalsPanel';
-import { PayoutBankLinks, useBankOptions } from './PayoutBankLinks';
+import { useBankOptions } from './PayoutBankLinks';
+import PaginationBar from '@/components/ui/PaginationBar';
+import { useInCompactHub } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/marketing/settlements`;
 const rp = formatRupiah;
+const pct = (v) => `${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}%`;
+const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const fmtMonthID = (ym) => { const [y, m] = String(ym).split('-'); return `${MONTHS_ID[Number(m) - 1] || m} ${y}`; };
 
 function token() { return localStorage.getItem('erp_token'); }
 
@@ -93,8 +104,14 @@ function Kpi({ label, value, hint, tone = 'default', testId, icon: Icon }) {
   );
 }
 
-export default function FinanceSettlementModule() {
+const PAGE = 25;
+
+export default function FinanceSettlementModule({ view = 'settlements' }) {
+  const compact = useInCompactHub();
   const [accounts, setAccounts] = useState([]);
+  const [skip, setSkip] = useState(0);
+  const [total, setTotal] = useState(0);
+  const formRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [accountId, setAccountId] = useState('');
@@ -118,16 +135,20 @@ export default function FinanceSettlementModule() {
     if (period.month) return { from: `${period.month}-01`, to: monthEndISO(period.month) };
     return { from: period.from, to: period.to };
   }, [period]);
+  // periode selalu tertulis di kartu (audit: 24,19% vs 24,16% tampak beda karena periodenya tak tertulis)
+  const periodLabel = period.month ? fmtMonthID(period.month)
+    : (range.from || range.to) ? `${range.from || '…'} – ${range.to || '…'}` : 'semua periode';
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ page_size: '50' });
+      const qs = new URLSearchParams({ page_size: String(PAGE), page: String(Math.floor(skip / PAGE) + 1) });
       if (accountId) qs.set('account_id', accountId);
       if (range.from) qs.set('date_from', range.from);
       if (range.to) qs.set('date_to', range.to);
       const d = await call(`?${qs}`);
       setRows(d.data || []);
+      setTotal(d.pagination?.total ?? (d.data || []).length);
       setSummary(d.summary || null);
       setRefreshKey((k) => k + 1);
     } catch (e) {
@@ -135,9 +156,14 @@ export default function FinanceSettlementModule() {
     } finally {
       setLoading(false);
     }
-  }, [accountId, range.from, range.to]);
+  }, [accountId, range.from, range.to, skip]);
 
+  useEffect(() => { setSkip(0); }, [accountId, range.from, range.to]);
   useEffect(() => { load(); }, [load]);
+  // Formulir dibuka → langsung terlihat (dulu muncul ±3.500 px di bawah tombolnya tanpa digulir).
+  useEffect(() => {
+    if (formOpen) formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [formOpen, editId]);
 
   const loadAccounts = useCallback(() => {
     fetch(`${API}/api/marketing/accounts?limit=200`,
@@ -255,7 +281,7 @@ export default function FinanceSettlementModule() {
     setForm(f); setEditId(r.id); setFormOpen(true);
   };
 
-  const save = async () => {
+  const save = async (postAfter = false) => {
     if (!form.account_id) { toast.error('Pilih toko dulu.'); return; }
     if (!form.settlement_id.trim()) { toast.error('Nomor pencairan wajib diisi.'); return; }
     if (!form.settlement_date) { toast.error('Tanggal uang masuk wajib diisi.'); return; }
@@ -272,9 +298,17 @@ export default function FinanceSettlementModule() {
       const d = editId
         ? await call(`/${editId}`, { method: 'PUT', body: JSON.stringify(body) })
         : await call('', { method: 'POST', body: JSON.stringify(body) });
-      toast.success(d.data?.math_verified
-        ? 'Dana dilepas tersimpan dan angkanya seimbang — saldo platform toko bertambah.'
-        : `Tersimpan, tetapi masih ada selisih ${rp(d.data?.net_payout_diff || 0)} — beri nama dulu sebelum dijurnal.`);
+      const saved = d.data || {};
+      if (postAfter && saved.math_verified && saved.id && !saved.je_id) {
+        // "Simpan & posting": dokumen yang seimbang langsung dijurnal + diposting (dulu 3 kali simpan).
+        await call(`/${saved.id}/journal`, { method: 'POST' });
+        const p = await call(`/${saved.id}/post`, { method: 'POST' });
+        toast.success(`Dana dilepas tersimpan & diposting${p.je_number ? ` · ${p.je_number}` : ''} — saldo toko di buku besar bertambah.`);
+      } else {
+        toast.success(saved.math_verified
+          ? 'Dana dilepas tersimpan (draf) — saldo toko di buku besar bertambah setelah jurnalnya diposting.'
+          : `Tersimpan, tetapi masih ada selisih ${rp(saved.net_payout_diff || 0)} — beri nama dulu sebelum dijurnal.`);
+      }
       setFormOpen(false);
       if (!editId && importRes) await rememberMapping(form.account_id);
       setImportRes(null);
@@ -317,17 +351,11 @@ export default function FinanceSettlementModule() {
   return (
     <div className="space-y-4" data-testid="finance-settlement-module">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
+        {!compact ? (
           <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Banknote className="w-5 h-5" /> Saldo & Pencairan Marketplace
+            <Banknote className="w-5 h-5" /> Marketplace
           </h2>
-          <p className="text-xs text-foreground/60 mt-0.5 max-w-3xl">
-            <b>Tahap 1 — Dana dilepas platform ke saldo toko</b> (laporan Penghasilan Shopee / Settlement
-            TikTok): omzet bruto dikurangi potongan → masuk <b>saldo platform (piutang toko 1-1303-xxx)</b>,
-            bukan bank. <b>Tahap 2 — Penarikan</b> saldo itu ke rekening bank ada di panel bawah.
-            Omzet dari input sales Marketing tidak pernah masuk ke sini.
-          </p>
-        </div>
+        ) : <span />}
         <div className="flex items-center gap-2 flex-wrap">
           <select data-testid="fin-settlement-account-filter" value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
@@ -359,10 +387,11 @@ export default function FinanceSettlementModule() {
                 className="p-1 rounded hover:bg-foreground/10"><X className="w-3.5 h-3.5" /></button>
             ) : null}
           </div>
-          <button data-testid="fin-settlement-refresh" onClick={load}
+          <button data-testid="fin-settlement-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang"
             className="h-9 px-3 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-1.5">
-            <RefreshCw className="w-4 h-4" /> Muat ulang
+            <RefreshCw className="w-4 h-4" />
           </button>
+          {view === 'settlements' ? (<>
           <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden"
             data-testid="fin-settlement-import-file"
             onChange={(e) => importFile(e.target.files?.[0])} />
@@ -377,40 +406,52 @@ export default function FinanceSettlementModule() {
             className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm flex items-center gap-1.5">
             <Plus className="w-4 h-4" /> Catat dana dilepas
           </button>
+          </>) : null}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <Kpi testId="fin-settlement-kpi-net" icon={Banknote} label="Total masuk saldo platform"
-          value={rp(summary?.net_payout || 0)} tone="good"
-          hint={`${rows.length} laporan dana dilepas${range.from || range.to ? ` · ${range.from || '…'} → ${range.to || '…'}` : ''}`} />
-        <Kpi testId="fin-settlement-kpi-gross" icon={Store} label="Omzet bruto terkait"
-          value={rp(summary?.gross_sales || 0)} />
-        <Kpi testId="fin-settlement-kpi-ded" icon={Percent} label="Potongan platform"
-          value={rp(summary?.total_deductions || 0)}
-          hint={`${summary?.deduction_pct || 0}% dari bruto`} tone="warn" />
-        <Kpi testId="fin-settlement-kpi-unverified" icon={AlertTriangle} label="Belum seimbang"
-          value={`${summary?.unverified_count || 0} dokumen`}
-          tone={(summary?.unverified_count || 0) > 0 ? 'bad' : 'good'}
-          hint="selisih belum diberi nama — belum boleh dijurnal" />
-      </div>
+      {view !== 'withdrawals' ? (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Kpi testId="fin-settlement-kpi-net" icon={Banknote} label={`Masuk saldo platform · ${periodLabel}`}
+            value={rp(summary?.net_payout || 0)} tone="good"
+            hint={`${total} laporan dana dilepas`} />
+          <Kpi testId="fin-settlement-kpi-gross" icon={Store} label={`Omzet bruto · ${periodLabel}`}
+            value={rp(summary?.gross_sales || 0)} />
+          <Kpi testId="fin-settlement-kpi-ded" icon={Percent} label={`Potongan platform · ${periodLabel}`}
+            value={rp(summary?.total_deductions || 0)}
+            hint={`${pct(summary?.deduction_pct)} dari bruto`} tone="warn" />
+        </div>
+      ) : null}
+      {/* pemeriksaan teknis hanya muncul bila ada masalah (dulu kartu "Belum seimbang 0 dokumen" selalu tampil) */}
+      {view !== 'withdrawals' && (summary?.unverified_count || 0) > 0 ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300 px-3 py-2 text-sm flex items-center gap-2"
+          data-testid="fin-settlement-kpi-unverified">
+          <AlertTriangle className="w-4 h-4" />
+          {summary.unverified_count} laporan dana dilepas masih ada selisih — beri nama selisihnya sebelum dijurnal.
+        </div>
+      ) : null}
 
-      {/* ── SALDO PLATFORM PER TOKO + TAHAP 2 (PENARIKAN) ── */}
-      <PlatformBalanceCards refreshKey={refreshKey} />
-      <PayoutBankLinks accounts={accounts} banks={banks} onChanged={loadAccounts} />
-      <PlatformWithdrawalsPanel accounts={accounts} accountId={accountId} banks={banks}
-        balances={balances?.data} onChanged={() => setRefreshKey((k) => k + 1)} />
+      {view === 'balances' ? (<>
+        <PlatformBalanceCards refreshKey={refreshKey} />
+        <SettlementByStoreCards refreshKey={refreshKey} month={period.month} />
+      </>) : null}
+      {view === 'withdrawals' ? (
+        <PlatformWithdrawalsPanel accounts={accounts} accountId={accountId} banks={banks}
+          balances={balances?.data} onChanged={() => setRefreshKey((k) => k + 1)} />
+      ) : null}
 
+      {view === 'settlements' ? (<>
       {/* ── HASIL IMPOR ── */}
       <SettlementImportPanel result={importRes} onClose={() => setImportRes(null)}
         onMappingChange={changeMapping} />
 
       {/* ── FORM ── */}
       {formOpen ? (
+        <div ref={formRef} className="scroll-mt-4">
         <GlassCard className="p-4 space-y-3" data-testid="fin-settlement-form">
           <div className="flex items-center justify-between">
             <h3 className="font-medium text-sm">
-              {editId ? 'Koreksi laporan dana dilepas' : 'Tahap 1 — Catat dana dilepas ke saldo platform'}
+              {editId ? 'Koreksi laporan dana dilepas' : 'Catat dana dilepas ke saldo toko'}
             </h3>
             <button data-testid="fin-settlement-form-close" onClick={() => setFormOpen(false)}
               className="p-1 rounded hover:bg-foreground/10"><X className="w-4 h-4" /></button>
@@ -508,16 +549,23 @@ export default function FinanceSettlementModule() {
               : ' — beri nama dulu di "Potongan lain" atau "Penyesuaian"; jurnal akan ditolak selama masih ada selisih.'}
           </div>
 
-          <div className="flex gap-2">
-            <button data-testid="fin-settlement-save" disabled={busy === 'save'} onClick={save}
+          <div className="flex gap-2 flex-wrap">
+            <button data-testid="fin-settlement-save-post" disabled={busy === 'save' || Math.abs(diff) >= 0.01}
+              onClick={() => save(true)}
+              title={Math.abs(diff) >= 0.01 ? 'Masih ada selisih — tidak bisa langsung diposting' : 'Simpan, buat jurnal, dan posting ke buku besar'}
               className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm flex items-center gap-1.5 disabled:opacity-50">
               {busy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              Simpan
+              Simpan &amp; posting
+            </button>
+            <button data-testid="fin-settlement-save" disabled={busy === 'save'} onClick={() => save(false)}
+              className="h-9 px-4 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-1.5 disabled:opacity-50">
+              Simpan draf
             </button>
             <button data-testid="fin-settlement-cancel" onClick={() => setFormOpen(false)}
               className="h-9 px-4 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm">Batal</button>
           </div>
         </GlassCard>
+        </div>
       ) : null}
 
       {/* ── HASIL COCOK ── */}
@@ -580,9 +628,6 @@ export default function FinanceSettlementModule() {
           </ul>
         </GlassCard>
       ) : null}
-
-      {/* ── PER TOKO ── */}
-      <SettlementByStoreCards refreshKey={refreshKey} month={period.month} />
 
       {/* ── DAFTAR ── */}
       <GlassCard className="p-0 overflow-hidden">
@@ -658,20 +703,20 @@ export default function FinanceSettlementModule() {
                           className="p-1.5 rounded hover:bg-foreground/10 disabled:opacity-40">
                           <Scale className="w-4 h-4" />
                         </button>
-                        {!r.je_id ? (
+                        {!r.je_id && r.math_verified ? (
                           <button title="Buat jurnal draf"
                             data-testid={`fin-settlement-journal-${r.settlement_id}`}
                             disabled={busy === `journal:${r.id}`} onClick={() => act(r, 'journal')}
-                            className="p-1.5 rounded hover:bg-foreground/10 disabled:opacity-40">
-                            <BookCheck className="w-4 h-4" />
+                            className="h-7 px-2 rounded border border-foreground/10 hover:bg-foreground/10 text-xs flex items-center gap-1 disabled:opacity-40">
+                            <BookCheck className="w-3.5 h-3.5" /> Jurnal
                           </button>
                         ) : null}
                         {r.je_status === 'draft' ? (
                           <button title="Posting jurnal ke buku besar"
                             data-testid={`fin-settlement-post-${r.settlement_id}`}
                             disabled={busy === `post:${r.id}`} onClick={() => act(r, 'post')}
-                            className="p-1.5 rounded hover:bg-foreground/10 text-emerald-600 disabled:opacity-40">
-                            <Send className="w-4 h-4" />
+                            className="h-7 px-2 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-1 disabled:opacity-40">
+                            <Send className="w-3.5 h-3.5" /> Posting
                           </button>
                         ) : null}
                         {!r.je_id ? (
@@ -684,8 +729,9 @@ export default function FinanceSettlementModule() {
                             </button>
                             <button title="Hapus"
                               data-testid={`fin-settlement-delete-${r.settlement_id}`}
-                              disabled={busy === `delete:${r.id}`} onClick={() => act(r, 'delete')}
-                              className="p-1.5 rounded hover:bg-foreground/10 text-red-600 disabled:opacity-40">
+                              disabled={busy === `delete:${r.id}`}
+                              onClick={() => { if (window.confirm(`Hapus laporan dana dilepas ${r.settlement_id}?`)) act(r, 'delete'); }}
+                              className="ml-2 p-1.5 rounded hover:bg-foreground/10 text-red-600 disabled:opacity-40">
                               <Trash2 className="w-4 h-4" />
                             </button>
                           </>
@@ -698,7 +744,9 @@ export default function FinanceSettlementModule() {
             </table>
           </div>
         )}
+        <PaginationBar total={total} skip={skip} limit={PAGE} onPageChange={setSkip} className="px-3 py-2" />
       </GlassCard>
+      </>) : null}
     </div>
   );
 }

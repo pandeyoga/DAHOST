@@ -720,7 +720,8 @@ async def kasbon_stats(
     # 2026-11-02 (P5 butir 10): statistik + daftar aktif/pending memuat kasbon SEMUA karyawan.
     if not _is_privileged(user):
         raise HTTPException(403, "Statistik kasbon hanya untuk HR/Keuangan.")
-    all_docs = await db.dewi_kasbon_requests.find({}, {"_id": 0, "documents": 0}).to_list(1000)
+    # 2026-11-04 (audit Keuangan): dulu `.to_list(1000)` — angka diam-diam terpotong setelah 1000 pengajuan
+    all_docs = [d async for d in db.dewi_kasbon_requests.find({}, {"_id": 0, "documents": 0})]
 
     pending_hr = [d for d in all_docs if d.get("status") == "submitted"]
     pending_finance = [d for d in all_docs if d.get("status") == "hr_approved"]
@@ -753,6 +754,7 @@ async def kasbon_stats(
             "pending_hr": len(pending_hr),
             "pending_finance": len(pending_finance),
             "active_count": len(active),
+            "active_employees": len({d.get("employee_id") or d.get("employee_name") for d in active}),
             "paid_off_count": len(paid_off),
             "total_outstanding": round(total_outstanding, 2),
             "total_disbursed_all": round(total_disbursed_all, 2),

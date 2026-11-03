@@ -88,7 +88,8 @@ export default function TopBar({
 
         {/* Section pill nav — THE MENU (sections of current portal).
             IA v4: portal satu pintu tidak menampilkan pill (hanya 1 section, 1 pintu). */}
-        {!singleDoor && (
+        {/* 2026-11-04: portal ber-section tunggal (mis. Keuangan 8 grup di menu samping) tidak perlu pill */}
+        {!singleDoor && nav.sections.length > 1 && (
         <nav
           className="hidden md:inline-flex items-center gap-1 rounded-full border border-[var(--glass-border)] bg-[var(--nav-pill-bg)] backdrop-blur-xl p-1 overflow-x-auto max-w-[55vw]"
           data-testid="section-pill-nav"

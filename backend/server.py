@@ -1272,6 +1272,9 @@ app.include_router(rahaza_year_end_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
 from routes.dewi_cashflow_ai import router as cashflow_ai_router
 app.include_router(cashflow_ai_router, dependencies=_DENY_EXTERNAL)
+# 2026-11-04 (owner, audit Keuangan tahap 4) — Beranda Keuangan (menggantikan Dashboard + Rekap)
+from routes.finance_home import router as finance_home_router  # noqa: E402
+app.include_router(finance_home_router, dependencies=_DENY_EXTERNAL_AND_MKT)
 
 # Blueprint §3.7 — Return & Refund Portal Gudang
 from routes.dewi_wh_returns import router as dewi_wh_returns_router

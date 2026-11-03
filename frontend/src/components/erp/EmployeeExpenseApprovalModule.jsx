@@ -23,7 +23,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
-import { PageHeader, StatTile } from './moduleAtoms';
+import { PageHeader } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -311,33 +311,25 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
     <div className="space-y-5" data-testid="expense-approval-page">
       <PageHeader
         icon={CheckCircle}
-        eyebrow="SDM / Finance · Employee Expense Management"
-        title="Inbox Approval Klaim & Perjalanan"
-        subtitle="Review dan proses persetujuan klaim biaya serta perjalanan dinas karyawan."
+        title="Persetujuan Klaim & Perjalanan Dinas"
+        subtitle="SDM menyetujui klaim karyawan; Keuangan mencairkan uangnya."
         actions={
           <Button variant="ghost" onClick={fetchData} className="h-9 border">
-            <RefreshCw className="w-3.5 h-3.5 mr-1" />Muat Ulang
+            <RefreshCw className="w-3.5 h-3.5" />
           </Button>
         }
       />
 
-      {/* RC-IA-2a — klarifikasi pintu bersama HR/Keuangan */}
-      <div className="px-3 py-2 rounded-lg bg-primary/5 border border-primary/15 text-xs text-muted-foreground">
-        <strong className="text-foreground">Inbox bersama SDM &amp; Keuangan</strong> — layar yang sama dibuka dari dua portal. SDM menyetujui klaim, Keuangan melakukan pencairan (disbursement).
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Total Pending" value={totalPending} accent={totalPending > 0 ? 'warning' : 'default'} />
-        <StatTile label="Klaim Menunggu" value={summary?.expense_claims?.total_pending_approval || 0} />
-        <StatTile label="Dinas Menunggu" value={summary?.travel_requests?.total_pending_approval || 0} />
-        <StatTile label="Menunggu Disbursement" value={pendingAdvance + (summary?.expense_claims?.counts?.approved || 0)} accent={pendingAdvance > 0 ? 'info' : 'default'} />
-      </div>
+      {/* RC-IA-2a — pintu bersama SDM/Keuangan. 2026-11-04: 4 kartu hitungan → satu baris ringkas */}
+      <p className="text-sm text-muted-foreground" data-testid="expense-approval-summary">
+        {totalPending} menunggu persetujuan
+        {' · '}{pendingAdvance + (summary?.expense_claims?.counts?.approved || 0)} menunggu dicairkan Keuangan
+      </p>
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex rounded-lg border overflow-hidden">
-          {[['all','Semua'], ['expense_claim','Klaim Biaya'], ['travel_request','Perjalanan Dinas']].map(([v, l]) => (
+          {[['all', `Semua (${totalPending})`], ['expense_claim', `Klaim biaya (${summary?.expense_claims?.total_pending_approval || 0})`], ['travel_request', `Perjalanan dinas (${summary?.travel_requests?.total_pending_approval || 0})`]].map(([v, l]) => (
             <button key={v} onClick={() => setFilter(v)}
               data-testid={`expense-filter-${v}`}
               className={`px-3 py-1.5 text-sm font-medium transition-colors ${

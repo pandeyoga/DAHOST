@@ -245,25 +245,29 @@ MODULES: list[dict] = [
        _ALL, {"view": ["accessories.view"], "manage": ["wh.accessory.manage"], "approve": ["accessories.approve"]}),
 
     # ── KEUANGAN ────────────────────────────────────────────────────────────
-    _m("finance", "fin_dashboard", "Dashboard, Rekap & Laporan Keuangan",
-       ["finance-dashboard", "fin-recap", "fin-reports-hub"],
-       ["/api/rahaza/finance-summary", "/api/financial-recap", "/api/rahaza/finance/reports"], _VE,
+    # 2026-11-04: Beranda (menggantikan Dashboard + Rekap) dan 5 menu laporan (dulu 1 hub 10 tab)
+    _m("finance", "fin_dashboard", "Beranda & Laporan Keuangan",
+       ["finance-dashboard", "fin-recap", "fin-reports-hub", "fin-pnl", "fin-bs", "fin-cashflow", "fin-gl",
+        "fin-fg-valuation"],
+       ["/api/rahaza/finance-summary", "/api/financial-recap", "/api/rahaza/finance/reports", "/api/finance/home"], _VE,
        {"view": ["finance.view", "fin.recap.view"], "export": ["report.export"]}),
     # 2026-11-02 (K33): Laporan Eksekutif (memuat total gaji) DIPISAH dari fin_dashboard supaya owner
     # bisa mencentang/melepasnya sendiri di Manajemen Role. Penjaga handler (bawaan Manajemen+Keuangan):
     # routes/dewi_executive_report.exec_report_access.
+    # 2026-11-04 (owner): menu Laporan Eksekutif dipindah ke Portal Manajemen (ALSO_PORTALS)
     _m("finance", "fin_exec_report", "Laporan Eksekutif", ["fin-executive-report"],
        ["/api/reports/executive"], _VE, {"export": ["report.export"]}),
-    _m("finance", "fin_marketplace", "Saldo & Pencairan Marketplace", ["fin-marketplace-settlement"],
+    _m("finance", "fin_marketplace", "Marketplace (saldo, dana dilepas, penarikan)", ["fin-marketplace-settlement"],
        ["/api/marketing/settlements", "/api/marketing/withdrawals"], _ALL,
        {"view": ["fin.ar.view"], "manage": ["fin.ar.manage"], "approve": ["finance.approve"]}),
-    _m("finance", "fin_ar", "Piutang (AR) & Invoice", ["fin-ar-360"],
+    _m("finance", "fin_ar", "Piutang Reseller (faktur, umur, hapus buku)", ["fin-ar-hub", "fin-ar-360", "fin-ar-invoices"],
        ["/api/rahaza/ar-360", "/api/rahaza/ar-aging", "/api/rahaza/ar-invoices", "/api/rahaza/customer-statement"],
        _ALL, {"view": ["fin.ar.view", "fin.invoice.view"], "manage": ["fin.ar.manage", "fin.invoice.manage"],
               "approve": ["finance.approve"]}),
     _m("finance", "fin_channel_gl", "Peta Akun Channel", ["fin-channel-gl"], ["/api/rahaza/channel-gl-mapping"], _CRUD,
        {"view": ["finance.view"], "manage": ["finance.manage"]}),
-    _m("finance", "fin_ap", "Aging Hutang (AP)", ["fin-ap-aging"], ["/api/rahaza/ap-aging"], _VE,
+    _m("finance", "fin_ap", "Hutang Pemasok & CMT (umur hutang)", ["fin-ap-hub", "fin-ap-aging"],
+       ["/api/rahaza/ap-aging"], _VE,
        {"view": ["fin.ap.view"]}),
     # 2026-11-02 (K11): Nota Debit pemasok (atas Retur Pembelian) diterbitkan Keuangan.
     _m("finance", "fin_debit_notes", "Nota Debit Pemasok", ["fin-debit-notes"], ["/api/rahaza/debit-notes"],
@@ -272,7 +276,8 @@ MODULES: list[dict] = [
        ["/api/rahaza/cash-accounts", "/api/rahaza/cash-movements", "/api/finance/ai-cashflow"], _ALL,
        {"view": ["fin.cash.view", "fin.payment.view"], "manage": ["fin.cash.manage", "fin.payment.manage"],
         "approve": ["finance.approve"]}, lookup=True),
-    _m("finance", "fin_petty_cash", "Kas Kecil", ["fin-petty-cash"], ["/api/finance/petty-cash"], _ALL,
+    # 2026-11-04 (owner): Kas Kecil = rekening biasa di Rekening & Mutasi; modul ini hanya untuk data dana lama
+    _m("finance", "fin_petty_cash", "Kas Kecil (dana lama)", ["fin-petty-cash"], ["/api/finance/petty-cash"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
     _m("finance", "fin_bank_transfer", "Transfer Bank", ["fin-bank-transfer"], ["/api/finance/bank-transfers"], _ALL,
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
@@ -281,8 +286,9 @@ MODULES: list[dict] = [
        {"view": ["fin.cash.view"], "manage": ["fin.cash.manage"], "approve": ["finance.approve"]}),
     _m("finance", "fin_expenses", "Pengeluaran & Biaya", ["fin-expenses"], ["/api/rahaza/expenses"], _ALL,
        {"view": ["fin.expense.view"], "manage": ["fin.expense.manage"], "approve": ["finance.approve"]}),
-    _m("finance", "fin_kasbon", "Kasbon & Pinjaman Karyawan", ["fin-kasbon"],
-       ["/api/dewi/kasbon", "/api/rahaza/hr/employee-loans"], _ALL,
+    # 2026-11-04 (owner): uang muka karyawan (dulu di Kas Kecil) satu menu dengan kasbon
+    _m("finance", "fin_kasbon", "Kasbon & Uang Muka Karyawan", ["fin-kasbon"],
+       ["/api/dewi/kasbon", "/api/rahaza/hr/employee-loans", "/api/finance/petty-cash/advances"], _ALL,
        {"view": ["fin.expense.view"], "manage": ["fin.expense.manage"], "approve": ["finance.approve", "hr.approve"]}),
     _m("finance", "fin_journal", "Jurnal, Periode & Penyesuaian", ["fin-journal-hub", "fin-acctg-adjust-hub"],
        ["/api/rahaza/journals", "/api/rahaza/periods", "/api/rahaza/year-end", "/api/rahaza/finance"], _ALL,
@@ -290,7 +296,8 @@ MODULES: list[dict] = [
     _m("finance", "fin_invoice_approval", "Persetujuan Perubahan Invoice", ["fin-approval"],
        ["/api/invoice-edit-requests"], ("view", "create", "approve", "export"),
        {"view": ["fin.invoice.view"], "approve": ["fin.approval.manage", "finance.approve"]}),
-    _m("finance", "fin_master", "Master Akuntansi (COA & Posting)", ["fin-accounting-master-hub"],
+    _m("finance", "fin_master", "Pengaturan Keuangan (COA, saldo awal, pemetaan akun)",
+       ["fin-settings-hub", "fin-accounting-master-hub"],
        ["/api/rahaza/coa", "/api/rahaza/coa-auto", "/api/rahaza/posting-profiles", "/api/rahaza/integration-settings"],
        _CRUD, {"view": ["finance.view"], "manage": ["finance.manage"]}, lookup=True),
     _m("finance", "fin_budget", "Anggaran & Pusat Biaya", ["fin-budget", "fin-cost-centers"],
@@ -473,6 +480,7 @@ ALSO_PORTALS = {
     "proc_match": ["finance"], "proc_shopping_list": ["warehouse"], "wh_material_issue": ["production"],
     "wh_sku_bridge": ["toko"], "acc_requests": ["rnd"], "fin_hpp": ["production"], "mkt_changelog": ["management"],
     "rnd_dashboard": ["management"], "hr_expense": ["finance"], "fin_kasbon": ["hr"], "prod_analytics": ["hr"],
+    "fin_exec_report": ["management"],
     "prod_master_product": ["rnd"], "rnd_master_product": ["production", "finance"],
     "wh_master": ["production", "rnd"],
     # 2026-11-02: tagihan CMT (posting/bayar) juga ditulis dari Portal Maklon (layar Tagihan CMT maklon) —

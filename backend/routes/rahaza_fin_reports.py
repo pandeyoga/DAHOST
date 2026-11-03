@@ -506,6 +506,8 @@ async def cash_mutations(
     gl_account_code: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=500),
 ):
     """2026-11-02 (K19): daftar mutasi rekening Kas & Bank DITURUNKAN DARI GL (baris jurnal akun
     rekening) — dipakai panel "Mutasi" di layar Kas & Bank. `rahaza_cash_movements` hanya metadata."""
@@ -520,7 +522,8 @@ async def cash_mutations(
     if not code:
         raise HTTPException(400, "Rekening belum tertaut akun GL — tekan 'Sinkron Bagan Akun & GL' dulu.")
     from routes.rahaza_posting import cash_mutations_from_gl
-    out = await cash_mutations_from_gl(db, code, from_date, to_date, account_id=(acc or {}).get("id"))
+    out = await cash_mutations_from_gl(db, code, from_date, to_date, account_id=(acc or {}).get("id"),
+                                       page=page, page_size=page_size)
     out["account"] = {"id": (acc or {}).get("id"), "code": (acc or {}).get("code") or code,
                       "name": (acc or {}).get("name")}
     return serialize_doc(out)

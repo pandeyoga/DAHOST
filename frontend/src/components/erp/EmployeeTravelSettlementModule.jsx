@@ -27,7 +27,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from '@/components/ui/select';
-import { PageHeader, StatTile } from './moduleAtoms';
+import { PageHeader } from './moduleAtoms';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
@@ -45,11 +45,11 @@ const EXPENSE_CATEGORIES = [
 ];
 
 const STATUS_CONFIG = {
-  draft:     { label: 'Draft',              color: 'bg-muted text-foreground' },
-  submitted: { label: 'Menunggu Approval',  color: 'bg-yellow-100 text-yellow-800' },
-  approved:  { label: 'Disetujui — Siap Post', color: 'bg-blue-100 text-blue-800' },
+  draft:     { label: 'Draf',               color: 'bg-muted text-foreground' },
+  submitted: { label: 'Menunggu persetujuan', color: 'bg-yellow-100 text-yellow-800' },
+  approved:  { label: 'Disetujui · siap diposting', color: 'bg-blue-100 text-blue-800' },
   rejected:  { label: 'Ditolak',            color: 'bg-red-100 text-red-800' },
-  posted:    { label: 'Sudah Di-Post GL',   color: 'bg-purple-100 text-purple-800' },
+  posted:    { label: 'Terjurnal',          color: 'bg-purple-100 text-purple-800' },
 };
 
 const STL_TYPE_CONFIG = {
@@ -568,13 +568,17 @@ function OutstandingAdvancePanel({ token }) {
 
 // ── Main Module ────────────────────────────────────────────────────────────────
 
-export default function EmployeeTravelSettlementModule({ token, user }) {
+export default function EmployeeTravelSettlementModule({ token, user, defaultTab = 'my' }) {
   const [settlements, setSettlements] = useState([]);
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
-  const [activeTab, setActiveTab] = useState('my');   // my | queue | outstanding
+  const [activeTab, setActiveTab] = useState(() => {   // my | queue | outstanding
+    const r = (user?.role || '').toLowerCase();
+    const canQueue = isFinanceRole(r) || ['superadmin', 'admin', 'owner', 'hr', 'manager', 'finance'].includes(r);
+    return defaultTab === 'queue' && !canQueue ? 'my' : defaultTab;
+  });
   const [showCreate, setShowCreate] = useState(false);
   const [selectedTravel, setSelectedTravel] = useState(null); // travel request for new settlement
   const [selected, setSelected] = useState(null);              // settlement detail
@@ -738,9 +742,10 @@ export default function EmployeeTravelSettlementModule({ token, user }) {
   };
 
   const tabs = [
-    { id: 'my',          label: 'Settlement Saya' },
-    ...(isApprover ? [{ id: 'queue', label: `Queue (${summary?.pending_post || 0})` }] : []),
-    ...(isFinance  ? [{ id: 'outstanding', label: `Outstanding Advance (${
+    { id: 'my',          label: 'Settlement saya' },
+    // 2026-11-04: peran keuangan kanonik ('accounting'/'staff_keuangan') juga melihat antrean posting
+    ...((isApprover || isFinance) ? [{ id: 'queue', label: `Antrean (${summary?.pending_post || 0})` }] : []),
+    ...(isFinance  ? [{ id: 'outstanding', label: `Uang muka belum selesai (${
       summary?.outstanding_advances_count || 0
     })` }] : []),
   ];
@@ -758,9 +763,8 @@ export default function EmployeeTravelSettlementModule({ token, user }) {
     <div className="space-y-5" data-testid="travel-settlement-page">
       <PageHeader
         icon={FileText}
-        eyebrow="SDM / Finance · Employee Expense Management"
-        title="Settlement Perjalanan Dinas"
-        subtitle="Laporan biaya aktual, rekonsiliasi uang muka, dan posting GL jurnal perjalanan dinas."
+        title="Perjalanan Dinas"
+        subtitle="Biaya aktual perjalanan dinas dibandingkan uang mukanya, lalu dijurnal."
         actions={
           <div className="flex gap-2 items-center">
             {/* Phase 4: Export with date range */}
@@ -782,7 +786,7 @@ export default function EmployeeTravelSettlementModule({ token, user }) {
               />
               <Button variant="ghost" size="sm" onClick={handleExport} className="h-7">
                 <Download className="w-3.5 h-3.5 mr-1" />
-                Export CSV
+                Unduh CSV
               </Button>
             </div>
             
@@ -791,7 +795,7 @@ export default function EmployeeTravelSettlementModule({ token, user }) {
             </Button>
             {myTrips.length > 0 && (
               <Button onClick={() => setShowCreate(true)} className="h-9" data-testid="btn-new-settlement">
-                <Plus className="w-3.5 h-3.5 mr-1.5" />Settlement Baru
+                <Plus className="w-3.5 h-3.5 mr-1.5" />Penyelesaian baru
               </Button>
             )}
           </div>
@@ -800,20 +804,10 @@ export default function EmployeeTravelSettlementModule({ token, user }) {
 
       {/* RC-IA-2a — klarifikasi pintu bersama HR/Keuangan */}
       <div className="px-3 py-2 rounded-lg bg-primary/5 border border-primary/15 text-xs text-muted-foreground">
-        <strong className="text-foreground">Inbox bersama SDM &amp; Keuangan</strong> — layar yang sama dibuka dari dua portal. SDM menyetujui perjalanan dinas, Keuangan memproses settlement &amp; posting GL.
+        <strong className="text-foreground">Dipakai bersama SDM &amp; Keuangan</strong> — SDM menyetujui perjalanan dinas, Keuangan menyelesaikan dan menjurnalnya.
       </div>
 
-      {/* Summary stats */}
-      {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Menunggu Approval" value={summary.settlement_counts?.submitted || 0} accent="warning" />
-          <StatTile label="Siap Di-Post" value={summary.settlement_counts?.approved || 0} accent="info" />
-          <StatTile label="Sudah Di-Post" value={summary.settlement_counts?.posted || 0} accent="success" />
-          <StatTile label="Outstanding Advance" value={summary.outstanding_advances_count || 0}
-            accent={(summary.outstanding_advances_count || 0) > 0 ? 'danger' : 'default'} />
-        </div>
-      )}
-
+      {/* 2026-11-04: 4 kartu hitungan dilepas — jumlah antrean & uang muka ada di nama tab */}
       {/* Tabs */}
       <div className="flex rounded-lg border overflow-hidden w-fit">
         {tabs.map(t => (

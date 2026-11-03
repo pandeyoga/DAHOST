@@ -207,13 +207,14 @@ async def ar_360_dashboard(request: Request, top_n: int = Query(10, le=50)):
     # DSO-ish metric: weighted average days overdue (across overdue invoices only)
     avg_days_overdue = round(sum_days_overdue_weighted / total_overdue_amount, 1) if total_overdue_amount > 0 else 0
 
-    # Receipts last 30 days (for DSO estimate)
-    last_30 = (today - timedelta(days=30)).isoformat()
-    paid_invoices_30 = await db.rahaza_ar_invoices.find(
-        {'status': 'paid', 'updated_at': {'$gte': last_30}},
-        {'_id': 0, 'total': 1, 'paid_amount': 1}
-    ).to_list(length=2000)
-    cash_collected_30 = sum(float(inv.get('paid_amount', inv.get('total', 0)) or 0) for inv in paid_invoices_30)
+    # Uang diterima 30 hari terakhir (untuk DSO). 2026-11-04: dulu dibaca dari faktur LUNAS yang
+    # `updated_at`-nya ≥ teks tanggal — `updated_at` bertipe Date sehingga tak pernah cocok (kartu selalu
+    # Rp0) dan cicilan tidak ikut. Kini SSOT kas masuk pelanggan yang sama dengan Rekap/Beranda:
+    # pembayaran faktur (`rahaza_ar_payments.date`) + pelunasan Nota Penjualan.
+    from core.recap_finance import sum_direct_sale_receipts, sum_payments
+    last_30 = {'$gte': (today - timedelta(days=30)).isoformat(), '$lte': today.isoformat()}
+    cash_collected_30 = float(await sum_payments(db.rahaza_ar_payments, last_30) or 0) \
+        + float(await sum_direct_sale_receipts(db, last_30) or 0)
     dso_estimate = round((total_outstanding / cash_collected_30) * 30, 1) if cash_collected_30 > 0 else None
 
     return {

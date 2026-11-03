@@ -201,7 +201,7 @@ export default function AdminSetupPanelModule() {
   }
 
   return (
-    <div className="h-screen overflow-auto bg-background p-4 md:p-6" data-testid="admin-setup-panel-module">
+    <div data-testid="admin-setup-panel-module">
       <div className="mx-auto max-w-4xl space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">

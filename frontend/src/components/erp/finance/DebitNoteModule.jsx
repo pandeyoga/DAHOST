@@ -165,8 +165,8 @@ export default function DebitNoteModule({ token }) {
     setErr('');
     try {
       const [r, d, b] = await Promise.all([
-        apiGet(token, '/api/rahaza/purchase-returns?status=all'),
-        apiGet(token, '/api/rahaza/debit-notes'),
+        apiGet(token, '/api/rahaza/purchase-returns?status=all&limit=1000'),
+        apiGet(token, '/api/rahaza/debit-notes?limit=1000'),
         apiGet(token, '/api/rahaza/debit-notes/supplier-balances'),
       ]);
       setRtps(r?.items || []); setDns(d?.items || []); setBal(b || { items: [] });

@@ -26,7 +26,6 @@ export default function RahazaHPPModule({ token }) {
     <div className="space-y-5" data-testid="rahaza-hpp-page">
       <PageHeader
         icon={TrendingUp}
-        eyebrow="Portal Finance · Rahaza Finance"
         title="HPP Aktual Dashboard"
         subtitle="Hitung Harga Pokok Produksi berbasis data aktual: material issue + labor WIP + overhead. Lihat perbandingan Estimasi vs Aktual."
       />
