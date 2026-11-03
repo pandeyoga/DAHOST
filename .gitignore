@@ -114,3 +114,7 @@ credentials.json
 
 # worktree sementara agen Claude Code (lokal)
 /.claude/worktrees/
+
+# demo subdomain (2026-11-03): situs Caddy hasil skrip & arsip data demo (berisi data klien)
+/deploy/caddy-sites/*.caddy
+/deploy/demo/data/

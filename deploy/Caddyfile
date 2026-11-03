@@ -58,3 +58,7 @@
 www.{$DOMAIN} {
     redir https://{$DOMAIN}{uri} permanent
 }
+
+# 2026-11-03: situs tambahan (mis. demo.<domain> dari deploy/demo/demo.sh) — satu berkas *.caddy per situs
+# di deploy/caddy-sites/ (tidak masuk git). Folder kosong = tidak ada situs tambahan.
+import /etc/caddy/sites/*.caddy

@@ -1,0 +1,82 @@
+# DEMO / SIMULASI di subdomain (mis. demo.dafashionerp.cloud) — TERPISAH TOTAL dari produksi.
+#   · database sendiri (container mongo-demo + volume sendiri; TIDAK terhubung ke jaringan produksi)
+#   · JWT_SECRET sendiri → token login produksi tidak berlaku di demo (dan sebaliknya)
+#   · uploads/backups sendiri; build frontend sendiri (alamat API demo tertanam di bundle)
+# Caddy PRODUKSI yang meneruskan subdomain ke sini (berkas deploy/caddy-sites/demo.caddy dibuat demo.sh).
+# Jalankan lewat: bash deploy/demo/demo.sh pasang | muat-data <arsip> | update | status | hapus
+name: dahost-demo
+
+services:
+  mongo-demo:
+    image: mongo:7
+    restart: unless-stopped
+    command: ["mongod", "--bind_ip_all", "--quiet", "--wiredTigerCacheSizeGB", "0.25"]
+    volumes:
+      - demo_mongo_data:/data/db
+    networks: [demo]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  backend-demo:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.backend
+    restart: unless-stopped
+    depends_on:
+      mongo-demo:
+        condition: service_healthy
+    environment:
+      ENV: production
+      TZ: Asia/Jakarta
+      # SENGAJA ditulis tetap (bukan dari .env): demo tidak boleh pernah menunjuk ke mongo produksi
+      MONGO_URL: mongodb://mongo-demo:27017
+      DB_NAME: dahost_demo
+      JWT_SECRET: ${DEMO_JWT_SECRET:?isi DEMO_JWT_SECRET di deploy/demo/.env}
+      CORS_ORIGINS: https://${DEMO_DOMAIN}
+      REACT_APP_BACKEND_URL: https://${DEMO_DOMAIN}
+      API_URL: https://${DEMO_DOMAIN}
+      BASE_URL: https://${DEMO_DOMAIN}
+      WEBAUTHN_RP_ID: ${DEMO_DOMAIN}
+      WEBAUTHN_ORIGIN: https://${DEMO_DOMAIN}
+      WEBAUTHN_RP_NAME: DA ERP (DEMO)
+      ALLOW_DEMO_SEED: "false"
+      SEED_DEFAULT_LOCATIONS: "false"
+      ENSURE_INDEXES: "1"
+      ALLOW_SESSION_TOKEN_IN_QUERY: "1"
+      ANTHROPIC_API_KEY: ""          # AI nonaktif di demo
+    volumes:
+      - demo_uploads:/app/uploads
+      - demo_backups:/app/backups
+    networks:
+      demo: {}
+      proxy:
+        aliases: [demo-backend]
+    expose:
+      - "8001"
+
+  frontend-demo:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        REACT_APP_BACKEND_URL: https://${DEMO_DOMAIN:?isi DEMO_DOMAIN di deploy/demo/.env}
+    restart: unless-stopped
+    networks:
+      proxy:
+        aliases: [demo-frontend]
+    expose:
+      - "80"
+
+networks:
+  demo: {}
+  proxy:
+    external: true
+    name: ${PROD_NETWORK:-dahost_default}   # jaringan compose produksi — tempat Caddy berada
+
+volumes:
+  demo_mongo_data:
+  demo_uploads:
+  demo_backups:

@@ -79,6 +79,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy-sites:/etc/caddy/sites:ro      # situs tambahan (demo) — lihat deploy/demo/demo.sh
       - caddy_data:/data
       - caddy_config:/config
 
