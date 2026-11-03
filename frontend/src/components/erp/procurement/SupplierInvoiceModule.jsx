@@ -7,25 +7,36 @@
  * Nilai faktur memakai qty NET (diterima − ditolak) × harga per satuan DASAR
  * (INV-UOM-1), tetapi ditampilkan juga dalam satuan beli PO supaya cocok dengan
  * dokumen fisik dari supplier.
+ *
+ * 2026-11-03 (uji tugas): pembayaran hutang dipindah KE SINI (satu-satunya pintu). Dulu hanya ada di
+ * Penyesuaian › "Diskon Pembelian", yang meminta UUID rekening, selalu mengirim diskon 2% (angka tetap
+ * di kode untuk semua pemasok) walau tidak dipilih, dan hanya memuat faktur `sent` sehingga sisa
+ * faktur yang dicicil tidak bisa dibayar. Potongan dari pemasok kini diisi manual, bawaan 0.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle, Banknote, CheckCircle2, ClipboardCheck, FileText, Filter,
-  RefreshCw, Search, Send, Truck,
+  HandCoins, RefreshCw, Search, Send, Truck,
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { MoneyInput } from '@/components/ui/money-input';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import Modal from '../Modal';
 import { toast } from 'sonner';
 import { EP, apiGet, apiPost, fmtDate, fmtNum, fmtRp } from './procApi';
 import { PaymentHistoryList } from '../PaymentHistoryModal';
+import CashAccountSelect, { usePaymentCashAccounts } from '../SdmCashAccountSelect';
+import { currentRole } from '../portalAccess';
+import { isFinanceRole } from '../../../lib/financeRoles';
 import { useTaxProfile } from '../../../lib/taxProfile';
+import { todayWIB } from '../../../lib/waktu';
 
 const AP_STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
   sent: { label: 'Terkirim', cls: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-400/15 dark:text-blue-300 dark:border-blue-400/30' },
-  partially_paid: { label: 'Dibayar Sebagian', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
+  // 2026-11-03: kunci status server = partial_paid (dulu `partially_paid` → badge jatuh ke "Draft")
+  partial_paid: { label: 'Dibayar Sebagian', cls: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
   paid: { label: 'Lunas', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30' },
   cancelled: { label: 'Dibatalkan', cls: 'bg-muted text-muted-foreground border-border' },
 };
@@ -160,7 +171,117 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
   );
 }
 
-function InvoiceDetail({ inv, onClose, onSend, sending, token }) {
+const PAYABLE = ['sent', 'partial_paid'];
+const canPay = (inv) => PAYABLE.includes(inv?.status) && Number(inv?.balance ?? inv?.total ?? 0) > 0;
+
+function PayInvoiceModal({ token, inv, onClose, onPaid }) {
+  const balance = Number(inv.balance ?? inv.total ?? 0);
+  const { accounts, loaded } = usePaymentCashAccounts(token);
+  const [accountId, setAccountId] = useState('');
+  const [date, setDate] = useState(todayWIB());
+  const [amount, setAmount] = useState(String(Math.round(balance)));
+  const [discount, setDiscount] = useState('');
+  const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const cash = Number(amount || 0);
+  const disc = Number(discount || 0);
+  const reduced = cash + disc;
+  const left = balance - reduced;
+  const problem = !accountId ? 'Pilih rekening pembayaran.'
+    : cash <= 0 ? 'Jumlah dibayar harus lebih dari 0.'
+      : left < -0.5 ? `Jumlah bayar + potongan melebihi sisa hutang (${fmtRp(balance)}).`
+        : '';
+
+  const submit = async () => {
+    if (problem) { setErr(problem); return; }
+    setErr('');
+    setSaving(true);
+    try {
+      const out = await apiPost(token, `/api/rahaza/ap-invoices/${inv.id}/payment`, {
+        amount: cash, discount_amount: disc, account_id: accountId, date, notes: notes || undefined,
+      });
+      const posting = out?._posting_result;
+      if (posting?.ok) {
+        toast.success(`Pembayaran ${fmtRp(cash)} untuk ${inv.invoice_number} tercatat · ${posting.je_number}`);
+      } else {
+        toast.warning(
+          `Pembayaran tercatat, tetapi BELUM masuk buku besar: ${posting?.error || 'hasil posting tidak diketahui'}.`,
+          { duration: 10000 },
+        );
+      }
+      onPaid?.(out);
+      onClose();
+    } catch (e) {
+      setErr(e.message);
+      toast.error(e.message);
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal onClose={onClose} title={`Bayar ${inv.invoice_number}`} size="md">
+      <div className="space-y-4" data-testid="ap-pay-modal">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div><div className="text-xs text-muted-foreground">Supplier</div><div className="font-medium">{inv.vendor_name}</div></div>
+          <div><div className="text-xs text-muted-foreground">Sisa hutang</div><div className="font-semibold tabular-nums">{fmtRp(balance)}</div></div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1">Bayar dari rekening</label>
+            <CashAccountSelect accounts={accounts} loaded={loaded} value={accountId} onChange={setAccountId}
+                               testId="ap-pay-account" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-date">Tanggal bayar</label>
+            <GlassInput id="ap-pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)}
+                        data-testid="ap-pay-date" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-amount">Jumlah dibayar (keluar dari bank)</label>
+            <MoneyInput glass id="ap-pay-amount" value={amount} onChange={(e) => setAmount(e.target.value)}
+                        className="text-right" data-testid="ap-pay-amount" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-discount">Potongan dari pemasok (opsional)</label>
+            <MoneyInput glass id="ap-pay-discount" value={discount} onChange={(e) => setDiscount(e.target.value)}
+                        placeholder="0" className="text-right" data-testid="ap-pay-discount" />
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Isi potongan hanya bila pemasok memberi potongan tertulis (mis. bayar lebih cepat). Potongan mengurangi hutang
+          tanpa uang keluar dan dicatat sebagai Potongan Pembelian.
+        </p>
+        <div>
+          <label className="block text-xs font-medium mb-1" htmlFor="ap-pay-notes">Catatan</label>
+          <GlassInput id="ap-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)}
+                      placeholder="opsional, mis. no. referensi transfer" data-testid="ap-pay-notes" />
+        </div>
+        <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 text-sm space-y-1">
+          <div className="flex justify-between"><span className="text-muted-foreground">Hutang berkurang</span>
+            <span className="tabular-nums" data-testid="ap-pay-reduced">{fmtRp(reduced)}</span></div>
+          <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1"><span>Sisa setelah dibayar</span>
+            <span className="tabular-nums" data-testid="ap-pay-left">{fmtRp(Math.max(left, 0))}</span></div>
+        </div>
+        {(err || (problem && accountId)) && (
+          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm"
+               data-testid="ap-pay-error">
+            {err || problem}
+          </div>
+        )}
+        <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
+          <Button variant="secondary" onClick={onClose}>Batal</Button>
+          <Button onClick={submit} disabled={saving || !!problem} data-testid="ap-pay-submit">
+            <HandCoins className="w-4 h-4 mr-1.5" />
+            {saving ? 'Menyimpan...' : 'Bayar & Catat ke Buku Besar'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
   return (
     <Modal onClose={onClose} title={`Faktur ${inv.invoice_number}`} size="2xl">
       <div className="space-y-4" data-testid="ap-detail">
@@ -249,6 +370,11 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token }) {
 
         <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
           <Button variant="secondary" onClick={onClose}>Tutup</Button>
+          {onPay && canPay(inv) && (
+            <Button onClick={() => onPay(inv)} data-testid="ap-detail-pay">
+              <HandCoins className="w-4 h-4 mr-1.5" /> Bayar
+            </Button>
+          )}
           {inv.status === 'draft' && (
             <Button onClick={() => onSend(inv)} disabled={sending} data-testid="ap-detail-approve">
               <Send className="w-4 h-4 mr-1.5" />
@@ -271,7 +397,10 @@ export default function SupplierInvoiceModule({ token }) {
   const [statusFilter, setStatusFilter] = useState('');
   const [createGr, setCreateGr] = useState(null);
   const [detail, setDetail] = useState(null);
+  const [paying, setPaying] = useState(null);
   const [sending, setSending] = useState(false);
+  // Faktur Supplier juga dibuka dari portal Pengadaan; tombol bayar hanya untuk peran keuangan (FIN-02).
+  const finance = isFinanceRole(currentRole());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -323,8 +452,9 @@ export default function SupplierInvoiceModule({ token }) {
     });
   }, [invoices, search, statusFilter]);
 
+  // draf belum menjadi hutang (belum disetujui & belum dijurnal) — sama dengan Umur Hutang & buku besar
   const outstanding = invoices
-    .filter((i) => !['paid', 'cancelled'].includes(i.status))
+    .filter((i) => !['draft', 'paid', 'cancelled'].includes(i.status))
     .reduce((s, i) => s + Number(i.balance ?? i.total ?? 0), 0);
 
   return (
@@ -486,7 +616,13 @@ export default function SupplierInvoiceModule({ token }) {
                       <td className="py-3 text-right font-mono text-xs">{fmtRp(i.total)}</td>
                       <td className="py-3 text-right font-mono text-xs">{fmtRp(i.balance ?? i.total)}</td>
                       <td className="py-3"><ApBadge status={i.status} /></td>
-                      <td className="py-3 pr-4 text-right">
+                      <td className="py-3 pr-4 text-right whitespace-nowrap">
+                        {finance && canPay(i) && (
+                          <Button size="sm" onClick={() => setPaying(i)} className="mr-1"
+                                  data-testid={`ap-pay-${i.id}`}>
+                            Bayar
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" onClick={() => setDetail(i)}
                                 data-testid={`ap-view-${i.id}`}>
                           Detail
@@ -507,7 +643,11 @@ export default function SupplierInvoiceModule({ token }) {
                             onCreated={() => { load(); setTab('invoices'); }} />
       )}
       {detail && (
-        <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token} />
+        <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token}
+                       onPay={finance ? (inv) => { setDetail(null); setPaying(inv); } : null} />
+      )}
+      {paying && (
+        <PayInvoiceModal token={token} inv={paying} onClose={() => setPaying(null)} onPaid={() => load()} />
       )}
     </div>
   );
