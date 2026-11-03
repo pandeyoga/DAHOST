@@ -45,6 +45,7 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-finance"],
 
 AR_STATUS = ["draft", "issued", "sent", "partial_paid", "paid", "overdue", "written_off", "cancelled"]
 AP_STATUS = ["draft", "sent", "partial_paid", "paid", "overdue", "cancelled"]
+AP_DEBIT_TYPES = ("EXPENSE", "COGS", "ASSET", "OTHER_EXPENSE")   # akun yang boleh didebit faktur supplier manual
 
 
 def _uid(): return str(uuid.uuid4())
@@ -758,6 +759,19 @@ async def create_ap(request: Request):
         raise HTTPException(400, "tax_pct tidak boleh negatif.")
     tax = round(subtotal * tax_pct / 100)
     total = round(subtotal + tax)
+    # 2026-11-03: akun debit faktur manual (mis. 5-2200 ongkos jahit, 5-1100 kain). Kosong = bawaan
+    # mapping 'ap_invoice.debit_expense_default'. `post_ap_invoice` sudah membaca `gl_debit_code`.
+    gl_debit_code = str(body.get("gl_debit_code") or "").strip()
+    if gl_debit_code:
+        acc = await db.rahaza_coa_accounts.find_one({"code": gl_debit_code, "active": True},
+                                                    {"_id": 0, "is_group": 1, "type": 1})
+        if not acc:
+            raise HTTPException(400, f"Akun '{gl_debit_code}' tidak ditemukan atau non-aktif.")
+        if acc.get("is_group"):
+            raise HTTPException(400, f"Akun '{gl_debit_code}' adalah header (non-postable). Pilih akun leaf.")
+        if acc.get("type") not in AP_DEBIT_TYPES:
+            raise HTTPException(400, f"Akun '{gl_debit_code}' bertipe {acc.get('type')} — faktur supplier hanya boleh "
+                                     f"mendebit akun beban, HPP, atau aset.")
     from core.tax_status import get_tax_profile, input_tax_treatment
     treatment = input_tax_treatment(await get_tax_profile(db))  # non-PKP → PPN = bagian harga beli
     invoice_number = await _gen_number(db, "rahaza_ap_invoices", "AP")
@@ -772,6 +786,7 @@ async def create_ap(request: Request):
         "total": total, "paid_amount": 0, "balance": total,
         "status": "draft", "notes": body.get("notes") or "",
         "cost_center_id": body.get("cost_center_id") or None,
+        "gl_debit_code": gl_debit_code or None,
         "created_at": _now(), "updated_at": _now(),
         "created_by": user["id"], "created_by_name": user.get("name", ""),
     }

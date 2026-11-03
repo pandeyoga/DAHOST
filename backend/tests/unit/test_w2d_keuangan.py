@@ -60,6 +60,8 @@ def _ev(e, doc):
             return _ev(a[1], doc) if _ev(a[0], doc) else _ev(a[2], doc)
         if op == "$eq":
             return _ev(a[0], doc) == _ev(a[1], doc)
+        if op == "$in":
+            return _ev(a[0], doc) in _ev(a[1], doc)
     return e
 
 
@@ -84,6 +86,11 @@ class AggCollection(fm.FakeCollection):
                     for f, acc in spec.items():
                         g[f] += float(_ev(acc["$sum"], r) or 0)
                 rows = list(groups.values())
+            elif "$sort" in st:
+                for k, direction in reversed(list(st["$sort"].items())):
+                    rows.sort(key=lambda r, k=k: r.get(k) or 0, reverse=direction < 0)
+            elif "$limit" in st:
+                rows = rows[:st["$limit"]]
         return fm.FakeCursor(rows)
 
     async def distinct(self, field, q=None):
@@ -503,6 +510,22 @@ def test_k20_rekap_label_dan_laba_kotor_gl(recap_db):
     oct_, nov = r["monthly_trend"][-2], r["monthly_trend"][-1]
     assert oct_["gl_gross_profit"] == 1_100_000 and oct_["cash_in"] == 1_310_000
     assert nov["gl_gross_profit"] == 0                                      # 1 Des tidak lagi masuk November
+
+
+def test_rekap_hutang_per_vendor_terisi(recap_db):
+    # dulu `garment_summary` selalu [] → kartu "Hutang Vendor" selalu "Tidak ada data"
+    recap_db.rahaza_ap_invoices.docs[0]["vendor_name"] = "CMT Bu Lilis"
+    recap_db.rahaza_ap_invoices.docs += [
+        {"id": "ap2", "vendor_name": "ACSM", "status": "paid", "issue_date": "2026-10-03", "total": 4_000_000, "balance": 0},
+        {"id": "ap3", "vendor_name": "ACSM", "status": "partial_paid", "issue_date": "2026-10-20", "total": 3_000_000, "balance": 1_200_000},
+        {"id": "ap4", "vendor_name": "ACSM", "status": "draft", "issue_date": "2026-10-21", "total": 9_000_000, "balance": 9_000_000},
+        {"id": "ap5", "vendor_name": "WAITEX", "status": "sent", "issue_date": "2026-09-30", "total": 5_000_000, "balance": 5_000_000}]
+    r = run(rec.compute_financial_recap(recap_db, "2026-10-01", "2026-10-31", date(2026, 11, 2), ["issued", "sent", "partial_paid"]))
+    rows = {g["vendor_name"]: g for g in r["garment_summary"]}
+    assert set(rows) == {"ACSM", "CMT Bu Lilis"}                            # draft & di luar periode tidak ikut
+    assert rows["ACSM"]["total_invoiced"] == 7_000_000 and rows["ACSM"]["outstanding"] == 1_200_000
+    assert rows["CMT Bu Lilis"]["outstanding"] == 1_000_000 and rows["CMT Bu Lilis"]["garment_name"] == "CMT Bu Lilis"
+    assert [g["vendor_name"] for g in r["garment_summary"]] == ["ACSM", "CMT Bu Lilis"]   # urut sisa terbesar
 
 
 # ═════════════════════════ K33 — Laporan Eksekutif ═════════════════════════════
