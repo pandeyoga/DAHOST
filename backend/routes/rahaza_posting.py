@@ -1047,8 +1047,30 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
         lines[0]["debit"] = round(subtotal - ppv, 2)
         lines.append({"account_code": ppv_code, "debit": ppv if ppv > 0 else 0, "credit": -ppv if ppv < 0 else 0,
                       "description": f"{desc} - Selisih harga beli vs GR"})
-    if tax > 0 and tax_code:
-        lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"{desc} - PPN Masukan"})
+    if tax > 0:
+        # 2026-11-03 (saklar PKP, core.tax_status): perlakuan PPN masukan dibekukan di faktur saat dibuat.
+        #   kredit       (PKP)     → Dr 1-1501 PPN Masukan (dapat dikreditkan)
+        #   kapitalisasi (non-PKP) → PPN tidak dapat dikreditkan = bagian harga beli: tagihan dari GR →
+        #                            akun selisih harga beli (PPV, sama dengan selisih harga vs GR);
+        #                            tagihan biaya → akun beban baris tagihan.
+        # Faktur lama tanpa penanda mengikuti status perusahaan saat posting.
+        from core.tax_status import TREAT_CAPITALIZE, get_tax_profile, input_tax_treatment
+        treatment = invoice.get("input_tax_treatment") or input_tax_treatment(await get_tax_profile(db))
+        if treatment == TREAT_CAPITALIZE:
+            is_gr = invoice.get("source") == "gr" or bool(invoice.get("gr_ids"))
+            cap_code = mapping.get("debit_price_variance") if is_gr else exp_default
+            if not cap_code:
+                result = {"ok": False, "error": "PPN supplier (non-PKP) perlu akun selisih harga beli: isi mapping 'ap_invoice.debit_price_variance'."}
+                await _save_source_posting_result(db, "rahaza_ap_invoices", inv_id, result)
+                return result
+            lines.append({"account_code": cap_code, "debit": tax, "credit": 0,
+                          "description": f"{desc} - PPN supplier (tidak dapat dikreditkan, non-PKP)"})
+        else:
+            if not tax_code:
+                result = {"ok": False, "error": "Mapping 'ap_invoice.debit_tax_input' (PPN Masukan) belum diisi."}
+                await _save_source_posting_result(db, "rahaza_ap_invoices", inv_id, result)
+                return result
+            lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"{desc} - PPN Masukan"})
 
     result = await _create_posted_je(db, je_date, memo, "ap_invoice", source_ref, lines, user)
     await _save_source_posting_result(db, "rahaza_ap_invoices", inv_id, result)

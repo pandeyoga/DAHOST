@@ -23,6 +23,11 @@ router = APIRouter(prefix='/api/dewi/system/config', tags=['Dewi-System-Config']
 # DEFAULT CONFIG SCHEMA (for initial render in UI)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# 2026-11-03 (saklar PKP): kunci yang PENSIUN — tidak dibaca kode lagi & disembunyikan dari daftar.
+# `maklon_tax_pct` (PPN invoice maklon 11%) digantikan Status Pajak perusahaan (core.tax_status):
+# non-PKP tidak memungut PPN, PKP = 12% × DPP 11/12. Dokumen lama di DB dibiarkan (tidak dihapus).
+RETIRED_KEYS = {'maklon_tax_pct'}
+
 DEFAULT_CONFIGS = [
     # 2026-09-24 — gate GDG-2 (progress produksi internal wajib MI issued) bisa dimatikan.
     {
@@ -57,15 +62,6 @@ DEFAULT_CONFIGS = [
         'label': 'Prefix Invoice Maklon',
         'description': 'Prefix untuk nomor invoice order maklon. Contoh INV-MKL → INV-MKL-2026-0001',
         'data_type': 'string',
-        'is_secret': False,
-    },
-    {
-        'key': 'maklon_tax_pct',
-        'value': 11.0,
-        'category': 'maklon',
-        'label': 'PPN Invoice Maklon (%)',
-        'description': 'Persentase PPN default yang diterapkan pada invoice maklon',
-        'data_type': 'number',
         'is_secret': False,
     },
     {
@@ -324,6 +320,8 @@ async def list_configs(
 
     out = []
     for doc in items:
+        if doc.get('key') in RETIRED_KEYS:
+            continue
         cleaned = {**doc}
         _mask_secret(cleaned)
         # Hide raw secret value if not admin

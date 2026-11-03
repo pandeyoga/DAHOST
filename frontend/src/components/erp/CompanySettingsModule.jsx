@@ -1,13 +1,18 @@
 
 import { useState, useEffect } from 'react';
-import { Settings, Save, Upload, Building2, FileText, RefreshCw, CheckCircle, Image } from 'lucide-react';
+import { Settings, Save, Upload, Building2, FileText, RefreshCw, CheckCircle, Image, Receipt } from 'lucide-react';
+import { resetTaxProfileCache } from '../../lib/taxProfile';
 
 export default function CompanySettingsModule({ token, userRole }) {
   const [settings, setSettings] = useState({
     company_name: '', company_address: '', company_phone: '',
     company_email: '', company_website: '', company_logo_url: '',
-    pdf_header_line1: '', pdf_header_line2: '', pdf_footer_text: '',
+    pdf_header_line1: '', pdf_header_line2: '', pdf_footer_text: '', npwp: '',
   });
+  // 2026-11-03: saklar Status Pajak (SSOT backend core/tax_status.py)
+  const [tax, setTax] = useState({ pkp: false, pkp_since: '' });
+  const [taxSaved, setTaxSaved] = useState({ pkp: false, pkp_since: '' });
+  const [taxHistory, setTaxHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -34,7 +39,11 @@ export default function CompanySettingsModule({ token, userRole }) {
           pdf_header_line1: data.pdf_header_line1 || '',
           pdf_header_line2: data.pdf_header_line2 || '',
           pdf_footer_text: data.pdf_footer_text || '',
+          npwp: data.npwp || '',
         });
+        const tp = { pkp: !!data.tax_profile?.pkp, pkp_since: data.tax_profile?.pkp_since || '' };
+        setTax(tp); setTaxSaved(tp);
+        setTaxHistory(Array.isArray(data.tax_profile_history) ? data.tax_profile_history.slice(-5).reverse() : []);
       }
     } catch (e) { console.error(e); }
     setLoading(false);
@@ -42,20 +51,29 @@ export default function CompanySettingsModule({ token, userRole }) {
 
   const handleSave = async (e) => {
     e.preventDefault();
+    const taxChanged = tax.pkp !== taxSaved.pkp || (tax.pkp && tax.pkp_since !== taxSaved.pkp_since);
+    if (taxChanged && !window.confirm(tax.pkp
+      ? `Ubah status pajak menjadi PKP sejak ${tax.pkp_since || '-'}?\n\nDokumen penjualan BARU akan memungut PPN 12% × DPP 11/12, dan PPN dari supplier dikreditkan. Dokumen lama tidak berubah.`
+      : 'Ubah status pajak menjadi NON-PKP?\n\nDokumen penjualan BARU tidak memungut PPN, dan PPN dari supplier dicatat sebagai bagian harga beli. Dokumen lama tidak berubah.')) return;
     setSaving(true);
     setSaved(false);
     try {
       const res = await fetch('/api/company-settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({ ...settings, tax_profile: tax }),
       });
       if (res.ok) {
+        const data = await res.json();
+        const tp = { pkp: !!data.tax_profile?.pkp, pkp_since: data.tax_profile?.pkp_since || '' };
+        setTax(tp); setTaxSaved(tp);
+        setTaxHistory(Array.isArray(data.tax_profile_history) ? data.tax_profile_history.slice(-5).reverse() : []);
+        resetTaxProfileCache();
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
       } else {
-        const data = await res.json();
-        alert(data.error || 'Gagal menyimpan');
+        const data = await res.json().catch(() => ({}));
+        alert(data.detail || data.error || 'Gagal menyimpan');
       }
     } catch (e) { alert('Gagal menyimpan: ' + e.message); }
     setSaving(false);
@@ -160,7 +178,14 @@ export default function CompanySettingsModule({ token, userRole }) {
                   value={settings.company_email} onChange={e => updateField('company_email', e.target.value)}
                   placeholder="info@company.com" />
               </div>
-              <div className="col-span-2">
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-1">NPWP Perusahaan</label>
+                <input type="text" disabled={!canEdit}
+                  className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
+                  value={settings.npwp} onChange={e => updateField('npwp', e.target.value)}
+                  placeholder="00.000.000.0-000.000" data-testid="company-npwp" />
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-foreground mb-1">Website</label>
                 <input type="text" disabled={!canEdit}
                   className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
@@ -168,6 +193,51 @@ export default function CompanySettingsModule({ token, userRole }) {
                   placeholder="www.company.com" />
               </div>
             </div>
+          </div>
+        </div>
+
+        {/* Status Pajak — saklar PKP */}
+        <div className="bg-[var(--card-surface)] rounded-xl border border-border shadow-sm" data-testid="company-tax-status">
+          <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+            <Receipt className="w-5 h-5 text-primary" />
+            <h3 className="font-semibold text-foreground">Status Pajak</h3>
+          </div>
+          <div className="p-5 space-y-4 text-sm">
+            <div className="flex flex-wrap gap-3">
+              {[{ v: false, t: 'Non-PKP', d: 'Tidak memungut PPN. PPN dari supplier masuk ke harga beli.' },
+                { v: true, t: 'PKP', d: 'Memungut PPN 12% × DPP 11/12 (efektif 11%, kode 04). PPN supplier dikreditkan.' }].map(o => (
+                <label key={o.t} className={`flex-1 min-w-[220px] cursor-pointer rounded-lg border px-4 py-3 ${tax.pkp === o.v ? 'border-primary bg-primary/5' : 'border-border'}`}>
+                  <div className="flex items-center gap-2 font-medium">
+                    <input type="radio" name="tax-status" disabled={!canEdit} checked={tax.pkp === o.v}
+                      onChange={() => setTax(t => ({ ...t, pkp: o.v }))} data-testid={`tax-status-${o.v ? 'pkp' : 'nonpkp'}`} />
+                    {o.t}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">{o.d}</p>
+                </label>
+              ))}
+            </div>
+            {tax.pkp && (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">PKP sejak *</label>
+                  <input type="date" disabled={!canEdit} required
+                    className="w-full border border-border rounded-lg px-3 py-2.5 text-sm disabled:bg-[var(--glass-bg)]"
+                    value={tax.pkp_since} onChange={e => setTax(t => ({ ...t, pkp_since: e.target.value }))} data-testid="tax-pkp-since" />
+                  <p className="text-xs text-muted-foreground mt-1">Tanggal pengukuhan PKP dari KPP. NPWP wajib diisi.</p>
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Perubahan hanya berlaku untuk dokumen BARU. Faktur, nota, dan tagihan yang sudah dibuat tidak berubah.
+            </p>
+            {taxHistory.length > 0 && (
+              <div className="text-xs text-muted-foreground border-t border-border pt-3 space-y-0.5">
+                <div className="font-medium text-foreground">Riwayat perubahan</div>
+                {taxHistory.map((h, i) => (
+                  <div key={i}>{String(h.at || '').slice(0, 10)} · {h.by}: {h.from_pkp ? 'PKP' : 'Non-PKP'} → {h.to_pkp ? `PKP (sejak ${h.pkp_since})` : 'Non-PKP'}</div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

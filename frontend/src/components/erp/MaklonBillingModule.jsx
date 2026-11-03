@@ -10,6 +10,8 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
+import SalesTaxFields from './SalesTaxFields';
+import { useTaxProfile } from '../../lib/taxProfile';
 import { motion } from 'framer-motion';
 import { PageHeader } from './moduleAtoms';
 import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
@@ -262,7 +264,9 @@ export default function MaklonBillingModule({ token, onNavigate }) {
 
 function GenerateDialog({ orders, headers, onClose, onSuccess }) {
   const [orderId, setOrderId] = useState('');
-  const [taxPct, setTaxPct] = useState('');
+  // 2026-11-03: PPN mengikuti saklar Status Pajak (dulu "PPN % opsional", kosong = 11% dari config)
+  const { profile: taxProfile } = useTaxProfile();
+  const [taxF, setTaxF] = useState({ kena_ppn: true, faktur_number: '', faktur_date: '' });
   const [terms, setTerms] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
@@ -277,7 +281,8 @@ function GenerateDialog({ orders, headers, onClose, onSuccess }) {
     if (!orderId) { toast.error('Pilih PO'); return; }
     setSaving(true);
     const payload = { order_id: orderId };
-    if (taxPct) payload.tax_pct = Number(taxPct);
+    payload.kena_ppn = !!taxProfile.pkp && taxF.kena_ppn !== false;
+    if (payload.kena_ppn) Object.assign(payload, { faktur_number: taxF.faktur_number, faktur_date: taxF.faktur_date });
     if (terms) payload.payment_terms = terms;
     if (notes) payload.notes = notes;
     if (selected?.source !== 'engine_ar') Object.assign(payload, docNumberPayload(numPolicy, 'invoice_number', invNumber));
@@ -324,8 +329,8 @@ function GenerateDialog({ orders, headers, onClose, onSuccess }) {
                   </p>
                 )}
               </div>
+              <SalesTaxFields profile={taxProfile} value={taxF} onChange={setTaxF} compact testIdPrefix="maklon-gen-tax" />
               <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1"><Label>PPN % (opsional)</Label><Input type="number" placeholder="default config" value={taxPct} onChange={e => setTaxPct(e.target.value)} /></div>
                 <div className="space-y-1">
                   <Label>Payment Terms</Label>
                   <Select value={terms} onValueChange={setTerms}>
