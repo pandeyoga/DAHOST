@@ -33,6 +33,11 @@ wait_backend() {
   "${DC[@]}" logs --tail=60 backend-demo; die "backend demo belum sehat"
 }
 
+has_users() {
+  [ "$("${DC[@]}" exec -T mongo-demo mongosh --quiet dahost_demo --eval 'print(db.users.countDocuments({}))' 2>/dev/null \
+    | tr -dc '0-9')" -gt 0 ] 2>/dev/null
+}
+
 indexes() {
   "${DC[@]}" exec -T backend-demo python migrations/ensure_indexes.py >/dev/null || echo "  ! ensure_indexes gagal" >&2
 }
@@ -62,7 +67,10 @@ case "$cmd" in
       "$DEMO_DIR/demo.caddy.template" > "$SITES_DIR/demo.caddy"
     echo "==> build & jalankan demo (frontend dibangun ulang untuk $domain — beberapa menit)"
     "${DC[@]}" up -d --build
-    wait_backend; indexes; reload_caddy
+    reload_caddy
+    # DB demo masih kosong → backend (ENV=production) menolak menyala tanpa superadmin. Itu normal di
+    # tahap ini; backend menyala sendiri sesudah `muat-data`.
+    if has_users; then wait_backend; indexes; fi
     echo "SELESAI. Isi datanya: bash deploy/demo/demo.sh muat-data <arsip>"
     ;;
   muat-data)
@@ -73,9 +81,12 @@ case "$cmd" in
     "${DC[@]}" exec -T mongo-demo mongorestore --archive --gzip --nsInclude="$src.*" \
       --nsFrom="$src.*" --nsTo="dahost_demo.*" < "$file"
     read -rsp "Kata sandi BARU untuk SEMUA akun demo (min. 12 karakter): " demo_pw; echo
-    "${DC[@]}" exec -T -e DEMO_PASSWORD="$demo_pw" backend-demo python /app/scripts/demo_prepare.py --terapkan
+    # container sekali-pakai (bukan `exec`): backend demo bisa sedang gagal menyala sebelum data ada
+    "${DC[@]}" run --rm --no-deps -e DEMO_PASSWORD="$demo_pw" backend-demo \
+      python /app/scripts/demo_prepare.py --terapkan
+    "${DC[@]}" up -d backend-demo >/dev/null
     "${DC[@]}" restart backend-demo >/dev/null
-    wait_backend; indexes
+    wait_backend; indexes; reload_caddy
     echo "SELESAI. Buka https://$(grep '^DEMO_DOMAIN=' "$ENV_FILE" | cut -d= -f2)"
     ;;
   update)
