@@ -68,6 +68,26 @@ async def gl_gross_profit(db, date_from: str = "", date_to: str = "") -> dict:
     return {"revenue": t["revenue"], "cogs": t["cogs"], "gross_profit": t["gross_profit"]}
 
 
+async def vendor_payables(db, date_filter: dict, excluded: list, open_statuses: list, limit: int = 10) -> list:
+    """2026-11-03: daftar "Hutang Vendor" di Rekap — dulu `garment_summary` selalu `[]` sehingga kartu
+    itu selalu "Tidak ada data" walau Total Outstanding AP terisi. Per pemasok: Σ tagihan periode ini
+    dan sisa yang belum dibayar (status terbuka). Kunci `garment_name` dipertahankan untuk layar lama."""
+    match = {"status": {"$nin": excluded}}
+    if date_filter:
+        match["issue_date"] = date_filter
+    rows = await db.rahaza_ap_invoices.aggregate([
+        {"$match": match},
+        {"$group": {"_id": {"$ifNull": ["$vendor_name", "(tanpa nama)"]},
+                    "total_invoiced": {"$sum": invoice_total_expr()},
+                    "outstanding": {"$sum": {"$cond": [{"$in": ["$status", open_statuses]}, open_balance_expr(), 0]}},
+                    "invoices": {"$sum": 1}}},
+        {"$sort": {"outstanding": -1, "total_invoiced": -1}},
+        {"$limit": limit},
+    ]).to_list(limit)
+    return [{"vendor_name": r["_id"], "garment_name": r["_id"], "total_invoiced": round(r["total_invoiced"], 2),
+             "outstanding": round(r["outstanding"], 2), "invoices": r["invoices"]} for r in rows]
+
+
 async def compute_financial_recap(db, date_from: str, date_to: str, today, open_statuses_canonical: list) -> dict:
     """Isi `GET /api/financial-recap` (FinancialRecapModule.jsx) — dipindah dari server.py (2026-11-02)
     supaya bisa diuji tanpa memuat seluruh server.
@@ -152,7 +172,7 @@ async def compute_financial_recap(db, date_from: str, date_to: str, today, open_
         "gl_cogs": gl["cogs"],
         "gl_gross_profit_label": "Laba kotor (buku besar)",
         "monthly_trend": monthly_trend,
-        "garment_summary": [],
+        "garment_summary": await vendor_payables(db, date_filter, excluded, open_statuses),
         "date_from": date_from,
         "date_to": date_to,
     }
