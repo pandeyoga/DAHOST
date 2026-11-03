@@ -77,6 +77,9 @@ case "$cmd" in
     file="${1:-}"; [ -f "$file" ] || die "berkas arsip tidak ditemukan: $file"
     src="${SRC_DB:-dahost_erp}"
     echo "==> data demo lama DIHAPUS lalu diisi dari $file ($src → dahost_demo). Produksi tidak tersentuh."
+    # backend demo dihentikan selama pemulihan: tanpa ini ia menyala begitu akun ikut terpulihkan dan
+    # menjalankan tugas awal (indeks, seed) bersamaan dengan mongorestore
+    "${DC[@]}" stop backend-demo >/dev/null 2>&1 || true
     "${DC[@]}" exec -T mongo-demo mongosh --quiet dahost_demo --eval 'db.dropDatabase()' >/dev/null
     "${DC[@]}" exec -T mongo-demo mongorestore --archive --gzip --nsInclude="$src.*" \
       --nsFrom="$src.*" --nsTo="dahost_demo.*" < "$file"

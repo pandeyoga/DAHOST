@@ -5,6 +5,11 @@ services:
     image: mongo:7
     restart: unless-stopped
     command: ["mongod", "--bind_ip_all", "--quiet", "--wiredTigerCacheSizeGB", "1"]
+    # 2026-11-03: batas berkas terbuka bawaan Docker di VPS = 1024, padahal WiredTiger membuka 1 berkas per
+    # koleksi + per indeks (±240 koleksi, ±560 berkas saat diam). Lewat batas → WT_PANIC → mongod mati
+    # (terbukti di mongo demo saat muat-data). Anjuran MongoDB: 64000.
+    ulimits:
+      nofile: {soft: 64000, hard: 64000}
     volumes:
       - mongo_data:/data/db
     healthcheck:
