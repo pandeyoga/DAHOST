@@ -8,6 +8,8 @@ import { toast } from 'sonner';
 import Modal from '../Modal';
 import { PageHeader } from '../moduleAtoms';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
+import SalesTaxFields from '../SalesTaxFields';
+import { useTaxProfile, previewOutputTax } from '../../../lib/taxProfile';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 const STATUS = { draft: ['Draft', 'text-amber-300 bg-amber-400/10 border-amber-400/25'], confirmed: ['Belum Lunas', 'text-sky-300 bg-sky-400/10 border-sky-400/25'], paid: ['Lunas', 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25'], cancelled: ['Batal', 'text-red-300 bg-red-400/10 border-red-400/25'], confirming: ['Memproses', 'text-muted-foreground'] };
@@ -78,7 +80,11 @@ function CreateSaleModal({ onClose, onSaved }) {
   const [customers, setCustomers] = useState([]);
   const [stock, setStock] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [f, setF] = useState({ customer_id: '', payment_type: 'cash', cash_account_id: '', sale_date: todayWIB(), due_date: '', tax_pct: 0, discount_amount: 0, notes: '' });
+  const [f, setF] = useState({ customer_id: '', payment_type: 'cash', cash_account_id: '', sale_date: todayWIB(), due_date: '', discount_amount: 0, notes: '' });
+  // 2026-11-03: PPN mengikuti saklar Status Pajak (dulu pilihan bebas 0/11/12% atas DPP penuh)
+  const { profile: taxProfile } = useTaxProfile();
+  const [taxF, setTaxF] = useState({ kena_ppn: true, faktur_number: '', faktur_date: '' });
+  const kenaPpn = !!taxProfile.pkp && taxF.kena_ppn !== false;
   const [items, setItems] = useState([{ material_id: '', qty: 1, price: 0 }]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -95,7 +101,7 @@ function CreateSaleModal({ onClose, onSaved }) {
   }));
     const subtotal = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.price) || 0), 0);
   const disc = Number(f.discount_amount) || 0;
-  const tax = Math.round((subtotal - disc) * (Number(f.tax_pct) || 0) / 100);
+  const tax = previewOutputTax(taxProfile, subtotal - disc, kenaPpn);
   const total = subtotal - disc + tax;
   const cust = customers.find(c => c.id === f.customer_id);
 
@@ -105,7 +111,8 @@ function CreateSaleModal({ onClose, onSaved }) {
     if (!clean.length) return toast.error('Tambahkan minimal satu item.');
     setBusy(true);
     try {
-      const n = await apiPost('/sales/direct-sales', { ...f, items: clean, due_date: f.due_date || undefined });
+      const n = await apiPost('/sales/direct-sales', { ...f, items: clean, due_date: f.due_date || undefined, kena_ppn: kenaPpn,
+                                                        ...(kenaPpn ? { faktur_number: taxF.faktur_number, faktur_date: taxF.faktur_date } : {}) });
       toast.success(`Draft ${n.note_number} tersimpan`); onSaved(n);
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
@@ -126,8 +133,8 @@ function CreateSaleModal({ onClose, onSaved }) {
           ) : (
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Jatuh Tempo (kosong = termin pelanggan)</span><GlassInput type="date" value={f.due_date} onChange={e => set('due_date', e.target.value)} data-testid="sale-form-due" /></label>
           )}
-          <label className="space-y-1"><span className="text-xs text-muted-foreground">PPN</span>
-            <select className={sel} value={f.tax_pct} onChange={e => set('tax_pct', Number(e.target.value))} data-testid="sale-form-tax"><option value={0}>Tanpa PPN</option><option value={11}>PPN 11%</option><option value={12}>PPN 12%</option></select></label>
+          <div className="space-y-1"><span className="text-xs text-muted-foreground">PPN</span>
+            <SalesTaxFields profile={taxProfile} value={taxF} onChange={setTaxF} compact testIdPrefix="sale-form-tax" /></div>
           <label className="space-y-1"><span className="text-xs text-muted-foreground">Diskon (Rp)</span><MoneyInput value={f.discount_amount} onChange={e => set('discount_amount', e.target.value)} className="h-10" data-testid="sale-form-discount" /></label>
         </div>
         <div className="space-y-2">
@@ -147,7 +154,7 @@ function CreateSaleModal({ onClose, onSaved }) {
           <label className="space-y-1 flex-1 min-w-[200px]"><span className="text-xs text-muted-foreground">Catatan</span><GlassInput value={f.notes} onChange={e => set('notes', e.target.value)} data-testid="sale-form-notes" /></label>
           <div className="text-right text-xs space-y-0.5" data-testid="sale-form-totals">
             <div>Subtotal <b>Rp {fmt(subtotal)}</b></div>
-            {tax > 0 && <div>PPN {f.tax_pct}% <b>Rp {fmt(tax)}</b></div>}
+            {tax > 0 && <div>PPN 12% × DPP 11/12 <b>Rp {fmt(tax)}</b></div>}
             {Number(f.discount_amount) > 0 && <div>Diskon <b>- Rp {fmt(f.discount_amount)}</b></div>}
             <div className="text-base">Total <b>Rp {fmt(total)}</b></div>
           </div>

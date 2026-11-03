@@ -24,6 +24,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PageHeader } from './moduleAtoms';
+import { useTaxProfile } from '../../lib/taxProfile';
 import { formatRupiah } from '@/lib/format';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -67,7 +68,10 @@ function StatusBadge({ status }) {
 function CreateAPFromGRDialog({ open, onClose, headers, onSuccess }) {
   const [grs, setGrs] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
-  const [taxPct, setTaxPct] = useState('11');
+  // 2026-11-03: bawaan 0 (dulu 11) — isi sesuai PPN yang DITAGIH supplier di fakturnya.
+  const [taxPct, setTaxPct] = useState('0');
+  const [supplierFaktur, setSupplierFaktur] = useState('');
+  const { profile: taxProfile } = useTaxProfile();
   const [notes, setNotes] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [loading, setLoading] = useState(false);
@@ -137,6 +141,7 @@ function CreateAPFromGRDialog({ open, onClose, headers, onSuccess }) {
         body: JSON.stringify({
           gr_ids: Array.from(selectedIds),
           tax_pct: parseFloat(taxPct) || 0,
+          supplier_faktur_number: supplierFaktur || undefined,
           due_date: dueDate || undefined,
           notes: notes || undefined,
         }),
@@ -224,7 +229,7 @@ function CreateAPFromGRDialog({ open, onClose, headers, onSuccess }) {
         <div className="border-t border-foreground/10 pt-3 space-y-3">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div>
-              <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Tax %</label>
+              <label className="text-[10px] text-muted-foreground uppercase tracking-wider">PPN dari supplier (%)</label>
               <Input
                 type="number"
                 value={taxPct}
@@ -232,6 +237,12 @@ function CreateAPFromGRDialog({ open, onClose, headers, onSuccess }) {
                 className="bg-foreground/5 border-foreground/10 text-sm mt-1"
                 data-testid="ap-tax-pct"
               />
+              <p className="text-[10px] text-muted-foreground mt-1" data-testid="ap-tax-note">{taxProfile.pkp ? 'PKP: PPN ini dikreditkan sebagai PPN Masukan — isi No. Faktur supplier.' : 'Non-PKP: PPN dari supplier tidak dapat dikreditkan, dicatat sebagai bagian harga beli.'}</p>
+            </div>
+            <div>
+              <label className="text-[10px] text-muted-foreground uppercase tracking-wider">No. Faktur Supplier</label>
+              <Input value={supplierFaktur} onChange={e => setSupplierFaktur(e.target.value)} placeholder="opsional"
+                     className="bg-foreground/5 border-foreground/10 text-sm mt-1" data-testid="ap-supplier-faktur" />
             </div>
             <div>
               <label className="text-[10px] text-muted-foreground uppercase tracking-wider">Jatuh Tempo</label>

@@ -705,11 +705,15 @@ async def issue_debit_note(request: Request):
         out_lines.append({**ln, "valued_qty": vq, "unvalued_qty": uq, "disc_price": disc,
                           "discount_absorbed_by_stock": absorbed})
     total = round(sum(x["amount"] for x in dn_lines), 2)
+    # 2026-11-03 (saklar PKP): non-PKP → tanpa PPN retur (K11). PKP → nota retur PPN BELUM otomatis.
+    from core.tax_status import get_tax_profile
+    ppn_note = ("PKP — nota retur PPN belum dibuat otomatis: terbitkan di Coretax & jurnal PPN Masukan manual"
+                if (await get_tax_profile(db)).get("pkp") else "Non-PKP — tanpa PPN retur")
     dn = {"id": dn_id, "dn_number": dn_number, "date": dn_date.isoformat(), "status": "issued",
           "purchase_return_id": rtp["id"], "rtp_number": rtp["rtp_number"], "settlement": st,
           "supplier_name": rtp.get("supplier_name"), "supplier_id": rtp.get("supplier_id"),
           "gr_id": rtp["gr_id"], "gr_number": rtp.get("gr_number"), "po_number": rtp.get("po_number"),
-          "lines": dn_lines, "total_amount": total, "ppn_amount": 0.0, "ppn_note": "DA bukan PKP — tanpa PPN retur",
+          "lines": dn_lines, "total_amount": total, "ppn_amount": 0.0, "ppn_note": ppn_note,
           "ap_amount": round(ap_amount, 2), "grni_amount": round(grni_amount, 2), "info_amount": round(info_amount, 2),
           "notes": body.get("notes") or "", "created_at": _now(), "created_by": user.get("id"),
           "created_by_name": user.get("name", "")}

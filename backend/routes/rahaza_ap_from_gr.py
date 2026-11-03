@@ -240,11 +240,12 @@ class CreateAPFromGRItem(BaseModel):
 class CreateAPFromGRPayload(BaseModel):
     gr_ids: List[str] = Field(..., min_length=1)
     items_override: Optional[List[CreateAPFromGRItem]] = None  # optional partial invoicing
-    tax_pct: Optional[float] = Field(default=0.0, ge=0)
+    tax_pct: Optional[float] = Field(default=0.0, ge=0)   # PPN yang DITAGIH supplier (sesuai fakturnya)
     issue_date: Optional[str] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
     payment_terms: Optional[str] = None
+    supplier_faktur_number: Optional[str] = None             # nomor faktur pajak / invoice supplier
 
 
 @router.post('/ap-invoices/from-gr', status_code=201)
@@ -366,6 +367,9 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
     tax_pct = float(payload.tax_pct or 0)
     tax_amount = round(subtotal * tax_pct / 100, 2)
     total = round(subtotal + tax_amount, 2)
+    # 2026-11-03 (saklar PKP): non-PKP → PPN supplier tidak dapat dikreditkan = bagian harga beli.
+    from core.tax_status import get_tax_profile, input_tax_treatment
+    treatment = input_tax_treatment(await get_tax_profile(db))
 
     # Determine supplier linkage (SSOT master) + vendor_code dari PO bila ada
     vendor_code = ''
@@ -413,6 +417,8 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
         'subtotal': round(subtotal, 2),
         'tax_pct': tax_pct,
         'tax_amount': tax_amount,
+        'input_tax_treatment': treatment,
+        'supplier_faktur_number': (payload.supplier_faktur_number or '').strip()[:40],
         'total': total,
         'paid_amount': 0,
         'balance': total,

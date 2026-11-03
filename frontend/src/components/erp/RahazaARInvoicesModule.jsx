@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useReducer, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Plus, RefreshCw, FileText, DollarSign, Calendar, Users, Zap, CheckCircle2, Store, History } from 'lucide-react';
 import PaymentHistoryModal from './PaymentHistoryModal';
+import SalesTaxFields from './SalesTaxFields';
+import { useTaxProfile, previewOutputTax } from '../../lib/taxProfile';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, StatusBadge, EmptyState } from './moduleAtoms';
@@ -317,7 +319,10 @@ function isMarketplaceChannel(c) {
 
 function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) {
   const today = todayWIB();
-  const [form, setForm] = useState({ customer_id: '', issue_date: today, due_date: '', notes: '', sales_channel: '', tax_pct: 0, discount_amount: 0 });
+  const [form, setForm] = useState({ customer_id: '', issue_date: today, due_date: '', notes: '', sales_channel: '', discount_amount: 0 });
+  // 2026-11-03: PPN mengikuti saklar Status Pajak (non-PKP = tanpa PPN; PKP = 12% × DPP 11/12)
+  const { profile: taxProfile } = useTaxProfile(token);
+  const [taxF, setTaxF] = useState({ kena_ppn: true, faktur_number: '', faktur_date: '' });
   const [items, setItems] = useState([{ description: '', qty: 1, unit_price: 0 }]);
   const [saving, setSaving] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -327,11 +332,12 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
   const numPolicy = useDocNumberPolicy('rahaza_ar_invoices.invoice_number', token);
   const [invNumber, setInvNumber] = useState('');
 
-  // Konvensi tunggal (= backend): DPP = subtotal − diskon; PPN = DPP × %; total = DPP + PPN
+  // Konvensi tunggal (= backend): DPP = subtotal − diskon; PPN dari Status Pajak; total = DPP + PPN
   const subtotal = items.reduce((s, i) => s + (Number(i.qty) * Number(i.unit_price)), 0);
   const discount = Math.min(Number(form.discount_amount) || 0, subtotal);
   const taxable = Math.max(subtotal - discount, 0);
-  const tax = Math.round(taxable * (Number(form.tax_pct) || 0) / 100);
+  const kenaPpn = !!taxProfile.pkp && taxF.kena_ppn !== false;
+  const tax = previewOutputTax(taxProfile, taxable, kenaPpn);
   const total = Math.round(taxable + tax);
 
   const submit = async () => {
@@ -339,7 +345,8 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
     try {
       const r = await fetch('/api/rahaza/ar-invoices', {
         method: 'POST', headers,
-        body: JSON.stringify({ ...form, tax_pct: Number(form.tax_pct) || 0, discount_amount: discount, items,
+        body: JSON.stringify({ ...form, kena_ppn: kenaPpn, ...(kenaPpn ? { faktur_number: taxF.faktur_number, faktur_date: taxF.faktur_date } : {}),
+                               discount_amount: discount, items,
                                ...docNumberPayload(numPolicy, 'invoice_number', invNumber) }),
       });
       if (r.ok) { onCreated(); onClose(); }
@@ -421,16 +428,13 @@ function CreateInvoiceModal({ token, customers, channels, onClose, onCreated }) 
               <label className="text-xs text-muted-foreground uppercase block mb-1">Diskon (Rp)</label>
               <MoneyInput glass value={form.discount_amount} onChange={e => setForm({ ...form, discount_amount: e.target.value })} data-testid="ar-create-discount" />
             </div>
-            <div>
-              <label className="text-xs text-muted-foreground uppercase block mb-1">PPN (%)</label>
-              <GlassInput type="number" min={0} max={100} step="1" value={form.tax_pct} onChange={e => setForm({ ...form, tax_pct: e.target.value })} data-testid="ar-create-tax-pct" />
-            </div>
           </div>
+          <SalesTaxFields profile={taxProfile} value={taxF} onChange={setTaxF} compact testIdPrefix="ar-create-tax" />
           <div className="text-right text-xs text-muted-foreground space-y-0.5" data-testid="ar-create-summary">
             <div>Subtotal: <span className="font-mono">{fmt(subtotal)}</span></div>
             {discount > 0 && <div>Diskon: <span className="font-mono">− {fmt(discount)}</span></div>}
             <div>DPP: <span className="font-mono">{fmt(taxable)}</span></div>
-            {tax > 0 && <div>PPN {Number(form.tax_pct) || 0}%: <span className="font-mono">{fmt(tax)}</span></div>}
+            {tax > 0 && <div>PPN 12% × DPP 11/12: <span className="font-mono">{fmt(tax)}</span></div>}
           </div>
           <div className="text-right text-sm font-semibold text-foreground" data-testid="ar-create-total">Total: {fmt(total)}</div>
         </div>

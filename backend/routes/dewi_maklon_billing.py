@@ -36,6 +36,10 @@ PAYMENT_METHODS = ['transfer', 'cash', 'check', 'giro', 'other']
 class InvoiceGenerateIn(BaseModel):
     order_id: str
     tax_pct: Optional[float] = Field(default=None, ge=0)
+    # 2026-11-03 (saklar PKP): PPN mengikuti Status Pajak perusahaan (core.tax_status).
+    kena_ppn: Optional[bool] = None
+    faktur_number: Optional[str] = None
+    faktur_date: Optional[str] = None
     payment_terms: Optional[str] = None
     notes: Optional[str] = None
     issue_date: Optional[str] = None  # YYYY-MM-DD
@@ -46,6 +50,9 @@ class InvoiceGenerateIn(BaseModel):
 class InvoiceUpdateIn(BaseModel):
     notes: Optional[str] = None
     tax_pct: Optional[float] = Field(default=None, ge=0)
+    kena_ppn: Optional[bool] = None
+    faktur_number: Optional[str] = None
+    faktur_date: Optional[str] = None
     discount_amount: Optional[float] = Field(default=None, ge=0)
     due_date: Optional[str] = None
 
@@ -108,7 +115,8 @@ async def _recalc_invoice(db, invoice_id: str) -> dict:
     discount = float(inv.get('discount_amount', 0) or 0)
     tax_pct = float(inv.get('tax_pct', 0) or 0)
     tax_base = max(subtotal - discount, 0)
-    tax_amount = round(tax_base * tax_pct / 100, 2)
+    from core.tax_status import tax_for_stored
+    tax_amount = tax_for_stored(inv, tax_base, round_to=2)
     total = round(tax_base + tax_amount, 2)
 
     payments = await db.dewi_maklon_payments.find({'invoice_id': invoice_id}).to_list(length=100)
@@ -210,9 +218,10 @@ async def _generate_from_engine_ar(db, mirror: dict, payload: 'InvoiceGenerateIn
     if not bill['lines']:
         raise HTTPException(400, 'Belum ada qty yang dikirim/diterima klien — tidak ada yang bisa ditagih')
 
-    tax_default = float(await get_config_value(db, 'maklon_tax_pct', 11.0) or 0)
+    from core.tax_status import faktur_fields, get_tax_profile, output_tax, wants_output_tax
+    tax_profile = await get_tax_profile(db)
+    apply_tax = wants_output_tax(tax_profile, payload.tax_pct, payload.kena_ppn)
     term_default = await get_config_value(db, 'maklon_payment_terms_default', 'net_30') or 'net_30'
-    tax_pct = payload.tax_pct if payload.tax_pct is not None else tax_default
     term = payload.payment_terms or term_default
     issue = payload.issue_date or wib_date_str()
     try:
@@ -222,11 +231,14 @@ async def _generate_from_engine_ar(db, mirror: dict, payload: 'InvoiceGenerateIn
     due_d = issue_d + timedelta(days=_payment_term_days(term))
     now = datetime.now(timezone.utc)
     subtotal = bill['subtotal']
-    tax_amount = round(subtotal * tax_pct / 100, 2)
+    tinfo = output_tax(tax_profile, subtotal, apply=apply_tax)
+    tax_pct, tax_amount = tinfo['tax_pct'], float(tinfo['tax_amount'])
     total = round(subtotal + tax_amount, 2)
+    tax_meta = {k: tinfo[k] for k in ('kena_ppn', 'ppn_rate', 'dpp_nilai_lain', 'kode_transaksi')}
+    tax_meta.update(faktur_fields(payload.dict()) if tinfo['kena_ppn'] else {'faktur_number': '', 'faktur_date': ''})
 
     await db.rahaza_ar_invoices.update_one({'id': ar['id']}, {'$set': {
-        'lines': bill['lines'], 'subtotal': subtotal, 'tax_pct': tax_pct, 'tax_amount': tax_amount,
+        'lines': bill['lines'], 'subtotal': subtotal, 'tax_pct': tax_pct, 'tax_amount': tax_amount, **tax_meta,
         'discount_amount': 0.0, 'total_amount': total, 'amount_paid': 0.0, 'amount_due': total,
         'invoice_date': issue_d.isoformat(), 'due_date': due_d.isoformat(), 'payment_terms': term,
         'status': 'issued', 'issued_at': now, 'issued_by': user.get('name', ''),
@@ -238,7 +250,7 @@ async def _generate_from_engine_ar(db, mirror: dict, payload: 'InvoiceGenerateIn
         'po_id': po_id, 'po_number': mirror.get('po_number'),
         'client_id': mirror.get('client_id'), 'client_name': mirror.get('client_name'),
         'issue_date': issue_d.isoformat(), 'due_date': due_d.isoformat(), 'payment_terms': term,
-        'tax_pct': tax_pct, 'discount_amount': 0.0,
+        'tax_pct': tax_pct, 'discount_amount': 0.0, **tax_meta,
         'lines': [{'description': ln['description'], 'qty': ln['qty'], 'unit': 'pcs',
                    'unit_price': ln['unit_price'], 'line_total': ln['line_total'],
                    'item_id': ln['item_id'], 'sku': ln['sku'], 'qty_ordered': ln['qty_ordered']}
@@ -401,10 +413,14 @@ async def generate_invoice(payload: InvoiceGenerateIn, user: dict = Depends(requ
 
     # Resolve configs
     prefix = await get_config_value(db, 'maklon_invoice_prefix', 'INV-MKL')
-    tax_default = float(await get_config_value(db, 'maklon_tax_pct', 11.0) or 0)
+    from core.tax_status import faktur_fields, get_tax_profile, output_tax, wants_output_tax
+    tax_profile = await get_tax_profile(db)
+    apply_tax = wants_output_tax(tax_profile, payload.tax_pct, payload.kena_ppn)
+    tinfo = output_tax(tax_profile, 0, apply=apply_tax)   # nilai dihitung ulang di _recalc_invoice
+    tax_pct = tinfo['tax_pct']
+    tax_meta = {k: tinfo[k] for k in ('kena_ppn', 'ppn_rate', 'dpp_nilai_lain', 'kode_transaksi')}
+    tax_meta.update(faktur_fields(payload.dict()) if tinfo['kena_ppn'] else {'faktur_number': '', 'faktur_date': ''})
     term_default = await get_config_value(db, 'maklon_payment_terms_default', 'net_30') or 'net_30'
-
-    tax_pct = payload.tax_pct if payload.tax_pct is not None else tax_default
     term = payload.payment_terms or term_default
 
     issue = payload.issue_date or wib_date_str()
@@ -436,6 +452,7 @@ async def generate_invoice(payload: InvoiceGenerateIn, user: dict = Depends(requ
         'due_date': due_d.isoformat(),
         'payment_terms': term,
         'tax_pct': tax_pct,
+        **tax_meta,
         'discount_amount': 0.0,
         'lines': [line],
         'subtotal': line['line_total'],
@@ -500,6 +517,18 @@ async def update_invoice(invoice_id: str, payload: InvoiceUpdateIn, user: dict =
         raise HTTPException(400, 'Invoice sudah lunas, tidak dapat diubah')
 
     update = {k: v for k, v in payload.dict(exclude_unset=True).items() if v is not None}
+    if {'tax_pct', 'kena_ppn', 'faktur_number', 'faktur_date'} & set(update):
+        # 2026-11-03 (saklar PKP): ubah PPN hanya lewat SSOT — non-PKP menolak PPN > 0.
+        from core.tax_status import faktur_fields, get_tax_profile, output_tax, wants_output_tax
+        tax_profile = await get_tax_profile(db)
+        if 'tax_pct' in update or 'kena_ppn' in update:
+            apply_tax = wants_output_tax(tax_profile, update.pop('tax_pct', None), update.pop('kena_ppn', None))
+            tinfo = output_tax(tax_profile, 0, apply=apply_tax)
+            update.update({k: tinfo[k] for k in ('tax_pct', 'kena_ppn', 'ppn_rate', 'kode_transaksi')})
+        kena = update.get('kena_ppn', inv.get('kena_ppn', bool(inv.get('tax_pct'))))
+        f = faktur_fields({'faktur_number': update.pop('faktur_number', inv.get('faktur_number')),
+                           'faktur_date': update.pop('faktur_date', inv.get('faktur_date'))})
+        update.update(f if kena else {'faktur_number': '', 'faktur_date': ''})
     if update:
         update['updated_at'] = datetime.now(timezone.utc)
         await db.dewi_maklon_invoices.update_one({'id': invoice_id}, {'$set': update})

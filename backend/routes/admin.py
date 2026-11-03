@@ -171,22 +171,46 @@ async def save_company_settings(request: Request):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
-    existing = await db.company_settings.find_one({'type': 'general'})
-    data = {
-        'company_name': body.get('company_name', ''), 'company_address': body.get('company_address', ''),
-        'company_phone': body.get('company_phone', ''), 'company_email': body.get('company_email', ''),
-        'company_website': body.get('company_website', ''), 'company_logo_url': body.get('company_logo_url', ''),
-        'company_tagline': body.get('company_tagline', body.get('tagline', '')),
-        'npwp': body.get('npwp', ''),
-        'pdf_header_line1': body.get('pdf_header_line1', ''), 'pdf_header_line2': body.get('pdf_header_line2', ''),
-        'pdf_footer_text': body.get('pdf_footer_text', ''),
-        'updated_by': user['name'], 'updated_at': now()
-    }
+    existing = await db.company_settings.find_one({'type': 'general'}) or {}
+    # 2026-11-03: hanya kolom yang DIKIRIM yang ditimpa. Dulu setiap kolom yang tidak ada di form
+    # (mis. `npwp`, `company_tagline` — form Pengaturan Perusahaan tidak punya isiannya) diset '' → NPWP hilang
+    # setiap kali Simpan.
+    fields = ['company_name', 'company_address', 'company_phone', 'company_email', 'company_website',
+              'company_logo_url', 'company_tagline', 'npwp', 'pdf_header_line1', 'pdf_header_line2', 'pdf_footer_text']
+    if 'tagline' in body and 'company_tagline' not in body:
+        body['company_tagline'] = body['tagline']
+    data = {f: str(body.get(f) or '').strip() for f in fields if f in body}
+    data.update({'updated_by': user['name'], 'updated_at': now()})
+    # Status pajak (saklar PKP) — SSOT core.tax_status; perubahan dicatat di tax_profile_history.
+    push = None
+    if 'tax_profile' in body:
+        from core.tax_status import normalize_profile, validate_profile_update
+        npwp = data.get('npwp', existing.get('npwp') or '')
+        newp = validate_profile_update(body.get('tax_profile'), npwp)
+        oldp = normalize_profile(existing.get('tax_profile'))
+        data['tax_profile'] = newp
+        if newp['pkp'] != oldp['pkp'] or newp['pkp_since'] != oldp['pkp_since']:
+            push = {'at': now(), 'by': user.get('name') or user.get('id'), 'from_pkp': oldp['pkp'],
+                    'to_pkp': newp['pkp'], 'pkp_since': newp['pkp_since']}
+    update = {'$set': data}
+    if push:
+        update['$push'] = {'tax_profile_history': push}
     if existing:
-        await db.company_settings.update_one({'type': 'general'}, {'$set': data})
+        await db.company_settings.update_one({'type': 'general'}, update)
     else:
-        await db.company_settings.insert_one({'id': new_id(), 'type': 'general', **data, 'created_at': now()})
+        doc = {'id': new_id(), 'type': 'general', **data, 'created_at': now()}
+        if push:
+            doc['tax_profile_history'] = [push]
+        await db.company_settings.insert_one(doc)
     return serialize_doc(await db.company_settings.find_one({'type': 'general'}, {'_id': 0}))
+
+
+@router.get("/tax-profile")
+async def get_tax_profile_endpoint(request: Request):
+    """Status pajak perusahaan untuk form transaksi (semua staf internal). Ubah lewat Pengaturan Perusahaan."""
+    await require_auth(request)
+    from core.tax_status import get_tax_profile
+    return await get_tax_profile(get_db())
 
 
 # ─── RBAC ────────────────────────────────────────────────────────────────────

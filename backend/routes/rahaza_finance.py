@@ -110,12 +110,15 @@ def _validate_tax_discount(tax_pct, discount_amount, subtotal):
         raise HTTPException(400, "discount_amount melebihi subtotal (DPP tidak boleh negatif).")
 
 
-def _invoice_totals(subtotal: float, tax_pct: float, discount_amount: float) -> dict:
-    """Konvensi tunggal AR: subtotal = bruto item; DPP = subtotal − diskon; PPN = DPP × pct; total = DPP + PPN.
-    Iter 119 (B-01): dulu PPN dihitung dari bruto & total = subtotal + PPN − diskon → jurnal tak seimbang."""
+def _invoice_totals(subtotal: float, discount_amount: float, profile: dict, *, apply_tax: bool) -> dict:
+    """Konvensi tunggal AR: subtotal = bruto item; DPP = subtotal − diskon; total = DPP + PPN.
+    Iter 119 (B-01): dulu PPN dihitung dari bruto & total = subtotal + PPN − diskon → jurnal tak seimbang.
+    2026-11-03 (saklar PKP): PPN dari SSOT `core.tax_status.output_tax` — non-PKP selalu 0;
+    PKP = 12% × DPP nilai lain 11/12 (kode 04)."""
+    from core.tax_status import output_tax
     taxable = max(subtotal - discount_amount, 0.0)
-    tax = round(taxable * tax_pct / 100)
-    return {"taxable_base": round(taxable), "tax_amount": tax, "total": round(taxable + tax)}
+    t = output_tax(profile, taxable, apply=apply_tax)
+    return {"taxable_base": round(taxable), "tax_amount": t["tax_amount"], "total": round(taxable + t["tax_amount"]), "tax": t}
 
 
 def ar_payment_guard_and_update(amount: float) -> tuple:
@@ -329,12 +332,15 @@ async def create_ar(request: Request):
     await _reject_marketplace_ar(db, {"sales_channel": body.get("sales_channel")})  # 2026-11-02 (D2)
     items = body.get("items") or []
     subtotal, norm_items = _norm_invoice_items(items, unit_default="pcs")
-    tax_pct = _to_num(body.get("tax_pct"), "tax_pct")
+    from core.tax_status import faktur_fields, get_tax_profile, wants_output_tax
+    tax_profile = await get_tax_profile(db)
+    apply_tax = wants_output_tax(tax_profile, body.get("tax_pct"), body.get("kena_ppn"))
     discount_amount = round(_to_num(body.get("discount_amount"), "discount_amount"))  # Phase 9C
-    _validate_tax_discount(tax_pct, discount_amount, subtotal)
-    tot = _invoice_totals(subtotal, tax_pct, discount_amount)
+    _validate_tax_discount(0, discount_amount, subtotal)
+    tot = _invoice_totals(subtotal, discount_amount, tax_profile, apply_tax=apply_tax)
     tax = tot["tax_amount"]
     total = tot["total"]
+    tax_pct = tot["tax"]["tax_pct"]
     invoice_number = await _gen_number(db, "rahaza_ar_invoices", "AR",
                                        requested=(body.get("invoice_number") or ""))
     doc = {
@@ -346,6 +352,9 @@ async def create_ar(request: Request):
         "items": norm_items, "subtotal": round(subtotal), "tax_pct": tax_pct, "tax_amount": tax,
         "discount_amount": discount_amount,  # Phase 9C
         "taxable_base": tot["taxable_base"],
+        "kena_ppn": tot["tax"]["kena_ppn"], "ppn_rate": tot["tax"]["ppn_rate"],
+        "dpp_nilai_lain": tot["tax"]["dpp_nilai_lain"], "kode_transaksi": tot["tax"]["kode_transaksi"],
+        **(faktur_fields(body) if tot["tax"]["kena_ppn"] else {"faktur_number": "", "faktur_date": ""}),
         "total": total, "paid_amount": 0, "balance": total,
         "total_amount": total, "amount_paid": 0, "amount_due": total,  # skema kanonik (H-01)
         "status": "draft", "notes": body.get("notes") or "",
@@ -744,11 +753,13 @@ async def create_ap(request: Request):
         raise HTTPException(400, "vendor_name wajib.")
     items = body.get("items") or []
     subtotal, norm = _norm_invoice_items(items, unit_default="")
-    tax_pct = _to_num(body.get("tax_pct"), "tax_pct")
+    tax_pct = _to_num(body.get("tax_pct"), "tax_pct")  # PPN yang DITAGIH supplier (sesuai fakturnya)
     if tax_pct < 0:
         raise HTTPException(400, "tax_pct tidak boleh negatif.")
     tax = round(subtotal * tax_pct / 100)
     total = round(subtotal + tax)
+    from core.tax_status import get_tax_profile, input_tax_treatment
+    treatment = input_tax_treatment(await get_tax_profile(db))  # non-PKP → PPN = bagian harga beli
     invoice_number = await _gen_number(db, "rahaza_ap_invoices", "AP")
     doc = {
         "id": _uid(), "invoice_number": invoice_number,
@@ -756,6 +767,8 @@ async def create_ap(request: Request):
         "issue_date": body.get("issue_date") or _today_iso(),
         "due_date": body.get("due_date") or _today_iso(),
         "items": norm, "subtotal": round(subtotal), "tax_pct": tax_pct, "tax_amount": tax,
+        "input_tax_treatment": treatment,
+        "supplier_faktur_number": str(body.get("supplier_faktur_number") or "").strip()[:40],
         "total": total, "paid_amount": 0, "balance": total,
         "status": "draft", "notes": body.get("notes") or "",
         "cost_center_id": body.get("cost_center_id") or None,

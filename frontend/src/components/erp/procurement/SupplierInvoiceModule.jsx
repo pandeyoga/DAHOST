@@ -20,6 +20,7 @@ import Modal from '../Modal';
 import { toast } from 'sonner';
 import { EP, apiGet, apiPost, fmtDate, fmtNum, fmtRp } from './procApi';
 import { PaymentHistoryList } from '../PaymentHistoryModal';
+import { useTaxProfile } from '../../../lib/taxProfile';
 
 const AP_STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
@@ -40,6 +41,7 @@ function ApBadge({ status }) {
 
 function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
   const [taxPct, setTaxPct] = useState(0);
+  const { profile: taxProfile } = useTaxProfile(token);
   const [invNo, setInvNo] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
@@ -57,6 +59,7 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
       const out = await apiPost(token, EP.apFromGr, {
         gr_ids: [gr.id],
         tax_pct: Number(taxPct || 0),
+        supplier_faktur_number: invNo || undefined,   // 2026-11-03: dulu isian ini tidak ikut dikirim
         due_date: dueDate || undefined,
         notes: notes || undefined,
       });
@@ -111,10 +114,11 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
                         placeholder="opsional" data-testid="ap-form-supplier-invno" />
           </div>
           <div>
-            <label className="block text-xs font-medium mb-1">PPN (%)</label>
+            <label className="block text-xs font-medium mb-1">PPN dari supplier (%)</label>
             <GlassInput type="number" min="0" max="100" value={taxPct}
                         onChange={(e) => setTaxPct(e.target.value)} className="text-right"
                         data-testid="ap-form-tax" />
+            <p className="text-[11px] text-muted-foreground mt-1" data-testid="ap-form-tax-note">{taxProfile.pkp ? 'PKP: PPN ini dikreditkan sebagai PPN Masukan — isi No. Faktur supplier.' : 'Non-PKP: PPN dari supplier tidak dapat dikreditkan, dicatat sebagai bagian harga beli.'}</p>
           </div>
           <div>
             <label className="block text-xs font-medium mb-1">Jatuh Tempo</label>

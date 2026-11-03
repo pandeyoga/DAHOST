@@ -164,13 +164,15 @@ async def fg_stock(request: Request, q: Optional[str] = None):
 
 
 # ── NOTA PENJUALAN LANGSUNG ───────────────────────────────────────────────────
-def _calc(items, tax_pct, discount):
+def _calc(items, discount, profile, apply_tax):
+    """PPN atas nilai setelah diskon, dari SSOT `core.tax_status` (non-PKP = 0; PKP = 12% × DPP 11/12)."""
+    from core.tax_status import output_tax
     subtotal = sum(i["amount"] for i in items)
     if discount > subtotal:
         raise HTTPException(400, "Diskon melebihi nilai nota.")
-    tax = round((subtotal - discount) * tax_pct / 100)  # PPN atas nilai setelah diskon
-    total = round(subtotal - discount + tax)
-    return round(subtotal), tax, total
+    t = output_tax(profile, subtotal - discount, apply=apply_tax)
+    total = round(subtotal - discount + t["tax_amount"])
+    return round(subtotal), t, total
 
 
 @router.post("/direct-sales")
@@ -204,9 +206,12 @@ async def create_direct_sale(request: Request):
             raise HTTPException(400, f"Stok {m.get('code')} tidak cukup (tersedia {int(avail.get(m['id'], 0))}, diminta {want[m['id']]}).")
         items.append({"material_id": m["id"], "sku": m.get("code") or "", "name": m.get("name") or "",
                       "qty": qty, "price": price, "amount": round(qty * price)})
-    tax_pct = _num(body.get("tax_pct"), "tax_pct")
+    from core.tax_status import faktur_fields, get_tax_profile, wants_output_tax
+    tax_profile = await get_tax_profile(db)
+    apply_tax = wants_output_tax(tax_profile, body.get("tax_pct"), body.get("kena_ppn"))
     discount = _num(body.get("discount_amount"), "discount_amount")
-    subtotal, tax, total = _calc(items, tax_pct, discount)
+    subtotal, tinfo, total = _calc(items, discount, tax_profile, apply_tax)
+    tax, tax_pct = tinfo["tax_amount"], tinfo["tax_pct"]
     sale_date = body.get("sale_date") or today_wib().isoformat()
     if payment_type == "cash":
         if not body.get("cash_account_id"):
@@ -223,6 +228,9 @@ async def create_direct_sale(request: Request):
         "sale_date": sale_date, "due_date": due_date, "payment_type": payment_type,
         "cash_account_id": body.get("cash_account_id") if payment_type == "cash" else None,
         "items": items, "subtotal": subtotal, "tax_pct": tax_pct, "tax_amount": tax,
+        "kena_ppn": tinfo["kena_ppn"], "ppn_rate": tinfo["ppn_rate"], "dpp_nilai_lain": tinfo["dpp_nilai_lain"],
+        "kode_transaksi": tinfo["kode_transaksi"],
+        **(faktur_fields(body) if tinfo["kena_ppn"] else {"faktur_number": "", "faktur_date": ""}),
         "discount_amount": round(discount), "total": total,
         "status": "draft", "notes": body.get("notes") or "",
         "created_at": _now(), "updated_at": _now(), "created_by": user.get("id"), "created_by_name": user.get("name", ""),
@@ -345,6 +353,7 @@ async def confirm_direct_sale(sid: str, request: Request):
         "items": [{"description": f"{i['sku']} {i['name']}".strip(), "qty": i["qty"], "unit": "pcs", "price": i["price"], "amount": i["amount"]} for i in note["items"]],
         # Konvensi AR kanonik (post_ar_invoice): `subtotal` = SETELAH diskon; revenue bruto = subtotal + discount_amount
         "subtotal": note["subtotal"] - note["discount_amount"], "tax_pct": note["tax_pct"], "tax_amount": note["tax_amount"], "discount_amount": note["discount_amount"],
+        **{k: note.get(k) for k in ("kena_ppn", "ppn_rate", "dpp_nilai_lain", "kode_transaksi", "faktur_number", "faktur_date") if k in note},
         "total": note["total"], "paid_amount": 0, "balance": note["total"],
         "total_amount": note["total"], "amount_paid": 0, "amount_due": note["total"],
         "status": "issued", "notes": f"Penjualan langsung {note['note_number']}", "sales_channel": "direct",
@@ -667,7 +676,8 @@ async def create_return(sid: str, request: Request):
                       "condition": ri.get("condition") or "good"})
     factor = (note["subtotal"] - note.get("discount_amount", 0)) / note["subtotal"] if note.get("subtotal") else 1
     subtotal = round(sum(i["amount"] for i in items) * factor)
-    tax = round(subtotal * float(note.get("tax_pct") or 0) / 100)
+    from core.tax_status import tax_for_stored
+    tax = tax_for_stored(note, subtotal)  # retur ikut cara PPN nota asal (DPP 11/12 bila dibuat lewat saklar PKP)
     total = subtotal + tax
     ret_date = body.get("return_date") or today_wib().isoformat()
     refund_account = body.get("cash_account_id") if body.get("refund_method") == "cash" else None
