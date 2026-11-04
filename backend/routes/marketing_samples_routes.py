@@ -322,6 +322,9 @@ async def create_sample(body: SampleIn, request: Request):
             {"id": body.catalog_item_id}, {"_id": 0})
         if not item:
             raise HTTPException(404, "Item katalog tidak ditemukan")
+        # 2026-11-04 — item harus milik toko yang dipilih (dulu item toko lain diterima)
+        if item.get("account_id") and item.get("account_id") != account["id"]:
+            raise HTTPException(400, "Item katalog ini milik toko lain. Pilih item dari katalog toko yang sama.")
         if not hpp:
             hpp = float(item.get("hpp") or 0)
 

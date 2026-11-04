@@ -102,6 +102,10 @@
       if (new Set(kids.map((k) => Math.round(k.getBoundingClientRect().height))).size > 1) continue;
       const bgs = kids.map((k) => getComputedStyle(k).backgroundColor + getComputedStyle(k).color);
       const uniq = new Set(bgs);
+      const odd = bgs.findIndex((x) => bgs.indexOf(x) === bgs.lastIndexOf(x));
+      // deret tombol aksi (toolbar) dengan tombol utama di ujung kanan bukan tab: tombolnya berjarak (≥6px)
+      const r0 = kids[0].getBoundingClientRect(), r1 = kids[1].getBoundingClientRect();
+      if (odd === kids.length - 1 && r1.left - r0.right >= 6) continue;
       if (uniq.size === 2 && bgs.filter((x) => x === bgs.find((y) => bgs.indexOf(y) === bgs.lastIndexOf(y))).length === 1 &&
           kids.every((k) => (k.innerText || '').trim().length < 40)) {
         const cs = getComputedStyle(el);

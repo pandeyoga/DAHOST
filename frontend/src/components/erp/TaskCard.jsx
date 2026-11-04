@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Clock, User, CheckCircle, AlertCircle, MoreVertical, ExternalLink, Zap } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -38,7 +39,7 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
   const actionExecuted = !!task.action_executed_at;
 
   const handleApprove = async () => {
-    if (!confirm('Approve task ini?')) return;
+    if (!(await confirmDialog('Approve task ini?'))) return;
     setLoading(true);
     try {
       const res = await fetch(`/api/marketing/tasks/${task.id}/approve`, {

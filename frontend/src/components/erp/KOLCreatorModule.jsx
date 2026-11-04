@@ -3,6 +3,7 @@
  * Admin view: Daftar Creator, Performa Live, Catalog & Requests, Leaderboard
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Users, Video, ShoppingBag, Trophy, Plus, Edit2, Trash2, Check, X, RefreshCw,
   ChevronDown, Star, TrendingUp, Eye, Package, Search, Filter, Target, Award,
@@ -385,129 +386,11 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
   );
 }
 
-// ─── Catalog Form Modal ───────────────────────────────────────────────────────
-function CatalogFormModal({ token, accounts, onClose, onSaved }) {
-  const [form, setForm] = useState({ account_id: '', fg_product_id: '', product_name: '', sku: '', category: '', unit_price: 0, description: '', is_active: true });
-  const [fgSearch, setFgSearch] = useState('');
-  const [fgProducts, setFgProducts] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  useEffect(() => {
-    const t = setTimeout(async () => {
-      if (!fgSearch) return;
-      try {
-        const r = await fetch(`${API}/api/marketing/kol/fg-products?search=${encodeURIComponent(fgSearch)}`, { headers: { Authorization: `Bearer ${token}` } });
-        const d = await r.json();
-        setFgProducts(Array.isArray(d) ? d : []);
-      } catch { setFgProducts([]); }
-    }, 400);
-    return () => clearTimeout(t);
-  }, [fgSearch, token]);
-
-  function selectFg(p) {
-    set('fg_product_id', p.id);
-    set('product_name', p.name || p.code);
-    set('sku', p.code || '');
-    set('category', p.category || p.subtype || '');
-    setFgSearch(p.name || p.code);
-    setFgProducts([]);
-  }
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!form.account_id || !form.fg_product_id) { toast.error('Pilih akun dan produk dari Master FG'); return; }
-    setSaving(true);
-    try {
-      const r = await fetch(`${API}/api/marketing/kol/catalog`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, unit_price: Number(form.unit_price) }),
-      });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Gagal menyimpan');
-      toast.success('Produk ditambahkan ke katalog');
-      onSaved();
-    } catch (err) { toast.error(err.message); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4">
-      <div className="bg-[hsl(var(--card))] border border-foreground/10 rounded-2xl w-full max-w-lg">
-        <div className="p-5 border-b border-foreground/10 flex items-center justify-between">
-          <h2 className="text-base font-semibold">Tambah Produk ke Katalog</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div>
-            <label className="block text-xs font-medium mb-1.5">Akun *</label>
-            <SmartNativeSelect value={form.account_id} onChange={e => set('account_id', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-              <option value="">Pilih Akun</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.account_name}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="relative">
-            <label className="block text-xs font-medium mb-1.5">Cari Produk FG (dari Produksi)</label>
-            <input
-              value={fgSearch}
-              onChange={e => { setFgSearch(e.target.value); setForm(f => ({ ...f, fg_product_id: '', product_name: '', sku: '', category: '' })); }}
-              className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
-              placeholder="Ketik nama/kode produk jadi..."
-              data-testid="kol-catalog-fg-search"
-            />
-            {fgProducts.length > 0 && (
-              <div className="absolute top-full left-0 right-0 bg-[hsl(var(--card))] border border-foreground/10 rounded-lg mt-1 z-10 max-h-40 overflow-auto">
-                {fgProducts.map(p => (
-                  <button key={p.id} type="button" onClick={() => selectFg(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-foreground/5 flex items-center justify-between">
-                    <span>{p.name} ({p.code})</span>
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400">{fmt(p.stock_qty)} pcs</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Nama Produk *</label>
-              <input data-testid="kol-catalog-name" value={form.product_name} readOnly className="w-full bg-foreground/10 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70 cursor-not-allowed" placeholder="otomatis dari Master FG" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">SKU *</label>
-              <input data-testid="kol-catalog-sku" value={form.sku} readOnly className="w-full bg-foreground/10 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70 cursor-not-allowed" placeholder="otomatis dari Master FG" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Kategori</label>
-              <input data-testid="kol-catalog-category" value={form.category} readOnly className="w-full bg-foreground/10 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70 cursor-not-allowed" placeholder="otomatis dari Master FG" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Harga (Rp)</label>
-              <MoneyInput unstyled value={form.unit_price} onChange={e => set('unit_price', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-            <button data-testid="save-catalog-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium disabled:opacity-50">
-              {saving ? 'Menyimpan...' : 'Tambah ke Katalog'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// MAIN MODULE
-// ══════════════════════════════════════════════════════════════════════════════
 export default function KOLCreatorModule({ token }) {
   const [tab, setTab] = useState('creators');
   const [creators, setCreators] = useState([]);
   const [sessions, setSessions] = useState([]);
   const [requests, setRequests] = useState([]);
-  const [catalog, setCatalog] = useState([]);
   const [accounts, setAccounts] = useState([]);
   const [leaderboard, setLeaderboard] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -525,7 +408,6 @@ export default function KOLCreatorModule({ token }) {
   // portal untuk kreator yang belum punya (penyebab "tidak bisa login").
   const [incentiveCreator, setIncentiveCreator] = useState(null);
   const [showSessionForm, setShowSessionForm] = useState(false);
-  const [showCatalogForm, setShowCatalogForm] = useState(false);
   const [leaderMonth, setLeaderMonth] = useState(() => thisMonthWIB());
   // Per-month creator targets: { creator_id → target doc }
   const [creatorTargets, setCreatorTargets] = useState({});
@@ -543,12 +425,11 @@ export default function KOLCreatorModule({ token }) {
     setLoading(true);
     const [cy, cm] = thisMonthWIB().split('-').map(Number);
     try {
-      const [crRes, ac, sess, reqs, cat, lb, tgtsRaw] = await Promise.all([
+      const [crRes, ac, sess, reqs, lb, tgtsRaw] = await Promise.all([
         fetch(`${API}/api/marketing/kol/creators?page=${creatorPage}&limit=${ITEMS_PER_PAGE}`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/accounts`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/kol/sessions`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/kol/requests?page=${requestPage}&limit=${ITEMS_PER_PAGE}`, { headers }).then(r => r.json()),
-        fetch(`${API}/api/marketing/kol/catalog`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/kol/leaderboard?month=${leaderMonth}`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/targets/creator?year=${cy}&month=${cm}`, { headers }).then(r => r.ok ? r.json() : []),
       ]);
@@ -570,7 +451,6 @@ export default function KOLCreatorModule({ token }) {
       }
       setAccounts(Array.isArray(ac) ? ac.filter(a => a.status === 'active') : []);
       setSessions(Array.isArray(sess) ? sess : []);
-      setCatalog(Array.isArray(cat) ? cat : []);
       setLeaderboard(lb?.leaderboard || []);
       // Build creator targets map: { creator_id → target }
       const tMap = {};
@@ -581,16 +461,6 @@ export default function KOLCreatorModule({ token }) {
   }, [headers, leaderMonth, creatorPage, requestPage]);
 
   useEffect(() => { load(); }, [load]);
-
-  async function seedDemo() {
-    try {
-      const r = await fetch(`${API}/api/marketing/kol/seed-demo`, { method: 'POST', headers });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.detail);
-      toast.success(`Demo seeded: ${d.creators_created} creators, ${d.sessions_created} sessions`);
-      load();
-    } catch (err) { toast.error(err.message); }
-  }
 
   async function handleApproveRequest(id) {
     try {
@@ -613,7 +483,7 @@ export default function KOLCreatorModule({ token }) {
   }
 
   async function handleDeleteSession(id) {
-    if (!confirm('Hapus sesi ini?')) return;
+    if (!(await confirmDialog('Hapus sesi ini?'))) return;
     try {
       const r = await fetch(`${API}/api/marketing/kol/sessions/${id}`, { method: 'DELETE', headers });
       if (!r.ok) throw new Error((await r.json()).detail);
@@ -623,21 +493,11 @@ export default function KOLCreatorModule({ token }) {
   }
 
   async function handleDeactivateCreator(id) {
-    if (!confirm('Nonaktifkan creator ini?')) return;
+    if (!(await confirmDialog('Nonaktifkan creator ini?'))) return;
     try {
       const r = await fetch(`${API}/api/marketing/kol/creators/${id}`, { method: 'DELETE', headers });
       if (!r.ok) throw new Error((await r.json()).detail);
       toast.success('Creator dinonaktifkan');
-      load();
-    } catch (err) { toast.error(err.message); }
-  }
-
-  async function handleRemoveCatalog(id) {
-    if (!confirm('Hapus produk dari katalog?')) return;
-    try {
-      const r = await fetch(`${API}/api/marketing/kol/catalog/${id}`, { method: 'DELETE', headers });
-      if (!r.ok) throw new Error((await r.json()).detail);
-      toast.success('Produk dinonaktifkan dari katalog');
       load();
     } catch (err) { toast.error(err.message); }
   }
@@ -653,7 +513,7 @@ export default function KOLCreatorModule({ token }) {
   const TABS = [
     { id: 'creators', label: 'Daftar Creator', icon: Users },
     { id: 'performance', label: 'Performa Live', icon: Video },
-    { id: 'catalog', label: 'Katalog & Request', icon: ShoppingBag, badge: pendingRequests.length || null },
+    { id: 'catalog', label: 'Permintaan Produk', icon: ShoppingBag, badge: pendingRequests.length || null },
     { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
     { id: 'weekly', label: 'Rapor Mingguan', icon: BarChart2 },
   ];
@@ -670,14 +530,6 @@ export default function KOLCreatorModule({ token }) {
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            data-testid="seed-demo-btn"
-            onClick={seedDemo}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5 transition-colors"
-          >
-            <RefreshCw size={14} />
-            Seed Demo
-          </button>
           {tab === 'creators' && (
             <button
               data-testid="add-creator-btn"
@@ -696,16 +548,6 @@ export default function KOLCreatorModule({ token }) {
             >
               <Plus size={16} />
               Catat Sesi
-            </button>
-          )}
-          {tab === 'catalog' && (
-            <button
-              data-testid="add-catalog-btn"
-              onClick={() => setShowCatalogForm(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium transition-colors"
-            >
-              <Plus size={16} />
-              Tambah Produk
             </button>
           )}
         </div>
@@ -772,7 +614,7 @@ export default function KOLCreatorModule({ token }) {
           {filteredCreators.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
               <Users className="mx-auto mb-3 opacity-30" size={40} />
-              <p className="text-sm">Belum ada creator. Klik "Tambah Creator" atau "Seed Demo" untuk memulai.</p>
+              <p className="text-sm">Belum ada kreator. Klik "Tambah Creator" untuk memulai.</p>
             </div>
           ) : (
             <>
@@ -1056,42 +898,16 @@ export default function KOLCreatorModule({ token }) {
             )}
           </div>
 
-          {/* Catalog */}
-          <div>
-            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <Package size={15} />
-              Katalog Produk ({catalog.filter(c => c.is_active).length} aktif)
-            </h3>
-            {catalog.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground text-sm">Belum ada produk di katalog. Klik "Tambah Produk".</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {catalog.map(item => (
-                  <div key={item.id} data-testid="catalog-item" className={`border rounded-xl p-4 ${item.is_active ? 'border-foreground/[0.08] bg-foreground/[0.03]' : 'border-foreground/[0.04] bg-foreground/[0.01] opacity-50'}`}>
-                    <div className="flex items-start justify-between mb-2">
-                      <div>
-                        <div className="font-medium text-sm">{item.product_name}</div>
-                        <div className="text-xs text-muted-foreground">{item.sku}</div>
-                      </div>
-                      <button onClick={() => handleRemoveCatalog(item.id)} className="text-muted-foreground hover:text-red-700 dark:text-red-400 transition-colors">
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">{fmtRp(item.unit_price)}</span>
-                      <span className={`text-xs ${item.stock_qty > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
-                        Stok: {fmt(item.stock_qty)} pcs
-                      </span>
-                    </div>
-                    {item.category && (
-                      <div className="mt-2">
-                        <span className="text-xs bg-foreground/5 border border-foreground/10 rounded px-2 py-0.5 text-muted-foreground">{item.category}</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+          {/* Katalog — satu sumber (keputusan owner 4 Nov 2026) */}
+          <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="kol-catalog-one-door">
+            <div className="text-sm">
+              <div className="font-medium text-foreground flex items-center gap-2"><Package size={15} />Produk untuk kreator</div>
+              <p className="text-muted-foreground mt-0.5">Kreator melihat katalog toko yang ditugaskan kepadanya. Tambah, ubah, atau nonaktifkan produk di Manajemen Katalog.</p>
+            </div>
+            <button type="button" onClick={() => { window.location.hash = '#marketing-catalog'; }}
+              className="shrink-0 inline-flex items-center gap-2 h-9 px-3 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] hover:bg-[var(--card-surface-hover)] text-sm">
+              Buka Manajemen Katalog
+            </button>
           </div>
         </div>
       )}
@@ -1192,14 +1008,6 @@ export default function KOLCreatorModule({ token }) {
           accounts={accounts}
           onClose={() => setShowSessionForm(false)}
           onSaved={() => { setShowSessionForm(false); load(); }}
-        />
-      )}
-      {showCatalogForm && (
-        <CatalogFormModal
-          token={token}
-          accounts={accounts}
-          onClose={() => setShowCatalogForm(false)}
-          onSaved={() => { setShowCatalogForm(false); load(); }}
         />
       )}
     </div>

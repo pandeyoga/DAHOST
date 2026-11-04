@@ -13,7 +13,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, require_demo_seed_allowed
 # F6 (sesi #9) — dashboard gabungan WAJIB berlingkup toko.
 from core import marketing_account_scope as _scope
 from routes.marketing_shared import _uid, _now, _get_user, _sanitize, _recalculate_health_score
@@ -341,6 +341,7 @@ async def seed_sample_data(request: Request):
     Seed sample platform accounts and sales data for testing.
     USE ONLY FOR DEVELOPMENT/TESTING.
     """
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     await require_auth(request)
     db = get_db()
     

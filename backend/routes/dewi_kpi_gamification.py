@@ -7,7 +7,7 @@ Refactored: Session #11.19 Final - CAREFUL APPROACH
 """
 from fastapi import APIRouter, Request, HTTPException, Query
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, require_demo_seed_allowed
 from routes.dewi_kpi_shared import (
     _uid, _now, _s, _grade,
     _require_hr, _get_linked_employee,
@@ -101,6 +101,7 @@ async def seed_demo_gamification(request: Request):
     Seed demo KPI periods + results + badges untuk testing gamification.
     Hanya bisa dijalankan jika belum ada data periods (idempotent).
     """
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     user = await require_auth(request)
     db = get_db()
 

@@ -151,7 +151,7 @@ export default function WeeklyMeetingReportModule({ token }) {
         actions={(
           <>
             <Button variant="outline" size="sm" onClick={load} data-testid="weekly-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
             </Button>
             <Button variant="outline" size="sm" onClick={() => download('excel')}
               disabled={busy === 'excel'} data-testid="weekly-export-excel">

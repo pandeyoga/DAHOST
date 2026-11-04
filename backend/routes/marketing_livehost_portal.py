@@ -194,12 +194,16 @@ async def get_my_scripts(request: Request):
     host = await require_livehost_auth(request)
     db = get_db()
     
-    # Get scripts that are either global or specific to assigned accounts
+    # Get scripts that are either global or specific to assigned accounts.
+    # 2026-11-04 — token portal tidak membawa `assigned_account_ids`; baca dari master host
+    # (dulu daftarnya selalu kosong → host hanya melihat skrip global).
+    hdoc = await db.marketing_livehosts.find_one({'id': host['id']}, {'_id': 0, 'assigned_account_ids': 1}) or {}
+    accs = hdoc.get('assigned_account_ids') or host.get('assigned_account_ids') or []
     query = {
         'is_active': True,
         '$or': [
             {'account_id': None},  # Global scripts
-            {'account_id': {'$in': host.get('assigned_account_ids', [])}}  # Account-specific
+            {'account_id': {'$in': accs}}  # Account-specific
         ]
     }
     

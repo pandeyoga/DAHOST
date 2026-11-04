@@ -155,7 +155,7 @@ export default function MarketingDashboard({ token, onNavigate }) {
         subtitle="Satu layar untuk target, omzet, anggaran, dan kesehatan tiap toko (Shopee, TikTokShop, Tokopedia) — angka resmi bulanan diambil dari SSOT siklus marketing."
         actions={
           <Button onClick={fetchData} variant="outline" size="sm" data-testid="refresh-dashboard-btn">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
           </Button>
         }
       />

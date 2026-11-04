@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   RotateCcw, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, Clock, XCircle,
@@ -265,7 +266,7 @@ export default function ReturnsRefundsModule({ token, onNavigate }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus return ini?')) return;
+    if (!(await confirmDialog('Hapus return ini?'))) return;
     try {
       await axios.delete(`${API}/api/marketing/returns/${id}`, { headers: authH });
       toast({ title: 'Berhasil', description: 'Return dihapus' });

@@ -175,7 +175,6 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
     pic_user_id: '',
     coa_revenue_code: '',
     coa_cash_code: '',
-    coa_receivable_code: '',
     revenue_basis: 'produk_setelah_diskon',
     platform_warehouse_name: '',
     platform_shop_id: '',
@@ -204,7 +203,6 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         // Akun lama yang belum ditautkan → sarankan akun penampung platform-nya
         coa_revenue_code: account.coa_revenue_code || fallbackRevenue(account.platform) || '',
         coa_cash_code: account.coa_cash_code || '',
-        coa_receivable_code: account.coa_receivable_code || coa.default_receivable || '',
         revenue_basis: account.revenue_basis || 'produk_setelah_diskon',
         platform_warehouse_name: account.platform_warehouse_name || '',
         platform_shop_id: account.platform_shop_id || '',
@@ -223,7 +221,6 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         // (bukan lagi diusulkan akun penampung "Lain-lain").
         coa_revenue_code: AUTO_REVENUE,
         coa_cash_code: coa.default_cash || '',
-        coa_receivable_code: coa.default_receivable || '',
         revenue_basis: 'produk_setelah_diskon',
         platform_warehouse_name: '',
         platform_shop_id: '',
@@ -284,7 +281,7 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
         pic_user_id: form.pic_user_id || null,
         // AUTO_REVENUE ⇒ kosong ⇒ server membuat akun "Penjualan – <nama toko>".
         coa_revenue_code: form.coa_revenue_code === AUTO_REVENUE ? null : form.coa_revenue_code,
-        coa_receivable_code: form.coa_receivable_code || null,
+        // coa_receivable_code tidak dikirim: akun piutang toko dibuat & diatur server (anak 1-1303).
         revenue_basis: form.revenue_basis,
         platform_warehouse_name: form.platform_warehouse_name.trim(),
         platform_shop_id: form.platform_shop_id.trim(),
@@ -998,7 +995,7 @@ function AccountManagementBase({ token, onNavigate }) {
         actions={
           <div className="flex items-center gap-2">
             <Button onClick={fetchAccounts} variant="outline" size="sm" data-testid="refresh-accounts-btn">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
             </Button>
             <Button onClick={recomputeHealth} variant="outline" size="sm" disabled={scoring}
               data-testid="recompute-health-btn">

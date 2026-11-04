@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field, field_validator
 
 from database import get_db
-from auth import require_auth
+from auth import require_auth, require_demo_seed_allowed
 from utils.helpers import _uid, _now, _clean
 
 
@@ -614,6 +614,7 @@ async def performance_summary(cycle_id: Optional[str] = None, user: dict = Depen
 @router.post("/seed-demo")
 async def seed_performance_demo(user: dict = Depends(require_auth)):
     """Seed 1 active cycle + 5 KPI templates + 8 assignments + 3 reviews (idempotent)."""
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     if user.get("role") not in ("superadmin", "admin"):
         raise HTTPException(403, "Hanya admin yang bisa seed")
 

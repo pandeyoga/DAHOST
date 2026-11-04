@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Rocket, Plus, Pencil, Trash2, RefreshCw, Loader2,
@@ -234,7 +235,7 @@ export default function ProductLaunchModule({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus entri ini?')) return;
+    if (!(await confirmDialog('Hapus entri ini?'))) return;
     try {
       await axios.delete(`${API}/api/marketing/product-launches/${id}`, { headers: authH });
       toast({ title: 'Dihapus' });

@@ -31,7 +31,7 @@ from database import get_db
 from utils.counters import gen_prefixed_number
 from utils.reject_reasons import normalize_reject_reasons  # FASE 19: SSOT bentuk alasan reject
 from core import quarantine  # FASE 6 (INV-8): rekonsiliasi reject → karantina
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, require_demo_seed_allowed
 from utils.data_quality import SkipTracker
 from datetime import datetime, timezone, timedelta
 import uuid
@@ -652,6 +652,7 @@ async def supplier_scorecard_detail(
 @router.post("/seed-demo")
 async def seed_grn_qc_demo(request: Request):
     """Seed sample inspection records for demo (idempotent — checks count first)."""
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     await require_auth(request)
     db = get_db()
     

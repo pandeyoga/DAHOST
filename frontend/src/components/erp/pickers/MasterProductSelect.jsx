@@ -117,7 +117,7 @@ export default function MasterProductSelect({
             aria-expanded={open}
             disabled={disabled || loading}
             data-testid={testId}
-            className="mt-1 w-full justify-between h-9 font-normal bg-background"
+            className="mt-1 w-full justify-between font-normal bg-background"
           >
             {loading ? (
               <span className="flex items-center gap-1.5 text-muted-foreground">

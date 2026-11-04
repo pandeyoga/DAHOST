@@ -5,10 +5,10 @@ from fastapi import Request, HTTPException
 from fastapi.params import Query
 from utils.query_guards import q_period
 from database import get_db
-from auth import hash_password, require_auth, serialize_doc, log_activity
+from auth import hash_password, require_auth, serialize_doc, log_activity, require_demo_seed_allowed
 from routes.shared import require_perm  # T-01 2.3
 from routes.marketing_kol_shared import (
-    router, _uid, _now, _get_user, SessionCreate, CatalogItemCreate,
+    router, _uid, _now, _get_user, SessionCreate,
 )
 from core import stock_service
 from utils.waktu import fmt_wib
@@ -183,92 +183,45 @@ async def reject_request(request_id: str, reason: str, request: Request):
     return serialize_doc({'message': 'Request ditolak', 'reason': reason})
 
 
-# ── CATALOG MANAGEMENT ───────────────────────────────────────────────────────────
+# ── CATALOG (satu sumber) ───────────────────────────────────────────────────────
+# 2026-11-04 (keputusan owner) — katalog kreator = katalog toko di Manajemen Katalog
+# (`marketing_catalog_items`). Daftar terpisah `marketing_creator_catalog` dihentikan: yang
+# diatur staf dulu bukan yang dilihat kreator. Ubah/tambah produk lewat Manajemen Katalog.
+KOL_CATALOG_ONE_DOOR = ('Katalog kreator sekarang memakai katalog toko. Tambah atau ubah produk di '
+                        'Portal Marketing → Manajemen Katalog.')
+
 
 @router.get('/kol/catalog')
 async def list_catalog(request: Request, account_id: Optional[str] = Query(None), is_active: Optional[bool] = Query(None)):
+    """Baca-saja: produk katalog toko seperti yang dilihat kreator (tanpa HPP)."""
     await require_auth(request)
     db = get_db()
+    from routes.marketing_kol_portal import CREATOR_CATALOG_FIELDS, shape_creator_catalog
     query = {}
     if account_id:
         query['account_id'] = account_id
     if is_active is not None:
         query['is_active'] = is_active
-    items = await db.marketing_creator_catalog.find(query, {'_id': 0}).sort('product_name', 1).to_list(500)
-    # BUG-INV-12 fix: agregasi stok kanonik lintas semua baris/skema.
-    fg_ids = [it.get('fg_product_id') for it in items if it.get('fg_product_id')]
-    stock_map = await stock_service.onhand_map(fg_ids, db=db) if fg_ids else {}
-    for item in items:
-        fg_id = item.get('fg_product_id')
-        item['stock_qty'] = stock_map.get(fg_id, 0) if fg_id else 0
-    return serialize_doc(items)
-
-
-async def _fg_master(db, fg_product_id: str) -> dict:
-    fg = await db.rahaza_materials.find_one({'id': fg_product_id, 'type': 'fg'}, {'_id': 0})
-    if not fg:
-        raise HTTPException(400, 'Produk harus dipilih dari Master FG (Produksi) — teks bebas tidak diterima.')
-    return fg
-
-
-def _apply_fg(data: CatalogItemCreate, fg: dict) -> None:
-    data.product_name = fg.get('name') or fg.get('code')
-    data.sku = fg.get('code') or data.sku
-    data.category = fg.get('category') or fg.get('subtype') or data.category
+    items = await db.marketing_catalog_items.find(query, CREATOR_CATALOG_FIELDS).sort('name', 1).to_list(2000)
+    return serialize_doc(await shape_creator_catalog(db, items))
 
 
 @router.post('/kol/catalog')
-async def add_catalog_item(data: CatalogItemCreate, request: Request):
+async def add_catalog_item(request: Request):
     await require_auth(request)
-    db = get_db()
-    account = await db.marketing_platform_accounts.find_one({'id': data.account_id}, {'_id': 0})
-    if not account:
-        raise HTTPException(404, 'Account tidak ditemukan')
-    _apply_fg(data, await _fg_master(db, data.fg_product_id))
-    if await db.marketing_creator_catalog.find_one({'account_id': data.account_id, 'sku': data.sku}):
-        raise HTTPException(400, f"SKU '{data.sku}' sudah ada di katalog akun ini")
-    item = {
-        'id': _uid(), 'account_id': data.account_id, 'account_name': account['account_name'],
-        'fg_product_id': data.fg_product_id, 'product_name': data.product_name,
-        'sku': data.sku, 'category': data.category or '', 'unit_price': data.unit_price,
-        'description': data.description or '', 'is_active': data.is_active,
-        'created_at': _now(), 'created_by': _get_user(request).get('email', 'system'),
-    }
-    await db.marketing_creator_catalog.insert_one(item)
-    user = _get_user(request)
-    await log_activity(user.get('id', 'system'), user.get('name') or user.get('email', 'system'),
-                       'create', 'marketing_creator_catalog', f"Added catalog item: {data.product_name} ({data.sku})")
-    return serialize_doc({'message': 'Produk berhasil ditambahkan ke katalog', 'item': item})
+    raise HTTPException(410, KOL_CATALOG_ONE_DOOR)
 
 
 @router.put('/kol/catalog/{item_id}')
-async def update_catalog_item(item_id: str, data: CatalogItemCreate, request: Request):
+async def update_catalog_item(item_id: str, request: Request):
     await require_auth(request)
-    db = get_db()
-    item = await db.marketing_creator_catalog.find_one({'id': item_id}, {'_id': 0})
-    if not item:
-        raise HTTPException(404, 'Item katalog tidak ditemukan')
-    _apply_fg(data, await _fg_master(db, data.fg_product_id))
-    update_data = {
-        'product_name': data.product_name, 'sku': data.sku, 'category': data.category or '',
-        'unit_price': data.unit_price, 'description': data.description or '',
-        'is_active': data.is_active, 'fg_product_id': data.fg_product_id, 'updated_at': _now(),
-    }
-    await db.marketing_creator_catalog.update_one({'id': item_id}, {'$set': update_data})
-    updated = await db.marketing_creator_catalog.find_one({'id': item_id}, {'_id': 0})
-    return serialize_doc({'message': 'Item katalog diupdate', 'item': updated})
+    raise HTTPException(410, KOL_CATALOG_ONE_DOOR)
 
 
 @router.delete('/kol/catalog/{item_id}')
 async def remove_catalog_item(item_id: str, request: Request):
-    await require_perm(request, 'toko.manage', legacy_roles=('manager_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko', 'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin'),
-                       message='Akses ditolak: Anda tidak berhak menonaktifkan item katalog kreator.')  # T-01 2.3
-    db = get_db()
-    item = await db.marketing_creator_catalog.find_one({'id': item_id}, {'_id': 0})
-    if not item:
-        raise HTTPException(404, 'Item katalog tidak ditemukan')
-    await db.marketing_creator_catalog.update_one({'id': item_id}, {'$set': {'is_active': False, 'updated_at': _now()}})
-    return serialize_doc({'message': 'Item katalog dinonaktifkan'})
+    await require_auth(request)
+    raise HTTPException(410, KOL_CATALOG_ONE_DOOR)
 
 
 @router.get('/kol/fg-products')
@@ -330,32 +283,9 @@ async def get_leaderboard(request: Request, month: Optional[str] = Query(None, d
 
 # ── SEED DEMO ───────────────────────────────────────────────────────────────────────
 
-async def _seed_kol_catalog(db, account_id: str) -> int:
-    demo_products = [
-        {'sku': 'KOL-PROD-001', 'product_name': 'Kemeja Batik Premium',  'category': 'Atasan',    'price': 189000, 'description': 'Kemeja batik motif kawung premium cotton'},
-        {'sku': 'KOL-PROD-002', 'product_name': 'Celana Chino Slim Fit', 'category': 'Bawahan',   'price': 249000, 'description': 'Celana chino slim fit berbagai warna'},
-        {'sku': 'KOL-PROD-003', 'product_name': 'Gaun Dress Floral',     'category': 'Dress',     'price': 329000, 'description': 'Gaun motif bunga untuk casual & formal'},
-        {'sku': 'KOL-PROD-004', 'product_name': 'Blouse Polos Linen',    'category': 'Atasan',    'price': 159000, 'description': 'Blouse bahan linen adem untuk sehari-hari'},
-        {'sku': 'KOL-PROD-005', 'product_name': 'Rok Midi Plisket',      'category': 'Bawahan',   'price': 199000, 'description': 'Rok midi plisket elegan'},
-        {'sku': 'KOL-PROD-006', 'product_name': 'Jaket Denim Classic',   'category': 'Outerwear', 'price': 379000, 'description': 'Jaket denim klasik unisex'},
-    ]
-    created = 0
-    for p in demo_products:
-        existing = await db.marketing_creator_catalog.find_one({'sku': p['sku'], 'account_id': account_id})
-        if not existing:
-            await db.marketing_creator_catalog.insert_one({
-                'id': _uid(), 'account_id': account_id, 'sku': p['sku'],
-                'product_name': p['product_name'], 'category': p.get('category', ''),
-                'description': p.get('description', ''), 'price': p['price'],
-                'fg_product_id': None, 'images': [], 'is_active': True, 'stock_note': 'Ready stock',
-                'created_at': _now(), 'created_by': 'seed',
-            })
-            created += 1
-    return created
-
-
 @router.post('/kol/seed-demo')
 async def seed_kol_demo(request: Request):
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     await require_auth(request)
     db = get_db()
     account = await db.marketing_platform_accounts.find_one({'status': 'active'}, {'_id': 0})
@@ -407,6 +337,5 @@ async def seed_kol_demo(request: Request):
         'message': 'Demo KOL data seeded',
         'creators_created': created,
         'sessions_created': created_sessions,
-        'catalog_created': await _seed_kol_catalog(db, account['id']),
         'note': 'Default password telah di-set untuk akun demo. Hubungi admin untuk credential.',
     })

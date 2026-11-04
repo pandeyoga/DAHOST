@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Tag, Plus, Pencil, Trash2, RefreshCw, Loader2,
@@ -180,7 +181,7 @@ export default function DiscountCampaignModule({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus kampanye ini?')) return;
+    if (!(await confirmDialog('Hapus kampanye ini?'))) return;
     try {
       await axios.delete(`${API}/api/marketing/discounts/${id}`, { headers: authH });
       toast({ title: 'Kampanye dihapus' });

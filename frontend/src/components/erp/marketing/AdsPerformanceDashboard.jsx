@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   TrendingUp, DollarSign, Target, MousePointer, Eye, RefreshCw, Loader2,
@@ -288,7 +289,7 @@ export default function AdsPerformanceDashboard({ token }) {
                         <Button size="sm" variant="ghost" className="h-7 px-2 text-red-600"
                           data-testid={`ads-delete-${c.id}`}
                           onClick={async () => {
-                            if (!window.confirm(`Hapus data iklan "${c.campaign_name}"?`)) return;
+                            if (!(await confirmDialog(`Hapus data iklan "${c.campaign_name}"?`))) return;
                             try {
                               await axios.delete(`${API}/api/marketing/ads/campaigns/${c.id}`, { headers: authH });
                               toast({ title: 'Data iklan dihapus' });

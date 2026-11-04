@@ -11,6 +11,7 @@
  *    kembali 0, tetapi entri periode lama tetap tersimpan sebagai bukti bayar.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Target, Plus, Trash2, RotateCcw, Save, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
@@ -71,7 +72,7 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
   };
 
   const closePeriod = async () => {
-    if (!window.confirm('Tutup periode ini dan mulai dari 0 hari ini? Entri lama tetap tersimpan.')) return;
+    if (!(await confirmDialog('Tutup periode ini dan mulai dari 0 hari ini? Entri lama tetap tersimpan.'))) return;
     setBusy(true);
     try {
       const r = await fetch(`${API}/api/marketing/kol/creators/${creator.id}/incentive/close-period`,

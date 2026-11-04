@@ -244,7 +244,7 @@ export default function FulfillmentMonitorModule({ token }) {
         actions={(
           <>
             <Button variant="outline" size="sm" onClick={load} data-testid="monitor-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
             </Button>
             <div className="relative">
               <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
