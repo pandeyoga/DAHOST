@@ -34,7 +34,7 @@
 | **ALAT UJI BARU (FASE 11)** | `scripts/sweep_query_robustness.py` (sapu SEMUA GET × 8 varian query rusak, read-only) · `scripts/verify_fase11.py` (gate regresi 108 assertion) · `scripts/map_broken_endpoints.py` (petakan hasil sweep → file+baris) · `scripts/run_all_verifications.sh` (9 skrip regresi berurutan) · `backend_test_fase11.py` (45 uji, self-cleaning) |
 | `/app/memory/GUIDELINE_DROP_LEGACY_COLLECTIONS.md` | **PANDUAN drop koleksi legacy** (FASE 8.8): prinsip keras, 4 grup kandidat + status kesiapan, prasyarat, checklist eksekusi, syarat hapus alias field `yarn_*`. Alat: `backend/migrations/drop_legacy_collections_guided.py` |
 | `/app/memory/PRD.md`, `BUSINESS_PROCESS_PRODUKSI_MAKLON.md`, `SYSTEM_FLOW_DIAGRAM.md`, `ROADMAP.md` | Referensi produk/bisnis |
-| `/app/memory/ENGINEERING_GUARDRAILS.md`, `/app/AGENT_DEVELOPMENT_RULES.md`, `/app/design_guidelines.md` | Aturan teknik & desain |
+| `/app/memory/ENGINEERING_GUARDRAILS.md`, `/app/AGENT_DEVELOPMENT_RULES.md`, `/app/AGENTS.md`, `/app/docs/design/PANDUAN_UI.md` | Aturan teknik & desain (UI: hanya PANDUAN_UI; `design_guidelines.md` dicabut 4 Nov 2026) |
 
 ## 📦 ARSIP (`/app/docs/_archive_history/` — 28 file, JANGAN dipakai sebagai rencana kerja)
 - `SSOT_MASTER_REPAIR_PLAN(.md, _PART2..4)` — **SUDAH DIEKSEKUSI SEMUA** (RC-01..RC-29, Session #16–17). Masih berguna HANYA sebagai referensi **SSOT Registry** (nama koleksi kanonik + peta field): Part 1 BAGIAN 1, Part 3 BAGIAN 1, Part 4 BAGIAN 1.

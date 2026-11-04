@@ -14,7 +14,7 @@ Stack: **FastAPI + MongoDB (Motor)** · **React 19 (CRA/craco, static bundle)** 
 | 3 | `memory/PLAN_PERBAIKAN_AUDIT.md` | Rencana perbaikan hasil audit (FASE 0–5) + tabel status §F |
 | 4 | `memory/PRD.md` | Log sesi terkini (paling atas) & riwayat produk |
 | 5 | `DOCS_INDEX.md` | Peta seluruh dokumen aktif vs arsip |
-| 6 | `AGENT_DEVELOPMENT_RULES.md`, `memory/ENGINEERING_GUARDRAILS.md`, `design_guidelines.md` | Aturan teknik & desain |
+| 6 | `AGENTS.md`, `AGENT_DEVELOPMENT_RULES.md`, `memory/ENGINEERING_GUARDRAILS.md`, `docs/design/PANDUAN_UI.md` | Aturan teknik & desain (UI: hanya PANDUAN_UI) |
 
 Riwayat blok status lama README (2026-05 → 2026-09) dipindah ke **`docs/CHANGELOG_SESI.md`** (arsip, tidak diubah).
 

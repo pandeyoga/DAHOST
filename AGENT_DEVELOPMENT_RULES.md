@@ -62,7 +62,7 @@ cat /app/FORENSIC_11_MIGRATION_ROADMAP.md
 cat /app/FORENSIC_04_DATA_ARCHITECTURE.md  # jika task tentang DB
 cat /app/FORENSIC_07_INFORMATION_ARCHITECTURE.md  # jika task tentang sidebar/menu
 cat /app/FORENSIC_09_CONSOLIDATION_PLAN.md  # jika task tentang refactor
-cat /app/design_guidelines.md  # jika task tentang UI
+cat /app/docs/design/PANDUAN_UI.md  # WAJIB jika task menyentuh layar (satu-satunya panduan UI; design_guidelines.md dicabut)
 ```
 
 ### Step 2: Code Discovery (10-15 menit)

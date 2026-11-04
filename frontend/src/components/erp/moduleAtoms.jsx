@@ -164,7 +164,9 @@ export function EmptyState({ icon: Icon, title, description, action, className, 
       {/* `action` boleh elemen ATAU { label, onClick } (sama dengan EmptyState.jsx) — 2026-11-04 */}
       {action && <div className="mt-4">{isValidElement(action) || typeof action !== 'object'
         ? action
-        : <Button onClick={action.onClick} data-testid={action.testId}>{action.label}</Button>}</div>}
+        : <Button onClick={action.onClick} variant={action.variant || 'default'} data-testid={action.testId || 'empty-state-action'}>
+            {action.icon && <action.icon className="w-4 h-4" />}{action.label}
+          </Button>}</div>}
     </div>
   );
 }

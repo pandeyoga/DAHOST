@@ -15,7 +15,8 @@
   const ENGLISH = ['Export CSV', 'Export Excel', 'Export', 'Refresh', 'Settlement', 'Outstanding', 'Overview', 'Submit',
     'Approve', 'Reject', 'Retry', 'Statement', 'Invoice', 'Print', 'Save', 'Cancel', 'Delete', 'Upload', 'Download',
     'Unposted', 'Pending', 'Gross Profit', 'Operating Income', 'Net Income', 'Dashboard', 'Overdue', 'Aging', 'Actual',
-    'Analysis', 'Client', 'Internal WO', 'Total Budget', 'Variance', 'Debtors', 'Customer', 'Supplier', 'request'];
+    'Analysis', 'Client', 'Internal WO', 'Total Budget', 'Variance', 'Debtors', 'Customer', 'Supplier', 'request',
+    'Next', 'Prev', 'Previous', 'Page', 'Search', 'Loading'];
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const visible = (el) => {
     const r = el.getBoundingClientRect();
@@ -175,9 +176,24 @@
       const th = tb.querySelector('thead th'); const td = tb.querySelector('tbody td'); const tr = tb.querySelector('tbody tr');
       if (th && td && tr) {
         const a = getComputedStyle(th); const b = getComputedStyle(td);
-        tableSigs.add(`judul ${a.fontSize} ${a.textTransform === 'uppercase' ? 'KAPITAL' : 'biasa'} ${a.fontWeight} latar ${rgba(a.backgroundColor)[3] > 0.05 ? 'ada' : 'tidak'} · sel ${b.fontSize} pad ${b.paddingTop}/${b.paddingLeft} · baris ${Math.round(tr.getBoundingClientRect().height)}px`);
+        tableSigs.add(`judul ${a.fontSize} ${a.textTransform === 'uppercase' ? 'KAPITAL' : 'biasa'} ${a.fontWeight} latar ${rgba(a.backgroundColor)[3] > 0.05 ? 'ada' : 'tidak'} · sel ${b.fontSize} pad ${b.paddingTop}/${b.paddingLeft}`);   // tinggi baris tergantung isi — tidak dibandingkan
       }
       if (!tb.querySelector('thead')) add('TABEL-TANPA-KEPALA', tb, 'tabel tanpa baris judul kolom');
+      // SEL-TERLIPAT — tanggal / uang / nomor dokumen pendek turun ke 2 baris (kolom terlalu sempit, G7)
+      let wrapped = 0, wrapSample = '';
+      for (const td of tb.querySelectorAll('tbody td')) {
+        const t = (td.innerText || '').trim();
+        if (!t || t.length > 28 || !/^(Rp\s?-?[\d.,]+|-?[\d.,]{4,}|\d{1,2} \w{3} \d{4}|[A-Z]{2,5}-[\w-]{4,})$/.test(t)) continue;
+        const lh = parseFloat(getComputedStyle(td).lineHeight) || parseFloat(getComputedStyle(td).fontSize) * 1.4;
+        const range = document.createRange(); range.selectNodeContents(td);
+        if (range.getClientRects().length > 1 || range.getBoundingClientRect().height > lh * 1.6) { wrapped++; wrapSample = wrapSample || t; }
+      }
+      if (wrapped) add('SEL-TERLIPAT', tb, `${wrapped} sel tanggal/uang/nomor turun 2 baris, mis. "${wrapSample}"`);
+      // TOMBOL-UTAMA-DI-TABEL — tombol berwarna utama berulang di tiap baris (G3: di tabel pakai outline/sm)
+      const rowPrimary = [...tb.querySelectorAll('tbody button')].filter((b) => visible(b) && hasBg(b)
+        && rgba(getComputedStyle(b).backgroundColor)[3] > 0.6 && (b.innerText || '').trim().length > 2
+        && getComputedStyle(b).backgroundColor === getComputedStyle(document.querySelector('button.bg-primary') || b).backgroundColor);
+      if (rowPrimary.length > 1) add('TOMBOL-UTAMA-DI-TABEL', rowPrimary[0], `${rowPrimary.length} tombol utama di baris tabel ("${(rowPrimary[0].innerText || '').trim()}")`);
       let misaligned = 0;
       for (const td of tb.querySelectorAll('tbody td')) {
         const t = (td.innerText || '').trim();
@@ -209,9 +225,13 @@
       return cs.position === 'fixed' && r.width >= 40 && r.width <= 90 && r.height >= 40 && r.height <= 90 && r.right > innerWidth - 120 && r.bottom > innerHeight - 140 && visible(el);
     });
     // periksa di posisi gulir paling bawah: yang penting baris/tombol terakhir tidak tertutup
-    const prevScroll = main.scrollTop;
-    main.scrollTop = main.scrollHeight;
-    for (const f of floating) {
+    // 2026-11-04: gulir wadah yang BENAR-BENAR bergulir (main atau dokumen) — dulu selalu `main`, sehingga di
+    // layar yang menggulir dokumen tombol di tepi bawah layar ikut terhitung "tertutup" (26 salah tangkap).
+    const scroller = main.scrollHeight > main.clientHeight + 4 ? main : (document.scrollingElement || document.documentElement);
+    const prevScroll = scroller.scrollTop;
+    scroller.scrollTop = scroller.scrollHeight;
+    const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4;
+    for (const f of (atBottom ? floating : [])) {
       const fr = f.getBoundingClientRect();
       for (const el of main.querySelectorAll('button, a, input, select, td')) {
         if (!visible(el) || f.contains(el)) continue;
@@ -219,12 +239,103 @@
         if (r.left < fr.right && r.right > fr.left && r.top < fr.bottom && r.bottom > fr.top) { add('TERTUTUP-CHAT', el); }
       }
     }
-    main.scrollTop = prevScroll;
+    scroller.scrollTop = prevScroll;
+
+    // ── Revisi 2 (2026-11-04): cetakan, ruang kosong, posisi tombol, teks teknis, popup ────────────
+    const usesTemplate = !!main.querySelector('[data-page-layout]');
+    if (!usesTemplate) add('CETAKAN-TIDAK-DIPAKAI', null, 'layar tidak memakai PageLayout');
+
+    // RUANG-KOSONG — pindai garis mendatar: pita tanpa isi (teks, kontrol, garis, latar) > 28 px di antara isi
+    const isInk = (el) => {
+      for (let e = el; e && e !== main; e = e.parentElement) {
+        if (/^(BUTTON|INPUT|SELECT|TEXTAREA|IMG|svg|TABLE|CANVAS|LABEL|A)$/.test(e.tagName)) return true;
+        if ([...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) return true;
+        if (hasBorder(e) || hasBg(e)) return true;
+      }
+      return false;
+    };
+    const xs = [0.08, 0.3, 0.5, 0.7, 0.92].map((f) => mr.left + mr.width * f);
+    const yTop = Math.max(mr.top, 0), yBot = Math.min(mr.bottom, innerHeight);
+    let run = 0, sawInk = false, gapStart = 0;
+    for (let y = yTop + 2; y < yBot; y += 4) {
+      const ink = xs.some((x) => document.elementsFromPoint(x, y).some((e) => main.contains(e) && e !== main && isInk(e)));
+      if (ink) {
+        if (sawInk && run * 4 > 28) {
+          const above = document.elementFromPoint(mr.left + mr.width / 2, gapStart - 6);
+          add('RUANG-KOSONG', null, `pita kosong ${run * 4} px di y=${Math.round(gapStart - mr.top)} (di bawah ${above ? short(above) : '?'})`);
+        }
+        sawInk = true; run = 0;
+      } else if (sawInk) {
+        if (run === 0) gapStart = y;
+        run++;
+      }
+    }
+
+    // BARIS-SATU-TOMBOL — baris selebar ≥50% yang isinya hanya satu tombol (aksi tab → baris tab, G2)
+    const oneBtnRows = [];
+    for (const el of all) {
+      if (el.tagName !== 'DIV' || oneBtnRows.some((f) => f.contains(el))) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < mr.width * 0.5 || r.height > 64 || r.height < 24) continue;
+      const ctrls = [...el.querySelectorAll('button, a, input, select, textarea, [role="combobox"]')].filter(visible);
+      if (ctrls.length !== 1 || !/^(BUTTON|A)$/.test(ctrls[0].tagName)) continue;
+      if ((el.innerText || '').trim() !== (ctrls[0].innerText || '').trim()) continue;
+      oneBtnRows.push(el);
+      add('BARIS-SATU-TOMBOL', ctrls[0], `baris hanya berisi ${short(ctrls[0])}`);
+    }
+
+    // PENYARING-KANAN — baris berisi kotak isian yang menempel di kanan, sisi kiri kosong (G6)
+    for (const el of all) {
+      const cs = getComputedStyle(el);
+      if (cs.display !== 'flex' || cs.flexDirection.startsWith('column')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < mr.width * 0.7) continue;
+      if (![...el.querySelectorAll('input, select, [role="combobox"]')].some(visible)) continue;
+      const kids = [...el.children].filter(visible);
+      if (kids.length && kids[0].getBoundingClientRect().left - r.left > r.width * 0.35) {
+        add('PENYARING-KANAN', kids[0], `penyaring mulai ${Math.round(kids[0].getBoundingClientRect().left - r.left)} px dari kiri`);
+      }
+    }
+
+    // TEKS-TEKNIS — istilah program tampil ke pengguna (snake_case, path modul, kode Python) (G11)
+    const TECH_RX = /\b[a-z][a-z0-9]+(?:_[a-z0-9]+){2,}\b|\b[a-z][a-z_]+(?:\.[a-z_][a-z0-9_]*){2,}\b|\[\(['"]|\bDEFAULT_[A-Z_]+\b/;
+    const walker = document.createTreeWalker(main, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = n.textContent.trim();
+      if (!t || t.includes('@') || t.includes('://')) continue;
+      const p = n.parentElement;
+      if (!p || !visible(p) || p.closest('input, textarea, code, kbd, pre')) continue;
+      const m = t.match(TECH_RX);
+      if (m) add('TEKS-TEKNIS', p, `"${m[0]}"`);
+    }
+
+    // POPUP-DAFTAR — popup yang sedang terbuka berisi tabel (G13)
+    for (const d of document.querySelectorAll('[role="dialog"]')) {
+      if (visible(d) && d.querySelector('table')) add('POPUP-DAFTAR', d, 'popup berisi tabel — buka di halaman (DetailPanel)');
+    }
+
+    // TOGGLE-SEPERTI-PENYARING — pilihan Tabel/Kartu memakai pil penyaring (G6 → ViewToggle)
+    for (const g of all.filter((el) => el.getAttribute('role') === 'group' && !el.hasAttribute('data-view-toggle'))) {
+      const labels = [...g.querySelectorAll('button')].map((b) => (b.innerText || '').trim().toLowerCase());
+      if (labels.includes('tabel') && labels.includes('kartu')) add('TOGGLE-SEPERTI-PENYARING', g, 'Tabel | Kartu tampil sebagai pil penyaring');
+    }
+
+    // Gaya tampilan kosong (dibandingkan antarlayar di uiAuditMenus → KOSONG-GAYA-BEDA)
+    const emptyStyles = [];
+    for (const el of all) {
+      const t = (el.innerText || '').trim();
+      if (!/^(Belum ada|Tidak ada)\b/.test(t) || t.length > 160 || !el.querySelector('svg')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height < 80 || [...el.children].some((c) => /^(Belum ada|Tidak ada)\b/.test((c.innerText || '').trim()) && c.querySelector('svg'))) continue;
+      let boxed = false;
+      for (let e = el; e && e !== main; e = e.parentElement) if (hasBorder(e) && parseFloat(getComputedStyle(e).borderTopLeftRadius) >= 8) { boxed = true; break; }
+      emptyStyles.push(boxed ? 'dalam kartu' : 'polos');
+    }
 
     // ── G2 Judul ────────────────────────────────────────────────────────────
     const h = [...main.querySelectorAll('h1, h2')].find(visible);
     const metrics = { judul: h ? `${h.tagName} ${getComputedStyle(h).fontSize} ${(h.innerText || '').trim().slice(0, 40)}` : '—',
-      tinggiTombol: hs, jumlahKartu: cards.length, tabel: [...tableSigs] };
+      tinggiTombol: hs, jumlahKartu: cards.length, tabel: [...tableSigs], cetakan: usesTemplate, kosong: [...new Set(emptyStyles)] };
     if (tableSigs.size > 1) add('TABEL-GAYA-BEDA', null, `${tableSigs.size} gaya tabel di satu layar`);
     const counts = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.length]));
     const samples = Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...new Set(v)].slice(0, 6)]));
@@ -255,6 +366,11 @@
     }
     const total = {};
     for (const r of res) for (const [k, n] of Object.entries(r.counts)) total[k] = (total[k] || 0) + n;
+    // antarlayar: tampilan kosong & format tabel harus satu gaya di satu portal
+    const emptyKinds = new Set(res.flatMap((r) => r.metrics?.kosong || []));
+    if (emptyKinds.size > 1) total['KOSONG-GAYA-BEDA'] = emptyKinds.size;
+    const tableKinds = new Set(res.flatMap((r) => r.metrics?.tabel || []));
+    if (tableKinds.size > 1) total['TABEL-GAYA-BEDA-PORTAL'] = tableKinds.size;
     window.__uiAuditResult = { layar: res.length, total, per_layar: res };
     return { layar: res.length, total };
   };
