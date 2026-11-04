@@ -1207,7 +1207,7 @@ html.light :is(
   [class*="glass"],
   [data-table-shell="true"],
   [class*="bg-background"]
-) > :is(div, section, form):has(> table) {
+) :is(div, section, form):has(> table) {   /* 2026-11-04: turunan (bukan anak langsung) — cegah kartu di dalam kartu (PANDUAN_UI G5) */
   border: 0;
   border-radius: 0;
   box-shadow: none;
@@ -1818,3 +1818,32 @@ html.light :is([class~="bg-slate-800"], [class~="bg-slate-900"], [class~="bg-sla
   color: inherit;
 }
 /* @@LIGHT-TEXT-BASELINE:END@@ */
+
+
+/* ╔══════════════════════════════════════════════════════════════════════════╗
+   ║  PANDUAN_UI G7 — SATU FORMAT TABEL (2026-11-04)                          ║
+   ║  Audit layar Keuangan: 12 format tabel di 12 layar (judul 10–12 px,      ║
+   ║  kadang kapital kadang tidak; sel 12–14 px; baris 29–84 px) dan angka    ║
+   ║  berhuruf mesin ketik. Berlaku per portal lewat main[data-portal]; portal ║
+   ║  lain ditambahkan ke daftar setelah diaudit (docs/design/CARA_AUDIT_UI). ║
+   ╚══════════════════════════════════════════════════════════════════════════╝ */
+html main:is([data-portal="finance"]) table > thead > tr > th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+  padding: 8px 12px;
+  white-space: nowrap;
+}
+html main:is([data-portal="finance"]) table > tbody > tr > td,
+html main:is([data-portal="finance"]) table > tfoot > tr > td {
+  font-size: 13px;
+  padding: 10px 12px;
+  font-variant-numeric: tabular-nums;
+}
+html main:is([data-portal="finance"]) table :is(td, th).font-mono,
+html main:is([data-portal="finance"]) table :is(td, th) .font-mono {
+  font-family: inherit;
+  font-variant-numeric: tabular-nums;
+}

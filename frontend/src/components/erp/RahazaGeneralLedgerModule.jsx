@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { journalSourceLabel } from '@/lib/financeLabels';
+import { formatDateID } from '@/lib/format';
 import { RefreshCw, FileText, Download, BookOpen } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -64,13 +66,13 @@ export default function RahazaGeneralLedgerModule({ token }) {
         subtitle="Detail semua transaksi per akun dengan saldo berjalan. Pilih akun dan range tanggal."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchGL} className="h-9 border border-[var(--glass-border)]" data-testid="gl-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportCSV} className="h-9 border border-[var(--glass-border)]" disabled={!data?.lines?.length} data-testid="gl-export"><Download className="w-3.5 h-3.5 mr-1.5" />Export CSV</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchGL} data-testid="gl-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportCSV} disabled={!data?.lines?.length} data-testid="gl-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
           </>
         }
       />
 
-      <GlassCard className="p-4">
+      <div>
         <div className="flex items-center gap-3 flex-wrap">
           <div>
             <label className="text-[10px] uppercase text-muted-foreground font-semibold block mb-1">Akun</label>
@@ -93,14 +95,14 @@ export default function RahazaGeneralLedgerModule({ token }) {
             <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-9 w-40" data-testid="gl-to" />
           </div>
         </div>
-      </GlassCard>
+      </div>
 
       {acc && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatTile label="Akun" value={acc.name} testId="gl-kpi-acc" />
-          <StatTile label="Saldo Awal" value={fmt(data.opening_balance)} testId="gl-kpi-open" />
-          <StatTile label="Total Debit / Credit" value={`${fmt(totalDebit)} / ${fmt(totalCredit)}`} testId="gl-kpi-mv" />
-          <StatTile label="Saldo Akhir" value={fmt(data.end_balance)} accent="primary" testId="gl-kpi-end" />
+          <StatTile label="Saldo awal" value={fmt(data.opening_balance)} testId="gl-kpi-open" />
+          <StatTile label="Total debit / kredit" value={`${fmt(totalDebit)} / ${fmt(totalCredit)}`} testId="gl-kpi-mv" />
+          <StatTile label="Saldo akhir" value={fmt(data.end_balance)} testId="gl-kpi-end" />
         </div>
       )}
 
@@ -133,10 +135,10 @@ export default function RahazaGeneralLedgerModule({ token }) {
                 </tr>
                 {data.lines.map((l, i) => (
                   <tr key={i} className="border-b border-[var(--glass-border)] hover:bg-foreground/5">
-                    <td className="py-1.5 px-2 text-xs">{l.date}</td>
+                    <td className="py-1.5 px-2 text-xs whitespace-nowrap">{formatDateID(l.date)}</td>
                     <td className="py-1.5 px-2 font-mono text-xs">{l.je_number}</td>
                     <td className="py-1.5 px-2 text-xs">{l.description || '-'}</td>
-                    <td className="py-1.5 px-2 text-[10px] uppercase text-muted-foreground">{l.source}</td>
+                    <td className="py-1.5 px-2 text-xs text-muted-foreground">{journalSourceLabel(l.source)}</td>
                     <td className="py-1.5 px-2 text-right font-mono text-xs text-emerald-300">{l.debit ? fmt(l.debit) : ''}</td>
                     <td className="py-1.5 px-2 text-right font-mono text-xs text-sky-300">{l.credit ? fmt(l.credit) : ''}</td>
                     <td className="py-1.5 px-2 text-right font-mono text-xs font-semibold">{fmt(l.balance)}</td>

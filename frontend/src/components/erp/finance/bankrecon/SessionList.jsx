@@ -1,10 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { GlassCard } from '@/components/ui/glass';
+import { EmptyState } from '../../moduleAtoms';
+import FilterChips from '@/components/ui/filter-chips';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import PaginationBar from '@/components/ui/PaginationBar';
-import { Loader2, Plus, AlertCircle, Trash2, ChevronRight } from 'lucide-react';
+import { Loader2, Plus, AlertCircle, Trash2, ChevronRight, Scale } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah as fmt } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -112,7 +116,7 @@ export function SessionList({ headers, onOpen }) {
   useEffect(() => { load(); }, [load]);
 
   const remove = async (s) => {
-    if (!window.confirm(`Hapus sesi ${s.period} · ${s.account_name}?`)) return;
+    if (!(await confirmDialog(`Hapus sesi ${s.period} · ${s.account_name}?`))) return;
     try {
       await axios.delete(`${API}/api/finance/bank-recon/sessions/${s.id}`, { headers });
       toast({ title: 'Sesi dihapus' }); load();
@@ -126,17 +130,9 @@ export function SessionList({ headers, onOpen }) {
   return (
     <div className="space-y-4">
       {summary && (
-        <div className="inline-flex rounded-lg border border-[var(--glass-border)] p-0.5" data-testid="recon-status-tabs">
-          {[
-            ['', 'Semua', summary.total_sessions], ['draft', 'Draf', summary.draft],
-            ['in_progress', 'Diproses', summary.in_progress], ['approved', 'Disetujui', summary.approved],
-          ].map(([key, label, val]) => (
-            <button key={key || 'all'} type="button" onClick={() => { setStatus(key); setSkip(0); }}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium ${status === key ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-              {label} <span className="tabular-nums">({val || 0})</span>
-            </button>
-          ))}
-        </div>
+        <FilterChips value={status} onChange={(k) => { setStatus(k); setSkip(0); }} testId="recon-status-tabs" ariaLabel="Status sesi"
+          options={[{ key: '', label: 'Semua', count: summary.total_sessions || 0 }, { key: 'draft', label: 'Draf', count: summary.draft || 0 },
+            { key: 'in_progress', label: 'Diproses', count: summary.in_progress || 0 }, { key: 'approved', label: 'Disetujui', count: summary.approved || 0 }]} />
       )}
       {summary?.total_unmatched > 0 && (
         <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2 text-sm" data-testid="recon-unmatched-alert">
@@ -146,9 +142,9 @@ export function SessionList({ headers, onOpen }) {
       )}
 
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Sesi rekonsiliasi</h3>
-        <Button data-testid="btn-create-session" size="sm" onClick={() => setShowCreate(v => !v)}>
-          <Plus className="w-4 h-4 mr-1" /> Sesi Baru
+        <span />
+        <Button data-testid="btn-create-session" onClick={() => setShowCreate(v => !v)}>
+          <Plus className="w-4 h-4" /> Sesi baru
         </Button>
       </div>
 
@@ -158,7 +154,11 @@ export function SessionList({ headers, onOpen }) {
       )}
 
       {items.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-10" data-testid="recon-empty">Belum ada sesi. Buat sesi per rekening & periode.</p>
+        <GlassCard className="p-0" data-testid="recon-empty">
+          <EmptyState icon={Scale} title="Belum ada sesi rekonsiliasi"
+            description="Satu sesi = satu rekening bank untuk satu bulan. Unggah rekening koran, lalu cocokkan dengan buku besar."
+            action={{ label: 'Mulai sesi', onClick: () => setShowCreate(true) }} />
+        </GlassCard>
       ) : (
         <div className="space-y-2" data-testid="recon-session-list">
           {items.map(s => {

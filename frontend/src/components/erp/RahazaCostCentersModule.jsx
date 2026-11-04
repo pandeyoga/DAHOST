@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, RefreshCw, Edit2, Trash2, Building2, PieChart } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from './moduleAtoms';
@@ -31,7 +32,7 @@ export default function RahazaCostCentersModule({ token }) {
     if (!r.ok) setError(`Gagal simpan (HTTP ${r.status})`); else { setEditing(null); fetchRows(); }
   };
   const del = async (id) => {
-    if (!window.confirm('Nonaktifkan cost center ini?')) return;
+    if (!(await confirmDialog('Nonaktifkan cost center ini?'))) return;
     const r = await fetch(`/api/rahaza/cost-centers/${id}`, { method: 'DELETE', headers });
     if (r.ok) fetchRows();
   };
@@ -46,8 +47,8 @@ export default function RahazaCostCentersModule({ token }) {
         subtitle="Master cost center untuk alokasi biaya & overhead ke HPP."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchRows} className="h-9 border border-[var(--glass-border)]"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button onClick={() => setEditing({ code: '', name: '', category: 'umum', overhead_rate_per_pcs: 0 })} className="h-9" data-testid="cc-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Tambah</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchRows} ><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button onClick={() => setEditing({ code: '', name: '', category: 'umum', overhead_rate_per_pcs: 0 })} data-testid="cc-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Tambah</Button>
           </>
         }
       />
@@ -93,7 +94,7 @@ function CCEditor({ value, onClose, onSave }) {
           <div><label className="text-xs uppercase text-muted-foreground">Overhead Rate per Pcs (Rp)</label><MoneyInput glass value={s.overhead_rate_per_pcs || 0} onChange={e => upd('overhead_rate_per_pcs', Number(e.target.value))} data-testid="cc-overhead" /></div>
         </div>
         <div className="flex gap-2 mt-6 justify-end">
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button>
+          <Button variant="outline" onClick={onClose} >Batal</Button>
           <Button onClick={() => onSave(s)} data-testid="cc-save">Simpan</Button>
         </div>
       </GlassCard>

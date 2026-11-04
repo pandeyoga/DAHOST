@@ -76,7 +76,7 @@ export default function FinanceHomeModule({ token, onNavigate }) {
           <h1 className="text-2xl font-bold text-foreground">Beranda Keuangan</h1>
           <p className="text-sm text-muted-foreground">{formatDateID(d.today, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
-        <Button variant="ghost" onClick={load} disabled={loading} className="h-9 border border-[var(--glass-border)]" title="Muat ulang" aria-label="Muat ulang">
+        <Button size="icon" variant="outline" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
         </Button>
       </div>
@@ -111,7 +111,7 @@ export default function FinanceHomeModule({ token, onNavigate }) {
                 <li key={t.key} className={`flex items-center gap-3 rounded-lg border border-[var(--glass-border)] border-l-4 ${LEVEL_CLS[t.level] || ''} px-3 py-2`} data-testid={`home-todo-${t.key}`}>
                   <span className="text-lg font-bold tabular-nums w-10 text-right text-foreground">{t.count}</span>
                   <span className="text-sm text-foreground flex-1">{t.label}{t.amount ? <span className="text-muted-foreground"> · {fmt(t.amount)}</span> : null}</span>
-                  <Button size="sm" variant="ghost" className="h-8" onClick={() => go(onNavigate, t.module, t.tab)}>
+                  <Button size="sm" variant="outline" onClick={() => go(onNavigate, t.module, t.tab)}>
                     Buka <ArrowRight className="w-3.5 h-3.5 ml-1" />
                   </Button>
                 </li>

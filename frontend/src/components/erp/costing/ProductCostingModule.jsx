@@ -20,6 +20,7 @@
  * yang diam-diam dianggap benar.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
 import {
   Calculator, RefreshCw, Search, Wand2, AlertTriangle, CheckCircle2, Settings2,
   Loader2, ArrowRight, History, Lock, Info, TrendingUp, Layers,
@@ -169,9 +170,8 @@ export default function ProductCostingModule({ token, onNavigate }) {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="ghost" onClick={load} disabled={loading} data-testid="costing-refresh">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-          </Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={load} disabled={loading} data-testid="costing-refresh">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
           <Button variant="outline" onClick={() => setShowSettings(true)} data-testid="costing-open-settings">
             <Settings2 className="w-4 h-4 mr-1.5" /> Setelan Upah &amp; Margin
           </Button>
@@ -184,19 +184,9 @@ export default function ProductCostingModule({ token, onNavigate }) {
       </div>
 
       {/* ── ringkasan ──────────────────────────────────────────────────── */}
-      <div className="inline-flex flex-wrap rounded-lg border border-[var(--glass-border)] p-0.5" data-testid="costing-summary">
-        {[
-          { k: 'models', f: '', label: 'Semua', v: stat('models') },
-          { k: 'ready', f: 'ready', label: 'Siap', v: stat('ready') },
-          { k: 'partial', f: 'partial', label: 'Masih ada kekurangan', v: stat('partial') },
-          { k: 'no_bom', f: 'no_bom', label: 'Belum ada BOM', v: stat('no_bom') },
-        ].map(c => (
-          <button key={c.k} type="button" onClick={() => setStatusTab(c.f)}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium ${statusTab === c.f ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-            {c.label} <span className="tabular-nums" data-testid={`costing-stat-${c.k}`}>({c.v})</span>
-          </button>
-        ))}
-      </div>
+      <FilterChips value={statusTab} onChange={setStatusTab} testId="costing-summary" ariaLabel="Status HPP" hideWhenEmpty={false}
+        options={[{ key: '', label: 'Semua', count: stat('models') }, { key: 'ready', label: 'Siap', count: stat('ready') },
+          { key: 'partial', label: 'Masih ada kekurangan', count: stat('partial') }, { key: 'no_bom', label: 'Belum ada BOM', count: stat('no_bom') }]} />
 
       {totalModels != null && totalModels > stat('models') && (
         <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="costing-truncated">

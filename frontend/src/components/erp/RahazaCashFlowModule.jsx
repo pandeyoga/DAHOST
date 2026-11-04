@@ -1,108 +1,41 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Wallet, Download, Droplet, TrendingUp, ArrowUpCircle, ArrowDownCircle, FileSpreadsheet } from 'lucide-react';
+import { RefreshCw, Wallet, Download, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
 import { downloadXlsx } from './finance/reportShared';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import FilterChips from '@/components/ui/filter-chips';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
-import { todayWIB, monthStartWIB } from '@/lib/waktu';
+import { formatDateID } from '@/lib/format';
+import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
+import StatementTable from './finance/StatementTable';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
+const COLS = [{ key: 'in', label: 'Masuk' }, { key: 'out', label: 'Keluar' }, { key: 'net', label: 'Bersih' }];
 
-function ActivityGroup({ label, items, total, testId, tone }) {
-  const toneClass = total >= 0 ? 'text-emerald-300' : 'text-rose-300';
-  const headerBar = tone === 'operating' ? 'bg-sky-500/10 border-sky-500/30' : tone === 'investing' ? 'bg-purple-500/10 border-purple-500/30' : 'bg-amber-500/10 border-amber-500/30';
-  return (
-    <GlassCard className="p-0 overflow-hidden" data-testid={testId}>
-      <div className={`px-5 py-3 border-b border-[var(--glass-border)] ${headerBar} flex items-center justify-between`}>
-        <h3 className="font-semibold text-sm uppercase tracking-wider">{label}</h3>
-        <span className={`font-mono text-base font-bold ${toneClass}`}>{fmt(total)}</span>
-      </div>
-      {items.length === 0 ? (
-        <div className="px-5 py-4 text-xs text-muted-foreground">Tidak ada aktivitas di periode ini.</div>
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-              <th className="py-2 px-5 text-left">Kategori (sumber jurnal)</th>
-              <th className="py-2 px-3 text-right">Masuk</th>
-              <th className="py-2 px-3 text-right">Keluar</th>
-              <th className="py-2 px-5 text-right">Net</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map(r => (
-              <tr key={r.category} className="border-b border-[var(--glass-border)] last:border-0" data-testid={`${testId}-row-${r.category}`}>
-                <td className="py-2 px-5 text-sm" title={(r.source_modules || []).join(', ')}>{r.label} <span className="text-[10px] text-muted-foreground">({r.count})</span></td>
-                <td className="py-2 px-3 text-right font-mono text-xs text-emerald-300">{r.inflow > 0 ? fmt(r.inflow) : ''}</td>
-                <td className="py-2 px-3 text-right font-mono text-xs text-rose-300">{r.outflow > 0 ? fmt(r.outflow) : ''}</td>
-                <td className={`py-2 px-5 text-right font-mono text-sm ${r.net >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{fmt(r.net)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </GlassCard>
-  );
-}
-
-const GROUP_TONE = { OPR: 'bg-sky-500/10 border-sky-500/30', INV: 'bg-purple-500/10 border-purple-500/30', PND: 'bg-amber-500/10 border-amber-500/30' };
-
-function AccountGroup({ code, group }) {
-  return (
-    <GlassCard className="p-0 overflow-hidden" data-testid={`cf-acc-${code}`}>
-      <div className={`px-5 py-3 border-b border-[var(--glass-border)] ${GROUP_TONE[code]} flex items-center justify-between`}>
-        <h3 className="font-semibold text-sm uppercase tracking-wider">{group.label} <span className="text-[10px] font-mono text-muted-foreground ml-1">{code}</span></h3>
-        <span className={`font-mono text-base font-bold ${group.total >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{fmt(group.total)}</span>
-      </div>
-      {group.items.length === 0 ? (
-        <div className="px-5 py-4 text-xs text-muted-foreground">Tidak ada jurnal kas dengan akun lawan kelompok ini.</div>
-      ) : (
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-              <th className="py-2 px-5 text-left">Akun lawan</th>
-              <th className="py-2 px-3 text-right">Masuk</th>
-              <th className="py-2 px-3 text-right">Keluar</th>
-              <th className="py-2 px-5 text-right">Net</th>
-            </tr>
-          </thead>
-          <tbody>
-            {group.items.map((r) => (
-              <tr key={r.code} className="border-b border-[var(--glass-border)] last:border-0" data-testid={`cf-acc-${code}-row-${r.code}`}>
-                <td className="py-2 px-5 text-sm"><span className="font-mono text-xs text-muted-foreground mr-2">{r.code}</span>{r.name}
-                  {r.tag_source === 'default' && <span className="ml-2 text-[9px] uppercase text-amber-300" title="Tag bawaan dari kode akun — ubah di Bagan Akun bila perlu">tag bawaan</span>}
-                </td>
-                <td className="py-2 px-3 text-right font-mono text-xs text-emerald-300">{r.inflow > 0 ? fmt(r.inflow) : ''}</td>
-                <td className="py-2 px-3 text-right font-mono text-xs text-rose-300">{r.outflow > 0 ? fmt(r.outflow) : ''}</td>
-                <td className={`py-2 px-5 text-right font-mono text-sm ${r.net >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{fmt(r.net)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </GlassCard>
-  );
-}
-
+/**
+ * Arus Kas › Sudah terjadi.
+ * 2026-11-02 (audit No.46 / K19): kedua tampilan dari buku besar — Per akun lawan (OPR/INV/PND) dan
+ * Per jenis transaksi (sumber jurnal yang menyentuh kas/bank).
+ * 2026-11-04 (PANDUAN_UI G7): satu tabel laporan (Masuk · Keluar · Bersih) — dulu tiap aktivitas satu
+ * kartu berwarna, ringkasan berupa kartu besar, dan angka berhuruf mesin ketik hijau/merah.
+ */
 export default function RahazaCashFlowModule({ token }) {
-  // 2026-11-02 (audit No.46): bawaan = "Per Akun" dari buku besar. K19: tampilan kategori kini juga
-  // dari buku besar (kategori = sumber jurnal), jadi kas awal/akhir kedua tampilan sama dengan GL.
   const [view, setView] = useState('account');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [from, setFrom] = useState(monthStartWIB());
-  const [to, setTo] = useState(todayWIB());
+  const [period, setPeriod] = useState(() => periodFromPreset('month'));
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  const { from, to } = period;
 
   const fetchData = useCallback(async () => {
     setLoading(true); setError('');
     try {
       const params = new URLSearchParams({ from, to });
       const r = await fetch(`/api/rahaza/finance/reports/cash-flow?${params}`, { headers });
-      if (!r.ok) { setError(`HTTP ${r.status}`); return; }
+      if (!r.ok) { setError(`Gagal memuat arus kas (HTTP ${r.status})`); return; }
       setData(await r.json());
     } finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,152 +44,122 @@ export default function RahazaCashFlowModule({ token }) {
 
   const exportCSV = () => {
     if (!data) return;
-    const lines = [['Activity', 'Category', 'Inflow', 'Outflow', 'Net', 'Count']];
-    Object.entries(data.activities || {}).forEach(([key, act]) => {
-      (act.items || []).forEach(r => lines.push([act.label, r.label, r.inflow, r.outflow, r.net, r.count]));
-      lines.push([`${act.label} TOTAL`, '', '', '', act.total, '']);
+    const lines = [['Aktivitas', 'Jenis', 'Masuk', 'Keluar', 'Bersih', 'Jumlah jurnal']];
+    Object.values(data.activities || {}).forEach((act) => {
+      (act.items || []).forEach((r) => lines.push([act.label, r.label, r.inflow, r.outflow, r.net, r.count]));
+      lines.push([`Total ${act.label}`, '', '', '', act.total, '']);
     });
-    lines.push(['Net Change', '', '', '', data.totals.net_change_in_cash, '']);
-    lines.push(['Opening Cash', '', '', '', data.totals.opening_cash, '']);
-    lines.push(['Closing Cash', '', '', '', data.totals.closing_cash, '']);
-    const csv = lines.map(r => r.map(c => (typeof c === 'string' && c.includes(',')) ? `"${c}"` : c).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
+    lines.push(['Perubahan kas', '', '', '', data.totals.net_change_in_cash, '']);
+    lines.push(['Kas awal', '', '', '', data.totals.opening_cash, '']);
+    lines.push(['Kas akhir', '', '', '', data.totals.closing_cash, '']);
+    const csv = lines.map((r) => r.map((c) => (typeof c === 'string' && c.includes(',')) ? `"${c}"` : c).join(',')).join('\n');
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const link = document.createElement('a');
-    link.href = url;
-    link.download = `cash-flow-${from}-${to}.csv`;
-    link.click();
+    link.href = url; link.download = `arus-kas-${from}-${to}.csv`; link.click();
     URL.revokeObjectURL(url);
   };
-
   const exportXlsx = () => downloadXlsx(`/api/rahaza/finance/reports/export-xlsx?report=cash-flow&from=${from}&to=${to}`, token, `arus-kas-${from}-${to}.xlsx`)
     .catch((e) => toast.error(`Ekspor gagal: ${e.message}`));
 
   const t = data?.totals || {};
   const ba = data?.by_account;
+  const vals = (r) => ({ in: r.inflow || 0, out: r.outflow ? -r.outflow : 0, net: r.net || 0 });
+  const sum = (items) => items.reduce((a, r) => ({ in: a.in + (r.inflow || 0), out: a.out - (r.outflow || 0), net: a.net + (r.net || 0) }), { in: 0, out: 0, net: 0 });
+
+  let rows = [];
+  let opening = 0; let closing = 0;
+  if (data && view === 'account' && ba) {
+    opening = ba.totals?.opening_cash_gl; closing = ba.totals?.closing_cash_gl;
+    rows = [{ kind: 'line', label: 'Kas awal periode', values: { net: opening } }];
+    ['OPR', 'INV', 'PND'].forEach((g) => {
+      const grp = ba.groups[g] || { label: g, items: [], total: 0 };
+      rows.push({ kind: 'group', id: `acc-${g}`, label: grp.label, values: { ...sum(grp.items), net: grp.total },
+        children: grp.items.map((r) => ({ code: r.code, label: r.name, note: r.tag_source === 'default' ? '(kelompok bawaan)' : '', values: vals(r) })) });
+    });
+    rows.push({ kind: 'subtotal', label: 'Perubahan kas', values: { net: Number(closing || 0) - Number(opening || 0) } });
+    rows.push({ kind: 'total', label: 'Kas akhir periode', values: { net: closing }, testId: 'cf-summary' });
+  } else if (data) {
+    opening = t.opening_cash; closing = t.closing_cash;
+    rows = [{ kind: 'line', label: 'Kas awal periode', values: { net: opening } }];
+    ['operating', 'investing', 'financing'].forEach((k) => {
+      const act = data.activities[k];
+      rows.push({ kind: 'group', id: `cat-${k}`, label: act.label, values: { ...sum(act.items), net: act.total },
+        children: act.items.map((r) => ({ label: r.label, note: `${r.count} jurnal`, values: vals(r) })) });
+    });
+    rows.push({ kind: 'subtotal', label: 'Perubahan kas', values: { net: t.net_change_in_cash } });
+    rows.push({ kind: 'total', label: 'Kas akhir periode', values: { net: closing }, testId: 'cf-summary' });
+  }
 
   return (
-    <div className="space-y-5" data-testid="cf-page">
+    <div className="space-y-4" data-testid="cf-page">
       <PageHeader
-        icon={Wallet}
-        eyebrow="Accounting Core · F3"
-        title="Laporan Arus Kas"
-        subtitle="Cash Flow Statement — kedua tampilan dari buku besar: Per Akun (akun lawan) dan Per Kategori (sumber jurnal yang menyentuh kas/bank). Grouping: Operasi / Investasi / Pendanaan."
+        title="Arus Kas"
+        subtitle="Uang masuk dan keluar rekening kas/bank, dari buku besar."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="cf-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportCSV} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="cf-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
-            <Button variant="ghost" onClick={exportXlsx} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="cf-export-xlsx"><FileSpreadsheet className="w-3.5 h-3.5 mr-1.5" />Ekspor Excel</Button>
+            <PeriodPicker value={period} onChange={setPeriod} testId="cf-period" />
+            <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="cf-refresh"><RefreshCw className="w-4 h-4" /></Button>
+            <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="cf-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+            <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="cf-export-xlsx"><FileSpreadsheet className="w-4 h-4" />Unduh Excel</Button>
           </>
         }
       />
 
-      <GlassCard className="p-4">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs text-muted-foreground">Dari</span>
-          <GlassInput type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-8 w-36" data-testid="cf-from" />
-          <span className="text-xs text-muted-foreground">s/d</span>
-          <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-8 w-36" data-testid="cf-to" />
-          <div className="flex gap-1 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-0.5 ml-auto">
-            <button onClick={() => setView('account')} className={view === 'account' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-account">Per Akun (OPR/INV/PND)</button>
-            <button onClick={() => setView('category')} className={view === 'category' ? 'px-3 py-1 text-xs rounded bg-primary/20 text-primary' : 'px-3 py-1 text-xs rounded text-muted-foreground'} data-testid="cf-view-category">Per Kategori Mutasi</button>
-          </div>
-        </div>
-      </GlassCard>
+      <div className="flex items-center gap-3 flex-wrap">
+        <FilterChips value={view} onChange={setView} testId="cf-view" ariaLabel="Tampilan" hideWhenEmpty={false}
+          options={[{ key: 'account', label: 'Per kelompok akun' }, { key: 'category', label: 'Per jenis transaksi' }]} />
+        {view === 'account' && ba && (
+          <span className="text-xs text-muted-foreground">
+            {ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).
+          </span>
+        )}
+      </div>
 
       {error && <GlassCard className="p-3 text-sm text-[hsl(var(--destructive))]" data-testid="cf-error">{error}</GlassCard>}
 
-      {view === 'category' && <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <StatTile label="Kas Awal" value={fmt(t.opening_cash)} testId="cf-kpi-open" />
-        <StatTile label="Operasi" value={fmt(t.operating)} accent={t.operating >= 0 ? 'success' : 'danger'} testId="cf-kpi-operating" />
-        <StatTile label="Investasi" value={fmt(t.investing)} testId="cf-kpi-investing" />
-        <StatTile label="Pendanaan" value={fmt(t.financing)} testId="cf-kpi-financing" />
-        <StatTile label="Kas Akhir" value={fmt(t.closing_cash)} accent="primary" testId="cf-kpi-closing" />
-      </div>}
+      {data && (
+        <div className="grid grid-cols-3 gap-3">
+          <StatTile label="Kas awal" value={fmt(opening)} testId="cf-kpi-open" />
+          <StatTile label="Perubahan kas" value={fmt(Number(closing || 0) - Number(opening || 0))} accent={Number(closing) < Number(opening) ? 'danger' : 'default'} testId="cf-kpi-net" />
+          <StatTile label="Kas akhir" value={fmt(closing)} testId="cf-kpi-closing" />
+        </div>
+      )}
 
       {loading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-48 rounded-xl" />
-          <Skeleton className="h-32 rounded-xl" />
-        </div>
+        <Skeleton className="h-80 rounded-[var(--radius-lg)]" />
       ) : !data ? (
-        <EmptyState icon={Wallet} title="Tidak ada data cash flow" description="Laporan arus kas akan muncul setelah ada transaksi kas di periode ini." />
-      ) : view === 'account' && ba ? (
-        <div className="space-y-4" data-testid="cf-by-account">
-          <GlassCard className="p-4 text-xs text-muted-foreground">
-            Dihitung dari buku besar: setiap jurnal yang menyentuh akun kas/bank ({ba.cash_account_codes?.length || 0} akun) dibaca akun lawannya, lalu dikelompokkan lewat tag <b>Kelompok Arus Kas</b> akun (Bagan Akun). Jurnal saldo awal = kas awal, bukan arus periode. {ba.totals?.journals || 0} jurnal.
-          </GlassCard>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            <StatTile label="Kas Awal (GL)" value={fmt(ba.totals?.opening_cash_gl)} testId="cf-acc-kpi-open" />
-            <StatTile label="Operasi" value={fmt(ba.totals?.OPR)} accent={(ba.totals?.OPR || 0) >= 0 ? 'success' : 'danger'} testId="cf-acc-kpi-opr" />
-            <StatTile label="Investasi" value={fmt(ba.totals?.INV)} testId="cf-acc-kpi-inv" />
-            <StatTile label="Pendanaan" value={fmt(ba.totals?.PND)} testId="cf-acc-kpi-pnd" />
-            <StatTile label="Kas Akhir (GL)" value={fmt(ba.totals?.closing_cash_gl)} accent="primary" testId="cf-acc-kpi-close" />
-          </div>
-          {['OPR', 'INV', 'PND'].map((g) => <AccountGroup key={g} code={g} group={ba.groups[g]} />)}
-          {Math.abs(ba.totals?.unexplained || 0) > 0.5 && (
-            <GlassCard className="p-3 text-xs text-rose-300" data-testid="cf-acc-unexplained">Selisih {fmt(ba.totals.unexplained)} antara perubahan kas GL dan Σ akun lawan — ada jurnal kas ke kas dengan nilai tidak seimbang.</GlassCard>
-          )}
-        </div>
+        <EmptyState icon={Wallet} title="Belum ada arus kas" description="Arus kas muncul setelah ada jurnal yang menyentuh rekening kas/bank." />
       ) : (
-        <div className="space-y-4">
-          <ActivityGroup label={data.activities.operating.label} items={data.activities.operating.items} total={data.activities.operating.total} testId="cf-operating" tone="operating" />
-          <ActivityGroup label={data.activities.investing.label} items={data.activities.investing.items} total={data.activities.investing.total} testId="cf-investing" tone="investing" />
-          <ActivityGroup label={data.activities.financing.label} items={data.activities.financing.items} total={data.activities.financing.total} testId="cf-financing" tone="financing" />
-
-          <GlassCard className="p-5 border-2" data-testid="cf-summary">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Droplet className="w-4 h-4 text-sky-300" />
-                <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Kas Awal Periode</span>
-              </div>
-              <span className="font-mono text-base">{fmt(t.opening_cash)}</span>
-            </div>
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                {t.net_change_in_cash >= 0 ? <ArrowUpCircle className="w-4 h-4 text-emerald-300" /> : <ArrowDownCircle className="w-4 h-4 text-rose-300" />}
-                <span className="text-xs uppercase tracking-wider text-muted-foreground font-semibold">Perubahan Bersih Kas</span>
-              </div>
-              <span className={`font-mono text-base font-bold ${t.net_change_in_cash >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{fmt(t.net_change_in_cash)}</span>
-            </div>
-            <div className="flex items-center justify-between pt-3 border-t border-[var(--glass-border)]">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-4 h-4 text-[hsl(var(--primary))]" />
-                <span className="text-sm uppercase tracking-wider font-bold">Kas Akhir Periode</span>
-              </div>
-              <span className="font-mono text-xl font-bold">{fmt(t.closing_cash)}</span>
-            </div>
-          </GlassCard>
-
-          {data.cash_accounts?.length > 0 && (
+        <>
+          <StatementTable testId={view === 'account' ? 'cf-by-account' : 'cf-by-category'} columns={COLS} rows={rows}
+            labelHeader={`${formatDateID(from)} – ${formatDateID(to)}`} blankZeroChildren />
+          {view === 'account' && Math.abs(ba?.totals?.unexplained || 0) > 0.5 && (
+            <p className="text-sm text-[hsl(var(--destructive))]" data-testid="cf-acc-unexplained">
+              Selisih {fmt(ba.totals.unexplained)} antara perubahan kas di buku besar dan jumlah per akun lawan — ada jurnal kas ke kas yang tidak seimbang.
+            </p>
+          )}
+          {view === 'category' && data.cash_accounts?.length > 0 && (
             <GlassCard className="p-0 overflow-hidden" data-testid="cf-accounts">
-              <div className="px-5 py-3 border-b border-[var(--glass-border)] bg-[var(--card-surface)]/40">
-                <h3 className="font-semibold text-sm uppercase tracking-wider">Saldo Rekening Kas/Bank (Current)</h3>
+              <div className="px-4 py-3 border-b border-[var(--glass-border)]">
+                <h3 className="font-semibold text-sm text-foreground">Saldo rekening kas/bank saat ini</h3>
               </div>
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-                    <th className="py-2 px-5 text-left">Kode</th>
-                    <th className="py-2 px-3 text-left">Nama</th>
-                    <th className="py-2 px-3 text-left">Tipe</th>
-                    <th className="py-2 px-5 text-right">Saldo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.cash_accounts.map(a => (
-                    <tr key={a.id} className="border-b border-[var(--glass-border)] last:border-0">
-                      <td className="py-2 px-5 font-mono text-xs">{a.code}</td>
-                      <td className="py-2 px-3">{a.name}</td>
-                      <td className="py-2 px-3 text-xs uppercase text-muted-foreground">{a.type}</td>
-                      <td className="py-2 px-5 text-right font-mono text-sm">{fmt(a.balance)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead><tr><th className="text-left">Rekening</th><th className="text-left">Jenis</th><th className="text-right">Saldo</th></tr></thead>
+                  <tbody>
+                    {data.cash_accounts.map((a) => (
+                      <tr key={a.id}>
+                        <td><span className="text-xs text-muted-foreground mr-2">{a.code}</span>{a.name}</td>
+                        <td className="text-muted-foreground">{a.type === 'bank' ? 'Bank' : 'Kas'}</td>
+                        <td className="text-right">{fmt(a.balance)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </GlassCard>
           )}
-        </div>
+        </>
       )}
     </div>
   );

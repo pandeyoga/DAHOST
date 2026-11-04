@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Scale, RefreshCw, Search, ChevronRight, ArrowLeft, FileText, DollarSign,
-  Calendar, Clock, AlertTriangle, AlertCircle, CheckCircle2, TrendingUp,
+  Calendar, Clock, AlertTriangle, CheckCircle2, TrendingUp,
   TrendingDown, Users, Phone, Building2, Banknote, Receipt, FileSpreadsheet,
   BarChart3, Filter, Printer, ExternalLink,} from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
@@ -60,24 +60,15 @@ function BucketBadge({ bucket }) {
 }
 
 // ─── KPI ─────────────────────────────────────────────────────────────────
-function KPICell({ label, value, sub, icon: Icon, tone = 'slate' }) {
-  const toneMap = {
-    slate:   'text-foreground/70',
-    green:   'text-green-600 dark:text-green-300',
-    amber:   'text-amber-600 dark:text-amber-300',
-    red:     'text-red-600 dark:text-red-300',
-    violet:  'text-violet-600 dark:text-violet-300',
-    blue:    'text-blue-600 dark:text-blue-300',
-    emerald: 'text-emerald-600 dark:text-emerald-300',
-    orange:  'text-orange-600 dark:text-orange-300',
-  };
+// PANDUAN_UI G5 (2026-11-04): kartu angka netral (StatTile) — warna hanya untuk "lewat jatuh tempo"
+// bila nilainya bukan nol; dulu tiap kartu warna sendiri (merah/biru/ungu/hijau) tanpa makna.
+function KPICell({ label, value, sub, tone }) {
+  const isZero = /^(Rp\s?)?0$|^—$/.test(String(value ?? '').trim());
   return (
-    <div className="p-3 rounded-lg bg-foreground/[0.03] border border-foreground/[0.08]">
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground uppercase tracking-wider mb-1">
-        {Icon && <Icon className="w-3 h-3" />} {label}
-      </div>
-      <div className={`text-lg font-bold ${toneMap[tone]} leading-tight`}>{value}</div>
-      {sub && <div className="text-[10px] text-muted-foreground mt-0.5">{sub}</div>}
+    <div className="rounded-[var(--radius-md)] border px-4 py-3 bg-[var(--card-surface)] border-[var(--glass-border)]">
+      <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">{label}</p>
+      <p className={`text-xl font-bold tracking-tight mt-1 tabular-nums ${tone === 'red' && !isZero ? 'text-[hsl(var(--destructive))]' : isZero ? 'text-muted-foreground' : 'text-foreground'}`}>{value}</p>
+      {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
     </div>
   );
 }
@@ -356,29 +347,27 @@ function DashboardView({ headers, onPickCustomer }) {
       />
 
       {/* Top KPI Strip — 2026-11-04: tombol jalankan M-07 (tandai lewat jatuh tempo) pindah ke Adm. Sistem */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        <KPICell label="Sisa piutang" value={fmtRp(k.total_outstanding)} icon={DollarSign} tone="red" />
-        <KPICell label="Lewat jatuh tempo" value={fmtRp(k.total_overdue_amount)} icon={AlertCircle} tone="red" sub={`${fmtPct(k.overdue_pct_of_outstanding)} dari sisa piutang`} />
-        <KPICell label="Faktur belum lunas" value={fmtNum(k.count_open_invoices)} icon={FileText} tone="blue" sub={`${k.count_overdue_invoices || 0} lewat jatuh tempo`} />
-        <KPICell label="Rata-rata terlambat" value={`${k.avg_days_overdue || 0} hari`} icon={Clock} tone="amber" sub="ditimbang nilai faktur yang terlambat" />
-        <KPICell label="Pelanggan berutang" value={fmtNum(k.total_unique_debtors)} icon={Users} tone="violet" />
-        <KPICell label="Rata-rata hari tertagih" value={k.dso_estimate_days ? `${fmtNum(k.dso_estimate_days)} hari` : '—'} icon={TrendingUp} tone="emerald" sub={`Diterima 30 hari: ${fmtRp(k.cash_collected_30d)}`} />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KPICell label="Sisa piutang" value={fmtRp(k.total_outstanding)} sub={`${fmtNum(k.count_open_invoices)} faktur · ${fmtNum(k.total_unique_debtors)} pelanggan`} />
+        <KPICell label="Lewat jatuh tempo" value={fmtRp(k.total_overdue_amount)} tone="red" sub={`${k.count_overdue_invoices || 0} faktur · ${fmtPct(k.overdue_pct_of_outstanding)} dari sisa`} />
+        <KPICell label="Rata-rata terlambat" value={`${k.avg_days_overdue || 0} hari`} sub="ditimbang nilai faktur yang terlambat" />
+        <KPICell label="Rata-rata hari tertagih" value={k.dso_estimate_days ? `${fmtNum(k.dso_estimate_days)} hari` : '—'} sub={`Diterima 30 hari: ${fmtRp(k.cash_collected_30d)}`} />
       </div>
 
       {/* Bucket Overview */}
       <GlassCard className="p-4">
         <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-cyan-600 dark:text-cyan-300" /> Sebaran umur piutang
+          Sebaran umur piutang
         </h4>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-x-6 gap-y-4">
           {Object.entries(BUCKET_LABELS).map(([key, m]) => {
             const val = buckets[key] || 0;
             const cnt = bucketCounts[key] || 0;
             const pct = totalBucket > 0 ? (val / totalBucket) * 100 : 0;
             return (
-              <div key={key} className={`p-3 rounded-lg border ${m.color.replace('text-', 'border-').replace('/30', '/20')}`}>
+              <div key={key}>
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
-                <div className={`text-lg font-bold ${m.color.split(' ')[0]} mt-1`}>{fmtRp(val)}</div>
+                <div className={`text-lg font-bold tabular-nums mt-1 ${val ? 'text-foreground' : 'text-muted-foreground'}`}>{fmtRp(val)}</div>
                 <div className="flex items-center justify-between mt-1">
                   <span className="text-[10px] text-muted-foreground">{cnt} faktur</span>
                   <span className="text-[10px] font-semibold text-foreground/70">{pct.toFixed(0)}%</span>

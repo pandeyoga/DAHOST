@@ -11,7 +11,10 @@ import { cn } from '@/lib/utils';
  * GlassCard — panel glass standar (lebih kuat dari v1).
  * Hover: bg + shadow glow halus + naik 2px (hanya jika hover=true).
  */
-export const GlassCard = ({ children, className, hover = true, as: As = 'div', ...props }) => {
+export const GlassCard = ({ children, className, hover, as: As = 'div', ...props }) => {
+  // PANDUAN_UI G5 (2026-11-04): efek angkat hanya untuk kartu yang bisa diklik — dulu semua kartu
+  // (tabel, laporan) ikut naik & bercahaya saat kursor lewat.
+  hover = hover ?? !!props.onClick;
   return (
     <As
       className={cn(

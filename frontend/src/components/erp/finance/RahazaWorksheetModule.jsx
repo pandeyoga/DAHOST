@@ -1,20 +1,21 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, Columns3, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
+import PeriodPicker, { periodFromPreset } from './PeriodPicker';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { PageHeader, StatTile } from '../moduleAtoms';
 import { fmt, fmtCell, authHeaders, downloadXlsx } from './reportShared';
-import { todayWIB, yearStartWIB } from '@/lib/waktu';
 
 const COLS = ['opening_debit', 'opening_credit', 'period_debit', 'period_credit', 'end_debit', 'end_credit', 'pl_debit', 'pl_credit', 'bs_debit', 'bs_credit'];
 const HEAD = [['Saldo Awal', 2], ['Mutasi', 2], ['Saldo Akhir', 2], ['Laba Rugi', 2], ['Neraca', 2]];
 const tdN = 'py-1.5 px-2 text-right font-mono text-xs whitespace-nowrap';
 
 export default function RahazaWorksheetModule({ token }) {
-  const [from, setFrom] = useState(yearStartWIB());
-  const [to, setTo] = useState(todayWIB());
+  // PANDUAN_UI G6 (2026-11-04): pemilih periode standar (dulu dua kotak tanggal)
+  const [period, setPeriod] = useState(() => periodFromPreset('ytd'));
+  const { from, to } = period;
   const [showZero, setShowZero] = useState(false);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,17 +45,14 @@ export default function RahazaWorksheetModule({ token }) {
         subtitle="Kertas kerja 10 kolom seperti sheet N-Lajur: saldo awal · mutasi · saldo akhir, lalu tiap akun dipisah ke kolom Laba Rugi atau Neraca. Baris laba/rugi bersih menyeimbangkan kedua pasangan kolom."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="ws-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportXlsx} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="ws-export"><Download className="w-3.5 h-3.5 mr-1.5" />Ekspor Excel</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="ws-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="ws-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh Excel</Button>
           </>
         }
       />
-      <GlassCard className="p-4">
+      <div>
         <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs text-muted-foreground">Dari</span>
-          <GlassInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 w-36" data-testid="ws-from" />
-          <span className="text-xs text-muted-foreground">s/d</span>
-          <GlassInput type="date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 w-36" data-testid="ws-to" />
+          <PeriodPicker value={period} onChange={setPeriod} testId="ws-period" />
           <label className="inline-flex items-center gap-2 text-xs text-foreground/80">
             <input type="checkbox" checked={showZero} onChange={(e) => setShowZero(e.target.checked)} data-testid="ws-show-zero" />
             Tampilkan akun saldo 0
@@ -66,7 +64,7 @@ export default function RahazaWorksheetModule({ token }) {
             </span>
           )}
         </div>
-      </GlassCard>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label="Mutasi Debit" value={fmt(t.period_debit)} testId="ws-kpi-pd" />
         <StatTile label="Mutasi Kredit" value={fmt(t.period_credit)} testId="ws-kpi-pc" />

@@ -3,6 +3,7 @@
  * yang dipotong platform, dipecah komisi/iklan/refund, supaya Shopee vs TikTok bisa dibandingkan.
  */
 import { useCallback, useEffect, useState } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { ChevronLeft, ChevronRight, Store, Loader2, AlertTriangle } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { toast } from 'sonner';
@@ -69,9 +70,10 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
           <button data-testid="fin-settlement-by-store-prev" onClick={() => step(1)}
             disabled={idx < 0 || idx >= months.length - 1}
             className="p-1 rounded hover:bg-foreground/10 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-          <input type="month" data-testid="fin-settlement-by-store-month" value={res?.month || month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="h-8 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-xs" />
+          <SmartNativeSelect data-testid="fin-settlement-by-store-month" value={res?.month || month}
+            onChange={(e) => setMonth(e.target.value)} className="h-8 w-36 text-xs">
+            {(months.length ? months : [res?.month || month].filter(Boolean)).map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </SmartNativeSelect>
           <button data-testid="fin-settlement-by-store-next" onClick={() => step(-1)}
             disabled={idx <= 0}
             className="p-1 rounded hover:bg-foreground/10 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>

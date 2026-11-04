@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -48,10 +49,10 @@ export function SessionDetail({ sessionId, headers, onBack }) {
     catch (e) { fail(e); } finally { setBusy(false); }
   };
   const autoMatch = () => act(() => axios.post(`${base}/auto-match`, {}, { headers }), 'Auto-match');
-  const approve = () => {
+  const approve = async () => {
     const sm = session.summary || {};
     if (!sm.explained) {
-      const ok = window.confirm(`Selisih ${fmt(sm.unexplained || 0)} belum terjelaskan (GL disesuaikan ${fmt(sm.adjusted_gl_balance || 0)} vs rekening koran ${fmt(sm.statement_closing || 0)}).\n\nTetap setujui sesi ini? Selisih akan dicatat pada ringkasan persetujuan.`);
+      const ok = await confirmDialog(`Selisih ${fmt(sm.unexplained || 0)} belum terjelaskan (GL disesuaikan ${fmt(sm.adjusted_gl_balance || 0)} vs rekening koran ${fmt(sm.statement_closing || 0)}).\n\nTetap setujui sesi ini? Selisih akan dicatat pada ringkasan persetujuan.`);
       if (!ok) return;
       return act(() => axios.post(`${base}/approve`, { confirm_unexplained: true }, { headers }), 'Sesi disetujui');
     }
@@ -61,7 +62,7 @@ export function SessionDetail({ sessionId, headers, onBack }) {
   const onMatch = (txn, g) => act(() => axios.post(`${base}/match`, { txn_id: txn.id, target_key: g.key }, { headers }), 'Dicocokkan');
   const onUnmatch = (txn) => act(() => axios.post(`${base}/unmatch`, { txn_id: txn.id }, { headers }), 'Tautan dilepas');
   const onAdjust = (txn, type) => act(() => axios.post(`${base}/transactions/${txn.id}/adjust`, { adjustment_type: type }, { headers }), 'Penyesuaian dijurnal');
-  const onDelete = (txn) => window.confirm('Hapus mutasi ini?') && act(() => axios.delete(`${base}/transactions/${txn.id}`, { headers }), 'Mutasi dihapus');
+  const onDelete = async (txn) => (await confirmDialog('Hapus mutasi ini?')) && act(() => axios.delete(`${base}/transactions/${txn.id}`, { headers }), 'Mutasi dihapus');
   const onLinkSettlement = () => act(() => Promise.resolve({}), 'Pencairan ditautkan');
 
   if (!session) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin" /></div>;

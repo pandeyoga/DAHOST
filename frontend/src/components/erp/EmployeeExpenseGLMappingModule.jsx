@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Plus, Pencil, Trash2, Check, X, AlertCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -125,7 +126,7 @@ export default function EmployeeExpenseGLMappingModule() {
   };
 
   const handleDelete = async (mapping) => {
-    if (!window.confirm(`Hapus mapping ${mapping.category}?`)) return;
+    if (!(await confirmDialog(`Hapus mapping ${mapping.category}?`))) return;
 
     try {
       const token = localStorage.getItem('erp_token');

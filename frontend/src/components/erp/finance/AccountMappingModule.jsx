@@ -6,6 +6,7 @@
  * disatukan di bawah satu pilihan.
  */
 import { Suspense, useState } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
 import { lazyRetry } from '../../../lib/lazyRetry';
 
 const RahazaPostingProfilesModule    = lazyRetry(() => import('../RahazaPostingProfilesModule'));
@@ -30,17 +31,8 @@ export default function AccountMappingModule(props) {
   const cur = VIEWS.find((v) => v.key === view) || VIEWS[0];
   return (
     <div className="space-y-4" data-testid="account-mapping">
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Jenis pemetaan akun">
-        {VIEWS.map((v) => (
-          <button key={v.key} type="button" role="tab" aria-selected={v.key === view} onClick={() => setView(v.key)}
-            className={`px-3 py-1.5 rounded-lg border text-sm ${v.key === view
-              ? 'border-[hsl(var(--primary)/0.4)] bg-[hsl(var(--primary)/0.10)] text-[hsl(var(--primary))] font-medium'
-              : 'border-[var(--glass-border)] text-foreground/70 hover:bg-[var(--glass-bg-hover)]'}`}
-            data-testid={`account-mapping-${v.key}`}>
-            {v.label}
-          </button>
-        ))}
-      </div>
+      <FilterChips value={view} onChange={setView} testId="account-mapping" ariaLabel="Jenis pemetaan akun" hideWhenEmpty={false}
+        options={VIEWS.map((v) => ({ key: v.key, label: v.label }))} />
       <p className="text-xs text-muted-foreground">{cur.hint}</p>
       <Suspense fallback={<div className="h-40" />}>
         <cur.Component {...props} />

@@ -13,11 +13,13 @@ const buttonVariants = cva(
           "bg-primary text-primary-foreground shadow hover:bg-primary/90",
         destructive:
           "bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90",
+        // PANDUAN_UI G3 (2026-11-04): tombol "kedua" berlatar kartu — dulu tanpa latar sehingga tampak
+        // tembus di atas latar gradasi; hover netral (dulu aksen limau di tema terang).
         outline:
-          "border border-input shadow-sm hover:bg-accent hover:text-accent-foreground",
+          "border border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground shadow-sm hover:bg-[var(--card-surface-hover)] hover:border-[hsl(var(--primary)/0.35)]",
         secondary:
           "bg-secondary text-secondary-foreground shadow-sm hover:bg-secondary/80",
-        ghost: "hover:bg-accent hover:text-accent-foreground",
+        ghost: "hover:bg-foreground/5 hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
@@ -25,6 +27,7 @@ const buttonVariants = cva(
         sm: "h-8 rounded-md px-3 text-xs",
         lg: "h-10 rounded-md px-8",
         icon: "h-9 w-9",
+        "icon-sm": "h-8 w-8",
       },
     },
     defaultVariants: {

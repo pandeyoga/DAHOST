@@ -4,6 +4,7 @@ import {
   CheckCircle2, XCircle, ChevronsDownUp, ChevronsUpDown, Loader2, Info, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -363,8 +364,8 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
           </div>
         )}
         <DialogFooter className="gap-2">
-          <Button variant="ghost" onClick={onClose} className="h-10 border border-[var(--glass-border)]" data-testid="coa-editor-cancel">Batal</Button>
-          <Button onClick={save} disabled={invalid || saving} className="h-10" data-testid="coa-editor-save">
+          <Button variant="outline" onClick={onClose} data-testid="coa-editor-cancel">Batal</Button>
+          <Button onClick={save} disabled={invalid || saving} data-testid="coa-editor-save">
             {saving && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}Simpan
           </Button>
         </DialogFooter>
@@ -460,10 +461,10 @@ function UsageSheet({ acc, api, onClose, onEdit, onDelete, onReactivate, openScr
               </ul>
             </section>
             <div className="flex flex-wrap gap-2 pt-2">
-              <Button variant="ghost" className="h-10 border border-[var(--glass-border)]" onClick={() => onEdit(acc)}>Ubah</Button>
+              <Button variant="outline" onClick={() => onEdit(acc)}>Ubah</Button>
               {acc.active === false
-                ? <Button className="h-10" onClick={() => onReactivate(acc)} data-testid="coa-usage-reactivate">Aktifkan lagi</Button>
-                : <Button variant="ghost" className="h-10 border border-[var(--glass-border)]" onClick={() => onDelete(acc)}>
+                ? <Button onClick={() => onReactivate(acc)} data-testid="coa-usage-reactivate">Aktifkan lagi</Button>
+                : <Button variant="outline" onClick={() => onDelete(acc)}>
                   {data.actions.delete.allowed ? 'Hapus permanen' : (data.actions.deactivate.allowed ? 'Nonaktifkan' : 'Kenapa terkunci?')}
                 </Button>}
             </div>
@@ -531,8 +532,8 @@ function DeleteDialog({ acc, api, onClose, onDone, openUsage }) {
         )}
         {err && <p className="text-sm text-red-600 dark:text-red-400" role="alert">{err}</p>}
         <DialogFooter className="gap-2">
-          <Button variant="ghost" className="h-10 border border-[var(--glass-border)]" onClick={onClose}>Batal</Button>
-          {data && mode === 'locked' && <Button className="h-10" onClick={() => { onClose(); openUsage(acc); }}>Lihat keterikatan</Button>}
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          {data && mode === 'locked' && <Button onClick={() => { onClose(); openUsage(acc); }}>Lihat keterikatan</Button>}
           {data && mode !== 'locked' && (
             <Button className={`h-10 ${mode === 'delete' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}`} disabled={busy} onClick={run} data-testid="coa-delete-confirm">
               {busy && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}{mode === 'delete' ? 'Hapus permanen' : 'Nonaktifkan'}
@@ -789,7 +790,7 @@ export default function RahazaCOAModule({ token, onNavigate }) {
         title="Bagan Akun"
         subtitle="Lencana menandai akun yang terhubung ke posting & konfigurasi — klik untuk melihat ke mana saja, sebelum mengubah atau menghapus."
         actions={(
-          <Button onClick={() => setEditing({})} className="h-10" data-testid="coa-add">
+          <Button onClick={() => setEditing({})} data-testid="coa-add">
             <Plus className="w-4 h-4 mr-1.5" />Tambah<span className="hidden sm:inline">&nbsp;akun</span>
           </Button>
         )}
@@ -800,41 +801,26 @@ export default function RahazaCOAModule({ token, onNavigate }) {
       <GlassCard className="p-3 sm:p-4 min-w-0">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <div className="relative flex-1 min-w-[12rem]">
+            <div className="relative w-80 max-w-full">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
               <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode, nama, penanda, keterikatan…"
-                className="pl-8 pr-8 h-10" aria-label="Cari akun" data-testid="coa-search" />
+                className="pl-8 pr-8 h-9" aria-label="Cari akun" data-testid="coa-search" />
               {search && (
                 <button type="button" onClick={() => setSearch('')} className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 grid place-items-center text-muted-foreground" aria-label="Hapus pencarian">
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={`${selectCls} h-10 w-auto`} aria-label="Filter tipe" data-testid="coa-type-filter">
+            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={`${selectCls} h-9 w-44`} aria-label="Filter tipe" data-testid="coa-type-filter">
               <option value="">Semua tipe</option>
               {TYPE_ORDER.map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
             </select>
-            <div className="flex rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] p-0.5" role="group" aria-label="Tampilan">
-              <button type="button" onClick={() => setView('tree')} aria-pressed={view === 'tree'}
-                className={`h-9 px-3 text-xs rounded inline-flex items-center gap-1 ${view === 'tree' ? 'bg-primary/15 text-primary' : 'text-muted-foreground'}`} data-testid="coa-view-tree">
-                <FolderTree className="w-4 h-4" />Pohon
-              </button>
-              <button type="button" onClick={() => setView('flat')} aria-pressed={view === 'flat'}
-                className={`h-9 px-3 text-xs rounded inline-flex items-center gap-1 ${view === 'flat' ? 'bg-primary/15 text-primary' : 'text-muted-foreground'}`} data-testid="coa-view-flat">
-                <Table2 className="w-4 h-4" />Tabel
-              </button>
-            </div>
+            <FilterChips value={view} onChange={setView} testId="coa-view" ariaLabel="Tampilan" hideWhenEmpty={false}
+              options={[{ key: 'tree', label: 'Pohon', icon: FolderTree }, { key: 'flat', label: 'Tabel', icon: Table2 }]} />
           </div>
 
-          <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1" role="group" aria-label="Filter keterikatan">
-            {FILTERS.map((f) => (
-              <button key={f.key} type="button" onClick={() => setFilter(f.key)} aria-pressed={filter === f.key}
-                className={`shrink-0 h-8 px-2.5 rounded-full border text-xs whitespace-nowrap ${filter === f.key ? 'bg-primary/15 border-primary/40 text-primary font-medium' : 'border-[var(--glass-border)] text-muted-foreground hover:text-foreground'}`}
-                data-testid={`coa-filter-${f.key}`}>
-                {f.label} <span className="opacity-70">{counts[f.key] ?? 0}</span>
-              </button>
-            ))}
-          </div>
+          <FilterChips value={filter} onChange={setFilter} testId="coa-filter" ariaLabel="Filter keterikatan" hideWhenEmpty={false}
+            options={FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key] ?? 0 }))} />
 
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
             <p>
@@ -846,15 +832,15 @@ export default function RahazaCOAModule({ token, onNavigate }) {
             <div className="flex flex-wrap items-center gap-1">
               {view === 'tree' && (
                 <>
-                  <Button variant="ghost" size="sm" className="h-8" onClick={() => setOpen(new Set(accounts.map((a) => a.code)))} aria-label="Buka semua">
+                  <Button variant="outline" size="sm" onClick={() => setOpen(new Set(accounts.map((a) => a.code)))} aria-label="Buka semua">
                     <ChevronsUpDown className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Buka semua</span>
                   </Button>
-                  <Button variant="ghost" size="sm" className="h-8" onClick={() => setOpen(new Set())} aria-label="Tutup semua">
+                  <Button variant="outline" size="sm" onClick={() => setOpen(new Set())} aria-label="Tutup semua">
                     <ChevronsDownUp className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Tutup semua</span>
                   </Button>
                 </>
               )}
-              <Button variant="ghost" size="sm" className="h-8" onClick={fetchData} aria-label="Muat ulang" data-testid="coa-refresh">
+              <Button variant="outline" size="sm" className="h-8" onClick={fetchData} aria-label="Muat ulang" data-testid="coa-refresh">
                 <RefreshCw className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Muat ulang</span>
               </Button>
               <ImportExportToolbar collectionKey="coa_accounts" label="Bagan Akun" onImported={fetchData} />

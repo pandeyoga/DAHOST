@@ -14,6 +14,7 @@
  * faktur yang dicicil tidak bisa dibayar. Potongan dari pemasok kini diisi manual, bawaan 0.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
 import {
   AlertTriangle, CheckCircle2, FileText, Filter,
   HandCoins, RefreshCw, Search, Send,
@@ -514,7 +515,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
             <p className="text-muted-foreground text-sm mt-1">Faktur hutang dari penerimaan barang. Qty yang ditolak QC tidak ikut difakturkan.</p>
           </div>
         ) : <span />}
-        <Button variant="secondary" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang">
+        <Button size="icon" variant="secondary" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang">
           <RefreshCw className="w-4 h-4" />
         </Button>
       </div>
@@ -525,20 +526,11 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
         </div>
       )}
 
-      <div className="flex gap-1 border-b border-[var(--glass-border)]">
-        {(financeMode
-          ? [{ key: 'invoices', label: `Tagihan (${invoices.length})` }, { key: 'pending', label: `Penerimaan belum difakturkan (${grs.length})` }]
-          : [{ key: 'pending', label: `Siap Difakturkan (${grs.length})` }, { key: 'invoices', label: `Faktur (${invoices.length})` }]
-        ).map((t) => (
-          <button key={t.key} type="button" onClick={() => setTab(t.key)}
-            data-testid={`ap-tab-${t.key}`}
-            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === t.key
-              ? 'border-[hsl(var(--primary))] text-[hsl(var(--primary))]'
-              : 'border-transparent text-muted-foreground hover:text-foreground'}`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* PANDUAN_UI G4 (2026-11-04): penyaring berbentuk pil — dulu tab garis bawah di dalam tab hub */}
+      <FilterChips value={tab} onChange={setTab} testId="ap-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
+        options={financeMode
+          ? [{ key: 'invoices', label: 'Tagihan', count: invoices.length }, { key: 'pending', label: 'Penerimaan belum difakturkan', count: grs.length }]
+          : [{ key: 'pending', label: 'Siap difakturkan', count: grs.length }, { key: 'invoices', label: 'Faktur', count: invoices.length }]} />
 
       {loading ? (
         <div className="flex items-center justify-center h-48">
@@ -551,7 +543,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
               <thead className="border-b border-[var(--glass-border)]">
                 <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
                   <th className="pb-3 pl-4">No. GR</th>
-                  <th className="pb-3">Supplier</th>
+                  <th className="pb-3">Pemasok</th>
                   <th className="pb-3">PO</th>
                   <th className="pb-3 text-right">Qty Bersih</th>
                   <th className="pb-3 text-right">Nilai</th>
@@ -595,15 +587,15 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
       ) : (
         <>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative flex-1 min-w-[220px]">
+            <div className="relative w-72 max-w-full">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <GlassInput className="pl-9" placeholder="Cari no faktur, supplier, PO..."
+              <GlassInput className="pl-9 h-9" placeholder="Cari no. faktur, pemasok, PO…"
                           value={search} onChange={(e) => setSearch(e.target.value)}
                           data-testid="ap-search" />
             </div>
             {financeMode && (
               <SmartNativeSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
-                className="h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+                className="h-9 w-40"
                 data-testid="ap-filter-kind">
                 <option value="">Semua jenis</option>
                 <option value="ap">Bahan &amp; jasa</option>
@@ -611,14 +603,14 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
               </SmartNativeSelect>
             )}
             <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+              className="h-9 w-48"
               data-testid="ap-filter-status">
               <option value="">Semua status</option>
               {Object.entries(AP_STATUS_META).map(([v, m]) => <option key={v} value={v}>{m.label}</option>)}
             </SmartNativeSelect>
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Filter className="w-3 h-3" /> {filteredInv.length} {financeMode ? 'tagihan' : 'faktur'}
-            </span>
+            {(search || kindFilter || statusFilter) && (
+              <span className="text-xs text-muted-foreground">{filteredInv.length} cocok</span>
+            )}
           </div>
 
           <GlassCard>
@@ -628,7 +620,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                   <tr className="text-left text-muted-foreground text-xs uppercase tracking-wide">
                     <th className="pb-3 pl-4">No. Faktur</th>
                     {financeMode && <th className="pb-3">Jenis</th>}
-                    <th className="pb-3">Supplier</th>
+                    <th className="pb-3">Pemasok</th>
                     <th className="pb-3">Referensi</th>
                     <th className="pb-3">Tanggal</th>
                     <th className="pb-3 text-right">Total</th>

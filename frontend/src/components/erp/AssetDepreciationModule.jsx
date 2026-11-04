@@ -1,5 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Play, RefreshCw, Calculator, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { monthOptions } from './finance/PeriodPicker';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard, GlassPanel } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
@@ -38,7 +41,7 @@ export default function AssetDepreciationModule({ token }) {
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
 
   const runBatchDepreciation = async () => {
-    if (selectedAssets.length === 0 && !window.confirm('Tidak ada aset yang dipilih. Jalankan untuk SEMUA aset aktif?')) return;
+    if (selectedAssets.length === 0 && !(await confirmDialog('Tidak ada aset yang dipilih. Jalankan penyusutan untuk SEMUA aset aktif?'))) return;
     setRunning(true);
     setResult(null);
     try {
@@ -87,9 +90,8 @@ export default function AssetDepreciationModule({ token }) {
         title="Depresiasi Aset (Batch)"
         subtitle="Jalankan batch depreciation untuk periode tertentu. Sistem akan otomatis posting jurnal depresiasi."
         actions={
-          <Button variant="ghost" onClick={fetchAssets} className="h-9 border border-[var(--glass-border)]" data-testid="depr-refresh">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang
-          </Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAssets} data-testid="depr-refresh">
+            <RefreshCw className="w-3.5 h-3.5" /></Button>
         }
       />
       {result && (
@@ -108,25 +110,21 @@ export default function AssetDepreciationModule({ token }) {
         <div className="space-y-4">
           <div className="flex gap-4 items-end">
             <div className="flex-1">
-              <label className="text-sm font-medium text-foreground mb-2 block">Periode Depresiasi</label>
-              <input
-                type="month"
-                value={period}
-                onChange={e => setPeriod(e.target.value)}
-                className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                data-testid="depr-period"
-              />
+              <label className="text-sm font-medium text-foreground mb-2 block">Periode penyusutan</label>
+              <SmartNativeSelect value={period} onChange={e => setPeriod(e.target.value)} className="h-9 w-48" data-testid="depr-period">
+                {monthOptions(24).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </SmartNativeSelect>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={selectAll} size="sm" data-testid="depr-select-all">
-                Pilih Semua
+                Pilih semua
               </Button>
               <Button variant="outline" onClick={clearSelection} size="sm" data-testid="depr-clear-all">
-                Clear
+                Kosongkan
               </Button>
             </div>
           </div>
-          <div className="flex items-center justify-between p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+          <div className="flex items-center justify-between px-4 py-3 bg-[hsl(var(--primary)/0.06)] rounded-lg">
             <div>
               <div className="text-sm font-medium text-foreground">
                 {selectedAssets.length === 0
@@ -137,12 +135,7 @@ export default function AssetDepreciationModule({ token }) {
                 Auto-post jurnal depresiasi aktif
               </div>
             </div>
-            <Button
-              onClick={runBatchDepreciation}
-              disabled={running || loading}
-              className="h-10"
-              data-testid="depr-run-batch"
-            >
+            <Button onClick={runBatchDepreciation} disabled={running || loading} data-testid="depr-run-batch" >
               <Play className="w-4 h-4 mr-2" />
               {running ? 'Memproses...' : 'Run Batch Depreciation'}
             </Button>
@@ -212,7 +205,7 @@ export default function AssetDepreciationModule({ token }) {
       </GlassCard>
       {result && result.results && result.results.length > 0 && (
         <GlassCard className="p-4">
-          <h3 className="text-lg font-semibold text-foreground mb-4">Hasil Batch Depreciation</h3>
+          <h3 className="text-lg font-semibold text-foreground mb-4">Hasil penyusutan</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="depr-result-table">
               <thead>

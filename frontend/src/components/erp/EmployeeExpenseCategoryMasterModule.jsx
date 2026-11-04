@@ -358,38 +358,12 @@ export default function EmployeeExpenseCategoryMasterModule() {
         </CardContent>
       </Card>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Card className="shadow-[var(--shadow-card)]">
-          <CardContent className="pt-4">
-            <p className="text-xs text-muted-foreground">Total Kategori</p>
-            <p className="text-2xl font-bold text-foreground">{categories.length}</p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-[var(--shadow-card)]">
-          <CardContent className="pt-4">
-            <p className="text-xs text-muted-foreground">Aktif</p>
-            <p className="text-2xl font-bold text-emerald-500">
-              {categories.filter(c => c.is_active !== false).length}
-            </p>
-          </CardContent>
-        </Card>
-        <Card className="shadow-[var(--shadow-card)]">
-          <CardContent className="pt-4">
-            <p className="text-xs text-muted-foreground">Nonaktif</p>
-            <p className="text-2xl font-bold text-muted-foreground">
-              {categories.filter(c => c.is_active === false).length}
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-
       {/* Table */}
       <Card className="shadow-[var(--shadow-card)]">
         <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-base">
             <Tag size={16} className="text-primary" />
-            Daftar Kategori
+            Daftar kategori <span className="text-sm font-normal text-muted-foreground">({categories.filter(c => c.is_active !== false).length} aktif dari {categories.length})</span>
           </CardTitle>
           <CardDescription>
             {filtered.length} kategori {search ? 'ditemukan' : 'tersedia'}

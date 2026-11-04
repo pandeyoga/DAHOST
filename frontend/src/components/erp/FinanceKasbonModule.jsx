@@ -3,6 +3,7 @@
  * Finance proses pencairan setelah HR approve, catat pembayaran, monitoring outstanding.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
 import { toast } from 'sonner';
 import {
   RefreshCw, Search, X, FileText, Table2, LayoutGrid, ArrowUpDown,
@@ -373,36 +374,18 @@ export default function FinanceKasbonModule() {
 
       {/* Tabs + Search */}
       <div className="flex gap-2 flex-wrap">
-        <div className="flex gap-1 p-1 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-          {[['pending','Siap Cairkan'],['active','Aktif'],['done','Selesai'],['all','Semua']].map(([k,l]) => (
-            <button key={k} onClick={() => setTab(k)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${tab===k ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
-              {l}
-              {k==='pending' && (stats.pending_finance||0) > 0 && (
-                <span className="ml-1 px-1.5 rounded-full bg-blue-500 text-white text-[10px]">{stats.pending_finance}</span>
-              )}
-            </button>
-          ))}
-        </div>
-        <div className="relative flex-1 min-w-[180px]">
+        <FilterChips value={tab} onChange={setTab} testId="kasbon-tab" ariaLabel="Status kasbon" hideWhenEmpty={false}
+          options={[{ key: 'pending', label: 'Siap dicairkan', count: stats.pending_finance || 0 }, { key: 'active', label: 'Aktif', count: stats.active_count || 0 },
+            { key: 'done', label: 'Selesai' }, { key: 'all', label: 'Semua' }]} />
+        <div className="relative w-72 max-w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari karyawan / no. pengajuan..."
             data-testid="kasbon-search"
-            className="w-full h-9 pl-9 pr-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
+            className="w-full h-9 pl-9 pr-3 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
         </div>
         <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-lg border border-[var(--glass-border)] overflow-hidden">
-            <button type="button" onClick={() => setView('table')} data-testid="kasbon-view-table"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <Table2 size={12} /> Tabel
-            </button>
-            <button type="button" onClick={() => setView('grid')} data-testid="kasbon-view-grid"
-              className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-                ? 'bg-primary text-primary-foreground' : 'bg-background text-foreground'}`}>
-              <LayoutGrid size={12} /> Kartu
-            </button>
-          </div>
+          <FilterChips value={view} onChange={setView} testId="kasbon-view" ariaLabel="Bentuk tampilan" hideWhenEmpty={false}
+            options={[{ key: 'table', label: 'Tabel', icon: Table2 }, { key: 'grid', label: 'Kartu', icon: LayoutGrid }]} />
           <ExportCsvButton filename="kasbon-pinjaman-karyawan" testId="kasbon-export-csv"
             head={CSV_HEAD} rows={csvRows}
             note={`Rp ${(rows.reduce((s, r) => s + Number(r.outstanding_balance || 0), 0)).toLocaleString('id-ID')} sisa`} />

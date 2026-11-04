@@ -9,6 +9,8 @@
  *  - GL Reconciliation: Dr Beban Dinas / Cr Uang Muka / Dr-Cr Bank (selisih)
  */
 import { useState, useEffect, useCallback } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
 import {
   Plus, RefreshCw, FileText, CheckCircle, XCircle,
@@ -347,7 +349,7 @@ function SettlementDetail({ stl, token, onClose, onRefresh, role }) {
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Gagal'); }
       onRefresh(); onClose();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setLoading(false); }
   };
 
@@ -545,7 +547,7 @@ function OutstandingAdvancePanel({ token }) {
                       </span>
                     ) : (
                       <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-800">
-                        Belum ada settlement
+                        Belum ada penyelesaian perjalanan dinas
                       </span>
                     )}
                   </td>
@@ -655,7 +657,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
       return;
     }
     
-    if (!window.confirm(`Approve ${selectedIds.length} settlement?`)) return;
+    if (!(await confirmDialog(`Approve ${selectedIds.length} settlement?`))) return;
     
     setBulkLoading(true);
     try {
@@ -696,7 +698,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
       return;
     }
     
-    if (!window.confirm(`Post GL untuk ${selectedIds.length} settlement? Ini akan membuat Journal Entry.`)) return;
+    if (!(await confirmDialog(`Post GL untuk ${selectedIds.length} settlement? Ini akan membuat Journal Entry.`))) return;
     
     setBulkLoading(true);
     try {
@@ -742,7 +744,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
   };
 
   const tabs = [
-    { id: 'my',          label: 'Settlement saya' },
+    { id: 'my',          label: 'Penyelesaian saya' },
     // 2026-11-04: peran keuangan kanonik ('accounting'/'staff_keuangan') juga melihat antrean posting
     ...((isApprover || isFinance) ? [{ id: 'queue', label: `Antrean (${summary?.pending_post || 0})` }] : []),
     ...(isFinance  ? [{ id: 'outstanding', label: `Uang muka belum selesai (${
@@ -790,11 +792,11 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
               </Button>
             </div>
             
-            <Button variant="ghost" onClick={fetchData} className="h-9 border">
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} >
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
             {myTrips.length > 0 && (
-              <Button onClick={() => setShowCreate(true)} className="h-9" data-testid="btn-new-settlement">
+              <Button onClick={() => setShowCreate(true)} data-testid="btn-new-settlement">
                 <Plus className="w-3.5 h-3.5 mr-1.5" />Penyelesaian baru
               </Button>
             )}
@@ -809,16 +811,8 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
 
       {/* 2026-11-04: 4 kartu hitungan dilepas — jumlah antrean & uang muka ada di nama tab */}
       {/* Tabs */}
-      <div className="flex rounded-lg border overflow-hidden w-fit">
-        {tabs.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`px-4 py-2 text-sm font-medium transition-colors ${
-              activeTab === t.id ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-            }`}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <FilterChips value={activeTab} onChange={setActiveTab} testId="travel-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
+        options={tabs.map((t) => ({ key: t.id, label: t.label }))} />
 
       {activeTab === 'outstanding' ? (
         <OutstandingAdvancePanel token={token} />
@@ -891,7 +885,7 @@ export default function EmployeeTravelSettlementModule({ token, user, defaultTab
             ) : settlements.length === 0 ? (
               <div className="p-12 text-center text-muted-foreground">
                 <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                <p className="font-medium">Belum ada settlement</p>
+                <p className="font-medium">Belum ada penyelesaian perjalanan dinas</p>
                 {myTrips.length > 0 && (
                   <p className="text-sm mt-1">Klik "Settlement Baru" untuk memulai rekonsiliasi perjalanan dinas.</p>
                 )}

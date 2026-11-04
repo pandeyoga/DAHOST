@@ -7,6 +7,8 @@
  *  - Perjalanan Dinas — Manager/HR approve → Finance bayar uang muka
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
+import { toast } from 'sonner';
 import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
 import {
   CheckCircle, XCircle, Clock, RefreshCw,
@@ -89,7 +91,7 @@ function ActionModal({ item, token, onClose, onRefresh }) {
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Gagal'); }
       onRefresh(); onClose();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setLoading(false); }
   };
 
@@ -314,7 +316,7 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
         title="Persetujuan Klaim & Perjalanan Dinas"
         subtitle="SDM menyetujui klaim karyawan; Keuangan mencairkan uangnya."
         actions={
-          <Button variant="ghost" onClick={fetchData} className="h-9 border">
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} >
             <RefreshCw className="w-3.5 h-3.5" />
           </Button>
         }
@@ -328,36 +330,18 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
 
       {/* Filter Tabs */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="flex rounded-lg border overflow-hidden">
-          {[['all', `Semua (${totalPending})`], ['expense_claim', `Klaim biaya (${summary?.expense_claims?.total_pending_approval || 0})`], ['travel_request', `Perjalanan dinas (${summary?.travel_requests?.total_pending_approval || 0})`]].map(([v, l]) => (
-            <button key={v} onClick={() => setFilter(v)}
-              data-testid={`expense-filter-${v}`}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                filter === v ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'
-              }`}>
-              {l}
-            </button>
-          ))}
-        </div>
-        <div className="relative flex-1 min-w-[200px]">
+        <FilterChips value={filter} onChange={setFilter} testId="expense-filter" ariaLabel="Jenis" hideWhenEmpty={false}
+          options={[{ key: 'all', label: 'Semua', count: totalPending }, { key: 'expense_claim', label: 'Klaim biaya', count: summary?.expense_claims?.total_pending_approval || 0 },
+            { key: 'travel_request', label: 'Perjalanan dinas', count: summary?.travel_requests?.total_pending_approval || 0 }]} />
+        <div className="relative w-72 max-w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Cari no. referensi / karyawan / judul…"
             data-testid="expense-search"
             className="w-full h-9 pl-9 pr-3 rounded-lg border border-border bg-card text-sm" />
         </div>
-        <div className="inline-flex rounded-lg border overflow-hidden">
-          <button type="button" onClick={() => setView('table')} data-testid="expense-view-table"
-            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'table'
-              ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground'}`}>
-            <Table2 size={12} /> Tabel
-          </button>
-          <button type="button" onClick={() => setView('grid')} data-testid="expense-view-grid"
-            className={`px-2.5 py-1.5 text-xs flex items-center gap-1 ${view === 'grid'
-              ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground'}`}>
-            <LayoutGrid size={12} /> Kartu
-          </button>
-        </div>
+        <FilterChips value={view} onChange={setView} testId="expense-view" ariaLabel="Bentuk tampilan" hideWhenEmpty={false}
+            options={[{ key: 'table', label: 'Tabel', icon: Table2 }, { key: 'grid', label: 'Kartu', icon: LayoutGrid }]} />
         <ExportCsvButton filename="inbox-approval-klaim-dinas" testId="expense-export-csv"
           head={CSV_HEAD} rows={csvRows}
           note={`total ${fmt(sumVisible)}`} />

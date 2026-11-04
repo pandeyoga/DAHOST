@@ -20,6 +20,7 @@
  *   50 baris dan kartu menulis "50 laporan").
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Banknote, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Store, Percent,
   Plus, Scale, BookCheck, Send, X, Trash2, Pencil, Upload,
@@ -27,9 +28,12 @@ import {
 import { GlassCard } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
-import { formatRupiah } from '@/lib/format';
+import { formatRupiah, formatDateID, formatPercent } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import PeriodPicker, { periodFromPreset } from './PeriodPicker';
 import { MoneyInput } from '@/components/ui/money-input';
-import { monthEndISO } from '@/lib/waktu';
+
 import { SettlementImportPanel, computeValues } from './SettlementImportPanel';
 import { SettlementByStoreCards } from './SettlementByStoreCards';
 import { PlatformBalanceCards, usePlatformBalances } from './PlatformBalanceCards';
@@ -41,7 +45,7 @@ import { useInCompactHub } from '../moduleAtoms';
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/marketing/settlements`;
 const rp = formatRupiah;
-const pct = (v) => `${Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}%`;
+const pct = (v) => formatPercent(v, 2);
 const MONTHS_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
 const fmtMonthID = (ym) => { const [y, m] = String(ym).split('-'); return `${MONTHS_ID[Number(m) - 1] || m} ${y}`; };
 
@@ -129,15 +133,13 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
   const [refreshKey, setRefreshKey] = useState(0);
   const fileRef = useRef(null);
 
-  // Filter periode: satu bulan (YYYY-MM) ATAU rentang tanggal bebas. Kosong = semua.
-  const [period, setPeriod] = useState({ month: '', from: '', to: '' });
-  const range = useMemo(() => {
-    if (period.month) return { from: `${period.month}-01`, to: monthEndISO(period.month) };
-    return { from: period.from, to: period.to };
-  }, [period]);
+  // PANDUAN_UI G6 (2026-11-04): satu pemilih periode, bawaan "Bulan ini" — dulu kotak bulan ATAU rentang
+  // tanggal dengan bawaan kosong (= semua periode) dan kotak bulan kosong tampil "--------- ----".
+  const [period, setPeriod] = useState(() => periodFromPreset('month'));
+  const range = useMemo(() => ({ from: period.from, to: period.to }), [period]);
+  const monthOfPeriod = ['month', 'last_month'].includes(period.preset) ? period.from.slice(0, 7) : '';
   // periode selalu tertulis di kartu (audit: 24,19% vs 24,16% tampak beda karena periodenya tak tertulis)
-  const periodLabel = period.month ? fmtMonthID(period.month)
-    : (range.from || range.to) ? `${range.from || '…'} – ${range.to || '…'}` : 'semua periode';
+  const periodLabel = monthOfPeriod ? fmtMonthID(monthOfPeriod) : `${formatDateID(range.from)} – ${formatDateID(range.to)}`;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -357,55 +359,30 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
           </h2>
         ) : <span />}
         <div className="flex items-center gap-2 flex-wrap">
-          <select data-testid="fin-settlement-account-filter" value={accountId}
-            onChange={(e) => setAccountId(e.target.value)}
-            className="h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm">
+          <SmartNativeSelect data-testid="fin-settlement-account-filter" value={accountId}
+            onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56">
             <option value="">Semua toko</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>
             ))}
-          </select>
-          <div className="flex items-center gap-1 h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-xs"
-            data-testid="fin-settlement-period-filter">
-            <input type="month" data-testid="fin-settlement-filter-month" value={period.month}
-              title="Filter satu bulan"
-              onChange={(e) => setPeriod({ month: e.target.value, from: '', to: '' })}
-              className="h-7 bg-transparent text-xs" />
-            <span className="text-foreground/40">atau</span>
-            <input type="date" data-testid="fin-settlement-filter-from" value={period.from}
-              title="Dari tanggal"
-              onChange={(e) => setPeriod({ month: '', from: e.target.value, to: period.to })}
-              className="h-7 bg-transparent text-xs" />
-            <span className="text-foreground/40">–</span>
-            <input type="date" data-testid="fin-settlement-filter-to" value={period.to}
-              title="Sampai tanggal"
-              onChange={(e) => setPeriod({ month: '', from: period.from, to: e.target.value })}
-              className="h-7 bg-transparent text-xs" />
-            {(period.month || period.from || period.to) ? (
-              <button data-testid="fin-settlement-filter-clear" title="Hapus filter periode"
-                onClick={() => setPeriod({ month: '', from: '', to: '' })}
-                className="p-1 rounded hover:bg-foreground/10"><X className="w-3.5 h-3.5" /></button>
-            ) : null}
-          </div>
-          <button data-testid="fin-settlement-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang"
-            className="h-9 px-3 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-1.5">
+          </SmartNativeSelect>
+          <PeriodPicker value={period} onChange={setPeriod} testId="fin-settlement-period-filter" />
+          <Button variant="outline" size="icon" data-testid="fin-settlement-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang">
             <RefreshCw className="w-4 h-4" />
-          </button>
+          </Button>
           {view === 'settlements' ? (<>
           <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden"
             data-testid="fin-settlement-import-file"
             onChange={(e) => importFile(e.target.files?.[0])} />
-          <button data-testid="fin-settlement-import" disabled={busy === 'import'}
+          <Button variant="outline" data-testid="fin-settlement-import" disabled={busy === 'import'}
             onClick={() => fileRef.current?.click()}
-            title="Unggah laporan Penghasilan (Shopee) / Settlement (TikTok) untuk mengisi form"
-            className="h-9 px-3 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-1.5 disabled:opacity-50">
+            title="Unggah laporan Penghasilan (Shopee) / Settlement (TikTok) untuk mengisi form">
             {busy === 'import' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
             Impor laporan
-          </button>
-          <button data-testid="fin-settlement-new" onClick={openCreate}
-            className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm flex items-center gap-1.5">
+          </Button>
+          <Button data-testid="fin-settlement-new" onClick={openCreate}>
             <Plus className="w-4 h-4" /> Catat dana dilepas
-          </button>
+          </Button>
           </>) : null}
         </div>
       </div>
@@ -433,7 +410,7 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
 
       {view === 'balances' ? (<>
         <PlatformBalanceCards refreshKey={refreshKey} />
-        <SettlementByStoreCards refreshKey={refreshKey} month={period.month} />
+        <SettlementByStoreCards refreshKey={refreshKey} month={monthOfPeriod} />
       </>) : null}
       {view === 'withdrawals' ? (
         <PlatformWithdrawalsPanel accounts={accounts} accountId={accountId} banks={banks}
@@ -662,7 +639,7 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
                 {rows.map((r) => (
                   <tr key={r.id} className="border-b border-foreground/5"
                     data-testid={`fin-settlement-row-${r.settlement_id}`}>
-                    <td className="py-2 px-3">{r.settlement_date || '—'}</td>
+                    <td className="py-2 px-3 whitespace-nowrap">{formatDateID(r.settlement_date)}</td>
                     <td className="py-2 px-3 font-mono text-xs">{r.settlement_id}</td>
                     <td className="py-2 px-3">
                       {accName(r.account_id)}
@@ -730,7 +707,7 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
                             <button title="Hapus"
                               data-testid={`fin-settlement-delete-${r.settlement_id}`}
                               disabled={busy === `delete:${r.id}`}
-                              onClick={() => { if (window.confirm(`Hapus laporan dana dilepas ${r.settlement_id}?`)) act(r, 'delete'); }}
+                              onClick={async () => { if (await confirmDialog(`Hapus laporan dana dilepas ${r.settlement_id}?`)) act(r, 'delete'); }}
                               className="ml-2 p-1.5 rounded hover:bg-foreground/10 text-red-600 disabled:opacity-40">
                               <Trash2 className="w-4 h-4" />
                             </button>

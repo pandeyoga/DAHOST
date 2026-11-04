@@ -9,6 +9,7 @@
  * yang dipertanggungjawabkan dengan nota.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import FilterChips from '@/components/ui/filter-chips';
 import { Plus, RefreshCw, Loader2, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -281,18 +282,14 @@ export default function EmployeeAdvancesModule() {
   return (
     <div className="space-y-4" data-testid="employee-advances">
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="inline-flex rounded-lg border border-[var(--glass-border)] p-0.5">
-          {[['open', 'Belum selesai'], ['all', 'Semua']].map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setStatus(k)} data-testid={`advance-status-${k}`}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium ${status === k ? 'bg-[var(--nav-pill-active)] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>{l}</button>
-          ))}
-        </div>
-        <div className="relative flex-1 min-w-[200px]">
+        <FilterChips value={status} onChange={setStatus} testId="advance-status" ariaLabel="Status uang muka" hideWhenEmpty={false}
+          options={[{ key: 'open', label: 'Belum selesai' }, { key: 'all', label: 'Semua' }]} />
+        <div className="relative w-72 max-w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input className="pl-9 h-9" placeholder="Cari karyawan / keperluan" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <Button variant="ghost" className="h-9 border border-[var(--glass-border)]" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
-        <Button className="h-9" onClick={() => setAdding(true)} data-testid="advance-add"><Plus className="w-4 h-4 mr-1" />Uang muka baru</Button>
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+        <Button onClick={() => setAdding(true)} data-testid="advance-add"><Plus className="w-4 h-4 mr-1" />Uang muka baru</Button>
       </div>
 
       {status === 'open' && data.total_open > 0 && (

@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { PageHeader } from './moduleAtoms';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Plus, Edit2, Trash2, CheckCircle, Lock, Unlock, Upload,
   BarChart2, TrendingUp, TrendingDown, Minus, RefreshCw,
@@ -122,7 +124,7 @@ export default function BudgetModule({ token }) {
   };
 
   const deleteBudget = async (bid) => {
-    if (!window.confirm('Hapus budget ini?')) return;
+    if (!(await confirmDialog('Hapus budget ini?'))) return;
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}`, { method: 'DELETE', headers });
     if (r.ok) { toast.success('Anggaran dihapus'); fetchBudgets(page); }
     else { const e = await r.json(); toast.error(e.detail || 'Gagal hapus'); }
@@ -223,7 +225,7 @@ export default function BudgetModule({ token }) {
         <GlassCard className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[var(--glass-bg)] text-xs uppercase text-muted-foreground">
-              <tr>{['Bulan','Akun','Budget','Aktual','Variance','%','Status'].map(h => <th key={h} className="px-3 py-2.5 text-left whitespace-nowrap">{h}</th>)}</tr>
+              <tr>{['Bulan','Akun','Anggaran','Realisasi','Selisih','%','Status'].map(h => <th key={h} className="px-3 py-2.5 text-left whitespace-nowrap">{h}</th>)}</tr>
             </thead>
             <tbody className="divide-y divide-border">
               {vrows.length === 0 && <tr><td colSpan={7} className="text-center py-6 text-muted-foreground">Tidak ada data</td></tr>}
@@ -267,10 +269,10 @@ export default function BudgetModule({ token }) {
           <div className="flex gap-2 flex-wrap">
             {selected.status === 'draft' && <Button size="sm" onClick={() => changeStatus(selected.id, 'approve')} className="bg-blue-600 hover:bg-blue-700 text-foreground"><CheckCircle className="w-3.5 h-3.5 mr-1" />Setujui</Button>}
             {selected.status === 'approved' && <Button size="sm" onClick={() => changeStatus(selected.id, 'lock')} className="bg-green-600 hover:bg-green-700 text-foreground"><Lock className="w-3.5 h-3.5 mr-1" />Kunci</Button>}
-            {(selected.status === 'approved' || selected.status === 'locked') && <Button size="sm" variant="outline" onClick={() => changeStatus(selected.id, 'reopen')}><Unlock className="w-3.5 h-3.5 mr-1" />Reopen</Button>}
+            {(selected.status === 'approved' || selected.status === 'locked') && <Button size="sm" variant="outline" onClick={() => changeStatus(selected.id, 'reopen')}><Unlock className="w-3.5 h-3.5 mr-1" />Buka lagi</Button>}
             {selected.status !== 'locked' && <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}><Upload className="w-3.5 h-3.5 mr-1" />Impor Excel</Button>}
             {selected.status !== 'locked' && <Button size="sm" onClick={() => setModalItem(true)}><Plus className="w-3.5 h-3.5 mr-1" />Tambah Item</Button>}
-            <Button size="sm" variant="outline" onClick={() => fetchVariance(selected.id)} disabled={loading}><BarChart2 className="w-3.5 h-3.5 mr-1" />Variance</Button>
+            <Button size="sm" variant="outline" onClick={() => fetchVariance(selected.id)} disabled={loading}><BarChart2 className="w-3.5 h-3.5 mr-1" />Anggaran vs realisasi</Button>
           </div>
         </div>
 
@@ -280,7 +282,7 @@ export default function BudgetModule({ token }) {
             <div><span className="text-muted-foreground">Tahun:</span> <strong>{selected.year}</strong></div>
             <div><span className="text-muted-foreground">Tipe:</span> {selected.period_type}</div>
             <div><span className="text-muted-foreground">Departemen:</span> {selected.department || '-'}</div>
-            <div><span className="text-muted-foreground">Total Budget:</span> <strong className="text-emerald-500">{fmtRp(selected.total_budgeted)}</strong></div>
+            <div><span className="text-muted-foreground">Total anggaran:</span> <strong className="text-foreground">{fmtRp(selected.total_budgeted)}</strong></div>
           </div>
         </GlassCard>
 
@@ -293,7 +295,7 @@ export default function BudgetModule({ token }) {
             </div>
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground uppercase">
-                <tr><th className="px-3 py-2 text-left">Akun</th><th className="px-3 py-2 text-right">Budget</th><th className="px-3 py-2 text-left">Catatan</th><th className="px-3 py-2 w-10"></th></tr>
+                <tr><th className="px-3 py-2 text-left">Akun</th><th className="px-3 py-2 text-right">Anggaran</th><th className="px-3 py-2 text-left">Catatan</th><th className="px-3 py-2 w-10"></th></tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {itemsByMonth[month].map(it => (
@@ -362,18 +364,12 @@ export default function BudgetModule({ token }) {
   return (
     <div className="space-y-5" data-testid="budget-list-page">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h2 className="text-lg font-semibold">Anggaran</h2>
-          <p className="text-xs text-muted-foreground">Anggaran per tahun, departemen, dan pusat biaya, dibandingkan dengan realisasinya.</p>
-        </div>
-        <Button onClick={() => { setModalBudget(true); fetchMeta(); }} data-testid="btn-new-budget">
+      <PageHeader title="Anggaran" subtitle="Anggaran per tahun, departemen, dan pusat biaya, dibandingkan dengan realisasinya." actions={<Button onClick={() => { setModalBudget(true); fetchMeta(); }} data-testid="btn-new-budget">
           <Plus className="w-4 h-4 mr-1.5" /> Anggaran baru
-        </Button>
-      </div>
+        </Button>} />
 
       {/* Filters */}
-      <GlassCard className="p-3">
+      <div>
         <div className="flex flex-wrap gap-3 items-center">
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-muted-foreground">Tahun:</span>
@@ -396,14 +392,14 @@ export default function BudgetModule({ token }) {
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
-      </GlassCard>
+      </div>
 
       {/* Table */}
       <GlassCard className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--glass-bg)] text-xs uppercase text-muted-foreground">
             <tr>
-              {['Nama Budget','Tahun','Tipe','Departemen','Total Budget','Status','Aksi'].map(h => (
+              {['Nama anggaran','Tahun','Tipe','Departemen','Total anggaran','Status','Aksi'].map(h => (
                 <th key={h} className="px-3 py-3 text-left whitespace-nowrap">{h}</th>
               ))}
             </tr>

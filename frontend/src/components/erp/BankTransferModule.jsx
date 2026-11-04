@@ -9,6 +9,8 @@
  *  - Void transfer + retry posting
  */
 import React, { useState, useEffect, useCallback } from 'react';
+import { PageHeader } from './moduleAtoms';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { FINANCE_ROLES } from '../../lib/financeRoles'; // FIN-02
 import {
   ArrowRightLeft, Plus, RefreshCw, CheckCircle2, XCircle,
@@ -306,7 +308,7 @@ export default function BankTransferModule() {
   };
 
   const handleVoid = async (tf) => {
-    if (!window.confirm(`Void transfer ${tf.ref_number}? Akan dibuat JE reversal.`)) return;
+    if (!(await confirmDialog(`Void transfer ${tf.ref_number}? Akan dibuat JE reversal.`))) return;
     try {
       const r = await fetch(`${BASE}/${tf.id}/void`, {
         method: 'POST',
@@ -321,16 +323,11 @@ export default function BankTransferModule() {
   const unpostedCount = transfers.filter(t => !t.gl_posted && t.status !== 'voided').length;
 
   return (
-    <div className="space-y-4 p-4">
-      {/* Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Transfer Antar Rekening</h1>
-          <p className="text-sm text-muted-foreground">
-            Memindah uang antar rekening sendiri (mis. bank → Kas Kecil). Jurnal terbentuk otomatis.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
+    <div className="space-y-4">
+      <PageHeader
+        title="Transfer Antar Rekening"
+        subtitle="Memindah uang antar rekening sendiri (mis. bank → Kas Kecil). Jurnal terbentuk otomatis."
+        actions={<>
           <Button variant="outline" size="sm" onClick={fetchTransfers} disabled={loading}>
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           </Button>
@@ -341,11 +338,11 @@ export default function BankTransferModule() {
               onClick={() => setDialogOpen(true)}
               className="gap-2"
             >
-              <Plus size={14} /> Transfer Baru
+              <Plus size={14} /> Transfer baru
             </Button>
           )}
-        </div>
-      </div>
+        </>}
+      />
 
       {/* 2026-11-04: 3 kartu hitungan dilepas — jumlah ada di daftar, yang belum terjurnal di peringatan bawah */}
       <p className="text-xs text-muted-foreground" data-testid="transfer-count">{total} transfer</p>

@@ -68,7 +68,7 @@ export default function ImportExportToolbar({ collectionKey, label, onImported, 
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size={size} disabled={exporting} data-testid={`ie-export-${collectionKey}`}>
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            <span className="ml-1.5">Ekspor</span>
+            <span className="ml-1.5">Unduh</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">

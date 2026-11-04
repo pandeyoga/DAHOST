@@ -80,24 +80,20 @@ export default function BadDebtWriteOffModule({ token }) {
         title="Hapus Buku Piutang Macet"
         subtitle="Kelola piutang overdue dan write-off piutang yang tidak tertagih. Sistem otomatis posting jurnal bad debt expense."
         actions={
-          <Button variant="ghost" onClick={fetchOverdueReport} className="h-9 border border-[var(--glass-border)]" data-testid="bd-refresh">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang
-          </Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchOverdueReport} data-testid="bd-refresh">
+            <RefreshCw className="w-3.5 h-3.5" /></Button>
         }
       />
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <StatTile label="Total Overdue" value={summary.total_overdue_invoices || 0} />
-        <StatTile label="Jumlah Overdue" value={fmt(summary.total_overdue_amount)} accent="warning" />
-        <StatTile
-          label="High Risk (>180 hari)"
-          value={summary.high_risk_count || 0}
-          accent="destructive"
-        />
-        <StatTile label="High Risk Amount" value={fmt(summary.high_risk_amount)} accent="destructive" />
-      </div>
+      {/* PANDUAN_UI G10: kartu angka hanya bila ada faktur lewat jatuh tempo */}
+      {Number(summary.total_overdue_invoices) > 0 && <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+        <StatTile label="Faktur lewat jatuh tempo" value={summary.total_overdue_invoices || 0} />
+        <StatTile label="Nilai lewat jatuh tempo" value={fmt(summary.total_overdue_amount)} accent="warning" />
+        <StatTile label="Berisiko (>180 hari)" value={summary.high_risk_count || 0} accent="danger" />
+        <StatTile label="Nilai berisiko" value={fmt(summary.high_risk_amount)} accent="danger" />
+      </div>}
       <GlassCard className="p-4">
         <div className="flex gap-3 mb-4 items-center">
-          <label className="text-sm text-muted-foreground">Min. Overdue:</label>
+          <label className="text-sm text-muted-foreground">Terlambat minimal:</label>
           <select
             value={minDays}
             onChange={e => setMinDays(Number(e.target.value))}
@@ -231,7 +227,7 @@ export default function BadDebtWriteOffModule({ token }) {
               </div>
             </div>
             <div className="flex gap-2 mt-6 justify-end">
-              <Button variant="ghost" onClick={() => setWriteOffTarget(null)} className="border border-[var(--glass-border)]" data-testid="bd-cancel">
+              <Button variant="outline" onClick={() => setWriteOffTarget(null)} data-testid="bd-cancel">
                 Batal
               </Button>
               <Button
