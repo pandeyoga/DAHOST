@@ -1,16 +1,16 @@
 # Cara mengaudit & merapikan UI satu portal
 
-Dipakai untuk Portal Keuangan (4 Nov 2026). Langkahnya sama untuk portal lain: `hr`, `production`, `warehouse`, `sales`, `toko`, dst. Daftar portal: `python3 scripts/ui_audit/scan_ui.py --list-portals`.
+Berlaku untuk semua portal: `finance`, `hr`, `production`, `warehouse`, `sales`, `toko`, dst.
+Daftar portal: `python3 scripts/ui_audit/scan_ui.py --list-portals`. Aturan: [PANDUAN_UI.md](PANDUAN_UI.md).
 
-Ada tiga lapis pemeriksaan. Setiap lapis menangkap hal yang tidak tertangkap lapis lain:
+Ada empat alat. Masing-masing menangkap hal yang tidak tertangkap alat lain:
 
-| Lapis | Alat | Menangkap | Tidak menangkap |
-|---|---|---|---|
-| 1. Kode | `scripts/ui_audit/scan_ui.py` | pola di kode: tombol ghost+border, `font-mono`, warna mentah, `<select>`/`type="month"`, `window.confirm`, kata Inggris, judul/tab buatan | hasil CSS akhir, isi data |
-| 2. Layar | `scripts/ui_audit/dom_audit.js` | yang benar-benar tampil: tombol tanpa latar, kartu di dalam kartu, baris laporan jadi kartu, nol merah, tanggal mentah, kode mentah, format tabel berbeda, isi tertutup tombol chat, tinggi tombol berbeda | rasa/kepatutan (perlu mata manusia) |
-| 3. Mata | daftar periksa di bawah | isi ganda antarmenu, urutan yang membingungkan, kata yang tidak dipahami pengguna | — |
-
-Kode aturan sama di ketiganya dan di [PANDUAN_UI.md](PANDUAN_UI.md).
+| Alat | Menangkap | Tidak menangkap |
+|---|---|---|
+| 1. **Pemindai kode** `scripts/ui_audit/scan_ui.py` | layar tanpa cetakan `PageLayout`, popup berisi daftar, jarak besar, tombol buatan, `<select>`/tanggal polos, warna mentah, `window.confirm`, judul/tab buatan, kata Inggris | hasil tampilan akhir, isi data |
+| 2. **Audit layar** `scripts/ui_audit/dom_audit.js` | pita kosong > 28 px, baris berisi satu tombol, penyaring menempel di kanan, istilah program di layar, kartu di dalam kartu, nol merah, tanggal/kode mentah, format tabel berbeda, tinggi tombol berbeda, isi tertutup tombol chat | rasa/kepatutan |
+| 3. **Galeri layar** `scripts/ui_audit/galeri.py` | **semua layar portal berdampingan** di satu halaman + temuan audit per layar + galat API; pembanding **sebelum/sesudah** | — (dilihat dengan mata) |
+| 4. **Mata** — daftar periksa di bawah | isi ganda antarmenu, urutan membingungkan, kata yang tidak dipahami | — |
 
 ## Langkah 1 — pindai kode
 
@@ -18,62 +18,77 @@ Kode aturan sama di ketiganya dan di [PANDUAN_UI.md](PANDUAN_UI.md).
 python3 scripts/ui_audit/scan_ui.py --portal hr --md docs/design/audit_hr.md
 ```
 
-Hasilnya laporan per aturan, lengkap dengan berkas dan nomor baris. Berkas yang diperiksa adalah layar yang dibuka dari menu portal itu, ditambah komponen yang diimpornya (sampai 2 tingkat).
+Hasilnya laporan per aturan, lengkap dengan berkas dan nomor baris. `CETAKAN-TIDAK-DIPAKAI` menunjukkan layar yang
+masih menyusun kepala/toolbar sendiri — mulai perbaikan dari sini.
 
-## Langkah 2 — periksa layar
+## Langkah 2 — galeri layar (sebelum)
 
-1. Jalankan app (lokal), masuk sebagai admin, lalu buka layar 1440×900.
-2. Ambil daftar menu:
-   ```bash
-   python3 scripts/ui_audit/scan_ui.py --portal hr --ids
-   ```
-3. Buka DevTools › Console, tempel isi `scripts/ui_audit/dom_audit.js`, lalu:
-   ```js
-   await uiAuditMenus(["hr-employees", "hr-attendance-hub" /* … hasil langkah 2 */])
-   copy(window.__uiAuditResult)   // salin hasil lengkap per layar
-   ```
-   `uiAuditMenus` membuka setiap menu **dan setiap tab hub-nya**, lalu memeriksa layar. Untuk satu layar saja: `await uiAudit()`.
-   Kalau dijalankan lewat Claude, alat browser punya batas 45 detik per panggilan. Jalankan dengan `uiAuditMenus([...]).then(...)` lalu tunggu, atau bagi per 5–8 menu.
-4. Baca `total` (jumlah per aturan) dan `per_layar[i].samples` (contoh elemen). `metrics.tabel` menunjukkan format tiap tabel; lebih dari satu format di portal yang sama = `TABEL-GAYA-BEDA`.
+Jalankan di app **lokal** (data dari cadangan VPS bila perlu). Butuh Docker; image Playwright diunduh sekali.
 
-Bila ada layar gagal dimuat, audit mencatat `LAYAR-ERROR` (layar error menutupi semua temuan lain — perbaiki dulu).
+```bash
+# token sementara dari backend LOKAL — dialihkan ke berkas, jangan ditampilkan; hapus setelah dipakai
+docker exec -i dahost-local-backend-1 python - < scripts/ui_audit/buat_token_lokal.py > "$TEMP/galeri_token.json"
 
-Catatan salah tangkap yang wajar:
-- `TEKS-INGGRIS` ikut menandai **data** ("Supplier Aksesoris…" adalah nama pemasok).
-- `TERTUTUP-CHAT` tergantung posisi gulir.
+MSYS_NO_PATHCONV=1 docker run --rm --network dahost-local_default -v "$PWD:/repo:ro" -v "$TEMP:/work" \
+  mcr.microsoft.com/playwright/python:v1.49.1-noble sh -c \
+  "pip install -q --break-system-packages playwright==1.49.1 >/dev/null 2>&1; \
+   python3 /repo/scripts/ui_audit/galeri.py --portal hr --token-file /work/galeri_token.json \
+   --base http://localhost:8080 --via http://caddy:80 --out /work/galeri_hr_sebelum"
+```
 
-Periksa contohnya sebelum memperbaiki.
+- `--network dahost-local_default` + `--via http://caddy:80`: container galeri masuk jaringan app lokal (port 8080 app
+  hanya terbuka untuk 127.0.0.1, jadi tidak terjangkau dari container lewat `host.docker.internal`). Halaman tetap
+  beralamat `--base` (sama dengan alamat yang tertanam di bundel), permintaannya diambil dari `--via`.
+- Image Playwright tidak membawa paket Python-nya — `pip install playwright==1.49.1` (versi sama dengan image) dulu.
+- Lama: ±5 detik per layar (Keuangan ±46 layar ≈ 4–5 menit).
 
-## Langkah 3 — daftar periksa mata (per layar)
+Buka `$TEMP/galeri_hr_sebelum/index.html`:
+- deret **pil di atas** = jumlah per aturan untuk seluruh portal; klik satu pil untuk menyaring layar yang melanggarnya;
+- **"Beda gaya antarlayar"** = tampilan kosong atau format tabel yang tidak sama di portal itu;
+- **galat API/JS** = layar yang memanggil API gagal (401/404/500) atau error JavaScript;
+- tiap kartu = satu layar (menu › tab): potret penuh, temuan, judul, apakah memakai cetakan, dan tinggi tombol.
 
-1. Apakah ada isi yang sama dengan menu/tab lain (angka, rekening koran, saldo per pemasok)?
-2. Apakah tombol utama hanya satu dan jelas?
-3. Apakah judul, tab, dan tombol semuanya bahasa Indonesia, dengan huruf besar hanya di awal?
-4. Apakah kartu dipakai sesuai G5 (bukan untuk tiap baris atau satu angka)?
-5. Apakah ada periode bawaan, dan tertulis rentangnya?
-6. Apakah tampilan kosong memberi langkah berikutnya?
-7. Apakah layar masih terbaca di tema gelap?
+Untuk tema gelap tambahkan `--dark`. Untuk lebar HP tambahkan `--width 390 --height 844`. Untuk sebagian menu
+saja: `--only hr-employees,hr-attendance-hub`.
+
+Tanpa Docker, audit layar bisa dijalankan manual: buka app, DevTools › Console, tempel isi `dom_audit.js`, lalu
+`await uiAuditMenus(<hasil scan_ui.py --portal hr --ids>)` dan `copy(window.__uiAuditResult)`.
+
+## Langkah 3 — daftar periksa mata (per layar, sambil melihat galeri)
+
+1. Apakah susunannya sama dengan layar lain: kepala → toolbar (penyaring kiri, alat kanan) → ringkasan → isi?
+2. Ada ruang kosong besar, tombol sendirian di satu baris, atau tombol di tempat yang beda dari layar lain?
+3. Apakah detail dibuka di halaman (panel di atas tabel / baris dibuka di bawah), bukan popup?
+4. Ada isi yang sama dengan menu/tab lain (angka, daftar, rekening koran)?
+5. Tombol utama hanya satu? Judul, tab, tombol bahasa Indonesia dengan huruf besar hanya di awal?
+6. Ada istilah program yang tampil ke pengguna?
+7. Periode bawaan ada dan rentangnya tertulis? Tampilan kosong memberi langkah berikutnya?
+8. Masih terbaca di tema gelap?
 
 ## Langkah 4 — perbaiki
 
-Pertama kali di Portal Keuangan (4 Nov 2026), sesudah perbaikan, audit layar 46 layar turun dari ±1.700 temuan menjadi
-tinggal temuan kecil dan salah tangkap data. Lihat laporan di artifact "Konsistensi UI Keuangan".
-
-0. **Perbaikan tombol massal** (aman, bisa dipratinjau):
+1. **Pindahkan layar ke cetakan `PageLayout`** (cara utama — menghapus banyak temuan sekaligus):
+   kepala → `title`/`subtitle`/`actions`; cari/pilihan/periode/pil → `filters`; muat ulang/unduh/`ViewToggle` → `tools`;
+   kartu angka → `summary`; popup daftar/detail → `detail` dengan `DetailPanel`; isi baris → `RowDetail`.
+   Contoh lengkap: `erp/RahazaCashAccountsModule.jsx` (Rekening & Mutasi).
+2. Perbaikan tombol massal (aman, bisa dipratinjau):
    ```bash
    python3 scripts/ui_audit/fix_buttons.py --portal hr          # pratinjau
    python3 scripts/ui_audit/fix_buttons.py --portal hr --apply  # tulis
    ```
-   Mengubah ghost+garis → outline, muat ulang bertulisan → ikon, tinggi manual → prop `size`, label Inggris tombol.
-
-1. **Komponen bersama dulu** (lihat "Yang harus dibersihkan" di PANDUAN_UI.md). Banyak temuan hilang sekaligus.
-2. Lalu per layar, dari aturan yang paling terlihat:
-   - `TOMBOL-TANPA-LATAR`, `BARIS-JADI-KARTU`, `KARTU-DI-DALAM-KARTU`;
-   - `TAB-*`, `PERIODE-GANDA`, `FILTER-BERTUMPUK`;
-   - `TANGGAL-MENTAH`, `KODE-MENTAH`, `TEKS-INGGRIS`;
-   - `ANGKA-MONO`, `WARNA-MENTAH`.
-3. Ulangi langkah 1–2. Setelah bersih, kunci angkanya supaya tidak memburuk:
+3. Per layar, dari yang paling terlihat: `RUANG-KOSONG`, `BARIS-SATU-TOMBOL`, `PENYARING-KANAN`, `POPUP-DAFTAR`,
+   `TEKS-TEKNIS`, `TOMBOL-TANPA-LATAR`, `KARTU-DI-DALAM-KARTU`, `TAB-*`, `TANGGAL-MENTAH`, `KODE-MENTAH`, `TEKS-INGGRIS`,
+   lalu `ANGKA-MONO`, `WARNA-MENTAH`.
+4. **Galeri sesudah** dengan pembanding — kartu tiap layar menampilkan potret sebelum & sesudah dan perubahan angkanya:
+   ```bash
+   ... galeri.py --portal hr ... --out /work/galeri_hr_sesudah --compare /work/galeri_hr_sebelum
+   ```
+   Tunjukkan `galeri_hr_sesudah/index.html` ke owner untuk ditinjau.
+5. Kunci angkanya supaya tidak memburuk:
    ```bash
    python3 scripts/ui_audit/scan_ui.py --portal hr --set-baseline
    ```
-   Tambahkan `python3 scripts/ui_audit/scan_ui.py --portal hr --gate` ke langkah gate di `.github/workflows/ci.yml`.
+   CI sudah menjalankan `scan_ui.py --portal all --gate` untuk semua portal.
+
+Catatan salah tangkap yang wajar: `TEKS-INGGRIS` ikut menandai data (nama pemasok), `TERTUTUP-CHAT` tergantung posisi gulir.
+Periksa contohnya di galeri sebelum memperbaiki.

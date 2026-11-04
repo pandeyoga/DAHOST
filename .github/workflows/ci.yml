@@ -30,7 +30,7 @@ jobs:
           python3 scripts/check_collection_writers.py --gate
           python3 scripts/check_unbounded_queries.py --gate
           python3 scripts/guardrails/check_finance_ui.py   # menu & tampilan Portal Keuangan (2026-11-04)
-          python3 scripts/ui_audit/scan_ui.py --portal finance --gate   # pola UI Keuangan tidak boleh memburuk (docs/design/PANDUAN_UI.md)
+          python3 scripts/ui_audit/scan_ui.py --portal all --gate   # pola UI SEMUA portal tidak boleh memburuk (docs/design/PANDUAN_UI.md)
 
   frontend:
     runs-on: ubuntu-latest

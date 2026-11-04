@@ -1,88 +1,22 @@
 /**
- * EmptyState - Unified empty state component
- * Consistent design untuk semua modules
- * 
- * Usage:
- *   <EmptyState 
- *     icon={Package}
- *     title="Belum ada data"
- *     description="Data akan muncul setelah Anda menambahkan item pertama"
- *     action={{ label: "Tambah Item", onClick: () => {} }}
- *   />
+ * EmptyState — DIALIHKAN ke satu komponen bersama `moduleAtoms.EmptyState` (PANDUAN_UI G10, 4 Nov 2026).
+ *
+ * Dulu ada dua komponen tampilan kosong dengan ukuran ikon & judul berbeda (ikon 48 px ungu + judul besar
+ * + animasi di sini; ikon kecil abu di moduleAtoms), sehingga layar kosong terlihat beda-beda. Impor lama
+ * (`import { EmptyState } from '../EmptyState'`) tetap jalan dan sekarang menampilkan bentuk yang sama.
  */
-import { motion } from 'framer-motion';
-import { Button } from '@/components/ui/button';
+import { EmptyState } from './moduleAtoms';
 
-export function EmptyState({ 
-  icon: Icon, 
-  title, 
-  description, 
-  action,
-  className = '' 
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`flex flex-col items-center justify-center py-16 px-6 ${className}`}
-      data-testid="empty-state"
-    >
-      {/* Icon */}
-      {Icon && (
-        <div className="mb-6 p-4 rounded-2xl bg-primary/10 border border-primary/20">
-          <Icon className="w-12 h-12 text-primary/60" strokeWidth={1.5} />
-        </div>
-      )}
-      
-      {/* Title */}
-      <h3 className="text-lg font-semibold text-foreground mb-2">
-        {title}
-      </h3>
-      
-      {/* Description */}
-      {description && (
-        <p className="text-sm text-muted-foreground text-center max-w-md mb-6">
-          {description}
-        </p>
-      )}
-      
-      {/* Action Button */}
-      {action && (
-        <Button 
-          onClick={action.onClick}
-          variant={action.variant || 'default'}
-          size="sm"
-          data-testid="empty-state-action"
-        >
-          {action.icon && <action.icon className="w-4 h-4 mr-2" />}
-          {action.label}
-        </Button>
-      )}
-    </motion.div>
-  );
-}
+export { EmptyState };
+export default EmptyState;
 
-/**
- * Common empty state presets
- */
+/** Teks bawaan yang umum (dipertahankan untuk impor lama). */
 export const EmptyStatePresets = {
   noData: (entityName = 'data') => ({
     title: `Belum ada ${entityName}`,
-    description: `${entityName} akan muncul di sini setelah Anda menambahkan item pertama.`
+    description: `${entityName} akan muncul di sini setelah Anda menambahkan item pertama.`,
   }),
-  
-  noResults: {
-    title: 'Tidak ada hasil',
-    description: 'Coba ubah filter atau kata kunci pencarian Anda.'
-  },
-  
-  noPermission: {
-    title: 'Akses Terbatas',
-    description: 'Anda tidak memiliki izin untuk melihat data ini. Hubungi administrator jika Anda memerlukan akses.'
-  },
-  
-  error: {
-    title: 'Gagal Memuat Data',
-    description: 'Terjadi kesalahan saat memuat data. Silakan refresh halaman atau hubungi support.'
-  }
+  noResults: { title: 'Tidak ada hasil', description: 'Coba ubah penyaring atau kata kunci pencarian.' },
+  noPermission: { title: 'Akses terbatas', description: 'Anda tidak punya izin melihat data ini. Hubungi administrator bila perlu akses.' },
+  error: { title: 'Gagal memuat data', description: 'Terjadi kesalahan saat memuat data. Muat ulang halaman atau hubungi admin.' },
 };

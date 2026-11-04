@@ -1,6 +1,8 @@
 # Panduan UI DAHOST
 
-Status: **disetujui owner 4 Nov 2026**. Sudah diterapkan di Portal Keuangan; portal lain menyusul dengan [CARA_AUDIT_UI.md](CARA_AUDIT_UI.md).
+Status: **disetujui owner 4 Nov 2026**. **Revisi 2 (4 Nov 2026):** cetakan halaman `PageLayout` wajib, detail dibuka di
+halaman (bukan popup), aturan ruang kosong & posisi tombol, larangan teks teknis. Ini **satu-satunya** panduan UI;
+`design_guidelines.md` dicabut. Agen AI membaca ringkasannya di [`AGENTS.md`](../../AGENTS.md).
 
 Panduan ini **tidak mengganti tampilan**. Warna ungu, huruf Space Grotesk/Inter, sudut membulat, permukaan putih (tema terang) dan kaca (tema gelap) tetap. Yang diatur hanya: **satu cara** untuk setiap jenis elemen.
 
@@ -14,6 +16,19 @@ Cara memeriksa portal: [CARA_AUDIT_UI.md](CARA_AUDIT_UI.md).
 
 ## G1 · Tata letak halaman
 
+**Setiap layar memakai cetakan `PageLayout`** (`erp/layout/PageLayout.jsx`). Layar hanya mengisi slot; urutan,
+posisi tombol, dan jarak ditentukan cetakan. → `CETAKAN-TIDAK-DIPAKAI`
+
+| Slot | Isi |
+|---|---|
+| `title`, `subtitle` | judul & satu kalimat penjelasan (di dalam hub disembunyikan) |
+| `actions` | tombol halaman — paling banyak 1 tombol utama (di dalam hub pindah ke baris tab) |
+| `filters` | cari, pilihan, periode, pil status — toolbar **kiri** |
+| `tools` | muat ulang, unduh, `ViewToggle` — toolbar **kanan**; tanpa `filters` ikut kepala/baris tab |
+| `summary` | kartu angka atau satu kalimat ringkasan |
+| `detail` | `DetailPanel` — detail satu baris, di halaman (G13) |
+| `footer` | paginasi, tautan "tampilkan …" |
+
 Urutan isi satu layar, dari atas:
 1. **Kepala halaman** (G2).
 2. **Tab** bila ada (G4).
@@ -24,7 +39,10 @@ Urutan isi satu layar, dari atas:
 
 Aturan:
 - Isi memakai **lebar penuh** area kerja. Modul tidak membuat pembungkus sendiri (`max-w-* mx-auto`, `p-6`). → `BUNGKUS-SENDIRI`, `LEBAR-HALAMAN-BEDA`
-- Jarak antarbagian 16 px (`space-y-4`).
+- Jarak antarbagian 16 px (`space-y-4`), dari cetakan. Jarak besar buatan sendiri (`space-y-6+`, `py-10+`, `mb-8`)
+  tidak dipakai → `JARAK-BESAR`. Di layar, pita kosong lebih dari 28 px di antara isi = `RUANG-KOSONG`.
+- **Tidak ada baris yang hanya berisi satu tombol** (mis. tombol muat ulang sendirian) → `BARIS-SATU-TOMBOL`.
+- Penyaring selalu mulai dari **kiri**; tidak ada baris penyaring yang menempel di kanan → `PENYARING-KANAN`.
 - Sisakan ruang 96 px di bawah halaman. Jangan menaruh tombol di pojok kanan bawah, karena tertutup tombol chat. → `TERTUTUP-CHAT`
 
 ## G2 · Kepala halaman
@@ -113,6 +131,8 @@ Kartu menandai **satu kelompok isi yang berdiri sendiri**: tabel, formulir, satu
   - **bawaan wajib ada** (biasanya Bulan ini);
   - tanpa `type="month"`, dan tanpa filter tanggal kedua di tabel. → `PERIODE-GANDA`, `BULAN-KOSONG`, `TANGGAL-POLOS`
 - Laporan posisi (Neraca, Saldo akun) memakai satu pilihan **"Per tanggal"**.
+- **Bentuk tampilan** (Tabel / Kartu) memakai `ViewToggle` (dua tombol ikon di `tools`), bukan pil penyaring.
+  → `TOGGLE-SEPERTI-PENYARING`
 - **Pilihan** memakai `SmartNativeSelect` (bisa dicari). Label pilihan dalam bahasa manusia, bukan kode (`bahan_pembantu` → "Bahan pembantu"). → `SELECT-POLOS`, `KODE-MENTAH`
 
 ## G7 · Tabel, laporan, angka
@@ -161,6 +181,8 @@ Kartu menandai **satu kelompok isi yang berdiri sendiri**: tabel, formulir, satu
 ## G10 · Kosong & memuat
 
 - **Kosong** = `EmptyState`: ikon, judul, satu kalimat langkah berikutnya, dan tombol bila ada. → `KOSONG-BUATAN`
+  Satu komponen saja (`erp/EmptyState.jsx` kini meneruskan ke `moduleAtoms.EmptyState`). Ditaruh di tempat tabelnya
+  (di dalam kartu tabel), sehingga semua layar kosong sama bentuknya. → `KOSONG-GAYA-BEDA`
 - Saat kosong, **sembunyikan** kartu angka 0 dan penyaring berangka (0).
 - **Memuat** = `Skeleton` sesuai bentuk isi.
 
@@ -194,10 +216,23 @@ Kartu menandai **satu kelompok isi yang berdiri sendiri**: tabel, formulir, satu
   | Jurnal | GL |
 
 - Penjelasan panjang dipindah ke panel bantuan. Di layar paling banyak satu baris.
+- **Tidak ada istilah program di layar**: `snake_case` (`entity_types`), path modul (`routes.coa_auto.X`), nama koleksi,
+  atau label teknis ("Induk Auto Akun (sub-ledger)"). Tulis kalimat yang dipahami staf, mis. "Akun induk rekening bank —
+  rekening baru dibuat di bawah akun ini. Diatur di Pengaturan Keuangan › Pemetaan akun otomatis." → `TEKS-TEKNIS`
 
 ## G12 · Elemen mengambang
 
 Tombol chat dan bantuan mengambang di kanan bawah. Halaman memberi ruang di bawahnya. Toolbar, tombol, dan baris terakhir tabel tidak boleh tertutup. → `TERTUTUP-CHAT`
+
+## G13 · Detail dibuka di halaman, bukan popup
+
+Arahan owner 4 Nov 2026: klik satu baris membuka detailnya **di halaman**.
+- **Detail satu baris** (mutasi rekening, keterikatan akun, rincian dokumen) = `DetailPanel` di slot `detail`:
+  lebar penuh, di atas tabel, tombol × dan Esc menutup.
+- **Isi baris** (baris-baris jurnal, item faktur) = `RowDetail` tepat di bawah barisnya, dibuka dengan `RowToggle`
+  (ikon panah) atau klik nomor dokumennya. Untuk jurnal: `finance/JournalLinesInline`.
+- **Popup (`Dialog`)** hanya untuk formulir isian pendek dan konfirmasi. `Sheet` (panel samping) tidak dipakai
+  untuk daftar/tabel. → `POPUP-DAFTAR`
 
 ---
 
@@ -205,7 +240,11 @@ Tombol chat dan bantuan mengambang di kanan bawah. Halaman memberi ruang di bawa
 
 | Kebutuhan | Pakai |
 |---|---|
-| Kepala halaman | `PageHeader` (moduleAtoms) — di dalam hub aksinya otomatis pindah ke baris tab |
+| **Cetakan layar** | **`PageLayout`** (erp/layout/PageLayout.jsx) — kepala, toolbar kiri/kanan, ringkasan, detail, isi, kaki |
+| Detail di halaman | `DetailPanel`, `RowDetail`, `RowToggle` (erp/layout/PageLayout.jsx) |
+| Isi jurnal di bawah baris | `finance/JournalLinesInline` |
+| Pilihan Tabel/Kartu | `@/components/ui/view-toggle` |
+| Kepala halaman (di dalam PageLayout) | `PageHeader` (moduleAtoms) — di dalam hub aksinya otomatis pindah ke baris tab |
 | Aksi modul buatan sendiri di dalam hub | `HubActions` (moduleAtoms) |
 | Tab halaman | `HubTabs` — Tabs Radix di dalam tab hub otomatis tampil sebagai pil penyaring |
 | Penyaring status/jenis | `@/components/ui/filter-chips` |
@@ -230,7 +269,7 @@ Urutannya penting: perbaiki **komponen** dulu, lalu layar.
 4. **Komponen baru `FilterChips`**: menggantikan 5 gaya tab buatan.
 5. **Kartu**: GlassCard, Card, DataCard, dan div buatan disatukan. StatTile, KPICell, StatCard, dan kartu warna buatan → **StatTile** (netral, nol abu).
 6. **Tabel**: `DataTable`/`<Table>` dengan format tetap. Komponen baru **`StatementTable`** untuk laporan keuangan.
-7. **Toolbar**: komponen **`Toolbar`** (kiri: penyaring; kanan: aksi) yang membungkus satu baris.
+7. **Toolbar**: ~~komponen `Toolbar`~~ → selesai lewat slot `filters`/`tools` di `PageLayout` (4 Nov 2026).
 8. **CSS tambalan di `index.css`** (blok "LIGHT MODE READABILITY BASELINE" dan "LIGHT-BUTTON-BASELINE") memetakan warna mentah ke token dan mengubah semua pembungkus tabel jadi kartu otomatis. Tambalan ini menutupi masalah dan menyebabkan **kartu di dalam kartu**. Kurangi bertahap setelah modul bersih.
 9. **Per layar**:
    - tanggal mentah, desimal titik, kode mentah;

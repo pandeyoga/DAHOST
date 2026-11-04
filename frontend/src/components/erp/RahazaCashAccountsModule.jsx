@@ -1,9 +1,10 @@
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, RefreshCw, Wallet, AlertTriangle, MoreHorizontal } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, EmptyState } from './moduleAtoms';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { EmptyState } from './moduleAtoms';
+import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import JournalLinesInline from './finance/JournalLinesInline';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { journalSourceLabel } from '@/lib/financeLabels';
@@ -34,8 +35,9 @@ const shortName = (a, grp) => {
  * Rekening & Mutasi (menu Keuangan › Kas & Bank).
  * 2026-11-04 (audit Keuangan): Kas Kecil = rekening kas biasa di sini; mutasi per halaman dari yang terbaru.
  * 2026-11-04 (PANDUAN_UI G5): satu tabel berkelompok (Kas · bank · dompet digital) — dulu satu kartu besar
- * per rekening (kode akun paling menonjol, "Bank BCA" ditulis 2–3×, ikon hapus di tiap kartu) dan total
- * dalam kartu selebar halaman. Mutasi dibuka di panel samping; ubah/nonaktifkan lewat menu ⋯.
+ * per rekening. Ubah/nonaktifkan lewat menu ⋯.
+ * 2026-11-04 (PANDUAN_UI G13, arahan owner): memakai cetakan PageLayout. Mutasi dibuka DI HALAMAN di atas
+ * tabel (dulu panel samping yang sempit — kolom Saldo terpotong); nomor jurnal dibuka di bawah barisnya.
  */
 export default function RahazaCashAccountsModule({ token }) {
   const [accounts, setAccounts] = useState([]);
@@ -45,6 +47,7 @@ export default function RahazaCashAccountsModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [showIdle, setShowIdle] = useState(false);
   const [mutPage, setMutPage] = useState(1);
+  const [openJe, setOpenJe] = useState(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchAccounts = useCallback(async () => {
@@ -60,13 +63,14 @@ export default function RahazaCashAccountsModule({ token }) {
   // K19: daftar mutasi DITURUNKAN DARI BUKU BESAR (baris jurnal akun rekening). Mutasi tercatat lama hanya metadata.
   const [mutInfo, setMutInfo] = useState(null);
   const fetchMovements = async (account_id, page = 1) => {
-    setMovements([]); setMutInfo(null); setMutPage(page);
+    setMovements([]); setMutInfo(null); setMutPage(page); setOpenJe(null);
     const r = await fetch(`/api/rahaza/finance/reports/cash-mutations?account_id=${account_id}&page=${page}&page_size=${MUT_PAGE}`, { headers });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) { toast.error(d.detail || `Gagal memuat mutasi (HTTP ${r.status})`); return; }
     setMovements(d.rows || []); setMutInfo(d);
   };
   const openAccount = (a) => { setSelected(a); fetchMovements(a.id, 1); };
+  const toggleAccount = (a) => (selected?.id === a.id ? setSelected(null) : openAccount(a));
 
   const save = async (body) => {
     const url = body.id ? `/api/rahaza/cash-accounts/${body.id}` : '/api/rahaza/cash-accounts';
@@ -99,29 +103,79 @@ export default function RahazaCashAccountsModule({ token }) {
   }, [shown]);
   const mutPages = Math.max(1, Math.ceil((mutInfo?.count || 0) / MUT_PAGE));
 
-  return (
-    <div className="space-y-4" data-testid="rahaza-cash-page">
-      <PageHeader
-        title="Rekening & Mutasi"
-        subtitle="Saldo dan mutasi tiap rekening dari buku besar. Kas Kecil termasuk di sini."
-        actions={
-          <>
-            <span className="text-sm text-muted-foreground mr-1" data-testid="ca-total-gl">Total saldo <b className="text-foreground tabular-nums">{fmt(total)}</b></span>
-            <Button variant="outline" size="icon" onClick={fetchAccounts} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
-            <Button onClick={() => setEditing({ code: '', name: '', type: 'cash', opening_balance: 0 })} data-testid="ca-add"><Plus className="w-4 h-4" />Rekening baru</Button>
-          </>
-        }
-      />
-      {(mismatch.length > 0 || noGl.length > 0) && (
-        <div className="bg-amber-400/8 border border-amber-400/20 rounded-lg px-4 py-3 text-xs text-[hsl(var(--warning))] flex items-start gap-2" data-testid="ca-gl-warning">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>
-            {mismatch.length > 0 && <p>{mismatch.length} rekening saldo buku besar ≠ saldo mutasi ({mismatch.map((a) => a.code).join(', ')}). Angka memakai buku besar; selisih berarti ada mutasi yang belum dijurnal.</p>}
-            {noGl.length > 0 && <p>{noGl.length} rekening belum punya akun buku besar ({noGl.map((a) => a.code).join(', ')}). Minta admin menjalankan “Sinkron Bagan Akun & GL” di Adm. Sistem › Perawatan Data Keuangan.</p>}
-          </div>
+  const warning = (mismatch.length > 0 || noGl.length > 0) && (
+    <div className="bg-amber-400/8 border border-amber-400/20 rounded-lg px-4 py-3 text-xs text-[hsl(var(--warning))] flex items-start gap-2" data-testid="ca-gl-warning">
+      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+      <div>
+        {mismatch.length > 0 && <p>{mismatch.length} rekening saldo buku besar ≠ saldo mutasi ({mismatch.map((a) => a.code).join(', ')}). Angka memakai buku besar; selisih berarti ada mutasi yang belum dijurnal.</p>}
+        {noGl.length > 0 && <p>{noGl.length} rekening belum punya akun buku besar ({noGl.map((a) => a.code).join(', ')}). Minta admin menjalankan “Sinkron Bagan Akun & GL” di Adm. Sistem › Perawatan Data Keuangan.</p>}
+      </div>
+    </div>
+  );
+
+  const detail = selected && (
+    <DetailPanel
+      title={`Mutasi ${selected.name}`}
+      description={mutInfo ? `${mutInfo.count} mutasi · masuk ${fmt(mutInfo.total_in)} · keluar ${fmt(mutInfo.total_out)} · saldo ${fmt(mutInfo.closing)}` : 'Memuat…'}
+      onClose={() => setSelected(null)}
+      testId="ca-movements-panel"
+    >
+      {mutInfo && movements.length === 0 ? (
+        <EmptyState icon={Wallet} title="Belum ada mutasi" description="Mutasi muncul setelah ada jurnal yang memakai rekening ini." />
+      ) : (
+        <div className="overflow-x-auto -mx-4">
+          <table className="w-full" data-testid="ca-mutations-table">
+            <thead><tr><th className="w-10" /><th className="text-left">Tanggal</th><th className="text-left">Jurnal</th><th className="text-left">Jenis</th><th className="text-left">Keterangan</th><th className="text-right">Masuk</th><th className="text-right">Keluar</th><th className="text-right">Saldo</th></tr></thead>
+            <tbody>{movements.map((m) => {
+              const open = openJe === m.id;
+              const toggle = () => setOpenJe(open ? null : m.id);
+              return (
+                <Fragment key={m.id}>
+                  <tr data-testid={`ca-mut-${m.source_module}`} className={open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                    <td>{m.je_id && <RowToggle open={open} onClick={toggle} label="Lihat isi jurnal" testId={`ca-je-toggle-${m.je_number}`} />}</td>
+                    <td className="whitespace-nowrap">{formatDateID(m.date)}</td>
+                    <td className="whitespace-nowrap">
+                      {m.je_id ? <Button variant="link" size="sm" className="h-auto p-0" onClick={toggle}>{m.je_number}</Button> : (m.je_number || '—')}
+                    </td>
+                    <td>{m.category_label || journalSourceLabel(m.category)}</td>
+                    <td>{m.ref_label || m.description || '—'}</td>
+                    <td className="text-right tabular-nums">{m.direction === 'in' ? formatNumber(m.amount) : ''}</td>
+                    <td className="text-right tabular-nums">{m.direction === 'out' ? formatNumber(m.amount) : ''}</td>
+                    <td className="text-right tabular-nums">{formatNumber(m.running_balance)}</td>
+                  </tr>
+                  {open && <RowDetail colSpan={8} testId={`ca-je-detail-${m.je_number}`}><JournalLinesInline jeId={m.je_id} token={token} /></RowDetail>}
+                </Fragment>
+              );
+            })}
+            </tbody>
+          </table>
         </div>
       )}
+      {mutPages > 1 && (
+        <PaginationLite page={mutPage} totalPages={mutPages} total={mutInfo?.count || 0} pageSize={MUT_PAGE}
+          onPageChange={(p) => fetchMovements(selected.id, p)} />
+      )}
+    </DetailPanel>
+  );
 
+  return (
+    <PageLayout
+      testId="rahaza-cash-page"
+      title="Rekening & Mutasi"
+      subtitle="Saldo dan mutasi tiap rekening dari buku besar. Kas Kecil termasuk di sini."
+      actions={<Button onClick={() => setEditing({ code: '', name: '', type: 'cash', opening_balance: 0 })} data-testid="ca-add"><Plus className="w-4 h-4" />Rekening baru</Button>}
+      tools={<Button variant="outline" size="icon" onClick={fetchAccounts} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      summary={<>
+        <p className="text-sm text-muted-foreground" data-testid="ca-total-gl">Total saldo <b className="text-foreground tabular-nums">{fmt(total)}</b> · {shown.length} rekening</p>
+        {warning}
+      </>}
+      detail={detail}
+      footer={idle.length > 0 && (
+        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setShowIdle((v) => !v)} data-testid="ca-toggle-idle">
+          {showIdle ? 'Sembunyikan rekening tanpa saldo & mutasi' : `Tampilkan ${idle.length} rekening tanpa saldo & mutasi`}
+        </Button>
+      )}
+    >
       <GlassCard className="p-0 overflow-hidden">
         {accounts.length === 0 && !loading ? (
           <EmptyState icon={Wallet} title="Belum ada rekening" description="Tambahkan rekening kas atau bank untuk mulai mencatat mutasi." />
@@ -142,16 +196,18 @@ export default function RahazaCashAccountsModule({ token }) {
                     {g.list.map((a) => (
                       <tr key={a.id} data-testid={`ca-card-${a.code}`} className={selected?.id === a.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
                         <td className="pl-6">
-                          <button type="button" className="text-left text-foreground hover:text-[hsl(var(--primary))]" onClick={() => openAccount(a)} title={`Akun buku besar ${a.gl_account_code || '—'}`}>
+                          <Button variant="link" size="sm" className="h-auto p-0 text-foreground" onClick={() => toggleAccount(a)} title={`Akun buku besar ${a.gl_account_code || '—'}`}>
                             {shortName(a, g.name)}
-                          </button>
+                          </Button>
                           {a.balance_source !== 'gl' && <span className="ml-2 text-xs text-[hsl(var(--warning))]">belum tertaut buku besar</span>}
                           {a.balance_source === 'gl' && a.balance_diff !== 0 && <span className="ml-2 text-xs text-[hsl(var(--warning))]" data-testid={`ca-diff-${a.code}`}>selisih {formatNumber(a.balance_diff)}</span>}
                         </td>
                         <td className="text-muted-foreground">{a.account_number || '—'}</td>
                         <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`} data-testid={`ca-balance-${a.code}`}>{formatNumber(a.balance)}</td>
                         <td className="text-right">
-                          <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openAccount(a)}>Lihat mutasi</Button>
+                          <Button variant="link" size="sm" className="h-auto p-0" onClick={() => toggleAccount(a)}>
+                            {selected?.id === a.id ? 'Tutup mutasi' : 'Lihat mutasi'}
+                          </Button>
                         </td>
                         <td className="text-right">
                           <DropdownMenu>
@@ -173,56 +229,8 @@ export default function RahazaCashAccountsModule({ token }) {
           </div>
         )}
       </GlassCard>
-      {idle.length > 0 && (
-        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setShowIdle((v) => !v)} data-testid="ca-toggle-idle">
-          {showIdle ? 'Sembunyikan rekening tanpa saldo & mutasi' : `Tampilkan ${idle.length} rekening tanpa saldo & mutasi`}
-        </Button>
-      )}
-
-      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
-        <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto" data-testid="ca-movements-panel">
-          {selected && (
-            <>
-              <SheetHeader>
-                <SheetTitle>Mutasi {selected.name}</SheetTitle>
-                <SheetDescription data-testid="ca-mutations-source">
-                  {mutInfo ? `${mutInfo.count} mutasi · masuk ${fmt(mutInfo.total_in)} · keluar ${fmt(mutInfo.total_out)} · saldo ${fmt(mutInfo.closing)}` : 'Memuat…'}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="mt-4">
-                {mutInfo && movements.length === 0 ? (
-                  <EmptyState icon={Wallet} title="Belum ada mutasi" description="Mutasi muncul setelah ada jurnal yang memakai rekening ini." />
-                ) : (
-                  <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--glass-border)]">
-                    <table className="w-full">
-                      <thead><tr><th className="text-left">Tanggal</th><th className="text-left">Jurnal</th><th className="text-left">Jenis</th><th className="text-left">Keterangan</th><th className="text-right">Masuk</th><th className="text-right">Keluar</th><th className="text-right">Saldo</th></tr></thead>
-                      <tbody>{movements.map((m) => (
-                        <tr key={m.id} data-testid={`ca-mut-${m.source_module}`}>
-                          <td className="whitespace-nowrap">{formatDateID(m.date)}</td>
-                          <td className="whitespace-nowrap text-muted-foreground">{m.je_number || '—'}</td>
-                          <td title={m.source_module}>{m.category_label || journalSourceLabel(m.category)}</td>
-                          <td>{m.ref_label || m.description || '—'}</td>
-                          <td className="text-right tabular-nums">{m.direction === 'in' ? formatNumber(m.amount) : ''}</td>
-                          <td className="text-right tabular-nums">{m.direction === 'out' ? formatNumber(m.amount) : ''}</td>
-                          <td className="text-right tabular-nums">{formatNumber(m.running_balance)}</td>
-                        </tr>))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-                {mutPages > 1 && (
-                  <div className="pt-3">
-                    <PaginationLite page={mutPage} totalPages={mutPages} total={mutInfo?.count || 0} pageSize={MUT_PAGE}
-                      onPageChange={(p) => fetchMovements(selected.id, p)} />
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </SheetContent>
-      </Sheet>
       {editing && <CAEditor value={editing} onClose={() => setEditing(null)} onSave={save} headers={headers} />}
-    </div>
+    </PageLayout>
   );
 }
 

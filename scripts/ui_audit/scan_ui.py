@@ -74,6 +74,23 @@ RULES: list[tuple[str, str, str, str]] = [
     ("TEKS-INGGRIS", "G11", "Label/tombol berbahasa Inggris.",
      r'(?:>|label[=:]\s*[\'"`]|title="|placeholder=")\s*(?:Export(?: CSV| Excel)?|Refresh|Settlement[^<"\'`]{0,20}|Outstanding[^<"\'`]{0,20}|Overview|Submit|Approve|Reject|Retry|Statement[^<"\'`]{0,15}|Invoice[^<"\'`]{0,15}|Print|Save|Cancel|Delete|Upload|Download|Unposted|Pending|Total (?:Pending|Budget|Outstanding)|Gross Profit|Operating Income|Net Income|Dashboard)\s*(?:<|[\'"`])'),
 ]
+# 2026-11-04 (revisi 2 panduan) — aturan yang dihitung khusus (bukan satu pola baris):
+#   CETAKAN-TIDAK-DIPAKAI  layar menu/tab tanpa PageLayout                (G1)
+#   POPUP-DAFTAR           daftar/tabel di dalam Sheet/Dialog              (G13)
+#   JARAK-BESAR            jarak/padding besar buatan sendiri              (G1)
+SPECIAL_RULES = {
+    "CETAKAN-TIDAK-DIPAKAI": ("G1", "Layar menu/tab tidak memakai cetakan PageLayout (erp/layout/PageLayout.jsx) — "
+                              "kepala, toolbar, dan posisi tombol disusun sendiri."),
+    "POPUP-DAFTAR": ("G13", "Daftar/tabel dibuka di popup (Sheet/Dialog) — detail dibuka di halaman: DetailPanel / RowDetail."),
+    "JARAK-BESAR": ("G1", "Jarak/padding besar buatan sendiri (space-y-6+, py-10+, mb-8…) — jarak antarbagian dari cetakan (16 px)."),
+}
+BIG_SPACE_RX = re.compile(r'(?<![\w-])(?:space-y-(?:6|7|8|10|12)|gap-(?:8|10|12)|(?:p|py|pt|pb)-(?:10|12|14|16|20|24)'
+                          r'|(?:m|my|mt|mb)-(?:8|10|12|16|20|24))(?![\w-])')
+BIG_SPACE_SKIP = ("moduleAtoms.jsx", "/layout/", "EmptyState.jsx")
+POPUP_BLOCK_RX = re.compile(r'<(SheetContent|DialogContent)\b')
+LIST_IN_POPUP_RX = {"SheetContent": re.compile(r'<table\b|<Table\b|<DataTable\b|<StatementTable\b|\.map\('),
+                    "DialogContent": re.compile(r'<table\b|<Table\b|<DataTable\b|<StatementTable\b')}
+
 FILE_RULES = [
     ("KARTU-DUA-JENIS", "G5", "Satu berkas memakai dua jenis kartu (<Card> shadcn dan <GlassCard>).",
      lambda s: bool(re.search(r'<Card\b', s) and re.search(r'<GlassCard\b', s))),
@@ -106,6 +123,61 @@ def portal_blocks(nav: str) -> dict[str, str]:
     return out
 
 
+def _entry_file(expr: str, lazy: dict) -> Path | None:
+    """Berkas modul untuk satu entri registri: `Nama`, `withProps(Nama, …)`, atau `lazyRetry(() => import('./x'))`."""
+    inline = LAZY_RX.search(expr)
+    if inline:
+        return _resolve(ERP, inline.group(1))
+    m = re.match(r"(?:withProps\()?(\w+)", expr)
+    return lazy.get(m.group(1)) if m else None
+
+
+def portal_screens(portal: str) -> set[Path]:
+    """Berkas LAYAR: modul yang dibuka langsung dari menu, dan modul tiap tab bila menunya hub (HubTabs)."""
+    reg = REGISTRY.read_text(encoding="utf-8")
+    lazy = {name: _resolve(ERP, path) for name, path in LAZY_NAMED_RX.findall(reg)}
+    entries = {mid: expr.strip() for mid, expr in ENTRY_RX.findall(reg)}
+    blocks = portal_blocks(NAV.read_text(encoding="utf-8"))
+    out: set[Path] = set()
+    for mid in re.findall(r"\{\s*id:\s*'([\w-]+)'", blocks[portal]):
+        f = _entry_file(entries.get(mid, ""), lazy)
+        if not f:
+            continue
+        src = f.read_text(encoding="utf-8", errors="ignore")
+        if "<HubTabs" in src:
+            for rel in LAZY_RX.findall(src):
+                sub = _resolve(f.parent, rel)
+                if sub and sub.suffix in (".jsx", ".js"):
+                    out.add(sub)
+        else:
+            out.add(f)
+    return out
+
+
+def scan_special(files: set[Path], screens: set[Path]) -> list[dict]:
+    hits = []
+    for f in sorted(files):
+        src = f.read_text(encoding="utf-8", errors="ignore")
+        lines = src.splitlines()
+        rel = f.relative_to(ROOT).as_posix()
+        if f in screens and "<PageLayout" not in src:
+            hits.append({"rule": "CETAKAN-TIDAK-DIPAKAI", "sec": "G1", "file": rel, "line": 0, "text": ""})
+        for mm in POPUP_BLOCK_RX.finditer(src):
+            tag = mm.group(1)
+            end = src.find(f"</{tag}>", mm.end())
+            block = src[mm.end(): end if end > 0 else mm.end() + 6000]
+            if LIST_IN_POPUP_RX[tag].search(block):
+                ln = src.count("\n", 0, mm.start()) + 1
+                hits.append({"rule": "POPUP-DAFTAR", "sec": "G13", "file": rel, "line": ln, "text": lines[ln - 1].strip()[:140]})
+        if not any(s in rel for s in BIG_SPACE_SKIP):
+            for mm in BIG_SPACE_RX.finditer(src):
+                ln = src.count("\n", 0, mm.start()) + 1
+                if COMMENT_RX.match(lines[ln - 1]):
+                    continue
+                hits.append({"rule": "JARAK-BESAR", "sec": "G1", "file": rel, "line": ln, "text": lines[ln - 1].strip()[:140]})
+    return hits
+
+
 def portal_files(portal: str) -> tuple[list[str], set[Path]]:
     reg = REGISTRY.read_text(encoding="utf-8")
     lazy = {name: _resolve(ERP, path) for name, path in LAZY_NAMED_RX.findall(reg)}
@@ -129,8 +201,7 @@ def portal_files(portal: str) -> tuple[list[str], set[Path]]:
                 add(sub, depth + 1)
 
     for mid in ids:
-        m = re.match(r"(?:withProps\()?(\w+)", entries.get(mid, ""))
-        f = lazy.get(m.group(1)) if m else None
+        f = _entry_file(entries.get(mid, ""), lazy)
         if f:
             add(f, 0)
     return ids, files
@@ -165,16 +236,32 @@ def main() -> int:
     ap.add_argument("--list-portals", action="store_true")
     ap.add_argument("--ids", action="store_true", help="cetak daftar id menu portal (untuk uiAuditMenus di dom_audit.js)")
     a = ap.parse_args()
+    portals = sorted(portal_blocks(NAV.read_text(encoding="utf-8")))
     if a.list_portals:
-        print("\n".join(sorted(portal_blocks(NAV.read_text(encoding="utf-8")))))
+        print("\n".join(portals))
         return 0
+    if a.portal == "all":
+        # 2026-11-04 — satu perintah untuk semua portal (dipakai CI): tiap portal dibandingkan baseline-nya.
+        if a.ids or a.md or a.json:
+            raise SystemExit("--ids/--md/--json hanya untuk satu portal")
+        rc = 0
+        for p in portals:
+            sub = [sys.argv[0], "--portal", p] + (["--gate"] if a.gate else []) + (["--set-baseline"] if a.set_baseline else [])
+            old = sys.argv
+            sys.argv = sub
+            try:
+                rc |= main()
+            finally:
+                sys.argv = old
+        return rc
     ids, files = portal_files(a.portal)
     if a.ids:
         print(json.dumps(ids))
         return 0
-    hits = scan(files)
+    hits = scan(files) + scan_special(files, portal_screens(a.portal))
     per_rule = Counter(h["rule"] for h in hits)
-    meta = {c: (s, w) for c, s, w, _ in RULES} | {c: (s, w) for c, s, w, _ in FILE_RULES}
+    meta = ({c: (s, w) for c, s, w, _ in RULES} | {c: (s, w) for c, s, w, _ in FILE_RULES}
+            | {c: v for c, v in SPECIAL_RULES.items()})
     print(f"Portal {a.portal}: {len(ids)} menu, {len(files)} berkas diperiksa, {len(hits)} temuan")
     for code, n in per_rule.most_common():
         print(f"  {n:5d}  {code:22s} [{meta[code][0]}]")

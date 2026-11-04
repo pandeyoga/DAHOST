@@ -10,6 +10,7 @@
  *   // period = { preset, from: 'YYYY-MM-DD', to: 'YYYY-MM-DD' }
  */
 import { GlassInput } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { formatDateID } from '@/lib/format';
 import { addMonthsYM, lastMonthPeriodWIB, monthEndISO, monthStartWIB, thisMonthWIB, todayWIB, yearStartWIB } from '@/lib/waktu';
 
@@ -50,15 +51,18 @@ export default function PeriodPicker({ value, onChange, presets = PERIOD_PRESETS
   const cur = value || periodFromPreset('month');
   return (
     <div className="flex items-center gap-2 flex-wrap" data-testid={testId}>
-      <select
+      {/* 2026-11-04 (audit galeri): pilihan aplikasi yang sama dengan penyaring lain — dulu <select> bawaan
+          browser, bentuknya beda dengan "Semua toko" di sebelahnya. */}
+      <SmartNativeSelect
         value={cur.preset || 'custom'}
         onChange={(e) => onChange(periodFromPreset(e.target.value, cur))}
-        className="h-9 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-sm text-foreground"
+        searchable={false}
+        className="h-9 w-40"
         aria-label="Periode"
         data-testid={`${testId}-preset`}
       >
         {presets.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
-      </select>
+      </SmartNativeSelect>
       {cur.preset === 'custom' ? (
         <>
           <GlassInput type="date" value={cur.from} onChange={(e) => onChange({ ...cur, from: e.target.value })}
