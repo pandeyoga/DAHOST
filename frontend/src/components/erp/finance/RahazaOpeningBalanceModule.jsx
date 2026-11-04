@@ -56,7 +56,7 @@ function PostedJournal({ status, onVoided, token, role }) {
           <p className="text-xs text-muted-foreground">Salah isi? Superadmin dapat membatalkan jurnal ini (void paksa, tercatat di audit) lalu mengunggah ulang.</p>
           <div className="flex gap-2 flex-wrap">
             <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Alasan pembatalan (wajib)" className="h-9 flex-1 min-w-[220px]" data-testid="ob-void-reason" />
-            <Button variant="ghost" onClick={doVoid} disabled={busy} className="h-9 border border-rose-500/40 text-rose-300" data-testid="ob-void-btn">Batalkan Jurnal Saldo Awal</Button>
+            <Button variant="outline" onClick={doVoid} disabled={busy} className="border-rose-500/40 text-rose-300" data-testid="ob-void-btn">Batalkan Jurnal Saldo Awal</Button>
           </div>
         </div>
       )}
@@ -185,7 +185,7 @@ export default function RahazaOpeningBalanceModule({ token, user }) {
         icon={ShieldCheck}
         title="Saldo Awal Neraca (Go-Live)"
         subtitle="Pindahkan neraca penutup pembukuan lama ke sistem: unduh template, isi debit/kredit per akun (+ rincian piutang/hutang per relasi), unggah untuk diperiksa, lalu posting SATU jurnal pembuka yang terkunci."
-        actions={<Button variant="ghost" onClick={fetchStatus} className="h-9 border border-[var(--glass-border)]" data-testid="ob-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>}
+        actions={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchStatus} data-testid="ob-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>}
       />
       {loading ? <Skeleton className="h-40 rounded-xl" /> : status?.journal ? (
         <PostedJournal status={status} token={token} role={user?.role} onVoided={fetchStatus} />
@@ -196,7 +196,7 @@ export default function RahazaOpeningBalanceModule({ token, user }) {
               <div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 1</div>
               <h3 className="font-semibold text-sm">Unduh template</h3>
               <p className="text-xs text-muted-foreground">{status?.balance_accounts || 0} akun neraca aktif + sheet rincian {status?.relation_sheets?.map((s) => s.control_account).join(', ')}.</p>
-              <Button onClick={dlTemplate} className="h-9 w-full" data-testid="ob-download-template"><Download className="w-3.5 h-3.5 mr-1.5" />Template Excel</Button>
+              <Button onClick={dlTemplate} className="w-full" data-testid="ob-download-template"><Download className="w-3.5 h-3.5 mr-1.5" />Template Excel</Button>
             </GlassCard>
             <GlassCard className="p-5 space-y-3" data-testid="ob-step-2">
               <div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 2</div>
@@ -214,7 +214,7 @@ export default function RahazaOpeningBalanceModule({ token, user }) {
                 <span className="text-xs text-muted-foreground">Per tanggal</span>
                 <GlassInput type="date" value={obDate} onChange={(e) => setObDate(e.target.value)} className="h-8 w-36" data-testid="ob-date" />
               </div>
-              <Button onClick={doApply} disabled={!preview?.ok || !preview.lines?.length || busy} className="h-9 w-full" data-testid="ob-apply">
+              <Button onClick={doApply} disabled={!preview?.ok || !preview.lines?.length || busy} className="w-full" data-testid="ob-apply">
                 {preview?.ok ? <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> : <Upload className="w-3.5 h-3.5 mr-1.5" />}Posting Saldo Awal
               </Button>
             </GlassCard>

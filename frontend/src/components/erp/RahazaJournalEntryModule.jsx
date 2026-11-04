@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Plus, RefreshCw, Trash2, BookCheck, FileText, X, Check, Ban, Search, Download } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -130,7 +132,7 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
           </div>
         ))}
       </div>
-      <Button variant="ghost" onClick={addLine} className="h-8 text-xs border border-dashed border-[var(--glass-border)]" data-testid="je-add-line"><Plus className="w-3 h-3 mr-1" />Tambah Baris</Button>
+      <Button size="sm" variant="outline" onClick={addLine} className="text-xs border-dashed" data-testid="je-add-line"><Plus className="w-3 h-3 mr-1" />Tambah Baris</Button>
 
       <div className="mt-5 flex items-center justify-between flex-wrap gap-3 pt-4 border-t border-[var(--glass-border)]">
         <div className="flex gap-4 text-sm">
@@ -141,9 +143,9 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" onClick={onClose} className="h-9 border border-[var(--glass-border)]" data-testid="je-editor-cancel">Batal</Button>
-          <Button variant="ghost" onClick={() => submit(true)} className="h-9 border border-[var(--glass-border)]" disabled={!balanced || !nomorSiap} data-testid="je-save-draft">Simpan Draft</Button>
-          <Button onClick={() => submit(false)} className="h-9" disabled={!balanced || !nomorSiap} data-testid="je-save-post">Simpan & Post</Button>
+          <Button variant="outline" onClick={onClose} data-testid="je-editor-cancel">Batal</Button>
+          <Button variant="outline" onClick={() => submit(true)} disabled={!balanced || !nomorSiap} data-testid="je-save-draft">Simpan Draft</Button>
+          <Button onClick={() => submit(false)} disabled={!balanced || !nomorSiap} data-testid="je-save-post">Simpan & Post</Button>
         </div>
       </div>
     </GlassCard>
@@ -196,12 +198,12 @@ function JournalDetail({ je, onPost, onVoid, onDelete, onClose }) {
         <div className="flex gap-2">
           {je.status === 'draft' && (
             <>
-              <Button variant="ghost" onClick={() => onDelete(je)} className="h-8 text-xs border border-red-400/25 text-red-300" data-testid="je-delete"><Trash2 className="w-3 h-3 mr-1" />Hapus Draft</Button>
-              <Button onClick={() => onPost(je)} className="h-8 text-xs" data-testid="je-post"><Check className="w-3 h-3 mr-1" />Post Jurnal</Button>
+              <Button size="sm" variant="outline" onClick={() => onDelete(je)} className="text-xs border-red-400/25 text-red-300" data-testid="je-delete"><Trash2 className="w-3 h-3 mr-1" />Hapus Draft</Button>
+              <Button size="sm" onClick={() => onPost(je)} className="text-xs" data-testid="je-post"><Check className="w-3 h-3 mr-1" />Post Jurnal</Button>
             </>
           )}
           {je.status === 'posted' && je.hub_voidable !== false && (
-            <Button variant="ghost" onClick={() => onVoid(je)} className="h-8 text-xs border border-red-400/25 text-red-300" data-testid="je-void"><Ban className="w-3 h-3 mr-1" />Void</Button>
+            <Button size="sm" variant="outline" onClick={() => onVoid(je)} className="text-xs border-red-400/25 text-red-300" data-testid="je-void"><Ban className="w-3 h-3 mr-1" />Void</Button>
           )}
           {je.status === 'posted' && je.hub_voidable === false && (
             <span className="text-[11px] text-amber-300/90 max-w-xs text-right" data-testid="je-void-locked">
@@ -278,14 +280,14 @@ export default function RahazaJournalEntryModule({ token }) {
   const save = async (body) => {
     const r = await fetch('/api/rahaza/journals', { method: 'POST', headers, body: JSON.stringify(body) });
     if (r.ok) { setEditing(null); fetchData(); }
-    else { const e = await r.json(); alert(e.detail || 'Error'); }
+    else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
 
   const postJE = async (je) => {
-    if (!window.confirm(`Posting jurnal ${je.je_number}? Setelah diposting, jurnal hanya bisa dibatalkan.`)) return;
+    if (!(await confirmDialog(`Posting jurnal ${je.je_number}? Setelah diposting, jurnal hanya bisa dibatalkan.`))) return;
     const r = await fetch(`/api/rahaza/journals/${je.id}/post`, { method: 'POST', headers });
     if (r.ok) { setDetailId(null); fetchData(); }
-    else { const e = await r.json(); alert(e.detail || 'Error'); }
+    else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
 
   const voidJE = async (je) => {
@@ -293,14 +295,14 @@ export default function RahazaJournalEntryModule({ token }) {
     if (reason === null) return;
     const r = await fetch(`/api/rahaza/journals/${je.id}/void`, { method: 'POST', headers, body: JSON.stringify({ reason }) });
     if (r.ok) { setDetailId(null); fetchData(); }
-    else { const e = await r.json(); alert(e.detail || 'Error'); }
+    else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
 
   const delDraft = async (je) => {
-    if (!window.confirm(`Hapus draf ${je.je_number}?`)) return;
+    if (!(await confirmDialog(`Hapus draf ${je.je_number}?`))) return;
     const r = await fetch(`/api/rahaza/journals/${je.id}`, { method: 'DELETE', headers });
     if (r.ok) { setDetailId(null); fetchData(); }
-    else { const e = await r.json(); alert(e.detail || 'Error'); }
+    else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
 
   // Unduh CSV: SEMUA jurnal sesuai penyaring (bukan hanya halaman ini), dibaca per halaman 200.
@@ -333,9 +335,9 @@ export default function RahazaJournalEntryModule({ token }) {
         subtitle="Semua jurnal, manual maupun otomatis dari dokumen."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" title="Muat ulang" aria-label="Muat ulang" data-testid="je-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button variant="ghost" onClick={exportCSV} disabled={!total} className="h-9 border border-[var(--glass-border)]" data-testid="je-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
-            <Button onClick={() => setEditing({})} className="h-9" disabled={accounts.length === 0} data-testid="je-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Jurnal baru</Button>
+            <Button size="icon" variant="outline" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="je-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportCSV} disabled={!total} data-testid="je-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
+            <Button onClick={() => setEditing({})} disabled={accounts.length === 0} data-testid="je-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Jurnal baru</Button>
           </>
         }
       />

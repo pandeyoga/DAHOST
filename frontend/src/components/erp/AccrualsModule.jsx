@@ -1,13 +1,26 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, RefreshCw, Edit2, Trash2, FileText, RotateCcw } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from './moduleAtoms';
+import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+
+const MONTH_NAMES = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+// 24 bulan terakhir, terbaru di atas
+const MONTH_OPTIONS = (() => {
+  const [y, m] = todayWIB().slice(0, 7).split('-').map(Number);
+  return Array.from({ length: 24 }, (_, i) => {
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    const yy = d.getUTCFullYear(); const mm = d.getUTCMonth() + 1;
+    return { value: `${yy}-${String(mm).padStart(2, '0')}`, label: `${MONTH_NAMES[mm - 1]} ${yy}` };
+  });
+})();
 
 const fmt = formatRupiah;
 
@@ -58,7 +71,7 @@ export default function AccrualsModule({ token }) {
   };
 
   const del = async (id) => {
-    if (!window.confirm('Hapus entry akrual ini?')) return;
+    if (!(await confirmDialog('Hapus entry akrual ini?'))) return;
     try {
       const r = await fetch(`/api/rahaza/finance/accruals/${id}`, { method: 'DELETE', headers });
       if (r.ok) {
@@ -71,7 +84,7 @@ export default function AccrualsModule({ token }) {
   };
 
   const reverse = async (id) => {
-    if (!window.confirm('Reverse entry akrual ini?')) return;
+    if (!(await confirmDialog('Reverse entry akrual ini?'))) return;
     try {
       const r = await fetch(`/api/rahaza/finance/accruals/${id}/reverse`, {
         method: 'POST',
@@ -99,10 +112,9 @@ export default function AccrualsModule({ token }) {
         subtitle="Catat pendapatan & beban yang sudah terjadi tapi belum tercatat di periode berjalan."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchAccruals} className="h-9 border border-[var(--glass-border)]" data-testid="accrual-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang
-            </Button>
-            <Button onClick={() => setEditing({ period: '', type: 'expense', description: '', amount: 0, account_id: '' })} className="h-9" data-testid="accrual-add">
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAccruals} data-testid="accrual-refresh">
+              <RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button onClick={() => setEditing({ period: '', type: 'expense', description: '', amount: 0, account_id: '' })} data-testid="accrual-add">
               <Plus className="w-3.5 h-3.5 mr-1.5" />Tambah Akrual
             </Button>
           </>
@@ -114,29 +126,23 @@ export default function AccrualsModule({ token }) {
       </div>
       <GlassCard className="p-4">
         <div className="flex gap-3 mb-4">
-          <input
-            type="month"
-            value={filter.period}
-            onChange={e => setFilter(f => ({ ...f, period: e.target.value }))}
-            className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-            placeholder="Filter Periode"
-            data-testid="accrual-filter-period"
-          />
-          <select
-            value={filter.type}
-            onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
-            className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm"
-            data-testid="accrual-filter-type"
-          >
-            <option value="">Semua Tipe</option>
+          {/* PANDUAN_UI G6 (2026-11-04): pilihan bulan berlabel (dulu kotak bulan kosong "--------- ----") */}
+          <SmartNativeSelect value={filter.period} onChange={e => setFilter(f => ({ ...f, period: e.target.value }))}
+            className="h-9 w-44" data-testid="accrual-filter-period">
+            <option value="">Semua periode</option>
+            {MONTH_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
+            className="h-9 w-40" data-testid="accrual-filter-type">
+            <option value="">Semua jenis</option>
             <option value="income">Pendapatan</option>
             <option value="expense">Beban</option>
-          </select>
+          </SmartNativeSelect>
         </div>
         {loading ? (
           <div className="text-center py-8 text-muted-foreground">Memuat...</div>
         ) : accruals.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Belum ada data akrual. Tekan "Tambah Akrual".</div>
+          <EmptyState icon={FileText} title="Belum ada akrual" description="Akrual mencatat beban/pendapatan yang sudah terjadi tapi belum dibayar/diterima." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="accrual-table">
@@ -256,7 +262,7 @@ function AccrualEditor({ value, onClose, onSave }) {
           </div>
         </div>
         <div className="flex gap-2 mt-6 justify-end">
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]" data-testid="accrual-cancel">
+          <Button variant="outline" onClick={onClose} data-testid="accrual-cancel">
             Batal
           </Button>
           <Button onClick={() => onSave(s)} data-testid="accrual-save">

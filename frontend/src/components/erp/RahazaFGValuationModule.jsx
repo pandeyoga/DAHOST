@@ -43,26 +43,26 @@ export default function RahazaFGValuationModule({ token }) {
         subtitle="Stok barang jadi × harga rata-rata, dibandingkan saldo akun Persediaan Barang Jadi di buku besar."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="fgval-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button variant="ghost" onClick={exportCSV} className="h-9 border border-[var(--glass-border)]" disabled={!data?.rows?.length} data-testid="fgval-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
+            <Button size="icon" variant="outline" onClick={fetchData} data-testid="fgval-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportCSV} disabled={!data?.rows?.length} data-testid="fgval-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
           </>
         }
       />
 
-      <GlassCard className="p-4 flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-muted-foreground">Saldo buku besar per</span>
         <GlassInput type="date" value={asOf} onChange={e => setAsOf(e.target.value)} className="h-8 w-36" data-testid="fgval-asof" />
         <span className={`text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded border ${data?.reconciled ? 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25' : data?.explained ? 'text-amber-300 bg-amber-400/10 border-amber-400/25' : 'text-red-300 bg-red-400/10 border-red-400/25'}`} data-testid="fgval-status">
           {data?.reconciled ? 'Cocok dengan GL' : data?.explained ? 'Selisih terjelaskan (lapisan belum berjurnal)' : 'Selisih belum terjelaskan'}
         </span>
-      </GlassCard>
+      </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {(Number(t.layer_value) || Number(t.gl_balance) || Number(t.unposted_layers)) ? <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label="Nilai persediaan (harga rata-rata)" value={`Rp ${fmt(t.layer_value)}`} accent="primary" testId="fgval-kpi-layer" />
         <StatTile label="Saldo buku besar" value={`Rp ${fmt(t.gl_balance)}`} testId="fgval-kpi-gl" />
         <StatTile label="Selisih" value={`Rp ${fmt(t.difference)}`} accent={Math.abs(t.difference || 0) < 1 ? 'success' : 'danger'} testId="fgval-kpi-diff" />
-        <StatTile label="Belum dijurnal" value={`Rp ${fmt(t.unposted_value)} · ${t.unposted_layers || 0} lapisan`} accent={t.unposted_layers ? 'danger' : 'success'} testId="fgval-kpi-unposted" />
-      </div>
+        <StatTile label="Belum dijurnal" value={`Rp ${fmt(t.unposted_value)} · ${t.unposted_layers || 0} lapisan`} accent={t.unposted_layers ? 'danger' : 'default'} testId="fgval-kpi-unposted" />
+      </div> : null}
 
       {t.unposted_layers > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300" data-testid="fgval-unposted-hint">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { StatTile } from './moduleAtoms';
 import {
   Plus, Edit2, Trash2, Eye, RefreshCw, ChevronDown,
   Package, Calendar, AlertTriangle, CheckCircle, Upload, TrendingDown, Printer
@@ -352,24 +353,17 @@ export default function FixedAssetsModule({ token }) {
           <p className="text-xs text-muted-foreground">Daftarkan aset, kelola depresiasi, dan posting jurnal</p>
         </div>
         <Button onClick={openCreate} data-testid="btn-new-asset">
-          <Plus className="w-4 h-4 mr-1.5" /> Daftar Aset Baru
+          <Plus className="w-4 h-4" /> Aset baru
         </Button>
       </div>
 
-      {/* Summary KPIs */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[
-            { label: 'Total Aset', value: `${summary.total_assets} aset` },
-            { label: 'Total Harga Perolehan', value: fmtRp(summary.total_cost), color: 'text-blue-500' },
-            { label: 'Total NBV', value: fmtRp(summary.total_nbv), color: 'text-emerald-500' },
-            { label: 'Depresiasi Bulan Ini', value: `${summary.depr_due_this_month} item due`, color: summary.depr_due_this_month > 0 ? 'text-amber-700 dark:text-amber-500' : 'text-muted-foreground' },
-          ].map(c => (
-            <GlassCard key={c.label} className="p-4">
-              <div className="text-xs text-muted-foreground mb-1">{c.label}</div>
-              <div className={`text-sm font-semibold ${c.color || 'text-foreground'}`}>{c.value}</div>
-            </GlassCard>
-          ))}
+      {/* Summary KPIs — PANDUAN_UI G5 (2026-11-04): StatTile netral, tidak tampil bila belum ada aset */}
+      {summary && Number(summary.total_assets) > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatTile label="Jumlah aset" value={`${summary.total_assets} aset`} />
+          <StatTile label="Harga perolehan" value={fmtRp(summary.total_cost)} />
+          <StatTile label="Nilai buku" value={fmtRp(summary.total_nbv)} />
+          <StatTile label="Penyusutan bulan ini" value={summary.depr_due_this_month ? `${summary.depr_due_this_month} aset jatuh tempo` : 'Tidak ada'} accent={summary.depr_due_this_month > 0 ? 'warning' : 'muted'} />
         </div>
       )}
 

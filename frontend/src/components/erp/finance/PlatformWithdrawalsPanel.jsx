@@ -4,6 +4,8 @@
  * yang dicocokkan ke mutasi bank di Rekonsiliasi Bank.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { formatDateID } from '@/lib/format';
+import { Button } from '@/components/ui/button';
 import {
   ArrowDownToLine, Plus, X, Loader2, CheckCircle2, BookCheck, Send, Pencil, Trash2, Landmark, Upload,
 } from 'lucide-react';
@@ -136,11 +138,10 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
         <div className="flex items-center gap-2">
           <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden" data-testid="wd-import-file"
             onChange={(e) => startImport(e.target.files?.[0])} />
-          <button data-testid="wd-import" disabled={busy === 'import'} onClick={() => fileRef.current?.click()}
-            title="Unggah laporan penarikan / withdrawal Shopee atau TikTok"
-            className="h-9 px-3 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-1.5 disabled:opacity-50">
+          <Button variant="outline" data-testid="wd-import" disabled={busy === 'import'} onClick={() => fileRef.current?.click()}
+            title="Unggah laporan penarikan Shopee atau TikTok">
             {busy === 'import' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />} Impor laporan penarikan
-          </button>
+          </Button>
           <button data-testid="wd-new" onClick={openCreate}
             className="h-9 px-3 rounded-lg bg-primary text-primary-foreground text-sm flex items-center gap-1.5">
             <Plus className="w-4 h-4" /> Catat penarikan
@@ -237,7 +238,7 @@ export function PlatformWithdrawalsPanel({ accounts, accountId, balances, banks 
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className="border-b border-foreground/5" data-testid={`wd-row-${r.reference}`}>
-                  <td className="py-2 px-3">{r.withdrawal_date}</td>
+                  <td className="py-2 px-3 whitespace-nowrap">{formatDateID(r.withdrawal_date)}</td>
                   <td className="py-2 px-3 font-mono text-xs">{r.reference}</td>
                   <td className="py-2 px-3">{accName(r.account_id)} <span className="text-xs text-foreground/50 uppercase">{r.platform}</span></td>
                   <td className="py-2 px-3 text-right tabular-nums font-medium">{rp(r.amount)}</td>

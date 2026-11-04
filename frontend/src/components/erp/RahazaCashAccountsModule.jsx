@@ -1,8 +1,12 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, RefreshCw, Edit2, Trash2, Wallet, AlertTriangle } from 'lucide-react';
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
+import { Plus, RefreshCw, Wallet, AlertTriangle, MoreHorizontal } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from './moduleAtoms';
+import { PageHeader, EmptyState } from './moduleAtoms';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { journalSourceLabel } from '@/lib/financeLabels';
 import { formatRupiah, formatDateID, formatNumber } from '@/lib/format';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -10,14 +14,28 @@ import { toast } from 'sonner';
 
 const fmt = formatRupiah;
 
-const TYPE_LABEL = { cash: 'Kas', bank: 'Bank' };
 const MUT_PAGE = 50;
+const WALLET_RX = /gopay|\bdana\b|shopeepay|ovo|flazz|linkaja|e-?wallet/i;
+
+/** Kelompok rekening untuk tabel: Kas · per bank · Dompet digital · Lainnya (PANDUAN_UI G5). */
+function groupOf(a) {
+  if (a.type === 'cash') return 'Kas';
+  if (WALLET_RX.test(`${a.name} ${a.bank_name || ''}`)) return 'Dompet digital';
+  const b = (a.bank_name || '').trim() || (a.name.match(/^Bank\s+\w+/i) || [''])[0];
+  return b ? b.replace(/^bank\s+/i, 'Bank ') : 'Lainnya';
+}
+/** "Bank BCA – CV Dekka Karya Utama" di kelompok "Bank BCA" cukup ditulis "CV Dekka Karya Utama". */
+const shortName = (a, grp) => {
+  const n = a.name.replace(new RegExp(`^${grp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*[–-]\\s*`, 'i'), '');
+  return n && n !== a.name ? n : a.name;
+};
 
 /**
  * Rekening & Mutasi (menu Keuangan › Kas & Bank).
- * 2026-11-04 (audit Keuangan): Kas Kecil = rekening kas biasa di sini (dana kas kecil terpisah dihapus dari
- * menu); mutasi per halaman dari yang terbaru (dulu 2000 baris tertua → mutasi terbaru hilang); rekening
- * bersaldo 0 tanpa mutasi dilipat; tombol "Sinkron Bagan Akun & GL" pindah ke Adm. Sistem.
+ * 2026-11-04 (audit Keuangan): Kas Kecil = rekening kas biasa di sini; mutasi per halaman dari yang terbaru.
+ * 2026-11-04 (PANDUAN_UI G5): satu tabel berkelompok (Kas · bank · dompet digital) — dulu satu kartu besar
+ * per rekening (kode akun paling menonjol, "Bank BCA" ditulis 2–3×, ikon hapus di tiap kartu) dan total
+ * dalam kartu selebar halaman. Mutasi dibuka di panel samping; ubah/nonaktifkan lewat menu ⋯.
  */
 export default function RahazaCashAccountsModule({ token }) {
   const [accounts, setAccounts] = useState([]);
@@ -27,7 +45,6 @@ export default function RahazaCashAccountsModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [showIdle, setShowIdle] = useState(false);
   const [mutPage, setMutPage] = useState(1);
-  const panelRef = useRef(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const fetchAccounts = useCallback(async () => {
@@ -50,9 +67,6 @@ export default function RahazaCashAccountsModule({ token }) {
     setMovements(d.rows || []); setMutInfo(d);
   };
   const openAccount = (a) => { setSelected(a); fetchMovements(a.id, 1); };
-  useEffect(() => {
-    if (selected && panelRef.current) panelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }, [selected]);
 
   const save = async (body) => {
     const url = body.id ? `/api/rahaza/cash-accounts/${body.id}` : '/api/rahaza/cash-accounts';
@@ -65,111 +79,148 @@ export default function RahazaCashAccountsModule({ token }) {
     setEditing(null); fetchAccounts();
   };
   const del = async (a) => {
-    if (!window.confirm(`Nonaktifkan rekening ${a.name}?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan ${a.name}?`, body: 'Rekening tidak bisa dipilih lagi untuk transaksi baru. Riwayat mutasinya tetap ada.', confirmLabel: 'Nonaktifkan', danger: true }))) return;
     await fetch(`/api/rahaza/cash-accounts/${a.id}`, { method: 'DELETE', headers });
     fetchAccounts();
   };
 
   const total = accounts.reduce((s, a) => s + (Number(a.balance) || 0), 0);
-  const mismatch = accounts.filter(a => a.balance_source === 'gl' && a.balance_diff !== 0);
-  const noGl = accounts.filter(a => a.balance_source !== 'gl');
+  const mismatch = accounts.filter((a) => a.balance_source === 'gl' && a.balance_diff !== 0);
+  const noGl = accounts.filter((a) => a.balance_source !== 'gl');
   const isIdle = (a) => Math.abs(Number(a.balance) || 0) < 0.5 && !Number(a.mutation_count || 0);
   const idle = accounts.filter(isIdle);
-  const shown = showIdle ? accounts : accounts.filter(a => !isIdle(a));
+  const shown = showIdle ? accounts : accounts.filter((a) => !isIdle(a));
+  const groups = useMemo(() => {
+    const m = new Map();
+    for (const a of shown) { const g = groupOf(a); if (!m.has(g)) m.set(g, []); m.get(g).push(a); }
+    return [...m.entries()]
+      .map(([name, list]) => ({ name, list: list.sort((x, y) => Number(y.balance || 0) - Number(x.balance || 0)), total: list.reduce((s, a) => s + Number(a.balance || 0), 0) }))
+      .sort((x, y) => (x.name === 'Kas' ? -1 : y.name === 'Kas' ? 1 : y.total - x.total));
+  }, [shown]);
   const mutPages = Math.max(1, Math.ceil((mutInfo?.count || 0) / MUT_PAGE));
 
   return (
-    <div className="space-y-5" data-testid="rahaza-cash-page">
+    <div className="space-y-4" data-testid="rahaza-cash-page">
       <PageHeader
-        icon={Wallet}
         title="Rekening & Mutasi"
-        subtitle="Saldo dan mutasi tiap rekening dibaca dari buku besar. Kas Kecil termasuk di sini."
+        subtitle="Saldo dan mutasi tiap rekening dari buku besar. Kas Kecil termasuk di sini."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchAccounts} className="h-9 border border-[var(--glass-border)]" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={() => setEditing({ code: '', name: '', type: 'cash', opening_balance: 0 })} className="h-9" data-testid="ca-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Rekening baru</Button>
+            <span className="text-sm text-muted-foreground mr-1" data-testid="ca-total-gl">Total saldo <b className="text-foreground tabular-nums">{fmt(total)}</b></span>
+            <Button variant="outline" size="icon" onClick={fetchAccounts} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+            <Button onClick={() => setEditing({ code: '', name: '', type: 'cash', opening_balance: 0 })} data-testid="ca-add"><Plus className="w-4 h-4" />Rekening baru</Button>
           </>
         }
       />
-      <StatTile label="Total saldo semua rekening" value={fmt(total)} accent="success" className="md:col-span-3" testId="ca-total-gl" />
       {(mismatch.length > 0 || noGl.length > 0) && (
-        <div className="bg-amber-400/8 border border-amber-400/20 rounded-lg px-4 py-3 text-xs text-amber-700 dark:text-amber-300 flex items-start gap-2" data-testid="ca-gl-warning">
+        <div className="bg-amber-400/8 border border-amber-400/20 rounded-lg px-4 py-3 text-xs text-[hsl(var(--warning))] flex items-start gap-2" data-testid="ca-gl-warning">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
-            {mismatch.length > 0 && <p>{mismatch.length} rekening saldo buku besar ≠ saldo mutasi ({mismatch.map(a => a.code).join(', ')}). Angka kartu memakai buku besar; selisih berarti ada mutasi yang belum dijurnal.</p>}
-            {noGl.length > 0 && <p>{noGl.length} rekening belum punya akun buku besar ({noGl.map(a => a.code).join(', ')}). Minta admin menjalankan “Sinkron Bagan Akun & GL” di Adm. Sistem › Perawatan Data Keuangan.</p>}
+            {mismatch.length > 0 && <p>{mismatch.length} rekening saldo buku besar ≠ saldo mutasi ({mismatch.map((a) => a.code).join(', ')}). Angka memakai buku besar; selisih berarti ada mutasi yang belum dijurnal.</p>}
+            {noGl.length > 0 && <p>{noGl.length} rekening belum punya akun buku besar ({noGl.map((a) => a.code).join(', ')}). Minta admin menjalankan “Sinkron Bagan Akun & GL” di Adm. Sistem › Perawatan Data Keuangan.</p>}
           </div>
         </div>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-        {shown.map(a => (
-          <GlassCard key={a.id} className={`p-4 cursor-pointer ${selected?.id === a.id ? 'ring-2 ring-[hsl(var(--primary))]' : ''}`} onClick={() => openAccount(a)} data-testid={`ca-card-${a.code}`}>
-            <div className="flex items-start justify-between">
-              <div>
-                <div className="font-mono text-xs text-muted-foreground">{a.code}{a.gl_account_code && a.gl_account_code !== a.code && <span className="ml-2 text-primary/80">akun {a.gl_account_code}</span>}</div>
-                <div className="font-semibold text-foreground">{a.name}</div>
-                <div className="text-[11px] text-muted-foreground mt-1">{TYPE_LABEL[a.type] || a.type}{a.bank_name && ` · ${a.bank_name}`}{a.account_number && ` · ${a.account_number}`}</div>
-              </div>
-              <div className="flex gap-1">
-                <button onClick={e => { e.stopPropagation(); setEditing({ ...a }); }} className="text-primary hover:bg-primary/10 rounded p-1" title="Ubah" aria-label="Ubah"><Edit2 className="w-3 h-3" /></button>
-                <button onClick={e => { e.stopPropagation(); del(a); }} className="text-red-500 dark:text-red-300 hover:bg-red-400/10 rounded p-1" title="Nonaktifkan" aria-label="Nonaktifkan"><Trash2 className="w-3 h-3" /></button>
-              </div>
-            </div>
-            <div className="mt-3 text-2xl font-bold text-foreground tabular-nums" data-testid={`ca-balance-${a.code}`}>{fmt(a.balance)}</div>
-            <div className="mt-1 flex items-center justify-between text-[11px]">
-              <span className={a.balance_source === 'gl' ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'} data-testid={`ca-source-${a.code}`}>
-                {a.balance_source === 'gl' ? `${a.mutation_count ?? 0} mutasi` : 'Belum tertaut buku besar'}
-              </span>
-              {a.balance_source === 'gl' && a.balance_diff !== 0 && (
-                <span className="text-amber-600 dark:text-amber-400" data-testid={`ca-diff-${a.code}`}>selisih {fmt(a.balance_diff)}</span>
-              )}
-            </div>
-          </GlassCard>
-        ))}
-        {accounts.length === 0 && !loading && <GlassCard className="p-6 text-center text-muted-foreground col-span-full">Belum ada rekening. Tekan “Rekening baru”.</GlassCard>}
-      </div>
+
+      <GlassCard className="p-0 overflow-hidden">
+        {accounts.length === 0 && !loading ? (
+          <EmptyState icon={Wallet} title="Belum ada rekening" description="Tambahkan rekening kas atau bank untuk mulai mencatat mutasi." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full" data-testid="ca-table">
+              <thead>
+                <tr><th className="text-left">Rekening</th><th className="text-left">No. rekening</th><th className="text-right">Saldo</th><th className="text-right">Mutasi</th><th className="w-24" /></tr>
+              </thead>
+              <tbody>
+                {groups.map((g) => (
+                  <Fragment key={g.name}>
+                    <tr className="bg-[hsl(var(--muted))]/50">
+                      <td colSpan={2} className="font-semibold text-foreground">{g.name}</td>
+                      <td className="text-right font-semibold tabular-nums">{formatNumber(g.total)}</td>
+                      <td colSpan={2} />
+                    </tr>
+                    {g.list.map((a) => (
+                      <tr key={a.id} data-testid={`ca-card-${a.code}`} className={selected?.id === a.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                        <td className="pl-6">
+                          <button type="button" className="text-left text-foreground hover:text-[hsl(var(--primary))]" onClick={() => openAccount(a)} title={`Akun buku besar ${a.gl_account_code || '—'}`}>
+                            {shortName(a, g.name)}
+                          </button>
+                          {a.balance_source !== 'gl' && <span className="ml-2 text-xs text-[hsl(var(--warning))]">belum tertaut buku besar</span>}
+                          {a.balance_source === 'gl' && a.balance_diff !== 0 && <span className="ml-2 text-xs text-[hsl(var(--warning))]" data-testid={`ca-diff-${a.code}`}>selisih {formatNumber(a.balance_diff)}</span>}
+                        </td>
+                        <td className="text-muted-foreground">{a.account_number || '—'}</td>
+                        <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-foreground'}`} data-testid={`ca-balance-${a.code}`}>{formatNumber(a.balance)}</td>
+                        <td className="text-right">
+                          <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openAccount(a)}>Lihat mutasi</Button>
+                        </td>
+                        <td className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon-sm" aria-label={`Menu ${a.name}`} title="Lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => setEditing({ ...a })}>Ubah rekening</DropdownMenuItem>
+                              <DropdownMenuItem className="text-[hsl(var(--destructive))]" onClick={() => del(a)}>Nonaktifkan</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </GlassCard>
       {idle.length > 0 && (
-        <button type="button" onClick={() => setShowIdle(v => !v)} className="text-xs text-primary hover:underline" data-testid="ca-toggle-idle">
+        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setShowIdle((v) => !v)} data-testid="ca-toggle-idle">
           {showIdle ? 'Sembunyikan rekening tanpa saldo & mutasi' : `Tampilkan ${idle.length} rekening tanpa saldo & mutasi`}
-        </button>
+        </Button>
       )}
-      {selected && (
-        <div ref={panelRef}>
-          <GlassCard className="p-4" data-testid="ca-movements-panel">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="font-semibold text-foreground">Mutasi {selected.name}</h3>
-              <button onClick={() => setSelected(null)} className="text-muted-foreground" title="Tutup" aria-label="Tutup">×</button>
-            </div>
-            <p className="text-[11px] text-muted-foreground mb-3" data-testid="ca-mutations-source">
-              {mutInfo ? `${mutInfo.count} mutasi · masuk ${fmt(mutInfo.total_in)} · keluar ${fmt(mutInfo.total_out)} · saldo ${fmt(mutInfo.closing)}` : 'Memuat…'}
-            </p>
-            {mutInfo && movements.length === 0 ? <div className="text-xs text-muted-foreground text-center py-8">Belum ada mutasi.</div> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-left text-xs text-muted-foreground"><th className="pb-2">Tanggal</th><th className="pb-2">Jurnal</th><th className="pb-2">Jenis</th><th className="pb-2">Keterangan</th><th className="pb-2 text-right">Masuk</th><th className="pb-2 text-right">Keluar</th><th className="pb-2 text-right">Saldo</th></tr></thead>
-                  <tbody>{movements.map(m => (
-                    <tr key={m.id} className="border-t border-[var(--glass-border)]" data-testid={`ca-mut-${m.source_module}`}>
-                      <td className="py-2 text-xs whitespace-nowrap">{formatDateID(m.date)}</td>
-                      <td className="py-2 text-xs font-mono whitespace-nowrap">{m.je_number || '-'}</td>
-                      <td className="py-2 text-xs" title={m.source_module}>{m.category_label || m.category}</td>
-                      <td className="py-2 text-xs">{m.ref_label || m.description || '-'}</td>
-                      <td className="py-2 text-right tabular-nums text-emerald-600 dark:text-emerald-300 text-xs">{m.direction === 'in' ? formatNumber(m.amount) : ''}</td>
-                      <td className="py-2 text-right tabular-nums text-red-600 dark:text-red-300 text-xs">{m.direction === 'out' ? formatNumber(m.amount) : ''}</td>
-                      <td className="py-2 text-right tabular-nums text-xs">{formatNumber(m.running_balance)}</td>
-                    </tr>))}
-                  </tbody>
-                </table>
+
+      <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
+        <SheetContent side="right" className="w-full sm:max-w-3xl overflow-y-auto" data-testid="ca-movements-panel">
+          {selected && (
+            <>
+              <SheetHeader>
+                <SheetTitle>Mutasi {selected.name}</SheetTitle>
+                <SheetDescription data-testid="ca-mutations-source">
+                  {mutInfo ? `${mutInfo.count} mutasi · masuk ${fmt(mutInfo.total_in)} · keluar ${fmt(mutInfo.total_out)} · saldo ${fmt(mutInfo.closing)}` : 'Memuat…'}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="mt-4">
+                {mutInfo && movements.length === 0 ? (
+                  <EmptyState icon={Wallet} title="Belum ada mutasi" description="Mutasi muncul setelah ada jurnal yang memakai rekening ini." />
+                ) : (
+                  <div className="overflow-x-auto rounded-[var(--radius-md)] border border-[var(--glass-border)]">
+                    <table className="w-full">
+                      <thead><tr><th className="text-left">Tanggal</th><th className="text-left">Jurnal</th><th className="text-left">Jenis</th><th className="text-left">Keterangan</th><th className="text-right">Masuk</th><th className="text-right">Keluar</th><th className="text-right">Saldo</th></tr></thead>
+                      <tbody>{movements.map((m) => (
+                        <tr key={m.id} data-testid={`ca-mut-${m.source_module}`}>
+                          <td className="whitespace-nowrap">{formatDateID(m.date)}</td>
+                          <td className="whitespace-nowrap text-muted-foreground">{m.je_number || '—'}</td>
+                          <td title={m.source_module}>{m.category_label || journalSourceLabel(m.category)}</td>
+                          <td>{m.ref_label || m.description || '—'}</td>
+                          <td className="text-right tabular-nums">{m.direction === 'in' ? formatNumber(m.amount) : ''}</td>
+                          <td className="text-right tabular-nums">{m.direction === 'out' ? formatNumber(m.amount) : ''}</td>
+                          <td className="text-right tabular-nums">{formatNumber(m.running_balance)}</td>
+                        </tr>))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {mutPages > 1 && (
+                  <div className="pt-3">
+                    <PaginationLite page={mutPage} totalPages={mutPages} total={mutInfo?.count || 0} pageSize={MUT_PAGE}
+                      onPageChange={(p) => fetchMovements(selected.id, p)} />
+                  </div>
+                )}
               </div>
-            )}
-            {mutPages > 1 && (
-              <div className="pt-2">
-                <PaginationLite page={mutPage} totalPages={mutPages} total={mutInfo?.count || 0} pageSize={MUT_PAGE}
-                  onPageChange={(p) => fetchMovements(selected.id, p)} />
-              </div>
-            )}
-          </GlassCard>
-        </div>
-      )}
+            </>
+          )}
+        </SheetContent>
+      </Sheet>
       {editing && <CAEditor value={editing} onClose={() => setEditing(null)} onSave={save} headers={headers} />}
     </div>
   );
@@ -212,7 +263,7 @@ function CAEditor({ value, onClose, onSave, headers }) {
           </>}
           {!s.id && <div><label className="text-xs uppercase text-muted-foreground">Saldo Awal</label><MoneyInput glass value={s.opening_balance || 0} onChange={e => upd('opening_balance', Number(e.target.value))} /></div>}
         </div>
-        <div className="flex gap-2 mt-6 justify-end"><Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button><Button onClick={() => onSave(s)} data-testid="ca-save">Simpan</Button></div>
+        <div className="flex gap-2 mt-6 justify-end"><Button variant="outline" onClick={onClose} >Batal</Button><Button onClick={() => onSave(s)} data-testid="ca-save">Simpan</Button></div>
       </GlassCard>
     </div>
   );

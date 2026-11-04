@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, BookLock, Undo2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { todayWIB } from '../../lib/waktu';
@@ -17,7 +19,7 @@ export function PeriodAlerts({ headers, onOpened }) {
 
   const openYear = async (y) => {
     const r = await fetch('/api/rahaza/periods/ensure-year', { method: 'POST', headers, body: JSON.stringify({ year: y }) });
-    if (r.ok) { await load(); onOpened?.(y); } else { const e = await r.json(); alert(e.detail || 'Error'); }
+    if (r.ok) { await load(); onOpened?.(y); } else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
   const resolve = async (id) => {
     await fetch(`/api/rahaza/periods/alerts/${id}/resolve`, { method: 'POST', headers });
@@ -62,16 +64,16 @@ export function YearEndClose({ headers, year, onDone }) {
   useEffect(() => { load(); }, [load]);
 
   const doClose = async () => {
-    if (!window.confirm(`Tutup tahun ${year}? Semua akun L/R di-nol-kan dan laba bersih Rp ${fmt(preview.net_income)} dipindah ke Laba Ditahan (3-2000).`)) return;
+    if (!(await confirmDialog(`Tutup tahun ${year}? Semua akun L/R di-nol-kan dan laba bersih Rp ${fmt(preview.net_income)} dipindah ke Laba Ditahan (3-2000).`))) return;
     setBusy(true);
     const r = await fetch('/api/rahaza/year-end/close', { method: 'POST', headers, body: JSON.stringify({ year }) });
     setBusy(false);
-    if (r.ok) { await load(); onDone?.(); } else { const e = await r.json(); alert(e.detail || 'Error'); }
+    if (r.ok) { await load(); onDone?.(); } else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
   const doReverse = async () => {
-    if (!window.confirm(`Batalkan jurnal penutup tahun ${year}?`)) return;
+    if (!(await confirmDialog(`Batalkan jurnal penutup tahun ${year}?`))) return;
     const r = await fetch(`/api/rahaza/year-end/${year}/reverse`, { method: 'POST', headers });
-    if (r.ok) { await load(); onDone?.(); } else { const e = await r.json(); alert(e.detail || 'Error'); }
+    if (r.ok) { await load(); onDone?.(); } else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
   if (!preview) return null;
   const closed = preview.already_closed;

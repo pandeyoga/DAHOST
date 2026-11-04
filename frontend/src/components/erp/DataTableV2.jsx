@@ -375,11 +375,11 @@ export function DataTable({
           <button
             onClick={handleExport}
             disabled={filtered.length === 0}
-            className="h-9 px-3 rounded-lg border border-[var(--glass-border)] text-[11px] font-medium text-foreground/80 hover:text-foreground hover:bg-[var(--glass-bg-hover)] flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--card-surface)] text-xs font-medium text-foreground hover:bg-[var(--card-surface-hover)] flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
             data-testid={`dtv2-${tableId}-export`}
           >
             <Download className="w-3.5 h-3.5" />
-            Export
+            Unduh
           </button>
         )}
       </div>

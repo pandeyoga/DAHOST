@@ -4,6 +4,7 @@
  * butuh format excel pencatatan yang bisa di-import". Template: MUTASI_KAS_BANK & JURNAL_UMUM.
  */
 import { useState } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Download, Upload, CheckCircle2, AlertTriangle, FileSpreadsheet } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -33,7 +34,7 @@ export default function RahazaJournalImportModule({ token }) {
   };
   const doApply = async () => {
     if (!preview?.ok || !preview.journals?.length) return;
-    if (!window.confirm(`Posting ${preview.journals.length} jurnal senilai Rp ${fmt(preview.totals.amount)}?`)) return;
+    if (!(await confirmDialog(`Posting ${preview.journals.length} jurnal senilai Rp ${fmt(preview.totals.amount)}?`))) return;
     setBusy(true);
     try {
       const d = await send('apply'); setResult(d);

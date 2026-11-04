@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button';
 import { PageHeader, StatusBadge, EmptyState } from './moduleAtoms';
 import { toast } from 'sonner';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatRupiah } from '@/lib/format';
+import { formatRupiah, formatDateID } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
@@ -144,26 +144,24 @@ export default function RahazaARInvoicesModule({ token }) {
   return (
     <div className="space-y-5" data-testid="rahaza-ar-invoices-page">
       <PageHeader
-        icon={FileText}
         title="Faktur Penjualan"
-        subtitle="Faktur piutang reseller dan maklon. Faktur dibuat dari Portal Penjualan › Nota Penjualan atau dari Maklon; di sini draf diterbitkan dan pembayaran dicatat."
+        subtitle="Faktur reseller & maklon. Dibuat dari Nota Penjualan atau Maklon; di sini diterbitkan dan dicatat pembayarannya."
         actions={
           <>
-            <Button variant="ghost" onClick={() => setShowStatement(true)} className="h-9 border border-[var(--glass-border)] gap-1.5"><Users className="w-3.5 h-3.5" />Statement</Button>
-            <Button variant="ghost" onClick={refresh} className="h-9 border border-[var(--glass-border)]" title="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={() => setShowStatement(true)} className="gap-1.5"><Users className="w-4 h-4" />Rekening koran</Button>
+            <Button size="icon" variant="outline" onClick={refresh} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
           </>
         }
       />
 
       {error && <div className="bg-[hsl(var(--destructive)/0.12)] border border-[hsl(var(--destructive)/0.22)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]">{error}<button onClick={() => setError('')} className="ml-2 text-xs underline">Tutup</button></div>}
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <ARStatTile label="Total faktur" value={invoices.length} accent="primary" />
-        <ARStatTile label="Belum lunas" value={unpaidInvoices.length} accent="warning" />
-        <ARStatTile label="Sisa piutang" value={fmt(totalOutstanding)} accent="danger" />
-        <ARStatTile label="Sudah diterima" value={fmt(totalPaid)} accent="success" />
-      </div>
+      {/* PANDUAN_UI G5 (2026-11-04): ringkasan satu baris — dulu 4 kartu 4 warna yang mengulang tab Umur piutang */}
+      {invoices.length > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="ar-summary">
+          {invoices.length} faktur · <b className="text-foreground">{unpaidInvoices.length}</b> belum lunas, sisa <b className="text-foreground tabular-nums">{fmt(totalOutstanding)}</b> · sudah diterima <b className="text-foreground tabular-nums">{fmt(totalPaid)}</b>
+        </p>
+      )}
 
       {/* Invoice table */}
       <GlassCard className="p-0 overflow-hidden">
@@ -171,13 +169,13 @@ export default function RahazaARInvoicesModule({ token }) {
           <table className="w-full text-sm">
             <thead className="bg-[var(--glass-bg)]">
               <tr className="text-left text-[10px] uppercase tracking-wider text-foreground/50">
-                <th className="px-4 py-3">Invoice</th>
+                <th className="px-4 py-3">No. faktur</th>
                 <th className="px-3 py-3">Channel</th>
                 <th className="px-3 py-3">Pelanggan</th>
                 <th className="px-3 py-3">Terbit</th>
                 <th className="px-3 py-3">Status</th>
                 <th className="px-3 py-3 text-right">Total</th>
-                <th className="px-3 py-3 text-right">Balance</th>
+                <th className="px-3 py-3 text-right">Sisa</th>
                 <th className="px-3 py-3 text-center">Aksi</th>
               </tr>
             </thead>
@@ -195,7 +193,7 @@ export default function RahazaARInvoicesModule({ token }) {
                   </td>
                   <td className="px-3 py-2"><ChannelBadge channel={inv.sales_channel} channels={channels} /></td>
                   <td className="px-3 py-2 text-xs text-foreground">{inv.customer_name}</td>
-                  <td className="px-3 py-2 text-xs text-foreground/70">{inv.issue_date}</td>
+                  <td className="px-3 py-2 text-xs text-foreground/70 whitespace-nowrap">{formatDateID(inv.issue_date)}</td>
                   <td className="px-3 py-2"><ArStatusBadge status={inv.status} /></td>
                   <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{fmt(inv.total)}</td>
                   <td className="px-3 py-2 text-right font-mono text-xs">
@@ -264,21 +262,6 @@ export default function RahazaARInvoicesModule({ token }) {
   );
 }
 
-function ARStatTile({ label, value, accent }) {
-  const accents = {
-    primary: 'border-[hsl(var(--primary)/0.25)] bg-[hsl(var(--primary)/0.08)] text-[hsl(var(--primary))]',
-    warning: 'border-[hsl(var(--warning)/0.25)] bg-[hsl(var(--warning)/0.08)] text-[hsl(var(--warning))]',
-    danger:  'border-[hsl(var(--destructive)/0.25)] bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--destructive))]',
-    success: 'border-[hsl(var(--success)/0.25)] bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success))]',
-  };
-  return (
-    <div className={`rounded-[var(--radius-lg)] border p-3 ${accents[accent] || 'border-[var(--glass-border)] bg-[var(--glass-bg)]'}`}>
-      <p className="text-[10px] uppercase tracking-wider text-foreground/50">{label}</p>
-      <p className="text-lg font-bold mt-0.5 font-mono">{value}</p>
-    </div>
-  );
-}
-
 function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
   const balance = Number(invoice.balance || 0);
   const [amount, setAmount] = useState(balance);
@@ -303,7 +286,7 @@ function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
           <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-notes">Catatan</label><GlassInput id="ar-pay-notes" value={notes} onChange={e => setNotes(e.target.value)} placeholder="opsional, mis. no. referensi transfer" /></div>
         </div>
         {problem && account_id && <div className="text-xs text-red-400 border border-red-400/30 rounded-lg px-3 py-2 mt-3" data-testid="ar-pay-error">{problem}</div>}
-        <div className="flex gap-2 mt-6 justify-end"><Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button><Button onClick={() => onPay({ amount, account_id, date, notes })} disabled={!!problem} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4 mr-1.5" />Simpan</Button></div>
+        <div className="flex gap-2 mt-6 justify-end"><Button variant="outline" onClick={onClose} >Batal</Button><Button onClick={() => onPay({ amount, account_id, date, notes })} disabled={!!problem} data-testid="ar-pay-submit"><DollarSign className="w-4 h-4 mr-1.5" />Simpan</Button></div>
       </GlassCard>
     </div>
   );
@@ -335,7 +318,7 @@ function CustomerStatementModal({ token, customers, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
       <GlassCard className="p-6 max-w-3xl w-full max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-start justify-between mb-4">
-          <h2 className="text-xl font-bold text-foreground flex items-center gap-2"><Users className="w-5 h-5 text-primary" /> Statement Pelanggan</h2>
+          <h2 className="text-xl font-bold text-foreground">Rekening koran pelanggan</h2>
           <button onClick={onClose} className="text-foreground/60 hover:text-foreground">✕</button>
         </div>
         <div className="grid grid-cols-4 gap-2 mb-3">
@@ -356,15 +339,15 @@ function CustomerStatementModal({ token, customers, onClose }) {
         {data && (
           <div className="space-y-3">
             <div className="grid grid-cols-4 gap-2">
-              <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3"><p className="text-[10px] uppercase text-muted-foreground">Invoice</p><p className="text-lg font-bold font-mono">{data.summary.count}</p></div>
+              <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3"><p className="text-[10px] uppercase text-muted-foreground">Faktur</p><p className="text-lg font-bold font-mono">{data.summary.count}</p></div>
               <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3"><p className="text-[10px] uppercase text-muted-foreground">Total Tagihan</p><p className="text-sm font-bold font-mono">{fmt2(data.summary.total_billed)}</p></div>
               <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/8 p-3"><p className="text-[10px] uppercase text-muted-foreground">Dibayar</p><p className="text-sm font-bold font-mono text-emerald-400">{fmt2(data.summary.total_paid)}</p></div>
-              <div className="rounded-lg border border-amber-400/20 bg-amber-400/8 p-3"><p className="text-[10px] uppercase text-muted-foreground">Outstanding</p><p className="text-sm font-bold font-mono text-amber-400">{fmt2(data.summary.outstanding)}</p></div>
+              <div className="rounded-lg border border-amber-400/20 bg-amber-400/8 p-3"><p className="text-[10px] uppercase text-muted-foreground">Sisa</p><p className="text-sm font-bold tabular-nums text-[hsl(var(--warning))]">{fmt2(data.summary.outstanding)}</p></div>
             </div>
           </div>
         )}
         <div className="flex justify-end mt-6">
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Tutup</Button>
+          <Button variant="outline" onClick={onClose} >Tutup</Button>
         </div>
       </GlassCard>
     </div>

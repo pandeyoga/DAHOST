@@ -85,8 +85,8 @@ export default function RahazaAPAgingModule({ token }) {
         subtitle="Hutang yang belum dibayar menurut tanggal jatuh tempo, termasuk tagihan CMT."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" title="Muat ulang" aria-label="Muat ulang" data-testid="apa-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button variant="ghost" onClick={exportCSV} disabled={!details.length} className="h-9 border border-[var(--glass-border)]" data-testid="apa-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
+            <Button size="icon" variant="outline" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="apa-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportCSV} disabled={!details.length} data-testid="apa-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
           </>
         }
       />

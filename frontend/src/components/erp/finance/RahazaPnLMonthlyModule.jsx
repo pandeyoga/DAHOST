@@ -38,15 +38,15 @@ export default function RahazaPnLMonthlyModule({ token }) {
         subtitle="Satu tabel Jan–Des seperti sheet Laba-12: pendapatan, HPP, beban, laba bersih per bulan, total tahun, dan akumulasi s/d bulan. Angka dari buku besar (jurnal posted), jurnal penutup tidak ikut."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="pnl12-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportXlsx} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="pnl12-export"><Download className="w-3.5 h-3.5 mr-1.5" />Ekspor Excel</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pnl12-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="pnl12-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh Excel</Button>
           </>
         }
       />
-      <GlassCard className="p-4 flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-muted-foreground">Tahun</span>
         <YearSelect value={year} onChange={setYear} testId="pnl12-year" />
-      </GlassCard>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label={`Pendapatan ${year}`} value={fmt(data?.groups?.revenue?.total)} testId="pnl12-kpi-rev" />
         <StatTile label="Laba Kotor" value={fmt(L.gross_profit?.total)} testId="pnl12-kpi-gross" />

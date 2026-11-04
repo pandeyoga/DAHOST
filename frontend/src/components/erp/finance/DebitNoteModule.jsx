@@ -9,6 +9,8 @@
  * Backend: /api/rahaza/debit-notes, /api/rahaza/purchase-returns/{id}/refund.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { PageHeader } from '../moduleAtoms';
+import FilterChips from '@/components/ui/filter-chips';
 import { FileMinus, Printer, RefreshCw, Wallet } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -180,22 +182,13 @@ export default function DebitNoteModule({ token }) {
 
   return (
     <div className="space-y-4" data-testid="debit-note-module">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><FileMinus className="w-5 h-5" /> Nota Debit</h2>
-          <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
-            Penyelesaian Retur Pembelian oleh Keuangan. Nota debit sebelum faktur mengurangi Hutang Belum Ditagih (GRNI) —
-            Tagihan dari GR otomatis lebih kecil; sesudah faktur mengurangi Hutang Usaha. Tanpa PPN (DA bukan PKP).
-          </p>
-        </div>
-        <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
-      </div>
-      <div className="flex gap-2">
-        {[['todo', `Perlu Diselesaikan (${todo.length})`], ['list', 'Nota Debit'], ['balance', 'Saldo Hutang per Pemasok']].map(([k, l]) => (
-          <button key={k} onClick={() => setTab(k)} className={`px-3 py-1.5 rounded-full text-xs border ${tab === k ? 'bg-primary/15 border-primary' : 'border-border'}`}
-            data-testid={`dn-tab-${k}`}>{l}</button>
-        ))}
-      </div>
+      <PageHeader
+        title="Nota Debit (Retur)"
+        subtitle="Penyelesaian retur pembelian: mengurangi hutang ke pemasok (sebelum faktur: hutang belum ditagih)."
+        actions={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>}
+      />
+      <FilterChips value={tab} onChange={setTab} testId="dn-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
+        options={[{ key: 'todo', label: 'Perlu diselesaikan', count: todo.length }, { key: 'list', label: 'Sudah terbit' }, { key: 'balance', label: 'Saldo per pemasok' }]} />
       {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
 
       {tab === 'todo' && (

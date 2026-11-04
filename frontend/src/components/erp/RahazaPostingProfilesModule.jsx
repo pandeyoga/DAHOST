@@ -137,8 +137,8 @@ export default function RahazaPostingProfilesModule({ token }) {
         title="Profil Posting"
         subtitle="Akun yang dipakai jurnal otomatis per jenis transaksi. Akun yang hilang/nonaktif/grup ditandai merah."
         actions={(
-          <Button variant="ghost" onClick={fetchData} className="h-10 border border-[var(--glass-border)]" data-testid="pp-refresh" aria-label="Muat ulang">
-            <RefreshCw className="w-4 h-4 sm:mr-1.5" /><span className="hidden sm:inline">Muat ulang</span>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pp-refresh" aria-label="Muat ulang">
+            <RefreshCw className="w-4 h-4 sm:mr-1.5" /><span className="hidden sm:inline"></span>
           </Button>
         )}
       />
@@ -214,11 +214,12 @@ export default function RahazaPostingProfilesModule({ token }) {
                   <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
                     <div className="min-w-0">
                       <h3 className="font-semibold text-foreground text-sm sm:text-base">{eventLabel(p.event_type)}</h3>
-                      <p className="text-[11px] text-muted-foreground font-mono">{p.event_type}{p.active === false ? ' · profil nonaktif' : ''}</p>
+                      {p.active === false && <p className="text-[11px] text-muted-foreground">Profil nonaktif</p>}
                       {p.description && <p className="text-xs text-muted-foreground mt-1">{p.description}</p>}
                     </div>
-                    <Button size="sm" onClick={() => saveProfile(p.event_type)} disabled={!hasEdits || saving === p.event_type}
-                      data-testid={`pp-save-${p.event_type}`} className="h-9">
+                    {/* PANDUAN_UI G3: hanya kartu yang diubah yang memberi tombol utama */}
+                    <Button size="sm" variant={hasEdits ? 'default' : 'outline'} onClick={() => saveProfile(p.event_type)} disabled={!hasEdits || saving === p.event_type}
+                      data-testid={`pp-save-${p.event_type}`}>
                       <Save className="w-4 h-4 mr-1.5" />
                       {saving === p.event_type ? 'Menyimpan…' : 'Simpan'}
                     </Button>
@@ -230,10 +231,10 @@ export default function RahazaPostingProfilesModule({ token }) {
                       const red = (st.kind !== 'ok' && st.kind !== 'empty') || bad.has(role);
                       const pending = consumersOf(p.event_type, role);
                       return (
-                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} className="min-w-0">
+                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} className="min-w-0" title={`Kode peran: ${role}`}>
                           <label className="text-xs font-medium text-foreground/80 block">
                             {roleLabel(p.event_type, role)}
-                            <span className="ml-1 font-mono text-[10px] text-muted-foreground">{role}</span>
+
                           </label>
                           <SmartNativeSelect
                             value={value}

@@ -3,7 +3,9 @@
  * Hero kecil untuk CRUD modules: title + subtitle (optional) + actions.
  * Konsisten di seluruh modul, dual-theme aware.
  */
-import { createContext, useContext } from 'react';
+import { createContext, isValidElement, useContext } from 'react';
+import { Button } from '@/components/ui/button';
+import { createPortal } from 'react-dom';
 import { cn } from '@/lib/utils';
 
 /**
@@ -14,46 +16,33 @@ import { cn } from '@/lib/utils';
  */
 export const CompactHubContext = createContext(false);
 export const useInCompactHub = () => useContext(CompactHubContext);
+/** Wadah DOM di baris tab hub (sisi kanan) — tempat aksi modul yang dibuka sebagai tab (PANDUAN_UI G2). */
+export const HubActionsContext = createContext(null);
 
-export function PageHeader({ icon: Icon, eyebrow, title, subtitle, actions, className, testId }) {
+/**
+ * HubActions — aksi modul. Di dalam hub (`compactHeaders`) dipindah ke baris tab hub supaya tidak ada
+ * baris yang hanya berisi tombol; di luar hub tampil di tempatnya.
+ */
+export function HubActions({ children, className }) {
   const compact = useContext(CompactHubContext);
-  if (compact) {
-    return actions
-      ? <div data-testid={testId} className={cn('flex items-center justify-end gap-2 flex-wrap', className)}>{actions}</div>
-      : null;
-  }
+  const slot = useContext(HubActionsContext);
+  if (!children) return null;
+  if (compact && slot) return createPortal(<>{children}</>, slot);
+  return <div className={cn('flex items-center justify-end gap-2 flex-wrap', className)}>{children}</div>;
+}
+
+export function PageHeader({ title, subtitle, actions, className, testId }) {
+  // PANDUAN_UI G2 (2026-11-04): kepala halaman POLOS — judul 24 px + satu baris penjelasan + aksi di kanan.
+  // Dulu berbentuk kartu bercahaya dengan ikon & "eyebrow" (prop `icon`/`eyebrow` kini diabaikan).
+  const compact = useContext(CompactHubContext);
+  if (compact) return actions ? <HubActions className={className}>{actions}</HubActions> : null;
   return (
-    <div
-      data-testid={testId}
-      className={cn(
-        'relative rounded-[var(--radius-lg)] border px-5 lg:px-7 py-5',
-        'bg-[var(--card-surface)] border-[var(--glass-border)]',
-        'backdrop-blur-[var(--glass-blur)] shadow-[var(--shadow-card)]',
-        'overflow-hidden',
-        className
-      )}
-    >
-      {/* Ambient accent glow (subtle) */}
-      <div
-        aria-hidden="true"
-        className="absolute -top-10 -right-10 w-52 h-52 rounded-full blur-[80px] opacity-30 pointer-events-none"
-        style={{ background: 'radial-gradient(circle, hsl(var(--primary)), transparent 70%)' }}
-      />
-      <div className="relative flex items-start justify-between gap-4 flex-wrap">
-        <div className="min-w-0 flex-1 flex items-start gap-3">
-          {Icon && (
-            <div className="hidden sm:grid place-items-center w-10 h-10 rounded-[12px] bg-[hsl(var(--primary)/0.12)] border border-[hsl(var(--primary)/0.22)] shrink-0">
-              <Icon className="w-4.5 h-4.5 text-[hsl(var(--primary))]" strokeWidth={2} />
-            </div>
-          )}
-          <div className="min-w-0 flex-1">
-            {eyebrow && <p className="text-[10px] uppercase tracking-[0.16em] text-foreground/50 font-semibold mb-1">{eyebrow}</p>}
-            <h1 className="text-xl lg:text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h1>
-            {subtitle && <p className="text-sm text-foreground/55 mt-1 leading-relaxed">{subtitle}</p>}
-          </div>
-        </div>
-        {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+    <div data-testid={testId} className={cn('flex items-start justify-between gap-4 flex-wrap', className)}>
+      <div className="min-w-0 flex-1">
+        <h1 className="text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h1>
+        {subtitle && <p className="text-sm text-muted-foreground mt-1 leading-relaxed max-w-3xl">{subtitle}</p>}
       </div>
+      {actions && <div className="flex items-center gap-2 flex-wrap shrink-0">{actions}</div>}
     </div>
   );
 }
@@ -76,6 +65,8 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
   };
   const isClickable = !!onClick;
   const Tag = isClickable ? 'button' : 'div';
+  // PANDUAN_UI G5/G8: angka nol tidak diberi warna (dulu "Rp 0" bisa merah/hijau)
+  if (/^(Rp\s?)?[-−]?0([.,]0+)?$/.test(String(value ?? '').trim())) accent = 'muted';
   return (
     <Tag
       data-testid={testId}
@@ -91,7 +82,7 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
       )}
     >
       <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">{label}</p>
-      <p className={cn('text-xl font-bold tracking-tight mt-1', colors[accent] || colors.default)}>
+      <p className={cn('text-xl font-bold tracking-tight mt-1 tabular-nums', colors[accent] || colors.default)}>
         {value}{suffix && <span className="text-sm text-foreground/50 ml-1">{suffix}</span>}
       </p>
       {isClickable && hint && (
@@ -112,7 +103,7 @@ const STATUS_LABEL_ID = {
   draft: 'Draf', approved: 'Disetujui', rejected: 'Ditolak', pending: 'Menunggu', posted: 'Terposting',
   paid: 'Lunas', partial_paid: 'Dibayar sebagian', overdue: 'Lewat jatuh tempo', cancelled: 'Dibatalkan',
   voided: 'Dibatalkan', void: 'Dibatalkan', completed: 'Selesai', written_off: 'Dihapusbukukan',
-  closed: 'Ditutup', locked: 'Dikunci',
+  closed: 'Ditutup', locked: 'Dikunci', open: 'Terbuka',
 };
 
 export function StatusBadge({ status, label, tone, className, testId }) {
@@ -170,7 +161,10 @@ export function EmptyState({ icon: Icon, title, description, action, className, 
       )}
       <p className="text-sm font-semibold text-foreground">{title}</p>
       {description && <p className="text-xs text-foreground/50 mt-1 max-w-sm">{description}</p>}
-      {action && <div className="mt-4">{action}</div>}
+      {/* `action` boleh elemen ATAU { label, onClick } (sama dengan EmptyState.jsx) — 2026-11-04 */}
+      {action && <div className="mt-4">{isValidElement(action) || typeof action !== 'object'
+        ? action
+        : <Button onClick={action.onClick} data-testid={action.testId}>{action.label}</Button>}</div>}
     </div>
   );
 }

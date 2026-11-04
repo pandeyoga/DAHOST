@@ -34,15 +34,15 @@ export default function RahazaHPPModule({ token }) {
         <TabsList className="grid w-full grid-cols-3" data-testid="hpp-tabs">
           <TabsTrigger value="internal-wo" data-testid="hpp-actual-tab-internal-wo">
             <Package className="w-4 h-4 mr-2" />
-            Internal WO
+            Work order internal
           </TabsTrigger>
           <TabsTrigger value="maklon" data-testid="hpp-actual-tab-maklon">
             <BarChart3 className="w-4 h-4 mr-2" />
-            Maklon Actual
+            Maklon
           </TabsTrigger>
           <TabsTrigger value="client-analysis" data-testid="hpp-actual-tab-client-analysis">
             <Building2 className="w-4 h-4 mr-2" />
-            Client Analysis
+            Per klien
           </TabsTrigger>
         </TabsList>
 
@@ -225,7 +225,7 @@ function InternalWOTab({ token, headers }) {
                       basis {hpp.basis || '-'} · qty selesai {hpp.qty_completed ?? hpp.qty ?? 0} pcs
                     </p>
                   </div>
-                  <Button onClick={snapshot} className="h-9" data-testid="hpp-snapshot">
+                  <Button onClick={snapshot} data-testid="hpp-snapshot">
                     <Save className="w-4 h-4 mr-1.5" />
                     Snapshot
                   </Button>

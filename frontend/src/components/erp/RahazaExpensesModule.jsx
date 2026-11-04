@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, RefreshCw, Receipt, CreditCard, BookOpen } from 'lucide-react';
+import { toast } from 'sonner';
+import { Plus, RefreshCw, CreditCard } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from './moduleAtoms';
+import { PageHeader } from './moduleAtoms';
 import { DataTable } from './DataTableV2';
-import OnwardCTA from './OnwardCTA';
 import { formatRupiah, formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { MoneyInput } from '@/components/ui/money-input';
@@ -18,6 +18,8 @@ const fmt = formatRupiah;
 // pengeluaran dari layar terjurnal ke 6-2900 Beban Umum. Tipe = EXPENSE_DEBIT_TYPES di backend.
 const EXPENSE_ACCOUNT_TYPES = ['EXPENSE', 'COGS', 'OTHER_EXPENSE'];
 const EXP_LIMIT = 5000;
+// kode kategori → kata biasa ("bahan_pembantu" → "Bahan pembantu") — PANDUAN_UI G6/G11
+const humanize = (v) => (v ? String(v).replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase()) : '—');
 
 export default function RahazaExpensesModule({ token, onNavigate }) {
   const [rows, setRows] = useState([]);
@@ -52,9 +54,9 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
     try {
       const r = await fetch('/api/rahaza/expenses', { method: 'POST', headers, body: JSON.stringify(body) });
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { window.alert(data?.detail || 'Gagal menyimpan pengeluaran'); return; }
+      if (!r.ok) { toast.error(data?.detail || 'Gagal menyimpan pengeluaran'); return; }
       const pr = data?.posting_result || data?.gl_posting;
-      if (pr && pr.ok === false) window.alert(`Pengeluaran tersimpan, tetapi jurnal GAGAL: ${pr.error || ''}`);
+      if (pr && pr.ok === false) toast.error(`Pengeluaran tersimpan, tetapi jurnal GAGAL: ${pr.error || ''}`);
       setCreating(false); fetchAll();
     } finally { setSavingExp(false); }
   };
@@ -70,24 +72,26 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
   const categoryOptions = useMemo(() => {
     const set = new Set();
     rows.forEach(r => { if (r.category) set.add(r.category); });
-    return [...set].sort().map(c => ({ value: c, label: c }));
+    return [...set].sort().map(c => ({ value: c, label: humanize(c) }));
   }, [rows]);
 
   return (
     <div className="space-y-5" data-testid="rahaza-expenses-page">
       <PageHeader
-        icon={CreditCard}
         title="Pengeluaran"
-        subtitle="Catat biaya operasional: pilih akun beban dan rekening yang membayar; jurnal terbentuk otomatis."
+        subtitle="Biaya operasional: pilih akun beban dan rekening yang membayar; jurnal terbentuk otomatis."
         actions={
           <>
             <PeriodPicker value={period} onChange={setPeriod} testId="exp-period" />
-            <Button variant="ghost" onClick={fetchAll} className="h-9 border border-[var(--glass-border)]" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={() => setCreating(true)} className="h-9" data-testid="exp-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Pengeluaran baru</Button>
+            <Button size="icon" variant="outline" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button onClick={() => setCreating(true)} data-testid="exp-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Pengeluaran baru</Button>
           </>
         }
       />
-      <StatTile label={`Total pengeluaran ${formatDateID(period.from)} – ${formatDateID(period.to)}`} value={fmt(total)} accent="danger" />
+      {/* PANDUAN_UI G5 (2026-11-04): total sebagai satu baris netral — dulu kartu selebar halaman dengan "Rp 0" merah */}
+      <p className="text-sm text-muted-foreground" data-testid="exp-total">
+        {formatDateID(period.from)} – {formatDateID(period.to)} · {rows.length} pengeluaran · total <b className="text-foreground tabular-nums">{fmt(total)}</b>
+      </p>
       {rows.length >= EXP_LIMIT && (
         <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="exp-truncated">
           Ditampilkan {EXP_LIMIT.toLocaleString('id-ID')} pengeluaran terbaru saja — persempit periode supaya semua terlihat.
@@ -102,33 +106,24 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
           { key: 'category', label: 'Kategori', type: 'select', options: categoryOptions },
           { key: 'cost_center_id', label: 'Pusat biaya', type: 'select',
             options: centers.map(c => ({ value: c.id, label: `${c.code} · ${c.name}` })) },
-          { key: 'date', label: 'Tanggal', type: 'date-range' },
         ]}
         columns={[
           { key: 'date', label: 'Tanggal', sortable: true,
             render: (r, v) => <span className="text-xs whitespace-nowrap">{formatDateID(v)}</span> },
           { key: 'category', label: 'Kategori', sortable: true,
-            render: (r, v) => <span className="text-xs">{v}</span> },
+            render: (r, v) => <span className="text-xs">{humanize(v)}</span> },
           { key: 'description', label: 'Deskripsi', sortable: true },
           { key: 'gl_debit_code', label: 'Akun beban',
             render: (r) => <span className="text-[11px] text-foreground/70">{r.gl_debit_code ? `${r.gl_debit_code} · ${coaName[r.gl_debit_code] || ''}` : 'bawaan (Beban Umum)'}</span> },
           { key: 'cost_center_code', label: 'Pusat biaya',
             render: (r) => <span className="text-[11px] text-foreground/60">{r.cost_center_code || '—'} {r.cost_center_name && `· ${r.cost_center_name}`}</span> },
           { key: 'amount', label: 'Jumlah', align: 'right', sortable: true,
-            render: (r) => <span className="font-mono text-[hsl(var(--destructive))]">{fmt(r.amount)}</span> },
+            render: (r) => <span className="tabular-nums text-foreground">{fmt(r.amount)}</span> },
         ]}
         emptyTitle="Belum ada pengeluaran di periode ini"
         emptyDescription='Tekan "Pengeluaran baru" untuk mencatat biaya operasional.'
         emptyIcon={CreditCard}
-        exportFilename={`expenses-${todayWIB()}.csv`}
-      />
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Setelah Catat Biaya"
-        actions={[
-          { module: 'fin-journal-hub', label: 'Lihat Jurnal (GL)', icon: BookOpen, primary: true, hint: 'Cek jurnal akuntansi yang terbentuk dari biaya' },
-          { module: 'fin-expense-settlement', label: 'Settlement Klaim', icon: CreditCard, hint: 'Proses pencairan klaim biaya karyawan' },
-        ]}
+        exportFilename={`pengeluaran-${todayWIB()}.csv`}
       />
       {creating && <ExpEditor centers={centers} accounts={accounts} accountsLoaded={accountsLoaded}
                               expenseAccounts={expenseAccounts} onClose={() => setCreating(false)} onSave={create} saving={savingExp} />}
@@ -161,7 +156,7 @@ function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, onClose
           <div><label className="text-xs text-muted-foreground">Cost Center (opsional)</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
         </div>
         {missing && <p className="text-[11px] text-muted-foreground mt-3" data-testid="exp-missing">{missing}</p>}
-        <div className="flex gap-2 mt-6 justify-end"><Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Batal</Button><Button onClick={() => onSave(s)} disabled={saving || !!missing} data-testid="exp-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button></div>
+        <div className="flex gap-2 mt-6 justify-end"><Button variant="outline" onClick={onClose} >Batal</Button><Button onClick={() => onSave(s)} disabled={saving || !!missing} data-testid="exp-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button></div>
       </GlassCard>
     </div>
   );

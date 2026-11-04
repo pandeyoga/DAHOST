@@ -39,6 +39,10 @@ export const JOURNAL_SOURCE_LABELS = {
   inventory_adjust: 'Penyesuaian stok',
   cogs_shipment: 'HPP pengiriman',
   petty_cash: 'Kas kecil',
+  petty_cash_expense: 'Kas kecil / uang muka',
+  petty_cash_replenish: 'Pengisian kas kecil',
+  cmt_ap_invoice_post: 'Tagihan CMT',
+  marketplace_withdrawal: 'Penarikan saldo toko',
 };
 
 export function journalSourceLabel(code) {

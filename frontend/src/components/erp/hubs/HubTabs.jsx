@@ -1,6 +1,6 @@
 import React, { Suspense, useState } from 'react';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../ui/tabs';
-import { CompactHubContext } from '../moduleAtoms';
+import { Tabs, TabsList, TabsTrigger, TabsContent, NestedTabsContext } from '../../ui/tabs';
+import { CompactHubContext, HubActionsContext } from '../moduleAtoms';
 
 /**
  * BACKLOG-A (T3.3/T3.4/T3.5/T3.6/T3.9) — Hub generik konsolidasi modul.
@@ -19,6 +19,8 @@ const Spinner = () => (
  * menumpuk sehingga angka pertama baru muncul di tengah layar.
  */
 export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders = false, ...rest }) {
+  // PANDUAN_UI G4 (2026-11-04): tab rata kiri selebar isi; aksi tab aktif di kanan baris yang sama
+  const [actionsSlot, setActionsSlot] = useState(null);
   const [tab, setTab] = useState(() => {
     try {
       const saved = sessionStorage.getItem(`hub_tab_${hubId}`);
@@ -43,25 +45,32 @@ export default function HubTabs({ hubId, title, subtitle, tabs, compactHeaders =
     <div className="space-y-4" data-testid={`${hubId}`}>
       {title && (
         <div>
-          <h2 className="text-2xl font-bold">{title}</h2>
+          <h2 className="text-2xl font-bold text-foreground tracking-tight leading-tight">{title}</h2>
           {subtitle && <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>}
         </div>
       )}
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList className="flex flex-wrap h-auto gap-1">
-          {tabs.map((t) => (
-            <TabsTrigger key={t.key} value={t.key} data-testid={`hub-tab-${t.key}`}>
-              {t.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="flex items-center gap-3 flex-wrap">
+          <TabsList className="h-auto flex-wrap justify-start gap-1">
+            {tabs.map((t) => (
+              <TabsTrigger key={t.key} value={t.key} data-testid={`hub-tab-${t.key}`}>
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <div ref={setActionsSlot} className="ml-auto flex items-center gap-2 flex-wrap" data-testid={`${hubId}-actions`} />
+        </div>
         {tabs.map((t) => (
           <TabsContent key={t.key} value={t.key} className="mt-4">
             {tab === t.key && (
               <CompactHubContext.Provider value={compactHeaders}>
-                <Suspense fallback={<Spinner />}>
-                  <t.Component {...rest} {...(t.props || {})} />
-                </Suspense>
+                <HubActionsContext.Provider value={compactHeaders ? actionsSlot : null}>
+                  <NestedTabsContext.Provider value>
+                    <Suspense fallback={<Spinner />}>
+                      <t.Component {...rest} {...(t.props || {})} />
+                    </Suspense>
+                  </NestedTabsContext.Provider>
+                </HubActionsContext.Provider>
               </CompactHubContext.Provider>
             )}
           </TabsContent>

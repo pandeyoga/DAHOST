@@ -284,7 +284,7 @@ export default function PurchaseReturnModule({ token }) {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
           <Button onClick={() => setShowCreate(true)} data-testid="rtp-new"><Plus className="w-4 h-4 mr-1" /> Retur dari Stok</Button>
         </div>
       </div>

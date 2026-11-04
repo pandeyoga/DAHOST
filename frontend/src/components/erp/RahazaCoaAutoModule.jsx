@@ -46,7 +46,7 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
           </SmartNativeSelect>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={runPreview} className="h-9 border border-[var(--glass-border)]" data-testid="coa-auto-store-preview">
+          <Button variant="outline" onClick={runPreview} data-testid="coa-auto-store-preview">
             <Eye className="w-3.5 h-3.5 mr-1.5" /> Nomor berikutnya (Shopee)
           </Button>
           {preview && (
@@ -162,10 +162,9 @@ export default function RahazaCoaAutoModule({ token }) {
         subtitle="Otomatis buat akun COA per-entitas (Vendor CMT, Supplier, Pelanggan, Channel Online, Bank/Kas) di bawah akun kontrol. GL jadi bisa menampilkan saldo per-entitas (hutang/piutang/kas)."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="coa-auto-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
-            </Button>
-            <Button onClick={save} disabled={saving} className="h-9" data-testid="coa-auto-save">
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="coa-auto-refresh">
+              <RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button onClick={save} disabled={saving} data-testid="coa-auto-save">
               <Save className="w-3.5 h-3.5 mr-1.5" /> {saving ? 'Menyimpan…' : 'Simpan Pengaturan'}
             </Button>
           </>

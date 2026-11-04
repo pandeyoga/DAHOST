@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, CalendarRange, Lock, LockOpen, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { RefreshCw, CalendarRange, Lock, LockOpen, ShieldCheck } from 'lucide-react';
+import { formatDateID } from '@/lib/format';
+import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader } from './moduleAtoms';
+import { StatusBadge as ModuleStatusBadge, PageHeader } from './moduleAtoms';
 import { PeriodAlerts, YearEndClose } from './RahazaPeriodsExtras';
 import { thisMonthWIB } from '../../lib/waktu';
 
@@ -14,15 +17,14 @@ function periodNotEndedReason(periodCode, thisMonth = thisMonthWIB()) {
   return `Periode ${periodCode} belum berakhir (WIB). Tutup/kunci hanya boleh setelah tanggal terakhir periode ini lewat.`;
 }
 
-const STATUS_COLORS = {
-  open: 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25',
-  closed: 'text-amber-300 bg-amber-400/10 border-amber-400/25',
-  locked: 'text-red-300 bg-red-400/10 border-red-400/25',
-};
+
+const STATUS_LABEL = { open: 'Terbuka', closed: 'Ditutup', locked: 'Dikunci' };
+const MONTHS_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const periodLabelID = (code) => { const [y, m] = String(code).split('-'); return `${MONTHS_ID[Number(m) - 1] || m} ${y}`; };
 
 function StatusBadge({ status }) {
-  const cls = STATUS_COLORS[status] || 'text-foreground/70 bg-foreground/5 border-foreground/10';
-  return <span className={`text-[9px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded border ${cls}`}>{status}</span>;
+  const tone = { open: 'success', closed: 'warning', locked: 'danger' }[status];
+  return <ModuleStatusBadge status={status} tone={tone} label={STATUS_LABEL[status] || status} />;
 }
 
 export default function RahazaPeriodsModule({ token }) {
@@ -50,15 +52,15 @@ export default function RahazaPeriodsModule({ token }) {
 
   const ensureYear = async () => {
     const r = await fetch('/api/rahaza/periods/ensure-year', { method: 'POST', headers, body: JSON.stringify({ year }) });
-    if (r.ok) { fetchData(); } else { const e = await r.json(); alert(e.detail || 'Error'); }
+    if (r.ok) { fetchData(); } else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
 
   const act = async (code, action) => {
     const verb = { close: 'tutup', reopen: 'buka kembali', lock: 'kunci final' }[action];
-    if (!window.confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} periode ${code}?`)) return;
+    if (!(await confirmDialog(`${verb.charAt(0).toUpperCase() + verb.slice(1)} periode ${code}?`))) return;
     const r = await fetch(`/api/rahaza/periods/${code}/${action}`, { method: 'POST', headers });
     if (r.ok) { fetchData(); }
-    else { const e = await r.json(); alert(e.detail || 'Error'); }
+    else { const e = await r.json(); toast.error(e.detail || 'Error'); }
   };
 
   return (
@@ -69,8 +71,8 @@ export default function RahazaPeriodsModule({ token }) {
         subtitle="Kelola periode bulanan: Open (default), Closed (stop posting), Locked (final audit, irreversible). Periode closed/locked memblokir posting jurnal di tanggal tersebut."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="pr-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button onClick={ensureYear} className="h-9" data-testid="pr-ensure">Generate {year}</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pr-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button onClick={ensureYear} data-testid="pr-ensure">Generate {year}</Button>
           </>
         }
       />
@@ -80,11 +82,11 @@ export default function RahazaPeriodsModule({ token }) {
 
       <GlassCard className="p-4">
         {policy && (
-          <div className="mb-4 rounded-md border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs text-amber-200" data-testid="pr-policy-banner">
-            <span className="font-semibold">Aturan posting (H-08):</span> jurnal ditolak bila tanggalnya lebih dari {policy.future_days_max} hari ke depan;
+          <p className="mb-4 text-xs text-muted-foreground" data-testid="pr-policy-banner">
+            <span className="font-semibold text-foreground">Aturan posting:</span> jurnal ditolak bila tanggalnya lebih dari {policy.future_days_max} hari ke depan;
             periode tahun {policy.auto_years?.[0]}–{policy.auto_years?.[policy.auto_years.length - 1]} dibuka otomatis saat posting pertama;
             tahun lain harus di-<em>Generate</em> di sini dulu. Periode <em>closed/locked</em> selalu memblokir posting.
-          </div>
+          </p>
         )}
         <div className="flex items-center gap-3 mb-4">
           <span className="text-xs text-muted-foreground">Tahun:</span>
@@ -94,64 +96,52 @@ export default function RahazaPeriodsModule({ token }) {
           <div className="py-10 text-center text-muted-foreground">Memuat…</div>
         ) : periods.length === 0 ? (
           <div className="py-10 text-center space-y-3">
-            <div className="text-muted-foreground">Tahun {year} belum di-generate.</div>
-            <Button onClick={ensureYear} data-testid="pr-ensure-empty">Generate Periode {year}</Button>
+            <div className="text-muted-foreground">Periode tahun {year} belum dibuat.</div>
+            <Button onClick={ensureYear} data-testid="pr-ensure-empty">Buat periode {year}</Button>
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {periods.map(p => {
-              const blockReason = periodNotEndedReason(p.period_code, thisMonth);
-              return (
-              <GlassCard key={p.period_code} className="p-4" hover={false} data-testid={`pr-card-${p.period_code}`}>
-                <div className="flex items-start justify-between">
-                  <div>
-                    <div className="text-xs font-mono text-muted-foreground">{p.period_code}</div>
-                    <div className="font-semibold text-foreground">{p.period_label}</div>
-                  </div>
-                  <StatusBadge status={p.status} />
-                </div>
-                {p.closed_at && (
-                  <div className="text-[10px] text-muted-foreground mt-2">
-                    Closed: {new Date(p.closed_at).toLocaleDateString('id-ID')} · {p.closed_by_name || '-'}
-                  </div>
-                )}
-                {p.locked_at && (
-                  <div className="text-[10px] text-red-300 mt-1">
-                    Locked: {new Date(p.locked_at).toLocaleDateString('id-ID')} · {p.locked_by_name || '-'}
-                  </div>
-                )}
-                <div className="flex gap-1 mt-3 flex-wrap">
-                  {p.status === 'open' && (
-                    <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-close-wrap-${p.period_code}`}>
-                      <Button variant="ghost" disabled={!!blockReason} onClick={() => act(p.period_code, 'close')} className="h-7 text-[11px] border border-[var(--glass-border)]" data-testid={`pr-close-${p.period_code}`}>
-                        <Lock className="w-3 h-3 mr-1" />Close
-                      </Button>
-                    </span>
-                  )}
-                  {p.status === 'closed' && (
-                    <>
-                      <Button variant="ghost" onClick={() => act(p.period_code, 'reopen')} className="h-7 text-[11px] border border-[var(--glass-border)]" data-testid={`pr-reopen-${p.period_code}`}>
-                        <LockOpen className="w-3 h-3 mr-1" />Reopen
-                      </Button>
-                      <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-lock-wrap-${p.period_code}`}>
-                        <Button variant="ghost" disabled={!!blockReason} onClick={() => act(p.period_code, 'lock')} className="h-7 text-[11px] border border-red-400/25 text-red-300" data-testid={`pr-lock-${p.period_code}`}>
-                          <ShieldCheck className="w-3 h-3 mr-1" />Lock Final
-                        </Button>
-                      </span>
-                    </>
-                  )}
-                  {p.status === 'locked' && (
-                    <div className="text-[10px] text-red-300 flex items-center gap-1">
-                      <AlertTriangle className="w-3 h-3" />Terkunci permanen
-                    </div>
-                  )}
-                </div>
-                {blockReason && p.status !== 'locked' && (
-                  <div className="text-[10px] text-muted-foreground mt-1.5" data-testid={`pr-not-ended-${p.period_code}`}>Belum berakhir — belum bisa ditutup/dikunci.</div>
-                )}
-              </GlassCard>
-              );
-            })}
+          <div className="overflow-x-auto -mx-4">
+            <table className="w-full" data-testid="pr-table">
+              <thead><tr><th className="text-left">Periode</th><th className="text-left">Status</th><th className="text-left">Ditutup / dikunci</th><th className="text-right">Aksi</th></tr></thead>
+              <tbody>
+                {periods.map(p => {
+                  const blockReason = periodNotEndedReason(p.period_code, thisMonth);
+                  return (
+                    <tr key={p.period_code} data-testid={`pr-card-${p.period_code}`}>
+                      <td className="text-foreground font-medium whitespace-nowrap">{periodLabelID(p.period_code)}</td>
+                      <td><StatusBadge status={p.status} /></td>
+                      <td className="text-xs text-muted-foreground">
+                        {p.locked_at ? `Dikunci ${formatDateID(p.locked_at)} · ${p.locked_by_name || '-'}`
+                          : p.closed_at ? `Ditutup ${formatDateID(p.closed_at)} · ${p.closed_by_name || '-'}`
+                            : blockReason ? <span data-testid={`pr-not-ended-${p.period_code}`}>Belum berakhir</span> : '—'}
+                      </td>
+                      <td className="text-right whitespace-nowrap">
+                        {p.status === 'open' && (
+                          <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-close-wrap-${p.period_code}`}>
+                            <Button size="sm" variant="outline" disabled={!!blockReason} onClick={() => act(p.period_code, 'close')} data-testid={`pr-close-${p.period_code}`}>
+                              <Lock className="w-3.5 h-3.5" />Tutup
+                            </Button>
+                          </span>
+                        )}
+                        {p.status === 'closed' && (
+                          <span className="inline-flex gap-1.5">
+                            <Button size="sm" variant="outline" onClick={() => act(p.period_code, 'reopen')} data-testid={`pr-reopen-${p.period_code}`}>
+                              <LockOpen className="w-3.5 h-3.5" />Buka lagi
+                            </Button>
+                            <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-lock-wrap-${p.period_code}`}>
+                              <Button size="sm" variant="outline" disabled={!!blockReason} onClick={() => act(p.period_code, 'lock')} className="text-[hsl(var(--destructive))]" data-testid={`pr-lock-${p.period_code}`}>
+                                <ShieldCheck className="w-3.5 h-3.5" />Kunci final
+                              </Button>
+                            </span>
+                          </span>
+                        )}
+                        {p.status === 'locked' && <span className="text-xs text-muted-foreground">Terkunci permanen</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </GlassCard>

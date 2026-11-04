@@ -1,18 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Scale, Download, FileBarChart, Search } from 'lucide-react';
+import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import { Skeleton } from '@/components/ui/skeleton';
-import { todayWIB, monthStartWIB } from '@/lib/waktu';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
 export default function RahazaTrialBalanceModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [from, setFrom] = useState(() => monthStartWIB());
-  const [to, setTo] = useState(() => todayWIB());
+  // PANDUAN_UI G6 (2026-11-04): pemilih periode standar (dulu dua kotak tanggal)
+  const [period, setPeriod] = useState(() => periodFromPreset('month'));
+  const { from, to } = period;
   const [showZero, setShowZero] = useState(false);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -60,19 +61,16 @@ export default function RahazaTrialBalanceModule({ token }) {
         subtitle="Laporan saldo semua akun untuk verifikasi double-entry. Debit harus sama dengan Credit."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="tb-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportCSV} className="h-9 border border-[var(--glass-border)]" disabled={!data?.rows?.length} data-testid="tb-export"><Download className="w-3.5 h-3.5 mr-1.5" />Export CSV</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="tb-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportCSV} disabled={!data?.rows?.length} data-testid="tb-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
           </>
         }
       />
 
-      <GlassCard className="p-4">
+      <div>
         <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">Dari</span>
-            <GlassInput type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-8 w-36" data-testid="tb-from" />
-            <span className="text-xs text-muted-foreground">s/d</span>
-            <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-8 w-36" data-testid="tb-to" />
+          <PeriodPicker value={period} onChange={setPeriod} testId="tb-period" />
           </div>
           <select
             value={typeFilter}
@@ -97,7 +95,7 @@ export default function RahazaTrialBalanceModule({ token }) {
             <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari akun…" className="pl-8 h-8" data-testid="tb-search" />
           </div>
         </div>
-      </GlassCard>
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label="Period Debit" value={fmt(data?.totals?.period_debit)} testId="tb-kpi-pd" />

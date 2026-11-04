@@ -8,6 +8,7 @@ import { PORTAL_NAV } from './components/erp/portal-shell/portalNav';
 import { canAccessPortal } from './components/erp/portalAccess';
 import { ThemeProvider, useTheme } from './components/theme/ThemeProvider';
 import { Toaster } from './components/ui/sonner';
+import { ConfirmDialogHost } from './components/ui/confirm-dialog';  // PANDUAN_UI G9
 // BUG DITUTUP 2026-08-12 — `hooks/use-toast` (shadcn) dipakai 57 modul (termasuk
 // Wizard Impor Data & dashboard marketing), tetapi <Toaster/> shadcn-nya TIDAK
 // PERNAH dipasang di pohon React. Akibatnya SEMUA pesan sukses/gagal modul-modul
@@ -1065,6 +1066,7 @@ export default function AppWithTheme() {
           <div className="noise-overlay fixed inset-0 pointer-events-none" aria-hidden="true" />
           <App />
           <Toaster position="top-right" richColors closeButton />
+          <ConfirmDialogHost />
           <ShadcnToaster />
         </TooltipProvider>
       </ThemeProvider>

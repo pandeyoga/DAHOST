@@ -1,5 +1,10 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, Clock, Eye, FileText, RefreshCw, AlertCircle, ArrowRight, History } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { PageHeader } from './moduleAtoms';
+import FilterChips from '@/components/ui/filter-chips';
+import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import Modal from './Modal';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
@@ -64,7 +69,7 @@ export default function ApprovalModule({ token, userRole }) {
 
   const handleApprove = async () => {
     if (!selectedRequest) return;
-    if (!confirm(`Setujui perubahan faktur ${selectedRequest.invoice_number}?`)) return;
+    if (!(await confirmDialog(`Setujui perubahan faktur ${selectedRequest.invoice_number}?`))) return;
     setActionLoading(true);
     try {
       const res = await fetch(`/api/invoice-edit-requests/${selectedRequest.id}/approve`, {
@@ -77,14 +82,14 @@ export default function ApprovalModule({ token, userRole }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.detail || data.error || data.message || 'Gagal approve request');
+        toast.error(data.detail || data.error || data.message || 'Gagal approve request');
       } else {
-        alert('Request approved! Invoice telah diupdate.');
+        toast.success('Request approved! Invoice telah diupdate.');
         setShowDetail(false);
         fetchRequests();
       }
     } catch (e) {
-      alert('Error: ' + e.message);
+      toast.error('Error: ' + e.message);
     } finally {
       setActionLoading(false);
     }
@@ -93,10 +98,10 @@ export default function ApprovalModule({ token, userRole }) {
   const handleReject = async () => {
     if (!selectedRequest) return;
     if (!approvalNotes.trim()) {
-      alert('Catatan/alasan reject wajib diisi');
+      toast.error('Catatan/alasan reject wajib diisi');
       return;
     }
-    if (!confirm(`Tolak perubahan faktur ${selectedRequest.invoice_number}?`)) return;
+    if (!(await confirmDialog(`Tolak perubahan faktur ${selectedRequest.invoice_number}?`))) return;
     setActionLoading(true);
     try {
       const res = await fetch(`/api/invoice-edit-requests/${selectedRequest.id}/reject`, {
@@ -109,14 +114,14 @@ export default function ApprovalModule({ token, userRole }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.detail || data.error || data.message || 'Gagal reject request');
+        toast.error(data.detail || data.error || data.message || 'Gagal reject request');
       } else {
-        alert('Request rejected');
+        toast.success('Request rejected');
         setShowDetail(false);
         fetchRequests();
       }
     } catch (e) {
-      alert('Error: ' + e.message);
+      toast.error('Error: ' + e.message);
     } finally {
       setActionLoading(false);
     }
@@ -240,49 +245,18 @@ export default function ApprovalModule({ token, userRole }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
   return (
-    <div className="space-y-6" data-testid="approval-module">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground" data-testid="approval-module-title">Persetujuan Perubahan Faktur</h1>
-          <p className="text-muted-foreground text-sm mt-1">Setujui atau tolak permintaan perubahan faktur yang diajukan admin.</p>
-        </div>
-        <button
-          onClick={fetchRequests}
-          className="flex items-center gap-2 px-4 py-2 border border-border rounded-lg text-sm hover:bg-[var(--glass-bg)]"
-          data-testid="approval-refresh-button"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-        </button>
-      </div>
-
-      {/* Info */}
-      <div className="bg-primary/10 border border-primary/20 rounded-xl p-4 text-sm text-primary">
-        <div className="flex items-start gap-2">
-          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="font-semibold">Alurnya:</p>
-            <p className="mt-1">1. Admin mengajukan perubahan faktur (faktur belum berubah).</p>
-            <p>2. Superadmin/Admin memeriksa → <strong>Setujui</strong> (faktur diperbarui dan riwayatnya dicatat) atau <strong>Tolak</strong>.</p>
-            <p>3. Semua perubahan tersimpan di riwayat perubahan faktur untuk pemeriksaan.</p>
-          </div>
-        </div>
-      </div>
+    <div className="space-y-4" data-testid="approval-module">
+      <PageHeader
+        title="Persetujuan Perubahan Faktur"
+        subtitle="Admin mengajukan perubahan faktur; superadmin/admin menyetujui atau menolak. Semua perubahan tercatat di riwayat faktur."
+        testId="approval-module-title"
+        actions={<Button variant="outline" size="icon" onClick={fetchRequests} title="Muat ulang" aria-label="Muat ulang" data-testid="approval-refresh-button"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
+      />
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
-        <div className="flex gap-1">
-          {['Pending', 'Approved', 'Rejected', ''].map(status => (
-            <button
-              key={status}
-              onClick={() => setFilterStatus(status)}
-              className={`px-3 py-1.5 rounded-lg text-sm border ${filterStatus === status ? 'bg-teal-600 text-foreground border-teal-600' : 'border-border text-muted-foreground hover:bg-[var(--glass-bg)]'}`}
-              data-testid={`filter-status-${status || 'all'}`}
-            >
-              {({ Pending: 'Menunggu', Approved: 'Disetujui', Rejected: 'Ditolak' })[status] || 'Semua'}
-            </button>
-          ))}
-        </div>
+        <FilterChips value={filterStatus} onChange={setFilterStatus} testId="filter-status" ariaLabel="Status permintaan" hideWhenEmpty={false}
+          options={[{ key: 'Pending', label: 'Menunggu' }, { key: 'Approved', label: 'Disetujui' }, { key: 'Rejected', label: 'Ditolak' }, { key: '', label: 'Semua' }]} />
         <div className="ml-auto">
           <input
             type="text"
@@ -305,7 +279,7 @@ export default function ApprovalModule({ token, userRole }) {
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground" data-testid="approval-empty">
           <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">Tidak ada request ditemukan</p>
+          <p className="font-medium">Tidak ada permintaan perubahan faktur di sini</p>
         </div>
       ) : (
         <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-hidden shadow-sm" data-testid="approval-list">
@@ -460,7 +434,7 @@ export default function ApprovalModule({ token, userRole }) {
                 onClick={() => {
                   setShowDetail(false);
                   // In a real app, navigate to invoice detail
-                  alert(`Navigasi ke invoice detail: ${selectedRequest.invoice_number} (implementasi bisa ditambahkan via parent callback)`);
+                  toast.info(`Navigasi ke invoice detail: ${selectedRequest.invoice_number} (implementasi bisa ditambahkan via parent callback)`);
                 }}
                 className="flex items-center gap-2 px-3 py-1.5 bg-primary text-foreground rounded-lg text-xs hover:brightness-110"
                 data-testid="view-invoice-link"

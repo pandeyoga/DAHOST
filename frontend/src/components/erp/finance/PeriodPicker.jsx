@@ -35,6 +35,17 @@ export function periodFromPreset(key, prev = {}) {
   }
 }
 
+const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+/** Pilihan bulan berlabel untuk formulir satu-bulan (pengganti input type="month"), terbaru di atas. */
+export function monthOptions(n = 24) {
+  const [y, m] = thisMonthWIB().split('-').map(Number);
+  return Array.from({ length: n }, (_, i) => {
+    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+    const yy = d.getUTCFullYear(); const mm = d.getUTCMonth() + 1;
+    return { value: `${yy}-${String(mm).padStart(2, '0')}`, label: `${BULAN[mm - 1]} ${yy}` };
+  });
+}
+
 export default function PeriodPicker({ value, onChange, presets = PERIOD_PRESETS, testId = 'period-picker' }) {
   const cur = value || periodFromPreset('month');
   return (
@@ -42,7 +53,7 @@ export default function PeriodPicker({ value, onChange, presets = PERIOD_PRESETS
       <select
         value={cur.preset || 'custom'}
         onChange={(e) => onChange(periodFromPreset(e.target.value, cur))}
-        className="h-8 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-xs text-foreground"
+        className="h-9 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-sm text-foreground"
         aria-label="Periode"
         data-testid={`${testId}-preset`}
       >
@@ -51,10 +62,10 @@ export default function PeriodPicker({ value, onChange, presets = PERIOD_PRESETS
       {cur.preset === 'custom' ? (
         <>
           <GlassInput type="date" value={cur.from} onChange={(e) => onChange({ ...cur, from: e.target.value })}
-                      className="h-8 w-36" aria-label="Dari tanggal" data-testid={`${testId}-from`} />
+                      className="h-9 w-36" aria-label="Dari tanggal" data-testid={`${testId}-from`} />
           <span className="text-xs text-muted-foreground">s/d</span>
           <GlassInput type="date" value={cur.to} onChange={(e) => onChange({ ...cur, to: e.target.value })}
-                      className="h-8 w-36" aria-label="Sampai tanggal" data-testid={`${testId}-to`} />
+                      className="h-9 w-36" aria-label="Sampai tanggal" data-testid={`${testId}-to`} />
         </>
       ) : (
         <span className="text-xs text-muted-foreground" data-testid={`${testId}-range`}>{formatDateID(cur.from)} – {formatDateID(cur.to)}</span>

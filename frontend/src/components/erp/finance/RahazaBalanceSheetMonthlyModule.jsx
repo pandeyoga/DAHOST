@@ -43,12 +43,12 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
         subtitle="Posisi keuangan per akhir tiap bulan Jan–Des seperti sheet Neraca-12. Setiap kolom harus seimbang: Aset = Liabilitas + Ekuitas (termasuk laba berjalan komputasi)."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchData} className="h-9 border border-[var(--glass-border)]" data-testid="bs12-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
-            <Button variant="ghost" onClick={exportXlsx} disabled={!data} className="h-9 border border-[var(--glass-border)]" data-testid="bs12-export"><Download className="w-3.5 h-3.5 mr-1.5" />Ekspor Excel</Button>
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="bs12-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="bs12-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh Excel</Button>
           </>
         }
       />
-      <GlassCard className="p-4 flex items-center gap-3 flex-wrap">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className="text-xs text-muted-foreground">Tahun</span>
         <YearSelect value={year} onChange={setYear} testId="bs12-year" />
         {data && (
@@ -57,7 +57,7 @@ export default function RahazaBalanceSheetMonthlyModule({ token }) {
             {data.balanced ? 'Semua kolom seimbang' : 'Ada kolom tidak seimbang — periksa jurnal tanpa akun neraca'}
           </span>
         )}
-      </GlassCard>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label={`Total aset ${asOf}`} value={fmt(at(data?.sections?.assets?.months))} testId="bs12-kpi-assets" />
         <StatTile label={`Total liabilitas ${asOf}`} value={fmt(at(data?.sections?.liabilities?.months))} testId="bs12-kpi-liab" />

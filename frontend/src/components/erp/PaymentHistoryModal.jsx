@@ -100,7 +100,7 @@ export default function PaymentHistoryModal({ token, kind, invoice, onClose }) {
         </p>
         <PaymentHistoryList token={token} kind={kind} invoiceId={invoice.id} />
         <div className="flex justify-end mt-5">
-          <Button variant="ghost" onClick={onClose} className="border border-[var(--glass-border)]">Tutup</Button>
+          <Button variant="outline" onClick={onClose} >Tutup</Button>
         </div>
       </GlassCard>
     </div>

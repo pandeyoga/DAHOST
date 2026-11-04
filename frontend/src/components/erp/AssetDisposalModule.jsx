@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, PackageMinus, Trash2 } from 'lucide-react';
+import FilterChips from '@/components/ui/filter-chips';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { PageHeader, StatTile } from './moduleAtoms';
@@ -82,38 +83,23 @@ export default function AssetDisposalModule({ token }) {
         title="Pelepasan Aset Tetap"
         subtitle="Kelola disposal aset tetap (penjualan, penghapusan). Sistem otomatis posting jurnal gain/loss disposal."
         actions={
-          <Button variant="ghost" onClick={fetchAssets} className="h-9 border border-[var(--glass-border)]" data-testid="disposal-refresh">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang
-          </Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAssets} data-testid="disposal-refresh">
+            <RefreshCw className="w-3.5 h-3.5" /></Button>
         }
       />
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <StatTile label="Total Aset Aktif" value={activeAssets.length} />
-        <StatTile label="Disposed Bulan Ini" value={disposedAssets.filter(a => (
+      {(activeAssets.length > 0 || disposedAssets.length > 0) && <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <StatTile label="Aset aktif" value={activeAssets.length} />
+        <StatTile label="Dilepas bulan ini" value={disposedAssets.filter(a => (
           toWIBDate(a.disposal_date).slice(0, 7) === thisMonthWIB()
         )).length} accent="warning" />
         <StatTile
-          label="Avg Gain/Loss"
+          label="Rata-rata laba/rugi pelepasan"
           value={disposedAssets.length > 0 ? fmt(disposedAssets.reduce((s, a) => s + (a.disposal_gain_loss || 0), 0) / disposedAssets.length) : 'Rp 0'}
         />
-      </div>
+      </div>}
       <GlassCard className="p-4">
-        <div className="flex gap-2 mb-4">
-          <Button
-            variant={tab === 'active' ? 'default' : 'ghost'}
-            onClick={() => setTab('active')}
-            data-testid="disposal-tab-active"
-          >
-            Aset Aktif ({activeAssets.length})
-          </Button>
-          <Button
-            variant={tab === 'disposed' ? 'default' : 'ghost'}
-            onClick={() => setTab('disposed')}
-            data-testid="disposal-tab-disposed"
-          >
-            Riwayat Disposal ({disposedAssets.length})
-          </Button>
-        </div>
+        <FilterChips value={tab} onChange={setTab} testId="disposal-tab" ariaLabel="Tampilan" hideWhenEmpty={false} className="mb-4"
+          options={[{ key: 'active', label: 'Aset aktif', count: activeAssets.length }, { key: 'disposed', label: 'Riwayat pelepasan', count: disposedAssets.length }]} />
         {loading ? (
           <div className="text-center py-8 text-muted-foreground">Memuat...</div>
         ) : assets.length === 0 ? (
@@ -244,7 +230,7 @@ export default function AssetDisposalModule({ token }) {
               </div>
             </div>
             <div className="flex gap-2 mt-6 justify-end">
-              <Button variant="ghost" onClick={() => setDisposalTarget(null)} className="border border-[var(--glass-border)]" data-testid="disposal-cancel">
+              <Button variant="outline" onClick={() => setDisposalTarget(null)} data-testid="disposal-cancel">
                 Batal
               </Button>
               <Button variant="destructive" onClick={dispose} data-testid="disposal-confirm">
