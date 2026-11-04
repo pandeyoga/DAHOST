@@ -13,6 +13,9 @@ import jwt as pyjwt
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+os.environ.setdefault("JWT_SECRET", "uji-hermetik-secret")
+os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+os.environ.setdefault("DB_NAME", "uji")
 
 from fastapi import HTTPException  # noqa: E402
 from starlette.requests import Request  # noqa: E402
@@ -71,7 +74,9 @@ def test_rute_campuran_performa_shift():
         _gate(path, _tok({"creator_id": "c1", "aud": "creator-portal"}))   # token kreator bukan untuk rute ini
 
 
-def test_model_skrip_dan_pelatihan_cocok_dengan_form():
+def test_model_skrip_dan_pelatihan_cocok_dengan_form(monkeypatch):
+    # modul ini membuat /app/uploads/livehost saat diimpor — di runner CI /app tidak bisa ditulis
+    monkeypatch.setattr(os, "makedirs", lambda *a, **k: None)
     from routes.marketing_livehost_shared import ScriptCreate, TrainingCreate, TrainingComplete
     s = ScriptCreate(title="Pembuka", category="opening", account_id=None, script_text="Halo kak",
                      language="indonesia", products_applicable=["Gamis"])

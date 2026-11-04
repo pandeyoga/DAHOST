@@ -12,6 +12,9 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+os.environ.setdefault("JWT_SECRET", "uji-hermetik-secret")
+os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+os.environ.setdefault("DB_NAME", "uji")
 
 from fastapi import HTTPException  # noqa: E402
 
