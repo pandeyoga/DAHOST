@@ -6,8 +6,12 @@
 Dipasang di `server.py` lewat `dependencies=[...]` pada `include_router` supaya satu perubahan
 menutup lintas-portal (vendor/klien/buyer menembak endpoint internal) untuk ratusan endpoint.
 """
+import re
+
+import jwt as pyjwt
 from fastapi import Depends, HTTPException, Request
 
+import auth as _auth
 from auth import verify_download_token, verify_token
 
 # Peran EKSTERNAL: bukan karyawan DA. Boleh masuk hanya ke portal masing-masing.
@@ -28,10 +32,42 @@ def _role_of(request: Request) -> str:
     return (payload.get("role") or "").lower()
 
 
+# 2026-11-04 — portal EKSTERNAL ber-token sendiri (Kreator `aud=creator-portal`, Livehost
+# `aud=livehost-portal`). Rutenya menjaga dirinya sendiri (`require_creator_auth` /
+# `require_livehost_auth`). Dulu gerbang router ini hanya mengenal JWT karyawan, jadi SEMUA
+# panggilan portal — termasuk login — dijawab 401 "Unauthorized" dan kedua portal mati.
+PORTAL_PATH_PREFIXES = ("/api/marketing/creator-portal/", "/api/marketing/livehost/portal/")
+# Rute campuran: dipakai staf (JWT karyawan, tetap digerbang) DAN portal Livehost (token portal).
+PORTAL_SHARED_ROUTES = {
+    re.compile(r"^/api/marketing/livehost/shifts/[^/]+/performance$"): "livehost-portal",
+}
+
+
+def _is_portal_path(path: str) -> bool:
+    return any(path.startswith(p) for p in PORTAL_PATH_PREFIXES)
+
+
+def _portal_token_ok(request: Request, audience: str) -> bool:
+    h = request.headers.get("Authorization", "")
+    if not h.startswith("Bearer ") or not _auth.JWT_SECRET:
+        return False
+    try:
+        pyjwt.decode(h.split(" ", 1)[1], _auth.JWT_SECRET, algorithms=["HS256"], audience=audience)
+        return True
+    except pyjwt.PyJWTError:
+        return False
+
+
 def deny_roles(*roles: str):
     denied = {r.lower() for r in roles}
 
     async def _dep(request: Request):
+        path = getattr(getattr(request, 'url', None), 'path', '') or ''
+        if _is_portal_path(path):
+            return
+        aud = next((a for rx, a in PORTAL_SHARED_ROUTES.items() if rx.match(path)), None)
+        if aud and _portal_token_ok(request, aud):
+            return
         role = _role_of(request)
         if role in denied:
             raise HTTPException(

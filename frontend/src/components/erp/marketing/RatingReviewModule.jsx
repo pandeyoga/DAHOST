@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Star, Plus, Pencil, Trash2, Sparkles, RefreshCw, CheckCircle2, AlertCircle,
@@ -234,7 +235,7 @@ export default function RatingReviewModule({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus review ini?')) return;
+    if (!(await confirmDialog('Hapus review ini?'))) return;
     try {
       await axios.delete(`${API}/api/marketing/reviews/${id}`, { headers: authH });
       toast({ title: 'Berhasil', description: 'Review dihapus' });

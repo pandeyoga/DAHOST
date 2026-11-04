@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Video, Plus, Edit, Trash2, RefreshCw, Loader2 } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -50,7 +51,7 @@ export default function ScriptsTab({ authH }) {
   }, [fetchScripts, fetchAccounts]);
 
   const handleDelete = async (script) => {
-    if (!window.confirm(`Yakin ingin menghapus script "${script.title}"?`)) return;
+    if (!(await confirmDialog(`Yakin ingin menghapus script "${script.title}"?`))) return;
     try {
       const res = await fetch(`${API}/api/marketing/livehost/scripts/${script.id}`, {
         method: 'DELETE',

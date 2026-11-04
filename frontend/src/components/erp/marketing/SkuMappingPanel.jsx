@@ -142,7 +142,7 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
               </span>
               <div className="ml-auto flex gap-2">
                 <Button size="sm" variant="outline" onClick={load} data-testid="sku-map-reload">
-                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
                 </Button>
                 <Button size="sm" variant="outline" onClick={useAllSuggestions}
                   data-testid="sku-map-use-suggestions">

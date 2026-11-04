@@ -43,7 +43,7 @@ CREATOR_CATALOG_FIELDS = {
     # HARGA JUAL saja — tanpa hpp/margin (keputusan pemilik).
     'unit_price': 1, 'harga_jual': 1, 'harga_coret': 1, 'price': 1,
     'platform_price': 1, 'harga_original': 1,
-    'images': 1, 'master_images': 1, 'platform_url': 1, 'is_active': 1,
+    'images': 1, 'master_images': 1, 'platform_url': 1, 'is_active': 1, 'publish_state': 1,
     'publish_state': 1, 'fg_product_id': 1, 'fg_material_id': 1, 'material_id': 1,
     'stock_quantity': 1, 'fg_available': 1, 'created_at': 1,
 }
@@ -121,11 +121,15 @@ async def creator_get_catalog(request: Request, account_id: Optional[str] = Quer
     # Sekarang sumbernya satu, dan HARGA HPP TIDAK PERNAH DIKIRIM ke portal
     # kreator (keputusan pemilik: kreator hanya boleh melihat harga jual).
     catalog = await db.marketing_catalog_items.find(
-        query, CREATOR_CATALOG_FIELDS).sort('product_name', 1).to_list(500)
-    legacy = await db.marketing_creator_catalog.find(
-        query, CREATOR_CATALOG_FIELDS).sort('product_name', 1).to_list(500)
-    seen_sku = {c.get('sku') for c in catalog}
-    catalog += [c for c in legacy if c.get('sku') not in seen_sku]
+        query, CREATOR_CATALOG_FIELDS).sort([('name', 1), ('product_name', 1)]).to_list(2000)
+    return serialize_doc(await shape_creator_catalog(db, catalog))
+
+
+async def shape_creator_catalog(db, catalog: list) -> list:
+    """Seragamkan item katalog untuk kreator: nama, harga jual, stok barang jadi, status tayang.
+    2026-11-04 (keputusan owner) — semua produk aktif tampil; yang belum punya tautan toko
+    ditandai `is_published=False` ("belum tayang") supaya tidak dipromosikan dulu."""
+    from core.catalog_status import publish_state_of
     # BUG-INV-12 fix: agregasi stok kanonik lintas semua baris/skema.
     for it in catalog:
         it['fg_product_id'] = (it.get('fg_product_id') or it.get('fg_material_id')
@@ -135,12 +139,13 @@ async def creator_get_catalog(request: Request, account_id: Optional[str] = Quer
     for item in catalog:
         fg_id = item.get('fg_product_id')
         item['stock_qty'] = stock_map.get(fg_id, 0) if fg_id else 0
-        # nama & harga diseragamkan supaya portal tidak perlu tahu asal koleksinya
         item['product_name'] = (item.get('product_name') or item.get('name')
                                 or item.get('fg_name') or '')
         item['unit_price'] = (item.get('unit_price') or item.get('harga_jual')
                               or item.get('price') or item.get('platform_price') or 0)
-    return serialize_doc(catalog)
+        item['publish_state'] = publish_state_of(item)
+        item['is_published'] = item['publish_state'] == 'published'
+    return catalog
 
 
 @router.post('/creator-portal/requests')
@@ -150,13 +155,17 @@ async def creator_request_item(data: ItemRequestCreate, request: Request):
     allowed = creator.get('assigned_account_ids', [])
     if data.account_id not in allowed:
         raise HTTPException(403, 'Creator tidak memiliki akses ke akun ini')
-    catalog_item = (await db.marketing_catalog_items.find_one(
+    catalog_item = await db.marketing_catalog_items.find_one(
         {'id': data.catalog_item_id, 'is_active': True}, {'_id': 0})
-        or await db.marketing_creator_catalog.find_one(
-        {'id': data.catalog_item_id, 'is_active': True}, {'_id': 0}))
     if not catalog_item:
         raise HTTPException(404, 'Produk tidak ditemukan di katalog')
-    fg_id = catalog_item.get('fg_product_id')
+    # 2026-11-04 — produk harus milik toko yang diminta (dulu produk toko lain diterima)
+    if catalog_item.get('account_id') and catalog_item.get('account_id') != data.account_id:
+        raise HTTPException(400, 'Produk ini bukan katalog toko yang dipilih')
+    # item katalog marketing memakai `fg_material_id` (dulu hanya `fg_product_id` dibaca →
+    # stok saat minta selalu 0 dan tautan barang jadi hilang)
+    fg_id = (catalog_item.get('fg_product_id') or catalog_item.get('fg_material_id')
+             or catalog_item.get('material_id') or None)
     stock_qty = 0
     if fg_id:
         # BUG-INV-12 fix: agregasi stok kanonik lintas semua baris/skema.

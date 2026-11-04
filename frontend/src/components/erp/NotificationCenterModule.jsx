@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Bell, RefreshCw, Send, Trash2, RotateCw, AlertTriangle, Mail,
@@ -374,7 +375,7 @@ export default function NotificationCenterModule({ token }) {
   };
 
   const remove = async (id) => {
-    if (!window.confirm('Hapus notifikasi ini?')) return;
+    if (!(await confirmDialog('Hapus notifikasi ini?'))) return;
     const r = await fetch(`/api/dewi/notifications/${id}`, { method: 'DELETE', headers });
     if (r.ok) { toast.success('Dihapus'); load(); }
   };

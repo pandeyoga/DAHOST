@@ -30,7 +30,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Query
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth, serialize_doc, log_activity, check_role
+from auth import require_auth, serialize_doc, log_activity, check_role, require_demo_seed_allowed
 from core.authz import only  # T-01 2.3
 from core.roles import WAREHOUSE_ROLES  # T-01 2.3
 
@@ -853,6 +853,7 @@ async def get_location_map(request: Request):
 @router.post("/structure/seed-demo")
 async def seed_demo_structure(request: Request):
     """Seed 1 building with 2 zones (RM + FG) and sample racks."""
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     await require_auth(request)
     db = get_db()
     created = {"buildings": 0, "zones": 0, "racks": 0, "positions": 0}

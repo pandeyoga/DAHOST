@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { TrendingUp, Plus, Edit, Trash2, RefreshCw, UserCheck, Loader2 } from 'lucide-react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -36,7 +37,7 @@ export default function TrainingTab({ authH }) {
   }, [fetchTrainings]);
 
   const handleDelete = async (training) => {
-    if (!window.confirm(`Yakin ingin menghapus training "${training.title}"?`)) return;
+    if (!(await confirmDialog(`Yakin ingin menghapus training "${training.title}"?`))) return;
     try {
       const res = await fetch(`${API}/api/marketing/livehost/training/${training.id}`, {
         method: 'DELETE',

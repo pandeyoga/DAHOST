@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect, useCallback } from 'react';
 import {
   Users, Plus, Edit, Trash2, RefreshCw, Search, Loader2,
@@ -68,7 +69,7 @@ export default function LiveHostsTab({ authH }) {
   }, [fetchHosts, fetchAccounts]);
 
   const handleDelete = async (host) => {
-    if (!window.confirm(`Yakin ingin menghapus LiveHost "${host.name}"?`)) return;
+    if (!(await confirmDialog(`Yakin ingin menghapus LiveHost "${host.name}"?`))) return;
     try {
       const res = await fetch(`${API}/api/marketing/livehost/${host.id}`, {
         method: 'DELETE',

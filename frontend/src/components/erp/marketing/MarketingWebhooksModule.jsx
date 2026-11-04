@@ -486,13 +486,13 @@ export default function MarketingWebhooksModule({ user, headers }) {
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" onClick={() => setShowManualIngest(false)}>Batal</Button>
-              <Button
+              <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
                 onClick={handleManualIngest}
                 disabled={manualSending || !manualForm.payload}
                 className="bg-amber-600 hover:bg-amber-700 text-foreground"
                 data-testid="btn-submit-manual-ingest"
               >
-                {manualSending ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <Send className="w-4 h-4 mr-1" />}
+                {manualSending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 mr-1" />}
                 Send
               </Button>
             </div>

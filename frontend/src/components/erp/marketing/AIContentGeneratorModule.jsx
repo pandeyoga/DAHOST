@@ -215,7 +215,7 @@ function GeneratorTab() {
             />
           </div>
 
-          <Button
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
             className={`w-full bg-gradient-to-r ${cfg.color} text-foreground hover:opacity-90`}
             onClick={handleGenerate}
             disabled={loading}

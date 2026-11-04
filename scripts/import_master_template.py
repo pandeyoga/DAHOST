@@ -663,6 +663,11 @@ async def _import_workbook(wb, db, apply, only):
         fg.update({k: v for k, v in pending.items() if v.get("type") == "fg"})
         adocs = {d["id"]: d for d in await db.marketing_platform_accounts.find(
             {}, {"_id": 0, "id": 1, "platform": 1, "account_name": 1}).to_list(500)}
+        # 2026-11-04 — item WAJIB bertaut katalog tokonya (`catalog_id`). Dulu kosong → item impor
+        # tidak terlihat di Manajemen Katalog (layar membaca per katalog). Satu katalog per toko,
+        # dibuat bila belum ada — sama dengan Jembatan SKU (`core.sku_bridge.ensure_catalog`).
+        from core.sku_bridge import ensure_catalog
+        catalog_of: dict = {}
         for r in recs:
             ak, sku = s(r["kode_akun"]).upper(), s(r["sku"]).upper()
             if ak not in acc:
@@ -684,9 +689,16 @@ async def _import_workbook(wb, db, apply, only):
                                                    "tertukar: harga_coret = harga SEBELUM diskon")
                 continue
             f, a = fg[sku], adocs.get(acc[ak], {})
+            if acc[ak] not in catalog_of:
+                cat = await db.marketing_catalogs.find_one(
+                    {"account_id": acc[ak], "is_active": {"$ne": False}}, {"_id": 0, "id": 1})
+                if not cat and apply and acc[ak] in adocs:
+                    cat = await ensure_catalog(db, acc[ak])
+                catalog_of[acc[ak]] = (cat or {}).get("id")
             await upsert(db, "marketing_catalog_items",
                          {"account_id": acc[ak], "sku": sku}, {
                              "account_id": acc[ak], "platform": a.get("platform") or "",
+                             **({"catalog_id": catalog_of[acc[ak]]} if catalog_of[acc[ak]] else {}),
                              "sku": sku, "name": f.get("name") or sku,
                              "fg_material_id": f["id"], "material_id": f["id"],
                              "fg_code": sku, "fg_name": f.get("name") or sku,

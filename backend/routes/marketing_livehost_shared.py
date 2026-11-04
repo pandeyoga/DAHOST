@@ -164,15 +164,27 @@ class ShiftPerformanceRecord(BaseModel):
     challenges_faced: Optional[str] = None
     notes: Optional[str] = None
 
+# 2026-11-04 — disamakan dengan handler (`marketing_livehost_scripts/_training`) dan form
+# (ScriptModal/TrainingModal). Dulu model hanya punya `content`/`content_url`: form ditolak 422,
+# dan handler membaca atribut yang tidak ada (500) → skrip & pelatihan tidak pernah bisa dibuat.
 class ScriptCreate(BaseModel):
-    title: str
-    content: str
+    title: str = Field(min_length=1)
+    script_text: str = Field(min_length=1)
     category: Optional[str] = None
+    account_id: Optional[str] = None
+    language: Optional[str] = 'indonesia'
+    products_applicable: Optional[List[str]] = None
 
 class TrainingCreate(BaseModel):
-    title: str
+    title: str = Field(min_length=1)
+    category: Optional[str] = None
     description: Optional[str] = None
+    content_type: Optional[str] = 'video'
     content_url: Optional[str] = None
+    duration_minutes: Optional[int] = 0
+    is_required: bool = True
+    expiry_months: Optional[int] = None
+    passing_score: Optional[float] = None
 
 class TrainingAssign(BaseModel):
     training_id: str
@@ -180,6 +192,7 @@ class TrainingAssign(BaseModel):
 
 class TrainingComplete(BaseModel):
     notes: Optional[str] = None
+    score: Optional[float] = None
 
 class LiveHostLoginIn(BaseModel):
     email: str

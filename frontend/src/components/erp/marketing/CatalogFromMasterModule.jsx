@@ -136,7 +136,7 @@ export default function CatalogFromMasterModule({ token, onAssigned }) {
         icon={Layers}
         actions={(
           <Button variant="outline" size="sm" onClick={load} data-testid="cfm-refresh">
-            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+            <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
           </Button>
         )}
       />

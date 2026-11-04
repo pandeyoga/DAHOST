@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Settings, CheckCircle2, XCircle, Clock, Save, Trash2, Eye, EyeOff,
@@ -187,7 +188,7 @@ export default function MarketingIntegrationSettings({ token }) {
     setLoading(true);
     try {
       const [r1, r2, r3] = await Promise.allSettled([
-        axios.get(`${API}/api/marketing/integration-settings/meta`),
+        axios.get(`${API}/api/marketing/integration-settings/meta`, { headers: authH }),
         axios.get(`${API}/api/marketing/integration-settings`, { headers: authH }),
         axios.get(`${API}/api/marketing/alerts/settings`, { headers: authH }),
       ]);
@@ -223,7 +224,7 @@ export default function MarketingIntegrationSettings({ token }) {
   };
 
   const handleDisconnect = async (platform) => {
-    if (!window.confirm(`Hapus credentials ${platform}?`)) return;
+    if (!(await confirmDialog(`Hapus credentials ${platform}?`))) return;
     try {
       await axios.delete(`${API}/api/marketing/integration-settings/${platform}`, { headers: authH });
       toast({ title: `${platform} credentials dihapus` });

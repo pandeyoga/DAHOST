@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useState, useEffect, useMemo } from 'react';
 import {
   Sheet,
@@ -182,7 +183,7 @@ export function TaskDetailDrawer({ taskId, open, onOpenChange, onUpdated, token 
   };
 
   const handleDelete = async () => {
-    if (!confirm('Yakin batalkan task ini?')) return;
+    if (!(await confirmDialog('Yakin batalkan task ini?'))) return;
     setSaving(true);
     try {
       const res = await fetch(`${API}/api/marketing/tasks/${taskId}`, {

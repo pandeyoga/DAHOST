@@ -299,6 +299,10 @@ function CreatorCatalogPage({ token }) {
                   <div className="min-w-0">
                     <div className="font-semibold text-foreground truncate">{item.product_name}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">SKU: {item.sku}</div>
+                    {item.is_published === false && (
+                      <span data-testid="catalog-not-published" className="inline-block mt-1 text-[10px] font-medium rounded px-1.5 py-0.5 bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300"
+                        title="Belum ada tautan produk di toko. Tunggu tayang sebelum dipromosikan.">Belum tayang</span>
+                    )}
                   </div>
                   {item.category && (
                     <span className="text-[10px] bg-muted border border-border rounded px-2 py-0.5 text-muted-foreground shrink-0 ml-2">{item.category}</span>

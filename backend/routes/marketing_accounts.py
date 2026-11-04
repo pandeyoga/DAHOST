@@ -109,10 +109,26 @@ async def _validate_coa_role(db, fname: str, code: str) -> dict:
         # Bila bagan akun belum memakai `flags` (DB lama), pakai pemeriksaan longgar
         # berbasis tipe akun supaya akun yang sah tidak ditolak keliru.
         checker = rule["ok"] if (row.get("flags") or {}) else rule["lenient"]
-        if not checker(row):
+        if not checker(row) and not await _subledger_parent_ok(db, row, rule):
             raise HTTPException(400, f"{field}: '{label}' bukan {rule['label']}. "
                                      f"Silakan {rule['hint']}.")
     return row
+
+
+async def _subledger_parent_ok(db, row: dict, rule: dict) -> bool:
+    """Akun subledger otomatis (mis. `1-1303-TTK-03 Piutang Channel — …`) dibuat tanpa
+    flags peran (`is_ar`); perannya diwarisi dari akun induknya (`1-1303`).
+    2026-11-04 — dulu subledger ditolak sehingga SEMUA toko gagal disimpan dari Kelola Akun."""
+    flags = row.get("flags") or {}
+    parent_code = flags.get("subledger_parent") or (row.get("parent_code") if flags.get("subledger") else "")
+    if not (flags.get("subledger") and parent_code):
+        return False
+    parent = await db.rahaza_coa_accounts.find_one(
+        {"code": parent_code}, {"_id": 0, "code": 1, "type": 1, "flags": 1, "is_group": 1, "active": 1})
+    if not parent:
+        return False
+    checker = rule["ok"] if (parent.get("flags") or {}) else rule["lenient"]
+    return bool(checker(parent))
 
 
 async def _fallback_revenue_code(db, platform: str) -> str:
@@ -299,6 +315,12 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
     # Baca ulang: `ensure_subledger_for_entity` menulis `ar_account_code` SETELAH insert.
     # Tanpa ini, UI tidak pernah melihat akun COA otomatis yang baru dibuat.
     saved = await db.marketing_platform_accounts.find_one({"id": account["id"]}, {"_id": 0})
+    # `coa_receivable_code` (warisan) = akun piutang toko sendiri, sama seperti sinkron startup
+    # (`core.finance_sync._sync_stores`). Dulu baru disamakan setelah backend restart.
+    if saved and saved.get("ar_account_code") and saved.get("coa_receivable_code") != saved["ar_account_code"]:
+        await db.marketing_platform_accounts.update_one(
+            {"id": account["id"]}, {"$set": {"coa_receivable_code": saved["ar_account_code"]}})
+        saved["coa_receivable_code"] = saved["ar_account_code"]
     return serialize_doc({"message": "Platform account created", "account": saved or account})
 
 
@@ -620,6 +642,11 @@ async def update_platform_account(account_id: str, data: PlatformAccountUpdate, 
     for fname in ("coa_revenue_code", "coa_receivable_code"):
         val = getattr(data, fname, None)
         if val is not None:
+            # 2026-11-04 — nilai yang sama dengan yang tersimpan = tidak berubah. Layar mengirim
+            # ulang semua field; tanpa ini mengganti nama toko ikut memvalidasi ulang akun lama
+            # dan menandai akun pendapatan otomatis seolah dipilih manual (`input`).
+            if (val or "").strip() == (account.get(fname) or "").strip():
+                continue
             if val:
                 await _validate_coa_role(db, fname, val)
             update_data[fname] = val

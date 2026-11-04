@@ -144,7 +144,7 @@ export default function AccountBulkReviewModule({ token }) {
         actions={
           <div className="flex items-center gap-2">
             <Button onClick={fetchAll} variant="outline" size="sm" data-testid="bulk-refresh-btn">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat Ulang
+              <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
             </Button>
             <Button onClick={markAllReviewed} variant="outline" size="sm" data-testid="bulk-mark-all-btn">
               <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> Tandai Semua Ditinjau

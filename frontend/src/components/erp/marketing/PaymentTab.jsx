@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { DollarSign, RefreshCw, ChevronLeft, ChevronRight, Loader2, CheckCircle, Clock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -42,7 +43,7 @@ export default function PaymentTab({ authH }) {
   }, [fetchPaymentStatus]);
 
   const handleCalculate = async () => {
-    if (!window.confirm(`Calculate payment untuk semua shift bulan ${month}?`)) return;
+    if (!(await confirmDialog(`Calculate payment untuk semua shift bulan ${month}?`))) return;
     setCalculating(true);
     try {
       const res = await fetch(`${API}/api/marketing/livehost/payment/calculate?month=${month}`, {
@@ -66,7 +67,7 @@ export default function PaymentTab({ authH }) {
   };
 
   const handleSync = async () => {
-    if (!window.confirm(`Sync payment ke Finance untuk bulan ${month}? Ini akan membuat payroll entries di Finance module.`)) return;
+    if (!(await confirmDialog(`Sync payment ke Finance untuk bulan ${month}? Ini akan membuat payroll entries di Finance module.`))) return;
     setSyncing(true);
     try {
       const res = await fetch(`${API}/api/marketing/livehost/payment/sync-to-finance?month=${month}`, {

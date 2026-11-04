@@ -403,6 +403,7 @@ async def clock_in_out(data: ClockInOut, request: Request):
 async def record_shift_performance(shift_id: str, data: ShiftPerformanceRecord, request: Request):
     """Admin or LiveHost records performance for a completed shift"""
     # Can be called by admin OR livehost portal
+    host = None
     try:
         await require_auth(request)
         caller_email = _get_user(request).get('email', 'admin')
@@ -418,6 +419,10 @@ async def record_shift_performance(shift_id: str, data: ShiftPerformanceRecord, 
     shift = await db.marketing_livehost_shifts.find_one({'id': shift_id}, {'_id': 0})
     if not shift:
         raise HTTPException(404, 'Shift tidak ditemukan')
+    # 2026-11-04 — host hanya boleh mengisi shift MILIKNYA (dulu host mana pun bisa menulis
+    # omzet ke shift host lain, dan omzet itu ikut masuk Sales Marketing).
+    if host is not None and shift.get('host_id') != host.get('id'):
+        raise HTTPException(403, 'Shift ini bukan milik Anda')
     
     if not shift.get('clock_out_time'):
         raise HTTPException(400, 'Shift belum di-clock out. Selesaikan shift terlebih dahulu.')

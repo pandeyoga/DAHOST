@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Calendar } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { GlassInput } from '@/components/ui/glass';
@@ -33,7 +34,7 @@ export function PeriodSelector({ value, onChange }) {
   const handleCustomApply = () => {
     if (!customFrom || !customTo) return;
     if (new Date(customFrom) > new Date(customTo)) {
-      alert('Tanggal mulai harus lebih kecil dari tanggal akhir');
+      toast.error('Tanggal mulai harus lebih kecil dari tanggal akhir');
       return;
     }
     onChange({ date_from: customFrom, date_to: customTo });

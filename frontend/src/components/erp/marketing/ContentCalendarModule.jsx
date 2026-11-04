@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import ContentPerformanceView from './ContentPerformanceView';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import CreatorScorecardView from './CreatorScorecardView';
 import PlatformKpiView from './PlatformKpiView';
 import {
@@ -233,7 +234,7 @@ function ContentCalendarBase({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus entri ini?')) return;
+    if (!(await confirmDialog('Hapus entri ini?'))) return;
     try {
       await axios.delete(`${API}/api/marketing/content-calendar/${id}`, { headers: authH });
       toast({ title: 'Dihapus' });

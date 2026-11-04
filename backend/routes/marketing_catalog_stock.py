@@ -10,7 +10,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 from database import get_db
-from auth import require_auth
+from auth import require_auth, require_demo_seed_allowed
 from core import catalog_stock as _cstock  # F7: SSOT SATU rumus stok jual
 
 router = APIRouter(prefix='/api/marketing/catalogs', tags=['Marketing-Catalog-stock'])
@@ -409,6 +409,7 @@ async def get_low_stock_items(catalog_id: str, request: Request):
 @router.post('/seed-demo')
 async def seed_demo_catalog(request: Request):
     """Seed demo catalogs + items untuk testing."""
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     user = await require_auth(request)
     db = get_db()
 

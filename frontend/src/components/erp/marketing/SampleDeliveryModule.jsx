@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Package, Plus, Pencil, Trash2, RefreshCw, CheckCircle2, Clock, Truck,
@@ -239,7 +240,7 @@ export default function SampleDeliveryModule({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus sample ini?')) return;
+    if (!(await confirmDialog('Hapus sample ini?'))) return;
     try {
       await axios.delete(`${API}/api/marketing/samples/${id}`, { headers: authH });
       toast({ title: 'Berhasil', description: 'Sample dihapus' });

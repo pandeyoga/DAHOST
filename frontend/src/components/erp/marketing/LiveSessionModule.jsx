@@ -1,3 +1,4 @@
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Video, Users, TrendingUp, Heart, MessageCircle, Share2, ShoppingBag,
@@ -247,7 +248,7 @@ export default function LiveSessionModule({ token }) {
                         <Button size="sm" variant="ghost" className="h-7 px-2 text-red-600"
                           data-testid={`live-delete-${s.id}`}
                           onClick={async () => {
-                            if (!window.confirm(`Hapus sesi "${s.title}"?`)) return;
+                            if (!(await confirmDialog(`Hapus sesi "${s.title}"?`))) return;
                             try {
                               await axios.delete(`${API}/api/marketing/live/sessions/${s.id}`, { headers: authH });
                               toast({ title: 'Sesi live dihapus' });

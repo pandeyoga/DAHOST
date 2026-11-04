@@ -3,6 +3,7 @@
  * Manajemen katalog produk per akun platform + stock sync.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import {
@@ -104,7 +105,6 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     catalogStatus: [], publishState: '', hasPhoto: '', sort: 'name', order: 'asc',
   });
   const [statusOptions, setStatusOptions] = useState([]);
-  const [seeding, setSeeding] = useState(false);
 
   // ── Load functions ────────────────────────────────────────────────
 
@@ -120,7 +120,8 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
     try {
       const r = await fetch(`${API}/api/marketing/accounts?status=active`, { headers });
       const d = await r.json();
-      setAccounts(d.accounts || []);
+      // /api/marketing/accounts mengembalikan daftar langsung (dulu dibaca `d.accounts` → pilihan toko selalu kosong)
+      setAccounts(Array.isArray(d) ? d : (d.accounts || []));
     } catch (e) { console.error(e); }
   }, [headers]);
 
@@ -217,7 +218,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   };
 
   const handleDeleteCatalog = async (catalog) => {
-    if (!window.confirm(`Hapus katalog "${catalog.name}" dan semua itemnya?`)) return;
+    if (!(await confirmDialog(`Hapus katalog "${catalog.name}" dan semua itemnya?`))) return;
     const r = await cat(`/${catalog.id}`, { method: 'DELETE', headers });
     const d = await r.json();
     if (!r.ok) { toast.error(d.detail || 'Gagal hapus'); return; }
@@ -298,7 +299,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   };
 
   const handleDeleteItem = async (item) => {
-    if (!window.confirm(`Hapus item "${item.name}"?`)) return;
+    if (!(await confirmDialog(`Hapus item "${item.name}"?`))) return;
     const r = await cat(`/${selectedCatalog.id}/items/${item.id}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal hapus item'); return; }
     toast.success('Item dihapus');
@@ -349,19 +350,6 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
       loadItems(selectedCatalog.id, searchQ, filterStatus, filterCategoryId, filterAttention);
       loadCatalogs();
     } finally { setSyncing(false); }
-  };
-
-  const handleSeedDemo = async () => {
-    setSeeding(true);
-    try {
-      const r = await cat('/seed-demo', { method: 'POST', headers });
-      const d = await r.json();
-      if (!r.ok) { toast.error(d.detail || 'Gagal seed'); return; }
-      toast.success(d.message);
-      loadCatalogs();
-      loadDashboard();
-      loadAccounts();
-    } finally { setSeeding(false); }
   };
 
   // Tarik-ulang HPP dari RnD (Model/FG) — SEMUA item katalog (bulk)
@@ -417,14 +405,10 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
             Manajemen Katalog Produk
           </h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Phase 5 — Catalog Management + Stock Sync
+            Katalog per toko dan stok jualnya
           </p>
         </div>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={handleSeedDemo} disabled={seeding}>
-            {seeding ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Package className="w-4 h-4 mr-1" />}
-            Seed Demo Data
-          </Button>
           <Button size="sm" className="bg-indigo-600 hover:bg-indigo-700" onClick={() => setCatalogDialog({})}>
             <Plus className="w-4 h-4 mr-1" /> Buat Katalog
           </Button>
@@ -479,7 +463,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
               onChange={e => setFilterAccount(e.target.value)}
             >
               <option value="">Semua Akun</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.platform} — {a.name}</option>)}
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.platform} — {a.account_name || a.name}</option>)}
             </SmartNativeSelect>
             <Button size="sm" variant="outline" onClick={loadCatalogs} disabled={loading}>
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -494,7 +478,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
             <div className="text-center py-16 text-muted-foreground">
               <Layers className="w-12 h-12 mx-auto mb-3 opacity-20" />
               <p className="text-sm">Belum ada katalog</p>
-              <p className="text-xs mt-1">Klik "Buat Katalog" atau "Seed Demo Data" untuk memulai</p>
+              <p className="text-xs mt-1">Klik "Buat Katalog" untuk memulai</p>
             </div>
           )}
 
@@ -1068,7 +1052,7 @@ function CatalogDialog({ initial, accounts, onSave, onClose }) {
               required
             >
               <option value="">-- Pilih Akun --</option>
-              {accounts.map(a => <option key={a.id} value={a.id}>{a.platform} — {a.name}</option>)}
+              {accounts.map(a => <option key={a.id} value={a.id}>{a.platform} — {a.account_name || a.name}</option>)}
             </SmartNativeSelect>
           </div>
 

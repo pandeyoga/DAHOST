@@ -26,7 +26,7 @@ from database import get_db
 from core.stock_schema import read_qty, read_reserved
 from core import stock_service
 from utils.counters import gen_prefixed_number
-from auth import require_auth, serialize_doc, log_activity
+from auth import require_auth, serialize_doc, log_activity, require_demo_seed_allowed
 from datetime import datetime, timezone
 import uuid
 import logging
@@ -473,6 +473,7 @@ async def list_fg_reservations(
 @router.post("/seed-demo")
 async def seed_demo(request: Request):
     """Admin utility: seed sample FG data for matrix view demo (idempotent)."""
+    require_demo_seed_allowed()  # pagar produksi: ALLOW_DEMO_SEED=false → 403 (2026-11-04)
     await require_auth(request)
     from routes.fg_matrix_seed import seed_fg_matrix_demo
     return await seed_fg_matrix_demo()
