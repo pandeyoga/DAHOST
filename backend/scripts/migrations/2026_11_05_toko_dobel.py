@@ -27,7 +27,6 @@ Runbook (VPS):
 import argparse
 import asyncio
 import os
-import re
 import sys
 from datetime import datetime, timezone
 
@@ -36,12 +35,11 @@ from motor.motor_asyncio import AsyncIOMotorClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from core.marketing_account_scope import store_identity_keys  # noqa: E402
+from core.store_cleanup import coa_unused_elsewhere, owned_coa, store_data_refs  # noqa: E402
 
 MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 DB_NAME = os.environ.get('DB_NAME', 'test_database')
 ACCOUNTS = 'marketing_platform_accounts'
-# koleksi jejak/riwayat tidak dihitung sebagai "data toko"
-LOG_LIKE = re.compile(r'(_log|_logs|history|audit|activity|notification|_syncs$)')
 REASON = 'toko tercatat dua kali (migrasi 2026-11-05)'
 
 
@@ -89,54 +87,19 @@ def choose_keeper(group: list, ref_total: dict) -> dict:
     return min(group, key=lambda s: (-ref_total.get(s['id'], 0), _created(s), len(s.get('account_code') or '')))
 
 
-# ── baca DB ──────────────────────────────────────────────────────────────────
+# ── baca DB — aturan "punya data" & "akun COA milik toko" ada di core.store_cleanup ─────
 async def _data_refs(db, store: dict, collections: list) -> dict:
-    """{koleksi: jumlah} dokumen data yang menunjuk toko ini (+ jurnal di akun COA-nya)."""
-    refs = {}
-    for c in collections:
-        if c == ACCOUNTS or LOG_LIKE.search(c) or c == 'marketing_catalogs':
-            continue
-        n = await db[c].count_documents({'account_id': store['id']})
-        if n:
-            refs[c] = n
-    codes = [c for c in (store.get('coa_revenue_code'), store.get('coa_receivable_code'),
-                         store.get('ar_account_code')) if c]
-    if codes:
-        n = (await db.rahaza_journal_lines.count_documents({'account_code': {'$in': codes}})
-             + await db.rahaza_journal_entries.count_documents({'lines.account_code': {'$in': codes}}))
-        if n:
-            refs['jurnal di akun COA toko ini'] = n
-    return refs
-
-
-def _system_created(a: dict) -> bool:
-    from core.finance_sync import _system_created as sc
-    return sc(a)
+    return await store_data_refs(db, store, collections)
 
 
 async def _coa_to_deactivate(db, dup: dict) -> list:
-    """Akun COA milik toko dobel yang aman dinonaktifkan: dibuat sistem UNTUK toko ini,
-    aktif, belum pernah dijurnal, tidak dipakai toko lain."""
+    """Akun COA buatan sistem untuk toko dobel yang aman dinonaktifkan (aktif, belum dijurnal,
+    tidak dipakai toko lain)."""
     out = []
-    cands = []
-    rc = dup.get('coa_revenue_code')
-    if rc:
-        cands.append(('Penjualan', rc, {'code': rc, 'flags.store_account_code': dup.get('account_code')}))
-    for ar in {dup.get('coa_receivable_code'), dup.get('ar_account_code')} - {None, ''}:
-        cands.append(('Piutang', ar, {'code': ar, 'flags.subledger_entity_id': dup['id']}))
-    for label, code, q in cands:
-        a = await db.rahaza_coa_accounts.find_one(q, {'_id': 0})
-        if not a or a.get('active') is False:
+    for a in await owned_coa(db, dup):
+        if a.get('active') is False or not await coa_unused_elsewhere(db, dup, a['code']):
             continue
-        if label == 'Penjualan' and not _system_created(a):
-            continue
-        other = await db[ACCOUNTS].count_documents({'id': {'$ne': dup['id']}, '$or': [
-            {'coa_revenue_code': code}, {'coa_receivable_code': code}, {'ar_account_code': code}]})
-        jl = (await db.rahaza_journal_lines.count_documents({'account_code': code})
-              + await db.rahaza_journal_entries.count_documents({'lines.account_code': code}))
-        if other or jl:
-            continue
-        out.append({'label': label, 'code': code, 'name': a.get('name')})
+        out.append({'code': a['code'], 'name': a.get('name')})
     return out
 
 
@@ -166,12 +129,15 @@ async def run(apply: bool) -> int:
                 held += 1
                 print(f"    ! {label} — PUNYA DATA, tidak diubah: {refs[dup['id']]}")
                 continue
+            drafts = await db.marketing_data_import_sessions.count_documents(
+                {'account_id': dup['id'], 'committed_count': {'$in': [0, None]}})
             coa = await _coa_to_deactivate(db, dup)
             cats = await db.marketing_catalogs.find(
                 {'account_id': dup['id'], 'is_active': {'$ne': False}}, {'_id': 0, 'id': 1, 'name': 1}).to_list(50)
             print(f"    - {label} — dinonaktifkan"
                   + (f"; akun COA: {', '.join(c['code'] + ' ' + (c['name'] or '') for c in coa)}" if coa else '')
-                  + (f"; katalog kosong: {', '.join(c['name'] for c in cats)}" if cats else ''))
+                  + (f"; katalog kosong: {', '.join(c['name'] for c in cats)}" if cats else '')
+                  + (f"; {drafts} draf impor yang belum pernah disimpan diabaikan" if drafts else ''))
             planned += 1
             if not apply:
                 continue

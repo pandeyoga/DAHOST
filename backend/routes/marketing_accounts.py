@@ -759,6 +759,41 @@ async def update_platform_account(account_id: str, data: PlatformAccountUpdate, 
     return serialize_doc({"message": "Platform account updated", "account": updated})
 
 
+@router.delete("/accounts/{account_id}/permanent")
+async def delete_platform_account_permanently(account_id: str, request: Request):
+    """HAPUS PERMANEN toko — hanya super admin, hanya toko yang BELUM punya data (owner, 5 Nov 2026).
+
+    "Punya data" memakai aturan yang sama dengan migrasi toko dobel (`core.store_cleanup`). Toko yang
+    sudah punya pesanan/katalog/jurnal/… ditolak 409 dengan daftar datanya — pakai Arsipkan.
+    Akun Penjualan & Piutang yang dibuat sistem untuk toko itu ikut dibereskan menurut aturan Bagan Akun
+    (akun pendapatan toko & piutang sub-ledger buatan sistem: dinonaktifkan, tidak dihapus).
+    """
+    user = await require_auth(request)
+    if str(user.get("role") or "").lower() != "superadmin":
+        raise HTTPException(403, "Hapus permanen toko hanya untuk super admin. "
+                                 "Gunakan Arsipkan untuk menonaktifkan toko.")
+    db = get_db()
+    account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})
+    if not account:
+        raise HTTPException(404, "Akun toko tidak ditemukan")
+    from core import store_cleanup
+    try:
+        res = await store_cleanup.delete_store_permanently(db, account, user)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from None
+    await log_activity(user.get("id", "system"), user.get("name") or user.get("email", "system"),
+                       "delete", "marketing_account",
+                       f"Hapus permanen toko: {account.get('account_code')} · {account.get('account_name')}")
+    coa_note = ""
+    if res["coa_deleted"]:
+        coa_note += f" Akun COA ikut dihapus: {', '.join(res['coa_deleted'])}."
+    if res["coa_deactivated"]:
+        coa_note += f" Akun COA dinonaktifkan: {', '.join(res['coa_deactivated'])}."
+    if res["coa_kept"]:
+        coa_note += f" Akun COA dibiarkan karena masih terikat: {', '.join(res['coa_kept'])}."
+    return {"ok": True, "message": f"Toko {account.get('account_code')} dihapus permanen.{coa_note}", **res}
+
+
 @router.delete("/accounts/{account_id}")
 async def archive_platform_account(account_id: str, request: Request):
     """

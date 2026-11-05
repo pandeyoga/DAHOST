@@ -144,3 +144,77 @@ def test_migrasi_mengelompokkan_toko_dobel_dan_mempertahankan_yang_lama():
     g = [s for s in stores if s["id"] in ("a-shp02", "a-d1")]
     assert mig.choose_keeper(g, {})["account_code"] == "SHP-02"                     # yang lebih dulu dibuat
     assert mig.choose_keeper(g, {"a-d1": 5})["account_code"] == "SHOPEE - OUTFIT"   # yang punya data menang
+
+
+# ── hapus permanen (super admin, hanya toko tanpa data) ─────────────────────
+SUPER = {"id": "u-super", "name": "Super Admin", "role": "superadmin"}
+DOBEL = {"id": "a-d1", "account_code": "SHOPEE - OUTFIT", "account_name": "Shopee Outfit Boutique",
+         "platform": "shopee", "username": "outfit.boutique", "status": "active", "created_at": T1,
+         "coa_revenue_code": "4-1118", "coa_receivable_code": "1-1303-SHOPEE-OUTFIT"}
+
+
+def _db_dobel(monkeypatch):
+    from core import coa_bindings as cb
+    async def _no_bindings(db, codes=None, **kw):
+        return {c: [] for c in (codes or [])}
+    monkeypatch.setattr(cb, "collect_bindings", _no_bindings)
+    db = _db()
+    db.marketing_platform_accounts.docs.append(dict(DOBEL))
+    db.rahaza_coa_accounts.docs = [
+        {"code": "4-1115", "name": "Penjualan – Shopee Outfit Boutique", "active": True,
+         "created_by_name": "finance_sync", "flags": {"store_account_code": "SHP-02"}},
+        {"code": "4-1118", "name": "Penjualan – Shopee Outfit Boutique", "active": True,
+         "created_by": "system", "created_by_name": "finance_sync", "flags": {"store_account_code": "SHOPEE - OUTFIT"}},
+        {"code": "1-1303-SHOPEE-OUTFIT", "name": "Piutang Channel — Shopee Outfit Boutique", "active": True,
+         "flags": {"subledger": True, "subledger_entity_id": "a-d1"}},
+    ]
+    # draf impor yang belum pernah disimpan BUKAN data (kasus VPS 5 Nov)
+    db.marketing_data_import_sessions.docs = [{"id": "s1", "account_id": "a-d1", "status": "ready", "committed_count": 0}]
+    return db
+
+
+def test_hapus_permanen_toko_tanpa_data_ikut_membereskan_akun_coa(monkeypatch):
+    from core import store_cleanup
+    db = _db_dobel(monkeypatch)
+    res = asyncio.run(store_cleanup.delete_store_permanently(db, dict(DOBEL), SUPER))
+    assert not [a for a in db.marketing_platform_accounts.docs if a["id"] == "a-d1"]
+    assert sorted(res["coa_deleted"]) == ["1-1303-SHOPEE-OUTFIT", "4-1118"]
+    assert [a["code"] for a in db.rahaza_coa_accounts.docs] == ["4-1115"]       # akun toko asli utuh
+    assert res["drafts_deleted"] == 1
+    assert db.marketing_change_log.docs[-1]["action"] == "store_deleted"
+
+
+def test_hapus_permanen_ditolak_bila_toko_punya_data(monkeypatch):
+    from core import store_cleanup
+    db = _db_dobel(monkeypatch)
+    db.marketing_content_calendar.docs = [{"id": "k1", "account_id": "a-d1", "title": "test"}]
+    with pytest.raises(ValueError) as e:
+        asyncio.run(store_cleanup.delete_store_permanently(db, dict(DOBEL), SUPER))
+    assert "1 jadwal konten" in str(e.value)
+    db.marketing_content_calendar.docs = []
+    db.koleksi_baru_lain.docs = [{"id": "z1", "account_id": "a-d1"}]
+    with pytest.raises(ValueError) as e:
+        asyncio.run(store_cleanup.delete_store_permanently(db, dict(DOBEL), SUPER))
+    assert "1 data lain" in str(e.value) and "koleksi_baru_lain" not in str(e.value)   # nama program tidak tampil
+    assert [a for a in db.marketing_platform_accounts.docs if a["id"] == "a-d1"]  # tidak terhapus
+
+
+@pytest.mark.parametrize("user", [SPV, {"id": "u-adm", "name": "Admin", "role": "admin"}, PIC])
+def test_hapus_permanen_hanya_super_admin(monkeypatch, user):
+    with pytest.raises(HTTPException) as e:
+        _call(ma.delete_platform_account_permanently, _db_dobel(monkeypatch), user, monkeypatch, "a-d1")
+    assert e.value.status_code == 403
+
+
+def test_hapus_permanen_lewat_endpoint(monkeypatch):
+    async def _no_log(*a, **k):
+        return None
+    monkeypatch.setattr(ma, "log_activity", _no_log)
+    db = _db_dobel(monkeypatch)
+    out = _call(ma.delete_platform_account_permanently, db, SUPER, monkeypatch, "a-d1")
+    assert out["ok"] and "dihapus permanen" in out["message"]
+    db.marketing_platform_accounts.docs.append(dict(DOBEL, id="a-d2"))
+    db.marketing_orders.docs = [{"id": "o1", "account_id": "a-d2"}]
+    with pytest.raises(HTTPException) as e:
+        _call(ma.delete_platform_account_permanently, db, SUPER, monkeypatch, "a-d2")
+    assert e.value.status_code == 409 and "1 pesanan" in e.value.detail
