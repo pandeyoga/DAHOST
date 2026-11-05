@@ -33,6 +33,8 @@ export const isStoreScopedUser = () => SCOPED_ROLES.includes(currentRole());
 export const STORE_MANAGER_ROLES = ['owner', 'admin', 'superadmin', 'spv_marketing', 'manager_marketing', 'manager'];
 /** Boleh menambah / mengubah / mengarsipkan master toko? */
 export const canManageStores = () => STORE_MANAGER_ROLES.includes(currentRole());
+/** Hapus PERMANEN toko (hanya toko yang belum punya data) — khusus super admin (owner, 5 Nov 2026). */
+export const canDeleteStores = () => currentRole() === 'superadmin';
 
 /** Kalimat jalan keluar yang sama di semua layar (2026-11-05: PIC kini ikut memberi akses). */
 export const NO_STORE_HINT = 'Minta SPV Marketing atau owner memilih Anda sebagai PIC toko di Manajemen Akun, '

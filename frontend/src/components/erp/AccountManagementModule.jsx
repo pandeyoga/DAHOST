@@ -25,11 +25,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Store, Plus, RefreshCw, Pencil, Archive, Loader2, UserCheck, Table2, LayoutGrid,
   Search, Landmark, Wallet, Receipt, Warehouse, Hash, BadgeCheck, AlertTriangle,
-  Link2, Scale, X, Star, Calculator, ClipboardCheck,
+  Link2, Scale, X, Star, Calculator, ClipboardCheck, Trash2,
 } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput, GlassTable } from '@/components/ui/glass';
 import AccountAssignView from './marketing/AccountAssignView';
-import { isStoreScopedUser, NO_STORE_HINT, canManageStores } from './marketing/NoStoreScopeNotice';
+import { isStoreScopedUser, NO_STORE_HINT, canManageStores, canDeleteStores } from './marketing/NoStoreScopeNotice';
 import { usePlatformBalances } from './finance/PlatformBalanceCards';
 import { formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -627,6 +627,7 @@ function AccountManagementBase({ token, onNavigate }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editAccount, setEditAccount] = useState(null);
   const [archiveTarget, setArchiveTarget] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);   // hapus permanen (super admin)
   const [reviewingId, setReviewingId] = useState(null);
   const [scoring, setScoring] = useState(false);
 
@@ -735,12 +736,31 @@ function AccountManagementBase({ token, onNavigate }) {
       const res = await fetch(`${API}/api/marketing/accounts/${archiveTarget.id}`, {
         method: 'DELETE', headers,
       });
-      if (!res.ok) throw new Error('Gagal mengarsipkan akun');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || 'Gagal mengarsipkan akun');
       toast.success('Akun diarsipkan (status nonaktif)');
       setArchiveTarget(null);
       fetchAccounts();
     } catch (e) {
       toast.error(e.message);
+    }
+  };
+
+  /** Hapus permanen — server menolak (409) bila toko sudah punya data; alasannya ditampilkan apa adanya. */
+  const handleDeletePermanent = async () => {
+    if (!deleteTarget) return;
+    try {
+      const res = await fetch(`${API}/api/marketing/accounts/${deleteTarget.id}/permanent`, {
+        method: 'DELETE', headers,
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || 'Gagal menghapus toko');
+      toast.success(body.message || 'Toko dihapus permanen');
+      setDeleteTarget(null);
+      fetchAccounts();
+    } catch (e) {
+      toast.error(e.message, { duration: 10000 });
+      setDeleteTarget(null);
     }
   };
 
@@ -890,6 +910,15 @@ function AccountManagementBase({ token, onNavigate }) {
               <Archive size={12} />
             </Button>
           </>)}
+          {canDeleteStores() && (
+            <Button
+              size="icon-sm" variant="ghost" className="text-destructive hover:bg-destructive/10"
+              title="Hapus permanen (hanya toko yang belum punya data)" onClick={() => setDeleteTarget(acc)}
+              data-testid={`delete-acc-${acc.account_code}`}
+            >
+              <Trash2 size={12} />
+            </Button>
+          )}
         </div>
       </td>
     </tr>
@@ -985,6 +1014,15 @@ function AccountManagementBase({ token, onNavigate }) {
         >
           <Archive className="w-3 h-3" />
         </Button>
+        {canDeleteStores() && (
+          <Button
+            size="sm" variant="outline" className="text-destructive hover:bg-destructive/10"
+            title="Hapus permanen (hanya toko yang belum punya data)"
+            onClick={() => setDeleteTarget(acc)} data-testid={`delete-acc-card-${acc.account_code}`}
+          >
+            <Trash2 className="w-3 h-3" />
+          </Button>
+        )}
       </div>
       )}
     </GlassCard>
@@ -1245,6 +1283,27 @@ function AccountManagementBase({ token, onNavigate }) {
             <AlertDialogCancel>Batal</AlertDialogCancel>
             <AlertDialogAction onClick={handleArchive} className="bg-red-500 hover:bg-red-600" data-testid="confirm-archive-btn">
               Arsipkan
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent data-testid="delete-confirm-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Hapus toko permanen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Toko <b>{deleteTarget?.account_code} · {deleteTarget?.account_name}</b> akan dihapus dan tidak bisa
+              dikembalikan. Hanya bisa untuk toko yang belum punya data (pesanan, katalog, sales, jurnal, dan lainnya);
+              bila sudah ada, sistem menolak dan menyebut datanya. Akun Penjualan dan Piutang yang dibuat otomatis
+              untuk toko ini ikut dinonaktifkan di Bagan Akun (akun buatan sistem tidak dihapus).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeletePermanent} className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="confirm-delete-btn">
+              Hapus permanen
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
