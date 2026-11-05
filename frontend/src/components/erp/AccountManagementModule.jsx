@@ -912,7 +912,7 @@ function AccountManagementBase({ token, onNavigate }) {
           </>)}
           {canDeleteStores() && (
             <Button
-              size="icon" variant="ghost" className="h-7 w-7 text-destructive hover:bg-destructive/10"
+              size="icon-sm" variant="ghost" className="text-destructive hover:bg-destructive/10"
               title="Hapus permanen (hanya toko yang belum punya data)" onClick={() => setDeleteTarget(acc)}
               data-testid={`delete-acc-${acc.account_code}`}
             >
