@@ -13,14 +13,18 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { IconButton } from './IconButton';
+import { Notice, EmptyState } from './moduleAtoms';
 import {
   ScanLine, Plus, Check, X, ClipboardList, MapPin, AlertTriangle, PackageCheck, ArrowLeft,
   RefreshCw, ShieldCheck, ListChecks, Boxes, Printer, EyeOff, Archive, Minus,
 } from 'lucide-react';
 import useUomOptions from '@/hooks/useUomOptions';
-import { UomSelect, UomConversionHint, baseUnitOf } from './uom/UomPicker';
+import { UomConversionHint, baseUnitOf } from './uom/UomPicker';
 import UniversalScanner from './scanner/UniversalScanner';
+import { toScanResult } from './scanner/ScanResult';
 import { scanFeedback } from './scanner/scanCode';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -35,10 +39,10 @@ const STATUS_BADGE = {
   cancelled: 'bg-muted text-muted-foreground border-[var(--glass-border)]',
 };
 const STATUS_LABEL = {
-  counting: 'Menghitung', submitted: 'Menunggu Approval', approving: 'Diproses', approved: 'Disetujui',
+  counting: 'Menghitung', submitted: 'Menunggu persetujuan', approving: 'Diproses', approved: 'Disetujui',
   rejected: 'Ditolak', cancelled: 'Dibatalkan', open: 'Aktif (lama)', pending_approval: 'Menunggu (lama)',
 };
-const KIND_OPTS = [['bahan', 'Kain / Bahan'], ['aksesoris', 'Aksesoris'], ['fg', 'Barang Jadi']];
+const KIND_OPTS = [['bahan', 'Kain / bahan'], ['aksesoris', 'Aksesoris'], ['fg', 'Barang jadi']];
 const LINE_STATUS = {
   belum: ['Belum dihitung', 'bg-muted text-muted-foreground border-[var(--glass-border)]'],
   dihitung: ['Dihitung', 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.2)]'],
@@ -69,12 +73,20 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const [scanQty, setScanQty] = useState(1);
   const [scanUom, setScanUom] = useState('');
   const [lastScan, setLastScan] = useState(null);
+  // 2026-11-06 (audit layar scan Gudang): hasil scan tampil TEPAT di bawah kotak scan (prop `result`
+  // UniversalScanner), bukan di pesan atas halaman yang di HP berada di luar layar.
+  const [itemResult, setItemResult] = useState(null);
+  const [binResult, setBinResult] = useState(null);
 
   const authH = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const jsonH = useMemo(() => ({ ...authH, 'Content-Type': 'application/json' }), [authH]);
   const flash = (type, text) => { setMessage({ type, text }); setTimeout(() => setMessage(null), 5000); };
   const errText = (d, fb) => (typeof d?.detail === 'string' ? d.detail : d?.detail?.message || fb);
   const focusItem = () => setTimeout(() => document.querySelector('[data-testid="opname-item-input"] input')?.focus(), 40);
+  // Hasil scan barang: berhasil → testid lama `opname-last-scan`; ditolak → `opname-scan-result`.
+  const itemFail = (text, detail) => setItemResult({ ...toScanResult(text), detail, testId: 'opname-scan-result' });
+  const binFail = (text) => setBinResult({ ...toScanResult(text), testId: 'opname-bin-result' });
+  const resetScanUi = () => { setItemResult(null); setBinResult(null); };
 
   const loadSessions = useCallback(async () => {
     try {
@@ -127,6 +139,10 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const { options: uomOpts } = useUomOptions(lastMatId ? [lastMatId] : []);
   const scanUomOpt = lastMatId ? uomOpts[lastMatId] : null;
   const scanBaseUnit = baseUnitOf(scanUomOpt, '');
+  // Pilihan satuan = sama dengan UomSelect (satuan master barang terakhir; bila belum ada, satuan dasarnya).
+  const scanUnitBase = baseUnitOf(scanUomOpt, lastScan?.base_uom || '');
+  const scanUnits = scanUomOpt?.units?.length ? scanUomOpt.units : (scanUnitBase ? [{ unit: scanUnitBase }] : []);
+  const scanUnitValue = String(scanUom || scanBaseUnit || scanUnitBase || '');
 
   const printLocationLabel = async (id) => {
     try {
@@ -149,14 +165,14 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       const d = await r.json();
       if (r.ok) {
         setShowNew(false); setCodes(''); setSubType(''); setSubId('');
-        await loadSessions(); await loadDetail(d.id); setCtxBin({ id: '', label: '' }); setLastScan(null);
+        await loadSessions(); await loadDetail(d.id); setCtxBin({ id: '', label: '' }); setLastScan(null); resetScanUi();
         flash('success', `Sesi ${d.session_no} dibuat — ${d.lines} baris (${d.level === 'rak' ? 'hitung rak: penempatan saja' : 'hitung lokasi'}).`);
       } else flash('error', errText(d, 'Gagal membuat sesi'));
     } catch (e) { flash('error', e.message); } finally { setBusy(false); }
   };
 
-  const openSession = async (s) => { await loadDetail(s.id); setCtxBin({ id: '', label: '' }); setLastScan(null); };
-  const backToList = async () => { setView(null); setZeroList(null); await loadSessions(); };
+  const openSession = async (s) => { await loadDetail(s.id); setCtxBin({ id: '', label: '' }); setLastScan(null); resetScanUi(); };
+  const backToList = async () => { setView(null); setZeroList(null); resetScanUi(); await loadSessions(); };
 
   const pickBin = async (raw) => {
     const code = (raw || '').trim(); if (!code) return;
@@ -164,9 +180,9 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       const qs = new URLSearchParams({ barcode: code, session_id: sess.id });
       const r = await fetch(`${API}/api/wms/opname3/resolve-bin?${qs}`, { headers: authH });
       const d = await r.json();
-      if (!r.ok) { scanFeedback('error'); flash('error', errText(d, `Kode "${code}" bukan bin/lokasi sesi ini`)); return; }
-      scanFeedback('ok'); setCtxBin({ id: d.bin_id, label: d.label }); focusItem();
-    } catch (e) { scanFeedback('error'); flash('error', e.message); }
+      if (!r.ok) { scanFeedback('error'); binFail(errText(d, `Kode "${code}" bukan bin/lokasi sesi ini`)); return; }
+      scanFeedback('ok'); setBinResult(null); setCtxBin({ id: d.bin_id, label: d.label }); focusItem();
+    } catch (e) { scanFeedback('error'); binFail(e.message); }
   };
 
   const post = async (path, payload) => {
@@ -177,7 +193,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
 
   const doScan = async (raw) => {
     const code = (raw || '').trim(); if (!code) return;
-    if (isRak && !ctxBin.id) { scanFeedback('error'); flash('error', 'Hitung rak: scan / pilih BIN dulu'); return; }
+    if (isRak && !ctxBin.id) { scanFeedback('error'); itemFail('Pilih bin dulu', 'Hitung rak: pilih atau scan bin di bagian Lokasi hitung.'); return; }
     const q = Number(scanQty) > 0 ? Number(scanQty) : (mode === 'set' ? 0 : 1);
     const payload = { session_id: sess.id, bin_id: ctxBin.id, qty: q };
     if (scanUom && scanUom !== scanBaseUnit) payload.input_uom = scanUom;
@@ -185,9 +201,16 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       const [r, d] = mode === 'set'
         ? await post('count', { ...payload, item_barcode: code })
         : await post('scan', { ...payload, item_barcode: code });
-      if (r.ok) { scanFeedback('ok'); setLastScan(d); await loadDetail(sess.id); }
-      else { scanFeedback('error'); flash('error', errText(d, 'Barang tidak dikenal')); }
-    } catch (e) { scanFeedback('error'); flash('error', e.message); }
+      if (r.ok) {
+        scanFeedback('ok'); setLastScan(d);
+        setItemResult({
+          tone: 'ok', testId: 'opname-last-scan',
+          title: `Tercatat: ${d.material_code} · ${fmtNum(d.counted_qty)} ${d.base_uom || ''}`.trim(),
+          detail: `${d.material_name || ''} · ${d.bin_label || 'lantai / belum dirak'}`,
+        });
+        await loadDetail(sess.id);
+      } else { scanFeedback('error'); itemFail(errText(d, 'Barang tidak dikenal'), `Kode: ${code}`); }
+    } catch (e) { scanFeedback('error'); itemFail(e.message || 'Scan gagal terkirim', 'Periksa koneksi, lalu scan ulang.'); }
     focusItem();
   };
 
@@ -218,36 +241,46 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
         await loadDetail(sess.id);
       } else if (r.status === 409 && d?.detail?.code === 'belum_dihitung') {
         setZeroList(d.detail.belum_dihitung || []);
-      } else flash('error', errText(d, `Gagal ${action}`));
+      } else flash('error', errText(d, `Gagal ${{ submit: 'mengajukan', approve: 'menyetujui', reject: 'menolak', cancel: 'membatalkan' }[action] || 'memproses'} sesi`));
     } catch (e) { flash('error', e.message); } finally { setBusy(false); }
+  };
+
+  const cancelSession = async () => {
+    const ok = await confirmDialog({
+      title: `Batalkan sesi ${sess.session_no}?`,
+      body: 'Hasil hitung sesi ini tidak dipakai dan stok tidak berubah.',
+      confirmLabel: 'Batalkan sesi', cancelLabel: 'Kembali', danger: true,
+    });
+    if (ok) doAction('cancel');
   };
 
   // ── RENDER ─────────────────────────────────────────────────────────────
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>;
 
+  // Pesan atas halaman hanya untuk aksi sesi (buat, ajukan, setujui, tolak, batalkan); hasil scan ada di bawah kotak scan.
   const banner = message && (
-    <div data-testid="opname-message" className={`p-3 rounded-xl text-sm font-medium ${message.type === 'success' ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.2)]' : 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.2)]'}`}>{message.text}</div>
+    <Notice tone={message.type === 'success' ? 'success' : 'danger'} title={message.text} testId="opname-message" />
   );
 
   // ── DAFTAR ──
   if (!view) {
     return (
-      <div className="space-y-6" data-testid="wms-opname-scan-module">
+      <div className="space-y-4" data-testid="wms-opname-scan-module">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold text-foreground">{kind === 'aksesoris' ? 'Stok Opname Aksesoris' : 'Sesi Opname'}</h1>
-            <p className="text-muted-foreground text-sm">Per lokasi (opsional zona/rak/bin). Hitung buta, tanpa kunci — transaksi tetap jalan; selisih = hitung − stok sistem saat dihitung. Satu jurnal per sesi saat disetujui.</p>
+            <h1 className="text-2xl font-bold text-foreground">{kind === 'aksesoris' ? 'Stok opname aksesoris' : 'Sesi opname'}</h1>
+            <p className="text-muted-foreground text-sm">Hitung stok fisik per lokasi; transaksi tetap jalan dan selisih dibukukan setelah disetujui.</p>
           </div>
           <div className="flex gap-2">
-            <IconButton label="Refresh" onClick={loadSessions} data-testid="opname-refresh"><RefreshCw className="w-4 h-4 text-muted-foreground" /></IconButton>
-            <Button onClick={() => setShowNew((v) => !v)} className="bg-primary text-primary-foreground hover:brightness-110" data-testid="opname-new-btn"><Plus className="w-4 h-4 mr-1" /> Opname Baru</Button>
+            <IconButton label="Muat ulang" onClick={loadSessions} data-testid="opname-refresh"><RefreshCw className="w-4 h-4 text-muted-foreground" /></IconButton>
+            <Button onClick={() => setShowNew((v) => !v)} data-testid="opname-new-btn"><Plus className="w-4 h-4" /> Opname baru</Button>
           </div>
         </div>
         {banner}
 
         {showNew && (
           <GlassCard hover={false} className="p-5 space-y-3" data-testid="opname-new-panel">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-4 h-4 text-primary" /> Sesi Opname Baru</h3>
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ListChecks className="w-4 h-4 text-primary" /> Sesi opname baru</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Lokasi (wajib)</label>
@@ -278,29 +311,29 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                 </div>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-4">
-              <span className="text-xs text-muted-foreground">Jenis:</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <span className="text-xs text-muted-foreground">Jenis barang:</span>
               {KIND_OPTS.map(([k, label]) => (
-                <label key={k} className="text-sm text-foreground flex items-center gap-1.5">
-                  <input type="checkbox" checked={kinds.includes(k)} disabled={!!kind}
-                    onChange={(e) => setKinds((v) => (e.target.checked ? [...v, k] : v.filter((x) => x !== k)))} data-testid={`opname-kind-${k}`} />
+                <label key={k} htmlFor={`opname-kind-${k}-cb`} className="text-sm text-foreground flex items-center gap-2 cursor-pointer">
+                  <Checkbox id={`opname-kind-${k}-cb`} checked={kinds.includes(k)} disabled={!!kind}
+                    onCheckedChange={(c) => setKinds((v) => (c === true ? [...v, k] : v.filter((x) => x !== k)))} data-testid={`opname-kind-${k}`} />
                   {label}
                 </label>
               ))}
-              <span className="text-[11px] text-muted-foreground">(kosong = semua jenis)</span>
+              <span className="text-[11px] text-muted-foreground">Tidak dicentang = semua jenis</span>
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Cycle count — kode / SKU barang (opsional, pisah koma/baris; kosong = hitung semua barang di cakupan)</label>
-              <textarea value={codes} onChange={(e) => setCodes(e.target.value)} rows={2} className={selectCls} data-testid="opname-codes" />
+              <label htmlFor="opname-codes-field" className="text-xs text-muted-foreground mb-1 block">Hanya barang tertentu (opsional) — ketik atau scan kode, satu per baris</label>
+              <textarea id="opname-codes-field" value={codes} onChange={(e) => setCodes(e.target.value)} rows={2} className={selectCls} placeholder="Kosongkan untuk menghitung semua barang" data-testid="opname-codes" />
             </div>
-            <Button onClick={createSession} disabled={busy || !locId || (subType && !subId)} className="bg-primary text-primary-foreground hover:brightness-110" data-testid="opname-create-btn"><Check className="w-4 h-4 mr-1" /> Mulai (ambil snapshot)</Button>
+            <Button onClick={createSession} disabled={busy || !locId || (subType && !subId)} data-testid="opname-create-btn"><Check className="w-4 h-4" /> Mulai hitung</Button>
           </GlassCard>
         )}
 
         <GlassCard hover={false} className="p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3">Riwayat Sesi Opname</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-3">Riwayat sesi opname</h3>
           {sessions.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-8">Belum ada sesi opname. Klik &ldquo;Opname Baru&rdquo; untuk memulai.</p>
+            <EmptyState icon={ClipboardList} title="Belum ada sesi opname" description="Klik Opname baru untuk mulai menghitung." testId="opname-empty" />
           ) : (
             <div className="space-y-2">
               {sessions.map((s) => (
@@ -339,7 +372,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   if (view.archived) {
     const rows = view.counts || view.session?.count_items || [];
     return (
-      <div className="space-y-6" data-testid="wms-opname-scan-module">
+      <div className="space-y-4" data-testid="wms-opname-scan-module">
         {header}
         <GlassCard hover={false} className="p-5" data-testid="opname-archive">
           <p className="text-xs text-muted-foreground mb-3">Sesi ini dibuat mesin opname lama (sebelum mesin tunggal K9). Hanya bisa dibaca; untuk menghitung ulang buat Sesi Opname baru.</p>
@@ -362,7 +395,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   const status = sess.status;
 
   return (
-    <div className="space-y-6" data-testid="wms-opname-scan-module">
+    <div className="space-y-4" data-testid="wms-opname-scan-module">
       {header}
       {banner}
 
@@ -374,59 +407,88 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
             {zeroList.map((z) => <div key={z.key}>{z.material_code} — {z.material_name}{z.bin_label ? ` @ ${z.bin_label}` : ''}</div>)}
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => doAction('submit', { confirm_zero: true })} disabled={busy} className="bg-[hsl(var(--warning))] text-white hover:brightness-110" data-testid="opname-confirm-zero">Anggap 0 &amp; Ajukan</Button>
-            <Button onClick={() => setZeroList(null)} variant="ghost" className="text-muted-foreground">Kembali menghitung</Button>
+            <Button onClick={() => doAction('submit', { confirm_zero: true })} disabled={busy} data-testid="opname-confirm-zero">Anggap 0 &amp; ajukan</Button>
+            <Button onClick={() => setZeroList(null)} variant="outline">Kembali menghitung</Button>
           </div>
         </GlassCard>
       )}
 
       {status === 'counting' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <GlassCard hover={false} className="p-5 space-y-4">
-            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ScanLine className="w-4 h-4 text-primary" /> Hitung <span className="text-[11px] text-muted-foreground font-normal flex items-center gap-1"><EyeOff className="w-3 h-3" /> buta — qty sistem disembunyikan</span></h3>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <GlassCard hover={false} className="p-5 space-y-4" data-testid="opname-count-panel">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2 flex-wrap"><ScanLine className="w-4 h-4 text-primary" /> Hitung <span className="text-[11px] text-muted-foreground font-normal flex items-center gap-1"><EyeOff className="w-3 h-3" /> jumlah sistem disembunyikan</span></h3>
+
+            {/* 1 · Aksi utama: scan barang — paling atas, besar; hasil scan tepat di bawahnya. */}
+            <div>
+              <UniversalScanner variant="inline" onScan={doScan} continuous keepFocus autoFocus
+                label="Scan barang" placeholder="Scan atau ketik kode barang, lalu Enter"
+                inputClassName="h-12 text-base md:text-base" disabled={isRak && !ctxBin.id}
+                result={isRak && !ctxBin.id
+                  ? { tone: 'info', title: 'Pilih bin dulu', detail: 'Hitung rak: pilih atau scan bin di bagian Lokasi hitung di bawah.', testId: 'opname-scan-result' }
+                  : itemResult}
+                data-testid="opname-item-input" />
+            </div>
+
+            {/* 2 · Cara menghitung + jumlah & satuan */}
             <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Konteks: scan label BIN atau label LOKASI {isRak ? '(wajib bin)' : '(opsional — tanpa bin = lantai / belum dirak)'}</label>
-              <UniversalScanner variant="inline" onScan={pickBin} placeholder="Scan label bin / lokasi..." data-testid="opname-bin-barcode" />
-              <SmartNativeSelect value={ctxBin.id} onChange={(e) => { const b = ctxBins.find((x) => x.id === e.target.value); setCtxBin(b ? { id: b.id, label: b.label } : { id: '', label: '' }); focusItem(); }} className={selectCls} data-testid="opname-bin-select">
+              <p className="text-xs font-medium text-muted-foreground">Cara menghitung</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Cara menghitung">
+                <Button type="button" variant={mode === 'add' ? 'default' : 'outline'} aria-pressed={mode === 'add'} onClick={() => setMode('add')} className="flex-1 basis-44" data-testid="opname-mode-add">Tambah tiap scan</Button>
+                <Button type="button" variant={mode === 'set' ? 'default' : 'outline'} aria-pressed={mode === 'set'} onClick={() => setMode('set')} className="flex-1 basis-44" data-testid="opname-mode-set">Isi jumlah hitungan</Button>
+              </div>
+              <p className="text-[11px] text-muted-foreground" data-testid="opname-mode-help">
+                {mode === 'set'
+                  ? 'Isi jumlahnya, lalu scan barangnya — jumlah itu menjadi hasil hitung barang tersebut di lokasi ini.'
+                  : 'Setiap scan menambah jumlah di bawah ke hitungan barang tersebut.'}
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="min-w-0">
+                  <label htmlFor="opname-scan-qty-field" className="text-xs text-muted-foreground mb-1 block">{mode === 'set' ? 'Jumlah hitungan' : 'Jumlah per scan'}</label>
+                  <GlassInput id="opname-scan-qty-field" type="number" min={0} step="0.0001" value={scanQty}
+                    onChange={(e) => setScanQty(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') focusItem(); }}
+                    data-testid="opname-scan-qty" />
+                </div>
+                <div className="min-w-0">
+                  <span className="text-xs text-muted-foreground mb-1 block">Satuan</span>
+                  <SmartNativeSelect value={scanUnitValue} onChange={(e) => setScanUom(e.target.value)} disabled={scanUnits.length <= 1}
+                    searchable={false} className={`${selectCls} h-10`} aria-label="Satuan" data-testid="opname-scan-uom"
+                    title={scanUnits.length <= 1 ? 'Belum ada satuan lain — tambahkan kemasan di Master Material' : 'Pilih satuan hitung fisik'}>
+                    {scanUnits.length
+                      ? scanUnits.map((u) => <option key={u.unit} value={u.unit}>{u.unit}</option>)
+                      : <option value="">Satuan barang</option>}
+                  </SmartNativeSelect>
+                </div>
+              </div>
+              <UomConversionHint opt={scanUomOpt} qty={scanQty} unit={scanUom || scanBaseUnit} fallbackUnit={lastScan?.base_uom || ''} testId="opname-scan-uom-hint" />
+            </div>
+
+            {/* 3 · Lokasi hitung: satu blok (pilih, atau scan label) */}
+            <div className="space-y-2 pt-4 border-t border-[var(--glass-border)]">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs font-medium text-muted-foreground flex items-center gap-1"><MapPin className="w-3 h-3" /> Lokasi hitung{isRak ? ' (wajib pilih bin)' : ''}</span>
+                <span className="text-[11px] text-muted-foreground min-w-0 truncate" data-testid="opname-active-bin">
+                  Sekarang: <span className="text-foreground font-medium">{ctxBin.id ? ctxBin.label : `${sess.location_code} · lantai / belum dirak`}</span>
+                </span>
+              </div>
+              <SmartNativeSelect value={ctxBin.id} onChange={(e) => { const b = ctxBins.find((x) => x.id === e.target.value); setCtxBin(b ? { id: b.id, label: b.label } : { id: '', label: '' }); setBinResult(null); focusItem(); }} className={selectCls} aria-label="Lokasi hitung" data-testid="opname-bin-select">
                 {!isRak && <option value="">Lantai / belum dirak ({sess.location_code})</option>}
                 {isRak && <option value="">— pilih bin —</option>}
                 {ctxBins.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
               </SmartNativeSelect>
-              <div className="p-2 rounded-lg bg-primary/10 border border-primary/20 text-xs text-foreground flex items-center gap-2" data-testid="opname-active-bin">
-                <MapPin className="w-3 h-3 text-primary" /> {ctxBin.id ? ctxBin.label : `${sess.location_code} · lantai / belum dirak`}
-              </div>
+              <UniversalScanner variant="inline" onScan={pickBin} cameraButton={false} result={binResult}
+                placeholder={isRak ? 'Atau scan label bin' : 'Atau scan label bin / lokasi'} data-testid="opname-bin-barcode" />
+              <p className="text-[11px] text-muted-foreground">{isRak ? 'Hitung rak: pilih atau scan bin dulu sebelum scan barang.' : 'Tanpa bin berarti barang di lantai atau belum dirak.'}</p>
             </div>
-            <div className="space-y-2">
-              <div className="flex gap-2 text-xs">
-                <button onClick={() => setMode('add')} className={`px-2 py-1 rounded border ${mode === 'add' ? 'border-primary text-primary' : 'border-[var(--glass-border)] text-muted-foreground'}`} data-testid="opname-mode-add">+ per scan</button>
-                <button onClick={() => setMode('set')} className={`px-2 py-1 rounded border ${mode === 'set' ? 'border-primary text-primary' : 'border-[var(--glass-border)] text-muted-foreground'}`} data-testid="opname-mode-set">Ketik jumlah (set)</button>
-              </div>
-              <div className="flex gap-2">
-                <GlassInput type="number" min={0} step="0.0001" value={scanQty} onChange={(e) => setScanQty(e.target.value)} className="w-28" data-testid="opname-scan-qty" />
-                <UomSelect opt={scanUomOpt} value={scanUom || scanBaseUnit} onChange={(e) => setScanUom(e.target.value)} fallbackUnit={lastScan?.base_uom || ''} testId="opname-scan-uom" className="w-24 shrink-0" />
-                <div className="flex-1"><UomConversionHint opt={scanUomOpt} qty={scanQty} unit={scanUom || scanBaseUnit} fallbackUnit={lastScan?.base_uom || ''} testId="opname-scan-uom-hint" /></div>
-              </div>
-              <label className="text-xs font-medium text-muted-foreground">{mode === 'set' ? 'Scan / ketik kode barang → jumlah di atas MENJADI hasil hitung di konteks ini.' : 'Scan barang terus-menerus (scanner atau kamera); tiap scan menambah jumlah di atas.'}</label>
-              <UniversalScanner variant="inline" onScan={doScan} continuous keepFocus autoFocus placeholder="Scan / ketik kode barang lalu Enter..." disabled={isRak && !ctxBin.id} data-testid="opname-item-input" />
-            </div>
-            {lastScan && (
-              <div className="p-3 rounded-xl border bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.2)]" data-testid="opname-last-scan">
-                <div className="flex items-center justify-between"><span className="text-sm font-medium text-foreground">{lastScan.material_code}</span><span className="text-lg font-bold text-foreground">{fmtNum(lastScan.counted_qty)} {lastScan.base_uom}</span></div>
-                <p className="text-[11px] text-muted-foreground mt-1">{lastScan.material_name} · {lastScan.bin_label || 'lantai / belum dirak'}</p>
-              </div>
-            )}
           </GlassCard>
 
           <GlassCard hover={false} className="p-5">
-            <div className="flex items-center justify-between mb-3 gap-2">
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" /> Lembar Hitung <span className="text-xs text-muted-foreground font-normal">{totals.counted || 0}/{totals.lines || 0} dihitung</span></h3>
-              <div className="flex gap-2">
-                <Button onClick={() => doAction('cancel')} disabled={busy} variant="ghost" size="sm" className="text-muted-foreground" data-testid="opname-cancel-btn">Batalkan</Button>
-                <Button onClick={() => doAction('submit')} disabled={busy} size="sm" className="bg-primary text-primary-foreground hover:brightness-110" data-testid="opname-submit-btn"><PackageCheck className="w-4 h-4 mr-1" /> Selesai &amp; Ajukan</Button>
-              </div>
+            <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2"><ClipboardList className="w-4 h-4 text-primary" /> Lembar hitung <span className="text-xs text-muted-foreground font-normal">{totals.counted || 0}/{totals.lines || 0} dihitung</span></h3>
+              <Button onClick={() => doAction('submit')} disabled={busy} size="sm" data-testid="opname-submit-btn"><PackageCheck className="w-4 h-4" /> Selesai &amp; ajukan</Button>
             </div>
             <div className="space-y-2 max-h-[520px] overflow-y-auto">
-              {lines.length === 0 ? <p className="text-xs text-muted-foreground text-center py-8">Tidak ada barang di snapshot. Barang yang ditemukan akan ditambahkan saat di-scan.</p> : lines.map((ln) => (
+              {lines.length === 0 ? <EmptyState icon={ClipboardList} title="Tidak ada barang di stok saat mulai" description="Barang yang di-scan akan ditambahkan ke daftar ini." testId="opname-lines-empty" /> : lines.map((ln) => (
                 <div key={ln.key} className="p-2.5 rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)]" data-testid={`opname-line-${ln.material_code}`}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
@@ -458,6 +520,11 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                 </div>
               ))}
             </div>
+            {/* Batalkan sesi dijauhkan dari "Selesai & ajukan" (dulu bersebelahan → mudah salah tekan) dan dikonfirmasi. */}
+            <div className="mt-4 pt-3 border-t border-[var(--glass-border)] flex flex-wrap items-center gap-3">
+              <Button onClick={cancelSession} disabled={busy} variant="outline" size="sm" className="text-destructive hover:text-destructive" data-testid="opname-cancel-btn">Batalkan sesi</Button>
+              <span className="text-[11px] text-muted-foreground">Hanya bila sesi ini salah dibuat; hasil hitung tidak dipakai.</span>
+            </div>
           </GlassCard>
         </div>
       )}
@@ -467,16 +534,16 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Baris dihitung</p><p className="text-xl font-bold text-foreground">{totals.counted || 0}/{totals.lines || 0}</p></GlassCard>
             <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Baris berselisih</p><p className="text-xl font-bold text-foreground">{totals.with_variance || 0}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Nilai selisih (WAC snapshot)</p><p className={`text-xl font-bold ${totals.total_variance_value < 0 ? 'text-[hsl(var(--destructive))]' : totals.total_variance_value > 0 ? 'text-[hsl(var(--success))]' : 'text-foreground'}`}>{fmtRp(totals.total_variance_value)}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Tanpa WAC (tak berjurnal)</p><p className="text-xl font-bold text-[hsl(var(--warning))]">{totals.uncosted || 0}</p></GlassCard>
+            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Nilai selisih (harga rata-rata saat mulai)</p><p className={`text-xl font-bold ${totals.total_variance_value < 0 ? 'text-[hsl(var(--destructive))]' : totals.total_variance_value > 0 ? 'text-[hsl(var(--success))]' : 'text-foreground'}`}>{fmtRp(totals.total_variance_value)}</p></GlassCard>
+            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Tanpa harga rata-rata (tidak dijurnal)</p><p className="text-xl font-bold text-[hsl(var(--warning))]">{totals.uncosted || 0}</p></GlassCard>
           </div>
           {isRak && <p className="text-xs text-muted-foreground">Hitung level rak hanya memperbaiki PENEMPATAN bin — stok dan jurnal tidak berubah.</p>}
 
           {status === 'submitted' && (
             <div className="flex flex-wrap gap-2" data-testid="opname-approval-actions">
-              <Button onClick={() => doAction('approve')} disabled={busy} className="bg-[hsl(var(--success))] text-white hover:brightness-110" data-testid="opname-approve-btn"><ShieldCheck className="w-4 h-4 mr-1" /> Approve (Supervisor)</Button>
-              <Button onClick={() => doAction('reject')} disabled={busy} variant="outline" className="border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))]" data-testid="opname-reject-btn"><X className="w-4 h-4 mr-1" /> Tolak</Button>
-              <Button onClick={() => doAction('cancel')} disabled={busy} variant="ghost" className="text-muted-foreground" data-testid="opname-cancel-btn">Batalkan</Button>
+              <Button onClick={() => doAction('approve')} disabled={busy} data-testid="opname-approve-btn"><ShieldCheck className="w-4 h-4" /> Setujui</Button>
+              <Button onClick={() => doAction('reject')} disabled={busy} variant="outline" className="border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))]" data-testid="opname-reject-btn"><X className="w-4 h-4" /> Tolak</Button>
+              <Button onClick={cancelSession} disabled={busy} variant="outline" className="text-destructive hover:text-destructive" data-testid="opname-cancel-btn">Batalkan sesi</Button>
             </div>
           )}
           {status === 'approved' && (
@@ -493,7 +560,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                 <thead>
                   <tr className="text-xs text-muted-foreground border-b border-[var(--glass-border)]">
                     <th className="text-left py-2">Kode</th><th className="text-left">Nama</th>{isRak && <th className="text-left">Bin</th>}
-                    <th className="text-right">{isRak ? 'Penempatan' : 'Snapshot'}</th>{!isRak && <th className="text-right">Mutasi s/d dihitung</th>}{!isRak && <th className="text-right">Sistem saat dihitung</th>}
+                    <th className="text-right">{isRak ? 'Penempatan' : 'Stok saat mulai'}</th>{!isRak && <th className="text-right">Mutasi s/d dihitung</th>}{!isRak && <th className="text-right">Sistem saat dihitung</th>}
                     <th className="text-right">Hitung</th><th className="text-right">Selisih</th>{!isRak && <th className="text-right">Nilai</th>}<th className="text-left pl-3">Catatan</th>
                   </tr>
                 </thead>

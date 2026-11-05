@@ -25,6 +25,11 @@
  *   feedback              — bunyi/getar saat kode terbaca (bawaan: = continuous).
  *   keepFocus             — (inline) input kembali fokus setelah setiap scan.
  *   dedupeMs              — (inline) abaikan kode sama dari wedge dalam jeda ini (bawaan 0).
+ * 2026-11-06 (audit layar scan Gudang):
+ *   result                — (inline) {tone, title, detail} → `ScanResult` TEPAT di bawah kotak scan
+ *                           (satu bentuk umpan balik di semua layar; dulu tiap layar menaruh pesan sendiri).
+ *   cameraButton          — (inline) tombol besar "Scan pakai kamera" di HP (bawaan true): ikon kecil di
+ *                           ujung kotak terlalu kecil untuk jari, padahal di HP kamera adalah cara utama.
  * Kode SELALU dinormalisasi (`scanCode.normalizeScanCode`, cermin backend) sebelum onScan.
  * Layar scan keluar (K15) & opname (K9) memakai komponen ini — jangan buat scanner baru.
  */
@@ -37,6 +42,7 @@ import { Input } from '@/components/ui/input';
 import Modal from '../Modal';
 import { useCameraScanner, useWedgeInput } from './useScanner';
 import { normalizeScanCode, scanFeedback } from './scanCode';
+import ScanResult from './ScanResult';
 
 // ─── Internal: Camera + Manual modal contents ─────────────────────────────────
 function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuous = false, feedback }) {
@@ -141,7 +147,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
           }`}
           data-testid="scanner-tab-manual"
         >
-          <Keyboard className="w-3.5 h-3.5" /> Input Manual
+          <Keyboard className="w-3.5 h-3.5" /> Ketik kode
         </button>
       </div>
 
@@ -198,7 +204,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
                   className="ml-2 underline font-semibold"
                   data-testid="scanner-switch-manual-cta"
                 >
-                  Pakai input manual
+                  Ketik kode saja
                 </button>
               </span>
             </div>
@@ -241,11 +247,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
       )}
 
       <div className="text-[10px] text-muted-foreground text-center">
-        Tips: tekan{' '}
-        <kbd className="px-1 py-0.5 border border-[var(--glass-border)] rounded bg-[var(--glass-bg)]">
-          Input Manual
-        </kbd>{' '}
-        kalau kamera bermasalah.
+        Kamera bermasalah? Pilih <b>Ketik kode</b>.
       </div>
     </div>
   );
@@ -273,14 +275,21 @@ function ScannerInline({
   onScan, placeholder = 'Scan atau ketik barcode...', label, disabled,
   autoFocus = false, inputClassName = '', 'data-testid': testId,
   continuous = false, keepFocus = false, feedback = false, dedupeMs = 0,
+  result = null, cameraButton = true,
 }) {
   const [value, setValue]       = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [flashAt, setFlashAt]   = useState(0);
   const inputRef                = useRef(null);
 
-  const refocus = useCallback(() => {
-    if (keepFocus) setTimeout(() => inputRef.current?.focus(), 0);
+  // Di HP (layar sentuh) fokus TIDAK dikembalikan setelah scan kamera — memfokuskan kotak input
+  // memunculkan keyboard dan menutupi separuh layar. Scanner tembak/keyboard tetap kembali fokus.
+  const refocus = useCallback((source) => {
+    if (!keepFocus) return;
+    let touch = false;
+    try { touch = window.matchMedia?.('(pointer: coarse)')?.matches; } catch (_) { /* noop */ }
+    if (source === 'camera' && touch) return;
+    setTimeout(() => inputRef.current?.focus(), 0);
   }, [keepFocus]);
 
   const fireScan = useCallback((code, source, beep = true) => {
@@ -288,7 +297,7 @@ function ScannerInline({
     setFlashAt(Date.now());
     if (feedback && beep) scanFeedback('ok');
     onScan?.(code, source);
-    refocus();
+    refocus(source);
   }, [onScan, feedback, refocus]);
 
   const { handleKeyDown } = useWedgeInput({
@@ -330,15 +339,23 @@ function ScannerInline({
           onClick={() => setModalOpen(true)}
           disabled={disabled}
           title="Buka kamera scanner"
+          aria-label="Buka kamera scanner"
           className="absolute right-2 text-muted-foreground hover:text-[hsl(var(--primary))] transition-colors disabled:opacity-40"
           data-testid="scanner-camera-btn"
         >
           <ScanLine className="w-4 h-4" />
         </button>
       </div>
+      {cameraButton && (
+        <Button type="button" variant="outline" size="lg" className="mt-2 w-full sm:hidden text-base gap-2"
+          onClick={() => setModalOpen(true)} disabled={disabled} data-testid="scanner-camera-big">
+          <Camera className="w-5 h-5" /> Scan pakai kamera
+        </Button>
+      )}
+      {result && <ScanResult {...result} />}
       <ScannerModal
         open={modalOpen}
-        onClose={() => { setModalOpen(false); refocus(); }}
+        onClose={() => { setModalOpen(false); refocus('camera'); }}
         onScan={handleModalScan}
         title="Scan Barcode"
         continuous={continuous}
@@ -411,6 +428,8 @@ export default function UniversalScanner({
   feedback,
   keepFocus,
   dedupeMs,
+  result,
+  cameraButton,
   'data-testid': testId,
 }) {
   if (variant === 'modal') {
@@ -454,6 +473,8 @@ export default function UniversalScanner({
       feedback={feedback}
       keepFocus={keepFocus}
       dedupeMs={dedupeMs}
+      result={result}
+      cameraButton={cameraButton}
       data-testid={testId}
     />
   );

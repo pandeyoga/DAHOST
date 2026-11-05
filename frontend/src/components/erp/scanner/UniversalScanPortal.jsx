@@ -22,31 +22,31 @@ const API = process.env.REACT_APP_BACKEND_URL;
 // 2026-11-02 (Paket 3a): + `fg` (SKU barang jadi, Code128 & QR label) dan `bin`
 // (posisi rak / lokasi) — resolver backend kini `core.scan_resolver`.
 const ENTITY_CFG = {
-  fg:             { icon: Shirt,         color: 'text-rose-600 dark:text-rose-400',    bg: 'bg-rose-50 dark:bg-rose-400/10',    border: 'border-rose-300 dark:border-rose-400/20',    label: 'Barang Jadi (SKU)' },
-  bin:            { icon: MapPin,        color: 'text-teal-600 dark:text-teal-400',    bg: 'bg-teal-50 dark:bg-teal-400/10',    border: 'border-teal-300 dark:border-teal-400/20',    label: 'Lokasi / Bin' },
-  asset:          { icon: Package,       color: 'text-blue-600 dark:text-blue-400',    bg: 'bg-blue-50 dark:bg-blue-400/10',    border: 'border-blue-300 dark:border-blue-400/20',    label: 'Aset' },
-  bundle:         { icon: Box,           color: 'text-purple-600 dark:text-purple-400',  bg: 'bg-purple-50 dark:bg-purple-400/10',  border: 'border-purple-300 dark:border-purple-400/20',  label: 'Bundle Produksi' },
-  material:       { icon: Layers,        color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-400/10', border: 'border-emerald-300 dark:border-emerald-400/20', label: 'Material' },
-  work_order:     { icon: ClipboardList, color: 'text-orange-600 dark:text-orange-400',  bg: 'bg-orange-50 dark:bg-orange-400/10',  border: 'border-orange-300 dark:border-orange-400/20',  label: 'Work Order' },
-  purchase_order: { icon: ShoppingCart,  color: 'text-indigo-600 dark:text-indigo-400',  bg: 'bg-indigo-50 dark:bg-indigo-400/10',  border: 'border-indigo-300 dark:border-indigo-400/20',  label: 'Purchase Order' },
-  fabric_roll:    { icon: Columns,       color: 'text-yellow-600 dark:text-yellow-400',  bg: 'bg-yellow-50 dark:bg-yellow-400/10',  border: 'border-yellow-300 dark:border-yellow-400/20',  label: 'Roll Kain' },
-  delivery_order: { icon: Truck,         color: 'text-sky-600 dark:text-sky-400',     bg: 'bg-sky-50 dark:bg-sky-400/10',     border: 'border-sky-300 dark:border-sky-400/20',     label: 'Delivery Order' },
+  fg:             { icon: Shirt,         color: 'text-[hsl(var(--destructive))] ',    bg: 'bg-[hsl(var(--destructive)/0.1)] ',    border: 'border-[hsl(var(--destructive)/0.35)] ',    label: 'Barang Jadi (SKU)' },
+  bin:            { icon: MapPin,        color: 'text-[hsl(var(--success))] ',    bg: 'bg-[hsl(var(--success)/0.1)] ',    border: 'border-[hsl(var(--success)/0.35)] ',    label: 'Lokasi / Bin' },
+  asset:          { icon: Package,       color: 'text-[hsl(var(--primary))] ',    bg: 'bg-[hsl(var(--primary)/0.1)] ',    border: 'border-[hsl(var(--primary)/0.35)] ',    label: 'Aset' },
+  bundle:         { icon: Box,           color: 'text-[hsl(var(--primary))] ',  bg: 'bg-[hsl(var(--primary)/0.1)] ',  border: 'border-[hsl(var(--primary)/0.35)] ',  label: 'Bundle Produksi' },
+  material:       { icon: Layers,        color: 'text-[hsl(var(--success))] ', bg: 'bg-[hsl(var(--success)/0.1)] ', border: 'border-[hsl(var(--success)/0.35)] ', label: 'Material' },
+  work_order:     { icon: ClipboardList, color: 'text-[hsl(var(--warning))] ',  bg: 'bg-[hsl(var(--warning)/0.1)] ',  border: 'border-[hsl(var(--warning)/0.35)] ',  label: 'Work Order' },
+  purchase_order: { icon: ShoppingCart,  color: 'text-[hsl(var(--primary))] ',  bg: 'bg-[hsl(var(--primary)/0.1)] ',  border: 'border-[hsl(var(--primary)/0.35)] ',  label: 'Purchase Order' },
+  fabric_roll:    { icon: Columns,       color: 'text-[hsl(var(--warning))] ',  bg: 'bg-[hsl(var(--warning)/0.1)] ',  border: 'border-[hsl(var(--warning)/0.35)] ',  label: 'Roll Kain' },
+  delivery_order: { icon: Truck,         color: 'text-[hsl(var(--primary))] ',     bg: 'bg-[hsl(var(--primary)/0.1)] ',     border: 'border-[hsl(var(--primary)/0.35)] ',     label: 'Delivery Order' },
 };
 
 // ─── Status badge ─────────────────────────────────────────────────────────────
 function StatusBadge({ status }) {
   if (!status) return null;
   const STATUS_COLOR = {
-    active: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-300', available: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-300',
-    in_use: 'bg-blue-50 dark:bg-blue-400/15 text-blue-600 dark:text-blue-300',       in_stock: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-300',
-    draft: 'bg-zinc-50 dark:bg-zinc-400/15 text-zinc-300',         inactive: 'bg-zinc-50 dark:bg-zinc-400/15 text-zinc-300',
-    maintenance: 'bg-yellow-50 dark:bg-yellow-400/15 text-yellow-600 dark:text-yellow-300',
-    completed: 'bg-sky-50 dark:bg-sky-400/15 text-sky-600 dark:text-sky-300',       done: 'bg-sky-50 dark:bg-sky-400/15 text-sky-600 dark:text-sky-300',
-    rejected: 'bg-red-50 dark:bg-red-400/15 text-red-600 dark:text-red-300',        cancelled: 'bg-red-50 dark:bg-red-400/15 text-red-600 dark:text-red-300',
-    in_progress: 'bg-orange-50 dark:bg-orange-400/15 text-orange-600 dark:text-orange-300',
-    approved: 'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-300',
+    active: 'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))] ', available: 'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))] ',
+    in_use: 'bg-[hsl(var(--primary)/0.1)]  text-[hsl(var(--primary))] ',       in_stock: 'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))] ',
+    draft: 'bg-muted text-foreground',         inactive: 'bg-muted text-foreground',
+    maintenance: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))] ',
+    completed: 'bg-[hsl(var(--primary)/0.1)]  text-[hsl(var(--primary))] ',       done: 'bg-[hsl(var(--primary)/0.1)]  text-[hsl(var(--primary))] ',
+    rejected: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))] ',        cancelled: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))] ',
+    in_progress: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))] ',
+    approved: 'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))] ',
   };
-  const cls = STATUS_COLOR[status] || 'bg-zinc-50 dark:bg-zinc-400/15 text-zinc-300';
+  const cls = STATUS_COLOR[status] || 'bg-muted text-foreground';
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${cls}`}>
       {status.replace(/_/g, ' ')}
@@ -74,7 +74,7 @@ function ScanResultCard({ result, onAction, onScanAgain }) {
             <StatusBadge status={result.status} />
           </div>
           <p className="text-sm font-semibold text-foreground mt-0.5 truncate">{result.display_name}</p>
-          <p className="text-xs text-zinc-500 font-mono">{result.entity_number}</p>
+          <p className="text-xs text-muted-foreground tabular-nums">{result.entity_number}</p>
         </div>
       </div>
 
@@ -83,8 +83,8 @@ function ScanResultCard({ result, onAction, onScanAgain }) {
         <div className="grid grid-cols-3 gap-2">
           {Object.entries(result.meta).map(([k, v]) => (
             <div key={k} className="bg-black/20 rounded-lg px-2 py-1.5">
-              <div className="text-[10px] text-zinc-500">{k}</div>
-              <div className="text-xs text-zinc-200 font-medium truncate" title={v}>{v || '—'}</div>
+              <div className="text-[10px] text-muted-foreground">{k}</div>
+              <div className="text-xs text-foreground font-medium truncate" title={v}>{v || '—'}</div>
             </div>
           ))}
         </div>
@@ -108,7 +108,7 @@ function ScanResultCard({ result, onAction, onScanAgain }) {
 
       <button
         onClick={onScanAgain}
-        className="w-full py-2 text-xs font-medium text-zinc-400 hover:text-foreground border border-white/10 rounded-xl transition-colors"
+        className="w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground border border-[var(--glass-border)] rounded-xl transition-colors"
         data-testid="scan-again-btn"
       >
         Scan Lagi
@@ -120,22 +120,22 @@ function ScanResultCard({ result, onAction, onScanAgain }) {
 // ─── Not Found Card ───────────────────────────────────────────────────────────
 function NotFoundCard({ code, onScanAgain }) {
   return (
-    <div className="rounded-2xl border border-red-300 dark:border-red-500/20 bg-red-50 dark:bg-red-400/5 p-4 space-y-3" data-testid="scan-not-found-card">
+    <div className="rounded-2xl border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)]  p-4 space-y-3" data-testid="scan-not-found-card">
       <div className="flex items-center gap-3">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-500/20">
-          <AlertTriangle size={18} className="text-red-700 dark:text-red-400" />
+        <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] ">
+          <AlertTriangle size={18} className="text-[hsl(var(--destructive))] " />
         </div>
         <div>
           <p className="text-sm font-semibold text-foreground">Kode Tidak Ditemukan</p>
-          <p className="text-xs text-zinc-500 font-mono mt-0.5">{code}</p>
+          <p className="text-xs text-muted-foreground tabular-nums mt-0.5">{code}</p>
         </div>
       </div>
-      <p className="text-xs text-zinc-400">
+      <p className="text-xs text-muted-foreground">
         Kode ini tidak cocok dengan SKU barang jadi, bahan, lokasi/bin, roll kain, bundle, WO, PO, delivery order, atau aset yang terdaftar.
       </p>
       <button
         onClick={onScanAgain}
-        className="w-full py-2 text-xs font-medium text-zinc-400 hover:text-foreground border border-white/10 rounded-xl transition-colors"
+        className="w-full py-2 text-xs font-medium text-muted-foreground hover:text-foreground border border-[var(--glass-border)] rounded-xl transition-colors"
         data-testid="scan-again-btn-notfound"
       >
         Scan Lagi
@@ -153,22 +153,22 @@ function HistoryItem({ item }) {
     <div className="flex items-center gap-2.5 py-1.5 border-b border-foreground/5 last:border-0">
       {item.found ? (
         <div className={`w-6 h-6 rounded-md flex-shrink-0 flex items-center justify-center ${cfg?.bg || 'bg-foreground/5'}`}>
-          <Icon size={11} className={cfg?.color || 'text-zinc-400'} />
+          <Icon size={11} className={cfg?.color || 'text-muted-foreground'} />
         </div>
       ) : (
-        <div className="w-6 h-6 rounded-md flex-shrink-0 flex items-center justify-center bg-red-50 dark:bg-red-400/10">
-          <X size={11} className="text-red-700 dark:text-red-400" />
+        <div className="w-6 h-6 rounded-md flex-shrink-0 flex items-center justify-center bg-[hsl(var(--destructive)/0.1)] ">
+          <X size={11} className="text-[hsl(var(--destructive))] " />
         </div>
       )}
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-zinc-200 truncate">
+        <p className="text-xs text-foreground truncate">
           {item.display_name || item.raw_code}
         </p>
         {item.entity_number && item.entity_number !== item.display_name && (
-          <p className="text-[10px] text-zinc-500 font-mono">{item.entity_number}</p>
+          <p className="text-[10px] text-muted-foreground tabular-nums">{item.entity_number}</p>
         )}
       </div>
-      <span className="text-[10px] text-zinc-600 flex-shrink-0">{time}</span>
+      <span className="text-[10px] text-muted-foreground flex-shrink-0">{time}</span>
     </div>
   );
 }
@@ -193,6 +193,12 @@ export default function UniversalScanPortal({ token, onNavigate }) {
     } catch (_) { /* noop */ }
     finally { setHistoryLoading(false); }
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onOpen = () => openPortal();
+    window.addEventListener('erp-universal-scan', onOpen);
+    return () => window.removeEventListener('erp-universal-scan', onOpen);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openPortal = () => {
     setOpen(true);
@@ -252,15 +258,8 @@ export default function UniversalScanPortal({ token, onNavigate }) {
 
   return (
     <>
-      {/* Floating trigger button */}
-      <button
-        onClick={openPortal}
-        title="Universal Scan (Ctrl+Shift+S)"
-        className="fixed bottom-6 right-6 z-40 w-12 h-12 rounded-full bg-indigo-600 hover:bg-indigo-500 text-foreground shadow-lg shadow-indigo-500/30 flex items-center justify-center transition-all hover:scale-110 active:scale-95"
-        data-testid="universal-scan-fab"
-      >
-        <ScanLine size={20} />
-      </button>
+      {/* 2026-11-06 — pemicu kini tombol di kepala halaman (TopBar, event `erp-universal-scan`),
+          bukan bulatan mengambang yang menutupi isi halaman. Pintasan Ctrl+Shift+S tetap. */}
 
       {/* Portal modal */}
       {open && (
@@ -271,30 +270,30 @@ export default function UniversalScanPortal({ token, onNavigate }) {
           <div className="absolute inset-0 bg-foreground/40 backdrop-blur-sm" onClick={closePortal} />
 
           {/* Panel */}
-          <div className="relative w-full sm:max-w-md bg-zinc-900 border border-white/10 rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden"
+          <div className="relative w-full sm:max-w-md bg-background border border-[var(--glass-border)] rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden"
             data-testid="universal-scan-portal"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-5 pt-5 pb-3">
               <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 rounded-xl bg-indigo-100 dark:bg-indigo-500/15 border border-indigo-300 dark:border-indigo-500/20 flex items-center justify-center">
-                  <ScanLine size={15} className="text-indigo-600 dark:text-indigo-400" />
+                <div className="w-8 h-8 rounded-xl bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  flex items-center justify-center">
+                  <ScanLine size={15} className="text-[hsl(var(--primary))] " />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground">Universal Scan</p>
-                  <p className="text-[10px] text-zinc-500">SKU • Bahan • Bin • Roll • Bundle • WO • PO • DO • Aset</p>
+                  <p className="text-sm font-semibold text-foreground">Scan barcode</p>
+                  <p className="text-[10px] text-muted-foreground">SKU • Bahan • Bin • Roll • Bundle • WO • PO • DO • Aset</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => { setShowHistory(!showHistory); if (!showHistory) loadHistory(); }}
-                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400' : 'text-zinc-500 hover:text-foreground hover:bg-foreground/5'}`}
+                  className={`w-8 h-8 rounded-xl flex items-center justify-center transition-colors ${showHistory ? 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'}`}
                   data-testid="scan-history-toggle"
-                  title="Riwayat Scan"
+                  title="Riwayat scan" aria-label="Riwayat scan"
                 >
                   <History size={14} />
                 </button>
-                <button onClick={closePortal} className="w-8 h-8 rounded-xl text-zinc-400 hover:text-foreground hover:bg-foreground/5 flex items-center justify-center">
+                <button onClick={closePortal} aria-label="Tutup" title="Tutup" className="w-8 h-8 rounded-xl text-muted-foreground hover:text-foreground hover:bg-foreground/5 flex items-center justify-center">
                   <X size={14} />
                 </button>
               </div>
@@ -303,16 +302,16 @@ export default function UniversalScanPortal({ token, onNavigate }) {
             <div className="px-5 pb-6 space-y-4 max-h-[80vh] overflow-y-auto">
               {/* History panel */}
               {showHistory && (
-                <div className="bg-foreground/5 border border-white/10 rounded-xl p-3">
+                <div className="bg-foreground/5 border border-[var(--glass-border)] rounded-xl p-3">
                   <p className="text-xs font-semibold text-foreground mb-2 flex items-center gap-1.5">
                     <History size={12} /> Riwayat Scan Terakhir
                   </p>
                   {historyLoading ? (
-                    <div className="flex items-center gap-2 text-xs text-zinc-500 py-2">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
                       <Loader2 size={12} className="animate-spin" /> Memuat...
                     </div>
                   ) : history.length === 0 ? (
-                    <p className="text-xs text-zinc-500 py-2">Belum ada riwayat scan.</p>
+                    <p className="text-xs text-muted-foreground py-2">Belum ada riwayat scan.</p>
                   ) : (
                     <div>
                       {history.map((h) => <HistoryItem key={h.id} item={h} />)}
@@ -332,8 +331,8 @@ export default function UniversalScanPortal({ token, onNavigate }) {
               {/* Resolving state */}
               {resolving && (
                 <div className="flex items-center justify-center gap-3 py-10" data-testid="scan-resolving">
-                  <Loader2 size={20} className="animate-spin text-indigo-600 dark:text-indigo-400" />
-                  <p className="text-sm text-zinc-300">Mengidentifikasi...</p>
+                  <Loader2 size={20} className="animate-spin text-[hsl(var(--primary))] " />
+                  <p className="text-sm text-foreground">Mengidentifikasi...</p>
                 </div>
               )}
 
@@ -347,13 +346,13 @@ export default function UniversalScanPortal({ token, onNavigate }) {
 
             {/* Keyboard hint */}
             <div className="px-5 pb-4 text-center">
-              <p className="text-[10px] text-zinc-600">
+              <p className="text-[10px] text-muted-foreground">
                 Shortcut:{' '}
-                <kbd className="px-1.5 py-0.5 bg-foreground/5 border border-white/10 rounded text-zinc-500">Ctrl</kbd>
+                <kbd className="px-1.5 py-0.5 bg-foreground/5 border border-[var(--glass-border)] rounded text-muted-foreground">Ctrl</kbd>
                 {' + '}
-                <kbd className="px-1.5 py-0.5 bg-foreground/5 border border-white/10 rounded text-zinc-500">Shift</kbd>
+                <kbd className="px-1.5 py-0.5 bg-foreground/5 border border-[var(--glass-border)] rounded text-muted-foreground">Shift</kbd>
                 {' + '}
-                <kbd className="px-1.5 py-0.5 bg-foreground/5 border border-white/10 rounded text-zinc-500">S</kbd>
+                <kbd className="px-1.5 py-0.5 bg-foreground/5 border border-[var(--glass-border)] rounded text-muted-foreground">S</kbd>
               </p>
             </div>
           </div>

@@ -18,6 +18,8 @@ import {
   Menu, ChevronLeft, Command as CommandIcon,
 } from 'lucide-react';
 import { NotificationBell } from '../NotificationBell';
+import { ScanLine } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import GlobalSearch from './GlobalSearch';
 import AccountMenu from './AccountMenu';
 import { PORTAL_LABEL, formatSectionLabel } from './portalNav';
@@ -140,6 +142,14 @@ export default function TopBar({
             <CommandIcon className="w-3 h-3" />
             <span className="text-[10px] font-semibold tracking-wider uppercase opacity-60">⌘K</span>
           </button>
+
+          {/* 2026-11-06 — Scan universal di kepala halaman (dulu bulatan mengambang yang menutupi isi
+              di HP, tepat di bekas tombol chat). Event dibaca `scanner/UniversalScanPortal`. */}
+          <Button variant="outline" size="icon" title="Scan barcode (Ctrl+Shift+S)" aria-label="Scan barcode"
+            onClick={() => window.dispatchEvent(new CustomEvent('erp-universal-scan'))}
+            data-testid="universal-scan-fab">
+            <ScanLine className="w-4 h-4" />
+          </Button>
 
           {/* Kotak masuk (bel): Perlu Tindakan + Pemberitahuan */}
           <NotificationBell
