@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput, GlassTable } from '@/components/ui/glass';
 import AccountAssignView from './marketing/AccountAssignView';
+import { isStoreScopedUser, NO_STORE_HINT } from './marketing/NoStoreScopeNotice';
 import { usePlatformBalances } from './finance/PlatformBalanceCards';
 import { formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -1062,7 +1063,7 @@ function AccountManagementBase({ token, onNavigate }) {
               'Shop ID', 'Kode COA piutang', 'Gudang']}
             rows={(filtered || []).map((a) => [a.account_code, a.account_name, a.platform,
               a.group_name || a.account_group || '', a.username, a.status,
-              a.pic_name || a.pic_id || '', a.shop_id || '',
+              a.pic_user_name || '', a.shop_id || '',
               a.ar_coa_code || a.coa_code || '', a.warehouse_code || a.warehouse_id || ''])}
           />
 
@@ -1148,14 +1149,18 @@ function AccountManagementBase({ token, onNavigate }) {
         </div>
       ) : filtered.length === 0 ? (
         <GlassCard className="p-4">
+          {/* 2026-11-05: staf berlingkup toko yang belum memegang toko diberi tahu SEBAB & jalan keluarnya —
+              dulu tampil "Belum ada akun toko · Tambah Akun Pertama" seolah tokonya belum dibuat. */}
           <EmptyState
             icon={Store}
-            title={accounts.length === 0 ? 'Belum ada akun toko' : 'Tidak ada akun yang cocok dengan filter'}
+            title={accounts.length === 0
+              ? (isStoreScopedUser() ? 'Belum ada toko yang Anda pegang' : 'Belum ada akun toko')
+              : 'Tidak ada akun yang cocok dengan filter'}
             description={accounts.length === 0
-              ? 'Tambahkan toko marketplace pertama beserta tautan Finance-nya.'
+              ? (isStoreScopedUser() ? NO_STORE_HINT : 'Tambahkan toko marketplace pertama beserta tautan Finance-nya.')
               : 'Ubah kata pencarian atau bersihkan filter untuk melihat toko lain.'}
             testId="accounts-empty-state"
-            action={accounts.length === 0 ? (
+            action={accounts.length === 0 && isStoreScopedUser() ? null : accounts.length === 0 ? (
               <Button size="sm" onClick={handleCreate} data-testid="create-first-account-btn">
                 <Plus className="w-4 h-4 mr-2" /> Tambah Akun Pertama
               </Button>
