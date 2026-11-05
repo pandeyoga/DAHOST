@@ -272,7 +272,8 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
             "saved_templates": []
         },
         "assigned_staff": [],
-        "pic_id": getattr(request.state, 'user', {}).get("id", "system"),
+        # 2026-11-05 — pembuat toko TIDAK lagi dicatat sebagai PIC (`pic_id`): PIC hanya
+        # `pic_user_id` yang dipilih di form; pembuatnya tercatat di `created_by`.
         "health_score": None,  # None = belum ada data (UI tampilkan "N/A")
         # F0.7 — tautan Finance + basis omzet (SSOT §1)
         **coa_fields,

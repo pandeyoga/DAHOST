@@ -339,7 +339,10 @@ async def host_options(db, account_id: Optional[str] = None) -> List[dict]:
 #   * `owner/admin/superadmin/spv_marketing/manager_marketing/accounting/
 #      content_creator/marketing_kol`  ⇒ SEMUA toko (None = tanpa filter)
 #   * `staff_marketing/pic_toko/host_live/cs_staff`               ⇒ hanya toko yang
-#      DI-ASSIGN (`pic_id == user.id` ATAU `user.id ∈ assigned_staff`)
+#      DIPEGANGNYA: dia PIC toko itu (`pic_user_id == user.id`, dipilih di Manajemen Akun)
+#      ATAU namanya ada di Assign Staf (`user.id ∈ assigned_staff`)
+#     2026-11-05 (owner): dulu yang dibaca `pic_id` — isian lama yang berisi PEMBUAT
+#     toko, bukan PIC yang dipilih — sehingga PIC yang sudah diatur tetap melihat 0 toko.
 #   * peran lain                                                  ⇒ tidak ada toko
 # Hasil KOSONG bukan berarti "belum ada data" — pesannya harus menyebut jalan
 # keluarnya (minta SPV meng-assign di Manajemen Akun).
@@ -382,7 +385,7 @@ async def visible_account_ids(db, user: Optional[dict]) -> Optional[List[str]]:
     if not uid or _role(user) not in SCOPED_ROLES:
         return []
     rows = await db[ACCOUNTS].find(
-        {"$or": [{"pic_id": uid}, {"assigned_staff": uid}]}, {"_id": 0, "id": 1}
+        {"$or": [{"pic_user_id": uid}, {"assigned_staff": uid}]}, {"_id": 0, "id": 1}
     ).to_list(300)
     return [r["id"] for r in rows]
 

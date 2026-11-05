@@ -442,7 +442,7 @@ export default function AccountAssignView({ token }) {
                           <div className="flex flex-wrap gap-1">
                             {s.accounts.map((a) => (
                               <Badge key={a.id} variant="outline" className="text-[9px]">
-                                {a.account_name}
+                                {a.account_name}{a.as_pic ? ' · PIC' : ''}
                               </Badge>
                             ))}
                           </div>

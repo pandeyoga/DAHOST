@@ -18,14 +18,22 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { currentRole } from '../portalAccess';
+import { Notice } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 // Sama dengan `core.marketing_account_scope.SCOPED_ROLES` (backend = SSOT-nya).
 const SCOPED_ROLES = ['staff_marketing', 'pic_toko', 'host_live', 'cs_staff'];
 
+/** Pemakai ini hanya melihat toko yang DIPEGANGNYA (PIC atau Assign Staf)? */
+export const isStoreScopedUser = () => SCOPED_ROLES.includes(currentRole());
+
+/** Kalimat jalan keluar yang sama di semua layar (2026-11-05: PIC kini ikut memberi akses). */
+export const NO_STORE_HINT = 'Minta SPV Marketing atau owner memilih Anda sebagai PIC toko di Manajemen Akun, '
+  + 'atau menambahkan Anda di tab Assign Staf.';
+
 export default function NoStoreScopeNotice({ token, what = 'Angka di layar ini' }) {
-  const scoped = SCOPED_ROLES.includes(currentRole());
+  const scoped = isStoreScopedUser();
   const [count, setCount] = useState(null);   // null = belum tahu
 
   useEffect(() => {
@@ -49,18 +57,10 @@ export default function NoStoreScopeNotice({ token, what = 'Angka di layar ini' 
   if (!scoped || count === null || count > 0) return null;
 
   return (
-    <div className="rounded-lg border border-amber-500/40 bg-amber-50 dark:bg-amber-500/10 p-3 flex gap-2.5"
-      data-testid="marketing-no-scope-notice">
-      <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
-      <div className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
-        <p className="font-semibold">Belum ada toko yang di-assign kepada Anda.</p>
-        <p className="mt-0.5">
-          {what} akan tetap <b>0</b> sampai <b>SPV Marketing</b> meng-assign toko Anda
-          (Manajemen Akun → tab <b>Assign Staf</b>). Ini bukan berarti tokonya tidak
-          berjualan — Anda memang hanya boleh melihat toko yang menjadi tanggung
-          jawab Anda.
-        </p>
-      </div>
-    </div>
+    <Notice tone="warning" icon={AlertTriangle} testId="marketing-no-scope-notice"
+      title="Belum ada toko yang Anda pegang.">
+      {what} tetap 0 sampai Anda memegang toko. {NO_STORE_HINT} Ini bukan berarti tokonya tidak
+      berjualan — Anda hanya melihat toko yang menjadi tanggung jawab Anda.
+    </Notice>
   );
 }

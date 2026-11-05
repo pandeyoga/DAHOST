@@ -3,7 +3,8 @@
 KENAPA LAYAR/ENDPOINT INI ADA (F6.4, 2026-08-13)
 ------------------------------------------------
 F6 sudah menegakkan *visibilitas per toko*: staf hanya melihat toko yang
-`pic_id`-nya dia atau yang id-nya ada di `assigned_staff`. Tetapi sampai sekarang
+PIC-nya dia (`pic_user_id`, dipilih di Manajemen Akun) atau yang id-nya ada di
+`assigned_staff`. Tetapi sampai sekarang
 **tidak ada satu pun jalan aplikasi untuk MENGISI `assigned_staff`** — nilainya
 hanya bisa berubah lewat skrip seed. Akibatnya aturan F6 benar di kode tapi tidak
 bisa dipakai: staf baru tidak pernah bisa diberi toko, dan staf yang pindah tugas
@@ -76,6 +77,19 @@ async def _staff_index(db) -> Dict[str, dict]:
     return {r["id"]: r for r in rows if r.get("id")}
 
 
+def _holder_ids(account: dict) -> List[str]:
+    """Pemakai yang MEMEGANG toko: PIC-nya + staf di Assign Staf (tanpa dobel).
+
+    Sama persis dengan aturan visibilitas `scope.visible_account_ids` — layar Assign Staf
+    harus menghitung pemegang dengan aturan yang sama dengan yang membuka tokonya.
+    """
+    ids = list(account.get("assigned_staff") or [])
+    pid = account.get("pic_user_id")
+    if pid and pid not in ids:
+        ids.append(pid)
+    return ids
+
+
 def _is_inactive(u: dict) -> bool:
     """Akun pemakai yang sudah dimatikan.
 
@@ -95,8 +109,8 @@ async def staff_options(request: Request):
     db = get_db()
     idx = await _staff_index(db)
     counts: Dict[str, int] = {}
-    async for a in db[ACCOUNTS].find({}, {"_id": 0, "assigned_staff": 1, "pic_id": 1}):
-        for sid in (a.get("assigned_staff") or []):
+    async for a in db[ACCOUNTS].find({}, {"_id": 0, "assigned_staff": 1, "pic_user_id": 1}):
+        for sid in _holder_ids(a):
             counts[sid] = counts.get(sid, 0) + 1
     out = [{**s, "accounts_assigned": counts.get(s["id"], 0)} for s in idx.values()]
     out.sort(key=lambda r: (r.get("name") or "").lower())
@@ -122,16 +136,18 @@ async def overview(request: Request, include_inactive: bool = Query(True)):
     q = await scope.scope_filter(db, user, q, field="id")
     accounts = await db[ACCOUNTS].find(
         q, {"_id": 0, "id": 1, "account_name": 1, "account_code": 1, "platform": 1,
-            "status": 1, "assigned_staff": 1, "pic_id": 1, "pic_user_id": 1,
+            "status": 1, "assigned_staff": 1, "pic_user_id": 1,
             "pic_user_name": 1},
     ).sort("account_name", 1).to_list(300)
     idx = await _staff_index(db)
     # PIC bisa berperan apa pun (mis. manager) — namanya diambil dari users supaya
     # kolom "PIC" tidak pernah menampilkan UUID mentah.
-    pic_ids = {a.get("pic_id") or a.get("pic_user_id") for a in accounts}
+    # 2026-11-05 — PIC = `pic_user_id` (dipilih di Manajemen Akun). `pic_id` lama berisi
+    # PEMBUAT toko, jadi tidak dibaca lagi (dulu menang atas PIC yang dipilih).
+    pic_ids = {a.get("pic_user_id") for a in accounts}
     pics = {u["id"]: u for u in await db.users.find(
         {"id": {"$in": [p for p in pic_ids if p]}},
-        {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1}).to_list(300)}
+        {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1, "status": 1}).to_list(300)}
     rows = []
     for a in accounts:
         staff = []
@@ -141,7 +157,11 @@ async def overview(request: Request, include_inactive: bool = Query(True)):
                                       "email": "", "role": "", "status": "unknown"})
         for s in staff:
             s["inactive"] = _is_inactive(s)
-        pid = a.get("pic_id") or a.get("pic_user_id")
+        pid = a.get("pic_user_id")
+        pic = pics.get(pid) or ({"id": pid, "name": a.get("pic_user_name") or ""}
+                                if pid else None)
+        if pic:
+            pic = {**pic, "inactive": _is_inactive(pic)}
         rows.append({
             "id": a["id"], "account_name": a.get("account_name"),
             "account_code": a.get("account_code"), "platform": a.get("platform"),
@@ -152,12 +172,16 @@ async def overview(request: Request, include_inactive: bool = Query(True)):
             # tidak ada yang memegang walau kolomnya terisi.
             "inactive_count": sum(1 for s in staff if s.get("inactive")),
             "active_count": sum(1 for s in staff if not s.get("inactive")),
-            "pic": pics.get(pid) or ({"id": pid, "name": a.get("pic_user_name") or ""}
-                                     if pid else None),
+            # PIC ikut memegang toko (melihat & mengisi datanya) walau tidak ada di daftar staf
+            "pic": pic,
         })
-    unassigned = [r["account_name"] for r in rows if r["assigned_count"] == 0]
+    # Toko "belum terpegang" = tanpa PIC DAN tanpa staf; "pemegang nonaktif" = ada pemegang
+    # tetapi tidak satu pun yang masih bisa login.
+    unassigned = [r["account_name"] for r in rows
+                  if r["assigned_count"] == 0 and not r["pic"]]
     stale = [r["account_name"] for r in rows
-             if r["assigned_count"] > 0 and r["active_count"] == 0]
+             if (r["assigned_count"] > 0 or r["pic"]) and r["active_count"] == 0
+             and not (r["pic"] and not r["pic"]["inactive"])]
     notes = [
         "Staf tanpa toko tidak melihat data apa pun (bukan 'data kosong') — "
         "itu sebabnya assign harus dilakukan sebelum staf mulai bekerja.",
@@ -194,14 +218,15 @@ async def by_staff(request: Request):
     q = await scope.scope_filter(db, user, {}, field="id")
     accounts = await db[ACCOUNTS].find(
         q, {"_id": 0, "id": 1, "account_name": 1, "account_code": 1, "platform": 1,
-            "status": 1, "assigned_staff": 1}).to_list(300)
+            "status": 1, "assigned_staff": 1, "pic_user_id": 1}).to_list(300)
     held: Dict[str, List[dict]] = {}
     for a in accounts:
-        for sid in (a.get("assigned_staff") or []):
+        for sid in _holder_ids(a):
             held.setdefault(sid, []).append({
                 "id": a["id"], "account_name": a.get("account_name"),
                 "account_code": a.get("account_code"),
-                "platform": a.get("platform"), "status": a.get("status")})
+                "platform": a.get("platform"), "status": a.get("status"),
+                "as_pic": sid == a.get("pic_user_id")})
     rows = []
     for s in idx.values():
         acc = held.get(s["id"]) or []
@@ -211,7 +236,9 @@ async def by_staff(request: Request):
     # yang belum punya toko naik ke atas: itu daftar kerja SPV, bukan sisa daftar
     rows.sort(key=lambda r: (r["accounts_count"] > 0, (r.get("name") or "").lower()))
     # staf yang di-assign tapi sudah tidak ada di master pemakai
-    ghosts = sorted({sid for sid in held if sid not in idx})
+    # (PIC boleh berperan apa pun, mis. manager — yang dicek hanya daftar Assign Staf)
+    ghosts = sorted({sid for a in accounts for sid in (a.get("assigned_staff") or [])
+                     if sid not in idx})
     return serialize_doc({
         "success": True, "rows": rows, "total": len(rows),
         "can_edit": scope.can_write_target(user),
