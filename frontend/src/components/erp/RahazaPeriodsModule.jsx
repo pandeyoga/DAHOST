@@ -3,9 +3,12 @@ import { RefreshCw, CalendarRange, Lock, LockOpen, ShieldCheck } from 'lucide-re
 import { formatDateID } from '@/lib/format';
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { StatusBadge as ModuleStatusBadge, PageHeader } from './moduleAtoms';
+import { Skeleton } from '@/components/ui/skeleton';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { StatusBadge as ModuleStatusBadge, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import { PeriodAlerts, YearEndClose } from './RahazaPeriodsExtras';
 import { thisMonthWIB } from '../../lib/waktu';
 
@@ -14,19 +17,24 @@ import { thisMonthWIB } from '../../lib/waktu';
 // supaya pengguna tidak menekan tombol yang pasti ditolak.
 function periodNotEndedReason(periodCode, thisMonth = thisMonthWIB()) {
   if (!periodCode || periodCode < thisMonth) return '';
-  return `Periode ${periodCode} belum berakhir (WIB). Tutup/kunci hanya boleh setelah tanggal terakhir periode ini lewat.`;
+  return `Periode ${periodLabelID(periodCode)} belum berakhir (WIB). Tutup/kunci hanya boleh setelah tanggal terakhir periode ini lewat.`;
 }
 
 
 const STATUS_LABEL = { open: 'Terbuka', closed: 'Ditutup', locked: 'Dikunci' };
 const MONTHS_ID = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-const periodLabelID = (code) => { const [y, m] = String(code).split('-'); return `${MONTHS_ID[Number(m) - 1] || m} ${y}`; };
+function periodLabelID(code) { const [y, m] = String(code).split('-'); return `${MONTHS_ID[Number(m) - 1] || m} ${y}`; }
 
 function StatusBadge({ status }) {
   const tone = { open: 'success', closed: 'warning', locked: 'danger' }[status];
   return <ModuleStatusBadge status={status} tone={tone} label={STATUS_LABEL[status] || status} />;
 }
 
+/**
+ * Tutup buku (menu Akuntansi › Akrual & Tutup Buku › Tutup buku).
+ * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — pilihan tahun di toolbar, aturan posting & peringatan di
+ * ringkasan; tanpa istilah Inggris ("Generate", "closed/locked").
+ */
 export default function RahazaPeriodsModule({ token }) {
   const [periods, setPeriods] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +42,9 @@ export default function RahazaPeriodsModule({ token }) {
   const [policy, setPolicy] = useState(null);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   const thisMonth = thisMonthWIB();
+  const nowYear = Number(thisMonth.slice(0, 4));
+  const yearOptions = [];
+  for (let y = Math.min(nowYear - 5, year); y <= Math.max(nowYear + 2, year); y++) yearOptions.push(y);
 
   useEffect(() => {
     fetch('/api/rahaza/periods/policy', { headers }).then(r => r.ok ? r.json() : null).then(setPolicy).catch(() => {});
@@ -52,55 +63,53 @@ export default function RahazaPeriodsModule({ token }) {
 
   const ensureYear = async () => {
     const r = await fetch('/api/rahaza/periods/ensure-year', { method: 'POST', headers, body: JSON.stringify({ year }) });
-    if (r.ok) { fetchData(); } else { const e = await r.json(); toast.error(e.detail || 'Error'); }
+    if (r.ok) { fetchData(); } else { const e = await r.json(); toast.error(e.detail || 'Gagal membuat periode'); }
   };
 
   const act = async (code, action) => {
-    const verb = { close: 'tutup', reopen: 'buka kembali', lock: 'kunci final' }[action];
-    if (!(await confirmDialog(`${verb.charAt(0).toUpperCase() + verb.slice(1)} periode ${code}?`))) return;
+    const verb = { close: 'Tutup', reopen: 'Buka kembali', lock: 'Kunci final' }[action];
+    if (!(await confirmDialog({ title: `${verb} periode ${periodLabelID(code)}?`, confirmLabel: verb, danger: action === 'lock' }))) return;
     const r = await fetch(`/api/rahaza/periods/${code}/${action}`, { method: 'POST', headers });
     if (r.ok) { fetchData(); }
-    else { const e = await r.json(); toast.error(e.detail || 'Error'); }
+    else { const e = await r.json(); toast.error(e.detail || 'Gagal'); }
   };
 
   return (
-    <div className="space-y-5" data-testid="rahaza-periods-page">
-      <PageHeader
-        icon={CalendarRange}
-        title="Periode Akuntansi (Fiscal Periods)"
-        subtitle="Kelola periode bulanan: Open (default), Closed (stop posting), Locked (final audit, irreversible). Periode closed/locked memblokir posting jurnal di tanggal tersebut."
-        actions={
-          <>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pr-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={ensureYear} data-testid="pr-ensure">Generate {year}</Button>
-          </>
-        }
-      />
-
-      <PeriodAlerts headers={headers} onOpened={(y) => { if (y === year) fetchData(); }} />
-      <YearEndClose key={`ye-${year}-${periods.map(p => p.status).join('')}`} headers={headers} year={year} onDone={fetchData} />
-
-      <GlassCard className="p-4">
+    <PageLayout
+      testId="rahaza-periods-page"
+      title="Tutup buku"
+      subtitle="Periode bulanan: terbuka, ditutup (jurnal ditolak), atau dikunci final untuk audit."
+      actions={<Button variant="outline" onClick={ensureYear} data-testid="pr-ensure">Lengkapi periode {year}</Button>}
+      filters={
+        <SmartNativeSelect value={String(year)} onChange={e => setYear(Number(e.target.value) || year)} searchable={false}
+          className="h-9 w-28" aria-label="Tahun" data-testid="pr-year">
+          {yearOptions.map(y => <option key={y} value={String(y)}>{y}</option>)}
+        </SmartNativeSelect>
+      }
+      tools={
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pr-refresh"><RefreshCw className="w-4 h-4" /></Button>
+      }
+      summary={<>
         {policy && (
-          <p className="mb-4 text-xs text-muted-foreground" data-testid="pr-policy-banner">
+          <p className="text-xs text-muted-foreground" data-testid="pr-policy-banner">
             <span className="font-semibold text-foreground">Aturan posting:</span> jurnal ditolak bila tanggalnya lebih dari {policy.future_days_max} hari ke depan;
-            periode tahun {policy.auto_years?.[0]}–{policy.auto_years?.[policy.auto_years.length - 1]} dibuka otomatis saat posting pertama;
-            tahun lain harus di-<em>Generate</em> di sini dulu. Periode <em>closed/locked</em> selalu memblokir posting.
+            periode tahun {policy.auto_years?.[0]}–{policy.auto_years?.[policy.auto_years.length - 1]} dibuka otomatis saat jurnal pertama;
+            tahun lain harus dibuat di sini dulu. Periode yang ditutup atau dikunci selalu menolak jurnal.
           </p>
         )}
-        <div className="flex items-center gap-3 mb-4">
-          <span className="text-xs text-muted-foreground">Tahun:</span>
-          <GlassInput type="number" value={year} onChange={e => setYear(Number(e.target.value) || year)} className="h-8 w-24" data-testid="pr-year" />
-        </div>
+        <PeriodAlerts headers={headers} onOpened={(y) => { if (y === year) fetchData(); }} />
+        <YearEndClose key={`ye-${year}-${periods.map(p => p.status).join('')}`} headers={headers} year={year} onDone={fetchData} />
+      </>}
+    >
+      <GlassCard className="p-0 overflow-hidden">
         {loading ? (
-          <div className="py-10 text-center text-muted-foreground">Memuat…</div>
+          <Skeleton className="h-40 m-4" />
         ) : periods.length === 0 ? (
-          <div className="py-10 text-center space-y-3">
-            <div className="text-muted-foreground">Periode tahun {year} belum dibuat.</div>
-            <Button onClick={ensureYear} data-testid="pr-ensure-empty">Buat periode {year}</Button>
-          </div>
+          <EmptyState icon={CalendarRange} title={`Periode tahun ${year} belum dibuat`}
+            description="Buat 12 periode bulanan supaya jurnal tahun ini bisa dicatat."
+            action={<Button onClick={ensureYear} data-testid="pr-ensure-empty">Buat periode {year}</Button>} />
         ) : (
-          <div className="overflow-x-auto -mx-4">
+          <div className="overflow-x-auto">
             <table className="w-full" data-testid="pr-table">
               <thead><tr><th className="text-left">Periode</th><th className="text-left">Status</th><th className="text-left">Ditutup / dikunci</th><th className="text-right">Aksi</th></tr></thead>
               <tbody>
@@ -119,18 +128,18 @@ export default function RahazaPeriodsModule({ token }) {
                         {p.status === 'open' && (
                           <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-close-wrap-${p.period_code}`}>
                             <Button size="sm" variant="outline" disabled={!!blockReason} onClick={() => act(p.period_code, 'close')} data-testid={`pr-close-${p.period_code}`}>
-                              <Lock className="w-3.5 h-3.5" />Tutup
+                              <Lock className="w-4 h-4" />Tutup
                             </Button>
                           </span>
                         )}
                         {p.status === 'closed' && (
                           <span className="inline-flex gap-1.5">
                             <Button size="sm" variant="outline" onClick={() => act(p.period_code, 'reopen')} data-testid={`pr-reopen-${p.period_code}`}>
-                              <LockOpen className="w-3.5 h-3.5" />Buka lagi
+                              <LockOpen className="w-4 h-4" />Buka lagi
                             </Button>
                             <span title={blockReason || undefined} className="inline-flex" data-testid={`pr-lock-wrap-${p.period_code}`}>
                               <Button size="sm" variant="outline" disabled={!!blockReason} onClick={() => act(p.period_code, 'lock')} className="text-[hsl(var(--destructive))]" data-testid={`pr-lock-${p.period_code}`}>
-                                <ShieldCheck className="w-3.5 h-3.5" />Kunci final
+                                <ShieldCheck className="w-4 h-4" />Kunci final
                               </Button>
                             </span>
                           </span>
@@ -145,6 +154,6 @@ export default function RahazaPeriodsModule({ token }) {
           </div>
         )}
       </GlassCard>
-    </div>
+    </PageLayout>
   );
 }

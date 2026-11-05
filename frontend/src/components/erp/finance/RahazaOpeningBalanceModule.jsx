@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Download, Upload, Lock, CheckCircle2, AlertTriangle, RefreshCw, FileSpreadsheet, ShieldCheck } from 'lucide-react';
+import { Download, Upload, Lock, CheckCircle2, AlertTriangle, RefreshCw, FileSpreadsheet } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { PageHeader, StatTile } from '../moduleAtoms';
+import { StatTile, EmptyState } from '../moduleAtoms';
+import PageLayout from '../layout/PageLayout';
+import { formatDateID } from '@/lib/format';
 import { fmt, fmtCell, authHeaders, downloadXlsx } from './reportShared';
 
-const tdN = 'py-1.5 px-2 text-right font-mono text-xs';
+const tdN = 'text-right tabular-nums';
 
 function PostedJournal({ status, onVoided, token, role }) {
   const je = status.journal;
@@ -26,25 +28,23 @@ function PostedJournal({ status, onVoided, token, role }) {
     } finally { setBusy(false); }
   };
   return (
-    <GlassCard className="p-5 space-y-4" data-testid="ob-posted">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <div className="inline-flex items-center gap-2 text-emerald-300 font-semibold"><Lock className="w-4 h-4" />Saldo awal sudah diposting & terkunci</div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Jurnal <span className="font-mono text-foreground" data-testid="ob-je-number">{je.je_number}</span> · tanggal {je.date} · {status.lines.length} baris ·
-            D {fmt(je.total_debit)} = K {fmt(je.total_credit)} · {je.source_ref}
-          </p>
-        </div>
+    <GlassCard className="p-4 space-y-3" data-testid="ob-posted">
+      <div>
+        <p className="inline-flex items-center gap-2 text-[hsl(var(--success))] font-semibold"><Lock className="w-4 h-4" />Saldo awal sudah diposting dan terkunci</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          Jurnal <span className="text-foreground" data-testid="ob-je-number">{je.je_number}</span> · tanggal {formatDateID(je.date)} · {status.lines.length} baris ·
+          debit Rp {fmt(je.total_debit)} = kredit Rp {fmt(je.total_credit)}{je.source_ref ? ` · berkas ${je.source_ref}` : ''}
+        </p>
       </div>
-      <div className="overflow-auto max-h-[50vh]">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-[var(--card-surface)] text-[10px] uppercase text-muted-foreground">
-            <tr className="border-b border-[var(--glass-border)]"><th className="py-2 px-2 text-left">Kode</th><th className="py-2 px-2 text-left">Akun</th><th className="py-2 px-2 text-right">Debit</th><th className="py-2 px-2 text-right">Kredit</th></tr>
+      <div className="overflow-auto max-h-[50vh] -mx-4">
+        <table className="w-full">
+          <thead className="sticky top-0 bg-[var(--card-surface)]">
+            <tr><th className="text-left">Kode</th><th className="text-left">Akun</th><th className="text-right">Debit</th><th className="text-right">Kredit</th></tr>
           </thead>
           <tbody>
             {status.lines.map((l) => (
-              <tr key={l.line_id} className="border-b border-[var(--glass-border)]" data-testid={`ob-line-${l.account_code}`}>
-                <td className="py-1.5 px-2 font-mono text-xs">{l.account_code}</td><td className="py-1.5 px-2 text-xs">{l.account_name}</td>
+              <tr key={l.line_id} data-testid={`ob-line-${l.account_code}`}>
+                <td className="whitespace-nowrap">{l.account_code}</td><td>{l.account_name}</td>
                 <td className={tdN}>{fmtCell(l.debit)}</td><td className={tdN}>{fmtCell(l.credit)}</td>
               </tr>
             ))}
@@ -52,11 +52,11 @@ function PostedJournal({ status, onVoided, token, role }) {
         </table>
       </div>
       {canVoid && (
-        <div className="border-t border-[var(--glass-border)] pt-4 space-y-2">
-          <p className="text-xs text-muted-foreground">Salah isi? Superadmin dapat membatalkan jurnal ini (void paksa, tercatat di audit) lalu mengunggah ulang.</p>
+        <div className="border-t border-[var(--glass-border)] pt-3 space-y-2">
+          <p className="text-xs text-muted-foreground">Salah isi? Superadmin dapat membatalkan jurnal ini (pembatalan paksa, tercatat di jejak audit) lalu mengunggah ulang.</p>
           <div className="flex gap-2 flex-wrap">
-            <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Alasan pembatalan (wajib)" className="h-9 flex-1 min-w-[220px]" data-testid="ob-void-reason" />
-            <Button variant="outline" onClick={doVoid} disabled={busy} className="border-rose-500/40 text-rose-300" data-testid="ob-void-btn">Batalkan Jurnal Saldo Awal</Button>
+            <GlassInput value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Alasan pembatalan (wajib)" className="h-9 w-80 max-w-full" data-testid="ob-void-reason" />
+            <Button variant="outline" onClick={doVoid} disabled={busy} className="text-[hsl(var(--destructive))]" data-testid="ob-void-btn">Batalkan jurnal saldo awal</Button>
           </div>
         </div>
       )}
@@ -70,65 +70,76 @@ function PreviewTable({ preview }) {
     <div className="space-y-3" data-testid="ob-preview">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatTile label="Baris terisi" value={preview.rows.length} testId="ob-kpi-rows" />
-        <StatTile label="Total Debit" value={fmt(preview.totals.debit)} testId="ob-kpi-debit" />
-        <StatTile label="Total Kredit" value={fmt(preview.totals.credit)} testId="ob-kpi-credit" />
+        <StatTile label="Total debit" value={fmt(preview.totals.debit)} testId="ob-kpi-debit" />
+        <StatTile label="Total kredit" value={fmt(preview.totals.credit)} testId="ob-kpi-credit" />
         <StatTile label={preview.ok ? 'Siap diposting' : `${preview.errors.length} masalah`} value={preview.ok ? '✓' : '✗'} accent={preview.ok ? 'success' : 'danger'} testId="ob-kpi-status" />
       </div>
       {preview.errors.length > 0 && (
-        <GlassCard className="p-4 border border-rose-500/30" data-testid="ob-errors">
-          <div className="inline-flex items-center gap-2 text-rose-300 font-semibold text-sm mb-2"><AlertTriangle className="w-4 h-4" />Perbaiki dulu di Excel, lalu unggah lagi</div>
+        <div className="bg-[hsl(var(--destructive)/0.08)] border border-[hsl(var(--destructive)/0.3)] rounded-[var(--radius-md)] px-4 py-3" data-testid="ob-errors">
+          <p className="inline-flex items-center gap-2 text-[hsl(var(--destructive))] font-semibold text-sm mb-2"><AlertTriangle className="w-4 h-4" />Perbaiki dulu di Excel, lalu unggah lagi</p>
           <ul className="text-xs space-y-1 list-disc pl-5">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
-        </GlassCard>
+        </div>
       )}
       {preview.balancing && (
-        <GlassCard className="p-3 text-xs text-amber-200" data-testid="ob-balancing">
+        <p className="text-xs text-[hsl(var(--warning))]" data-testid="ob-balancing">
           Selisih Rp {fmt(Math.max(preview.balancing.debit, preview.balancing.credit))} ditutup otomatis ke {preview.balancing.account_code} {preview.balancing.account_name} ({preview.balancing.debit ? 'debit' : 'kredit'}).
-        </GlassCard>
+        </p>
       )}
       {preview.relations?.length > 0 && (
         <GlassCard className="p-0 overflow-hidden">
-          <div className="px-4 py-2 text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">Rincian per relasi vs akun kontrol</div>
-          <table className="w-full text-sm">
-            <tbody>
-              {preview.relations.map((r) => (
-                <tr key={r.sheet} className="border-b border-[var(--glass-border)] last:border-0" data-testid={`ob-rel-${r.sheet}`}>
-                  <td className="py-1.5 px-4 text-xs font-mono">{r.sheet}</td>
-                  <td className="py-1.5 px-2 text-xs text-muted-foreground">{r.rows} baris → {r.control_account}</td>
-                  <td className={tdN}>{fmt(r.detail_total)}</td>
-                  <td className={tdN}>vs {fmt(r.control_balance)}</td>
-                  <td className={`py-1.5 px-4 text-xs ${r.match ? 'text-emerald-300' : 'text-rose-300'}`}>{r.match ? (r.rows ? 'cocok' : 'kosong') : 'TIDAK cocok'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <p className="px-4 pt-3 text-xs font-semibold text-muted-foreground">Rincian per relasi dibanding akun kontrol</p>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead><tr><th className="text-left">Sheet</th><th className="text-left">Baris → akun kontrol</th><th className="text-right">Total rincian</th><th className="text-right">Saldo akun kontrol</th><th className="text-left">Hasil</th></tr></thead>
+              <tbody>
+                {preview.relations.map((r) => (
+                  <tr key={r.sheet} data-testid={`ob-rel-${r.sheet}`}>
+                    <td className="whitespace-nowrap">{r.sheet}</td>
+                    <td className="text-muted-foreground">{r.rows} baris → {r.control_account}</td>
+                    <td className={tdN}>{fmt(r.detail_total)}</td>
+                    <td className={tdN}>{fmt(r.control_balance)}</td>
+                    <td className={r.match ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}>{r.match ? (r.rows ? 'Cocok' : 'Kosong') : 'Tidak cocok'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </GlassCard>
       )}
       <GlassCard className="p-0 overflow-hidden">
-        <div className="overflow-auto max-h-[45vh]">
-          <table className="w-full text-sm" data-testid="ob-preview-table">
-            <thead className="sticky top-0 bg-[var(--card-surface)] text-[10px] uppercase text-muted-foreground">
-              <tr className="border-b border-[var(--glass-border)]"><th className="py-2 px-2 text-left">Baris</th><th className="py-2 px-2 text-left">Kode</th><th className="py-2 px-2 text-left">Akun</th><th className="py-2 px-2 text-right">Debit</th><th className="py-2 px-2 text-right">Kredit</th><th className="py-2 px-2 text-left">Status</th></tr>
-            </thead>
-            <tbody>
-              {preview.rows.map((r) => (
-                <tr key={r.row} className={`border-b border-[var(--glass-border)] ${r.error ? 'bg-rose-500/10' : ''}`} data-testid={`ob-row-${r.code}`}>
-                  <td className="py-1.5 px-2 text-xs text-muted-foreground">{r.row}</td>
-                  <td className="py-1.5 px-2 font-mono text-xs">{r.code}</td>
-                  <td className="py-1.5 px-2 text-xs">{r.name}</td>
-                  <td className={tdN}>{fmtCell(r.debit)}</td><td className={tdN}>{fmtCell(r.credit)}</td>
-                  <td className={`py-1.5 px-2 text-xs ${r.error ? 'text-rose-300' : 'text-emerald-300'}`}>{r.error || 'OK'}</td>
-                </tr>
-              ))}
-              {preview.rows.length === 0 && <tr><td colSpan={6} className="py-8 text-center text-muted-foreground text-xs">Semua saldo 0 — tidak ada yang akan diposting.</td></tr>}
-            </tbody>
-          </table>
-        </div>
+        {preview.rows.length === 0 ? (
+          <EmptyState icon={FileSpreadsheet} title="Semua saldo 0" description="Tidak ada yang akan diposting dari berkas ini." />
+        ) : (
+          <div className="overflow-auto max-h-[45vh]">
+            <table className="w-full" data-testid="ob-preview-table">
+              <thead className="sticky top-0 bg-[var(--card-surface)]">
+                <tr><th className="text-left">Baris</th><th className="text-left">Kode</th><th className="text-left">Akun</th><th className="text-right">Debit</th><th className="text-right">Kredit</th><th className="text-left">Status</th></tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((r) => (
+                  <tr key={r.row} className={r.error ? 'bg-[hsl(var(--destructive)/0.08)]' : ''} data-testid={`ob-row-${r.code}`}>
+                    <td className="tabular-nums text-muted-foreground">{r.row}</td>
+                    <td className="whitespace-nowrap">{r.code}</td>
+                    <td>{r.name}</td>
+                    <td className={tdN}>{fmtCell(r.debit)}</td><td className={tdN}>{fmtCell(r.credit)}</td>
+                    <td className={r.error ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--success))]'}>{r.error || 'Siap'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </GlassCard>
       {errRows.length > 0 && <p className="text-[11px] text-muted-foreground">{errRows.length} baris bermasalah ditandai merah.</p>}
     </div>
   );
 }
 
+/**
+ * Saldo awal (menu Pengaturan Keuangan › Saldo awal).
+ * 2026-11-05 (PANDUAN_UI G1/G3): cetakan PageLayout; satu tombol utama (Posting saldo awal) — dulu dua tombol
+ * utama berdampingan; angka tanpa huruf mesin ketik; warna hanya token.
+ */
 export default function RahazaOpeningBalanceModule({ token, user }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -180,53 +191,53 @@ export default function RahazaOpeningBalanceModule({ token, user }) {
   const dlTemplate = () => downloadXlsx('/api/rahaza/finance/opening-balance/template', token, 'SALDO_AWAL_GOLIVE.xlsx').catch((e) => toast.error(`Unduh gagal: ${e.message}`));
 
   return (
-    <div className="space-y-5" data-testid="ob-page">
-      <PageHeader
-        icon={ShieldCheck}
-        title="Saldo Awal Neraca (Go-Live)"
-        subtitle="Pindahkan neraca penutup pembukuan lama ke sistem: unduh template, isi debit/kredit per akun (+ rincian piutang/hutang per relasi), unggah untuk diperiksa, lalu posting SATU jurnal pembuka yang terkunci."
-        actions={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchStatus} data-testid="ob-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>}
-      />
+    <PageLayout
+      testId="ob-page"
+      title="Saldo awal"
+      subtitle="Pindahkan neraca penutup pembukuan lama ke sistem sebagai satu jurnal pembuka yang terkunci."
+      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchStatus} data-testid="ob-refresh"><RefreshCw className="w-4 h-4" /></Button>}
+    >
       {loading ? <Skeleton className="h-40 rounded-xl" /> : status?.journal ? (
         <PostedJournal status={status} token={token} role={user?.role} onVoided={fetchStatus} />
       ) : (
         <>
           <div className="grid md:grid-cols-3 gap-4">
-            <GlassCard className="p-5 space-y-3" data-testid="ob-step-1">
-              <div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 1</div>
+            <GlassCard className="p-4 space-y-3" data-testid="ob-step-1">
+              <p className="text-xs text-muted-foreground font-semibold">Langkah 1</p>
               <h3 className="font-semibold text-sm">Unduh template</h3>
-              <p className="text-xs text-muted-foreground">{status?.balance_accounts || 0} akun neraca aktif + sheet rincian {status?.relation_sheets?.map((s) => s.control_account).join(', ')}.</p>
-              <Button onClick={dlTemplate} className="w-full" data-testid="ob-download-template"><Download className="w-3.5 h-3.5 mr-1.5" />Template Excel</Button>
+              <p className="text-xs text-muted-foreground">{status?.balance_accounts || 0} akun neraca aktif + sheet rincian {status?.relation_sheets?.map((s) => s.control_account).join(', ')}. Isi debit/kredit per akun dan rincian piutang/hutang per relasi.</p>
+              <Button variant="outline" onClick={dlTemplate} className="w-full" data-testid="ob-download-template"><Download className="w-4 h-4" />Unduh template Excel</Button>
             </GlassCard>
-            <GlassCard className="p-5 space-y-3" data-testid="ob-step-2">
-              <div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 2</div>
+            <GlassCard className="p-4 space-y-3" data-testid="ob-step-2">
+              <p className="text-xs text-muted-foreground font-semibold">Langkah 2</p>
               <h3 className="font-semibold text-sm">Unggah berkas terisi</h3>
               <input ref={inputRef} type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/20 file:px-3 file:py-1.5 file:text-xs file:text-primary" data-testid="ob-file-input" />
               <label className="inline-flex items-center gap-2 text-xs text-foreground/80">
                 <input type="checkbox" checked={toRetained} onChange={(e) => setToRetained(e.target.checked)} data-testid="ob-to-retained" />
-                Tutup selisih D≠K ke 3-2000 Laba Ditahan
+                Tutup selisih debit ≠ kredit ke 3-2000 Laba Ditahan
               </label>
             </GlassCard>
-            <GlassCard className="p-5 space-y-3" data-testid="ob-step-3">
-              <div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 3</div>
+            <GlassCard className="p-4 space-y-3" data-testid="ob-step-3">
+              <p className="text-xs text-muted-foreground font-semibold">Langkah 3</p>
               <h3 className="font-semibold text-sm">Posting jurnal pembuka</h3>
               <div className="flex items-center gap-2">
                 <span className="text-xs text-muted-foreground">Per tanggal</span>
-                <GlassInput type="date" value={obDate} onChange={(e) => setObDate(e.target.value)} className="h-8 w-36" data-testid="ob-date" />
+                <GlassInput type="date" value={obDate} onChange={(e) => setObDate(e.target.value)} className="h-9 w-40" data-testid="ob-date" />
               </div>
               <Button onClick={doApply} disabled={!preview?.ok || !preview.lines?.length || busy} className="w-full" data-testid="ob-apply">
-                {preview?.ok ? <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" /> : <Upload className="w-3.5 h-3.5 mr-1.5" />}Posting Saldo Awal
+                {preview?.ok ? <CheckCircle2 className="w-4 h-4" /> : <Upload className="w-4 h-4" />}Posting saldo awal
               </Button>
             </GlassCard>
           </div>
           {busy && !preview && <Skeleton className="h-24 rounded-xl" />}
           {preview ? <PreviewTable preview={preview} /> : (
-            <GlassCard className="p-8 text-center text-muted-foreground text-sm" data-testid="ob-empty">
-              <FileSpreadsheet className="w-8 h-8 mx-auto mb-2 opacity-40" />Belum ada berkas — pratinjau muncul otomatis setelah berkas dipilih. Tidak ada yang tersimpan sebelum tombol Posting ditekan.
+            <GlassCard className="p-0">
+              <EmptyState icon={FileSpreadsheet} testId="ob-empty" title="Belum ada berkas"
+                description="Pratinjau muncul otomatis setelah berkas dipilih. Tidak ada yang tersimpan sebelum tombol Posting ditekan." />
             </GlassCard>
           )}
         </>
       )}
-    </div>
+    </PageLayout>
   );
 }

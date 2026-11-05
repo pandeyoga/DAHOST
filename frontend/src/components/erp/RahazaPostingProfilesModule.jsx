@@ -1,9 +1,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { RefreshCw, Save, Settings2, BookOpen, AlertCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
+import FilterChips from '@/components/ui/filter-chips';
+import { RefreshCw, Save, BookOpen, AlertCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader } from './moduleAtoms';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import ImportExportToolbar from './ImportExportToolbar';
 
 // 2026-11-02 (S2-H): label event/peran dari SATU sumber backend (GET /posting-profiles/meta) — dulu hanya
@@ -19,12 +22,18 @@ const humanize = (k) => (k || '').replace(/_/g, ' ');
 function codeStatus(code, byCode) {
   if (!code) return { kind: 'empty' };
   const a = byCode.get(code);
-  if (!a) return { kind: 'missing', text: `${code} — TIDAK ADA di Bagan Akun` };
-  if (a.active === false) return { kind: 'inactive', text: `${code} — ${a.name} (NONAKTIF)` };
-  if (a.is_group) return { kind: 'group', text: `${code} — ${a.name} (akun GRUP, tidak bisa diposting)` };
+  if (!a) return { kind: 'missing', text: `${code} — tidak ada di Bagan Akun` };
+  if (a.active === false) return { kind: 'inactive', text: `${code} — ${a.name} (nonaktif)` };
+  if (a.is_group) return { kind: 'group', text: `${code} — ${a.name} (akun grup, tidak bisa diposting)` };
   return { kind: 'ok' };
 }
 
+/**
+ * Jurnal otomatis per transaksi (Pengaturan Keuangan › Pemetaan akun otomatis; juga menu Profil Posting).
+ * 2026-11-05 (PANDUAN_UI G1/G11): cetakan PageLayout — cari & pil "Bermasalah" di toolbar, unduh/impor & muat
+ * ulang di kanan. Keterangan profil dari server (berbahasa Inggris: "AP Invoice → Dr … / Cr AP") dan nama modul
+ * program tidak lagi ditampilkan; peran tiap akun sudah berlabel Indonesia.
+ */
 export default function RahazaPostingProfilesModule({ token }) {
   const [profiles, setProfiles] = useState([]);
   const [accounts, setAccounts] = useState([]);
@@ -50,7 +59,7 @@ export default function RahazaPostingProfilesModule({ token }) {
         fetch('/api/rahaza/coa/accounts?active_only=false', { headers }),
         fetch('/api/rahaza/posting-profiles/meta', { headers }),
       ]);
-      if (!rp.ok) { setError(`Gagal memuat profil posting (HTTP ${rp.status})`); return; }
+      if (!rp.ok) { setError(`Gagal memuat profil jurnal otomatis (HTTP ${rp.status})`); return; }
       if (!ra.ok) { setError(`Gagal memuat Bagan Akun (HTTP ${ra.status})`); return; }
       setProfiles(await rp.json());
       setAccounts(await ra.json());
@@ -110,7 +119,7 @@ export default function RahazaPostingProfilesModule({ token }) {
       setError(`Gagal menyimpan "${eventLabel(event_type)}": ${msg}`);
       return;
     }
-    setInfo(`Profil "${eventLabel(event_type)}" disimpan.`);
+    setInfo(`Pengaturan "${eventLabel(event_type)}" disimpan.`);
     setBadRoles((b) => ({ ...b, [event_type]: undefined }));
     setEdits((e) => ({ ...e, [event_type]: undefined }));
     fetchData();
@@ -129,80 +138,73 @@ export default function RahazaPostingProfilesModule({ token }) {
     return hay.some((s) => (s || '').toLowerCase().includes(ql));
   });
 
-  return (
-    <div className="space-y-4 min-w-0" data-testid="posting-profiles-page">
-      <PageHeader
-        icon={Settings2}
-        eyebrow="Portal Keuangan · Master Akuntansi"
-        title="Profil Posting"
-        subtitle="Akun yang dipakai jurnal otomatis per jenis transaksi. Akun yang hilang/nonaktif/grup ditandai merah."
-        actions={(
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pp-refresh" aria-label="Muat ulang">
-            <RefreshCw className="w-4 h-4 sm:mr-1.5" /><span className="hidden sm:inline"></span>
-          </Button>
-        )}
-      />
+  const scrollTo = (et) => { setFocus(et); cardRefs.current[et]?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 
-      {problems.length > 0 && (
-        <GlassCard className="p-3 border-red-500/50" data-testid="pp-problems">
-          <div className="flex items-start gap-2 text-sm">
-            <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-            <div className="min-w-0">
-              <p className="font-semibold">{problems.length} peran menunjuk akun yang bermasalah — posting otomatis akan gagal</p>
-              <ul className="mt-1 space-y-0.5 text-xs">
-                {problems.slice(0, 8).map((x) => (
-                  <li key={`${x.et}.${x.role}`}>
-                    <button type="button" className="text-left hover:underline" onClick={() => { setFocus(x.et); cardRefs.current[x.et]?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }}>
-                      {eventLabel(x.et)} › {roleLabel(x.et, x.role)}: <span className="text-red-700 dark:text-red-300">{x.st.text}</span>
-                    </button>
-                  </li>
-                ))}
-                {problems.length > 8 && <li>+{problems.length - 8} lagi (centang "Hanya yang bermasalah")</li>}
-              </ul>
+  return (
+    <PageLayout
+      testId="posting-profiles-page"
+      title="Jurnal otomatis per transaksi"
+      subtitle="Akun debit/kredit tiap jenis transaksi. Akun yang hilang, nonaktif, atau grup ditandai merah."
+      filters={<>
+        <div className="relative w-72 max-w-full">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari transaksi, peran, atau kode akun…" className="pl-8 h-9" aria-label="Cari jurnal otomatis" data-testid="pp-search" />
+        </div>
+        <FilterChips value={onlyProblems ? 'problems' : 'all'} onChange={(k) => setOnlyProblems(k === 'problems')} testId="pp-filter" ariaLabel="Penyaring masalah"
+          options={[{ key: 'all', label: 'Semua', count: profiles.length }, { key: 'problems', label: 'Bermasalah', count: problemEvents.size }]} />
+      </>}
+      tools={<>
+        <ImportExportToolbar collectionKey="posting_profiles" label="Profil jurnal otomatis" onImported={fetchData} size="default" />
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="pp-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      </>}
+      summary={<>
+        {problems.length > 0 && (
+          <div className="bg-[hsl(var(--destructive)/0.08)] border border-[hsl(var(--destructive)/0.3)] rounded-[var(--radius-md)] px-4 py-3" data-testid="pp-problems">
+            <div className="flex items-start gap-2 text-sm">
+              <AlertTriangle className="w-5 h-5 text-[hsl(var(--destructive))] shrink-0" />
+              <div className="min-w-0">
+                <p className="font-semibold">{problems.length} peran menunjuk akun yang bermasalah — jurnal otomatisnya akan gagal</p>
+                <ul className="mt-1 space-y-0.5 text-xs">
+                  {problems.slice(0, 8).map((x) => (
+                    <li key={`${x.et}.${x.role}`}>
+                      <Button variant="link" size="sm" className="h-auto p-0 text-xs text-foreground text-left whitespace-normal" onClick={() => scrollTo(x.et)}>
+                        {eventLabel(x.et)} › {roleLabel(x.et, x.role)}: <span className="text-[hsl(var(--destructive))]">{x.st.text}</span>
+                      </Button>
+                    </li>
+                  ))}
+                  {problems.length > 8 && <li>+{problems.length - 8} lagi (pilih "Bermasalah")</li>}
+                </ul>
+              </div>
             </div>
           </div>
-        </GlassCard>
-      )}
-      {error && (
-        <GlassCard className="p-3 border-[hsl(var(--destructive))]">
+        )}
+        {error && (
           <div className="flex items-start gap-2 text-sm text-[hsl(var(--destructive))]" role="alert">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" /> <span className="break-words">{error}</span>
           </div>
-        </GlassCard>
-      )}
-      {info && (
-        <GlassCard className="p-3">
-          <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-300">
+        )}
+        {info && (
+          <div className="flex items-center gap-2 text-sm text-[hsl(var(--success))]">
             <CheckCircle2 className="w-4 h-4" /> {info}
           </div>
-        </GlassCard>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[12rem]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari transaksi, peran, atau kode akun…" className="pl-8 h-10" aria-label="Cari profil posting" />
-        </div>
-        <label className="flex items-center gap-2 text-xs h-10">
-          <input type="checkbox" className="h-4 w-4" checked={onlyProblems} onChange={(e) => setOnlyProblems(e.target.checked)} />
-          Hanya yang bermasalah
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <ImportExportToolbar collectionKey="posting_profiles" label="Profil Posting" onImported={fetchData} />
-        </div>
-      </div>
-
+        )}
+      </>}
+    >
       {loading ? (
-        <GlassCard className="p-16 text-center text-muted-foreground">Memuat…</GlassCard>
+        <Skeleton className="h-40" />
       ) : profiles.length === 0 ? (
-        <GlassCard className="p-12 text-center">
-          <BookOpen className="w-10 h-10 mx-auto mb-2 opacity-40" />
-          <p className="text-muted-foreground">Belum ada profil jurnal otomatis. Minta admin menjalankan
-            “Pasang profil jurnal otomatis bawaan” di Adm. Sistem › Perawatan Data Keuangan.</p>
+        <GlassCard className="p-0">
+          <EmptyState icon={BookOpen} title="Belum ada pengaturan jurnal otomatis"
+            description="Minta admin menjalankan “Pasang profil jurnal otomatis bawaan” di Adm. Sistem › Perawatan Data Keuangan." />
+        </GlassCard>
+      ) : shown.length === 0 ? (
+        <GlassCard className="p-0">
+          <EmptyState icon={Search} title="Tidak ada yang cocok" description="Ubah pencarian atau pilih Semua." />
         </GlassCard>
       ) : (
         <div className="space-y-4">
-          {shown.length === 0 && <p className="text-sm text-muted-foreground text-center py-6">Tidak ada profil yang cocok.</p>}
           {shown.map((p) => {
             const mapping = p.mapping || {};
             const roles = Object.keys(mapping);
@@ -210,17 +212,16 @@ export default function RahazaPostingProfilesModule({ token }) {
             const bad = badRoles[p.event_type] || new Set();
             return (
               <div key={p.event_type} ref={(el) => { cardRefs.current[p.event_type] = el; }}>
-                <GlassCard className={`p-4 sm:p-5 ${focus === p.event_type ? 'ring-2 ring-primary' : ''} ${problemEvents.has(p.event_type) ? 'border-red-500/40' : ''}`} data-testid={`pp-card-${p.event_type}`}>
+                <GlassCard className={`p-4 ${focus === p.event_type ? 'ring-2 ring-primary' : ''} ${problemEvents.has(p.event_type) ? 'border-[hsl(var(--destructive)/0.4)]' : ''}`} data-testid={`pp-card-${p.event_type}`}>
                   <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
                     <div className="min-w-0">
                       <h3 className="font-semibold text-foreground text-sm sm:text-base">{eventLabel(p.event_type)}</h3>
-                      {p.active === false && <p className="text-[11px] text-muted-foreground">Profil nonaktif</p>}
-                      {p.description && <p className="text-xs text-muted-foreground mt-1">{p.description}</p>}
+                      {p.active === false && <p className="text-[11px] text-muted-foreground">Nonaktif</p>}
                     </div>
                     {/* PANDUAN_UI G3: hanya kartu yang diubah yang memberi tombol utama */}
                     <Button size="sm" variant={hasEdits ? 'default' : 'outline'} onClick={() => saveProfile(p.event_type)} disabled={!hasEdits || saving === p.event_type}
                       data-testid={`pp-save-${p.event_type}`}>
-                      <Save className="w-4 h-4 mr-1.5" />
+                      <Save className="w-4 h-4" />
                       {saving === p.event_type ? 'Menyimpan…' : 'Simpan'}
                     </Button>
                   </div>
@@ -231,15 +232,14 @@ export default function RahazaPostingProfilesModule({ token }) {
                       const red = (st.kind !== 'ok' && st.kind !== 'empty') || bad.has(role);
                       const pending = consumersOf(p.event_type, role);
                       return (
-                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} className="min-w-0" title={`Kode peran: ${role}`}>
-                          <label className="text-xs font-medium text-foreground/80 block">
+                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} data-role={role} className="min-w-0">
+                          <label className="text-xs font-medium text-foreground/80 block mb-1">
                             {roleLabel(p.event_type, role)}
-
                           </label>
                           <SmartNativeSelect
                             value={value}
                             onChange={(e) => handleEdit(p.event_type, role, e.target.value)}
-                            className={`w-full h-9 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border px-2 text-sm text-foreground ${red ? 'border-red-500 ring-1 ring-red-500/40' : 'border-[var(--glass-border)]'}`}
+                            className={`w-full h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : ''}`}
                             data-testid={`pp-select-${p.event_type}-${role}`}
                             aria-invalid={red}
                           >
@@ -250,13 +250,14 @@ export default function RahazaPostingProfilesModule({ token }) {
                             ))}
                           </SmartNativeSelect>
                           {red && (
-                            <p className="text-[11px] text-red-700 dark:text-red-300 mt-1" role="alert" data-testid={`pp-bad-${p.event_type}-${role}`}>
+                            <p className="text-[11px] text-[hsl(var(--destructive))] mt-1" role="alert" data-testid={`pp-bad-${p.event_type}-${role}`}>
                               {st.text || 'Ditolak server — lihat pesan di atas.'} Pilih akun rinci yang aktif.
                             </p>
                           )}
                           {pending.length > 0 && (
-                            <p className="text-[11px] text-amber-700 dark:text-amber-300 mt-1" data-testid={`pp-pending-${p.event_type}-${role}`}>
-                              Masih dibaca dari kode program ({pending.map((c) => c.source).join(', ')} = {pending[0].code}) — perubahan di sini berlaku setelah modul itu membaca profil.
+                            <p className="text-[11px] text-[hsl(var(--warning))] mt-1" data-testid={`pp-pending-${p.event_type}-${role}`}
+                              data-sources={pending.map((c) => c.source).join(', ')}>
+                              Akun ini masih ditetapkan di program ({pending[0].code}) — perubahan di sini baru berlaku setelah program diperbarui.
                             </p>
                           )}
                         </div>
@@ -269,6 +270,6 @@ export default function RahazaPostingProfilesModule({ token }) {
           })}
         </div>
       )}
-    </div>
+    </PageLayout>
   );
 }

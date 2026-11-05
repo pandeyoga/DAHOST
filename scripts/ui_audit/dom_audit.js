@@ -106,7 +106,8 @@
       const odd = bgs.findIndex((x) => bgs.indexOf(x) === bgs.lastIndexOf(x));
       // deret tombol aksi (toolbar) dengan tombol utama di ujung kanan bukan tab: tombolnya berjarak (≥6px)
       const r0 = kids[0].getBoundingClientRect(), r1 = kids[1].getBoundingClientRect();
-      if (odd === kids.length - 1 && r1.left - r0.right >= 6) continue;
+      // deret tombol aksi (toolbar / baris tab hub) berjarak ≥8px; tab sungguhan bersambung (≤4px)
+      if (r1.left - r0.right >= 8 || (odd === kids.length - 1 && r1.left - r0.right >= 6)) continue;
       if (uniq.size === 2 && bgs.filter((x) => x === bgs.find((y) => bgs.indexOf(y) === bgs.lastIndexOf(y))).length === 1 &&
           kids.every((k) => (k.innerText || '').trim().length < 40)) {
         const cs = getComputedStyle(el);
@@ -184,9 +185,15 @@
       for (const td of tb.querySelectorAll('tbody td')) {
         const t = (td.innerText || '').trim();
         if (!t || t.length > 28 || !/^(Rp\s?-?[\d.,]+|-?[\d.,]{4,}|\d{1,2} \w{3} \d{4}|[A-Z]{2,5}-[\w-]{4,})$/.test(t)) continue;
-        const lh = parseFloat(getComputedStyle(td).lineHeight) || parseFloat(getComputedStyle(td).fontSize) * 1.4;
-        const range = document.createRange(); range.selectNodeContents(td);
-        if (range.getClientRects().length > 1 || range.getBoundingClientRect().height > lh * 1.6) { wrapped++; wrapSample = wrapSample || t; }
+        // hitung baris TEKS (kotak teks dengan posisi atas berbeda) — kotak elemen <span>/<button> tidak dihitung
+        const tops = new Set();
+        const tw = document.createTreeWalker(td, NodeFilter.SHOW_TEXT);
+        for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+          if (!n.textContent.trim()) continue;
+          const rg = document.createRange(); rg.selectNodeContents(n);
+          for (const rc of rg.getClientRects()) if (rc.width > 1) tops.add(Math.round(rc.top / 4));
+        }
+        if (tops.size > 1) { wrapped++; wrapSample = wrapSample || t; }
       }
       if (wrapped) add('SEL-TERLIPAT', tb, `${wrapped} sel tanggal/uang/nomor turun 2 baris, mis. "${wrapSample}"`);
       // TOMBOL-UTAMA-DI-TABEL — tombol berwarna utama berulang di tiap baris (G3: di tabel pakai outline/sm)
@@ -278,7 +285,8 @@
       const r = el.getBoundingClientRect();
       if (r.width < mr.width * 0.5 || r.height > 64 || r.height < 24) continue;
       const ctrls = [...el.querySelectorAll('button, a, input, select, textarea, [role="combobox"]')].filter(visible);
-      if (ctrls.length !== 1 || !/^(BUTTON|A)$/.test(ctrls[0].tagName)) continue;
+      // pemicu pilihan (SmartNativeSelect = <button role=combobox>) adalah penyaring, bukan tombol aksi
+      if (ctrls.length !== 1 || !/^(BUTTON|A)$/.test(ctrls[0].tagName) || ctrls[0].getAttribute('role') === 'combobox' || ctrls[0].hasAttribute('aria-haspopup')) continue;
       if ((el.innerText || '').trim() !== (ctrls[0].innerText || '').trim()) continue;
       oneBtnRows.push(el);
       add('BARIS-SATU-TOMBOL', ctrls[0], `baris hanya berisi ${short(ctrls[0])}`);

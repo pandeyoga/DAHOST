@@ -1842,6 +1842,16 @@ html main:is([data-portal="finance"]) table > tfoot > tr > td {
   padding: 10px 12px;
   font-variant-numeric: tabular-nums;
 }
+/* PageLayout (2026-11-04, galeri: RUANG-KOSONG) — baris toolbar yang isinya ternyata kosong (mis. pil penyaring
+   disembunyikan karena semua angkanya 0) tidak memakan tempat; dulu meninggalkan pita kosong ±68 px. */
+[data-page-toolbar]:has(> div:first-child:empty):not(:has(> div:nth-child(2))) { display: none; }
+
+/* 2026-11-04 (galeri: SEL-TERLIPAT) — uang/angka (kolom rata kanan) dan tanggal/nomor dokumen tidak dipatah
+   ke 2 baris; kolom teks panjang (pemasok, keterangan) tetap boleh membungkus. */
+html main:is([data-portal="finance"]) table > tbody > tr > td:is(.text-right, .tabular-nums, .whitespace-nowrap),
+html main:is([data-portal="finance"]) table > tfoot > tr > td.text-right {
+  white-space: nowrap;
+}
 html main:is([data-portal="finance"]) table :is(td, th).font-mono,
 html main:is([data-portal="finance"]) table :is(td, th) .font-mono {
   font-family: inherit;

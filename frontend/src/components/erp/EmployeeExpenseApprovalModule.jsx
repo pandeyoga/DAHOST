@@ -8,24 +8,20 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
+import ViewToggle from '@/components/ui/view-toggle';
 import { toast } from 'sonner';
 import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
 import {
-  CheckCircle, XCircle, Clock, RefreshCw,
-  Wallet, MapPin, Banknote, AlertCircle, Filter,
-  Search, Table2, LayoutGrid, ArrowUpDown,
+  CheckCircle, XCircle, RefreshCw,
+  Wallet, MapPin, Banknote, Search, ArrowUpDown,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter
-} from '@/components/ui/dialog';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
-} from '@/components/ui/select';
-import { PageHeader } from './moduleAtoms';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { formatRupiah } from '@/lib/format';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -41,33 +37,36 @@ import { todayWIB } from '../../lib/waktu';
 const EXPENSE_VIEW_KEY = 'hr_expense_approval_view';
 const CSV_HEAD = ['No. Referensi', 'Jenis', 'Judul', 'Karyawan', 'Departemen',
   'Diajukan', 'Status', 'Jumlah'];
+const SORT_COLS = [
+  { key: 'ref_number', label: 'No. referensi' }, { key: 'type_label', label: 'Jenis' },
+  { key: 'title', label: 'Judul' }, { key: 'employee_name', label: 'Karyawan' },
+  { key: 'employee_dept', label: 'Departemen' }, { key: 'submitted_at', label: 'Diajukan' },
+  { key: 'status', label: 'Status' }, { key: 'amount', label: 'Jumlah' },
+];
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmt = formatRupiah;
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString('id-ID', { day:'2-digit', month:'short', year:'numeric' }) : '—';
 
+// 2026-11-05 (PANDUAN_UI G8): jenis = teks netral berikon; status = StatusBadge bersama (dulu pil warna palet langsung)
 function TypeBadge({ type }) {
-  if (type === 'expense_claim') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"><Wallet className="w-3 h-3" />Klaim Biaya</span>;
-  return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800"><MapPin className="w-3 h-3" />Perjalanan Dinas</span>;
+  if (type === 'expense_claim') return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap"><Wallet className="w-3 h-3" />Klaim biaya</span>;
+  return <span className="inline-flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap"><MapPin className="w-3 h-3" />Perjalanan dinas</span>;
 }
 
-function StatusBadge({ status }) {
-  const configs = {
-    submitted: 'bg-yellow-100 text-yellow-800',
-    approved: 'bg-blue-100 text-blue-800',
-    advance_paid: 'bg-teal-100 text-teal-800',
-  };
-  const labels = {
-    submitted: 'Menunggu Persetujuan',
-    approved: 'Disetujui — Menunggu Disbursement',
-    advance_paid: 'Uang Muka Dibayar',
-  };
-  const c = configs[status] || 'bg-muted text-foreground';
-  const l = labels[status] || status;
-  return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${c}`}>{l}</span>;
+const EXP_STATUS = {
+  submitted: { label: 'Menunggu persetujuan', tone: 'warning' },
+  approved: { label: 'Disetujui · menunggu dicairkan', tone: 'info' },
+  advance_paid: { label: 'Uang muka dibayar', tone: 'success' },
+};
+
+function ExpStatusBadge({ status }) {
+  const c = EXP_STATUS[status];
+  return <StatusBadge status={status} label={c?.label} tone={c?.tone} />;
 }
 
-function ActionModal({ item, token, onClose, onRefresh }) {
+// 2026-11-05 (PANDUAN_UI G13): klik baris membuka rincian + tindakannya DI HALAMAN (DetailPanel) — dulu popup.
+function ActionPanel({ item, token, onClose, onRefresh }) {
   const [rejectReason, setRejectReason] = useState('');
   const [showReject, setShowReject] = useState(false);
   const [note, setNote] = useState('');
@@ -96,44 +95,42 @@ function ActionModal({ item, token, onClose, onRefresh }) {
   };
 
   return (
-    <div className="space-y-4">
-      {/* Item Header */}
-      <div className="rounded-lg bg-muted/50 p-4 space-y-3">
-        <div className="flex items-start justify-between">
+    <DetailPanel
+      title={`Proses ${isClaim ? 'klaim biaya' : 'perjalanan dinas'}`}
+      description={`${item.ref_number || '—'} · ${item.employee_name || '—'}`}
+      onClose={onClose}
+      testId="expense-action-panel"
+    >
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
           <TypeBadge type={item.type} />
-          <StatusBadge status={item.status} />
+          <ExpStatusBadge status={item.status} />
         </div>
-        <div className="grid grid-cols-2 gap-3 text-sm">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div>
             <p className="text-xs text-muted-foreground">Karyawan</p>
             <p className="font-medium">{item.employee_name}</p>
             <p className="text-xs text-muted-foreground">{item.employee_dept}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground">Nomor Referensi</p>
-            <p className="font-mono font-bold text-xs">{item.ref_number}</p>
-          </div>
-          <div className="col-span-2">
-            <p className="text-xs text-muted-foreground">{isClaim ? 'Judul Klaim' : 'Destinasi'}</p>
+            <p className="text-xs text-muted-foreground">{isClaim ? 'Judul klaim' : 'Tujuan'}</p>
             <p className="font-medium">{item.title}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Total</p>
-            <p className="text-lg font-bold">{fmt(item.amount)}</p>
+            <p className="text-lg font-bold tabular-nums whitespace-nowrap">{fmt(item.amount)}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Diajukan</p>
-            <p>{fmtDate(item.submitted_at)}</p>
+            <p className="whitespace-nowrap">{fmtDate(item.submitted_at)}</p>
           </div>
         </div>
-      </div>
 
-      {/* Approve Section */}
-      {item.status === 'submitted' && (
-        <div className="space-y-3">
-          {showReject ? (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Alasan Penolakan *</label>
+        {/* Persetujuan */}
+        {item.status === 'submitted' && (
+          showReject ? (
+            <div className="space-y-2 max-w-xl">
+              <label className="text-sm font-medium">Alasan penolakan *</label>
               <Textarea
                 placeholder="Jelaskan alasan penolakan..."
                 value={rejectReason}
@@ -145,82 +142,73 @@ function ActionModal({ item, token, onClose, onRefresh }) {
                 <Button variant="destructive" size="sm"
                   disabled={!rejectReason.trim() || loading}
                   onClick={() => doAction('reject', { reason: rejectReason })}>
-                  <XCircle className="w-3.5 h-3.5 mr-1" />Konfirmasi Tolak
+                  <XCircle className="w-3.5 h-3.5" />Konfirmasi tolak
                 </Button>
               </div>
             </div>
           ) : (
-            <div className="flex flex-col gap-3">
-              <div className="flex gap-2">
-                <Input
-                  placeholder="Catatan persetujuan (opsional)"
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  className="text-sm"
-                />
-              </div>
-              <div className="flex gap-2 justify-end">
-                <Button variant="outline" onClick={() => setShowReject(true)} disabled={loading}>
-                  <XCircle className="w-3.5 h-3.5 mr-1" />Tolak
-                </Button>
-                <Button onClick={() => doAction('approve', { note, cash_advance_approved: item.cash_advance_requested ?? item.amount })} disabled={loading}
-                  className="bg-green-600 hover:bg-green-700 text-foreground">
-                  <CheckCircle className="w-3.5 h-3.5 mr-1" />Setujui
-                </Button>
-              </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                placeholder="Catatan persetujuan (opsional)"
+                value={note}
+                onChange={e => setNote(e.target.value)}
+                className="text-sm max-w-md"
+              />
+              <Button variant="outline" onClick={() => setShowReject(true)} disabled={loading}>
+                <XCircle className="w-3.5 h-3.5" />Tolak
+              </Button>
+              <Button onClick={() => doAction('approve', { note, cash_advance_approved: item.cash_advance_requested ?? item.amount })} disabled={loading}>
+                <CheckCircle className="w-3.5 h-3.5" />Setujui
+              </Button>
             </div>
-          )}
-        </div>
-      )}
+          )
+        )}
 
-      {/* Finance Actions */}
-      {item.status === 'approved' && (
-        <div className="grid grid-cols-2 gap-2" data-testid="expense-pay-source">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Dibayar dari Rekening</label>
-            <CashAccountSelect accounts={accounts} loaded={accLoaded} value={payAccount} onChange={setPayAccount}
-              className="w-full h-8 px-2 rounded-md border border-border bg-background text-sm" testId="expense-pay-account" />
+        {/* Pencairan oleh Keuangan */}
+        {item.status === 'approved' && (
+          <div className="grid grid-cols-2 gap-3 max-w-xl" data-testid="expense-pay-source">
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Dibayar dari rekening</label>
+              <CashAccountSelect accounts={accounts} loaded={accLoaded} value={payAccount} onChange={setPayAccount}
+                className="w-full h-9 px-2 rounded-md border border-border bg-background text-sm" testId="expense-pay-account" />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Tanggal bayar</label>
+              <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="text-sm" />
+            </div>
           </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tanggal Bayar</label>
-            <Input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} className="text-sm h-8" />
+        )}
+        {!isClaim && item.status === 'approved' && (
+          <div className="space-y-2 max-w-xl">
+            <p className="text-sm font-medium">Bayar uang muka perjalanan dinas</p>
+            <div className="flex gap-2">
+              <MoneyInput
+                placeholder={`Jumlah (estimasi: ${fmt(item.amount)})`}
+                value={advanceAmount}
+                onChange={e => setAdvanceAmount(e.target.value)}
+                className="text-sm"
+              />
+              <Button className="whitespace-nowrap"
+                onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || item.amount, bank_account_id: payAccount, payment_date: payDate })}
+                disabled={loading || !payAccount}>
+                <Banknote className="w-3.5 h-3.5" />Bayar
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
-      {!isClaim && item.status === 'approved' && (
-        <div className="rounded-lg bg-teal-50 border border-teal-200 p-3 space-y-2">
-          <p className="text-sm font-medium text-teal-800">Bayar Uang Muka Perjalanan Dinas</p>
-          <div className="flex gap-2">
-            <MoneyInput
-              placeholder={`Jumlah (estimasi: ${fmt(item.amount)})`}
-              value={advanceAmount}
-              onChange={e => setAdvanceAmount(e.target.value)}
-              className="text-sm h-8"
-            />
-            <Button size="sm" className="bg-teal-600 hover:bg-teal-700 text-foreground whitespace-nowrap"
-              onClick={() => doAction('advance-paid', { amount_paid: parseFloat(advanceAmount) || item.amount, bank_account_id: payAccount, payment_date: payDate })}
+        )}
+
+        {isClaim && item.status === 'approved' && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Pencairan klaim biaya</p>
+            <Button
+              onClick={() => doAction('disburse', { payment_method: 'transfer', bank_account_id: payAccount, payment_date: payDate })}
               disabled={loading || !payAccount}>
-              <Banknote className="w-3.5 h-3.5 mr-1" />Bayar
+              <Banknote className="w-3.5 h-3.5" />Bayar & catat jurnal
             </Button>
           </div>
-        </div>
-      )}
-
-      {isClaim && item.status === 'approved' && (
-        <div className="rounded-lg bg-green-50 border border-green-200 p-3">
-          <p className="text-sm font-medium text-green-800 mb-2">Disbursement Klaim Biaya</p>
-          <Button className="bg-green-600 hover:bg-green-700 text-foreground" size="sm"
-            onClick={() => doAction('disburse', { payment_method: 'transfer', bank_account_id: payAccount, payment_date: payDate })}
-            disabled={loading || !payAccount}>
-            <Banknote className="w-3.5 h-3.5 mr-1" />Bayar & Post GL
-          </Button>
-        </div>
-      )}
-
-      <DialogFooter>
-        <Button variant="outline" onClick={onClose}>Tutup</Button>
-      </DialogFooter>
-    </div>
+        )}
+      </div>
+    </DetailPanel>
   );
 }
 
@@ -305,84 +293,78 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
   const sumVisible = rows.reduce((s, r) => s + Number(r.amount || 0), 0);
   const csvRows = rows.map((r) => [
     r.ref_number, r.type_label || (r.type === 'expense_claim' ? 'Klaim Biaya' : 'Perjalanan Dinas'),
-    r.title, r.employee_name, r.employee_dept, fmtDate(r.submitted_at), r.status,
+    r.title, r.employee_name, r.employee_dept, fmtDate(r.submitted_at), EXP_STATUS[r.status]?.label || r.status,
     r.amount ?? 0,
   ]);
 
+  const openItem = (item) => setSelected((cur) => (cur?.id === item.id ? null : item));
+  const empty = items.length === 0;
+
+  // 2026-11-05 (PANDUAN_UI G1/G6/G10, owner): cetakan PageLayout. Tabel/Kartu = ViewToggle di kanan (dulu pil
+  // seperti penyaring), "Unduh CSV" (dulu "CSV"), pil jenis tersembunyi bila semua 0, tampilan kosong di kartu tabel.
   return (
-    <div className="space-y-5" data-testid="expense-approval-page">
-      <PageHeader
-        icon={CheckCircle}
-        title="Persetujuan Klaim & Perjalanan Dinas"
-        subtitle="SDM menyetujui klaim karyawan; Keuangan mencairkan uangnya."
-        actions={
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} >
-            <RefreshCw className="w-3.5 h-3.5" />
-          </Button>
-        }
-      />
-
-      {/* RC-IA-2a — pintu bersama SDM/Keuangan. 2026-11-04: 4 kartu hitungan → satu baris ringkas */}
-      <p className="text-sm text-muted-foreground" data-testid="expense-approval-summary">
-        {totalPending} menunggu persetujuan
-        {' · '}{pendingAdvance + (summary?.expense_claims?.counts?.approved || 0)} menunggu dicairkan Keuangan
-      </p>
-
-      {/* Filter Tabs */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <FilterChips value={filter} onChange={setFilter} testId="expense-filter" ariaLabel="Jenis" hideWhenEmpty={false}
+    <PageLayout
+      testId="expense-approval-page"
+      title="Persetujuan klaim & perjalanan dinas"
+      subtitle="SDM menyetujui klaim karyawan; Keuangan mencairkan uangnya."
+      filters={<>
+        <FilterChips value={filter} onChange={setFilter} testId="expense-filter" ariaLabel="Jenis" hideWhenEmpty={filter === 'all'}
           options={[{ key: 'all', label: 'Semua', count: totalPending }, { key: 'expense_claim', label: 'Klaim biaya', count: summary?.expense_claims?.total_pending_approval || 0 },
             { key: 'travel_request', label: 'Perjalanan dinas', count: summary?.travel_requests?.total_pending_approval || 0 }]} />
         <div className="relative w-72 max-w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)}
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
             placeholder="Cari no. referensi / karyawan / judul…"
-            data-testid="expense-search"
-            className="w-full h-9 pl-9 pr-3 rounded-lg border border-border bg-card text-sm" />
+            data-testid="expense-search" aria-label="Cari"
+            className="pl-9 h-9" />
         </div>
-        <FilterChips value={view} onChange={setView} testId="expense-view" ariaLabel="Bentuk tampilan" hideWhenEmpty={false}
-            options={[{ key: 'table', label: 'Tabel', icon: Table2 }, { key: 'grid', label: 'Kartu', icon: LayoutGrid }]} />
+      </>}
+      tools={<>
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData}>
+          <RefreshCw className="w-4 h-4" />
+        </Button>
         <ExportCsvButton filename="inbox-approval-klaim-dinas" testId="expense-export-csv"
-          head={CSV_HEAD} rows={csvRows}
+          head={CSV_HEAD} rows={csvRows} label="Unduh CSV" size="default" className=""
           note={`total ${fmt(sumVisible)}`} />
-        <span className="text-xs text-muted-foreground" data-testid="expense-visible-sum">
-          {rows.length} item terlihat · total <strong className="text-foreground">{fmt(sumVisible)}</strong>
-        </span>
-      </div>
-
-      {/* Items List */}
-      <div className="space-y-3">
-        {loading ? (
-          <div className="p-12 text-center text-muted-foreground">
-            <div className="animate-spin w-6 h-6 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3" />
-            Memuat data...
-          </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-xl border p-12 text-center text-muted-foreground">
-            <CheckCircle className="w-10 h-10 mx-auto mb-3 opacity-30" />
-            <p className="font-medium">Tidak ada item yang perlu diproses</p>
-            <p className="text-sm mt-1">Semua klaim dan perjalanan dinas sudah diproses.</p>
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="rounded-xl border p-10 text-center text-muted-foreground"
-            data-testid="expense-search-empty">
-            <p className="font-medium">Tidak ada item yang cocok dengan pencarian «{search}»</p>
-            <p className="text-sm mt-1">Kosongkan pencarian untuk melihat {items.length} item lagi.</p>
-          </div>
-        ) : view === 'table' ? (
-          <div className="rounded-xl border bg-card">
+        <ViewToggle value={view} onChange={setView} testId="expense-view" />
+      </>}
+      summary={!loading && !empty && (
+        /* RC-IA-2a — pintu bersama SDM/Keuangan. 2026-11-04: 4 kartu hitungan → satu baris ringkas */
+        <p className="text-sm text-muted-foreground" data-testid="expense-approval-summary">
+          {totalPending} menunggu persetujuan
+          {' · '}{pendingAdvance + (summary?.expense_claims?.counts?.approved || 0)} menunggu dicairkan Keuangan
+          {' · '}<span data-testid="expense-visible-sum">{rows.length} terlihat, total <strong className="text-foreground tabular-nums">{fmt(sumVisible)}</strong></span>
+        </p>
+      )}
+      detail={selected && (
+        <ActionPanel key={selected.id} item={selected} token={token} onClose={() => setSelected(null)} onRefresh={fetchData} />
+      )}
+      footer={!loading && rows.length > 0 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
+      )}
+    >
+      {loading ? (
+        <div className="flex items-center justify-center h-48">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
+        </div>
+      ) : (empty || rows.length === 0 || view === 'table') ? (
+        <GlassCard className="p-0 overflow-hidden">
+          {empty ? (
+            <EmptyState icon={CheckCircle} title="Tidak ada yang perlu diproses"
+              description="Semua klaim dan perjalanan dinas sudah diproses." />
+          ) : rows.length === 0 ? (
+            <EmptyState icon={Search} testId="expense-search-empty" title={`Tidak ada yang cocok dengan «${search}»`}
+              description={`Kosongkan pencarian untuk melihat ${items.length} item lagi.`} />
+          ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs" data-testid="expense-table">
                 <thead className="bg-muted/60">
                   <tr className="text-left">
-                    {[['ref_number', 'No. Referensi'], ['type_label', 'Jenis'],
-                      ['title', 'Judul'], ['employee_name', 'Karyawan'],
-                      ['employee_dept', 'Departemen'], ['submitted_at', 'Diajukan'],
-                      ['status', 'Status'], ['amount', 'Jumlah']].map(([k, label]) => (
-                      <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
+                    {SORT_COLS.map(({ key: k, label }) => (
+                      <th key={k} className={`px-2.5 py-2 font-semibold whitespace-nowrap ${k === 'amount' ? 'text-right' : ''}`}>
                         <button type="button" onClick={() => toggleSort(k)}
                           data-testid={`expense-sort-${k}`}
-                          className="inline-flex items-center gap-1 hover:text-primary">
+                          className="inline-flex items-center gap-1 uppercase hover:text-primary">
                           {label}
                           <ArrowUpDown size={10}
                             className={sort.key === k ? 'text-primary' : 'opacity-40'} />
@@ -394,28 +376,28 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
                 </thead>
                 <tbody className="divide-y divide-border">
                   {paged.map((item) => (
-                    <tr key={item.id} className="hover:bg-muted/40 cursor-pointer"
-                      onClick={() => setSelected(item)}
+                    <tr key={item.id} className={`cursor-pointer hover:bg-muted/40 ${selected?.id === item.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
+                      onClick={() => openItem(item)}
                       data-testid={`expense-row-${item.ref_number}`}>
-                      <td className="px-2.5 py-2 font-mono whitespace-nowrap">{item.ref_number}</td>
+                      <td className="px-2.5 py-2 whitespace-nowrap">{item.ref_number}</td>
                       <td className="px-2.5 py-2"><TypeBadge type={item.type} /></td>
                       <td className="px-2.5 py-2 max-w-[18rem] truncate" title={item.title}>{item.title}</td>
                       <td className="px-2.5 py-2 font-medium whitespace-nowrap">{item.employee_name}</td>
                       <td className="px-2.5 py-2 text-muted-foreground whitespace-nowrap">{item.employee_dept || '—'}</td>
                       <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(item.submitted_at)}</td>
-                      <td className="px-2.5 py-2"><StatusBadge status={item.status} /></td>
-                      <td className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">{fmt(item.amount)}</td>
+                      <td className="px-2.5 py-2"><ExpStatusBadge status={item.status} /></td>
+                      <td className="px-2.5 py-2 text-right tabular-nums font-semibold whitespace-nowrap">{fmt(item.amount)}</td>
                       <td className="px-2.5 py-2 text-right whitespace-nowrap">
                         {item.status === 'submitted' && (
-                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                          <Button size="sm" variant="outline"
                             onClick={(e) => { e.stopPropagation(); setSelected(item); }}>
                             Proses
                           </Button>
                         )}
                         {(item.status === 'approved' && isFinance) && (
-                          <Button size="sm" className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                          <Button size="sm" variant="outline"
                             onClick={(e) => { e.stopPropagation(); setSelected(item); }}>
-                            <Banknote className="w-3 h-3 mr-1" />Bayar
+                            <Banknote className="w-3 h-3" />Bayar
                           </Button>
                         )}
                         {!(item.status === 'submitted' || (item.status === 'approved' && isFinance)) && (
@@ -427,85 +409,54 @@ export default function EmployeeExpenseApprovalModule({ token, user }) {
                 </tbody>
               </table>
             </div>
-            <PaginationLite page={page} totalPages={totalPages} total={total}
-              pageSize={pageSize} onPageChange={setPage} className="px-3" />
-          </div>
-        ) : paged.map(item => (
-          <div key={item.id}
-            className="rounded-xl border bg-card p-4 hover:shadow-md transition-shadow cursor-pointer"
-            onClick={() => setSelected(item)}>
-            <div className="flex items-start justify-between">
-              <div className="flex items-start gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                  item.type === 'expense_claim' ? 'bg-blue-100 dark:bg-blue-900' : 'bg-green-100 dark:bg-green-900'
-                }`}>
-                  {item.type === 'expense_claim'
-                    ? <Wallet className="w-5 h-5 text-blue-600" />
-                    : <MapPin className="w-5 h-5 text-green-600" />}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
+          )}
+        </GlassCard>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          {paged.map(item => (
+            <GlassCard key={item.id}
+              className={`p-4 cursor-pointer ${selected?.id === item.id ? 'border-[hsl(var(--primary)/0.45)]' : ''}`}
+              onClick={() => openItem(item)}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <TypeBadge type={item.type} />
-                    <StatusBadge status={item.status} />
+                    <ExpStatusBadge status={item.status} />
                   </div>
                   <p className="font-medium mt-1">{item.title}</p>
                   <p className="text-sm text-muted-foreground">
                     {item.employee_name} · {item.employee_dept} · {fmtDate(item.submitted_at)}
                   </p>
                 </div>
+                <div className="text-right shrink-0">
+                  <p className="text-lg font-bold tabular-nums whitespace-nowrap">{fmt(item.amount)}</p>
+                  <p className="text-xs text-muted-foreground whitespace-nowrap">{item.ref_number}</p>
+                </div>
               </div>
-              <div className="text-right">
-                <p className="text-lg font-bold">{fmt(item.amount)}</p>
-                <p className="text-xs font-mono text-muted-foreground">{item.ref_number}</p>
+              <div className="mt-3 flex gap-2 justify-end">
+                {item.status === 'submitted' && (
+                  <>
+                    <Button size="sm" variant="outline"
+                      onClick={e => { e.stopPropagation(); setSelected(item); }}>
+                      <XCircle className="w-3.5 h-3.5" />Tolak
+                    </Button>
+                    <Button size="sm" variant="outline"
+                      onClick={e => { e.stopPropagation(); setSelected(item); }}>
+                      <CheckCircle className="w-3.5 h-3.5" />Setujui
+                    </Button>
+                  </>
+                )}
+                {(item.status === 'approved' && isFinance) && (
+                  <Button size="sm" variant="outline"
+                    onClick={e => { e.stopPropagation(); setSelected(item); }}>
+                    <Banknote className="w-3.5 h-3.5" />Proses pembayaran
+                  </Button>
+                )}
               </div>
-            </div>
-            <div className="mt-3 flex gap-2 justify-end">
-              {item.status === 'submitted' && (
-                <>
-                  <Button size="sm" variant="outline" className="text-red-600 border-red-200 hover:bg-red-50"
-                    onClick={e => { e.stopPropagation(); setSelected(item); }}>
-                    <XCircle className="w-3.5 h-3.5 mr-1" />Tolak
-                  </Button>
-                  <Button size="sm" className="bg-green-600 hover:bg-green-700 text-foreground"
-                    onClick={e => { e.stopPropagation(); setSelected(item); }}>
-                    <CheckCircle className="w-3.5 h-3.5 mr-1" />Setujui
-                  </Button>
-                </>
-              )}
-              {(item.status === 'approved' && isFinance) && (
-                <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-foreground"
-                  onClick={e => { e.stopPropagation(); setSelected(item); }}>
-                  <Banknote className="w-3.5 h-3.5 mr-1" />Proses Pembayaran
-                </Button>
-              )}
-            </div>
-          </div>
-        ))}
-        {view === 'grid' && rows.length > 0 && (
-          <PaginationLite page={page} totalPages={totalPages} total={total}
-            pageSize={pageSize} onPageChange={setPage} />
-        )}
-      </div>
-
-      {/* Action Modal */}
-      <Dialog open={!!selected} onOpenChange={v => !v && setSelected(null)}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CheckCircle className="w-5 h-5 text-green-600" />
-              Proses {selected?.type === 'expense_claim' ? 'Klaim Biaya' : 'Perjalanan Dinas'}
-            </DialogTitle>
-          </DialogHeader>
-          {selected && (
-            <ActionModal
-              item={selected}
-              token={token}
-              onClose={() => setSelected(null)}
-              onRefresh={fetchData}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
+            </GlassCard>
+          ))}
+        </div>
+      )}
+    </PageLayout>
   );
 }

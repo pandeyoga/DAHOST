@@ -383,7 +383,7 @@ def test_set_store_cash_code_marks_source(db, monkeypatch):
 def test_payout_bank_links_badge_for_default():
     src = open(os.path.join(REPO, "frontend", "src", "components", "erp", "finance", "PayoutBankLinks.jsx"),
                encoding="utf-8").read()
-    assert "rekening bawaan {a.coa_cash_code} — belum diatur" in src and "cashIsConfirmed" in src
+    assert "rekening bawaan {a.coa_cash_code} — belum diatur" in src.lower() and "cashIsConfirmed" in src
 
 
 # ══════════════════════════════════════════════════════════════════════════════

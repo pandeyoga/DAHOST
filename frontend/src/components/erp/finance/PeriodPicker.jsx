@@ -22,6 +22,9 @@ export const PERIOD_PRESETS = [
   { key: '12m', label: '12 bulan terakhir' },
   { key: 'custom', label: 'Pilih tanggal' },
 ];
+/** Tambahan opsional untuk daftar yang bawaannya semua waktu (mis. rekening koran pelanggan):
+ *  <PeriodPicker presets={[ALL_TIME, ...PERIOD_PRESETS]} /> → { preset: 'all', from: '', to: '' }. */
+export const ALL_TIME = { key: 'all', label: 'Semua waktu' };
 
 export function periodFromPreset(key, prev = {}) {
   const today = todayWIB();
@@ -32,6 +35,7 @@ export function periodFromPreset(key, prev = {}) {
     case '3m': return { preset: key, from: `${addMonthsYM(ym, -2)}-01`, to: today };
     case 'ytd': return { preset: key, from: yearStartWIB(), to: today };
     case '12m': return { preset: key, from: `${addMonthsYM(ym, -11)}-01`, to: today };
+    case 'all': return { preset: key, from: '', to: '' };
     default: return { preset: 'custom', from: prev.from || monthStartWIB(), to: prev.to || monthEndISO(ym) };
   }
 }
@@ -71,7 +75,7 @@ export default function PeriodPicker({ value, onChange, presets = PERIOD_PRESETS
           <GlassInput type="date" value={cur.to} onChange={(e) => onChange({ ...cur, to: e.target.value })}
                       className="h-9 w-36" aria-label="Sampai tanggal" data-testid={`${testId}-to`} />
         </>
-      ) : (
+      ) : cur.preset === 'all' ? null : (
         <span className="text-xs text-muted-foreground" data-testid={`${testId}-range`}>{formatDateID(cur.from)} – {formatDateID(cur.to)}</span>
       )}
     </div>

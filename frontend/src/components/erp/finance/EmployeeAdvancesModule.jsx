@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
-import { Plus, RefreshCw, Loader2, Search } from 'lucide-react';
+import { AlertCircle, Plus, RefreshCw, Loader2, Search, HandCoins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +25,8 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { formatRupiah, formatDateID } from '@/lib/format';
 import CashAccountSelect, { usePaymentCashAccounts } from '../SdmCashAccountSelect';
 import { todayWIB } from '../../../lib/waktu';
+import { EmptyState, Notice, StatusBadge } from '../moduleAtoms';
+import PageLayout from '../layout/PageLayout';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const BASE = `${API}/api/finance/petty-cash`;
@@ -32,6 +34,7 @@ const fmt = formatRupiah;
 const tok = () => localStorage.getItem('erp_token');
 const authH = () => ({ Authorization: `Bearer ${tok()}`, 'Content-Type': 'application/json' });
 const STATUS = { open: 'Terbuka', partial: 'Sebagian', settled: 'Selesai' };
+const STATUS_TONE = { open: 'default', partial: 'info', settled: 'success' };
 
 /* karyawan + kategori nota + pemetaan kategori→akun + akun beban (sama dengan form kas kecil lama) */
 function useAdvanceRefs(open) {
@@ -109,7 +112,7 @@ function NewAdvanceDialog({ open, onClose, onDone }) {
           <DialogDescription>Dicatat sebagai Uang Muka Karyawan; dibebankan saat nota dipertanggungjawabkan.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-1">
-          {err && <div className="text-destructive text-sm bg-destructive/10 rounded px-3 py-2">{err}</div>}
+          {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
           <div className="space-y-1">
             <Label>Karyawan *</Label>
             <SmartNativeSelect value={f.employee_id || ''} onChange={e => set('employee_id', e.target.value)} data-testid="advance-employee"
@@ -206,7 +209,7 @@ function SettleDialog({ advance, onClose, onDone }) {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-1">
-          {err && <div className="text-destructive text-sm bg-destructive/10 rounded px-3 py-2">{err}</div>}
+          {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
           {items.map((it, i) => (
             <div key={i} className="rounded-lg border border-border p-2 space-y-2">
               <div className="grid grid-cols-2 gap-2">
@@ -279,33 +282,37 @@ export default function EmployeeAdvancesModule() {
   const pg = useClientPagination(rows, 25);
   const overdue = (data.items || []).filter(a => a.overdue && a.open_amount > 0);
 
+  // 2026-11-05 (PANDUAN_UI G1/G10): cetakan PageLayout — tombol utama di kepala (di hub: baris tab), pil + cari di
+  // kiri, muat ulang di kanan; tampilan kosong = EmptyState di kartu tabel (dulu teks polos berjarak besar).
   return (
-    <div className="space-y-4" data-testid="employee-advances">
-      <div className="flex items-center gap-2 flex-wrap">
+    <PageLayout
+      testId="employee-advances"
+      title="Uang muka karyawan"
+      subtitle="Uang operasional karyawan yang dipertanggungjawabkan dengan nota."
+      actions={<Button onClick={() => setAdding(true)} data-testid="advance-add"><Plus className="w-4 h-4" />Uang muka baru</Button>}
+      filters={<>
         <FilterChips value={status} onChange={setStatus} testId="advance-status" ariaLabel="Status uang muka" hideWhenEmpty={false}
           options={[{ key: 'open', label: 'Belum selesai' }, { key: 'all', label: 'Semua' }]} />
         <div className="relative w-72 max-w-full">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input className="pl-9 h-9" placeholder="Cari karyawan / keperluan" value={search} onChange={e => setSearch(e.target.value)} />
+          <Input className="pl-9 h-9" placeholder="Cari karyawan / keperluan" aria-label="Cari" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
-        <Button onClick={() => setAdding(true)} data-testid="advance-add"><Plus className="w-4 h-4 mr-1" />Uang muka baru</Button>
-      </div>
-
-      {status === 'open' && data.total_open > 0 && (
+      </>}
+      tools={<Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      summary={status === 'open' && data.total_open > 0 && (
         <p className="text-sm text-muted-foreground" data-testid="advance-summary">
-          Belum dipertanggungjawabkan: <strong className="text-foreground">{fmt(data.total_open)}</strong> · {data.by_employee.length} karyawan
-          {overdue.length > 0 && <span className="text-amber-600 dark:text-amber-400"> · {overdue.length} lewat batas nota</span>}
+          Belum dipertanggungjawabkan: <strong className="text-foreground tabular-nums">{fmt(data.total_open)}</strong> · {data.by_employee.length} karyawan
+          {overdue.length > 0 && <span className="text-[hsl(var(--warning))]"> · {overdue.length} lewat batas nota</span>}
         </p>
       )}
-
+    >
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
-          <div className="p-10 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+          <div className="h-32 flex items-center justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
         ) : rows.length === 0 ? (
-          <div className="p-10 text-center text-sm text-muted-foreground">
-            {status === 'open' ? 'Tidak ada uang muka yang belum dipertanggungjawabkan.' : 'Belum ada uang muka.'}
-          </div>
+          <EmptyState icon={HandCoins} testId="advance-empty"
+            title={search ? 'Tidak ada uang muka yang cocok' : status === 'open' ? 'Semua uang muka sudah dipertanggungjawabkan' : 'Belum ada uang muka'}
+            description={search ? 'Ubah atau kosongkan pencarian.' : 'Tekan "Uang muka baru" untuk mencatat uang yang diberikan ke karyawan.'} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -318,18 +325,18 @@ export default function EmployeeAdvancesModule() {
               </thead>
               <tbody>
                 {pg.paged.map(a => (
-                  <tr key={a.id} className={`border-b border-[var(--glass-border)] ${a.overdue && a.open_amount > 0 ? 'bg-amber-50 dark:bg-amber-400/10' : ''}`}>
+                  <tr key={a.id} className={`border-b border-[var(--glass-border)] ${a.overdue && a.open_amount > 0 ? 'bg-[hsl(var(--warning)/0.08)]' : ''}`}>
                     <td className="px-4 py-2 text-xs whitespace-nowrap">{formatDateID(a.txn_date)}</td>
                     <td className="py-2 text-xs">{a.employee_name}{a.employee_code && <span className="text-muted-foreground"> · {a.employee_code}</span>}</td>
                     <td className="py-2 text-xs">{a.memo || '—'}</td>
                     <td className="py-2 text-xs">{a.cash_account_name || (a.source === 'kas_kecil' ? 'Kas Kecil (dana lama)' : '—')}</td>
-                    <td className="py-2 text-xs text-right tabular-nums">{fmt(a.amount)}</td>
-                    <td className="py-2 text-xs text-right tabular-nums font-medium">{fmt(a.open_amount)}</td>
+                    <td className="py-2 text-xs text-right tabular-nums whitespace-nowrap">{fmt(a.amount)}</td>
+                    <td className="py-2 text-xs text-right tabular-nums whitespace-nowrap font-medium">{fmt(a.open_amount)}</td>
                     <td className="py-2 text-xs whitespace-nowrap">{a.due_date ? `${formatDateID(a.due_date)}${a.overdue && a.open_amount > 0 ? ' · lewat' : ''}` : '—'}</td>
-                    <td className="py-2 text-xs">{STATUS[a.advance_status] || a.advance_status}</td>
-                    <td className="px-4 py-2 text-right">
+                    <td className="py-2 text-xs"><StatusBadge status={a.advance_status} label={STATUS[a.advance_status] || a.advance_status} tone={STATUS_TONE[a.advance_status]} /></td>
+                    <td className="px-4 py-2 text-right whitespace-nowrap">
                       {a.open_amount > 0.009 && (
-                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setSettling(a)} data-testid={`settle-btn-${a.id}`}>
+                        <Button size="sm" variant="outline" onClick={() => setSettling(a)} data-testid={`settle-btn-${a.id}`}>
                           Pertanggungjawaban
                         </Button>
                       )}
@@ -345,6 +352,6 @@ export default function EmployeeAdvancesModule() {
 
       <NewAdvanceDialog open={adding} onClose={() => setAdding(false)} onDone={load} />
       <SettleDialog advance={settling} onClose={() => setSettling(null)} onDone={load} />
-    </div>
+    </PageLayout>
   );
 }

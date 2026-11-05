@@ -18,17 +18,23 @@
  *   (penarikan). Dulu keempatnya menumpuk di satu halaman ±7 layar. Tautan rekening per toko pindah
  *   ke Pengaturan Keuangan › Rekening toko. Daftar dana dilepas berpaginasi server (dulu berhenti di
  *   50 baris dan kartu menulis "50 laporan").
+ * 2026-11-05 (PANDUAN_UI G1, keluhan owner): memakai cetakan PageLayout — "Semua toko" + periode mulai dari
+ *   KIRI, muat ulang di kanan (dulu seluruh baris menempel di kanan dengan sisi kiri kosong). Tombol impor &
+ *   catat di slot `actions` (di hub pindah ke baris tab). Hasil "Cocokkan" dibuka di DetailPanel di atas
+ *   tabel. Tab Penarikan memakai cetakan yang sama lewat PlatformWithdrawalsPanel (periode tidak tampil di
+ *   sana karena daftar penarikan tidak disaring per periode).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Banknote, RefreshCw, AlertTriangle, CheckCircle2, Loader2, Store, Percent,
+  Banknote, RefreshCw, AlertTriangle, CheckCircle2, Loader2,
   Plus, Scale, BookCheck, Send, X, Trash2, Pencil, Upload,
 } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 import { formatRupiah, formatDateID, formatPercent } from '@/lib/format';
+import { finStatus } from '@/lib/financeLabels';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PeriodPicker, { periodFromPreset } from './PeriodPicker';
@@ -40,7 +46,8 @@ import { PlatformBalanceCards, usePlatformBalances } from './PlatformBalanceCard
 import { PlatformWithdrawalsPanel } from './PlatformWithdrawalsPanel';
 import { useBankOptions } from './PayoutBankLinks';
 import PaginationBar from '@/components/ui/PaginationBar';
-import { useInCompactHub } from '../moduleAtoms';
+import { EmptyState, Notice, StatTile, StatusBadge } from '../moduleAtoms';
+import PageLayout, { DetailPanel } from '../layout/PageLayout';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const BASE = `${API}/api/marketing/settlements`;
@@ -90,28 +97,9 @@ const EMPTY = {
   net_payout: '', notes: '', other_deductions_note: '',
 };
 
-function Kpi({ label, value, hint, tone = 'default', testId, icon: Icon }) {
-  const tones = {
-    default: 'text-foreground',
-    good: 'text-emerald-600 dark:text-emerald-300',
-    warn: 'text-amber-600 dark:text-amber-300',
-    bad: 'text-red-600 dark:text-red-300',
-  };
-  return (
-    <GlassCard className="p-4" data-testid={testId}>
-      <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-foreground/50">
-        {Icon ? <Icon className="w-3.5 h-3.5" /> : null}{label}
-      </div>
-      <div className={`mt-1 text-2xl font-semibold ${tones[tone]}`}>{value}</div>
-      {hint ? <div className="mt-1 text-xs text-foreground/50">{hint}</div> : null}
-    </GlassCard>
-  );
-}
-
 const PAGE = 25;
 
 export default function FinanceSettlementModule({ view = 'settlements' }) {
-  const compact = useInCompactHub();
   const [accounts, setAccounts] = useState([]);
   const [skip, setSkip] = useState(0);
   const [total, setTotal] = useState(0);
@@ -350,74 +338,142 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
     } finally { setBusy(''); }
   };
 
-  return (
-    <div className="space-y-4" data-testid="finance-settlement-module">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        {!compact ? (
-          <h2 className="text-lg font-semibold flex items-center gap-2">
-            <Banknote className="w-5 h-5" /> Marketplace
-          </h2>
-        ) : <span />}
-        <div className="flex items-center gap-2 flex-wrap">
-          <SmartNativeSelect data-testid="fin-settlement-account-filter" value={accountId}
-            onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56">
-            <option value="">Semua toko</option>
-            {accounts.map((a) => (
-              <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>
-            ))}
-          </SmartNativeSelect>
-          <PeriodPicker value={period} onChange={setPeriod} testId="fin-settlement-period-filter" />
-          <Button variant="outline" size="icon" data-testid="fin-settlement-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang">
-            <RefreshCw className="w-4 h-4" />
-          </Button>
-          {view === 'settlements' ? (<>
-          <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden"
-            data-testid="fin-settlement-import-file"
-            onChange={(e) => importFile(e.target.files?.[0])} />
-          <Button variant="outline" data-testid="fin-settlement-import" disabled={busy === 'import'}
-            onClick={() => fileRef.current?.click()}
-            title="Unggah laporan Penghasilan (Shopee) / Settlement (TikTok) untuk mengisi form">
-            {busy === 'import' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-            Impor laporan
-          </Button>
-          <Button data-testid="fin-settlement-new" onClick={openCreate}>
-            <Plus className="w-4 h-4" /> Catat dana dilepas
-          </Button>
-          </>) : null}
+  // ── Slot cetakan (PANDUAN_UI G1/G6): penyaring di kiri, muat ulang di kanan ──
+  const storeFilter = (
+    <SmartNativeSelect data-testid="fin-settlement-account-filter" value={accountId}
+      onChange={(e) => setAccountId(e.target.value)} className="h-9 w-56" aria-label="Toko">
+      <option value="">Semua toko</option>
+      {accounts.map((a) => (
+        <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>
+      ))}
+    </SmartNativeSelect>
+  );
+
+  if (view === 'withdrawals') {
+    return (
+      <PlatformWithdrawalsPanel testId="finance-settlement-module" filters={storeFilter}
+        accounts={accounts} accountId={accountId} banks={banks}
+        balances={balances?.data} onChanged={() => setRefreshKey((k) => k + 1)} />
+    );
+  }
+
+  // Kartu angka disembunyikan bila semuanya 0 (PANDUAN_UI G5/G10) — tabel/kartu toko menjelaskan kosongnya.
+  const hasKpi = !!(summary && (summary.net_payout || summary.gross_sales || summary.total_deductions));
+  const summaryNode = (<>
+    {hasKpi ? (
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <StatTile testId="fin-settlement-kpi-net" label={`Masuk saldo platform · ${periodLabel}`}
+          value={rp(summary.net_payout || 0)} suffix={`· ${total} laporan`} />
+        <StatTile testId="fin-settlement-kpi-gross" label={`Omzet bruto · ${periodLabel}`}
+          value={rp(summary.gross_sales || 0)} />
+        <StatTile testId="fin-settlement-kpi-ded" label={`Potongan platform · ${periodLabel}`}
+          value={rp(summary.total_deductions || 0)} suffix={`· ${pct(summary.deduction_pct)} dari bruto`} />
+      </div>
+    ) : null}
+    {/* pemeriksaan teknis hanya muncul bila ada masalah (dulu kartu "Belum seimbang 0 dokumen" selalu tampil) */}
+    {(summary?.unverified_count || 0) > 0 ? (
+      <Notice tone="danger" icon={AlertTriangle} testId="fin-settlement-kpi-unverified">
+        {summary.unverified_count} laporan dana dilepas masih ada selisih — beri nama selisihnya sebelum dijurnal.
+      </Notice>
+    ) : null}
+  </>);
+
+  const inputCls = 'h-9';
+  const humanize = (s) => String(s || '').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+
+  // ── HASIL COCOK: detail satu laporan, di halaman di atas tabel (PANDUAN_UI G13) ──
+  const reconPanel = view === 'settlements' && recon ? (
+    <DetailPanel testId="fin-settlement-recon" onClose={() => setRecon(null)}
+      title={<span className="flex items-center gap-2"><Scale className="w-4 h-4" /> Pencocokan {reconFor}</span>}
+      description={`Periode pesanan ${formatDateID(recon.period?.from)} – ${formatDateID(recon.period?.to)}`}>
+      <div className="grid md:grid-cols-3 gap-3 text-xs">
+        <div className="rounded-lg bg-foreground/5 p-3 tabular-nums">
+          <div className="text-muted-foreground uppercase tracking-wide">Dana dilepas</div>
+          <div className="mt-1">bruto <b>{rp(recon.settlement?.gross_sales || 0)}</b></div>
+          <div>masuk saldo <b>{rp(recon.settlement?.net_payout || 0)}</b></div>
+          <div>potongan <b>{rp(recon.settlement?.total_deductions || 0)}</b>{' '}
+            ({pct(recon.settlement?.deduction_pct || 0)})</div>
+        </div>
+        <div className="rounded-lg bg-foreground/5 p-3 tabular-nums">
+          <div className="text-muted-foreground uppercase tracking-wide">
+            Omzet pesanan periode ({recon.marketing?.order_count || 0} pesanan)
+          </div>
+          <div className="mt-1">bruto <b>{rp(recon.marketing?.revenue_gross || 0)}</b></div>
+          <div>setelah diskon <b>{rp(recon.marketing?.revenue_product || 0)}</b></div>
+          <div>dibayar pembeli <b>{rp(recon.marketing?.order_amount || 0)}</b></div>
+        </div>
+        <div className="rounded-lg bg-foreground/5 p-3 tabular-nums" data-testid="fin-settlement-recon-primary">
+          {/* 2026-11-02 (K5) — pembanding utama keputusan owner */}
+          <div className="text-muted-foreground uppercase tracking-wide">Selisih (setelah diskon penjual)</div>
+          <div className="mt-1 text-lg font-semibold">
+            {rp(recon.primary?.gap ?? recon.gap?.gross_vs_revenue_gross ?? 0)}
+          </div>
+          <div className="text-muted-foreground">
+            (bruto {rp(recon.primary?.settlement_gross || 0)} − diskon penjual{' '}
+            {rp(recon.primary?.settlement_seller_discount || 0)}) vs omzet setelah diskon{' '}
+            {rp(recon.primary?.omzet_after_discount || 0)}
+          </div>
+          <div className="text-muted-foreground">
+            {recon.gap?.cancelled_orders_excluded || 0} pesanan batal dikecualikan · selisih bruto vs bruto{' '}
+            {rp(recon.gap?.gross_vs_revenue_gross || 0)}
+          </div>
         </div>
       </div>
+      <ul className="space-y-1.5" data-testid="fin-settlement-recon-named">
+        {(recon.gap?.named || []).map((g) => (
+          <li key={g.name} className="text-xs rounded-lg bg-foreground/5 px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Badge variant="outline" className="text-[10px]">{humanize(g.name)}</Badge>
+              {g.amount ? <b className="tabular-nums">{rp(g.amount)}</b> : null}
+            </div>
+            <div className="mt-0.5 text-foreground/80">{g.label}</div>
+            <div className="text-muted-foreground">{g.action}</div>
+          </li>
+        ))}
+      </ul>
+    </DetailPanel>
+  ) : null;
 
-      {view !== 'withdrawals' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <Kpi testId="fin-settlement-kpi-net" icon={Banknote} label={`Masuk saldo platform · ${periodLabel}`}
-            value={rp(summary?.net_payout || 0)} tone="good"
-            hint={`${total} laporan dana dilepas`} />
-          <Kpi testId="fin-settlement-kpi-gross" icon={Store} label={`Omzet bruto · ${periodLabel}`}
-            value={rp(summary?.gross_sales || 0)} />
-          <Kpi testId="fin-settlement-kpi-ded" icon={Percent} label={`Potongan platform · ${periodLabel}`}
-            value={rp(summary?.total_deductions || 0)}
-            hint={`${pct(summary?.deduction_pct)} dari bruto`} tone="warn" />
-        </div>
-      ) : null}
-      {/* pemeriksaan teknis hanya muncul bila ada masalah (dulu kartu "Belum seimbang 0 dokumen" selalu tampil) */}
-      {view !== 'withdrawals' && (summary?.unverified_count || 0) > 0 ? (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300 px-3 py-2 text-sm flex items-center gap-2"
-          data-testid="fin-settlement-kpi-unverified">
-          <AlertTriangle className="w-4 h-4" />
-          {summary.unverified_count} laporan dana dilepas masih ada selisih — beri nama selisihnya sebelum dijurnal.
-        </div>
-      ) : null}
-
+  return (
+    <PageLayout
+      testId="finance-settlement-module"
+      title="Marketplace"
+      subtitle={view === 'balances'
+        ? 'Saldo tiap toko yang masih di platform dan potongan platform per toko.'
+        : 'Laporan dana dilepas platform ke saldo toko, dari laporan penghasilan Shopee / TikTok.'}
+      actions={view === 'settlements' ? (<>
+        <Button variant="outline" data-testid="fin-settlement-import" disabled={busy === 'import'}
+          onClick={() => fileRef.current?.click()}
+          title="Unggah laporan Penghasilan (Shopee) / Settlement (TikTok) untuk mengisi formulir">
+          {busy === 'import' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+          Impor laporan
+        </Button>
+        <Button data-testid="fin-settlement-new" onClick={openCreate}>
+          <Plus className="w-4 h-4" /> Catat dana dilepas
+        </Button>
+      </>) : null}
+      filters={<>
+        {storeFilter}
+        <PeriodPicker value={period} onChange={setPeriod} testId="fin-settlement-period-filter" />
+      </>}
+      tools={
+        <Button variant="outline" size="icon" data-testid="fin-settlement-refresh" onClick={load} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      }
+      summary={summaryNode}
+      detail={reconPanel}
+    >
       {view === 'balances' ? (<>
         <PlatformBalanceCards refreshKey={refreshKey} />
         <SettlementByStoreCards refreshKey={refreshKey} month={monthOfPeriod} />
       </>) : null}
-      {view === 'withdrawals' ? (
-        <PlatformWithdrawalsPanel accounts={accounts} accountId={accountId} banks={banks}
-          balances={balances?.data} onChanged={() => setRefreshKey((k) => k + 1)} />
-      ) : null}
 
       {view === 'settlements' ? (<>
+      <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls,.tsv" className="hidden"
+        data-testid="fin-settlement-import-file"
+        onChange={(e) => importFile(e.target.files?.[0])} />
+
       {/* ── HASIL IMPOR ── */}
       <SettlementImportPanel result={importRes} onClose={() => setImportRes(null)}
         onMappingChange={changeMapping} />
@@ -430,48 +486,44 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
             <h3 className="font-medium text-sm">
               {editId ? 'Koreksi laporan dana dilepas' : 'Catat dana dilepas ke saldo toko'}
             </h3>
-            <button data-testid="fin-settlement-form-close" onClick={() => setFormOpen(false)}
-              className="p-1 rounded hover:bg-foreground/10"><X className="w-4 h-4" /></button>
+            <Button variant="outline" size="icon" data-testid="fin-settlement-form-close" onClick={() => setFormOpen(false)}
+              title="Tutup" aria-label="Tutup"><X className="w-4 h-4" /></Button>
           </div>
 
           <div className="grid md:grid-cols-4 gap-3">
             <label className="text-xs space-y-1">
-              <span className="text-foreground/60">Toko</span>
-              <select data-testid="fin-settlement-input-account" value={form.account_id}
+              <span className="text-muted-foreground">Toko</span>
+              <SmartNativeSelect data-testid="fin-settlement-input-account" value={form.account_id}
                 onChange={(e) => setForm({ ...form, account_id: e.target.value })}
-                className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm">
+                className="h-9 w-full">
                 <option value="">— pilih toko —</option>
                 {accounts.map((a) => (
                   <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>
                 ))}
-              </select>
+              </SmartNativeSelect>
             </label>
             <label className="text-xs space-y-1">
-              <span className="text-foreground/60">No. laporan / settlement (dari platform)</span>
-              <input data-testid="fin-settlement-input-settlement-id" value={form.settlement_id}
+              <span className="text-muted-foreground">No. laporan (dari platform)</span>
+              <GlassInput data-testid="fin-settlement-input-settlement-id" value={form.settlement_id}
                 onChange={(e) => setForm({ ...form, settlement_id: e.target.value })}
-                placeholder="mis. 2026081512345"
-                className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm font-mono" />
+                placeholder="mis. 2026081512345" className={inputCls} />
             </label>
             <label className="text-xs space-y-1">
-              <span className="text-foreground/60">Tanggal dana dilepas</span>
-              <input type="date" data-testid="fin-settlement-input-date" value={form.settlement_date}
-                onChange={(e) => setForm({ ...form, settlement_date: e.target.value })}
-                className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
+              <span className="text-muted-foreground">Tanggal dana dilepas</span>
+              <GlassInput type="date" data-testid="fin-settlement-input-date" value={form.settlement_date}
+                onChange={(e) => setForm({ ...form, settlement_date: e.target.value })} className={inputCls} />
             </label>
             <div className="grid grid-cols-2 gap-2">
               <label className="text-xs space-y-1">
-                <span className="text-foreground/60">Periode pesanan dari <span className="text-amber-600">*</span></span>
-                <input type="date" data-testid="fin-settlement-input-period-from" value={form.period_from}
-                  onChange={(e) => setForm({ ...form, period_from: e.target.value })}
-                  className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
+                <span className="text-muted-foreground">Periode pesanan dari <span className="text-[hsl(var(--warning))]">*</span></span>
+                <GlassInput type="date" data-testid="fin-settlement-input-period-from" value={form.period_from}
+                  onChange={(e) => setForm({ ...form, period_from: e.target.value })} className={inputCls} />
               </label>
               <label className="text-xs space-y-1">
-                <span className="text-foreground/60">sampai <span className="text-amber-600">*</span>
-                  <span className="text-foreground/40"> (wajib untuk Cocokkan)</span></span>
-                <input type="date" data-testid="fin-settlement-input-period-to" value={form.period_to}
-                  onChange={(e) => setForm({ ...form, period_to: e.target.value })}
-                  className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
+                <span className="text-muted-foreground">sampai <span className="text-[hsl(var(--warning))]">*</span>
+                  <span className="text-muted-foreground/70"> (wajib untuk Cocokkan)</span></span>
+                <GlassInput type="date" data-testid="fin-settlement-input-period-to" value={form.period_to}
+                  onChange={(e) => setForm({ ...form, period_to: e.target.value })} className={inputCls} />
               </label>
             </div>
           </div>
@@ -479,238 +531,154 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
           <div className="grid md:grid-cols-5 gap-3">
             {MONEY_FIELDS.map(([f, label, sign]) => (
               <label key={f} className="text-xs space-y-1">
-                <span className="text-foreground/60">
-                  {label} <span className={sign > 0 ? 'text-emerald-600' : 'text-red-500'}>
+                <span className="text-muted-foreground">
+                  {label} <span className={sign > 0 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}>
                     ({sign > 0 ? '+' : '−'})</span>
                 </span>
-                <MoneyInput unstyled allowNegative={f === 'adjustments'} data-testid={`fin-settlement-input-${f}`}
+                <MoneyInput glass allowNegative={f === 'adjustments'} data-testid={`fin-settlement-input-${f}`}
                   value={form[f]} onChange={(e) => setForm({ ...form, [f]: e.target.value })}
-                  className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm text-right tabular-nums" />
+                  className="h-9 text-right tabular-nums" />
               </label>
             ))}
           </div>
 
           <div className="grid md:grid-cols-3 gap-3">
             <label className="text-xs space-y-1">
-              <span className="text-foreground/60">
+              <span className="text-muted-foreground">
                 Dana bersih masuk saldo platform <b>menurut laporan platform</b>
               </span>
-              <MoneyInput unstyled data-testid="fin-settlement-input-net-payout"
+              <MoneyInput glass data-testid="fin-settlement-input-net-payout"
                 value={form.net_payout}
                 onChange={(e) => setForm({ ...form, net_payout: e.target.value })}
-                className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm text-right tabular-nums font-semibold" />
+                className="h-9 text-right tabular-nums font-semibold" />
             </label>
             <label className="text-xs space-y-1">
-              <span className="text-foreground/60">Keterangan "potongan lain"</span>
-              <input data-testid="fin-settlement-input-other-note" value={form.other_deductions_note}
+              <span className="text-muted-foreground">Keterangan "potongan lain"</span>
+              <GlassInput data-testid="fin-settlement-input-other-note" value={form.other_deductions_note}
                 onChange={(e) => setForm({ ...form, other_deductions_note: e.target.value })}
-                placeholder="wajib bila ada potongan lain"
-                className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
+                placeholder="wajib bila ada potongan lain" className={inputCls} />
             </label>
             <label className="text-xs space-y-1">
-              <span className="text-foreground/60">Catatan</span>
-              <input data-testid="fin-settlement-input-notes" value={form.notes}
-                onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                className="w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm" />
+              <span className="text-muted-foreground">Catatan</span>
+              <GlassInput data-testid="fin-settlement-input-notes" value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })} className={inputCls} />
             </label>
           </div>
 
-          <div className={`text-xs rounded-lg px-3 py-2 ${Math.abs(diff) < 0.01
-            ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-            : 'bg-red-500/10 text-red-700 dark:text-red-300'}`}
-            data-testid="fin-settlement-diff">
+          <Notice tone={Math.abs(diff) < 0.01 ? 'success' : 'danger'} className="text-xs tabular-nums" testId="fin-settlement-diff">
             Hasil hitung dari rincian: <b>{rp(expected)}</b> · yang diisi:{' '}
             <b>{rp(parseFloat(form.net_payout) || 0)}</b> · selisih: <b>{rp(diff)}</b>
             {Math.abs(diff) < 0.01
               ? ' — seimbang, boleh dijurnal.'
               : ' — beri nama dulu di "Potongan lain" atau "Penyesuaian"; jurnal akan ditolak selama masih ada selisih.'}
-          </div>
+          </Notice>
 
           <div className="flex gap-2 flex-wrap">
-            <button data-testid="fin-settlement-save-post" disabled={busy === 'save' || Math.abs(diff) >= 0.01}
+            <Button data-testid="fin-settlement-save-post" disabled={busy === 'save' || Math.abs(diff) >= 0.01}
               onClick={() => save(true)}
-              title={Math.abs(diff) >= 0.01 ? 'Masih ada selisih — tidak bisa langsung diposting' : 'Simpan, buat jurnal, dan posting ke buku besar'}
-              className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm flex items-center gap-1.5 disabled:opacity-50">
+              title={Math.abs(diff) >= 0.01 ? 'Masih ada selisih — tidak bisa langsung diposting' : 'Simpan, buat jurnal, dan posting ke buku besar'}>
               {busy === 'save' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
               Simpan &amp; posting
-            </button>
-            <button data-testid="fin-settlement-save" disabled={busy === 'save'} onClick={() => save(false)}
-              className="h-9 px-4 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-1.5 disabled:opacity-50">
+            </Button>
+            <Button variant="outline" data-testid="fin-settlement-save" disabled={busy === 'save'} onClick={() => save(false)}>
               Simpan draf
-            </button>
-            <button data-testid="fin-settlement-cancel" onClick={() => setFormOpen(false)}
-              className="h-9 px-4 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm">Batal</button>
+            </Button>
+            <Button variant="outline" data-testid="fin-settlement-cancel" onClick={() => setFormOpen(false)}>Batal</Button>
           </div>
         </GlassCard>
         </div>
       ) : null}
 
-      {/* ── HASIL COCOK ── */}
-      {recon ? (
-        <GlassCard className="p-4 space-y-2" data-testid="fin-settlement-recon">
-          <div className="flex items-center justify-between">
-            <h3 className="font-medium text-sm flex items-center gap-2">
-              <Scale className="w-4 h-4" /> Pencocokan {reconFor}
-              <span className="text-xs text-foreground/50">
-                periode {recon.period?.from || '—'} → {recon.period?.to || '—'}
-              </span>
-            </h3>
-            <button data-testid="fin-settlement-recon-close" onClick={() => setRecon(null)}
-              className="p-1 rounded hover:bg-foreground/10"><X className="w-4 h-4" /></button>
-          </div>
-          <div className="grid md:grid-cols-3 gap-3 text-xs">
-            <div className="rounded-lg bg-foreground/5 p-3">
-              <div className="text-foreground/50 uppercase tracking-wide">Pencairan</div>
-              <div className="mt-1">bruto <b>{rp(recon.settlement?.gross_sales || 0)}</b></div>
-              <div>masuk saldo <b>{rp(recon.settlement?.net_payout || 0)}</b></div>
-              <div>potongan <b>{rp(recon.settlement?.total_deductions || 0)}</b>{' '}
-                ({recon.settlement?.deduction_pct || 0}%)</div>
-            </div>
-            <div className="rounded-lg bg-foreground/5 p-3">
-              <div className="text-foreground/50 uppercase tracking-wide">
-                Omzet pesanan periode ({recon.marketing?.order_count || 0} pesanan)
-              </div>
-              <div className="mt-1">bruto <b>{rp(recon.marketing?.revenue_gross || 0)}</b></div>
-              <div>setelah diskon <b>{rp(recon.marketing?.revenue_product || 0)}</b></div>
-              <div>dibayar pembeli <b>{rp(recon.marketing?.order_amount || 0)}</b></div>
-            </div>
-            <div className="rounded-lg bg-foreground/5 p-3" data-testid="fin-settlement-recon-primary">
-              {/* 2026-11-02 (K5) — pembanding utama keputusan owner */}
-              <div className="text-foreground/50 uppercase tracking-wide">Selisih (setelah diskon penjual)</div>
-              <div className="mt-1 text-lg font-semibold">
-                {rp(recon.primary?.gap ?? recon.gap?.gross_vs_revenue_gross ?? 0)}
-              </div>
-              <div className="text-foreground/60">
-                (bruto {rp(recon.primary?.settlement_gross || 0)} − diskon penjual{' '}
-                {rp(recon.primary?.settlement_seller_discount || 0)}) vs omzet setelah diskon{' '}
-                {rp(recon.primary?.omzet_after_discount || 0)}
-              </div>
-              <div className="text-foreground/50">
-                {recon.gap?.cancelled_orders_excluded || 0} pesanan batal dikecualikan · selisih bruto vs bruto{' '}
-                {rp(recon.gap?.gross_vs_revenue_gross || 0)}
-              </div>
-            </div>
-          </div>
-          <ul className="space-y-1.5" data-testid="fin-settlement-recon-named">
-            {(recon.gap?.named || []).map((g) => (
-              <li key={g.name} className="text-xs rounded-lg bg-foreground/5 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-[10px]">{g.name}</Badge>
-                  {g.amount ? <b>{rp(g.amount)}</b> : null}
-                </div>
-                <div className="mt-0.5 text-foreground/70">{g.label}</div>
-                <div className="text-foreground/50">{g.action}</div>
-              </li>
-            ))}
-          </ul>
-        </GlassCard>
-      ) : null}
-
       {/* ── DAFTAR ── */}
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
-          <div className="py-12 text-center text-sm text-foreground/50 flex items-center justify-center gap-2">
-            <Loader2 className="w-4 h-4 animate-spin" /> memuat pencairan…
+          <div className="py-8 text-center text-sm text-muted-foreground flex items-center justify-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin" /> memuat dana dilepas…
           </div>
         ) : rows.length === 0 ? (
-          <div className="py-12 text-center text-sm text-foreground/60 px-6" data-testid="fin-settlement-empty">
-            Belum ada laporan dana dilepas tercatat{accountId ? ' untuk toko ini' : ''}{range.from || range.to ? ' pada periode ini' : ''}.
-            <div className="mt-1 text-xs text-foreground/50">
-              Buka laporan Penghasilan (Shopee) / Settlement (TikTok), lalu tekan “Catat dana dilepas” atau “Impor laporan”.
-            </div>
-          </div>
+          <EmptyState icon={Banknote} testId="fin-settlement-empty"
+            title={`Belum ada laporan dana dilepas${accountId ? ' untuk toko ini' : ''}${range.from || range.to ? ' pada periode ini' : ''}`}
+            description="Buka laporan Penghasilan (Shopee) / Settlement (TikTok), lalu tekan “Catat dana dilepas” atau “Impor laporan”." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="fin-settlement-table">
               <thead>
-                <tr className="text-xs uppercase tracking-wide text-foreground/50 border-b border-foreground/10">
-                  <th className="text-left py-2 px-3">Tanggal</th>
-                  <th className="text-left py-2 px-3">No. Laporan</th>
-                  <th className="text-left py-2 px-3">Toko / Platform</th>
-                  <th className="text-right py-2 px-3">Bruto</th>
-                  <th className="text-right py-2 px-3">Potongan</th>
-                  <th className="text-right py-2 px-3">Masuk Saldo</th>
-                  <th className="text-left py-2 px-3">Status</th>
-                  <th className="text-left py-2 px-3">Jurnal</th>
-                  <th className="text-right py-2 px-3">Aksi</th>
+                <tr className="border-b border-[var(--glass-border)]">
+                  <th className="text-left">Tanggal</th>
+                  <th className="text-left">No. laporan</th>
+                  <th className="text-left">Toko / platform</th>
+                  <th className="text-right">Bruto</th>
+                  <th className="text-right">Potongan</th>
+                  <th className="text-right">Masuk saldo</th>
+                  <th className="text-left">Status</th>
+                  <th className="text-left">Jurnal</th>
+                  <th className="text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className="border-b border-foreground/5"
+                  <tr key={r.id} className={`border-b border-[var(--glass-border)] ${recon && reconFor === r.settlement_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                     data-testid={`fin-settlement-row-${r.settlement_id}`}>
-                    <td className="py-2 px-3 whitespace-nowrap">{formatDateID(r.settlement_date)}</td>
-                    <td className="py-2 px-3 font-mono text-xs">{r.settlement_id}</td>
-                    <td className="py-2 px-3">
+                    <td className="whitespace-nowrap">{formatDateID(r.settlement_date)}</td>
+                    <td className="whitespace-nowrap">{r.settlement_id}</td>
+                    <td>
                       {accName(r.account_id)}
-                      <span className="ml-1 text-xs text-foreground/50 uppercase">{r.platform}</span>
+                      <span className="ml-1 text-xs text-muted-foreground uppercase">{r.platform}</span>
                     </td>
-                    <td className="py-2 px-3 text-right tabular-nums">{rp(r.gross_sales || 0)}</td>
-                    <td className="py-2 px-3 text-right tabular-nums text-amber-600 dark:text-amber-300">
+                    <td className="text-right tabular-nums whitespace-nowrap">{rp(r.gross_sales || 0)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">
                       {rp(r.total_deductions || 0)}
                       {r.deduction_pct ? (
-                        <span className="text-xs text-foreground/50"> ({r.deduction_pct}%)</span>
+                        <span className="text-xs text-muted-foreground"> ({pct(r.deduction_pct)})</span>
                       ) : null}
                     </td>
-                    <td className="py-2 px-3 text-right tabular-nums font-medium">
+                    <td className="text-right tabular-nums whitespace-nowrap font-medium">
                       {rp(r.net_payout || 0)}
                     </td>
-                    <td className="py-2 px-3">
-                      {r.math_verified ? (
-                        <Badge variant="outline" className="text-[10px] text-emerald-600">
-                          <CheckCircle2 className="w-3 h-3 mr-1" /> seimbang
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px] text-red-600">
-                          <AlertTriangle className="w-3 h-3 mr-1" /> selisih {rp(r.net_payout_diff || 0)}
-                        </Badge>
-                      )}
+                    <td className="whitespace-nowrap">
+                      {r.math_verified
+                        ? <StatusBadge tone="success" label="Seimbang" />
+                        : <StatusBadge tone="danger" label={`Selisih ${rp(r.net_payout_diff || 0)}`} />}
                     </td>
-                    <td className="py-2 px-3 text-xs">
+                    <td className="text-xs whitespace-nowrap">
                       {r.je_number
-                        ? <span className="font-mono">{r.je_number}
-                          <span className="ml-1 text-foreground/50">({r.je_status})</span></span>
-                        : <span className="text-foreground/40">belum</span>}
+                        ? <>{r.je_number} <span className="text-muted-foreground">({finStatus(r.je_status).label.toLowerCase()})</span></>
+                        : <span className="text-muted-foreground">belum</span>}
                     </td>
-                    <td className="py-2 px-3">
+                    <td>
                       <div className="flex items-center justify-end gap-1">
-                        <button title="Cocokkan dengan omzet periode"
+                        <Button variant="ghost" size="icon-sm" title="Cocokkan dengan omzet periode" aria-label="Cocokkan dengan omzet periode"
                           data-testid={`fin-settlement-reconcile-${r.settlement_id}`}
-                          disabled={busy === `recon:${r.id}`} onClick={() => reconcile(r)}
-                          className="p-1.5 rounded hover:bg-foreground/10 disabled:opacity-40">
+                          disabled={busy === `recon:${r.id}`} onClick={() => reconcile(r)}>
                           <Scale className="w-4 h-4" />
-                        </button>
+                        </Button>
                         {!r.je_id && r.math_verified ? (
-                          <button title="Buat jurnal draf"
+                          <Button variant="outline" size="sm" title="Buat jurnal draf"
                             data-testid={`fin-settlement-journal-${r.settlement_id}`}
-                            disabled={busy === `journal:${r.id}`} onClick={() => act(r, 'journal')}
-                            className="h-7 px-2 rounded border border-foreground/10 hover:bg-foreground/10 text-xs flex items-center gap-1 disabled:opacity-40">
+                            disabled={busy === `journal:${r.id}`} onClick={() => act(r, 'journal')}>
                             <BookCheck className="w-3.5 h-3.5" /> Jurnal
-                          </button>
+                          </Button>
                         ) : null}
                         {r.je_status === 'draft' ? (
-                          <button title="Posting jurnal ke buku besar"
+                          <Button variant="outline" size="sm" title="Posting jurnal ke buku besar"
                             data-testid={`fin-settlement-post-${r.settlement_id}`}
-                            disabled={busy === `post:${r.id}`} onClick={() => act(r, 'post')}
-                            className="h-7 px-2 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs flex items-center gap-1 disabled:opacity-40">
+                            disabled={busy === `post:${r.id}`} onClick={() => act(r, 'post')}>
                             <Send className="w-3.5 h-3.5" /> Posting
-                          </button>
+                          </Button>
                         ) : null}
                         {!r.je_id ? (
                           <>
-                            <button title="Koreksi angka"
+                            <Button variant="ghost" size="icon-sm" title="Koreksi angka" aria-label="Koreksi angka"
                               data-testid={`fin-settlement-edit-${r.settlement_id}`}
-                              onClick={() => openEdit(r)}
-                              className="p-1.5 rounded hover:bg-foreground/10">
+                              onClick={() => openEdit(r)}>
                               <Pencil className="w-4 h-4" />
-                            </button>
-                            <button title="Hapus"
+                            </Button>
+                            <Button variant="ghost" size="icon-sm" title="Hapus" aria-label="Hapus"
                               data-testid={`fin-settlement-delete-${r.settlement_id}`}
-                              disabled={busy === `delete:${r.id}`}
-                              onClick={async () => { if (await confirmDialog(`Hapus laporan dana dilepas ${r.settlement_id}?`)) act(r, 'delete'); }}
-                              className="ml-2 p-1.5 rounded hover:bg-foreground/10 text-red-600 disabled:opacity-40">
+                              disabled={busy === `delete:${r.id}`} className="ml-2 text-[hsl(var(--destructive))]"
+                              onClick={async () => { if (await confirmDialog({ title: `Hapus laporan dana dilepas ${r.settlement_id}?`, confirmLabel: 'Hapus', danger: true })) act(r, 'delete'); }}>
                               <Trash2 className="w-4 h-4" />
-                            </button>
+                            </Button>
                           </>
                         ) : null}
                       </div>
@@ -724,6 +692,6 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
         <PaginationBar total={total} skip={skip} limit={PAGE} onPageChange={setSkip} className="px-3 py-2" />
       </GlassCard>
       </>) : null}
-    </div>
+    </PageLayout>
   );
 }

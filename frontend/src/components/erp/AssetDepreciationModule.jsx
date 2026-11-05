@@ -1,17 +1,35 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Play, RefreshCw, Calculator, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Play, RefreshCw, Calculator } from 'lucide-react';
 import { monthOptions } from './finance/PeriodPicker';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from './moduleAtoms';
+import { Skeleton } from '@/components/ui/skeleton';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah } from '@/lib/format';
 import { thisMonthWIB } from '@/lib/waktu';
 
 const fmt = formatRupiah;
+const MONTH_OPTIONS = monthOptions(24);
+const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const periodLabel = (code) => { const [y, m] = String(code || '').split('-'); return BULAN[Number(m) - 1] ? `${BULAN[Number(m) - 1]} ${y}` : (code || '—'); };
+const METHOD_LABEL = { straight_line: 'Garis lurus', double_declining: 'Saldo menurun ganda' };
+const catLabel = (c) => (c === 'it' ? 'IT' : c ? c.charAt(0).toUpperCase() + c.slice(1).replace(/-/g, ' ') : '—');
+const RESULT_STATUS = {
+  posted: { label: 'Tercatat', tone: 'success' },
+  error: { label: 'Gagal', tone: 'danger' },
+  skipped: { label: 'Dilewati', tone: 'warning' },
+  already_posted: { label: 'Sudah tercatat', tone: 'muted' },
+};
 
+/**
+ * Penyusutan aset (menu Aset Tetap › Penyusutan).
+ * 2026-11-05 (PANDUAN_UI G1/G13): cetakan PageLayout — bulan di toolbar, tombol utama di kepala/baris tab,
+ * hasil penyusutan dibuka di panel di atas tabel (dulu kartu-kartu angka + tabel terpisah di bawah).
+ */
 export default function AssetDepreciationModule({ token }) {
   const [period, setPeriod] = useState(thisMonthWIB());
   const [assets, setAssets] = useState([]);
@@ -31,7 +49,7 @@ export default function AssetDepreciationModule({ token }) {
         setAssets(data.filter(a => a.depreciation_method && !['none', 'manual'].includes(a.depreciation_method)));
       }
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal memuat daftar aset', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal memuat daftar aset', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -41,7 +59,9 @@ export default function AssetDepreciationModule({ token }) {
   useEffect(() => { fetchAssets(); }, [fetchAssets]);
 
   const runBatchDepreciation = async () => {
-    if (selectedAssets.length === 0 && !(await confirmDialog('Tidak ada aset yang dipilih. Jalankan penyusutan untuk SEMUA aset aktif?'))) return;
+    if (selectedAssets.length === 0 && !(await confirmDialog({
+      title: 'Jalankan penyusutan untuk semua aset aktif?', body: 'Tidak ada aset yang dipilih.', confirmLabel: 'Jalankan',
+    }))) return;
     setRunning(true);
     setResult(null);
     try {
@@ -56,14 +76,14 @@ export default function AssetDepreciationModule({ token }) {
       });
       if (r.ok) {
         const data = await r.json();
-        setResult(data);
-        toast({ title: 'Sukses', description: `Batch depreciation selesai: ${data.posted_count} aset berhasil diposting` });
+        setResult({ ...data, period });
+        toast({ title: 'Berhasil', description: `Penyusutan selesai: ${data.posted_count} aset dicatat ke jurnal` });
       } else {
         const err = await r.json();
-        toast({ title: 'Error', description: err.detail || 'Batch depreciation gagal', variant: 'destructive' });
+        toast({ title: 'Gagal', description: err.detail || 'Penyusutan gagal', variant: 'destructive' });
       }
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal menjalankan batch depreciation', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal menjalankan penyusutan', variant: 'destructive' });
     } finally {
       setRunning(false);
     }
@@ -83,119 +103,131 @@ export default function AssetDepreciationModule({ token }) {
     setSelectedAssets([]);
   };
 
-  return (
-    <div className="space-y-5" data-testid="asset-depreciation-page">
-      <PageHeader
-        icon={Calculator}
-        title="Depresiasi Aset (Batch)"
-        subtitle="Jalankan batch depreciation untuk periode tertentu. Sistem akan otomatis posting jurnal depresiasi."
-        actions={
-          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAssets} data-testid="depr-refresh">
-            <RefreshCw className="w-3.5 h-3.5" /></Button>
-        }
-      />
-      {result && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <StatTile label="Aset Diproses" value={result.assets_processed} />
-          <StatTile label="Berhasil Posted" value={result.posted_count} accent="success" />
-          <StatTile label="Total Depresiasi" value={fmt(result.total_depreciation)} accent="primary" />
-          <StatTile
-            label="Success Rate"
-            value={`${result.assets_processed > 0 ? Math.round((result.posted_count / result.assets_processed) * 100) : 0}%`}
-            accent={result.posted_count === result.assets_processed ? 'success' : 'warning'}
-          />
+  const detail = result && (
+    <DetailPanel
+      title={`Hasil penyusutan ${periodLabel(result.period || period)}`}
+      description={`${result.assets_processed} aset diproses · ${result.posted_count} dicatat ke jurnal · total ${fmt(result.total_depreciation)}`}
+      onClose={() => setResult(null)}
+      testId="depr-result-panel"
+    >
+      {result.results && result.results.length > 0 && (
+        <div className="overflow-x-auto -mx-4">
+          <table className="w-full" data-testid="depr-result-table">
+            <thead>
+              <tr>
+                <th className="text-left">Status</th>
+                <th className="text-left">Kode aset</th>
+                <th className="text-left">Nama aset</th>
+                <th className="text-right">Penyusutan</th>
+                <th className="text-left">No. jurnal</th>
+                <th className="text-left">Keterangan</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.results.map((r, idx) => {
+                const st = RESULT_STATUS[r.status] || { label: r.status, tone: 'default' };
+                return (
+                  <tr key={idx}>
+                    <td><StatusBadge tone={st.tone} label={st.label} /></td>
+                    <td className="whitespace-nowrap">{r.asset_code}</td>
+                    <td>{r.asset_name}</td>
+                    <td className="text-right tabular-nums">{fmt(r.depr_amount)}</td>
+                    <td className="whitespace-nowrap">{r.je_number || '—'}</td>
+                    <td className="text-xs text-muted-foreground">{r.reason && r.reason !== 'OK' ? r.reason : '—'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       )}
-      <GlassCard className="p-6">
-        <div className="space-y-4">
-          <div className="flex gap-4 items-end">
-            <div className="flex-1">
-              <label className="text-sm font-medium text-foreground mb-2 block">Periode penyusutan</label>
-              <SmartNativeSelect value={period} onChange={e => setPeriod(e.target.value)} className="h-9 w-48" data-testid="depr-period">
-                {monthOptions(24).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={selectAll} size="sm" data-testid="depr-select-all">
-                Pilih semua
-              </Button>
-              <Button variant="outline" onClick={clearSelection} size="sm" data-testid="depr-clear-all">
-                Kosongkan
-              </Button>
-            </div>
-          </div>
-          <div className="flex items-center justify-between px-4 py-3 bg-[hsl(var(--primary)/0.06)] rounded-lg">
-            <div>
-              <div className="text-sm font-medium text-foreground">
-                {selectedAssets.length === 0
-                  ? 'Semua aset aktif akan diproses'
-                  : `${selectedAssets.length} aset dipilih`}
-              </div>
-              <div className="text-xs text-muted-foreground mt-1">
-                Auto-post jurnal depresiasi aktif
-              </div>
-            </div>
-            <Button onClick={runBatchDepreciation} disabled={running || loading} data-testid="depr-run-batch" >
-              <Play className="w-4 h-4 mr-2" />
-              {running ? 'Memproses...' : 'Run Batch Depreciation'}
-            </Button>
-          </div>
-        </div>
-      </GlassCard>
-      <GlassCard className="p-4">
-        <h3 className="text-lg font-semibold text-foreground mb-4">Daftar Aset Aktif ({assets.length})</h3>
+    </DetailPanel>
+  );
+
+  return (
+    <PageLayout
+      testId="asset-depreciation-page"
+      title="Penyusutan aset"
+      subtitle="Hitung penyusutan satu bulan; jurnalnya dicatat otomatis."
+      actions={
+        <Button onClick={runBatchDepreciation} disabled={running || loading} data-testid="depr-run-batch">
+          <Play className="w-4 h-4" />
+          {running ? 'Memproses…' : 'Jalankan penyusutan'}
+        </Button>
+      }
+      filters={
+        <SmartNativeSelect value={period} onChange={e => setPeriod(e.target.value)} className="h-9 w-48" aria-label="Periode penyusutan" data-testid="depr-period">
+          {MONTH_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </SmartNativeSelect>
+      }
+      tools={
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAssets} data-testid="depr-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      }
+      summary={assets.length > 0 && (
+        <p className="text-sm text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-foreground">
+            {selectedAssets.length === 0 ? 'Semua aset aktif akan diproses' : `${selectedAssets.length} dari ${assets.length} aset dipilih`}
+          </span>
+          <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAll} data-testid="depr-select-all">Pilih semua</Button>
+          <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection} data-testid="depr-clear-all">Kosongkan</Button>
+        </p>
+      )}
+      detail={detail}
+    >
+      <GlassCard className="p-0 overflow-hidden">
         {loading ? (
-          <div className="text-center py-8 text-muted-foreground">Memuat aset...</div>
+          <Skeleton className="h-40 m-4" />
         ) : assets.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">Tidak ada aset aktif yang perlu depresiasi</div>
+          <EmptyState icon={Calculator} title="Tidak ada aset yang perlu disusutkan"
+            description="Aset aktif dengan metode garis lurus atau saldo menurun muncul di sini." />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="depr-asset-table">
+            <table className="w-full" data-testid="depr-asset-table">
               <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="pb-2 w-12">
+                <tr>
+                  <th className="w-10">
                     <input
                       type="checkbox"
                       checked={selectedAssets.length === assets.length}
                       onChange={e => e.target.checked ? selectAll() : clearSelection()}
                       className="w-4 h-4"
+                      aria-label="Pilih semua aset"
                     />
                   </th>
-                  <th className="pb-2">Kode</th>
-                  <th className="pb-2">Nama Aset</th>
-                  <th className="pb-2">Kategori</th>
-                  <th className="pb-2">Metode</th>
-                  <th className="pb-2 text-right">Harga Perolehan</th>
-                  <th className="pb-2 text-right">NBV Saat Ini</th>
+                  <th className="text-left">Kode</th>
+                  <th className="text-left">Nama aset</th>
+                  <th className="text-left">Kategori</th>
+                  <th className="text-left">Metode</th>
+                  <th className="text-right">Harga perolehan</th>
+                  <th className="text-right">Nilai buku</th>
                 </tr>
               </thead>
               <tbody>
                 {assets.map(a => (
                   <tr
                     key={a.id}
-                    className={`border-b border-[var(--glass-border)] hover:bg-[var(--glass-border)]/30 cursor-pointer ${selectedAssets.includes(a.id) ? 'bg-primary/10' : ''}`}
+                    className={`cursor-pointer ${selectedAssets.includes(a.id) ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                     onClick={() => toggleAsset(a.id)}
                     data-testid={`depr-asset-row-${a.id}`}
                   >
-                    <td className="py-3">
+                    <td>
                       <input
                         type="checkbox"
                         checked={selectedAssets.includes(a.id)}
                         onChange={() => toggleAsset(a.id)}
                         className="w-4 h-4"
                         onClick={e => e.stopPropagation()}
+                        aria-label={`Pilih ${a.name}`}
                       />
                     </td>
-                    <td className="py-3 font-mono text-xs">{a.code}</td>
-                    <td className="py-3">{a.name}</td>
-                    <td className="py-3 capitalize">{a.category}</td>
-                    <td className="py-3 text-xs">
-                      <span className="px-2 py-1 rounded bg-blue-500/20 text-blue-300">
-                        {a.depreciation_method === 'straight_line' ? 'Garis Lurus' : 'Double Declining'}
-                      </span>
-                    </td>
-                    <td className="py-3 text-right font-mono">{fmt(a.purchase_cost)}</td>
-                    <td className="py-3 text-right font-mono">{fmt(a.book_value_current)}</td>
+                    <td className="whitespace-nowrap">{a.code}</td>
+                    <td>{a.name}</td>
+                    <td>{catLabel(a.category)}</td>
+                    <td className="whitespace-nowrap">{METHOD_LABEL[a.depreciation_method] || a.depreciation_method}</td>
+                    <td className="text-right tabular-nums">{fmt(a.purchase_cost)}</td>
+                    <td className="text-right tabular-nums">{fmt(a.book_value_current)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -203,42 +235,6 @@ export default function AssetDepreciationModule({ token }) {
           </div>
         )}
       </GlassCard>
-      {result && result.results && result.results.length > 0 && (
-        <GlassCard className="p-4">
-          <h3 className="text-lg font-semibold text-foreground mb-4">Hasil penyusutan</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="depr-result-table">
-              <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="pb-2">Status</th>
-                  <th className="pb-2">Kode Aset</th>
-                  <th className="pb-2">Nama Aset</th>
-                  <th className="pb-2 text-right">Depresiasi</th>
-                  <th className="pb-2">JE Number</th>
-                  <th className="pb-2">Keterangan</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.results.map((r, idx) => (
-                  <tr key={idx} className="border-b border-[var(--glass-border)]">
-                    <td className="py-3">
-                      {r.status === 'posted' && <CheckCircle className="w-4 h-4 text-emerald-300" />}
-                      {r.status === 'error' && <XCircle className="w-4 h-4 text-red-300" />}
-                      {r.status === 'skipped' && <AlertCircle className="w-4 h-4 text-yellow-300" />}
-                      {r.status === 'already_posted' && <CheckCircle className="w-4 h-4 text-muted-foreground" />}
-                    </td>
-                    <td className="py-3 font-mono text-xs">{r.asset_code}</td>
-                    <td className="py-3">{r.asset_name}</td>
-                    <td className="py-3 text-right font-mono">{fmt(r.depr_amount)}</td>
-                    <td className="py-3 font-mono text-xs">{r.je_number || '-'}</td>
-                    <td className="py-3 text-xs text-muted-foreground">{r.reason || 'OK'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </GlassCard>
-      )}
-    </div>
+    </PageLayout>
   );
 }

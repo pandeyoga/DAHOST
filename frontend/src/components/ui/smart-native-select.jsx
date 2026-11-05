@@ -175,7 +175,11 @@ export default function SmartNativeSelect({
         )}
         {...rest}
       >
-        <span className={cn("truncate", selected && selected.value !== "" ? "text-foreground" : "text-muted-foreground")}>
+        {/* 2026-11-04 (galeri Keuangan): pilihan bernilai kosong yang BERARTI ("Semua toko", "Semua status") tampil
+            seperti pilihan biasa — dulu abu seperti placeholder, sehingga dua pilihan bersebelahan terlihat beda.
+            Abu hanya untuk placeholder sungguhan (prop `placeholder`, atau label "— …" / "Pilih …"). */}
+        <span className={cn("truncate", (!selected || (selected.value === "" && (placeholder || /^\s*([—–-]|pilih\b)/i.test(selected.label))))
+          ? "text-muted-foreground" : "text-foreground")}>
           {selected ? selected.label : ph}
         </span>
         <ChevronDown className={cn("h-4 w-4 flex-shrink-0 opacity-50 transition-transform", open && "rotate-180")} />

@@ -189,7 +189,7 @@ export function CoaTreeView({ tree, open, setOpen, visible, matched, q, onEdit, 
   const rows = flattenTree(tree, open, 0, visible);
   if (!rows.length) return <div className="py-8 text-center text-sm text-muted-foreground">Tidak ada akun yang cocok.</div>;
   return (
-    <div className="max-h-[65vh] overflow-y-auto overflow-x-hidden" data-testid="coa-tree">
+    <div className="overflow-x-hidden" data-testid="coa-tree">
       {rows.map((row) => (
         <TreeRow key={row.node.code} row={row} onToggle={toggle} isOpen={open.has(row.node.code)}
           matched={matched ? matched.has(row.node.code) : undefined} q={q}

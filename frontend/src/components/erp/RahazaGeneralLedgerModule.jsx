@@ -1,22 +1,33 @@
-import { useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { journalSourceLabel } from '@/lib/financeLabels';
 import { formatDateID } from '@/lib/format';
-import { RefreshCw, FileText, Download, BookOpen } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { RefreshCw, FileText, Download } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile } from './moduleAtoms';
-import { todayWIB, monthStartWIB } from '@/lib/waktu';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatTile, EmptyState } from './moduleAtoms';
+import PageLayout, { RowDetail } from './layout/PageLayout';
+import JournalLinesInline from './finance/JournalLinesInline';
+import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
+/**
+ * Buku Besar › Mutasi per akun (saldo berjalan satu akun).
+ * 2026-11-05 (PANDUAN_UI G1/G6/G7): cetakan PageLayout; periode lewat PeriodPicker (dulu dua kotak tanggal
+ * berlabel KAPITAL di atasnya); nomor jurnal & angka tidak dipatah ke 2 baris; tanpa huruf mesin ketik dan
+ * warna hijau/biru; tabel tidak lagi bergulir di wadah setinggi 600 px.
+ */
 export default function RahazaGeneralLedgerModule({ token }) {
   const [accounts, setAccounts] = useState([]);
   const [code, setCode] = useState('');
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [from, setFrom] = useState(() => monthStartWIB());
-  const [to, setTo] = useState(() => todayWIB());
+  const [openLine, setOpenLine] = useState(null);
+  // Bawaan sama dengan dulu: awal bulan ini s/d hari ini.
+  const [period, setPeriod] = useState(() => periodFromPreset('month'));
+  const { from, to } = period;
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   useEffect(() => {
@@ -40,16 +51,16 @@ export default function RahazaGeneralLedgerModule({ token }) {
 
   const exportCSV = () => {
     if (!data?.lines) return;
-    const rows = data.lines.map(l => [l.date, l.je_number, l.description, l.source, l.debit, l.credit, l.balance]);
+    const rows = data.lines.map(l => [l.date, l.je_number, l.description, journalSourceLabel(l.source), l.debit, l.credit, l.balance]);
     const csv = [
-      ['Tanggal', 'Jurnal', 'Deskripsi', 'Sumber', 'Debit', 'Credit', 'Saldo'],
+      ['Tanggal', 'Jurnal', 'Keterangan', 'Sumber', 'Debit', 'Kredit', 'Saldo'],
       ...rows,
     ].map(r => r.map(c => typeof c === 'string' && c.includes(',') ? `"${c}"` : c).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `gl-${code}-${from}-${to}.csv`;
+    link.download = `buku-besar-${code}-${from}-${to}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -57,47 +68,25 @@ export default function RahazaGeneralLedgerModule({ token }) {
   const acc = data?.account;
   const totalDebit = (data?.lines || []).reduce((s, l) => s + (l.debit || 0), 0);
   const totalCredit = (data?.lines || []).reduce((s, l) => s + (l.credit || 0), 0);
+  const neg = (n) => (Number(n) < 0 ? 'text-[hsl(var(--destructive))]' : '');
 
   return (
-    <div className="space-y-5" data-testid="rahaza-gl-page">
-      <PageHeader
-        icon={BookOpen}
-        title="Buku Besar (General Ledger)"
-        subtitle="Detail semua transaksi per akun dengan saldo berjalan. Pilih akun dan range tanggal."
-        actions={
-          <>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchGL} data-testid="gl-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button variant="outline" onClick={exportCSV} disabled={!data?.lines?.length} data-testid="gl-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
-          </>
-        }
-      />
-
-      <div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div>
-            <label className="text-[10px] uppercase text-muted-foreground font-semibold block mb-1">Akun</label>
-            <SmartNativeSelect
-              value={code}
-              onChange={e => setCode(e.target.value)}
-              className="h-9 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-sm text-foreground min-w-[260px]"
-              data-testid="gl-account"
-            >
-              <option value="">— Pilih akun —</option>
-              {accounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div>
-            <label className="text-[10px] uppercase text-muted-foreground font-semibold block mb-1">Dari</label>
-            <GlassInput type="date" value={from} onChange={e => setFrom(e.target.value)} className="h-9 w-40" data-testid="gl-from" />
-          </div>
-          <div>
-            <label className="text-[10px] uppercase text-muted-foreground font-semibold block mb-1">Sampai</label>
-            <GlassInput type="date" value={to} onChange={e => setTo(e.target.value)} className="h-9 w-40" data-testid="gl-to" />
-          </div>
-        </div>
-      </div>
-
-      {acc && (
+    <PageLayout
+      testId="rahaza-gl-page"
+      title="Mutasi per akun"
+      subtitle="Semua transaksi satu akun dengan saldo berjalan, dari buku besar."
+      filters={<>
+        <SmartNativeSelect value={code} onChange={e => setCode(e.target.value)} className="h-9 w-72 max-w-full" aria-label="Akun" data-testid="gl-account">
+          <option value="">Pilih akun…</option>
+          {accounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+        </SmartNativeSelect>
+        <PeriodPicker value={period} onChange={setPeriod} testId="gl" />
+      </>}
+      tools={<>
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchGL} data-testid="gl-refresh"><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" onClick={exportCSV} disabled={!data?.lines?.length} data-testid="gl-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+      </>}
+      summary={acc && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatTile label="Akun" value={acc.name} testId="gl-kpi-acc" />
           <StatTile label="Saldo awal" value={fmt(data.opening_balance)} testId="gl-kpi-open" />
@@ -105,56 +94,67 @@ export default function RahazaGeneralLedgerModule({ token }) {
           <StatTile label="Saldo akhir" value={fmt(data.end_balance)} testId="gl-kpi-end" />
         </div>
       )}
-
+    >
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
-          <div className="py-16 text-center text-muted-foreground">Memuat…</div>
+          <div className="space-y-2 p-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
         ) : !data || !data.lines?.length ? (
-          <div className="py-16 text-center text-muted-foreground">
-            <FileText className="w-10 h-10 mx-auto mb-2 opacity-40" />
-            {code ? 'Tidak ada transaksi di periode ini.' : 'Pilih akun untuk melihat buku besar.'}
-          </div>
+          <EmptyState icon={FileText}
+            title={code ? 'Tidak ada transaksi di periode ini' : 'Pilih akun untuk melihat mutasinya'}
+            description={code ? 'Ubah periode atau pilih akun lain.' : 'Mutasi dan saldo berjalan akun tampil di sini.'} />
         ) : (
-          <div className="overflow-x-auto max-h-[600px]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-[var(--card-surface)] backdrop-blur-sm">
-                <tr className="text-left text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="py-2 px-2">Tanggal</th>
-                  <th className="py-2 px-2">No. Jurnal</th>
-                  <th className="py-2 px-2">Deskripsi</th>
-                  <th className="py-2 px-2">Sumber</th>
-                  <th className="py-2 px-2 text-right">Debit</th>
-                  <th className="py-2 px-2 text-right">Credit</th>
-                  <th className="py-2 px-2 text-right">Saldo</th>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="gl-table">
+              <thead>
+                <tr>
+                  <th className="text-left">Tanggal</th>
+                  <th className="text-left">No. jurnal</th>
+                  <th className="text-left">Keterangan</th>
+                  <th className="text-left">Sumber</th>
+                  <th className="text-right">Debit</th>
+                  <th className="text-right">Kredit</th>
+                  <th className="text-right">Saldo</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-b border-[var(--glass-border)] text-xs font-semibold bg-foreground/5">
-                  <td colSpan={6} className="py-1.5 px-2">Saldo Awal</td>
-                  <td className="py-1.5 px-2 text-right font-mono">{fmt(data.opening_balance)}</td>
+                <tr className="border-b border-[var(--glass-border)] font-semibold bg-foreground/5">
+                  <td colSpan={6}>Saldo awal</td>
+                  <td className={`text-right tabular-nums ${neg(data.opening_balance)}`}>{fmt(data.opening_balance)}</td>
                 </tr>
-                {data.lines.map((l, i) => (
-                  <tr key={i} className="border-b border-[var(--glass-border)] hover:bg-foreground/5">
-                    <td className="py-1.5 px-2 text-xs whitespace-nowrap">{formatDateID(l.date)}</td>
-                    <td className="py-1.5 px-2 font-mono text-xs">{l.je_number}</td>
-                    <td className="py-1.5 px-2 text-xs">{l.description || '-'}</td>
-                    <td className="py-1.5 px-2 text-xs text-muted-foreground">{journalSourceLabel(l.source)}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs text-emerald-300">{l.debit ? fmt(l.debit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs text-sky-300">{l.credit ? fmt(l.credit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs font-semibold">{fmt(l.balance)}</td>
-                  </tr>
-                ))}
-                <tr className="font-semibold bg-[var(--card-surface)] border-t-2 border-[var(--glass-border)]">
-                  <td colSpan={4} className="py-2 px-2 text-right text-xs uppercase">TOTAL MUTASI</td>
-                  <td className="py-2 px-2 text-right font-mono text-xs">{fmt(totalDebit)}</td>
-                  <td className="py-2 px-2 text-right font-mono text-xs">{fmt(totalCredit)}</td>
-                  <td className="py-2 px-2 text-right font-mono text-xs">{fmt(data.end_balance)}</td>
+                {data.lines.map((l, i) => {
+                  const key = l.id || `${l.je_number}-${i}`;
+                  const open = openLine === key;
+                  return (
+                    <Fragment key={key}>
+                      <tr className={`border-b border-[var(--glass-border)] hover:bg-foreground/5 ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+                        <td className="whitespace-nowrap">{formatDateID(l.date)}</td>
+                        <td className="whitespace-nowrap">
+                          {/* 2026-11-04 (G13): klik nomor jurnal → isi jurnal di bawah barisnya */}
+                          {l.je_id
+                            ? <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setOpenLine(open ? null : key)} data-testid={`gl-je-${l.je_number}`}>{l.je_number}</Button>
+                            : l.je_number}
+                        </td>
+                        <td>{l.description || '—'}</td>
+                        <td className="text-muted-foreground">{journalSourceLabel(l.source)}</td>
+                        <td className="text-right tabular-nums">{l.debit ? fmt(l.debit) : ''}</td>
+                        <td className="text-right tabular-nums">{l.credit ? fmt(l.credit) : ''}</td>
+                        <td className={`text-right tabular-nums font-semibold ${neg(l.balance)}`}>{fmt(l.balance)}</td>
+                      </tr>
+                      {open && <RowDetail colSpan={7}><JournalLinesInline jeId={l.je_id} token={token} /></RowDetail>}
+                    </Fragment>
+                  );
+                })}
+                <tr className="font-semibold border-t-2 border-[var(--glass-border)]">
+                  <td colSpan={4}>Total mutasi</td>
+                  <td className="text-right tabular-nums">{fmt(totalDebit)}</td>
+                  <td className="text-right tabular-nums">{fmt(totalCredit)}</td>
+                  <td className={`text-right tabular-nums ${neg(data.end_balance)}`}>{fmt(data.end_balance)}</td>
                 </tr>
               </tbody>
             </table>
           </div>
         )}
       </GlassCard>
-    </div>
+    </PageLayout>
   );
 }

@@ -244,6 +244,10 @@ Arahan owner 4 Nov 2026: klik satu baris membuka detailnya **di halaman**.
 | Detail di halaman | `DetailPanel`, `RowDetail`, `RowToggle` (erp/layout/PageLayout.jsx) |
 | Isi jurnal di bawah baris | `finance/JournalLinesInline` |
 | Pilihan Tabel/Kartu | `@/components/ui/view-toggle` |
+| Kotak pemberitahuan (peringatan/galat/berhasil/info) | `Notice` (moduleAtoms) — pengganti `<div>` berwarna buatan sendiri |
+| Keterangan kecil di bawah angka kartu | `StatTile sub=… subTone=…` |
+| Periode "Semua waktu" | `PeriodPicker presets={[ALL_TIME, ...PERIOD_PRESETS]}` |
+| Memo jurnal berbahasa Inggris dari server | `humanMemo()` (lib/financeLabels) |
 | Kepala halaman (di dalam PageLayout) | `PageHeader` (moduleAtoms) — di dalam hub aksinya otomatis pindah ke baris tab |
 | Aksi modul buatan sendiri di dalam hub | `HubActions` (moduleAtoms) |
 | Tab halaman | `HubTabs` — Tabs Radix di dalam tab hub otomatis tampil sebagai pil penyaring |

@@ -16,8 +16,8 @@ import { toast } from 'sonner';
 import { downloadCsv } from '@/lib/csv';
 
 export default function ExportCsvButton({
-  filename, head, rows, testId = 'export-csv', label = 'CSV',
-  size = 'sm', variant = 'outline', className = 'h-8',
+  filename, head, rows, testId = 'export-csv', label = 'Unduh CSV',
+  size = 'default', variant = 'outline', className = '',
   note = '',
 }) {
   const list = rows || [];

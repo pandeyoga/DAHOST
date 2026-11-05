@@ -1,28 +1,41 @@
-import { Badge } from '@/components/ui/badge';
-import { formatRupiah as fmt } from '@/lib/format';
+import { BookOpen } from 'lucide-react';
+import { formatDateID, formatRupiah as fmt } from '@/lib/format';
+import { humanMemo, journalSourceLabel } from '@/lib/financeLabels';
+import { EmptyState, StatusBadge } from '../../moduleAtoms';
 
-// Baris jurnal GL pada akun bank sesi (posted, dalam periode). Sumber: rahaza_journal_entries.lines.
+// Baris jurnal pada akun bank sesi (posted, dalam periode). Sumber: rahaza_journal_entries.lines.
+// 2026-11-05 (PANDUAN_UI G7/G8/G10): tanggal formatDateID, angka tabular-nums (bukan font-mono), kolom
+// "Masuk (Dr)/Keluar (Cr)" → "Debit"/"Kredit", warna token, kosong = EmptyState.
 export function GlLinesTable({ lines, glAccountCode }) {
   if (!lines?.length) {
-    return <p className="text-sm text-muted-foreground text-center py-8" data-testid="recon-gl-empty">Belum ada jurnal pada akun {glAccountCode} di periode ini.</p>;
+    return (
+      <EmptyState icon={BookOpen} testId="recon-gl-empty" title="Belum ada jurnal"
+        description={`Belum ada jurnal pada akun ${glAccountCode} di periode ini.`} />
+    );
   }
   return (
     <div className="overflow-x-auto" data-testid="recon-gl-table">
-      <table className="w-full text-xs">
-        <thead className="text-muted-foreground border-b">
-          <tr><th className="text-left py-2 pr-2">Tanggal</th><th className="text-left pr-2">No. Jurnal</th><th className="text-left pr-2">Memo / Sumber</th>
-            <th className="text-right pr-2">Masuk (Dr)</th><th className="text-right pr-2">Keluar (Cr)</th><th className="text-left">Status</th></tr>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
+            <th className="px-3 py-2">Tanggal</th>
+            <th className="px-3 py-2">No. jurnal</th>
+            <th className="px-3 py-2">Keterangan / sumber</th>
+            <th className="px-3 py-2 text-right">Debit</th>
+            <th className="px-3 py-2 text-right">Kredit</th>
+            <th className="px-3 py-2">Status</th>
+          </tr>
         </thead>
         <tbody>
           {lines.map(g => (
-            <tr key={g.key} className="border-b last:border-0" data-testid={`recon-gl-${g.key}`}>
-              <td className="py-1.5 pr-2 whitespace-nowrap">{g.date}</td>
-              <td className="pr-2 font-mono whitespace-nowrap">{g.je_number}</td>
-              <td className="pr-2 max-w-[320px] truncate" title={g.memo}>{g.memo || g.description} <span className="text-muted-foreground">· {g.source_module}</span></td>
-              <td className="pr-2 text-right text-green-700">{g.debit > 0 ? fmt(g.debit) : ''}</td>
-              <td className="pr-2 text-right text-red-700">{g.credit > 0 ? fmt(g.credit) : ''}</td>
-              <td>{g.is_matched ? <Badge className="bg-green-100 text-green-700 border-green-200 text-[10px]" variant="outline">Cocok</Badge>
-                : <Badge variant="outline" className="text-[10px]">Belum di bank</Badge>}</td>
+            <tr key={g.key} className="border-b border-[var(--glass-border)] last:border-0" data-testid={`recon-gl-${g.key}`}>
+              <td className="px-3 py-2 whitespace-nowrap">{formatDateID(g.date)}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{g.je_number}</td>
+              <td className="px-3 py-2 max-w-[320px] truncate" title={g.memo}>{humanMemo(g.memo || g.description)} <span className="text-muted-foreground">· {journalSourceLabel(g.source_module)}</span></td>
+              <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{g.debit > 0 ? fmt(g.debit) : ''}</td>
+              <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{g.credit > 0 ? fmt(g.credit) : ''}</td>
+              <td className="px-3 py-2">{g.is_matched ? <StatusBadge status="matched" label="Cocok" tone="success" />
+                : <StatusBadge status="unmatched" label="Belum di bank" tone="muted" />}</td>
             </tr>
           ))}
         </tbody>

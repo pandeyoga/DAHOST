@@ -1,29 +1,33 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Plus, RefreshCw, Edit2, Trash2, FileText, RotateCcw } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatTile, StatusBadge, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
+import Modal from './Modal';
 import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { monthOptions } from './finance/PeriodPicker';
 
-const MONTH_NAMES = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 // 24 bulan terakhir, terbaru di atas
-const MONTH_OPTIONS = (() => {
-  const [y, m] = todayWIB().slice(0, 7).split('-').map(Number);
-  return Array.from({ length: 24 }, (_, i) => {
-    const d = new Date(Date.UTC(y, m - 1 - i, 1));
-    const yy = d.getUTCFullYear(); const mm = d.getUTCMonth() + 1;
-    return { value: `${yy}-${String(mm).padStart(2, '0')}`, label: `${MONTH_NAMES[mm - 1]} ${yy}` };
-  });
-})();
+const MONTH_OPTIONS = monthOptions(24);
+const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const periodLabel = (code) => { const [y, m] = String(code || '').split('-'); return BULAN[Number(m) - 1] ? `${BULAN[Number(m) - 1]} ${y}` : (code || '—'); };
+const PAGE_SIZE = 25;
 
 const fmt = formatRupiah;
 
+/**
+ * Akrual (menu Akuntansi › Akrual & Tutup Buku).
+ * 2026-11-05 (PANDUAN_UI G1): memakai cetakan PageLayout — pilihan bulan & jenis di toolbar kiri, muat ulang di
+ * kanan; formulir memakai dialog aplikasi (dulu lapisan buatan sendiri, kotak bulan kosong, dan isian "UUID akun").
+ */
 export default function AccrualsModule({ token }) {
   const [accruals, setAccruals] = useState([]);
   const [editing, setEditing] = useState(null);
@@ -43,7 +47,7 @@ export default function AccrualsModule({ token }) {
       const r = await fetch(url, { headers });
       if (r.ok) setAccruals(await r.json());
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal memuat data akrual', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal memuat data akrual', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -58,33 +62,33 @@ export default function AccrualsModule({ token }) {
       const method = body.id ? 'PUT' : 'POST';
       const r = await fetch(url, { method, headers, body: JSON.stringify(body) });
       if (r.ok) {
-        toast({ title: 'Sukses', description: `Akrual berhasil ${body.id ? 'diupdate' : 'dibuat'}` });
+        toast({ title: 'Berhasil', description: `Akrual ${body.id ? 'diperbarui' : 'dicatat'}` });
         setEditing(null);
         fetchAccruals();
       } else {
         const err = await r.json();
-        toast({ title: 'Error', description: err.detail || 'Gagal menyimpan', variant: 'destructive' });
+        toast({ title: 'Gagal', description: err.detail || 'Gagal menyimpan', variant: 'destructive' });
       }
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal menyimpan akrual', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal menyimpan akrual', variant: 'destructive' });
     }
   };
 
   const del = async (id) => {
-    if (!(await confirmDialog('Hapus entry akrual ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus akrual ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const r = await fetch(`/api/rahaza/finance/accruals/${id}`, { method: 'DELETE', headers });
       if (r.ok) {
-        toast({ title: 'Sukses', description: 'Akrual berhasil dihapus' });
+        toast({ title: 'Berhasil', description: 'Akrual dihapus' });
         fetchAccruals();
       }
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal menghapus', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal menghapus', variant: 'destructive' });
     }
   };
 
   const reverse = async (id) => {
-    if (!(await confirmDialog('Reverse entry akrual ini?'))) return;
+    if (!(await confirmDialog({ title: 'Balik akrual ini?', body: 'Jurnal pembalik dicatat per hari ini.', confirmLabel: 'Balik' }))) return;
     try {
       const r = await fetch(`/api/rahaza/finance/accruals/${id}/reverse`, {
         method: 'POST',
@@ -92,99 +96,98 @@ export default function AccrualsModule({ token }) {
         body: JSON.stringify({ reversal_date: todayWIB() })
       });
       if (r.ok) {
-        toast({ title: 'Sukses', description: 'Akrual berhasil di-reverse' });
+        toast({ title: 'Berhasil', description: 'Akrual dibalik' });
         fetchAccruals();
       }
     } catch (e) {
-      toast({ title: 'Error', description: 'Gagal reverse akrual', variant: 'destructive' });
+      toast({ title: 'Gagal', description: 'Gagal membalik akrual', variant: 'destructive' });
     }
   };
 
   const totalIncome = accruals.filter(a => a.type === 'income' && a.status === 'active').reduce((s, a) => s + (Number(a.amount) || 0), 0);
   const totalExpense = accruals.filter(a => a.type === 'expense' && a.status === 'active').reduce((s, a) => s + (Number(a.amount) || 0), 0);
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(accruals, 10);
+  const { page, setPage, totalPages, total, paged } = useClientPagination(accruals, PAGE_SIZE);
   return (
-    <div className="space-y-5" data-testid="accruals-page">
-      <PageHeader
-        icon={FileText}
-        title="Pencatatan Akrual"
-        subtitle="Catat pendapatan & beban yang sudah terjadi tapi belum tercatat di periode berjalan."
-        actions={
-          <>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAccruals} data-testid="accrual-refresh">
-              <RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={() => setEditing({ period: '', type: 'expense', description: '', amount: 0, account_id: '' })} data-testid="accrual-add">
-              <Plus className="w-3.5 h-3.5 mr-1.5" />Tambah Akrual
-            </Button>
-          </>
-        }
-      />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <StatTile label="Total Akrual Pendapatan" value={fmt(totalIncome)} accent="success" />
-        <StatTile label="Total Akrual Beban" value={fmt(totalExpense)} accent="destructive" />
-      </div>
-      <GlassCard className="p-4">
-        <div className="flex gap-3 mb-4">
-          {/* PANDUAN_UI G6 (2026-11-04): pilihan bulan berlabel (dulu kotak bulan kosong "--------- ----") */}
-          <SmartNativeSelect value={filter.period} onChange={e => setFilter(f => ({ ...f, period: e.target.value }))}
-            className="h-9 w-44" data-testid="accrual-filter-period">
-            <option value="">Semua periode</option>
-            {MONTH_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </SmartNativeSelect>
-          <SmartNativeSelect value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
-            className="h-9 w-40" data-testid="accrual-filter-type">
-            <option value="">Semua jenis</option>
-            <option value="income">Pendapatan</option>
-            <option value="expense">Beban</option>
-          </SmartNativeSelect>
+    <PageLayout
+      testId="accruals-page"
+      title="Akrual"
+      subtitle="Pendapatan dan beban yang sudah terjadi tetapi belum dibayar atau diterima."
+      actions={
+        <Button onClick={() => setEditing({ period: '', type: 'expense', description: '', amount: 0, account_id: '' })} data-testid="accrual-add">
+          <Plus className="w-4 h-4" />Akrual baru
+        </Button>
+      }
+      filters={<>
+        {/* PANDUAN_UI G6 (2026-11-04): pilihan bulan berlabel (dulu kotak bulan kosong "--------- ----") */}
+        <SmartNativeSelect value={filter.period} onChange={e => setFilter(f => ({ ...f, period: e.target.value }))}
+          className="h-9 w-44" data-testid="accrual-filter-period">
+          <option value="">Semua periode</option>
+          {MONTH_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
+          className="h-9 w-40" data-testid="accrual-filter-type">
+          <option value="">Semua jenis</option>
+          <option value="income">Pendapatan</option>
+          <option value="expense">Beban</option>
+        </SmartNativeSelect>
+      </>}
+      tools={
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchAccruals} data-testid="accrual-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      }
+      summary={accruals.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <StatTile label="Akrual pendapatan aktif" value={fmt(totalIncome)} />
+          <StatTile label="Akrual beban aktif" value={fmt(totalExpense)} />
         </div>
+      )}
+      footer={!loading && accruals.length > 0 && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={PAGE_SIZE} onPageChange={setPage} />
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
         {loading ? (
-          <div className="text-center py-8 text-muted-foreground">Memuat...</div>
+          <Skeleton className="h-40 m-4" />
         ) : accruals.length === 0 ? (
-          <EmptyState icon={FileText} title="Belum ada akrual" description="Akrual mencatat beban/pendapatan yang sudah terjadi tapi belum dibayar/diterima." />
+          <EmptyState icon={FileText} title="Belum ada akrual" description="Akrual mencatat beban atau pendapatan yang sudah terjadi tetapi belum dibayar atau diterima." />
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="accrual-table">
+            <table className="w-full" data-testid="accrual-table">
               <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="pb-2">Periode</th>
-                  <th className="pb-2">Tipe</th>
-                  <th className="pb-2">Deskripsi</th>
-                  <th className="pb-2 text-right">Jumlah</th>
-                  <th className="pb-2">Status</th>
-                  <th className="pb-2 text-right">Aksi</th>
+                <tr>
+                  <th className="text-left">Periode</th>
+                  <th className="text-left">Jenis</th>
+                  <th className="text-left">Keterangan</th>
+                  <th className="text-right">Jumlah</th>
+                  <th className="text-left">Status</th>
+                  <th className="text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody>
                 {paged.map(a => (
-                  <tr key={a.id} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass-border)]/30" data-testid={`accrual-row-${a.id}`}>
-                    <td className="py-3">{a.period}</td>
-                    <td className="py-3">
-                      <span className={`px-2 py-1 rounded text-xs ${a.type === 'income' ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>
-                        {a.type === 'income' ? 'Pendapatan' : 'Beban'}
-                      </span>
+                  <tr key={a.id} data-testid={`accrual-row-${a.id}`}>
+                    <td className="whitespace-nowrap">{periodLabel(a.period)}</td>
+                    <td>{a.type === 'income' ? 'Pendapatan' : 'Beban'}</td>
+                    <td>{a.description}</td>
+                    <td className="text-right tabular-nums">{fmt(a.amount)}</td>
+                    <td>
+                      <StatusBadge tone={a.status === 'active' ? 'info' : 'muted'} label={a.status === 'active' ? 'Aktif' : 'Dibalik'} />
                     </td>
-                    <td className="py-3">{a.description}</td>
-                    <td className="py-3 text-right font-mono">{fmt(a.amount)}</td>
-                    <td className="py-3">
-                      <span className={`px-2 py-1 rounded text-xs ${a.status === 'active' ? 'bg-blue-500/20 text-blue-300' : 'bg-muted/20 text-muted-foreground'}`}>
-                        {a.status === 'active' ? 'Aktif' : 'Reversed'}
-                      </span>
-                    </td>
-                    <td className="py-3 text-right">
+                    <td className="text-right">
                       <div className="flex gap-1 justify-end">
                         {a.status === 'active' && (
                           <>
-                            <button onClick={() => setEditing({ ...a })} className="text-primary hover:bg-primary/10 rounded p-1" data-testid={`accrual-edit-${a.id}`}>
-                              <Edit2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => reverse(a.id)} className="text-yellow-300 hover:bg-yellow-400/10 rounded p-1" data-testid={`accrual-reverse-${a.id}`}>
-                              <RotateCcw className="w-3.5 h-3.5" />
-                            </button>
-                            <button onClick={() => del(a.id)} className="text-red-300 hover:bg-red-400/10 rounded p-1" data-testid={`accrual-delete-${a.id}`}>
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ ...a })} title="Ubah" aria-label="Ubah" data-testid={`accrual-edit-${a.id}`}>
+                              <Edit2 className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon-sm" onClick={() => reverse(a.id)} title="Balik akrual" aria-label="Balik akrual" data-testid={`accrual-reverse-${a.id}`}>
+                              <RotateCcw className="w-4 h-4" />
+                            </Button>
+                            <Button variant="ghost" size="icon-sm" onClick={() => del(a.id)} title="Hapus" aria-label="Hapus" className="text-[hsl(var(--destructive))]" data-testid={`accrual-delete-${a.id}`}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
                           </>
                         )}
                       </div>
@@ -193,83 +196,77 @@ export default function AccrualsModule({ token }) {
                 ))}
               </tbody>
             </table>
-            <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
           </div>
         )}
       </GlassCard>
-      {editing && <AccrualEditor value={editing} onClose={() => setEditing(null)} onSave={save} />}
-    </div>
+      {editing && <AccrualEditor value={editing} headers={headers} onClose={() => setEditing(null)} onSave={save} />}
+    </PageLayout>
   );
 }
 
-function AccrualEditor({ value, onClose, onSave }) {
+function AccrualEditor({ value, headers, onClose, onSave }) {
   const [s, setS] = useState(value);
+  const [accounts, setAccounts] = useState([]);
   const upd = (k, v) => setS(x => ({ ...x, [k]: v }));
+  // Akun dipilih dari Bagan Akun (dulu kotak "Account ID (COA)" yang harus diisi UUID)
+  useEffect(() => {
+    fetch('/api/rahaza/coa/accounts', { headers })
+      .then(r => (r.ok ? r.json() : []))
+      .then(d => setAccounts((Array.isArray(d) ? d : d.items || []).filter(a => a.active !== false && !a.is_group)))
+      .catch(() => setAccounts([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const periodOpts = s.period && !MONTH_OPTIONS.some(m => m.value === s.period)
+    ? [{ value: s.period, label: s.period }, ...MONTH_OPTIONS] : MONTH_OPTIONS;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <GlassCard className="p-6 max-w-lg w-full" onClick={e => e.stopPropagation()} data-testid="accrual-editor">
-        <h2 className="text-xl font-bold text-foreground mb-4">{s.id ? 'Edit' : 'Tambah'} Akrual</h2>
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs uppercase text-muted-foreground">Periode (YYYY-MM)</label>
-            <input
-              type="month"
-              value={s.period}
-              onChange={e => upd('period', e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="accrual-period"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase text-muted-foreground">Tipe</label>
-            <select
-              value={s.type}
-              onChange={e => upd('type', e.target.value)}
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              data-testid="accrual-type"
-            >
-              <option value="income">Pendapatan</option>
-              <option value="expense">Beban</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs uppercase text-muted-foreground">Deskripsi</label>
-            <textarea
-              value={s.description}
-              onChange={e => upd('description', e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-              rows={3}
-              data-testid="accrual-description"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase text-muted-foreground">Jumlah (Rp)</label>
-            <MoneyInput
-              glass
-              value={s.amount || 0}
-              onChange={e => upd('amount', Number(e.target.value))}
-              data-testid="accrual-amount"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase text-muted-foreground">Account ID (COA) - Opsional</label>
-            <GlassInput
-              value={s.account_id || ''}
-              onChange={e => upd('account_id', e.target.value)}
-              placeholder="UUID akun COA"
-              data-testid="accrual-account-id"
-            />
-          </div>
+    <Modal title={s.id ? 'Ubah akrual' : 'Akrual baru'} onClose={onClose} size="md" data-testid="accrual-editor">
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">Periode</label>
+          <SmartNativeSelect value={s.period} onChange={e => upd('period', e.target.value)} className="h-9 w-full" data-testid="accrual-period">
+            <option value="">Pilih bulan</option>
+            {periodOpts.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </SmartNativeSelect>
         </div>
-        <div className="flex gap-2 mt-6 justify-end">
-          <Button variant="outline" onClick={onClose} data-testid="accrual-cancel">
-            Batal
-          </Button>
-          <Button onClick={() => onSave(s)} data-testid="accrual-save">
-            Simpan
-          </Button>
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">Jenis</label>
+          <SmartNativeSelect value={s.type} onChange={e => upd('type', e.target.value)} searchable={false} className="h-9 w-full" data-testid="accrual-type">
+            <option value="income">Pendapatan</option>
+            <option value="expense">Beban</option>
+          </SmartNativeSelect>
         </div>
-      </GlassCard>
-    </div>
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">Keterangan</label>
+          <textarea
+            value={s.description}
+            onChange={e => upd('description', e.target.value)}
+            className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+            rows={3}
+            data-testid="accrual-description"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">Jumlah (Rp)</label>
+          <MoneyInput
+            glass
+            value={s.amount || 0}
+            onChange={e => upd('amount', Number(e.target.value))}
+            data-testid="accrual-amount"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground block mb-1">Akun (opsional)</label>
+          <SmartNativeSelect value={s.account_id || ''} onChange={e => upd('account_id', e.target.value)} className="h-9 w-full" data-testid="accrual-account-id">
+            <option value="">Tidak dipilih</option>
+            {s.account_id && !accounts.some(a => a.id === s.account_id) && <option value={s.account_id}>Akun tersimpan</option>}
+            {accounts.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+          </SmartNativeSelect>
+        </div>
+        <div className="flex gap-2 pt-2 justify-end">
+          <Button variant="outline" onClick={onClose} data-testid="accrual-cancel">Batal</Button>
+          <Button onClick={() => onSave(s)} data-testid="accrual-save">Simpan</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

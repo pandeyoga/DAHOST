@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import FilterChips from '@/components/ui/filter-chips';
 import {
-  AlertTriangle, CheckCircle2, FileText, Filter,
+  AlertTriangle, CheckCircle2, FileText,
   HandCoins, RefreshCw, Search, Send,
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -32,7 +32,8 @@ import { currentRole } from '../portalAccess';
 import { isFinanceRole } from '../../../lib/financeRoles';
 import { useTaxProfile } from '../../../lib/taxProfile';
 import { todayWIB } from '../../../lib/waktu';
-import { useInCompactHub } from '../moduleAtoms';
+import { EmptyState, Notice } from '../moduleAtoms';
+import PageLayout, { DetailPanel } from '../layout/PageLayout';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const AP_STATUS_META = {
@@ -95,11 +96,7 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
   return (
     <Modal onClose={onClose} title={`Buat Faktur dari ${gr.receipt_number}`} size="lg">
       <div className="space-y-4" data-testid="ap-create-modal">
-        {err && (
-          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm">
-            {err}
-          </div>
-        )}
+        {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div>
             <div className="text-xs text-muted-foreground">Supplier</div>
@@ -112,14 +109,14 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
           </div>
         </div>
 
-        <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 text-sm space-y-1">
+        <div className="border-y border-[var(--glass-border)] py-2 text-sm space-y-1">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Qty diterima</span>
             <span className="tabular-nums">{fmtNum(gr.total_received)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Qty ditolak (tidak difakturkan)</span>
-            <span className="tabular-nums text-red-600 dark:text-red-400">−{fmtNum(gr.total_rejected)}</span>
+            <span className="tabular-nums text-[hsl(var(--destructive))]">−{fmtNum(gr.total_rejected)}</span>
           </div>
           <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1">
             <span>Qty bersih difakturkan</span>
@@ -154,7 +151,7 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
             data-testid="ap-form-notes" />
         </div>
 
-        <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 text-sm space-y-1">
+        <div className="border-y border-[var(--glass-border)] py-2 text-sm space-y-1">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Subtotal</span>
             <span className="tabular-nums" data-testid="ap-form-subtotal">{fmtRp(subtotal)}</span>
@@ -277,17 +274,14 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
           <GlassInput id="ap-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)}
                       placeholder="opsional, mis. no. referensi transfer" data-testid="ap-pay-notes" />
         </div>
-        <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-3 text-sm space-y-1">
+        <div className="border-y border-[var(--glass-border)] py-2 text-sm space-y-1">
           <div className="flex justify-between"><span className="text-muted-foreground">Hutang berkurang</span>
             <span className="tabular-nums" data-testid="ap-pay-reduced">{fmtRp(reduced)}</span></div>
           <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1"><span>Sisa setelah dibayar</span>
             <span className="tabular-nums" data-testid="ap-pay-left">{fmtRp(Math.max(left, 0))}</span></div>
         </div>
         {(err || (problem && accountId)) && (
-          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm"
-               data-testid="ap-pay-error">
-            {err || problem}
-          </div>
+          <Notice tone="danger" icon={AlertTriangle} testId="ap-pay-error">{err || problem}</Notice>
         )}
         <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
           <Button variant="secondary" onClick={onClose}>Batal</Button>
@@ -301,9 +295,23 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
   );
 }
 
+// 2026-11-04 (PANDUAN_UI G13): rincian faktur dibuka DI HALAMAN di atas daftar — dulu popup.
 function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
   return (
-    <Modal onClose={onClose} title={`Faktur ${inv.invoice_number}`} size="2xl">
+    <DetailPanel title={`Faktur ${inv.invoice_number}`} description={inv.vendor_name} onClose={onClose} testId="ap-detail-panel"
+      actions={<>
+        {onPay && canPay(inv) && (
+          <Button variant="outline" onClick={() => onPay(inv)} data-testid="ap-detail-pay">
+            <HandCoins className="w-4 h-4" /> Bayar
+          </Button>
+        )}
+        {inv.status === 'draft' && (
+          <Button onClick={() => onSend(inv)} disabled={sending} data-testid="ap-detail-approve">
+            <Send className="w-4 h-4" />
+            {sending ? 'Memproses…' : 'Setujui & catat ke buku besar'}
+          </Button>
+        )}
+      </>}>
       <div className="space-y-4" data-testid="ap-detail">
         <div className="flex items-center gap-2 flex-wrap">
           <ApBadge status={inv.status} />
@@ -373,9 +381,7 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
         </div>
 
         {inv.notes && (
-          <div className="p-3 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)] text-xs">
-            {inv.notes}
-          </div>
+          <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">Catatan:</span> {inv.notes}</p>
         )}
 
         {inv.status !== 'draft' && (
@@ -387,23 +393,8 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
             <PaymentHistoryList token={token} kind="ap" invoiceId={inv.id} />
           </div>
         )}
-
-        <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-          <Button variant="secondary" onClick={onClose}>Tutup</Button>
-          {onPay && canPay(inv) && (
-            <Button onClick={() => onPay(inv)} data-testid="ap-detail-pay">
-              <HandCoins className="w-4 h-4 mr-1.5" /> Bayar
-            </Button>
-          )}
-          {inv.status === 'draft' && (
-            <Button onClick={() => onSend(inv)} disabled={sending} data-testid="ap-detail-approve">
-              <Send className="w-4 h-4 mr-1.5" />
-              {sending ? 'Memproses...' : 'Setujui & Catat ke Buku Besar'}
-            </Button>
-          )}
-        </div>
       </div>
-    </Modal>
+    </DetailPanel>
   );
 }
 
@@ -424,7 +415,6 @@ const cmtToRow = (p) => ({
  * (penyaring jenis), dibuka di tab Tagihan, tagihan CMT bisa diposting & dibayar dari sini.
  */
 export default function SupplierInvoiceModule({ token, financeMode = false }) {
-  const compact = useInCompactHub();
   const [tab, setTab] = useState(financeMode ? 'invoices' : 'pending');
   const [grs, setGrs] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -506,38 +496,67 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
   }, [invoices, search, statusFilter, kindFilter]);
   const { page, setPage, totalPages, paged } = useClientPagination(filteredInv, 25);
 
-  return (
-    <div className="space-y-5" data-testid="supplier-invoice-page">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        {!compact ? (
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">Faktur Supplier</h1>
-            <p className="text-muted-foreground text-sm mt-1">Faktur hutang dari penerimaan barang. Qty yang ditolak QC tidak ikut difakturkan.</p>
-          </div>
-        ) : <span />}
-        <Button size="icon" variant="secondary" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang">
-          <RefreshCw className="w-4 h-4" />
-        </Button>
-      </div>
-
-      {err && (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300 text-sm">
-          {err}
-        </div>
-      )}
-
-      {/* PANDUAN_UI G4 (2026-11-04): penyaring berbentuk pil — dulu tab garis bawah di dalam tab hub */}
+  // PANDUAN_UI G1/G6 (2026-11-04): cetakan PageLayout — pil, cari, dan pilihan satu baris di kiri; muat ulang di
+  // kanan. Dulu tombol muat ulang sendirian di satu baris, lalu pil di baris kedua, cari di baris ketiga.
+  const filters = (
+    <>
       <FilterChips value={tab} onChange={setTab} testId="ap-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
         options={financeMode
-          ? [{ key: 'invoices', label: 'Tagihan', count: invoices.length }, { key: 'pending', label: 'Penerimaan belum difakturkan', count: grs.length }]
+          ? [{ key: 'invoices', label: 'Daftar tagihan', count: invoices.length }, { key: 'pending', label: 'Penerimaan belum difakturkan', count: grs.length }]
           : [{ key: 'pending', label: 'Siap difakturkan', count: grs.length }, { key: 'invoices', label: 'Faktur', count: invoices.length }]} />
+      {tab === 'invoices' && (
+        <>
+          <div className="relative w-72 max-w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <GlassInput className="pl-9 h-9" placeholder="Cari no. faktur, pemasok, PO…"
+                        value={search} onChange={(e) => setSearch(e.target.value)}
+                        data-testid="ap-search" />
+          </div>
+          {financeMode && (
+            <SmartNativeSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
+              className="h-9 w-40"
+              data-testid="ap-filter-kind">
+              <option value="">Semua jenis</option>
+              <option value="ap">Bahan &amp; jasa</option>
+              <option value="cmt">CMT</option>
+            </SmartNativeSelect>
+          )}
+          <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="h-9 w-48"
+            data-testid="ap-filter-status">
+            <option value="">Semua status</option>
+            {Object.entries(AP_STATUS_META).map(([v, m]) => <option key={v} value={v}>{m.label}</option>)}
+          </SmartNativeSelect>
+          {(search || kindFilter || statusFilter) && (
+            <span className="text-xs text-muted-foreground">{filteredInv.length} cocok</span>
+          )}
+        </>
+      )}
+    </>
+  );
 
+  return (
+    <PageLayout
+      testId="supplier-invoice-page"
+      title="Faktur Supplier"
+      subtitle="Faktur hutang dari penerimaan barang. Qty yang ditolak QC tidak ikut difakturkan."
+      filters={filters}
+      tools={<Button size="icon" variant="outline" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      summary={err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
+      detail={detail && (
+        <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token}
+                       onPay={finance ? (inv) => { setDetail(null); setPaying(inv); } : null} />
+      )}
+    >
       {loading ? (
         <div className="flex items-center justify-center h-48">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
         </div>
       ) : tab === 'pending' ? (
         <GlassCard>
+          {grs.length === 0 ? (
+            <EmptyState icon={CheckCircle2} title="Tidak ada penerimaan yang menunggu faktur" description="Penerimaan barang yang belum difakturkan akan muncul di sini." />
+          ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="border-b border-[var(--glass-border)]">
@@ -551,16 +570,10 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                 </tr>
               </thead>
               <tbody data-testid="ap-pending-body">
-                {grs.length === 0 && (
-                  <tr><td colSpan="6" className="py-12 text-center text-muted-foreground">
-                    <CheckCircle2 className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                    <p className="text-sm">Tidak ada penerimaan yang menunggu faktur.</p>
-                  </td></tr>
-                )}
                 {grs.map((g, idx) => (
                   <tr key={g.id} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}
                       data-testid={`ap-pending-row-${g.id}`}>
-                    <td className="py-3 pl-4 font-mono text-xs">{g.receipt_number}</td>
+                    <td className="py-3 pl-4 text-xs whitespace-nowrap">{g.receipt_number}</td>
                     <td className="py-3">
                       <div className="font-medium text-xs">{g.supplier_name}</div>
                       {g.supplier_code && <div className="text-[11px] font-mono text-muted-foreground">{g.supplier_code}</div>}
@@ -574,8 +587,8 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                     <td className="py-3 text-right font-mono text-xs">{fmtNum(g.total_net)}</td>
                     <td className="py-3 text-right font-mono text-xs">{fmtRp(g.receivable_amount)}</td>
                     <td className="py-3 pr-4 text-right">
-                      <Button size="sm" onClick={() => setCreateGr(g)} data-testid={`ap-create-${g.id}`}>
-                        Buat Faktur
+                      <Button size="sm" variant="outline" onClick={() => setCreateGr(g)} data-testid={`ap-create-${g.id}`}>
+                        Buat faktur
                       </Button>
                     </td>
                   </tr>
@@ -583,37 +596,14 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
               </tbody>
             </table>
           </div>
+          )}
         </GlassCard>
       ) : (
-        <>
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative w-72 max-w-full">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <GlassInput className="pl-9 h-9" placeholder="Cari no. faktur, pemasok, PO…"
-                          value={search} onChange={(e) => setSearch(e.target.value)}
-                          data-testid="ap-search" />
-            </div>
-            {financeMode && (
-              <SmartNativeSelect value={kindFilter} onChange={(e) => setKindFilter(e.target.value)}
-                className="h-9 w-40"
-                data-testid="ap-filter-kind">
-                <option value="">Semua jenis</option>
-                <option value="ap">Bahan &amp; jasa</option>
-                <option value="cmt">CMT</option>
-              </SmartNativeSelect>
-            )}
-            <SmartNativeSelect value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-9 w-48"
-              data-testid="ap-filter-status">
-              <option value="">Semua status</option>
-              {Object.entries(AP_STATUS_META).map(([v, m]) => <option key={v} value={v}>{m.label}</option>)}
-            </SmartNativeSelect>
-            {(search || kindFilter || statusFilter) && (
-              <span className="text-xs text-muted-foreground">{filteredInv.length} cocok</span>
-            )}
-          </div>
-
           <GlassCard>
+            {filteredInv.length === 0 ? (
+              <EmptyState icon={FileText} title={invoices.length ? 'Tidak ada tagihan yang cocok' : 'Belum ada tagihan'}
+                description={invoices.length ? 'Ubah pencarian atau penyaring.' : 'Tagihan muncul setelah faktur pemasok atau tagihan CMT dibuat.'} />
+            ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="border-b border-[var(--glass-border)]">
@@ -630,42 +620,34 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                   </tr>
                 </thead>
                 <tbody data-testid="ap-invoice-body">
-                  {filteredInv.length === 0 && (
-                    <tr><td colSpan={financeMode ? 9 : 8} className="py-12 text-center text-muted-foreground">
-                      <FileText className="w-10 h-10 mx-auto mb-2 opacity-30" />
-                      <p className="text-sm">Belum ada tagihan.</p>
-                    </td></tr>
-                  )}
                   {paged.map((i, idx) => (
-                    <tr key={`${i.kind}-${i.id}`} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''}`}
+                    <tr key={`${i.kind}-${i.id}`} className={`border-b border-[var(--glass-border)] ${idx % 2 === 0 ? 'bg-[var(--glass-bg)]/30' : ''} ${detail?.id === i.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}
                         data-testid={`ap-invoice-row-${i.id}`}>
-                      <td className="py-3 pl-4 font-mono text-xs">{i.invoice_number}</td>
-                      {financeMode && <td className="py-3 text-xs">{KIND_LABEL[i.kind] || i.kind}</td>}
+                      <td className="py-3 pl-4 text-xs whitespace-nowrap">
+                        {i.kind !== 'cmt'
+                          ? <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setDetail(detail?.id === i.id ? null : i)} data-testid={`ap-view-${i.id}`}>{i.invoice_number}</Button>
+                          : i.invoice_number}
+                      </td>
+                      {financeMode && <td className="py-3 text-xs whitespace-nowrap">{KIND_LABEL[i.kind] || i.kind}</td>}
                       <td className="py-3 text-xs">{i.vendor_name}</td>
-                      <td className="py-3 text-[11px] font-mono text-muted-foreground">
+                      <td className="py-3 text-[11px] text-muted-foreground">
                         {(i.po_numbers || []).join(', ') || (i.gr_numbers || []).join(', ') || '—'}
                       </td>
-                      <td className="py-3 text-xs">{fmtDate(i.issue_date)}</td>
-                      <td className="py-3 text-right font-mono text-xs">{fmtRp(i.total)}</td>
-                      <td className="py-3 text-right font-mono text-xs">{fmtRp(i.balance ?? i.total)}</td>
+                      <td className="py-3 text-xs whitespace-nowrap">{fmtDate(i.issue_date)}</td>
+                      <td className="py-3 text-right tabular-nums text-xs">{fmtRp(i.total)}</td>
+                      <td className="py-3 text-right tabular-nums text-xs">{fmtRp(i.balance ?? i.total)}</td>
                       <td className="py-3"><ApBadge status={i.status} /></td>
                       <td className="py-3 pr-4 text-right whitespace-nowrap">
                         {finance && i.kind === 'cmt' && !i.gl_posted && !['paid', 'cancelled', 'void'].includes(i.status) && (
-                          <Button size="sm" variant="secondary" onClick={() => postCmt(i)} className="mr-1"
+                          <Button size="sm" variant="outline" onClick={() => postCmt(i)} className="mr-1"
                                   data-testid={`ap-post-cmt-${i.id}`} title="Catat tagihan CMT ini ke buku besar">
                             Jurnal
                           </Button>
                         )}
                         {finance && canPayRow(i) && (
-                          <Button size="sm" onClick={() => setPaying(i)} className="mr-1"
+                          <Button size="sm" variant="outline" onClick={() => setPaying(i)}
                                   data-testid={`ap-pay-${i.id}`}>
                             Bayar
-                          </Button>
-                        )}
-                        {i.kind !== 'cmt' && (
-                          <Button variant="ghost" size="sm" onClick={() => setDetail(i)}
-                                  data-testid={`ap-view-${i.id}`}>
-                            Detail
                           </Button>
                         )}
                       </td>
@@ -674,9 +656,9 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                 </tbody>
               </table>
             </div>
+            )}
             {totalPages > 1 && <div className="px-4 py-2"><PaginationLite page={page} totalPages={totalPages} total={filteredInv.length} pageSize={25} onPageChange={setPage} /></div>}
           </GlassCard>
-        </>
       )}
 
       {createGr && (
@@ -684,13 +666,9 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                             onClose={() => setCreateGr(null)}
                             onCreated={() => { load(); setTab('invoices'); }} />
       )}
-      {detail && (
-        <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token}
-                       onPay={finance ? (inv) => { setDetail(null); setPaying(inv); } : null} />
-      )}
       {paying && (
         <PayInvoiceModal token={token} inv={paying} onClose={() => setPaying(null)} onPaid={() => load()} />
       )}
-    </div>
+    </PageLayout>
   );
 }

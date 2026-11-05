@@ -6,8 +6,10 @@ import { useCallback, useEffect, useState } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { ChevronLeft, ChevronRight, Store, Loader2, AlertTriangle } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
+import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { formatRupiah as rp } from '@/lib/format';
+import { EmptyState } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -18,10 +20,11 @@ function monthLabel(m) {
   return `${names[parseInt(mo, 10) - 1] || mo} ${y}`;
 }
 
+// 2026-11-05 (PANDUAN_UI G8): warna hanya token — merah = potongan jauh di atas rata-rata.
 function pctTone(p, avg) {
-  if (p > avg + 2) return 'text-red-600 dark:text-red-300';
-  if (p < avg - 2) return 'text-emerald-600 dark:text-emerald-300';
-  return 'text-amber-600 dark:text-amber-300';
+  if (p > avg + 2) return 'text-[hsl(var(--destructive))]';
+  if (p < avg - 2) return 'text-[hsl(var(--success))]';
+  return 'text-[hsl(var(--warning))]';
 }
 
 export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
@@ -62,32 +65,34 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-medium text-sm flex items-center gap-2">
           <Store className="w-4 h-4" /> Potongan per toko
-          <span className="text-xs text-foreground/50">
+          <span className="text-xs text-muted-foreground font-normal tabular-nums">
             rata-rata {res?.average_deduction_pct ?? 0}% dari bruto
           </span>
         </h3>
-        <div className="flex items-center gap-1 text-sm">
-          <button data-testid="fin-settlement-by-store-prev" onClick={() => step(1)}
-            disabled={idx < 0 || idx >= months.length - 1}
-            className="p-1 rounded hover:bg-foreground/10 disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
+        <div className="flex items-center gap-1">
+          <Button variant="outline" size="icon-sm" data-testid="fin-settlement-by-store-prev" onClick={() => step(1)}
+            disabled={idx < 0 || idx >= months.length - 1} title="Bulan sebelumnya" aria-label="Bulan sebelumnya">
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
           <SmartNativeSelect data-testid="fin-settlement-by-store-month" value={res?.month || month}
-            onChange={(e) => setMonth(e.target.value)} className="h-8 w-36 text-xs">
+            onChange={(e) => setMonth(e.target.value)} className="h-8 w-36" aria-label="Bulan">
             {(months.length ? months : [res?.month || month].filter(Boolean)).map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
           </SmartNativeSelect>
-          <button data-testid="fin-settlement-by-store-next" onClick={() => step(-1)}
-            disabled={idx <= 0}
-            className="p-1 rounded hover:bg-foreground/10 disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
+          <Button variant="outline" size="icon-sm" data-testid="fin-settlement-by-store-next" onClick={() => step(-1)}
+            disabled={idx <= 0} title="Bulan berikutnya" aria-label="Bulan berikutnya">
+            <ChevronRight className="w-4 h-4" />
+          </Button>
         </div>
       </div>
 
       {loading ? (
-        <div className="py-6 text-center text-xs text-foreground/50 flex items-center justify-center gap-2">
+        <div className="py-6 text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
           <Loader2 className="w-4 h-4 animate-spin" /> memuat…
         </div>
       ) : !res?.data?.length ? (
-        <div className="py-6 text-center text-xs text-foreground/50" data-testid="fin-settlement-by-store-empty">
-          Belum ada pencairan tercatat untuk {monthLabel(res?.month)}.
-        </div>
+        <EmptyState icon={Store} className="py-6" testId="fin-settlement-by-store-empty"
+          title={`Belum ada dana dilepas tercatat untuk ${monthLabel(res?.month)}`}
+          description="Potongan per toko muncul setelah laporan dana dilepas dicatat." />
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
           {res.data.map((s) => (
@@ -96,7 +101,7 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-sm font-medium truncate">{s.account_name}</div>
-                  <div className="text-[10px] uppercase tracking-wide text-foreground/50">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
                     {s.platform} · {s.count} pencairan
                   </div>
                 </div>
@@ -105,18 +110,18 @@ export function SettlementByStoreCards({ refreshKey, month: monthProp = '' }) {
                 </div>
               </div>
               <div className="h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                <div className="h-full bg-amber-500" style={{ width: `${Math.min(100, s.deduction_pct)}%` }} />
+                <div className="h-full bg-[hsl(var(--warning))]" style={{ width: `${Math.min(100, s.deduction_pct)}%` }} />
               </div>
-              <div className="grid grid-cols-3 gap-1 text-[10px] text-foreground/60">
+              <div className="grid grid-cols-3 gap-1 text-[10px] text-muted-foreground tabular-nums">
                 <div>komisi <b>{s.commission_pct}%</b></div>
                 <div>iklan <b>{s.ads_pct}%</b></div>
                 <div>refund <b>{s.refund_pct}%</b></div>
               </div>
-              <div className="text-xs text-foreground/70">
-                bruto {rp(s.gross_sales)} → masuk saldo <b>{rp(s.net_payout)}</b>
+              <div className="text-xs text-muted-foreground tabular-nums">
+                bruto {rp(s.gross_sales)} → masuk saldo <b className="text-foreground whitespace-nowrap">{rp(s.net_payout)}</b>
               </div>
               {s.unverified_count > 0 ? (
-                <div className="text-[10px] text-red-600 flex items-center gap-1">
+                <div className="text-[10px] text-[hsl(var(--destructive))] flex items-center gap-1">
                   <AlertTriangle className="w-3 h-3" /> {s.unverified_count} belum seimbang
                 </div>
               ) : null}

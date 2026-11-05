@@ -5,7 +5,8 @@ import { downloadXlsx } from './finance/reportShared';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import FilterChips from '@/components/ui/filter-chips';
-import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
+import { StatTile, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -20,6 +21,7 @@ const COLS = [{ key: 'in', label: 'Masuk' }, { key: 'out', label: 'Keluar' }, { 
  * Per jenis transaksi (sumber jurnal yang menyentuh kas/bank).
  * 2026-11-04 (PANDUAN_UI G7): satu tabel laporan (Masuk · Keluar · Bersih) — dulu tiap aktivitas satu
  * kartu berwarna, ringkasan berupa kartu besar, dan angka berhuruf mesin ketik hijau/merah.
+ * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — periode & tampilan di toolbar kiri, muat ulang & unduh di kanan.
  */
 export default function RahazaCashFlowModule({ token }) {
   const [view, setView] = useState('account');
@@ -91,57 +93,55 @@ export default function RahazaCashFlowModule({ token }) {
   }
 
   return (
-    <div className="space-y-4" data-testid="cf-page">
-      <PageHeader
-        title="Arus Kas"
-        subtitle="Uang masuk dan keluar rekening kas/bank, dari buku besar."
-        actions={
-          <>
-            <PeriodPicker value={period} onChange={setPeriod} testId="cf-period" />
-            <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="cf-refresh"><RefreshCw className="w-4 h-4" /></Button>
-            <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="cf-export"><Download className="w-4 h-4" />Unduh CSV</Button>
-            <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="cf-export-xlsx"><FileSpreadsheet className="w-4 h-4" />Unduh Excel</Button>
-          </>
-        }
-      />
-
-      <div className="flex items-center gap-3 flex-wrap">
+    <PageLayout
+      testId="cf-page"
+      title="Arus Kas"
+      subtitle="Uang masuk dan keluar rekening kas/bank, dari buku besar."
+      filters={<>
+        <PeriodPicker value={period} onChange={setPeriod} testId="cf-period" />
         <FilterChips value={view} onChange={setView} testId="cf-view" ariaLabel="Tampilan" hideWhenEmpty={false}
           options={[{ key: 'account', label: 'Per kelompok akun' }, { key: 'category', label: 'Per jenis transaksi' }]} />
-        {view === 'account' && ba && (
-          <span className="text-xs text-muted-foreground">
-            {ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).
-          </span>
+      </>}
+      tools={<>
+        <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="cf-refresh"><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="cf-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+        <Button variant="outline" onClick={exportXlsx} disabled={!data} data-testid="cf-export-xlsx"><FileSpreadsheet className="w-4 h-4" />Unduh Excel</Button>
+      </>}
+      summary={<>
+        {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="cf-error">{error}</p>}
+        {data && (
+          <div className="grid grid-cols-3 gap-3">
+            <StatTile label="Kas awal" value={fmt(opening)} testId="cf-kpi-open" />
+            <StatTile label="Perubahan kas" value={fmt(Number(closing || 0) - Number(opening || 0))} accent={Number(closing) < Number(opening) ? 'danger' : 'default'} testId="cf-kpi-net" />
+            <StatTile label="Kas akhir" value={fmt(closing)} testId="cf-kpi-closing" />
+          </div>
         )}
-      </div>
-
-      {error && <GlassCard className="p-3 text-sm text-[hsl(var(--destructive))]" data-testid="cf-error">{error}</GlassCard>}
-
-      {data && (
-        <div className="grid grid-cols-3 gap-3">
-          <StatTile label="Kas awal" value={fmt(opening)} testId="cf-kpi-open" />
-          <StatTile label="Perubahan kas" value={fmt(Number(closing || 0) - Number(opening || 0))} accent={Number(closing) < Number(opening) ? 'danger' : 'default'} testId="cf-kpi-net" />
-          <StatTile label="Kas akhir" value={fmt(closing)} testId="cf-kpi-closing" />
-        </div>
-      )}
-
+        {data && view === 'account' && ba && (
+          <p className="text-sm text-muted-foreground">
+            {ba.totals?.journals || 0} jurnal kas dikelompokkan menurut akun lawan (Operasi / Investasi / Pendanaan di Bagan Akun).
+          </p>
+        )}
+        {data && view === 'account' && Math.abs(ba?.totals?.unexplained || 0) > 0.5 && (
+          <p className="text-sm text-[hsl(var(--destructive))]" data-testid="cf-acc-unexplained">
+            Selisih {fmt(ba.totals.unexplained)} antara perubahan kas di buku besar dan jumlah per akun lawan — ada jurnal kas ke kas yang tidak seimbang.
+          </p>
+        )}
+      </>}
+    >
       {loading ? (
         <Skeleton className="h-80 rounded-[var(--radius-lg)]" />
       ) : !data ? (
-        <EmptyState icon={Wallet} title="Belum ada arus kas" description="Arus kas muncul setelah ada jurnal yang menyentuh rekening kas/bank." />
+        <GlassCard className="p-0">
+          <EmptyState icon={Wallet} title="Belum ada arus kas" description="Arus kas muncul setelah ada jurnal yang menyentuh rekening kas/bank." />
+        </GlassCard>
       ) : (
         <>
           <StatementTable testId={view === 'account' ? 'cf-by-account' : 'cf-by-category'} columns={COLS} rows={rows}
             labelHeader={`${formatDateID(from)} – ${formatDateID(to)}`} blankZeroChildren />
-          {view === 'account' && Math.abs(ba?.totals?.unexplained || 0) > 0.5 && (
-            <p className="text-sm text-[hsl(var(--destructive))]" data-testid="cf-acc-unexplained">
-              Selisih {fmt(ba.totals.unexplained)} antara perubahan kas di buku besar dan jumlah per akun lawan — ada jurnal kas ke kas yang tidak seimbang.
-            </p>
-          )}
           {view === 'category' && data.cash_accounts?.length > 0 && (
             <GlassCard className="p-0 overflow-hidden" data-testid="cf-accounts">
               <div className="px-4 py-3 border-b border-[var(--glass-border)]">
-                <h3 className="font-semibold text-sm text-foreground">Saldo rekening kas/bank saat ini</h3>
+                <p className="font-semibold text-sm text-foreground">Saldo rekening kas/bank saat ini</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full">
@@ -151,7 +151,7 @@ export default function RahazaCashFlowModule({ token }) {
                       <tr key={a.id}>
                         <td><span className="text-xs text-muted-foreground mr-2">{a.code}</span>{a.name}</td>
                         <td className="text-muted-foreground">{a.type === 'bank' ? 'Bank' : 'Kas'}</td>
-                        <td className="text-right">{fmt(a.balance)}</td>
+                        <td className={`text-right tabular-nums ${Number(a.balance) < 0 ? 'text-[hsl(var(--destructive))]' : ''}`}>{fmt(a.balance)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -161,6 +161,6 @@ export default function RahazaCashFlowModule({ token }) {
           )}
         </>
       )}
-    </div>
+    </PageLayout>
   );
 }

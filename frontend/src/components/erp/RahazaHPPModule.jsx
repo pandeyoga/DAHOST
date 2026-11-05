@@ -1,77 +1,136 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Calculator, RefreshCw, Save, Package, Users, Layers, TrendingUp, BarChart3, Building2 } from 'lucide-react';
-import { GlassCard, GlassPanel } from '@/components/ui/glass';
+import { RefreshCw, Save, Package, BarChart3, Building2, Settings2, Download, FileSpreadsheet, Factory, Calculator } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import FilterChips from '@/components/ui/filter-chips';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PageHeader } from './moduleAtoms';
+import { StatTile, StatusBadge, EmptyState } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
+import Modal from './Modal';
 import { HppComparisonInline } from './HppComparisonInline';
-import { ExportButtonGroup } from './ExportButtonGroup';
 import { toast } from 'sonner';
-import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
+import { posToLegacyOrders } from '@/lib/maklonOrderAdapter';
 import { formatRupiah } from '@/lib/format';
+import { categoryLabel } from '@/lib/itemTaxonomy';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import { readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
 const fmt = formatRupiah;
+const pct = (n) => `${Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
+// Status job produksi & order maklon dalam bahasa staf (dulu kode mentah: "In Progress", "in_production").
+const STATUS_ID = {
+  'in progress': { label: 'Sedang dikerjakan', tone: 'info' }, open: { label: 'Terbuka', tone: 'default' },
+  pending: { label: 'Menunggu', tone: 'warning' }, draft: { label: 'Draf', tone: 'muted' },
+  confirmed: { label: 'Dikonfirmasi', tone: 'info' }, released: { label: 'Dirilis', tone: 'info' },
+  'in production': { label: 'Diproduksi', tone: 'info' }, cutting: { label: 'Cutting', tone: 'info' },
+  packing: { label: 'Packing', tone: 'info' }, 'partial delivered': { label: 'Terkirim sebagian', tone: 'warning' },
+  completed: { label: 'Selesai', tone: 'success' }, done: { label: 'Selesai', tone: 'success' },
+  finished: { label: 'Selesai', tone: 'success' }, invoiced: { label: 'Sudah ditagih', tone: 'success' },
+  closed: { label: 'Ditutup', tone: 'muted' }, cancelled: { label: 'Dibatalkan', tone: 'muted' },
+  canceled: { label: 'Dibatalkan', tone: 'muted' },
+};
+function JobStatus({ status }) {
+  const key = String(status || '').toLowerCase().replace(/[_\s]+/g, ' ').trim();
+  const m = STATUS_ID[key] || { label: key || '—', tone: 'default' };
+  return <StatusBadge tone={m.tone} label={m.label} />;
+}
+
+const TABS = [
+  { key: 'internal-wo', label: 'Work order internal', icon: Package },
+  { key: 'maklon', label: 'Maklon', icon: BarChart3 },
+  { key: 'client-analysis', label: 'Per klien', icon: Building2 },
+];
+
+/**
+ * HPP aktual (menu HPP › HPP aktual): job produksi internal, order maklon, dan analisa per klien.
+ * 2026-11-05 (PANDUAN_UI G1/G4/G13): cetakan PageLayout; tiga tab Radix di dalam tab hub → pil penyaring di
+ * toolbar; daftar job = tabel, rincian HPP job dibuka DI HALAMAN di atas tabel (dulu daftar tombol bergulir
+ * 500 px + panel di sebelahnya); pengaturan biaya bawaan = formulir pendek di dialog (dulu kartu dengan
+ * tombol "Simpan Settings" sendirian di satu baris); label Indonesia.
+ */
 export default function RahazaHPPModule({ token }) {
   const [activeTab, setActiveTab] = useState('internal-wo');
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
 
+  const page = {
+    testId: 'rahaza-hpp-page',
+    title: 'HPP aktual',
+    subtitle: 'HPP dari data nyata: bahan keluar + upah produksi + overhead, dibandingkan estimasi.',
+    chips: (
+      <div className="contents" data-testid="hpp-tabs">
+        <FilterChips value={activeTab} onChange={setActiveTab} testId="hpp-actual-tab" ariaLabel="Jenis HPP" hideWhenEmpty={false} options={TABS} />
+      </div>
+    ),
+  };
+
+  if (activeTab === 'maklon') return <MaklonActualTab token={token} headers={headers} page={page} />;
+  if (activeTab === 'client-analysis') return <ClientAnalysisTab token={token} headers={headers} page={page} />;
+  return <InternalWOTab token={token} headers={headers} page={page} />;
+}
+
+/** Tabel rincian kecil di dalam panel/kartu (bahan atau upah). */
+function BreakdownTable({ columns, rows, testId }) {
   return (
-    <div className="space-y-5" data-testid="rahaza-hpp-page">
-      <PageHeader
-        icon={TrendingUp}
-        title="HPP Aktual Dashboard"
-        subtitle="Hitung Harga Pokok Produksi berbasis data aktual: material issue + labor WIP + overhead. Lihat perbandingan Estimasi vs Aktual."
-      />
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm" data-testid={testId}>
+        <thead>
+          <tr>{columns.map((c) => <th key={c.key} className={c.right ? 'text-right' : 'text-left'}>{c.label}</th>)}</tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-t border-[var(--glass-border)]">
+              {columns.map((c) => (
+                <td key={c.key} className={c.right ? 'text-right tabular-nums whitespace-nowrap' : (c.muted ? 'text-muted-foreground' : '')}>{c.render(r)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-        <TabsList className="grid w-full grid-cols-3" data-testid="hpp-tabs">
-          <TabsTrigger value="internal-wo" data-testid="hpp-actual-tab-internal-wo">
-            <Package className="w-4 h-4 mr-2" />
-            Work order internal
-          </TabsTrigger>
-          <TabsTrigger value="maklon" data-testid="hpp-actual-tab-maklon">
-            <BarChart3 className="w-4 h-4 mr-2" />
-            Maklon
-          </TabsTrigger>
-          <TabsTrigger value="client-analysis" data-testid="hpp-actual-tab-client-analysis">
-            <Building2 className="w-4 h-4 mr-2" />
-            Per klien
-          </TabsTrigger>
-        </TabsList>
+const MATERIAL_COLS = [
+  { key: 'name', label: 'Bahan', render: (m) => m.material_name },
+  { key: 'type', label: 'Jenis', muted: true, render: (m) => (m.type ? categoryLabel(m.type) : '—') },
+  { key: 'qty', label: 'Qty', right: true, render: (m) => `${Number(m.qty || 0).toLocaleString('id-ID')} ${m.unit || ''}` },
+  { key: 'unit_cost', label: 'Harga satuan', right: true, render: (m) => fmt(m.unit_cost) },
+  { key: 'amount', label: 'Jumlah', right: true, render: (m) => fmt(m.amount) },
+];
+const LABOR_COLS = [
+  { key: 'op', label: 'Operator', render: (l) => l.operator_name || '—' },
+  { key: 'proc', label: 'Proses', muted: true, render: (l) => l.process_code || '—' },
+  { key: 'qty', label: 'Qty', right: true, render: (l) => `${Number(l.qty || 0).toLocaleString('id-ID')} pcs` },
+  { key: 'rate', label: 'Tarif', right: true, render: (l) => fmt(l.rate) },
+  { key: 'amount', label: 'Jumlah', right: true, render: (l) => fmt(l.amount) },
+];
 
-        <TabsContent value="internal-wo" className="mt-4">
-          <InternalWOTab token={token} headers={headers} />
-        </TabsContent>
-
-        <TabsContent value="maklon" className="mt-4">
-          <MaklonActualTab token={token} headers={headers} />
-        </TabsContent>
-
-        <TabsContent value="client-analysis" className="mt-4">
-          <ClientAnalysisTab token={token} headers={headers} />
-        </TabsContent>
-      </Tabs>
+/** Angka ringkas tanpa kartu (dipakai di dalam panel — kartu di dalam kartu tidak dipakai). */
+function Figure({ label, value, testId, strong }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-lg font-semibold tabular-nums ${strong ? 'text-[hsl(var(--primary))]' : 'text-foreground'}`} data-testid={testId}>{value}</p>
     </div>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB 1: Internal WO (existing functionality + comparison)
+// TAB 1: Work order internal
 // ══════════════════════════════════════════════════════════════════════════════
-function InternalWOTab({ token, headers }) {
+function InternalWOTab({ headers, page }) {
   const [settings, setSettings] = useState(null);
+  const [draft, setDraft] = useState(null);           // salinan pengaturan yang sedang diubah di dialog
   const [wos, setWos] = useState([]);
   const [selected, setSelected] = useState(null);
   const [hpp, setHpp] = useState(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [loading, setLoading] = useState(true);
+  const { page: pg, setPage, totalPages, paged } = useClientPagination(wos, 25);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -95,13 +154,22 @@ function InternalWOTab({ token, headers }) {
   const computeHPP = async (wo_id) => {
     const r = await fetch(`/api/production-jobs/${wo_id}/hpp`, { headers });
     if (r.ok) setHpp(await r.json());
+    else { toast.error(`Gagal menghitung HPP job (HTTP ${r.status})`); setSelected(null); }
+  };
+  const openJob = (w) => {
+    if (selected?.id === w.id) { setSelected(null); setHpp(null); return; }
+    setSelected(w); setHpp(null);
+    computeHPP(w.id);
   };
 
   const saveSettings = async () => {
     setSavingSettings(true);
     try {
-      await fetch('/api/rahaza/costing-settings', { method: 'PUT', headers, body: JSON.stringify(settings) });
-      toast.success('Settings tersimpan');
+      const r = await fetch('/api/rahaza/costing-settings', { method: 'PUT', headers, body: JSON.stringify(draft) });
+      if (!r.ok) { toast.error(`Gagal menyimpan pengaturan (HTTP ${r.status})`); return; }
+      setSettings(draft);
+      setDraft(null);
+      toast.success('Pengaturan biaya tersimpan');
       if (selected) computeHPP(selected.id);
     } finally {
       setSavingSettings(false);
@@ -112,7 +180,7 @@ function InternalWOTab({ token, headers }) {
     if (!selected) return;
     const r = await fetch(`/api/production-jobs/${selected.id}/hpp-snapshot`, { method: 'POST', headers });
     if (r.ok) {
-      toast.success('Snapshot HPP tersimpan');
+      toast.success('HPP job tersimpan sebagai catatan');
     }
   };
 
@@ -124,237 +192,146 @@ function InternalWOTab({ token, headers }) {
     return hpp ? hpp.total_cost * 0.95 : 0; // assume 5% variance for demo
   };
 
-  return (
-    <div className="space-y-4">
-      {/* Settings */}
-      {settings && (
-        <GlassCard className="p-4" data-testid="hpp-settings">
-          <h3 className="font-semibold text-foreground mb-3">
-            <Calculator className="w-4 h-4 inline mr-1" />
-            Global Costing Settings
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div>
-              <label className="text-xs uppercase text-muted-foreground">Overhead/pcs</label>
-              <MoneyInput
-                glass
-                value={settings.overhead_rate_per_pcs || 0}
-                onChange={e => setSettings(s => ({ ...s, overhead_rate_per_pcs: Number(e.target.value) }))}
-                data-testid="hpp-overhead-pcs"
-              />
-            </div>
-            <div>
-              <label className="text-xs uppercase text-muted-foreground">Default Bahan/kg</label>
-              <MoneyInput
-                glass
-                value={readNumber(settings, FIELD.defaultMaterialCostPerKg)}
-                onChange={e => setSettings(s => ({ ...s, default_material_cost_per_kg: Number(e.target.value) }))}
-                data-testid="hpp-yarn-kg"
-              />
-            </div>
-            <div>
-              <label className="text-xs uppercase text-muted-foreground">Default Accessory/unit</label>
-              <MoneyInput
-                glass
-                value={settings.default_accessory_cost_per_unit || 0}
-                onChange={e => setSettings(s => ({ ...s, default_accessory_cost_per_unit: Number(e.target.value) }))}
-              />
-            </div>
-            <div>
-              <label className="text-xs uppercase text-muted-foreground">Labor Fallback/pcs</label>
-              <MoneyInput
-                glass
-                value={settings.labor_rate_fallback_per_pcs || 0}
-                onChange={e => setSettings(s => ({ ...s, labor_rate_fallback_per_pcs: Number(e.target.value) }))}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end mt-3">
-            <Button onClick={saveSettings} disabled={savingSettings} data-testid="hpp-save-settings">
-              <Save className="w-4 h-4 mr-1.5" />
-              {savingSettings ? 'Menyimpan...' : 'Simpan Settings'}
-            </Button>
-          </div>
-        </GlassCard>
+  const detail = selected && (
+    <DetailPanel
+      testId="hpp-detail-panel"
+      title={hpp?.job_number || selected.job_number || selected.wo_number}
+      description={hpp ? `PO ${hpp.po_number || selected.po_number || '—'} · qty selesai ${hpp.qty_completed ?? hpp.qty ?? 0} pcs` : 'Menghitung HPP…'}
+      onClose={() => { setSelected(null); setHpp(null); }}
+      actions={hpp && (
+        <Button onClick={snapshot} title="Simpan HPP job ini sebagai catatan" data-testid="hpp-snapshot">
+          <Save className="w-4 h-4" />Simpan HPP
+        </Button>
       )}
-
-      {/* WO list + Detail */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <GlassCard className="p-0 lg:col-span-1 overflow-hidden">
-          <div className="p-3 border-b border-[var(--glass-border)] text-sm font-semibold text-foreground">
-            Production Jobs (Internal)
+    >
+      {!hpp ? (
+        <Skeleton className="h-32 w-full" />
+      ) : (
+        <div className="space-y-4" data-testid="hpp-detail">
+          <HppComparisonInline estimated={getEstimatedHPP(selected)} actual={hpp.total_cost} />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <Figure label="Bahan" value={fmt(hpp.material_cost)} testId="hpp-material-cost" />
+            <Figure label="Upah" value={fmt(hpp.labor_cost)} testId="hpp-labor-cost" />
+            <Figure label="Overhead" value={fmt(hpp.overhead_cost)} />
+            <Figure label="Total biaya" value={fmt(hpp.total_cost)} />
+            <Figure label="HPP per pcs" value={fmt(hpp.hpp_unit)} testId="hpp-unit-actual" strong />
           </div>
-          <ScrollArea className="h-[500px]">
-            {wos.length === 0 ? (
-              <div className="p-6 text-center text-muted-foreground text-xs">Belum ada job produksi internal.</div>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Rincian bahan ({hpp.material_breakdown?.length || 0})</p>
+            {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
+              <p className="text-sm text-muted-foreground">Job ini belum punya pengeluaran bahan; angka bahan di atas memakai total agregat.</p>
             ) : (
-              wos.map(w => (
-                <button
-                  key={w.id}
-                  onClick={() => {
-                    setSelected(w);
-                    computeHPP(w.id);
-                  }}
-                  className={`w-full text-left p-3 border-b border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${
-                    selected?.id === w.id ? 'bg-[var(--glass-bg-hover)]' : ''
-                  }`}
-                  data-testid={`hpp-wo-${w.job_number || w.wo_number}`}
-                >
-                  <div className="font-mono text-xs text-foreground">{w.job_number || w.wo_number}</div>
-                  <div className="text-xs text-muted-foreground">
-                    {w.po_number} · <span className="text-primary">{w.status}</span>
-                  </div>
-                </button>
-              ))
+              <BreakdownTable columns={MATERIAL_COLS} rows={hpp.material_breakdown} />
             )}
-          </ScrollArea>
-        </GlassCard>
-
-        <div className="lg:col-span-2">
-          {!hpp ? (
-            <GlassCard className="p-8 text-center text-muted-foreground">
-              Pilih Job Produksi untuk hitung HPP Aktual
-            </GlassCard>
-          ) : (
-            <div className="space-y-3" data-testid="hpp-detail">
-              <GlassCard className="p-4">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <h3 className="text-lg font-bold text-foreground">{hpp.job_number || selected?.job_number || hpp.wo_number}</h3>
-                    <p className="text-xs text-muted-foreground">
-                      basis {hpp.basis || '-'} · qty selesai {hpp.qty_completed ?? hpp.qty ?? 0} pcs
-                    </p>
-                  </div>
-                  <Button onClick={snapshot} data-testid="hpp-snapshot">
-                    <Save className="w-4 h-4 mr-1.5" />
-                    Snapshot
-                  </Button>
-                </div>
-
-                {/* Comparison: Estimated vs Actual */}
-                <div className="mb-4 p-3 bg-[var(--glass-bg)] rounded-lg border border-[var(--glass-border)]">
-                  <HppComparisonInline estimated={getEstimatedHPP(selected)} actual={hpp.total_cost} />
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <GlassPanel className="px-3 py-2">
-                    <div className="text-[10px] uppercase text-muted-foreground">
-                      <Package className="w-3 h-3 inline" /> Material
-                    </div>
-                    <div className="text-lg font-bold text-foreground" data-testid="hpp-material-cost">
-                      {fmt(hpp.material_cost)}
-                    </div>
-                  </GlassPanel>
-                  <GlassPanel className="px-3 py-2">
-                    <div className="text-[10px] uppercase text-muted-foreground">
-                      <Users className="w-3 h-3 inline" /> Labor
-                    </div>
-                    <div className="text-lg font-bold text-foreground" data-testid="hpp-labor-cost">
-                      {fmt(hpp.labor_cost)}
-                    </div>
-                  </GlassPanel>
-                  <GlassPanel className="px-3 py-2">
-                    <div className="text-[10px] uppercase text-muted-foreground">
-                      <Layers className="w-3 h-3 inline" /> Overhead
-                    </div>
-                    <div className="text-lg font-bold text-foreground">{fmt(hpp.overhead_cost)}</div>
-                  </GlassPanel>
-                  <GlassPanel className="px-3 py-2 bg-primary/10 border-primary/30">
-                    <div className="text-[10px] uppercase text-primary">HPP / Unit</div>
-                    <div className="text-lg font-bold text-primary" data-testid="hpp-unit-actual">
-                      {fmt(hpp.hpp_unit)}
-                    </div>
-                  </GlassPanel>
-                </div>
-                <div className="mt-3 pt-3 border-t border-[var(--glass-border)] flex justify-between items-center">
-                  <span className="text-sm font-semibold text-foreground">Total Biaya</span>
-                  <span className="text-xl font-bold text-foreground font-mono">{fmt(hpp.total_cost)}</span>
-                </div>
-              </GlassCard>
-
-              {/* Material Breakdown */}
-              <GlassCard className="p-4">
-                <h4 className="font-semibold text-foreground mb-2">
-                  Breakdown Material ({hpp.material_breakdown?.length || 0})
-                </h4>
-                {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
-                  <div className="text-xs text-muted-foreground">Belum ada material issue utk job ini (breakdown agregat: lihat kartu di atas).</div>
-                ) : (
-                  <ScrollArea className="h-[200px]">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-left text-muted-foreground">
-                          <th>Material</th>
-                          <th>Tipe</th>
-                          <th className="text-right">Qty</th>
-                          <th className="text-right">Unit Cost</th>
-                          <th className="text-right">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {hpp.material_breakdown.map((m, i) => (
-                          <tr key={i} className="border-t border-[var(--glass-border)]">
-                            <td className="py-1">{m.material_name}</td>
-                            <td className="py-1 text-muted-foreground">{m.type}</td>
-                            <td className="py-1 text-right font-mono">
-                              {m.qty} {m.unit}
-                            </td>
-                            <td className="py-1 text-right font-mono">{fmt(m.unit_cost)}</td>
-                            <td className="py-1 text-right font-mono">{fmt(m.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </ScrollArea>
-                )}
-              </GlassCard>
-
-              {/* Labor Breakdown */}
-              <GlassCard className="p-4">
-                <h4 className="font-semibold text-foreground mb-2">
-                  Breakdown Labor ({hpp.labor_breakdown?.length || 0})
-                </h4>
-                {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
-                  <div className="text-xs text-muted-foreground">Belum ada output produksi tagged ke job ini (labor agregat: lihat kartu di atas).</div>
-                ) : (
-                  <ScrollArea className="h-[200px]">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="text-left text-muted-foreground">
-                          <th>Operator</th>
-                          <th>Proses</th>
-                          <th className="text-right">Qty</th>
-                          <th className="text-right">Rate</th>
-                          <th className="text-right">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {hpp.labor_breakdown.map((l, i) => (
-                          <tr key={i} className="border-t border-[var(--glass-border)]">
-                            <td className="py-1">{l.operator_name}</td>
-                            <td className="py-1 text-muted-foreground">{l.process_code}</td>
-                            <td className="py-1 text-right font-mono">{l.qty} pcs</td>
-                            <td className="py-1 text-right font-mono">{fmt(l.rate)}</td>
-                            <td className="py-1 text-right font-mono">{fmt(l.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </ScrollArea>
-                )}
-              </GlassCard>
-            </div>
-          )}
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Rincian upah ({hpp.labor_breakdown?.length || 0})</p>
+            {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
+              <p className="text-sm text-muted-foreground">Job ini belum punya hasil produksi bertanda; angka upah di atas memakai total agregat.</p>
+            ) : (
+              <BreakdownTable columns={LABOR_COLS} rows={hpp.labor_breakdown} />
+            )}
+          </div>
         </div>
-      </div>
-    </div>
+      )}
+    </DetailPanel>
+  );
+
+  const setD = (k, v) => setDraft(s => ({ ...s, [k]: v }));
+
+  return (
+    <PageLayout
+      testId={page.testId}
+      title={page.title}
+      subtitle={page.subtitle}
+      filters={page.chips}
+      tools={<>
+        <Button variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-refresh"><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" onClick={() => setDraft({ ...settings })} disabled={!settings} data-testid="hpp-open-settings">
+          <Settings2 className="w-4 h-4" />Pengaturan biaya
+        </Button>
+      </>}
+      summary={settings && (
+        <p className="text-sm text-muted-foreground" data-testid="hpp-settings-summary">
+          Pengaturan biaya: overhead {fmt(settings.overhead_rate_per_pcs || 0)}/pcs · bahan bawaan {fmt(readNumber(settings, FIELD.defaultMaterialCostPerKg))}/kg ·
+          aksesori bawaan {fmt(settings.default_accessory_cost_per_unit || 0)}/unit · upah cadangan {fmt(settings.labor_rate_fallback_per_pcs || 0)}/pcs
+        </p>
+      )}
+      detail={detail}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+        ) : wos.length === 0 ? (
+          <EmptyState icon={Factory} title="Belum ada job produksi internal" description="Job produksi internal yang dibuat di portal Produksi muncul di sini." />
+        ) : (
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="hpp-wo-table">
+                <thead><tr><th className="text-left">Job produksi</th><th className="text-left">PO</th><th className="text-left">Status</th></tr></thead>
+                <tbody>
+                  {paged.map(w => (
+                    <tr key={w.id} className={`border-t border-[var(--glass-border)] ${selected?.id === w.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+                      <td className="whitespace-nowrap">
+                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openJob(w)} data-testid={`hpp-wo-${w.job_number || w.wo_number}`}>
+                          {w.job_number || w.wo_number}
+                        </Button>
+                      </td>
+                      <td className="whitespace-nowrap text-muted-foreground">{w.po_number || '—'}</td>
+                      <td><JobStatus status={w.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {totalPages > 1 && <div className="px-4 py-2"><PaginationLite page={pg} totalPages={totalPages} total={wos.length} pageSize={25} onPageChange={setPage} /></div>}
+          </>
+        )}
+      </GlassCard>
+
+      {draft && (
+        <Modal title="Pengaturan biaya bawaan" onClose={() => setDraft(null)} size="md">
+          <div className="space-y-4" data-testid="hpp-settings">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">Overhead per pcs</span>
+                <MoneyInput glass value={draft.overhead_rate_per_pcs || 0}
+                  onChange={e => setD('overhead_rate_per_pcs', Number(e.target.value))} data-testid="hpp-overhead-pcs" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">Harga bahan bawaan per kg</span>
+                <MoneyInput glass value={readNumber(draft, FIELD.defaultMaterialCostPerKg)}
+                  onChange={e => setD('default_material_cost_per_kg', Number(e.target.value))} data-testid="hpp-yarn-kg" />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">Aksesori bawaan per unit</span>
+                <MoneyInput glass value={draft.default_accessory_cost_per_unit || 0}
+                  onChange={e => setD('default_accessory_cost_per_unit', Number(e.target.value))} />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs text-muted-foreground">Upah cadangan per pcs</span>
+                <MoneyInput glass value={draft.labor_rate_fallback_per_pcs || 0}
+                  onChange={e => setD('labor_rate_fallback_per_pcs', Number(e.target.value))} />
+              </label>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setDraft(null)}>Batal</Button>
+              <Button onClick={saveSettings} disabled={savingSettings} data-testid="hpp-save-settings">
+                <Save className="w-4 h-4" />
+                {savingSettings ? 'Menyimpan…' : 'Simpan pengaturan'}
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </PageLayout>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB 2: Maklon Actual HPP
+// TAB 2: HPP aktual order maklon
 // ══════════════════════════════════════════════════════════════════════════════
-function MaklonActualTab({ token, headers }) {
+function MaklonActualTab({ headers, page }) {
   const [orders, setOrders] = useState([]);
   const [selectedOrderId, setSelectedOrderId] = useState('');
   const [hpp, setHpp] = useState(null);
@@ -369,7 +346,7 @@ function MaklonActualTab({ token, headers }) {
           setOrders(data.filter(o => !['draft', 'cancelled'].includes(o.status)));
         }
       } catch (e) {
-        toast.error('Gagal memuat orders');
+        toast.error('Gagal memuat order maklon');
       }
     };
     fetchOrders();
@@ -383,7 +360,7 @@ function MaklonActualTab({ token, headers }) {
       if (r.ok) {
         setHpp(await r.json());
       } else {
-        toast.error('Gagal memuat HPP maklon order');
+        toast.error('Gagal memuat HPP order maklon');
       }
     } finally {
       setLoading(false);
@@ -395,154 +372,72 @@ function MaklonActualTab({ token, headers }) {
     loadHPP(orderId);
   };
 
+  const ready = !loading && hpp;
+
   return (
-    <div className="space-y-4">
-      <GlassCard className="p-5">
-        <label className="block text-sm font-medium text-foreground mb-2">Pilih Maklon Order</label>
-        <Select value={selectedOrderId} onValueChange={handleOrderSelect}>
-          <SelectTrigger className="w-full md:w-96" data-testid="maklon-order-select">
-            <SelectValue placeholder="Pilih order maklon..." />
-          </SelectTrigger>
-          <SelectContent>
-            {orders.map(o => (
-              <SelectItem key={o.id} value={o.id}>
-                {o.order_code} — {o.product_name} ({o.qty_ordered} pcs)
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </GlassCard>
-
-      {loading && (
-        <GlassCard className="p-5">
-          <Skeleton className="h-32 w-full" />
-        </GlassCard>
-      )}
-
-      {!loading && hpp && (
-        <div className="space-y-4">
-          <GlassCard className="p-5">
-            <div className="mb-4">
-              <h3 className="text-lg font-bold text-foreground">{hpp.order_code}</h3>
-              <p className="text-sm text-muted-foreground">
-                {hpp.client_name} · {hpp.product_name} · {hpp.qty_ordered} pcs
-              </p>
-            </div>
-
-            {/* Comparison */}
-            <div className="mb-4 p-4 bg-[var(--glass-bg)] rounded-lg border border-[var(--glass-border)]">
-              <HppComparisonInline estimated={hpp.estimated_hpp_total} actual={hpp.total_cost_actual} />
-            </div>
-
-            {/* KPI Cards */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <GlassPanel className="px-3 py-2">
-                <div className="text-[10px] uppercase text-muted-foreground">Material</div>
-                <div className="text-lg font-bold text-foreground" data-testid="maklon-hpp-material">
-                  {fmt(hpp.material_cost_actual)}
-                </div>
-              </GlassPanel>
-              <GlassPanel className="px-3 py-2">
-                <div className="text-[10px] uppercase text-muted-foreground">Labor</div>
-                <div className="text-lg font-bold text-foreground" data-testid="maklon-hpp-labor">
-                  {fmt(hpp.labor_cost_actual)}
-                </div>
-              </GlassPanel>
-              <GlassPanel className="px-3 py-2">
-                <div className="text-[10px] uppercase text-muted-foreground">Overhead</div>
-                <div className="text-lg font-bold text-foreground">{fmt(hpp.overhead_cost_actual)}</div>
-              </GlassPanel>
-              <GlassPanel className="px-3 py-2 bg-primary/10 border-primary/30">
-                <div className="text-[10px] uppercase text-primary">HPP / Unit</div>
-                <div className="text-lg font-bold text-primary" data-testid="maklon-hpp-unit">
-                  {fmt(hpp.hpp_unit_actual)}
-                </div>
-              </GlassPanel>
-            </div>
-          </GlassCard>
-
-          {/* Breakdown Tables */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <GlassCard className="p-4">
-              <h4 className="font-semibold text-foreground mb-2">Material Breakdown</h4>
-              {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
-                <div className="text-xs text-muted-foreground">Belum ada material issue</div>
-              ) : (
-                <ScrollArea className="h-[200px]">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-muted-foreground">
-                        <th>Material</th>
-                        <th className="text-right">Qty</th>
-                        <th className="text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hpp.material_breakdown.map((m, i) => (
-                        <tr key={i} className="border-t border-[var(--glass-border)]">
-                          <td className="py-1">{m.material_name}</td>
-                          <td className="py-1 text-right font-mono">
-                            {m.qty} {m.unit}
-                          </td>
-                          <td className="py-1 text-right font-mono">{fmt(m.amount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </ScrollArea>
-              )}
-            </GlassCard>
-
-            <GlassCard className="p-4">
-              <h4 className="font-semibold text-foreground mb-2">Labor Breakdown</h4>
-              {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
-                <div className="text-xs text-muted-foreground">Belum ada labor WIP events</div>
-              ) : (
-                <ScrollArea className="h-[200px]">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-muted-foreground">
-                        <th>Operator</th>
-                        <th>Proses</th>
-                        <th className="text-right">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {hpp.labor_breakdown.map((l, i) => (
-                        <tr key={i} className="border-t border-[var(--glass-border)]">
-                          <td className="py-1">{l.operator_name}</td>
-                          <td className="py-1">{l.process_code}</td>
-                          <td className="py-1 text-right font-mono">{fmt(l.amount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </ScrollArea>
-              )}
-            </GlassCard>
-          </div>
+    <PageLayout
+      testId={page.testId}
+      title={page.title}
+      subtitle={page.subtitle}
+      filters={<>
+        {page.chips}
+        <SmartNativeSelect value={selectedOrderId} onChange={e => handleOrderSelect(e.target.value)}
+          className="h-9 w-96 max-w-full" aria-label="Order maklon" data-testid="maklon-order-select">
+          <option value="">Pilih order maklon…</option>
+          {orders.map(o => (
+            <option key={o.id} value={o.id}>{`${o.order_code} — ${o.product_name} (${o.qty_ordered} pcs)`}</option>
+          ))}
+        </SmartNativeSelect>
+      </>}
+      summary={ready && <>
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground">{hpp.order_code}</span> · {hpp.client_name} · {hpp.product_name} · {hpp.qty_ordered} pcs
+        </p>
+        <HppComparisonInline estimated={hpp.estimated_hpp_total} actual={hpp.total_cost_actual} />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatTile label="Bahan" value={fmt(hpp.material_cost_actual)} testId="maklon-hpp-material" />
+          <StatTile label="Upah" value={fmt(hpp.labor_cost_actual)} testId="maklon-hpp-labor" />
+          <StatTile label="Overhead" value={fmt(hpp.overhead_cost_actual)} />
+          <StatTile label="HPP per pcs" value={fmt(hpp.hpp_unit_actual)} accent="primary" testId="maklon-hpp-unit" />
         </div>
-      )}
-
-      {!loading && !hpp && selectedOrderId && (
-        <GlassCard className="p-8 text-center text-muted-foreground">
-          Tidak ada data HPP untuk order ini
+      </>}
+    >
+      {loading ? (
+        <Skeleton className="h-48 w-full rounded-[var(--radius-lg)]" />
+      ) : hpp ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+          <GlassCard className="p-4 space-y-2">
+            <p className="text-sm font-semibold text-foreground">Rincian bahan</p>
+            {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
+              <EmptyState className="py-6" title="Belum ada pengeluaran bahan" description="Bahan yang dikeluarkan untuk order ini muncul di sini." />
+            ) : (
+              <BreakdownTable columns={MATERIAL_COLS.filter(c => ['name', 'qty', 'amount'].includes(c.key))} rows={hpp.material_breakdown} />
+            )}
+          </GlassCard>
+          <GlassCard className="p-4 space-y-2">
+            <p className="text-sm font-semibold text-foreground">Rincian upah</p>
+            {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
+              <EmptyState className="py-6" title="Belum ada upah produksi" description="Upah dari hasil produksi order ini muncul di sini." />
+            ) : (
+              <BreakdownTable columns={LABOR_COLS.filter(c => ['op', 'proc', 'amount'].includes(c.key))} rows={hpp.labor_breakdown} />
+            )}
+          </GlassCard>
+        </div>
+      ) : (
+        <GlassCard className="p-0">
+          {selectedOrderId
+            ? <EmptyState icon={Calculator} title="Tidak ada data HPP untuk order ini" description="Pilih order lain atau periksa produksi order ini." />
+            : <EmptyState icon={Calculator} title="Pilih order maklon" description="Perhitungan HPP aktual order yang dipilih tampil di sini." />}
         </GlassCard>
       )}
-
-      {!selectedOrderId && (
-        <GlassCard className="p-8 text-center text-muted-foreground">
-          Pilih Maklon Order untuk melihat perhitungan HPP Aktual
-        </GlassCard>
-      )}
-    </div>
+    </PageLayout>
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB 3: Client Analysis
+// TAB 3: Analisa per klien
 // ══════════════════════════════════════════════════════════════════════════════
-function ClientAnalysisTab({ token, headers }) {
+function ClientAnalysisTab({ headers, page }) {
   const [clients, setClients] = useState([]);
   const [selectedClientId, setSelectedClientId] = useState('');
   const [analysis, setAnalysis] = useState(null);
@@ -557,7 +452,7 @@ function ClientAnalysisTab({ token, headers }) {
           setClients(data.filter(c => c.status === 'active'));
         }
       } catch (e) {
-        toast.error('Gagal memuat clients');
+        toast.error('Gagal memuat daftar klien');
       }
     };
     fetchClients();
@@ -571,7 +466,7 @@ function ClientAnalysisTab({ token, headers }) {
       if (r.ok) {
         setAnalysis(await r.json());
       } else {
-        toast.error('Gagal memuat analisa client');
+        toast.error('Gagal memuat analisa klien');
       }
     } finally {
       setLoading(false);
@@ -583,165 +478,93 @@ function ClientAnalysisTab({ token, headers }) {
     loadAnalysis(clientId);
   };
 
-  const exportCSV = async () => {
+  const download = async (ext) => {
     if (!selectedClientId) return;
     try {
-      const r = await fetch(`/api/dewi/reports/maklon/client/${selectedClientId}/export.csv`, { headers });
-      if (r.ok) {
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `client_analysis_${selectedClientId}_${todayWIB()}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
+      const r = await fetch(`/api/dewi/reports/maklon/client/${selectedClientId}/export.${ext}`, { headers });
+      if (!r.ok) { toast.error(`Gagal mengunduh (HTTP ${r.status})`); return; }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `client_analysis_${selectedClientId}_${todayWIB()}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
     } catch (e) {
-      throw new Error(e.message);
+      toast.error(`Gagal mengunduh: ${e.message}`);
     }
   };
 
-  const exportExcel = async () => {
-    if (!selectedClientId) return;
-    try {
-      const r = await fetch(`/api/dewi/reports/maklon/client/${selectedClientId}/export.xlsx`, { headers });
-      if (r.ok) {
-        const blob = await r.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `client_analysis_${selectedClientId}_${todayWIB()}.xlsx`;
-        a.click();
-        URL.revokeObjectURL(url);
-      }
-    } catch (e) {
-      throw new Error(e.message);
-    }
-  };
+  const ready = !loading && analysis;
 
   return (
-    <div className="space-y-4">
-      <GlassCard className="p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <label className="block text-sm font-medium text-foreground mb-2">Pilih Klien Maklon</label>
-            <Select value={selectedClientId} onValueChange={handleClientSelect}>
-              <SelectTrigger className="w-full md:w-96" data-testid="client-select">
-                <SelectValue placeholder="Pilih klien..." />
-              </SelectTrigger>
-              <SelectContent>
-                {clients.map(c => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.code} — {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {analysis && (
-            <ExportButtonGroup onExportCSV={exportCSV} onExportExcel={exportExcel} disabled={!analysis} />
-          )}
-        </div>
-      </GlassCard>
-
-      {loading && (
+    <PageLayout
+      testId={page.testId}
+      title={page.title}
+      subtitle={page.subtitle}
+      filters={<>
+        {page.chips}
+        <SmartNativeSelect value={selectedClientId} onChange={e => handleClientSelect(e.target.value)}
+          className="h-9 w-80 max-w-full" aria-label="Klien maklon" data-testid="client-select">
+          <option value="">Pilih klien…</option>
+          {clients.map(c => <option key={c.id} value={c.id}>{`${c.code} — ${c.name}`}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={analysis && <>
+        <Button variant="outline" onClick={() => download('csv')} data-testid="report-export-csv-button"><Download className="w-4 h-4" />Unduh CSV</Button>
+        <Button variant="outline" onClick={() => download('xlsx')} data-testid="report-export-excel-button"><FileSpreadsheet className="w-4 h-4" />Unduh Excel</Button>
+      </>}
+      summary={loading ? (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-20" />)}</div>
+      ) : ready && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[1, 2, 3, 4].map(i => (
-            <Skeleton key={i} className="h-24" />
-          ))}
+          <StatTile label="Jumlah order" value={analysis.total_orders} testId="client-report-total-orders" />
+          <StatTile label="Total qty" value={`${analysis.total_qty.toLocaleString('id-ID')} pcs`} />
+          <StatTile label="Pendapatan" value={fmt(analysis.total_revenue)} testId="client-report-revenue" />
+          <StatTile label="Margin" value={pct(analysis.margin_pct)} accent={analysis.margin_pct < 0 ? 'danger' : 'default'} testId="client-report-margin-kpi" />
         </div>
-      )}
-
-      {!loading && analysis && (
-        <div className="space-y-4">
-          {/* KPI Bento Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <GlassPanel className="p-4">
-              <div className="text-xs text-muted-foreground">Total Orders</div>
-              <div className="text-2xl font-bold text-foreground" data-testid="client-report-total-orders">
-                {analysis.total_orders}
-              </div>
-            </GlassPanel>
-            <GlassPanel className="p-4">
-              <div className="text-xs text-muted-foreground">Total Qty</div>
-              <div className="text-2xl font-bold text-foreground">
-                {analysis.total_qty.toLocaleString('id-ID')} pcs
-              </div>
-            </GlassPanel>
-            <GlassPanel className="p-4">
-              <div className="text-xs text-muted-foreground">Total Revenue</div>
-              <div className="text-2xl font-bold text-foreground" data-testid="client-report-revenue">
-                {fmt(analysis.total_revenue)}
-              </div>
-            </GlassPanel>
-            <GlassPanel className="p-4 bg-primary/10 border-primary/30">
-              <div className="text-xs text-primary">Margin</div>
-              <div className="text-2xl font-bold text-primary" data-testid="client-report-margin-kpi">
-                {analysis.margin_pct.toFixed(1)}%
-              </div>
-            </GlassPanel>
+        <HppComparisonInline estimated={analysis.total_hpp_estimated} actual={analysis.total_hpp_actual} />
+      </>}
+    >
+      {ready ? (
+        <GlassCard className="p-0 overflow-hidden">
+          <div className="px-4 py-3 border-b border-[var(--glass-border)]">
+            <p className="text-sm font-semibold text-foreground">Rincian order ({analysis.orders.length})</p>
           </div>
-
-          {/* HPP Comparison */}
-          <GlassCard className="p-5">
-            <h3 className="font-semibold text-foreground mb-3">HPP Summary</h3>
-            <HppComparisonInline estimated={analysis.total_hpp_estimated} actual={analysis.total_hpp_actual} />
-          </GlassCard>
-
-          {/* Orders Table */}
-          <GlassCard className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-[var(--glass-border)]">
-              <h3 className="font-semibold text-foreground">Orders Detail ({analysis.orders.length})</h3>
-            </div>
-            <ScrollArea className="h-[400px]">
+          {analysis.orders.length === 0 ? (
+            <EmptyState title="Belum ada order untuk klien ini" description="Order maklon klien ini muncul di sini." />
+          ) : (
+            <div className="overflow-x-auto">
               <table className="w-full text-sm" data-testid="client-analysis-table">
-                <thead className="sticky top-0 bg-[var(--card-surface)] backdrop-blur-md">
-                  <tr className="text-left text-muted-foreground border-b border-[var(--glass-border)]">
-                    <th className="p-3">Order Code</th>
-                    <th className="p-3">Product</th>
-                    <th className="p-3 text-right">Qty</th>
-                    <th className="p-3">Status</th>
-                    <th className="p-3 text-right">Revenue</th>
-                    <th className="p-3 text-right">HPP Actual</th>
-                    <th className="p-3 text-right">Margin</th>
-                    <th className="p-3 text-center">On-Time</th>
+                <thead>
+                  <tr>
+                    <th className="text-left">Kode order</th>
+                    <th className="text-left">Produk</th>
+                    <th className="text-right">Qty</th>
+                    <th className="text-left">Status</th>
+                    <th className="text-right">Pendapatan</th>
+                    <th className="text-right">HPP aktual</th>
+                    <th className="text-right">Margin</th>
+                    <th className="text-center">Tepat waktu</th>
                   </tr>
                 </thead>
                 <tbody>
                   {analysis.orders.map((order, i) => (
-                    <tr
-                      key={i}
-                      className="border-b border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]"
-                      data-testid="client-analysis-row"
-                    >
-                      <td className="p-3 font-mono text-xs">{order.order_code}</td>
-                      <td className="p-3">{order.product_name}</td>
-                      <td className="p-3 text-right font-mono">{order.qty}</td>
-                      <td className="p-3">
-                        <span className="px-2 py-0.5 rounded-full text-xs bg-primary/10 text-primary">
-                          {order.status}
-                        </span>
+                    <tr key={i} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]" data-testid="client-analysis-row">
+                      <td className="whitespace-nowrap">{order.order_code}</td>
+                      <td>{order.product_name}</td>
+                      <td className="text-right tabular-nums">{order.qty}</td>
+                      <td><JobStatus status={order.status} /></td>
+                      <td className="text-right tabular-nums">{fmt(order.revenue)}</td>
+                      <td className="text-right tabular-nums">{fmt(order.hpp_actual)}</td>
+                      <td className={`text-right tabular-nums ${order.margin > 0 ? 'text-[hsl(var(--success))]' : order.margin < 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
+                        {fmt(order.margin)}
                       </td>
-                      <td className="p-3 text-right font-mono">{fmt(order.revenue)}</td>
-                      <td className="p-3 text-right font-mono">{fmt(order.hpp_actual)}</td>
-                      <td className="p-3 text-right font-mono">
-                        <span
-                          className={
-                            order.margin > 0
-                              ? 'text-emerald-400'
-                              : order.margin < 0
-                              ? 'text-rose-400'
-                              : 'text-muted-foreground'
-                          }
-                        >
-                          {fmt(order.margin)}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center">
+                      <td className="text-center">
                         {order.is_on_time === true ? (
-                          <span className="text-emerald-400">✓</span>
+                          <span className="text-[hsl(var(--success))]" title="Tepat waktu">✓</span>
                         ) : order.is_on_time === false ? (
-                          <span className="text-rose-400">✗</span>
+                          <span className="text-[hsl(var(--destructive))]" title="Terlambat">✗</span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}
@@ -750,22 +573,16 @@ function ClientAnalysisTab({ token, headers }) {
                   ))}
                 </tbody>
               </table>
-            </ScrollArea>
-          </GlassCard>
-        </div>
-      )}
-
-      {!loading && !analysis && selectedClientId && (
-        <GlassCard className="p-8 text-center text-muted-foreground">
-          Tidak ada data untuk client ini
+            </div>
+          )}
+        </GlassCard>
+      ) : !loading && (
+        <GlassCard className="p-0">
+          {selectedClientId
+            ? <EmptyState icon={Building2} title="Tidak ada data untuk klien ini" description="Pilih klien lain atau periksa order maklon klien ini." />
+            : <EmptyState icon={Building2} title="Pilih klien maklon" description="Ringkasan order, pendapatan, margin, dan HPP klien tampil di sini." />}
         </GlassCard>
       )}
-
-      {!selectedClientId && (
-        <GlassCard className="p-8 text-center text-muted-foreground">
-          Pilih Klien Maklon untuk melihat analisa KPI & HPP
-        </GlassCard>
-      )}
-    </div>
+    </PageLayout>
   );
 }

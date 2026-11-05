@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { Plus, RefreshCw, Wallet, AlertTriangle, MoreHorizontal } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { EmptyState } from './moduleAtoms';
+import { EmptyState, Notice } from './moduleAtoms';
 import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
 import JournalLinesInline from './finance/JournalLinesInline';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -104,13 +104,12 @@ export default function RahazaCashAccountsModule({ token }) {
   const mutPages = Math.max(1, Math.ceil((mutInfo?.count || 0) / MUT_PAGE));
 
   const warning = (mismatch.length > 0 || noGl.length > 0) && (
-    <div className="bg-amber-400/8 border border-amber-400/20 rounded-lg px-4 py-3 text-xs text-[hsl(var(--warning))] flex items-start gap-2" data-testid="ca-gl-warning">
-      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-      <div>
+    <Notice tone="warning" icon={AlertTriangle} testId="ca-gl-warning" className="text-xs">
+      <div className="space-y-1">
         {mismatch.length > 0 && <p>{mismatch.length} rekening saldo buku besar ≠ saldo mutasi ({mismatch.map((a) => a.code).join(', ')}). Angka memakai buku besar; selisih berarti ada mutasi yang belum dijurnal.</p>}
         {noGl.length > 0 && <p>{noGl.length} rekening belum punya akun buku besar ({noGl.map((a) => a.code).join(', ')}). Minta admin menjalankan “Sinkron Bagan Akun & GL” di Adm. Sistem › Perawatan Data Keuangan.</p>}
       </div>
-    </div>
+    </Notice>
   );
 
   const detail = selected && (

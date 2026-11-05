@@ -54,7 +54,7 @@ export default function PaginationLite({
           disabled={current <= 1}
           className="h-8 px-3 rounded-md border border-border bg-card text-foreground text-xs font-medium hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          ‹ Prev
+          ‹ Sebelumnya
         </button>
         <span className="h-8 px-3 inline-flex items-center rounded-md bg-muted text-foreground text-xs font-medium" data-testid="pagination-page">
           Halaman {current} / {safeTotalPages}
@@ -66,7 +66,7 @@ export default function PaginationLite({
           disabled={current >= safeTotalPages}
           className="h-8 px-3 rounded-md border border-border bg-card text-foreground text-xs font-medium hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          Next ›
+          Berikutnya ›
         </button>
       </div>
     </div>

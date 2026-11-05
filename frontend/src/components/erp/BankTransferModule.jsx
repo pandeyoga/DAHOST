@@ -7,20 +7,25 @@
  *  - Auto-posting GL (Dr Bank Tujuan / Cr Bank Sumber)
  *  - History transfer dengan status GL
  *  - Void transfer + retry posting
+ *
+ * 2026-11-05 (PANDUAN_UI G1/G5/G7/G13): cetakan PageLayout; satu kartu tabel (dulu Card shadcn berisi kotak
+ * bergaris = kartu di dalam kartu); nomor jurnal dibuka di bawah barisnya (JournalLinesInline); sel nomor,
+ * tanggal, dan uang tidak turun baris; label Indonesia ("Void" → "Batalkan", "Unposted" → "Belum dijurnal").
  */
-import React, { useState, useEffect, useCallback } from 'react';
-import { PageHeader } from './moduleAtoms';
+import { Fragment, useState, useEffect, useCallback } from 'react';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import PageLayout, { RowDetail } from './layout/PageLayout';
+import JournalLinesInline from './finance/JournalLinesInline';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { FINANCE_ROLES } from '../../lib/financeRoles'; // FIN-02
 import {
-  ArrowRightLeft, Plus, RefreshCw, CheckCircle2, XCircle,
-  Loader2, RotateCcw, AlertCircle, ArrowRight, Banknote
+  ArrowRightLeft, Plus, RefreshCw, CheckCircle2,
+  Loader2, RotateCcw, AlertCircle, ArrowRight,
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -73,7 +78,7 @@ function useBankAccounts() {
   return accounts;
 }
 
-// ── Transfer Form Dialog ─────────────────────────────────────────────────────
+// ── Transfer Form Dialog (formulir isian pendek — boleh popup, G13) ──────────
 function TransferDialog({ open, onClose, onCreated }) {
   const [form, setForm] = useState({
     from_account_code: '1-1201',
@@ -113,7 +118,7 @@ function TransferDialog({ open, onClose, onCreated }) {
   const toName   = BANK_ACCOUNTS.find(a => a.code === form.to_account_code)?.name || form.to_account_code;
 
   const save = async () => {
-    if (!form.amount || parseFloat(form.amount) <= 0) return setErr('Jumlah transfer harus > 0.');
+    if (!form.amount || parseFloat(form.amount) <= 0) return setErr('Jumlah transfer harus lebih dari 0.');
     if (form.from_account_code === form.to_account_code) return setErr('Rekening sumber dan tujuan tidak boleh sama.');
     setSaving(true); setErr('');
     try {
@@ -132,9 +137,9 @@ function TransferDialog({ open, onClose, onCreated }) {
       if (!res.ok) throw new Error(d.detail || 'Gagal membuat transfer');
       setResult(d);
       if (d.gl_posting?.ok) {
-        toast.success(`Transfer ${d.transfer?.ref_number} berhasil + GL terposting ✅`);
+        toast.success(`Transfer ${d.transfer?.ref_number} tercatat · jurnal ${d.gl_posting.je_number || ''}`.trim());
       } else {
-        toast.warning(`Transfer dicatat, tapi GL posting gagal: ${d.gl_posting?.error || '?'}`);
+        toast.warning(`Transfer dicatat, tetapi jurnal gagal: ${d.gl_posting?.error || '?'}`);
       }
       onCreated();
     } catch (e) { setErr(e.message); } finally { setSaving(false); }
@@ -144,29 +149,22 @@ function TransferDialog({ open, onClose, onCreated }) {
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Transfer Bank Antar Rekening</DialogTitle>
+          <DialogTitle>Transfer antar rekening</DialogTitle>
           <DialogDescription>
-            Jurnal otomatis: Dr {toName || '?'} / Cr {fromName || '?'}
+            Jurnal otomatis: debit {toName || '?'} / kredit {fromName || '?'}
           </DialogDescription>
         </DialogHeader>
 
         {result ? (
           <div className="py-4 space-y-3">
-            <div className={`flex items-center gap-3 p-3 rounded-lg border ${
-              result.gl_posting?.ok
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700'
-                : 'border-amber-500/30 bg-amber-500/10 text-amber-700'
-            }`}>
-              {result.gl_posting?.ok ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
-              <div>
-                <p className="font-medium text-sm">{result.transfer?.ref_number}</p>
-                <p className="text-xs">
-                  {result.gl_posting?.ok
-                    ? `GL: ${result.gl_posting.je_number} ✅`
-                    : `GL Gagal: ${result.gl_posting?.error}`}
-                </p>
-              </div>
-            </div>
+            <Notice tone={result.gl_posting?.ok ? 'success' : 'warning'} icon={result.gl_posting?.ok ? CheckCircle2 : AlertCircle}
+              title={result.transfer?.ref_number}>
+              <span className="text-xs">
+                {result.gl_posting?.ok
+                  ? `Jurnal ${result.gl_posting.je_number}`
+                  : `Jurnal gagal: ${result.gl_posting?.error}`}
+              </span>
+            </Notice>
             <div className="text-sm text-muted-foreground space-y-1">
               <div className="flex justify-between">
                 <span>Dari:</span><span className="font-medium">{result.transfer?.from_account_name}</span>
@@ -175,13 +173,13 @@ function TransferDialog({ open, onClose, onCreated }) {
                 <span>Ke:</span><span className="font-medium">{result.transfer?.to_account_name}</span>
               </div>
               <div className="flex justify-between">
-                <span>Jumlah:</span><span className="font-bold text-foreground">{fmt(result.transfer?.amount)}</span>
+                <span>Jumlah:</span><span className="font-bold text-foreground tabular-nums">{fmt(result.transfer?.amount)}</span>
               </div>
             </div>
           </div>
         ) : (
           <div className="space-y-3 py-2">
-            {err && <div className="text-destructive text-sm bg-destructive/10 rounded px-3 py-2">{err}</div>}
+            {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
 
             {/* Preview JE */}
             {form.amount > 0 && (
@@ -189,13 +187,13 @@ function TransferDialog({ open, onClose, onCreated }) {
                 <span className="font-medium text-foreground">{fromName}</span>
                 <ArrowRight size={12} />
                 <span className="font-medium text-foreground">{toName}</span>
-                <span className="ml-auto font-bold text-foreground">{fmt(parseFloat(form.amount || 0))}</span>
+                <span className="ml-auto font-bold text-foreground tabular-nums">{fmt(parseFloat(form.amount || 0))}</span>
               </div>
             )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Rekening Sumber *</Label>
+                <Label>Rekening sumber *</Label>
                 <Select value={form.from_account_code} onValueChange={v => setForm(p => ({ ...p, from_account_code: v }))}>
                   <SelectTrigger data-testid="from-account"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -208,7 +206,7 @@ function TransferDialog({ open, onClose, onCreated }) {
                 </Select>
               </div>
               <div className="space-y-1">
-                <Label>Rekening Tujuan *</Label>
+                <Label>Rekening tujuan *</Label>
                 <Select value={form.to_account_code} onValueChange={v => setForm(p => ({ ...p, to_account_code: v }))}>
                   <SelectTrigger data-testid="to-account"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -223,7 +221,7 @@ function TransferDialog({ open, onClose, onCreated }) {
             </div>
 
             <div className="space-y-1">
-              <Label>Jumlah (IDR) *</Label>
+              <Label>Jumlah (Rp) *</Label>
               <MoneyInput
                 data-testid="transfer-amount"
                 placeholder="5.000.000"
@@ -233,11 +231,11 @@ function TransferDialog({ open, onClose, onCreated }) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
-                <Label>Tanggal Transfer</Label>
+                <Label>Tanggal transfer</Label>
                 <Input type="date" value={form.transfer_date} onChange={e => setForm(p => ({ ...p, transfer_date: e.target.value }))} />
               </div>
               <div className="space-y-1">
-                <Label>No. Referensi Bank</Label>
+                <Label>No. referensi bank</Label>
                 <Input data-testid="transfer-ref" placeholder="opsional" value={form.ref_external} onChange={e => setForm(p => ({ ...p, ref_external: e.target.value }))} />
               </div>
             </div>
@@ -248,7 +246,7 @@ function TransferDialog({ open, onClose, onCreated }) {
 
             <DocNumberField
               policy={numPolicy} value={refNumber} onChange={setRefNumber}
-              testId="transfer-docnum" label="Nomor Dokumen Transfer" />
+              testId="transfer-docnum" label="Nomor dokumen transfer" />
           </div>
         )}
 
@@ -259,8 +257,8 @@ function TransferDialog({ open, onClose, onCreated }) {
             <>
               <Button variant="outline" onClick={onClose} disabled={saving}>Batal</Button>
               <Button data-testid="transfer-submit" onClick={save} disabled={saving}>
-                {saving && <Loader2 size={13} className="mr-1 animate-spin" />}
-                Transfer & Post GL
+                {saving && <Loader2 size={13} className="animate-spin" />}
+                Transfer & catat jurnal
               </Button>
             </>
           )}
@@ -276,6 +274,7 @@ export default function BankTransferModule() {
   const [total, setTotal]   = useState(0);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [openJe, setOpenJe] = useState(null);
 
   const role = userRole();
   const canManage = FINANCE_ROLES.includes(role);
@@ -308,158 +307,146 @@ export default function BankTransferModule() {
   };
 
   const handleVoid = async (tf) => {
-    if (!(await confirmDialog(`Void transfer ${tf.ref_number}? Akan dibuat JE reversal.`))) return;
+    const ok = await confirmDialog({
+      title: `Batalkan transfer ${tf.ref_number}?`,
+      body: 'Jurnal pembalik akan dibuat otomatis.',
+      confirmLabel: 'Batalkan transfer', cancelLabel: 'Tidak', danger: true,
+    });
+    if (!ok) return;
     try {
       const r = await fetch(`${BASE}/${tf.id}/void`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token()}` },
       });
       const d = await r.json();
-      if (d.ok) { toast.success(`Transfer ${tf.ref_number} divoid. JE reversal: ${d.je_number}`); fetchTransfers(); }
-      else toast.error(d.error || 'Gagal void');
+      if (d.ok) { toast.success(`Transfer ${tf.ref_number} dibatalkan${d.je_number ? ` · jurnal pembalik ${d.je_number}` : ''}`); fetchTransfers(); }
+      else toast.error(d.error || 'Gagal membatalkan transfer');
     } catch { toast.error('Koneksi bermasalah'); }
   };
 
   const unpostedCount = transfers.filter(t => !t.gl_posted && t.status !== 'voided').length;
+  const cols = canManage ? 8 : 7;
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Transfer Antar Rekening"
-        subtitle="Memindah uang antar rekening sendiri (mis. bank → Kas Kecil). Jurnal terbentuk otomatis."
-        actions={<>
-          <Button variant="outline" size="sm" onClick={fetchTransfers} disabled={loading}>
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          </Button>
-          {canManage && (
-            <Button
-              size="sm"
-              data-testid="create-transfer-btn"
-              onClick={() => setDialogOpen(true)}
-              className="gap-2"
-            >
-              <Plus size={14} /> Transfer baru
-            </Button>
-          )}
-        </>}
-      />
-
-      {/* 2026-11-04: 3 kartu hitungan dilepas — jumlah ada di daftar, yang belum terjurnal di peringatan bawah */}
-      <p className="text-xs text-muted-foreground" data-testid="transfer-count">{total} transfer</p>
-
-      {/* Unposted Alert */}
-      {unpostedCount > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-600">
-          <AlertCircle size={14} />
-          <span>{unpostedCount} transfer belum masuk buku besar. Tekan “Coba lagi” di baris yang bermasalah.</span>
-        </div>
+    <PageLayout
+      testId="bank-transfer-page"
+      title="Transfer Antar Rekening"
+      subtitle="Memindah uang antar rekening sendiri (mis. bank → Kas Kecil). Jurnal terbentuk otomatis."
+      actions={canManage && (
+        <Button data-testid="create-transfer-btn" onClick={() => setDialogOpen(true)}>
+          <Plus className="w-4 h-4" /> Transfer baru
+        </Button>
       )}
-
-      {/* Table */}
-      <Card className="shadow-[var(--shadow-card)]">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base flex items-center gap-2">
-            <ArrowRightLeft size={15} className="text-primary" />
-            Riwayat Transfer
-          </CardTitle>
-          {total > 50 && (
-            <CardDescription>Menampilkan 50 transfer terbaru dari {total} total.</CardDescription>
-          )}
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex justify-center py-12">
-              <Loader2 className="animate-spin text-muted-foreground" />
-            </div>
-          ) : transfers.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 gap-3 text-muted-foreground">
-              <ArrowRightLeft size={40} className="opacity-20" />
-              <p className="text-sm">Belum ada transfer bank.</p>
-              {canManage && (
-                <Button size="sm" onClick={() => setDialogOpen(true)}>
-                  <Plus size={13} className="mr-1" /> Transfer Pertama
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-[var(--radius-md)] border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/30">
-                    <TableHead className="text-xs uppercase">No. Ref</TableHead>
-                    <TableHead className="text-xs uppercase">Tanggal</TableHead>
-                    <TableHead className="text-xs uppercase">Dari</TableHead>
-                    <TableHead className="text-xs uppercase"></TableHead>
-                    <TableHead className="text-xs uppercase">Ke</TableHead>
-                    <TableHead className="text-xs uppercase text-right">Jumlah</TableHead>
-                    <TableHead className="text-xs uppercase">Jurnal</TableHead>
-                    <TableHead className="text-xs uppercase">Status</TableHead>
-                    {canManage && <TableHead className="w-24 text-xs uppercase">Aksi</TableHead>}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {transfers.map(tf => (
-                    <TableRow key={tf.id} data-testid={`transfer-row-${tf.id}`}>
-                      <TableCell className="font-mono text-xs">{tf.ref_number}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{fmtDate(tf.transfer_date)}</TableCell>
+      tools={
+        <Button variant="outline" size="icon" onClick={fetchTransfers} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      }
+      summary={<>
+        {/* 2026-11-04: 3 kartu hitungan dilepas — jumlah ada di daftar, yang belum terjurnal di peringatan bawah */}
+        <p className="text-sm text-muted-foreground" data-testid="transfer-count">
+          {total} transfer{total > 50 ? ' · menampilkan 50 transfer terbaru' : ''}
+        </p>
+        {unpostedCount > 0 && (
+          <Notice tone="warning" icon={AlertCircle}>
+            {unpostedCount} transfer belum masuk buku besar. Tekan “Coba lagi” di baris yang bermasalah.
+          </Notice>
+        )}
+      </>}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="flex justify-center py-8">
+            <Loader2 className="animate-spin text-muted-foreground" />
+          </div>
+        ) : transfers.length === 0 ? (
+          <EmptyState icon={ArrowRightLeft} title="Belum ada transfer antar rekening"
+            description={canManage ? 'Tekan “Transfer baru” untuk memindah uang antar rekening sendiri.' : 'Transfer antar rekening akan tampil di sini.'} />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>No. ref</TableHead>
+                <TableHead>Tanggal</TableHead>
+                <TableHead>Dari</TableHead>
+                <TableHead>Ke</TableHead>
+                <TableHead className="text-right">Jumlah</TableHead>
+                <TableHead>Jurnal</TableHead>
+                <TableHead>Status</TableHead>
+                {canManage && <TableHead className="text-right">Aksi</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {transfers.map(tf => {
+                const jeOpen = openJe === tf.id;
+                const toggleJe = () => setOpenJe(jeOpen ? null : tf.id);
+                return (
+                  <Fragment key={tf.id}>
+                    <TableRow data-testid={`transfer-row-${tf.id}`} className={jeOpen ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                      <TableCell className="text-xs whitespace-nowrap">{tf.ref_number}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{fmtDate(tf.transfer_date)}</TableCell>
                       <TableCell className="text-sm">{tf.from_account_name || tf.from_account_code}</TableCell>
-                      <TableCell><ArrowRight size={12} className="text-muted-foreground" /></TableCell>
-                      <TableCell className="text-sm">{tf.to_account_name || tf.to_account_code}</TableCell>
-                      <TableCell className="text-right font-semibold text-sm">{fmt(tf.amount)}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-sm">
+                        <span className="inline-flex items-center gap-1.5"><ArrowRight size={12} className="text-muted-foreground shrink-0" />{tf.to_account_name || tf.to_account_code}</span>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap font-semibold text-sm">{fmt(tf.amount)}</TableCell>
+                      <TableCell className="whitespace-nowrap">
                         {tf.gl_posted ? (
-                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 text-xs gap-1">
-                            <CheckCircle2 size={10} /> {tf.gl_je_number || 'Posted'}
-                          </Badge>
+                          tf.gl_je_id ? (
+                            <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={toggleJe} aria-expanded={jeOpen}
+                              title={jeOpen ? 'Tutup isi jurnal' : 'Lihat isi jurnal'} data-testid={`transfer-je-${tf.id}`}>
+                              {tf.gl_je_number || 'Terjurnal'}
+                            </Button>
+                          ) : <span className="text-xs">{tf.gl_je_number || 'Terjurnal'}</span>
                         ) : (
-                          <Badge variant="outline" className="border-rose-500/30 bg-rose-500/10 text-rose-600 text-xs gap-1">
-                            <XCircle size={10} /> Unposted
-                          </Badge>
+                          <StatusBadge status="unposted" label="Belum dijurnal" tone="danger" />
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline" className={`text-xs ${
-                          tf.status === 'voided' ? 'text-muted-foreground' : 'text-foreground'
-                        }`}>
-                          {tf.status === 'voided' ? 'Voided' : 'Selesai'}
-                        </Badge>
+                        {tf.status === 'voided'
+                          ? <StatusBadge status="voided" />
+                          : <StatusBadge status="completed" label="Selesai" tone="default" />}
                       </TableCell>
                       {canManage && (
-                        <TableCell>
-                          <div className="flex items-center gap-1">
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
                             {!tf.gl_posted && tf.status !== 'voided' && (
                               <Button
-                                variant="ghost" size="sm"
-                                className="h-7 gap-1 text-xs"
+                                variant="outline" size="sm"
                                 data-testid={`retry-posting-${tf.id}`}
                                 onClick={() => handleRetry(tf.id)}
                               >
-                                <RotateCcw size={11} /> Coba lagi
+                                <RotateCcw className="w-3.5 h-3.5" /> Coba lagi
                               </Button>
                             )}
                             {tf.status !== 'voided' && (
                               <Button
-                                variant="ghost" size="sm"
-                                className="h-7 text-xs text-destructive hover:text-destructive"
+                                variant="outline" size="sm"
                                 data-testid={`void-transfer-${tf.id}`}
                                 onClick={() => handleVoid(tf)}
+                                title="Batalkan transfer dan buat jurnal pembalik"
                               >
-                                Void
+                                Batalkan
                               </Button>
                             )}
                           </div>
                         </TableCell>
                       )}
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                    {jeOpen && tf.gl_je_id && (
+                      <RowDetail colSpan={cols} testId={`transfer-je-detail-${tf.id}`}>
+                        <JournalLinesInline jeId={tf.gl_je_id} token={token()} />
+                      </RowDetail>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
 
       <TransferDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onCreated={fetchTransfers} />
-    </div>
+    </PageLayout>
   );
 }

@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Link2, Unlink, Trash2, Wand2, Banknote } from 'lucide-react';
-import { formatRupiah as fmt } from '@/lib/format';
+import { Link2, Unlink, Trash2, Wand2, Banknote, Loader2 } from 'lucide-react';
+import { formatDateID, formatRupiah as fmt } from '@/lib/format';
+import { cn } from '@/lib/utils';
+import { humanMemo } from '@/lib/financeLabels';
+import { StatusBadge } from '../../moduleAtoms';
 import { SettlementLinkPicker } from '../SettlementLinkPicker';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -14,72 +16,74 @@ function CandidatePicker({ sessionId, txn, headers, onPick }) {
     axios.get(`${API}/api/finance/bank-recon/sessions/${sessionId}/transactions/${txn.id}/candidates`, { headers })
       .then(r => setItems(r.data.items || [])).catch(() => setItems([]));
   }, [sessionId, txn.id, headers]);
-  if (items === null) return <p className="text-xs text-muted-foreground">Memuat kandidat…</p>;
+  if (items === null) return <p className="text-xs text-muted-foreground flex items-center gap-2"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Memuat kandidat…</p>;
   if (!items.length) return <p className="text-xs text-muted-foreground" data-testid="recon-no-candidates">Tidak ada baris jurnal akun bank dengan arah yang sama di periode ini.</p>;
   return (
     <div className="max-h-56 overflow-y-auto space-y-1" data-testid="recon-candidates">
       {items.map(g => (
-        <button key={g.key} data-testid={`recon-cand-${g.key}`} onClick={() => onPick(g)}
-          className={`w-full text-left p-2 rounded border text-xs hover:bg-primary/10 ${g.within_rule ? 'border-green-300' : ''}`}>
-          <div className="flex justify-between gap-2">
-            <span className="truncate">{g.date} · <span className="font-mono">{g.je_number}</span> · {g.memo || g.description}</span>
-            <span className="font-medium whitespace-nowrap">{fmt(g.amount)}</span>
-          </div>
-          <div className="text-muted-foreground">
-            Δ {fmt(Math.abs(g.amount_diff))} · {g.days_apart ?? '?'} hari {g.within_rule && <span className="text-green-700">· sesuai aturan</span>}
-          </div>
-        </button>
+        <Button key={g.key} type="button" variant="outline" data-testid={`recon-cand-${g.key}`} onClick={() => onPick(g)}
+          className={cn('w-full h-auto px-3 py-2 flex-col items-stretch gap-0.5 text-left text-xs font-normal whitespace-normal',
+            g.within_rule && 'border-[hsl(var(--success)/0.5)]')}>
+          <span className="flex justify-between gap-2">
+            <span className="truncate min-w-0">{formatDateID(g.date)} · {g.je_number} · {humanMemo(g.memo || g.description)}</span>
+            <span className="font-medium whitespace-nowrap tabular-nums">{fmt(g.amount)}</span>
+          </span>
+          <span className="text-muted-foreground tabular-nums">
+            Selisih {fmt(Math.abs(g.amount_diff))} · {g.days_apart ?? '—'} hari {g.within_rule && <span className="text-[hsl(var(--success))]">· sesuai aturan</span>}
+          </span>
+        </Button>
       ))}
     </div>
   );
 }
 
 // Satu baris mutasi bank + aksi: cocokkan manual, tautkan pencairan, buat penyesuaian, lepas, hapus.
+// 2026-11-05 (PANDUAN_UI G5/G8): baris daftar di dalam DetailPanel — bukan kartu per baris; warna hanya token,
+// tanggal formatDateID.
 export function BankTxnRow({ sessionId, txn, headers, readOnly, onMatch, onUnmatch, onAdjust, onDelete, onLinkSettlement }) {
   const [open, setOpen] = useState(null); // 'gl' | 'settlement' | 'adjust'
   const isIn = (txn.direction || (txn.type === 'debit' ? 'in' : 'out')) === 'in';
   return (
-    <div className={`border rounded-lg p-3 ${txn.is_matched ? 'bg-green-50/40 border-green-200' : ''}`} data-testid={`recon-txn-${txn.id}`}>
+    <div className="border-b border-[var(--glass-border)] last:border-0 py-3" data-testid={`recon-txn-${txn.id}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm">
-            <span className={`w-2 h-2 rounded-full ${isIn ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-muted-foreground text-xs">{txn.txn_date}</span>
+            <span className="text-muted-foreground text-xs whitespace-nowrap">{formatDateID(txn.txn_date)}</span>
             <span className="truncate">{txn.description || '—'}</span>
             {txn.reference && <span className="text-xs text-muted-foreground">#{txn.reference}</span>}
           </div>
           {txn.is_matched && (
-            <p className="text-xs text-green-700 mt-1" data-testid={`recon-txn-matchref-${txn.id}`}>
+            <p className="text-xs text-[hsl(var(--success))] mt-1" data-testid={`recon-txn-matchref-${txn.id}`}>
               ✓ {txn.match_ref} {txn.auto_matched ? '· otomatis' : ''} {Math.abs(txn.amount_diff || 0) > 0.01 ? `· selisih ${fmt(Math.abs(txn.amount_diff))}` : ''}
             </p>
           )}
         </div>
-        <div className="text-right">
-          <p className={`font-semibold text-sm ${isIn ? 'text-green-700' : 'text-red-700'}`}>{isIn ? '+' : '−'}{fmt(txn.amount)}</p>
-          <Badge variant="outline" className="text-[10px]">{isIn ? 'Masuk' : 'Keluar'}</Badge>
+        <div className="text-right space-y-1">
+          <p className={cn('font-semibold text-sm tabular-nums whitespace-nowrap', isIn ? 'text-[hsl(var(--success))]' : 'text-foreground')}>{isIn ? '+' : '−'}{fmt(txn.amount)}</p>
+          <StatusBadge status={isIn ? 'in' : 'out'} label={isIn ? 'Masuk' : 'Keluar'} tone={isIn ? 'success' : 'muted'} />
         </div>
       </div>
       {!readOnly && (
         <div className="flex flex-wrap gap-1 mt-2">
           {txn.is_matched ? (
             <Button size="sm" variant="outline" data-testid={`recon-unmatch-${txn.id}`} onClick={() => onUnmatch(txn)}>
-              <Unlink className="w-3 h-3 mr-1" /> Lepas
+              <Unlink /> Lepas
             </Button>
           ) : (
             <>
-              <Button size="sm" variant="outline" data-testid={`recon-match-open-${txn.id}`} onClick={() => setOpen(open === 'gl' ? null : 'gl')}>
-                <Link2 className="w-3 h-3 mr-1" /> Cocokkan ke jurnal
+              <Button size="sm" variant="outline" data-testid={`recon-match-open-${txn.id}`} onClick={() => setOpen(open === 'gl' ? null : 'gl')} aria-expanded={open === 'gl'}>
+                <Link2 /> Cocokkan ke jurnal
               </Button>
               {isIn && (
-                <Button size="sm" variant="outline" data-testid={`recon-settle-open-${txn.id}`} onClick={() => setOpen(open === 'settlement' ? null : 'settlement')}>
-                  <Banknote className="w-3 h-3 mr-1" /> Pencairan marketplace
+                <Button size="sm" variant="outline" data-testid={`recon-settle-open-${txn.id}`} onClick={() => setOpen(open === 'settlement' ? null : 'settlement')} aria-expanded={open === 'settlement'}>
+                  <Banknote /> Pencairan marketplace
                 </Button>
               )}
-              <Button size="sm" variant="outline" data-testid={`recon-adjust-open-${txn.id}`} onClick={() => setOpen(open === 'adjust' ? null : 'adjust')}>
-                <Wand2 className="w-3 h-3 mr-1" /> Penyesuaian
+              <Button size="sm" variant="outline" data-testid={`recon-adjust-open-${txn.id}`} onClick={() => setOpen(open === 'adjust' ? null : 'adjust')} aria-expanded={open === 'adjust'}>
+                <Wand2 /> Penyesuaian
               </Button>
-              <Button size="sm" variant="ghost" data-testid={`recon-txn-delete-${txn.id}`} onClick={() => onDelete(txn)}>
-                <Trash2 className="w-3 h-3 text-red-500" />
+              <Button size="icon-sm" variant="ghost" data-testid={`recon-txn-delete-${txn.id}`} onClick={() => onDelete(txn)} title="Hapus mutasi" aria-label="Hapus mutasi">
+                <Trash2 className="text-[hsl(var(--destructive))]" />
               </Button>
             </>
           )}
