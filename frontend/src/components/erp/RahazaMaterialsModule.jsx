@@ -15,13 +15,13 @@ import { MoneyInput } from '@/components/ui/money-input';
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk Jadi). Semua tipe legacy
 // dipetakan ke kategori yang sama agar label konsisten.
 const TYPE_META = {
-  yarn:        { label: 'Bahan',       icon: Scale,   color: 'text-amber-600 dark:text-amber-300',     bg: 'bg-amber-400/10',   border: 'border-amber-300/20' },
-  fabric:      { label: 'Bahan',       icon: Scale,   color: 'text-amber-600 dark:text-amber-300',     bg: 'bg-amber-400/10',   border: 'border-amber-300/20' },
-  kain:        { label: 'Bahan',       icon: Scale,   color: 'text-amber-600 dark:text-amber-300',     bg: 'bg-amber-400/10',   border: 'border-amber-300/20' },
-  interlining: { label: 'Bahan',       icon: Scale,   color: 'text-amber-600 dark:text-amber-300',     bg: 'bg-amber-400/10',   border: 'border-amber-300/20' },
+  yarn:        { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
+  fabric:      { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
+  kain:        { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
+  interlining: { label: 'Bahan',       icon: Scale,   color: 'text-[hsl(var(--warning))] ',     bg: 'bg-[hsl(var(--warning)/0.1)]',   border: 'border-[hsl(var(--warning)/0.2)]' },
   accessory:   { label: 'Aksesoris',   icon: Gem,     color: 'text-primary',                           bg: 'bg-primary/10',     border: 'border-primary/25' },
   packaging:   { label: 'Aksesoris',   icon: Gem,     color: 'text-primary',                           bg: 'bg-primary/10',     border: 'border-primary/25' },
-  fg:          { label: 'Produk Jadi', icon: Archive, color: 'text-emerald-600 dark:text-emerald-300', bg: 'bg-emerald-400/10', border: 'border-emerald-300/20' },
+  fg:          { label: 'Produk Jadi', icon: Archive, color: 'text-[hsl(var(--success))] ', bg: 'bg-[hsl(var(--success)/0.1)]', border: 'border-[hsl(var(--success)/0.2)]' },
   other:       { label: 'Lainnya',     icon: Package, color: 'text-muted-foreground',                  bg: 'bg-muted/20',       border: 'border-border' },
 };
 
@@ -154,10 +154,10 @@ export default function RahazaMaterialsModule({ token }) {
 
       {/* Sprint 3.4: Low Stock Alert Banner */}
       {lowStockCount > 0 && (
-        <div className="flex items-center gap-2 bg-amber-400/10 border border-amber-300/20 rounded-lg px-4 py-2.5" data-testid="mat-low-stock-banner">
-          <AlertTriangle className="w-4 h-4 text-amber-300 shrink-0" />
-          <span className="text-sm text-amber-300 font-medium">{lowStockCount} material di bawah ambang minimum stok.</span>
-          <button onClick={() => setFilterLowStock(true)} className="text-xs text-amber-300 underline ml-auto">Lihat semua</button>
+        <div className="flex items-center gap-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.2)] rounded-lg px-4 py-2.5" data-testid="mat-low-stock-banner">
+          <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0" />
+          <span className="text-sm text-[hsl(var(--warning))] font-medium">{lowStockCount} material di bawah ambang minimum stok.</span>
+          <button onClick={() => setFilterLowStock(true)} className="text-xs text-[hsl(var(--warning))] underline ml-auto">Lihat semua</button>
         </div>
       )}
 
@@ -173,7 +173,7 @@ export default function RahazaMaterialsModule({ token }) {
         </select>
         <button
           onClick={() => setFilterLowStock(!filterLowStock)}
-          className={`h-9 px-3 rounded-lg border text-sm flex items-center gap-1.5 transition-colors ${filterLowStock ? 'bg-amber-400/15 border-amber-300/30 text-amber-300' : 'border-[var(--glass-border)] text-muted-foreground hover:text-foreground'}`}
+          className={`h-9 px-3 rounded-lg border text-sm flex items-center gap-1.5 transition-colors ${filterLowStock ? 'bg-[hsl(var(--warning)/0.15)] border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))]' : 'border-[var(--glass-border)] text-muted-foreground hover:text-foreground'}`}
           data-testid="mat-filter-low-stock">
           <AlertTriangle className="w-3.5 h-3.5" /> Low Stock {filterLowStock && `(aktif)`}
         </button>
@@ -204,10 +204,10 @@ export default function RahazaMaterialsModule({ token }) {
                 const Icon = meta.icon || Package;
                 const isLow = r.is_low_stock || r.below_min;
                 return (
-                  <tr key={r.id} className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${!r.active ? 'opacity-50' : ''} ${isLow ? 'bg-amber-400/4' : ''}`} data-testid={`mat-row-${r.code}`}>
-                    <td className="px-4 py-3 font-mono text-xs text-foreground">
+                  <tr key={r.id} className={`border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)] ${!r.active ? 'opacity-50' : ''} ${isLow ? 'bg-[hsl(var(--warning)/0.04)]' : ''}`} data-testid={`mat-row-${r.code}`}>
+                    <td className="px-4 py-3 tabular-nums text-xs text-foreground">
                       {r.code}
-                      {isLow && <AlertTriangle className="w-3 h-3 text-amber-300 inline ml-1.5" title={r.low_stock_reason || 'Low Stock'} data-testid={`mat-low-badge-${r.code}`} />}
+                      {isLow && <AlertTriangle className="w-3 h-3 text-[hsl(var(--warning))] inline ml-1.5" title={r.low_stock_reason || 'Low Stock'} data-testid={`mat-low-badge-${r.code}`} />}
                     </td>
                     <td className="px-4 py-3 text-foreground">{r.name}</td>
                     <td className="px-4 py-3">
@@ -217,15 +217,15 @@ export default function RahazaMaterialsModule({ token }) {
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">{r.unit}</td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">
-                      {r.min_stock_qty ? <span className="font-mono">{r.min_stock_qty} {r.unit}</span> : (r.min_stock ? r.min_stock : '—')}
+                      {r.min_stock_qty ? <span className="tabular-nums">{r.min_stock_qty} {r.unit}</span> : (r.min_stock ? r.min_stock : '—')}
                       {r.min_stock_percentage ? <span className="ml-1 text-[10px] text-primary/70">({r.min_stock_percentage}%)</span> : null}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">{r.color || readField(r, FIELD.composition) || '—'}</td>
-                    <td className="px-4 py-3">{r.active ? <span className="text-emerald-600 dark:text-emerald-300 text-xs font-medium">Aktif</span> : <span className="text-muted-foreground text-xs">Non-aktif</span>}</td>
+                    <td className="px-4 py-3">{r.active ? <span className="text-[hsl(var(--success))] text-xs font-medium">Aktif</span> : <span className="text-muted-foreground text-xs">Non-aktif</span>}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="inline-flex items-center gap-1">
                         <button onClick={() => openEdit(r)} className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" title="Edit" data-testid={`mat-edit-${r.code}`}><Edit2 className="w-3.5 h-3.5" /></button>
-                        {r.active && <button onClick={() => remove(r)} className="p-1.5 rounded hover:bg-red-400/10 text-muted-foreground hover:text-red-400" title="Nonaktifkan"><Trash2 className="w-3.5 h-3.5" /></button>}
+                        {r.active && <button onClick={() => remove(r)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]" title="Nonaktifkan"><Trash2 className="w-3.5 h-3.5" /></button>}
                       </div>
                     </td>
                   </tr>
@@ -245,14 +245,14 @@ export default function RahazaMaterialsModule({ token }) {
       {modalOpen && (
         <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit ${editing.code}` : 'Material Baru'} size="md">
           <div className="space-y-3" data-testid="mat-form">
-            {formError && <div className="bg-red-400/10 border border-red-300/20 rounded-lg p-3 text-sm text-red-300">{formError}</div>}
+            {formError && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.2)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]">{formError}</div>}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Kode <span className="text-red-400">*</span></label>
+                <label className="block text-xs font-medium text-foreground/70 mb-1">Kode <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <GlassInput value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} placeholder="BHN-KTN30S" data-testid="mat-field-code" />
               </div>
               <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Jenis <span className="text-red-400">*</span></label>
+                <label className="block text-xs font-medium text-foreground/70 mb-1">Jenis <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <select value={typeToCategory(form.type)} onChange={e => { const st = categoryToStoredType(e.target.value); setForm({...form, type: st, unit: isKgLike(st) ? 'kg' : 'pcs'}); }} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-field-type">
                   {CATEGORY_OPTIONS.filter(o => o.value !== 'fg').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
                 </select>
@@ -273,7 +273,7 @@ export default function RahazaMaterialsModule({ token }) {
               </SmartNativeSelect>
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Nama <span className="text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Nama <span className="text-[hsl(var(--destructive))]">*</span></label>
               <GlassInput value={form.name} onChange={e => setForm({...form, name: e.target.value})} placeholder="Kain Katun 30s" data-testid="mat-field-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -311,7 +311,7 @@ export default function RahazaMaterialsModule({ token }) {
                     <> · harga beli terakhir Rp {Number(form.last_receipt_unit_cost).toLocaleString('id-ID')}</>
                   )}
                 </p>
-                <p className="text-[11px] text-amber-600 dark:text-amber-300">
+                <p className="text-[11px] text-[hsl(var(--warning))] ">
                   Harga tidak diketik di sini. Ia terbentuk otomatis dari harga pembelian di PO saat
                   barang diterima. Koreksi manual (bila salah harga) lewat <strong>Valuasi HPP</strong>
                   agar ada jejak audit.
@@ -376,8 +376,8 @@ export default function RahazaMaterialsModule({ token }) {
             />
 
             {/* Sprint 3.4: Configurable Low Stock Threshold */}
-            <div className="border border-amber-300/20 bg-amber-400/5 rounded-lg p-3 space-y-2">
-              <p className="text-xs font-semibold text-amber-300 uppercase">Konfigurasi Ambang Low Stock</p>
+            <div className="border border-[hsl(var(--warning)/0.2)] bg-[hsl(var(--warning)/0.05)] rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-[hsl(var(--warning))] uppercase">Konfigurasi Ambang Low Stock</p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-foreground/70 mb-1">Min Qty Tetap ({form.unit})</label>

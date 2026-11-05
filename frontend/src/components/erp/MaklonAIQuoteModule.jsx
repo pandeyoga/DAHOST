@@ -34,9 +34,9 @@ const MARKET_OPTIONS = [
 ];
 
 const COMPETITIVENESS_COLOR = {
-  high: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30',
-  medium: 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-400 dark:border-amber-500/30',
-  low: 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-400 border-red-400 dark:border-red-500/30',
+  high: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ',
+  medium: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',
+  low: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',
   'n/a': 'bg-muted dark:bg-slate-500/15 text-muted-foreground dark:text-muted-foreground border-border dark:border-slate-500/30',
 };
 
@@ -156,9 +156,9 @@ export default function MaklonAIQuoteModule({ token }) {
     const res = r.result || r;
     return (
       <div className="space-y-4">
-        <div className="p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-300 dark:border-emerald-500/20">
+        <div className="p-4 rounded-xl bg-gradient-to-br from-[hsl(var(--success)/0.1)] to-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] ">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-semibold flex items-center gap-1"><Calculator className="w-4 h-4 text-emerald-500" /> Estimated Unit Price</span>
+            <span className="text-sm font-semibold flex items-center gap-1"><Calculator className="w-4 h-4 text-[hsl(var(--success))]" /> Estimated Unit Price</span>
             {res.competitiveness && (
               <Badge className={COMPETITIVENESS_COLOR[res.competitiveness] || ''} variant="outline">
                 {res.competitiveness === 'high' ? '🟢 Kompetitif' : res.competitiveness === 'medium' ? '🟡 Medium' : res.competitiveness === 'low' ? '🔴 Mahal' : 'n/a'}
@@ -166,7 +166,7 @@ export default function MaklonAIQuoteModule({ token }) {
             )}
           </div>
           <div className="flex items-baseline gap-4">
-            <span className="text-3xl font-bold text-emerald-600 dark:text-emerald-400">{fmtIDR(res.estimated_unit_price)}</span>
+            <span className="text-3xl font-bold text-[hsl(var(--success))] ">{fmtIDR(res.estimated_unit_price)}</span>
             <span className="text-sm text-muted-foreground">/ pcs</span>
           </div>
           <div className="text-xs text-muted-foreground mt-1">
@@ -198,11 +198,11 @@ export default function MaklonAIQuoteModule({ token }) {
 
         {res.risks?.length > 0 && (
           <div>
-            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-700 dark:text-amber-500" /> Risks</h4>
+            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] " /> Risks</h4>
             <ul className="space-y-1">
               {res.risks.map((rk, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <span className="text-amber-700 dark:text-amber-500 mt-0.5">⚠️</span><span>{rk}</span>
+                  <span className="text-[hsl(var(--warning))] mt-0.5">⚠️</span><span>{rk}</span>
                 </li>
               ))}
             </ul>
@@ -211,11 +211,11 @@ export default function MaklonAIQuoteModule({ token }) {
 
         {res.recommendations?.length > 0 && (
           <div>
-            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><ThumbsUp className="w-4 h-4 text-emerald-500" /> Recommendations</h4>
+            <h4 className="text-sm font-semibold mb-2 flex items-center gap-2"><ThumbsUp className="w-4 h-4 text-[hsl(var(--success))]" /> Recommendations</h4>
             <ul className="space-y-1">
               {res.recommendations.map((rec, i) => (
                 <li key={i} className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                  <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-emerald-500" /><span>{rec}</span>
+                  <ChevronRight className="w-3.5 h-3.5 mt-0.5 text-[hsl(var(--success))]" /><span>{rec}</span>
                 </li>
               ))}
             </ul>
@@ -233,7 +233,7 @@ export default function MaklonAIQuoteModule({ token }) {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <Calculator className="w-6 h-6 text-emerald-500" /> AI Quote Generator
+          <Calculator className="w-6 h-6 text-[hsl(var(--success))]" /> AI Quote Generator
         </h1>
         <p className="text-sm text-muted-foreground">
           Generate quotation maklon AI dengan HPP breakdown, margin, lead time, dan rekomendasi (Claude, bila AI aktif; selain itu estimasi heuristik).
@@ -249,7 +249,7 @@ export default function MaklonAIQuoteModule({ token }) {
         <TabsContent value="generate" className="mt-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <GlassCard className="p-6">
-              <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Receipt className="w-4 h-4 text-blue-500" /> Input Requirement</h3>
+              <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Receipt className="w-4 h-4 text-[hsl(var(--primary))]" /> Input Requirement</h3>
               <div className="space-y-3">
                 <div>
                   {/* F14b — artikel yang SUDAH ada di Katalog Buyer dipilih,
@@ -337,7 +337,7 @@ export default function MaklonAIQuoteModule({ token }) {
             </GlassCard>
 
             <GlassCard className="p-6">
-              <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Receipt className="w-4 h-4 text-emerald-500" /> Quote Result</h3>
+              <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><Receipt className="w-4 h-4 text-[hsl(var(--success))]" /> Quote Result</h3>
               {result ? renderResult(result) : (
                 <div className="py-12 text-center text-sm text-muted-foreground">
                   <Sparkles className="w-10 h-10 mx-auto mb-2 opacity-30" />
@@ -361,7 +361,7 @@ export default function MaklonAIQuoteModule({ token }) {
                   onClick={() => openDetail(q)}
                   onKeyDown={(e) => e.key === 'Enter' && openDetail(q)}
                   data-testid={`quote-history-${q.id}`}
-                  className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:border-emerald-500/40 cursor-pointer transition"
+                  className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:border-[hsl(var(--success)/0.4)] cursor-pointer transition"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div>
@@ -369,9 +369,9 @@ export default function MaklonAIQuoteModule({ token }) {
                       <span className="text-xs text-muted-foreground ml-2">{q.request?.quantity} pcs · {q.request?.client_name || 'no client'}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">{fmtIDR(q.result?.estimated_unit_price)}</span>
+                      <span className="text-sm font-semibold text-[hsl(var(--success))] ">{fmtIDR(q.result?.estimated_unit_price)}</span>
                       {q.status === 'accepted' ? (
-                        <Badge className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 border-emerald-400 dark:border-emerald-500/30" variant="outline">accepted</Badge>
+                        <Badge className="bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)] " variant="outline">accepted</Badge>
                       ) : (
                         <Badge variant="outline">{q.status || 'draft'}</Badge>
                       )}
@@ -392,7 +392,7 @@ export default function MaklonAIQuoteModule({ token }) {
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-emerald-500" /> Detail Quote
+              <Receipt className="w-5 h-5 text-[hsl(var(--success))]" /> Detail Quote
             </DialogTitle>
           </DialogHeader>
           {detail && (

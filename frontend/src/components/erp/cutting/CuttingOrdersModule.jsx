@@ -45,7 +45,7 @@ function Field({ label, children, hint, required }) {
   return (
     <label className="block">
       <span className="text-xs font-medium text-foreground/80">
-        {label} {required && <span className="text-red-500">*</span>}
+        {label} {required && <span className="text-[hsl(var(--destructive))]">*</span>}
       </span>
       <div className="mt-1">{children}</div>
       {hint && <span className="text-[11px] text-muted-foreground mt-1 block">{hint}</span>}
@@ -571,8 +571,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-orange-500/12 border border-orange-500/25 grid place-items-center">
-            <Scissors className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.25)] grid place-items-center">
+            <Scissors className="w-5 h-5 text-[hsl(var(--warning))] " />
           </div>
           <div>
             <h2 className="text-2xl font-bold text-foreground">Order Cutting</h2>
@@ -620,7 +620,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       </GlassCard>
 
       {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 text-sm text-red-700 dark:text-red-300">
+        <div className="flex items-center gap-2 p-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-sm text-[hsl(var(--destructive))] ">
           <AlertCircle className="w-4 h-4" /> {err}
         </div>
       )}
@@ -631,16 +631,16 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
           keluar itu tidak akan pernah muncul di layar Gudang. Menerbitkan dokumen
           TIDAK memotong stok lagi. */}
       {miMissing.count > 0 && (
-        <div className="rounded-xl border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-4"
+        <div className="rounded-xl border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  p-4"
           data-testid="cutting-mi-missing-panel">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 text-amber-700 dark:text-amber-300 mt-0.5 flex-shrink-0" />
+              <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] mt-0.5 flex-shrink-0" />
               <div>
-                <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">
+                <div className="text-sm font-semibold text-[hsl(var(--warning))] ">
                   {miMissing.count} laporan progres belum punya dokumen Pengeluaran Material
                 </div>
-                <p className="text-xs text-amber-900/80 dark:text-amber-100/80 mt-0.5 max-w-2xl">
+                <p className="text-xs text-[hsl(var(--warning)/0.8)] mt-0.5 max-w-2xl">
                   Kain &amp; gulungannya SUDAH berkurang, tetapi arus keluarnya belum tampil di layar
                   Gudang → Pengeluaran Material. Menerbitkan dokumen hanya membuat bukti/jejak —
                   <b> stok tidak dipotong lagi</b>.
@@ -648,7 +648,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               </div>
             </div>
             <button onClick={backfillMiDocs} disabled={miFixing}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white text-sm font-medium"
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] disabled:opacity-60 text-white text-sm font-medium"
               data-testid="cutting-mi-backfill-btn">
               {miFixing ? <Loader2 className="w-4 h-4 animate-spin" /> : <History className="w-4 h-4" />}
               {miFixing ? 'Menerbitkan…' : 'Terbitkan dokumen'}
@@ -657,7 +657,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-xs" data-testid="cutting-mi-missing-table">
               <thead>
-                <tr className="text-left text-amber-900/70 dark:text-amber-100/70 border-b border-amber-300/50 dark:border-amber-500/20">
+                <tr className="text-left text-[hsl(var(--warning)/0.7)] border-b border-[hsl(var(--warning)/0.5)] ">
                   <th className="px-2 py-1.5 font-medium">Order</th>
                   <th className="px-2 py-1.5 font-medium">Kain</th>
                   <th className="px-2 py-1.5 font-medium text-right">Kain keluar</th>
@@ -668,27 +668,27 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               </thead>
               <tbody>
                 {(miMissing.items || []).slice(0, 8).map((m) => (
-                  <tr key={m.progress_id} className="border-b border-amber-300/30 dark:border-amber-500/10 last:border-0"
+                  <tr key={m.progress_id} className="border-b border-[hsl(var(--warning)/0.3)] last:border-0"
                     data-testid={`cutting-mi-missing-row-${m.progress_id}`}>
-                    <td className="px-2 py-1.5 font-mono text-amber-900 dark:text-amber-100">{m.cutting_number || '-'}</td>
-                    <td className="px-2 py-1.5 text-amber-900 dark:text-amber-100">
-                      <span className="font-mono">{m.material_code || '-'}</span>
-                      <span className="text-amber-900/60 dark:text-amber-100/60"> · {m.material_name || ''}</span>
+                    <td className="px-2 py-1.5 tabular-nums text-[hsl(var(--warning))] ">{m.cutting_number || '-'}</td>
+                    <td className="px-2 py-1.5 text-[hsl(var(--warning))] ">
+                      <span className="tabular-nums">{m.material_code || '-'}</span>
+                      <span className="text-[hsl(var(--warning)/0.6)] "> · {m.material_name || ''}</span>
                     </td>
-                    <td className="px-2 py-1.5 text-right tabular-nums text-amber-900 dark:text-amber-100">
+                    <td className="px-2 py-1.5 text-right tabular-nums text-[hsl(var(--warning))] ">
                       {fmtNum(m.input_consumed, 2)} {m.unit || ''}
                     </td>
-                    <td className="px-2 py-1.5 text-amber-900/80 dark:text-amber-100/80">{m.location_name || '-'}</td>
-                    <td className="px-2 py-1.5 font-mono text-amber-900/80 dark:text-amber-100/80">
+                    <td className="px-2 py-1.5 text-[hsl(var(--warning)/0.8)] ">{m.location_name || '-'}</td>
+                    <td className="px-2 py-1.5 tabular-nums text-[hsl(var(--warning)/0.8)] ">
                       {(m.roll_numbers || []).join(', ') || '-'}
                     </td>
-                    <td className="px-2 py-1.5 text-amber-900/70 dark:text-amber-100/70">{fmtDateTime(m.created_at)}</td>
+                    <td className="px-2 py-1.5 text-[hsl(var(--warning)/0.7)] ">{fmtDateTime(m.created_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {miMissing.count > 8 && (
-              <p className="text-[11px] text-amber-900/70 dark:text-amber-100/70 mt-1.5">
+              <p className="text-[11px] text-[hsl(var(--warning)/0.7)] mt-1.5">
                 …dan {miMissing.count - 8} lagi. Tombol di atas menerbitkan semuanya.
               </p>
             )}
@@ -732,16 +732,16 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/40 cursor-pointer"
                     onClick={() => openDetail(r.id)}
                     data-testid={`cutting-row-${r.number}`}>
-                    <td className="px-4 py-2.5 font-mono text-xs text-foreground whitespace-nowrap">{r.number}</td>
+                    <td className="px-4 py-2.5 tabular-nums text-xs text-foreground whitespace-nowrap">{r.number}</td>
                     <td className="px-4 py-2.5">
                       <div className="font-medium text-foreground">{r.style_name || '-'}</div>
-                      <div className="text-[11px] text-muted-foreground font-mono">
+                      <div className="text-[11px] text-muted-foreground tabular-nums">
                         {r.output_material_code || 'kode dibuat saat Mulai'}
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-xs text-muted-foreground">
                       {r.input_material_name}<br />
-                      <span className="font-mono">{r.input_material_code}</span>
+                      <span className="tabular-nums">{r.input_material_code}</span>
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-foreground">
                       {fmtNum(r.consumed_input_qty, 2)} / {fmtNum(r.planned_input_qty, 2)} {r.input_unit}
@@ -760,7 +760,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                         className="text-xs text-[hsl(var(--primary))] hover:underline mr-3">Detail</button>
                       {r.status === 'draft' && (
                         <button onClick={(e) => { e.stopPropagation(); removeDraft(r); }}
-                          className="text-xs text-red-600 hover:underline inline-flex items-center gap-1">
+                          className="text-xs text-[hsl(var(--destructive))] hover:underline inline-flex items-center gap-1">
                           <Trash2 className="w-3 h-3" /> Hapus
                         </button>
                       )}
@@ -833,7 +833,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             )}
 
             {selectedMaterial && Number(selectedMaterial.stock_qty || 0) <= 0 && (
-              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-500/10 dark:border-amber-500/30 text-xs text-amber-800 dark:text-amber-300">
+              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-xs text-[hsl(var(--warning))] ">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                 Kain ini belum punya stok di gudang manapun. Cutting bisa disimpan sebagai draft,
                 tetapi tidak bisa dimulai sebelum penerimaan barang dicatat di Portal Gudang.
@@ -857,7 +857,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                             ...f,
                             roll_ids: checked ? f.roll_ids.filter((x) => x !== r.id) : [...f.roll_ids, r.id],
                           }))} />
-                        <span className="font-mono text-foreground">{r.roll_no}</span>
+                        <span className="tabular-nums text-foreground">{r.roll_no}</span>
                         <span className="text-muted-foreground">
                           sisa {fmtQty(remaining)} {r.uom} · {r.color || r.color_lot || '-'}
                           {r.source_receipt_number ? ` · dari ${r.source_receipt_number}` : ''}
@@ -878,7 +878,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             )}
 
             {selectedMaterial && rollMeta.roll_required && rolls.length === 0 && (
-              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 text-xs text-red-700 dark:text-red-300"
+              <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-xs text-[hsl(var(--destructive))] "
                 data-testid="cutting-no-rolls-warning">
                 <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                 <span>
@@ -1043,7 +1043,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     {Number(form.planned_input_qty) > 0 && bomReq.fabric.qty_total > 0 &&
                       Math.abs(Number(form.planned_input_qty) - bomReq.fabric.qty_total) /
                         bomReq.fabric.qty_total > 0.1 && (
-                      <div className="text-amber-600 dark:text-amber-300 inline-flex items-start gap-1"
+                      <div className="text-[hsl(var(--warning))] inline-flex items-start gap-1"
                         data-testid="cutting-bom-deviation">
                         <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
                         Rencana manual {fmtQtyTrim(form.planned_input_qty)} {bomReq.fabric.unit} berbeda
@@ -1075,7 +1075,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                 {bomReq?.gaps?.length > 0 && (
                   <ul className="mt-2 space-y-1" data-testid="cutting-bom-gaps">
                     {bomReq.gaps.map((g, i) => (
-                      <li key={i} className="text-[11px] text-amber-600 dark:text-amber-300 flex items-start gap-1">
+                      <li key={i} className="text-[11px] text-[hsl(var(--warning))] flex items-start gap-1">
                         <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
                         <span>
                           {g.message}
@@ -1171,14 +1171,14 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               <GlassCard className="p-3">
                 <p className="text-[11px] text-muted-foreground">Kain (input)</p>
                 <p className="text-sm font-medium text-foreground mt-0.5">{detail.input_material_name}</p>
-                <p className="text-[11px] font-mono text-muted-foreground">{detail.input_material_code}</p>
+                <p className="text-[11px] tabular-nums text-muted-foreground">{detail.input_material_code}</p>
                 <p className="text-xs mt-2 text-foreground">
                   Terpakai <b>{fmtNum(detail.consumed_input_qty, 2)}</b> / {fmtNum(detail.planned_input_qty, 2)} {detail.input_unit}
                 </p>
                 <p className="text-[11px] text-muted-foreground">Stok gudang saat ini: {fmtNum(detail.input_stock, 2)} {detail.input_unit}</p>
                 <p className="text-[11px] text-muted-foreground">Gudang sumber: <b className="text-foreground">{detail.location_name || '-'}</b></p>
                 {detailRolls.roll_required && (
-                  <p className="text-[11px] mt-1.5 text-violet-700 dark:text-violet-300" data-testid="cutting-roll-summary">
+                  <p className="text-[11px] mt-1.5 text-[hsl(var(--primary))] " data-testid="cutting-roll-summary">
                     {detailRolls.items.length} gulungan bersisa · total {fmtQty(detailRolls.total_remaining)} {detailRolls.uom}
                   </p>
                 )}
@@ -1198,7 +1198,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                 <p className="text-sm font-medium text-foreground mt-0.5">
                   {detail.output_material_name || `${detail.style_name} ${detail.output_color} ${detail.output_size}`}
                 </p>
-                <p className="text-[11px] font-mono text-muted-foreground">
+                <p className="text-[11px] tabular-nums text-muted-foreground">
                   {detail.output_material_code || 'kode dibuat saat Mulai'}
                 </p>
                 <p className="text-xs mt-2 text-foreground">
@@ -1224,7 +1224,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               {detail.status === 'in_progress' && (
                 <button onClick={() => doAction('/complete', {}, 'Cutting selesai — HPP potongan dihitung.')}
                   disabled={acting}
-                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-emerald-600 text-white text-sm disabled:opacity-60"
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--success))] text-white text-sm disabled:opacity-60"
                   data-testid="cutting-complete-btn">
                   <CheckCircle2 className="w-4 h-4" /> Selesaikan
                 </button>
@@ -1232,7 +1232,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               {(detail.status === 'draft' || detail.status === 'in_progress') && (
                 <button onClick={() => doAction('/cancel', { reason: 'dibatalkan user' }, 'Cutting dibatalkan.')}
                   disabled={acting}
-                  className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-red-300 dark:border-red-500/30 text-red-600 dark:text-red-400 text-sm disabled:opacity-60"
+                  className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  text-sm disabled:opacity-60"
                   data-testid="cutting-cancel-btn">
                   <XCircle className="w-4 h-4" /> Batalkan
                 </button>
@@ -1294,7 +1294,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                           ? 'Centang gulungan yang benar-benar dipotong. Pemakaian dibagi otomatis FIFO (gulungan tertua dulu) dan sisanya langsung berkurang.'
                           : ''}>
                         {detailRolls.items.length === 0 ? (
-                          <div className="flex items-start gap-2 p-2.5 rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 text-xs text-red-700 dark:text-red-300"
+                          <div className="flex items-start gap-2 p-2.5 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-xs text-[hsl(var(--destructive))] "
                             data-testid="cutting-progress-no-rolls">
                             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
                             <span>
@@ -1323,7 +1323,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                                     <input type="checkbox" checked={checked}
                                       onChange={() => toggleProgRoll(r.id)}
                                       data-testid={`cutting-progress-roll-cb-${r.roll_no}`} />
-                                    <span className="font-mono text-foreground">{r.roll_no}</span>
+                                    <span className="tabular-nums text-foreground">{r.roll_no}</span>
                                     <span className="text-muted-foreground">
                                       sisa {fmtQty(remaining)} {r.uom}
                                       {r.color_lot ? ` · lot ${r.color_lot}` : ''}
@@ -1342,8 +1342,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                             {(prog.roll_ids || []).length > 0 && Number(prog.input_consumed) > 0 && (
                               <div className={`mt-1.5 text-[11px] px-2.5 py-1.5 rounded-lg border ${
                                 allocPreview.shortage > 0
-                                  ? 'border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 text-red-700 dark:text-red-300'
-                                  : 'border-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-300'}`}
+                                  ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)]   text-[hsl(var(--destructive))] '
+                                  : 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]   text-[hsl(var(--success))] '}`}
                                 data-testid="cutting-alloc-preview">
                                 {allocPreview.shortage > 0 ? (
                                   <>Sisa gulungan terpilih kurang {fmtQty(allocPreview.shortage, 3)} {detailRolls.uom} —
@@ -1355,7 +1355,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                               </div>
                             )}
                             {rollBlocking && (
-                              <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-300" data-testid="cutting-roll-required-hint">
+                              <p className="mt-1.5 text-[11px] text-[hsl(var(--warning))] " data-testid="cutting-roll-required-hint">
                                 Pilih minimal satu gulungan — progres tidak bisa dicatat tanpa itu.
                               </p>
                             )}
@@ -1428,7 +1428,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                               </span>
                             </>
                           ) : (
-                            <span className="text-amber-600 dark:text-amber-300 text-[11px]">
+                            <span className="text-[hsl(var(--warning))] text-[11px]">
                               belum bernilai
                             </span>
                           )}
@@ -1455,7 +1455,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                             <div className="flex flex-wrap gap-1">
                               {p.roll_consumption.map((rc) => (
                                 <span key={rc.roll_id}
-                                  className="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-violet-100 dark:bg-violet-400/15 text-violet-800 dark:text-violet-200 border border-violet-300 dark:border-violet-400/30"
+                                  className="tabular-nums text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]  border border-[hsl(var(--primary)/0.35)] "
                                   title={`sisa setelah dipakai: ${fmtQty(rc.remaining_after)}`}>
                                   {rc.roll_no} −{fmtQty(rc.qty)}
                                 </span>
@@ -1470,12 +1470,12 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                             terlihat (bukan strip diam-diam) supaya bisa diterbitkan ulang. */}
                         <td className="px-4 py-2 text-xs" data-testid={`cutting-progress-mi-${p.id}`}>
                           {p.material_issue_number ? (
-                            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-400/15 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-400/30"
+                            <span className="tabular-nums text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.35)] "
                               title="Dokumen Pengeluaran Material yang mencatat arus keluar kain ini">
                               {p.material_issue_number}
                             </span>
                           ) : (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-400/15 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-400/30">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.35)] ">
                               belum ada
                             </span>
                           )}

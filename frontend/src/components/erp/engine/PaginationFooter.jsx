@@ -62,7 +62,7 @@ export default function PaginationFooter({
             <select
               value={perPage}
               onChange={(e) => onPerPageChange(Number(e.target.value))}
-              className="border border-border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="border border-border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
               disabled={loading}
               data-testid={`${testIdPrefix}-per-page`}
             >
@@ -107,7 +107,7 @@ export default function PaginationFooter({
             aria-current={page === p ? 'page' : undefined}
             className={`w-8 h-8 rounded text-sm transition-colors ${
               page === p
-                ? 'bg-blue-600 text-white shadow-sm'
+                ? 'bg-[hsl(var(--primary))] text-white shadow-sm'
                 : 'hover:bg-muted text-muted-foreground'
             }`}
             data-testid={`${testIdPrefix}-page-${p}`}

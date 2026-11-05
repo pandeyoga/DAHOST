@@ -75,10 +75,10 @@ function Stat({ label, value, tone = '' }) {
 
 function Banner({ tone = 'red', children, testId }) {
   const cls = tone === 'red'
-    ? 'bg-red-50 dark:bg-red-400/10 border-red-300 dark:border-red-400/30 text-red-700 dark:text-red-300'
+    ? 'bg-[hsl(var(--destructive)/0.1)]  border-[hsl(var(--destructive)/0.35)]  text-[hsl(var(--destructive))] '
     : tone === 'green'
-      ? 'bg-emerald-50 dark:bg-emerald-400/10 border-emerald-300 dark:border-emerald-400/30 text-emerald-700 dark:text-emerald-300'
-      : 'bg-amber-50 dark:bg-amber-400/10 border-amber-300 dark:border-amber-400/30 text-amber-800 dark:text-amber-300';
+      ? 'bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)]  text-[hsl(var(--success))] '
+      : 'bg-[hsl(var(--warning)/0.1)]  border-[hsl(var(--warning)/0.35)]  text-[hsl(var(--warning))] ';
   return <div className={`rounded-lg border px-3 py-2 text-xs ${cls}`} data-testid={testId}>{children}</div>;
 }
 
@@ -241,11 +241,11 @@ function ScanTab({ token }) {
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-lg border border-[var(--glass-border)] p-0.5" data-testid="scan-out-mode">
             <button type="button" onClick={() => setMode('scan')}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold ${mode === 'scan' ? 'bg-emerald-600 text-white' : 'text-muted-foreground'}`}>
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold ${mode === 'scan' ? 'bg-[hsl(var(--success))] text-white' : 'text-muted-foreground'}`}>
               Keluar
             </button>
             <button type="button" onClick={() => setMode('batal_kirim')} data-testid="scan-out-mode-cancel"
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold ${mode === 'batal_kirim' ? 'bg-amber-600 text-white' : 'text-muted-foreground'}`}>
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold ${mode === 'batal_kirim' ? 'bg-[hsl(var(--warning))] text-white' : 'text-muted-foreground'}`}>
               Batal kirim
             </button>
           </div>
@@ -263,7 +263,7 @@ function ScanTab({ token }) {
               className="w-16 h-8 text-xs" />
           </div>
         </div>
-        <div className={mode === 'batal_kirim' ? 'rounded-lg ring-2 ring-amber-500 p-1' : ''}>
+        <div className={mode === 'batal_kirim' ? 'rounded-lg ring-2 ring-[hsl(var(--warning)/0.35)] p-1' : ''}>
           <UniversalScanner variant="inline" onScan={onScan} continuous keepFocus autoFocus disabled={!loc}
             placeholder={loc ? (mode === 'batal_kirim' ? 'Scan paket yang BATAL dikirim…' : 'Scan SKU barang keluar…') : 'Pilih lokasi dulu'}
             data-testid="scan-out-input" inputClassName="h-12 text-base" />
@@ -308,7 +308,7 @@ function ScanTab({ token }) {
               <div className="font-semibold truncate" data-testid="scan-out-sheet">
                 {open ? `${open.number} — terbuka` : 'Belum ada scan hari ini (lembar dibuat otomatis saat scan pertama)'}
               </div>
-              {open?.post_error && <div className="text-xs text-red-600">Tutup terakhir gagal: {open.post_error}</div>}
+              {open?.post_error && <div className="text-xs text-[hsl(var(--destructive))]">Tutup terakhir gagal: {open.post_error}</div>}
             </div>
             <div className="flex items-center gap-2">
               <Button size="sm" variant="ghost" onClick={loadToday} title="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
@@ -320,14 +320,14 @@ function ScanTab({ token }) {
             </div>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <Stat label="Pcs neto hari ini" value={num(tot.pcs)} tone="text-emerald-600 dark:text-emerald-400" />
+            <Stat label="Pcs neto hari ini" value={num(tot.pcs)} tone="text-[hsl(var(--success))] " />
             <Stat label="Batal kirim" value={num(tot.pcs_cancel)} />
             <Stat label="HPP (WAC)" value={rp(tot.value)} />
           </div>
           {(data?.per_sku || []).length > 0 && (
             <div className="flex flex-wrap gap-1.5" data-testid="scan-out-per-sku">
               {data.per_sku.slice(0, 12).map((s) => (
-                <span key={s.sku} className="px-2 py-1 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)] text-xs font-mono">
+                <span key={s.sku} className="px-2 py-1 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)] text-xs tabular-nums">
                   {s.sku} <b>{s.net}</b>
                 </span>
               ))}
@@ -338,19 +338,19 @@ function ScanTab({ token }) {
 
       {(redLines.length > 0 || (data?.rejects || []).length > 0) && (
         <GlassCard className="p-3 space-y-1" hover={false} data-testid="scan-out-red-list">
-          <div className="text-xs font-semibold text-red-600 dark:text-red-400 flex items-center gap-1">
+          <div className="text-xs font-semibold text-[hsl(var(--destructive))] flex items-center gap-1">
             <AlertTriangle className="w-3.5 h-3.5" /> Daftar merah hari ini
           </div>
           {redLines.map((l) => (
             <div key={l.id} className="text-xs flex justify-between gap-2">
-              <span className="font-mono truncate">{l.sku} ×{l.qty}</span>
-              <span className="text-red-600 dark:text-red-400 text-right">{(l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')}</span>
+              <span className="tabular-nums truncate">{l.sku} ×{l.qty}</span>
+              <span className="text-[hsl(var(--destructive))] text-right">{(l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')}</span>
             </div>
           ))}
           {(data?.rejects || []).map((j) => (
             <div key={j.id} className="text-xs flex justify-between gap-2">
-              <span className="font-mono truncate">{j.code || '(kosong)'} </span>
-              <span className="text-red-600 dark:text-red-400 text-right">{j.reason}</span>
+              <span className="tabular-nums truncate">{j.code || '(kosong)'} </span>
+              <span className="text-[hsl(var(--destructive))] text-right">{j.reason}</span>
             </div>
           ))}
         </GlassCard>
@@ -369,20 +369,20 @@ function ScanTab({ token }) {
                 && (data?.sheets || []).some((s) => s.id === l.sheet_id && s.status === 'open');
               return (
                 <div key={l.id} data-testid="scan-out-line"
-                  className={`px-3 py-2 flex items-center gap-2 text-xs ${red ? 'bg-red-50 dark:bg-red-400/10' : ''} ${voided ? 'opacity-50 line-through' : ''}`}>
+                  className={`px-3 py-2 flex items-center gap-2 text-xs ${red ? 'bg-[hsl(var(--destructive)/0.1)] ' : ''} ${voided ? 'opacity-50 line-through' : ''}`}>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       {l.kind === 'batal_kirim'
-                        ? <span className="px-1.5 rounded bg-amber-100 dark:bg-amber-400/10 text-amber-700 dark:text-amber-300 font-semibold">BATAL</span>
+                        ? <span className="px-1.5 rounded bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  font-semibold">BATAL</span>
                         : null}
-                      <span className="font-mono font-semibold truncate">{l.sku}</span>
+                      <span className="tabular-nums font-semibold truncate">{l.sku}</span>
                       <span className="font-bold">×{l.qty}</span>
                     </div>
                     <div className="text-muted-foreground truncate">
                       {fmtTime(l.scanned_at)} · {l.operator_name || '-'}{l.store?.account_name ? ` · ${l.store.account_name}` : ''}
                       {l.status === 'active' ? ` · ${rp(l.value)}` : ` · dibatalkan (${l.void_reason || '-'})`}
                     </div>
-                    {red && <div className="text-red-600 dark:text-red-400">{(l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')}</div>}
+                    {red && <div className="text-[hsl(var(--destructive))] ">{(l.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')}</div>}
                   </div>
                   {mayVoid && (
                     <Button size="sm" variant="ghost" disabled={busy} onClick={() => voidLine(l)} title="Batalkan baris"
@@ -410,7 +410,7 @@ function Table({ head, rows, testId, empty = 'Tidak ada data.' }) {
         <tbody>
           {rows.length === 0 && <tr><td colSpan={head.length} className="px-2 py-3 text-center text-muted-foreground">{empty}</td></tr>}
           {rows.map((r, i) => (
-            <tr key={i} className={`border-t border-[var(--glass-border)] ${r.red ? 'text-red-600 dark:text-red-400' : ''}`}>
+            <tr key={i} className={`border-t border-[var(--glass-border)] ${r.red ? 'text-[hsl(var(--destructive))] ' : ''}`}>
               {r.cells.map((c, j) => <td key={j} className="px-2 py-1 whitespace-nowrap">{c}</td>)}
             </tr>
           ))}
@@ -466,14 +466,14 @@ function ReportTab({ token }) {
             <Stat label="HPP (WAC)" value={rp(s.value)} />
             <Stat label="SKU" value={num(s.skus)} />
             <Stat label="Impor vs scan" value={`${num(ctl.today?.import_pcs)} / ${num(ctl.today?.scan_pcs)}`}
-              tone={ctl.today?.flag ? 'text-red-600 dark:text-red-400' : ''} />
+              tone={ctl.today?.flag ? 'text-[hsl(var(--destructive))] ' : ''} />
           </div>
           <GlassCard className="p-3 space-y-1" hover={false}>
             <div className="text-xs font-semibold">Lembar</div>
             {(rep.sheets || []).length === 0 && <div className="text-xs text-muted-foreground">Tidak ada lembar.</div>}
             {(rep.sheets || []).map((sh) => (
               <div key={sh.id} className="text-xs flex flex-wrap justify-between gap-2">
-                <span className="font-mono">{sh.number}</span>
+                <span className="tabular-nums">{sh.number}</span>
                 <span>{sh.status === 'closed' ? `ditutup${sh.auto_closed ? ' otomatis' : ''} · ${sh.je_number || sh.je_note || '-'}` : 'TERBUKA'}</span>
               </div>
             ))}
@@ -508,7 +508,7 @@ function ReportTab({ token }) {
               rows={(rep.returns_received || []).map((r) => ({ cells: [r.return_code, r.sku, r.action, r.restock_qty || r.qty] }))} />
           </GlassCard>
           <GlassCard className="p-3 space-y-2" hover={false}>
-            <div className="text-xs font-semibold text-red-600 dark:text-red-400">Pengecualian</div>
+            <div className="text-xs font-semibold text-[hsl(var(--destructive))] ">Pengecualian</div>
             <Table head={['Jam', 'Kode/SKU', 'Keterangan']} empty="Tidak ada."
               rows={[
                 ...(rep.rejects || []).map((j) => ({ red: true, cells: [fmtTime(j.at), j.code, `Ditolak: ${j.reason}`] })),
@@ -564,7 +564,7 @@ function ControlTab({ token, canSupervise }) {
           <div className="grid grid-cols-3 gap-2">
             <Stat label={`Impor ${ctl.days} hr`} value={num(cum.import_pcs)} />
             <Stat label={`Scan ${ctl.days} hr`} value={num(cum.scan_pcs)} />
-            <Stat label="Selisih kumulatif" value={num(cum.gap)} tone={cum.flag ? 'text-red-600 dark:text-red-400' : ''} />
+            <Stat label="Selisih kumulatif" value={num(cum.gap)} tone={cum.flag ? 'text-[hsl(var(--destructive))] ' : ''} />
           </div>
           <GlassCard className="p-3" hover={false}>
             <Table testId="scan-out-control-rows" head={['Tanggal', 'Impor', 'basis pesanan', 'Scan', 'Selisih', 'Kumulatif', '']}
@@ -572,7 +572,7 @@ function ControlTab({ token, canSupervise }) {
                 red: r.flag,
                 cells: [r.date, r.import_pcs, r.import_pcs_order || '', r.scan_pcs, r.gap, r.cum_gap,
                   r.review?.status === 'reviewed'
-                    ? <span className="inline-flex items-center gap-1 text-emerald-600"><CheckCircle2 className="w-3 h-3" />diperiksa</span>
+                    ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]"><CheckCircle2 className="w-3 h-3" />diperiksa</span>
                     : (r.flag && canSupervise
                       ? <button type="button" className="underline" onClick={() => review(r.date)}>Tandai diperiksa</button> : ''),
                 ],

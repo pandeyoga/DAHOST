@@ -15,15 +15,15 @@ const COLOR_DOT = {
   BLACK:  'bg-card ring-border',
   WHITE:  'bg-white ring-border',
   GRAY:   'bg-muted ring-border',
-  NAVY:   'bg-blue-900 ring-blue-700',
-  BLUE:   'bg-blue-500 ring-blue-400',
-  RED:    'bg-red-500 ring-red-400',
-  GREEN:  'bg-emerald-500 ring-emerald-400',
-  YELLOW: 'bg-amber-400 ring-amber-300',
-  PURPLE: 'bg-purple-500 ring-purple-400',
-  PINK:   'bg-pink-400 ring-pink-300',
-  BROWN:  'bg-amber-800 ring-amber-700',
-  ORANGE: 'bg-orange-500 ring-orange-400',
+  NAVY:   'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
+  BLUE:   'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
+  RED:    'bg-[hsl(var(--destructive))] ring-[hsl(var(--destructive)/0.35)]',
+  GREEN:  'bg-[hsl(var(--success))] ring-[hsl(var(--success)/0.35)]',
+  YELLOW: 'bg-[hsl(var(--warning))] ring-[hsl(var(--warning)/0.35)]',
+  PURPLE: 'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
+  PINK:   'bg-[hsl(var(--primary))] ring-[hsl(var(--primary)/0.35)]',
+  BROWN:  'bg-[hsl(var(--warning))] ring-[hsl(var(--warning)/0.35)]',
+  ORANGE: 'bg-[hsl(var(--warning))] ring-[hsl(var(--warning)/0.35)]',
 };
 
 function colorDotClass(color) {
@@ -187,10 +187,10 @@ export default function FGStockMatrixView({ token, onCellAction }) {
   const cellIntensity = (qty, max) => {
     if (qty <= 0) return 'bg-card/40 text-muted-foreground/40 border-border/30';
     const ratio = max > 0 ? qty / max : 0;
-    if (ratio < 0.25) return 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-300 border-emerald-400 dark:border-emerald-500/30';
-    if (ratio < 0.5)  return 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-200 border-emerald-500/40';
-    if (ratio < 0.75) return 'bg-emerald-500/30 text-emerald-100 border-emerald-400/50';
-    return 'bg-emerald-500/40 text-foreground border-emerald-400/60';
+    if (ratio < 0.25) return 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ';
+    if (ratio < 0.5)  return 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] border-[hsl(var(--success)/0.4)]';
+    if (ratio < 0.75) return 'bg-[hsl(var(--success)/0.3)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.5)]';
+    return 'bg-[hsl(var(--success)/0.4)] text-foreground border-[hsl(var(--success)/0.6)]';
   };
 
   return (
@@ -312,7 +312,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                   <span className="text-primary font-bold">{model.total_qty.toLocaleString('id-ID')}</span>{' '}
                   <span className="text-muted-foreground/70">pcs</span>
                   {model.total_available !== model.total_qty && (
-                    <span className="ml-2 text-amber-700 dark:text-amber-400">({model.total_available} tersedia)</span>
+                    <span className="ml-2 text-[hsl(var(--warning))] ">({model.total_available} tersedia)</span>
                   )}
                 </div>
               </div>
@@ -338,7 +338,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                         </span>
                       </th>
                       {model.sizes.map(size => (
-                        <th key={size} className="px-2 py-2 text-center font-mono font-semibold text-foreground min-w-[80px]">
+                        <th key={size} className="px-2 py-2 text-center tabular-nums font-semibold text-foreground min-w-[80px]">
                           {size}
                         </th>
                       ))}
@@ -450,11 +450,11 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                 <div className="text-[10px] text-muted-foreground uppercase flex items-center justify-center gap-0.5">
                   <Lock className="w-2.5 h-2.5" /> Reserved
                 </div>
-                <div className="text-xl font-bold text-amber-700 dark:text-amber-400">{detailCell.reserved}</div>
+                <div className="text-xl font-bold text-[hsl(var(--warning))] ">{detailCell.reserved}</div>
               </div>
               <div className="text-center">
                 <div className="text-[10px] text-muted-foreground uppercase">Available</div>
-                <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">{detailCell.available}</div>
+                <div className="text-xl font-bold text-[hsl(var(--success))] ">{detailCell.available}</div>
               </div>
             </div>
 
@@ -464,7 +464,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                 <div className="space-y-3" data-testid="fg-matrix-allocate-form">
                   <div className="flex items-center justify-between">
                     <h4 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                      <Lock className="w-4 h-4 text-amber-700 dark:text-amber-400" /> Reservasi Stok
+                      <Lock className="w-4 h-4 text-[hsl(var(--warning))] " /> Reservasi Stok
                     </h4>
                     <button onClick={() => setActionMode(null)} className="text-xs text-muted-foreground hover:text-foreground">
                       Batal
@@ -497,10 +497,10 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                       placeholder="Catatan tambahan…"
                     />
                   </div>
-                  <Button
+                  <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
                     onClick={handleAllocate}
                     disabled={actionSubmitting || !actionQty || parseInt(actionQty, 10) <= 0 || parseInt(actionQty, 10) > detailCell.available}
-                    className="w-full bg-amber-500 hover:bg-amber-600 gap-2"
+                    className="w-full bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] gap-2"
                     data-testid="fg-matrix-allocate-submit"
                   >
                     {actionSubmitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
@@ -515,7 +515,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                       onClick={() => setActionMode('allocate')}
                       disabled={detailCell.available <= 0}
                       variant="outline"
-                      className="gap-1.5 text-xs border-amber-400 dark:border-amber-400/30 text-amber-600 dark:text-amber-300 hover:bg-amber-50 dark:bg-amber-400/10"
+                      className="gap-1.5 text-xs border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))]  hover:bg-[hsl(var(--warning)/0.1)] "
                       data-testid="fg-matrix-btn-allocate"
                     >
                       <Lock className="w-3.5 h-3.5" /> Reservasi
@@ -527,7 +527,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                       }}
                       disabled={detailCell.available <= 0}
                       variant="outline"
-                      className="gap-1.5 text-xs border-rose-400 dark:border-rose-400/30 text-rose-600 dark:text-rose-300 hover:bg-rose-50 dark:bg-rose-400/10"
+                      className="gap-1.5 text-xs border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.1)] "
                       data-testid="fg-matrix-btn-issue"
                     >
                       <MinusCircle className="w-3.5 h-3.5" /> Keluarkan Stok
@@ -546,7 +546,7 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                             {detailData.stocks_by_location.map((s, idx) => (
                               <div key={idx} className="flex items-center justify-between text-xs px-3 py-2 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
                                 <span className="text-foreground">{s.location_name || s.location_id || 'Default'}</span>
-                                <span className="font-mono text-primary font-bold">{s.qty} pcs</span>
+                                <span className="tabular-nums text-primary font-bold">{s.qty} pcs</span>
                               </div>
                             ))}
                           </div>
@@ -561,15 +561,15 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                           </div>
                           <div className="space-y-1">
                             {detailData.active_reservations.map(r => (
-                              <div key={r.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-amber-50 dark:bg-amber-400/5 border border-amber-300 dark:border-amber-400/20">
+                              <div key={r.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-md bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] ">
                                 <div className="flex-1 min-w-0">
                                   <div className="font-medium text-foreground truncate">{r.reservation_no}</div>
                                   <div className="text-muted-foreground truncate">{r.reference_label || '—'}</div>
                                 </div>
-                                <div className="font-mono text-amber-600 dark:text-amber-300 font-bold whitespace-nowrap">{r.qty} pcs</div>
+                                <div className="tabular-nums text-[hsl(var(--warning))] font-bold whitespace-nowrap">{r.qty} pcs</div>
                                 <button
                                   onClick={() => handleRelease(r.id)}
-                                  className="text-[10px] text-rose-600 dark:text-rose-300 hover:text-rose-200 underline whitespace-nowrap"
+                                  className="text-[10px] text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))] underline whitespace-nowrap"
                                   data-testid={`fg-matrix-release-${r.reservation_no}`}
                                 >
                                   Release
@@ -590,14 +590,14 @@ export default function FGStockMatrixView({ token, onCellAction }) {
                             {detailData.recent_movements.slice(0, 5).map(mv => (
                               <div key={mv.id} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded-md bg-[var(--glass-bg)] border border-[var(--glass-border)]">
                                 {mv.direction === 'in' ? (
-                                  <ArrowDownCircle className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                                  <ArrowDownCircle className="w-3 h-3 text-[hsl(var(--success))] " />
                                 ) : (
-                                  <ArrowUpCircle className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                                  <ArrowUpCircle className="w-3 h-3 text-[hsl(var(--destructive))] " />
                                 )}
                                 <span className="flex-1 truncate text-muted-foreground">
                                   {mv.notes || mv.reason_label || mv.source || '—'}
                                 </span>
-                                <span className={`font-mono font-bold ${mv.direction === 'in' ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                <span className={`tabular-nums font-bold ${mv.direction === 'in' ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
                                   {mv.direction === 'in' ? '+' : '-'}{mv.qty}
                                 </span>
                                 <span className="text-muted-foreground/70 text-[10px] whitespace-nowrap">

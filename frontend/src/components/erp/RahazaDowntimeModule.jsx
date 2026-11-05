@@ -81,7 +81,7 @@ export default function RahazaDowntimeModule({ headers }) {
     <div className="p-6 space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-xl font-semibold flex items-center gap-2"><AlertOctagon className="w-5 h-5 text-red-500" /> Log Downtime Mesin</h2>
+          <h2 className="text-xl font-semibold flex items-center gap-2"><AlertOctagon className="w-5 h-5 text-[hsl(var(--destructive))]" /> Log Downtime Mesin</h2>
           <p className="text-sm text-muted-foreground">Catat henti mesin untuk akurasi OEE Availability</p>
         </div>
         <div className="flex gap-2">
@@ -101,9 +101,9 @@ export default function RahazaDowntimeModule({ headers }) {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: 'Total Event', value: summary.total_events, color: 'text-foreground' },
-            { label: 'Total Downtime', value: `${summary.total_downtime_min} menit`, color: 'text-red-500' },
-            { label: 'Total Jam', value: `${summary.total_downtime_hours} jam`, color: 'text-red-500' },
-            { label: 'Top Reason', value: summary.by_reason?.[0]?.reason_name || '-', color: 'text-orange-500' },
+            { label: 'Total Downtime', value: `${summary.total_downtime_min} menit`, color: 'text-[hsl(var(--destructive))]' },
+            { label: 'Total Jam', value: `${summary.total_downtime_hours} jam`, color: 'text-[hsl(var(--destructive))]' },
+            { label: 'Top Reason', value: summary.by_reason?.[0]?.reason_name || '-', color: 'text-[hsl(var(--warning))]' },
           ].map(s => (
             <Card key={s.label}><CardContent className="pt-4">
               <p className="text-xs text-muted-foreground">{s.label}</p>

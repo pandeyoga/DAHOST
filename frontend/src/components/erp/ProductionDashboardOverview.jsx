@@ -73,8 +73,8 @@ export default function ProductionDashboardOverview({ token, onNavigate, busines
               </button>
             ))}
           </div>
-          <Button onClick={fetchData} className="h-9 bg-[hsl(var(--primary))] hover:brightness-110" data-testid="prod-dash-refresh">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" onClick={fetchData} className="bg-[hsl(var(--primary))] hover:brightness-110" data-testid="prod-dash-refresh">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             {loading ? 'Memuat...' : 'Refresh'}
           </Button>
           {updatedAt && <span className="text-xs text-foreground/50">Diperbarui: {updatedAt}</span>}
@@ -170,7 +170,7 @@ export default function ProductionDashboardOverview({ token, onNavigate, busines
             <div className="flex justify-between"><span>Rendemen (pcs / satuan kain)</span><b className="text-foreground">{cut.rendemen ?? 0}</b></div>
             <div className="flex justify-between"><span>Jenis potongan aktif</span><b className="text-foreground">{n(cut.panel_aktif)}</b></div>
           </div>
-          <Button variant="ghost" className="w-full mt-3 h-8 text-xs border border-[var(--glass-border)]"
+          <Button size="sm" variant="outline" className="w-full mt-3 text-xs"
             onClick={() => onNavigate && onNavigate('cutting-orders')} data-testid="prod-goto-cutting">
             Buka Order Cutting
           </Button>
@@ -220,7 +220,7 @@ export default function ProductionDashboardOverview({ token, onNavigate, busines
             <div className="flex justify-between"><span>Permak terbuka</span><b className="text-foreground">{n(data?.permak?.terbuka)} ({n(data?.permak?.qty_terbuka)} pcs)</b></div>
             <div className="flex justify-between"><span>Vendor aktif</span><b className="text-foreground">{n(qc.vendor_aktif)}</b></div>
           </div>
-          <Button variant="ghost" className="w-full mt-3 h-8 text-xs border border-[var(--glass-border)]"
+          <Button size="sm" variant="outline" className="w-full mt-3 text-xs"
             onClick={() => onNavigate && onNavigate('da-cmt-receive')} data-testid="prod-goto-receive">
             Buka Terima FG dari CMT
           </Button>
@@ -243,7 +243,7 @@ export default function ProductionDashboardOverview({ token, onNavigate, busines
                 data-testid={`prod-aging-${a.po_number}`}
                 className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left hover:bg-foreground/[0.04] transition-colors">
                 <Clock className={`w-4 h-4 shrink-0 ${a.hari_diam >= 7 ? 'text-[hsl(var(--warning))]' : 'text-foreground/35'}`} />
-                <span className="font-mono text-xs font-semibold w-32 truncate">{a.po_number}</span>
+                <span className="tabular-nums text-xs font-semibold w-32 truncate">{a.po_number}</span>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-foreground/[0.06] shrink-0">{a.status}</span>
                 <span className="text-xs text-foreground/55 truncate flex-1">{a.customer}</span>
                 <span className="text-xs tabular-nums text-foreground/60">{n(a.qty)} pcs</span>

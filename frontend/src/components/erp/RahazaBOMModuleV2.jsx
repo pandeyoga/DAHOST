@@ -8,6 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState, Notice } from './moduleAtoms';
 import { InlineMaterialPicker } from './bom/InlineMaterialPicker';
 import { VersionRail } from './bom/VersionRail';
 import { RequirementsPreviewCard } from './bom/RequirementsPreviewCard';
@@ -414,52 +417,50 @@ export default function RahazaBOMModuleV2({ token }) {
           hilang total saat sehat sehingga user tak pernah dapat konfirmasi
           bahwa rantai BOM→kebutuhan→stok memang utuh. */}
       {linkHealth && (linkHealth.unlinked_lines > 0 ? (
-        <div className="rounded-xl border border-amber-400 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10 px-4 py-3"
-          data-testid="bom-link-health-banner">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="text-sm text-amber-900 dark:text-amber-200">
-              <strong>{linkHealth.unlinked_lines} baris BOM belum tertaut ke master material</strong>
-              {linkHealth.unlinked_accessory_lines > 0 && (
-                <> — termasuk <strong>{linkHealth.unlinked_accessory_lines} baris aksesoris</strong></>
-              )}.
-              <div className="text-xs mt-1 opacity-90">
-                Baris yang tidak tertaut membuat kebutuhan material tidak bisa dipotong dari stok yang benar
-                (nama/kode gampang beda dengan master). Perbaikan otomatis akan menautkan baris yang
-                <strong> kodenya cocok</strong> dengan master; sisanya perlu dipilih manual di editor.
-              </div>
-            </div>
+        <Notice tone="warning" testId="bom-link-health-banner"
+          title={<>
+            {linkHealth.unlinked_lines} baris BOM belum tertaut ke master material
+            {linkHealth.unlinked_accessory_lines > 0 && (
+              <> — termasuk {linkHealth.unlinked_accessory_lines} baris aksesoris</>
+            )}.
+          </>}
+          action={
             <Button size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
-              <Wrench className="w-3.5 h-3.5 mr-1" />
+              <Wrench className="w-3.5 h-3.5" />
               {relinking ? 'Menautkan...' : 'Perbaiki Otomatis'}
             </Button>
-          </div>
-        </div>
+          }>
+          <p className="text-xs">
+            Baris yang tidak tertaut membuat kebutuhan material tidak bisa dipotong dari stok yang benar
+            (nama/kode gampang beda dengan master). Perbaikan otomatis akan menautkan baris yang
+            <strong> kodenya cocok</strong> dengan master; sisanya perlu dipilih manual di editor.
+          </p>
+        </Notice>
       ) : (
-        <div className="rounded-xl border border-emerald-400 dark:border-emerald-500/30 bg-emerald-50 dark:bg-emerald-500/10 px-4 py-3"
-          data-testid="bom-link-health-banner">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-sm text-emerald-900 dark:text-emerald-200">
-              <strong>Kopling BOM sehat</strong> — {linkHealth.total_lines} baris material
-              {' '}({linkHealth.accessory_lines} aksesoris) di {linkHealth.total_boms} BOM sudah tertaut ke master material.
-              <div className="text-xs mt-1 opacity-90">
-                Rantai BOM → kebutuhan material → stok tersambung, jadi kebutuhan tiap PO bisa
-                dibandingkan dengan stok nyata.
-              </div>
-            </div>
+        <Notice tone="success" testId="bom-link-health-banner" title="Kopling BOM sehat"
+          action={
             <Button size="sm" variant="outline" onClick={runRelink} disabled={relinking}
               data-testid="bom-relink-btn">
-              <Wrench className="w-3.5 h-3.5 mr-1" />
+              <Wrench className="w-3.5 h-3.5" />
               {relinking ? 'Memeriksa...' : 'Periksa Ulang'}
             </Button>
-          </div>
-        </div>
+          }>
+          <p>
+            {linkHealth.total_lines} baris material ({linkHealth.accessory_lines} aksesoris) di{' '}
+            {linkHealth.total_boms} BOM sudah tertaut ke master material.
+          </p>
+          <p className="text-xs mt-1">
+            Rantai BOM → kebutuhan material → stok tersambung, jadi kebutuhan tiap PO bisa
+            dibandingkan dengan stok nyata.
+          </p>
+        </Notice>
       ))}
 
       {!selectedModelId ? (
-        <GlassCard className="p-12 text-center text-muted-foreground">
-          <Package className="w-10 h-10 mx-auto mb-3 text-foreground/30" />
-          Pilih model terlebih dahulu untuk mulai mengisi BOM.
+        <GlassCard>
+          <EmptyState icon={Package} title="Belum ada model yang dipilih"
+            description="Pilih model terlebih dahulu untuk mulai mengisi BOM." />
         </GlassCard>
       ) : (        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
           <TabsList>
@@ -519,7 +520,7 @@ export default function RahazaBOMModuleV2({ token }) {
                           <TableCell className="font-semibold text-foreground">{row.size_code}</TableCell>
                           <TableCell className="text-sm">
                             {row.color_code || row.color
-                              ? <span className="inline-flex items-center gap-1.5"><span className="font-mono text-xs px-1.5 py-0.5 rounded bg-foreground/[0.06]">{row.color_code || '—'}</span><span className="text-foreground/80">{row.color}</span></span>
+                              ? <span className="inline-flex items-center gap-1.5"><span className="tabular-nums text-xs px-1.5 py-0.5 rounded bg-foreground/[0.06]">{row.color_code || '—'}</span><span className="text-foreground/80">{row.color}</span></span>
                               : <span className="text-xs text-muted-foreground">—</span>}
                           </TableCell>
                           <TableCell>
@@ -529,7 +530,7 @@ export default function RahazaBOMModuleV2({ token }) {
                               <span className="text-xs text-muted-foreground">Belum ada</span>
                             )}
                           </TableCell>
-                          <TableCell className="font-mono text-foreground">
+                          <TableCell className="tabular-nums text-foreground">
                             {row.panel_code ? (
                               <span data-testid={`bom-panel-${row.panel_code}`} title={row.panel_source_fabric ? `Kain asal: ${row.panel_source_fabric}` : ''}>
                                 1 pcs <span className="text-[hsl(var(--primary))]">{row.panel_code}</span>
@@ -550,7 +551,8 @@ export default function RahazaBOMModuleV2({ token }) {
                           <TableCell className="text-right">
                             <div className="inline-flex items-center gap-1">
                               <Button
-                                variant="ghost" size="sm" className="h-8 px-2"
+                                variant="ghost" size="icon-sm"
+                                title={row.bom_id ? 'Ubah BOM' : 'Buat BOM'} aria-label={row.bom_id ? 'Ubah BOM' : 'Buat BOM'}
                                 onClick={() => openEditorForSize(row.size_id, row.bom_id)}
                                 data-testid={`bom-open-${row.size_code}${row.color_code ? `-${row.color_code}` : ''}`}
                               >
@@ -558,7 +560,8 @@ export default function RahazaBOMModuleV2({ token }) {
                               </Button>
                               {row.bom_id && (
                                 <Button
-                                  variant="ghost" size="sm" className="h-8 px-2"
+                                  variant="ghost" size="icon-sm"
+                                  title="Salin ke size lain" aria-label="Salin ke size lain"
                                   onClick={() => openCopy(row)}
                                   data-testid={`bom-copy-${row.size_code}${row.color_code ? `-${row.color_code}` : ''}`}
                                 >
@@ -579,8 +582,9 @@ export default function RahazaBOMModuleV2({ token }) {
           {/* Editor Tab */}
           <TabsContent value="editor" className="space-y-4">
             {!selectedSizeId ? (
-              <GlassCard className="p-12 text-center text-muted-foreground">
-                Pilih size dari matriks untuk mulai edit BOM
+              <GlassCard>
+                <EmptyState icon={Layers} title="Belum ada size yang dipilih"
+                  description="Pilih size dari matriks untuk mulai edit BOM." />
               </GlassCard>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -605,7 +609,7 @@ export default function RahazaBOMModuleV2({ token }) {
                       {formError && (
                         <div
                           data-testid="bom-form-error"
-                          className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded-lg p-3 text-sm text-red-800 dark:text-red-300"
+                          className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--destructive))] "
                         >
                           {formError}
                         </div>
@@ -647,14 +651,14 @@ export default function RahazaBOMModuleV2({ token }) {
                                         categories={categories}
                                         onSelect={mat => selectMaterialFromMaster(idx, mat)}
                                       >
-                                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" title="Pilih dari master">
+                                        <Button variant="ghost" size="icon-sm" title="Pilih dari master" aria-label="Pilih dari master">
                                           <Search className="w-3.5 h-3.5" />
                                         </Button>
                                       </InlineMaterialPicker>
                                       {/* ACC-2 — indikator kopling ke master material */}
                                       {m.material_id ? (
                                         <span title="Tertaut ke master material" data-testid={`bom-mat-${idx}-linked`}>
-                                          <Link2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                          <Link2 className="w-3.5 h-3.5 text-[hsl(var(--success))] " />
                                         </span>
                                       ) : (
                                         <span
@@ -664,8 +668,8 @@ export default function RahazaBOMModuleV2({ token }) {
                                           data-testid={`bom-mat-${idx}-unlinked`}
                                         >
                                           <Unlink className={`w-3.5 h-3.5 ${isAccessoryLine(m)
-                                            ? 'text-red-600 dark:text-red-400'
-                                            : 'text-amber-600 dark:text-amber-400'}`} />
+                                            ? 'text-[hsl(var(--destructive))] '
+                                            : 'text-[hsl(var(--warning))] '}`} />
                                         </span>
                                       )}
                                     </div>
@@ -687,7 +691,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                     />
                                   </TableCell>
                                   <TableCell>
-                                    <select
+                                    <SmartNativeSelect
                                       className={selCls}
                                       value={m.category || ''}
                                       onChange={e => onCategoryChange(idx, e.target.value)}
@@ -695,10 +699,10 @@ export default function RahazaBOMModuleV2({ token }) {
                                     >
                                       <option value="">— Kategori —</option>
                                       {categories.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
-                                    </select>
+                                    </SmartNativeSelect>
                                   </TableCell>
                                   <TableCell>
-                                    <select
+                                    <SmartNativeSelect
                                       className={selCls}
                                       value={typeToCategory(m.material_type)}
                                       onChange={e => {
@@ -710,7 +714,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                       data-testid={`bom-mat-${idx}-type`}
                                     >
                                       {TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                                    </select>
+                                    </SmartNativeSelect>
                                   </TableCell>
                                   <TableCell>
                                     <GlassInput
@@ -723,19 +727,20 @@ export default function RahazaBOMModuleV2({ token }) {
                                     />
                                   </TableCell>
                                   <TableCell>
-                                    <select
+                                    <SmartNativeSelect
                                       className={selCls}
                                       value={m.unit || 'pcs'}
                                       onChange={e => updateMaterial(idx, { unit: e.target.value })}
                                       data-testid={`bom-mat-${idx}-unit`}
                                     >
                                       {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
-                                    </select>
+                                    </SmartNativeSelect>
                                   </TableCell>
                                   <TableCell>
                                     <Button
-                                      variant="ghost" size="sm"
-                                      className="h-7 w-7 p-0 hover:bg-red-400/10 hover:text-red-400"
+                                      variant="ghost" size="icon-sm"
+                                      className="hover:bg-[hsl(var(--destructive)/0.1)] hover:text-[hsl(var(--destructive))]"
+                                      title="Hapus baris" aria-label="Hapus baris"
                                       onClick={() => removeMaterial(idx)}
                                       data-testid={`bom-mat-${idx}-remove`}
                                     >
@@ -773,8 +778,14 @@ export default function RahazaBOMModuleV2({ token }) {
                       <div className="flex items-center justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
                         <Button
                           variant="ghost"
-                          onClick={() => {
-                            if (isDirty && !window.confirm('Ada perubahan belum disimpan. Batalkan?')) return;
+                          onClick={async () => {
+                            if (isDirty && !(await confirmDialog({
+                              title: 'Batalkan perubahan?',
+                              body: 'Ada perubahan belum disimpan. Perubahan itu akan hilang.',
+                              confirmLabel: 'Batalkan perubahan',
+                              cancelLabel: 'Kembali',
+                              danger: true,
+                            }))) return;
                             setEditor(null); setIsDirty(false); setFormError('');
                           }}
                           disabled={saving}
@@ -843,7 +854,7 @@ export default function RahazaBOMModuleV2({ token }) {
                                           {m.material_id ? (
                                             <span title="Tertaut ke master material"
                                               data-testid={`bom-viewer-mat-${idx}-linked`}>
-                                              <Link2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                              <Link2 className="w-3.5 h-3.5 text-[hsl(var(--success))] " />
                                             </span>
                                           ) : (
                                             <span
@@ -852,18 +863,18 @@ export default function RahazaBOMModuleV2({ token }) {
                                                 : 'Belum tertaut ke master material (disarankan pilih dari master)'}
                                               data-testid={`bom-viewer-mat-${idx}-unlinked`}>
                                               <Unlink className={`w-3.5 h-3.5 ${isAccessoryLine(m)
-                                                ? 'text-red-600 dark:text-red-400'
-                                                : 'text-amber-600 dark:text-amber-400'}`} />
+                                                ? 'text-[hsl(var(--destructive))] '
+                                                : 'text-[hsl(var(--warning))] '}`} />
                                             </span>
                                           )}
                                         </TableCell>
-                                        <TableCell className="font-mono text-xs">{m.code || '—'}</TableCell>
+                                        <TableCell className="tabular-nums text-xs">{m.code || '—'}</TableCell>
                                         <TableCell>{m.name}</TableCell>
                                         <TableCell className="text-xs text-muted-foreground">{m.category_name || '—'}</TableCell>
                                         <TableCell className="text-xs text-muted-foreground">
                                           {(TYPE_OPTIONS.find(t => t.value === m.material_type) || {}).label || m.material_type}
                                         </TableCell>
-                                        <TableCell className="text-right font-mono">{m.qty}</TableCell>
+                                        <TableCell className="text-right tabular-nums">{m.qty}</TableCell>
                                         <TableCell className="text-xs">{m.unit}</TableCell>
                                       </TableRow>
                                     ))}
@@ -885,17 +896,17 @@ export default function RahazaBOMModuleV2({ token }) {
                           )}
                         </div>
                       ) : (
-                        <div className="text-center py-12 text-muted-foreground">
-                          <FileText className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                          <p>Belum ada versi BOM untuk size ini</p>
-                          <Button
-                            variant="outline" size="sm" className="mt-4"
-                            onClick={() => { setEditor({ mode: 'create', form: { color: '', materials: [blankMaterial()], notes: '' } }); setIsDirty(false); setFormError(''); }}
-                            data-testid="bom-create-first-version-btn"
-                          >
-                            <Plus className="w-4 h-4 mr-2" /> Buat Versi Pertama
-                          </Button>
-                        </div>
+                        <EmptyState icon={FileText} title="Belum ada versi BOM untuk size ini"
+                          description="Buat versi pertama untuk mulai mencatat material size ini."
+                          action={
+                            <Button
+                              variant="outline" size="sm"
+                              onClick={() => { setEditor({ mode: 'create', form: { color: '', materials: [blankMaterial()], notes: '' } }); setIsDirty(false); setFormError(''); }}
+                              data-testid="bom-create-first-version-btn"
+                            >
+                              <Plus className="w-4 h-4" /> Buat versi pertama
+                            </Button>
+                          } />
                       )}
                     </GlassCard>
                   )}
@@ -922,8 +933,9 @@ export default function RahazaBOMModuleV2({ token }) {
             {selectedVersion ? (
               <RequirementsPreviewCard bom={selectedVersion} token={token} />
             ) : (
-              <GlassCard className="p-12 text-center text-muted-foreground">
-                Pilih versi BOM untuk melihat preview kebutuhan material
+              <GlassCard>
+                <EmptyState icon={FileText} title="Belum ada versi BOM yang dipilih"
+                  description="Pilih versi BOM untuk melihat preview kebutuhan material." />
               </GlassCard>
             )}
           </TabsContent>
@@ -967,8 +979,8 @@ export default function RahazaBOMModuleV2({ token }) {
                           }
                           data-testid={`bom-copy-target-${r.size_code}`}
                         />
-                        <span className="font-mono">{r.size_code}</span>
-                        {r.bom_id && <span className="text-[10px] text-amber-300">(ada)</span>}
+                        <span className="tabular-nums">{r.size_code}</span>
+                        {r.bom_id && <span className="text-[10px] text-[hsl(var(--warning))]">(ada)</span>}
                       </label>
                     );
                   })}

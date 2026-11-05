@@ -153,7 +153,7 @@ export default function PutAwayModule({ token, onNavigate }) {
       />
 
       {message && (
-        <div data-testid="putaway-message" className={`p-3 rounded-xl text-sm font-medium ${message.type === 'success' ? 'bg-emerald-400/10 text-emerald-400 border border-emerald-300/20' : 'bg-red-400/10 text-red-400 border border-red-300/20'}`}>{message.text}</div>
+        <div data-testid="putaway-message" className={`p-3 rounded-xl text-sm font-medium ${message.type === 'success' ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.2)]' : 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.2)]'}`}>{message.text}</div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -176,9 +176,9 @@ export default function PutAwayModule({ token, onNavigate }) {
                       className={`w-full text-left p-3 rounded-xl border transition-colors ${selected?.material_id === it.material_id ? 'border-primary/40 bg-primary/10' : 'border-[var(--glass-border)] bg-[var(--glass-bg)] hover:bg-[var(--glass-bg-hover)]'}`}
                       data-testid={`putaway-item-${it.code}`}>
                       <p className="text-sm font-medium text-foreground">{it.name}</p>
-                      <p className="text-xs text-muted-foreground font-mono">{it.code}</p>
+                      <p className="text-xs text-muted-foreground tabular-nums">{it.code}</p>
                       <div className="flex items-center gap-3 mt-1 text-[11px]">
-                        <span className="text-amber-400 font-semibold">Belum dirak: {fmtNum(it.unshelved)} {it.unit}</span>
+                        <span className="text-[hsl(var(--warning))] font-semibold">Belum dirak: {fmtNum(it.unshelved)} {it.unit}</span>
                         {it.placed > 0 && <span className="text-muted-foreground">Sudah dirak: {fmtNum(it.placed)}</span>}
                       </div>
                     </button>
@@ -198,8 +198,8 @@ export default function PutAwayModule({ token, onNavigate }) {
             <div className="space-y-3">
               <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
                 <p className="text-sm font-medium text-foreground">{selected.name}</p>
-                <p className="text-xs text-muted-foreground font-mono">{selected.code}</p>
-                <p className="text-xs text-amber-400 mt-1">Belum dirak: {fmtNum(selected.unshelved)} {selected.unit}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">{selected.code}</p>
+                <p className="text-xs text-[hsl(var(--warning))] mt-1">Belum dirak: {fmtNum(selected.unshelved)} {selected.unit}</p>
               </div>
 
               {/* Scan bin */}
@@ -258,7 +258,7 @@ export default function PutAwayModule({ token, onNavigate }) {
                 <UomConversionHint opt={uomOpt} qty={qty} unit={effUom} fallbackUnit={selected.unit}
                   className="mt-1" testId="putaway-uom-hint" />
                 {overLimit && (
-                  <p className="text-[11px] text-red-600 dark:text-red-400 mt-1" data-testid="putaway-over-limit">
+                  <p className="text-[11px] text-[hsl(var(--destructive))] mt-1" data-testid="putaway-over-limit">
                     Melebihi sisa belum dirak ({fmtNum(selected.unshelved)} {baseUnit}).
                   </p>
                 )}
@@ -285,13 +285,13 @@ export default function PutAwayModule({ token, onNavigate }) {
             <div className="space-y-4">
               <div className="p-3 rounded-xl bg-[var(--glass-bg)] border border-[var(--glass-border)] space-y-2">
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Barang</span><span className="text-foreground font-medium">{selected.name}</span></div>
-                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Kode</span><span className="text-foreground font-mono">{selected.code}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Kode</span><span className="text-foreground tabular-nums">{selected.code}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Tujuan</span><span className="text-foreground text-right">{selectedBin?.full_label || '-'}</span></div>
                 <div className="flex justify-between text-xs"><span className="text-muted-foreground">Qty</span><span className="text-foreground font-bold">{fmtNum(qty)} {effUom || selected.unit}</span></div>
                 {effUom && baseUnit && effUom !== baseUnit && (
                   <div className="flex justify-between text-xs" data-testid="putaway-confirm-conv">
                     <span className="text-muted-foreground">Masuk stok</span>
-                    <span className="text-emerald-700 dark:text-emerald-400 font-bold">{fmtNum(qtyBase)} {baseUnit}</span>
+                    <span className="text-[hsl(var(--success))] font-bold">{fmtNum(qtyBase)} {baseUnit}</span>
                   </div>
                 )}
               </div>

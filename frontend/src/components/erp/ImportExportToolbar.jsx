@@ -73,10 +73,10 @@ export default function ImportExportToolbar({ collectionKey, label, onImported, 
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onClick={() => doExport('xlsx')} data-testid={`ie-export-xlsx-${collectionKey}`}>
-            <FileSpreadsheet className="h-4 w-4 mr-2 text-emerald-600" /> Excel (.xlsx)
+            <FileSpreadsheet className="h-4 w-4 mr-2 text-[hsl(var(--success))]" /> Excel (.xlsx)
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => doExport('csv')} data-testid={`ie-export-csv-${collectionKey}`}>
-            <FileText className="h-4 w-4 mr-2 text-blue-600" /> CSV (.csv)
+            <FileText className="h-4 w-4 mr-2 text-[hsl(var(--primary))]" /> CSV (.csv)
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -104,10 +104,10 @@ export default function ImportExportToolbar({ collectionKey, label, onImported, 
 function Chip({ tone, icon: Icon, children }) {
   const tones = {
     slate: 'bg-muted text-foreground',
-    green: 'bg-emerald-500/15 text-emerald-600',
-    blue: 'bg-blue-500/15 text-blue-600',
-    amber: 'bg-amber-500/15 text-amber-600',
-    red: 'bg-red-500/15 text-red-600',
+    green: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
+    blue: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
+    amber: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+    red: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
   };
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-semibold ${tones[tone] || tones.slate}`}>
@@ -185,10 +185,10 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">Template:</span>
           <Button variant="outline" size="sm" onClick={() => downloadTemplate('xlsx')} data-testid="ie-template-xlsx">
-            <FileSpreadsheet className="h-4 w-4 mr-1.5 text-emerald-600" /> Excel
+            <FileSpreadsheet className="h-4 w-4 mr-1.5 text-[hsl(var(--success))]" /> Excel
           </Button>
           <Button variant="outline" size="sm" onClick={() => downloadTemplate('csv')} data-testid="ie-template-csv">
-            <FileText className="h-4 w-4 mr-1.5 text-blue-600" /> CSV
+            <FileText className="h-4 w-4 mr-1.5 text-[hsl(var(--primary))]" /> CSV
           </Button>
         </div>
 
@@ -223,15 +223,15 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
             </div>
 
             {preview.invalid > 0 && (
-              <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-red-600">
+              <div className="rounded-lg border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.05)] p-3">
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-[hsl(var(--destructive))]">
                   <AlertTriangle className="h-4 w-4" /> {preview.invalid} baris bermasalah — perbaiki dulu sebelum impor
                 </div>
                 <div className="max-h-40 overflow-auto text-xs">
                   {preview.preview_invalid.map((r, i) => (
                     <div key={i} className="border-b border-border/50 py-1">
-                      <span className="font-mono text-muted-foreground">Baris {r.row}:</span>{' '}
-                      <span className="text-red-600">{(r.errors || []).join('; ')}</span>
+                      <span className="tabular-nums text-muted-foreground">Baris {r.row}:</span>{' '}
+                      <span className="text-[hsl(var(--destructive))]">{(r.errors || []).join('; ')}</span>
                     </div>
                   ))}
                 </div>
@@ -244,7 +244,7 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
                 <div className="max-h-48 overflow-auto text-xs">
                   {preview.preview_valid.slice(0, 100).map((r, i) => (
                     <div key={i} className="flex items-center gap-2 border-b border-border/40 py-1">
-                      <span className={`rounded px-1.5 text-[10px] font-bold ${r.action === 'insert' ? 'bg-blue-500/15 text-blue-600' : 'bg-amber-500/15 text-amber-600'}`}>
+                      <span className={`rounded px-1.5 text-[10px] font-bold ${r.action === 'insert' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>
                         {r.action === 'insert' ? 'BARU' : 'UPDATE'}
                       </span>
                       <span className="truncate text-foreground">{Object.values(r.data).slice(0, 4).join(' · ')}</span>

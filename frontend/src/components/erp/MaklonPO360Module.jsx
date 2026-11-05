@@ -28,7 +28,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, EmptyState, Notice, StatTile } from './moduleAtoms';
 import OnwardCTA from './OnwardCTA';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
@@ -58,12 +58,12 @@ function fmtDateOnly(v) {
 
 const STATUS_CONFIG = {
   draft:              { label: 'Draft',             color: 'bg-muted text-foreground border-border dark:bg-slate-100 dark:bg-slate-500/15 dark:text-foreground/70 dark:border-slate-300 dark:border-slate-400/30' },
-  confirmed:          { label: 'Dikonfirmasi',      color: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-100 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-400 dark:border-blue-400/30' },
-  in_production:      { label: 'Produksi',          color: 'bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-100 dark:bg-violet-500/15 dark:text-violet-300 dark:border-violet-400 dark:border-violet-400/30' },
-  partial_delivered:  { label: 'Sebagian Terkirim', color: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-100 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-400 dark:border-amber-400/30' },
-  completed:          { label: 'Selesai',           color: 'bg-green-100 text-green-700 border-green-300 dark:bg-green-100 dark:bg-green-500/15 dark:text-green-300 dark:border-green-400 dark:border-green-400/30' },
-  invoiced:           { label: 'Ditagih',           color: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-100 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-400 dark:border-emerald-400/30' },
-  cancelled:          { label: 'Dibatalkan',        color: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-100 dark:bg-red-500/15 dark:text-red-300 dark:border-red-400 dark:border-red-400/30' },
+  confirmed:          { label: 'Dikonfirmasi',      color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]     ' },
+  in_production:      { label: 'Produksi',          color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]     ' },
+  partial_delivered:  { label: 'Sebagian Terkirim', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]     ' },
+  completed:          { label: 'Selesai',           color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]     ' },
+  invoiced:           { label: 'Ditagih',           color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]     ' },
+  cancelled:          { label: 'Dibatalkan',        color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]     ' },
 };
 
 function StatusBadge({ status, dict = STATUS_CONFIG }) {
@@ -113,13 +113,13 @@ function POPickerView({ headers, onPick, onBack, onNavigate }) {
   const filteredPg = useClientPagination(filtered, 10);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
-        title="Maklon PO 360° View"
-        subtitle="Pilih PO untuk membuka tampilan terintegrasi: Detail · BOM · Sample · Produksi · QC · Billing · HPP · Timeline"
+        title="Detail PO maklon"
+        subtitle="Pilih PO untuk membuka tampilan terintegrasi: Detail · BOM · Sample · Produksi · QC · Tagihan · HPP · Riwayat"
         icon={Package}
         actions={
-          <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="text-muted-foreground hover:text-foreground">
+          <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         }
@@ -130,7 +130,7 @@ function POPickerView({ headers, onPick, onBack, onNavigate }) {
         onNavigate={onNavigate}
         title="Alur Terkait"
         actions={[
-          { module: 'maklon-billing', label: 'Invoice & Billing', icon: Banknote, hint: 'Daftar invoice & penagihan Maklon' },
+          { module: 'maklon-billing', label: 'Faktur klien', icon: Banknote, hint: 'Daftar faktur & penagihan maklon' },
         ]}
       />
 
@@ -166,10 +166,11 @@ function POPickerView({ headers, onPick, onBack, onNavigate }) {
         {loading ? (
           <div className="flex items-center justify-center h-40 text-muted-foreground">Memuat...</div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-40 text-muted-foreground/60 gap-2">
-            <Package className="w-10 h-10 opacity-30" />
-            <p className="text-sm">Tidak ada PO ditemukan</p>
-          </div>
+          <EmptyState
+            icon={Package}
+            title="Tidak ada PO yang cocok"
+            description="Ubah kata kunci atau pilihan status, atau buat PO baru di menu PO Maklon."
+          />
         ) : (
           <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
             {filteredPg.paged.map(po => {
@@ -181,22 +182,22 @@ function POPickerView({ headers, onPick, onBack, onNavigate }) {
                   key={po.id}
                   data-testid={`po360-row-${po.id}`}
                   initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}
-                  className="w-full text-left flex items-center justify-between p-3 rounded-lg bg-foreground/[0.03] border border-foreground/[0.08] hover:bg-foreground/[0.06] hover:border-violet-400 dark:border-violet-400/30 transition-all group"
+                  className="w-full text-left flex items-center justify-between p-3 rounded-lg bg-foreground/[0.03] border border-foreground/[0.08] hover:bg-foreground/[0.06] hover:border-[hsl(var(--primary)/0.35)] transition-all group"
                   onClick={() => onPick(po)}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-lg bg-violet-100 dark:bg-violet-500/20 flex items-center justify-center">
-                      <Package className="w-5 h-5 text-violet-600 dark:text-violet-300" />
+                    <div className="w-10 h-10 rounded-lg bg-[hsl(var(--primary)/0.15)] flex items-center justify-center">
+                      <Package className="w-5 h-5 text-[hsl(var(--primary))] " />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-mono font-bold text-foreground">{po.po_number}</span>
+                        <span className="text-sm tabular-nums font-bold text-foreground">{po.po_number}</span>
                         <StatusBadge status={po.status} />
                       </div>
                       <div className="flex items-center gap-3 mt-0.5">
                         <span className="text-xs text-muted-foreground">{po.client_name}</span>
                         <span className="text-xs text-muted-foreground/60">{po.po_date}</span>
-                        {po.deadline && <span className="text-xs text-amber-700 dark:text-amber-400">📅 {po.deadline}</span>}
+                        {po.deadline && <span className="text-xs text-[hsl(var(--warning))] ">📅 {po.deadline}</span>}
                       </div>
                     </div>
                   </div>
@@ -207,15 +208,15 @@ function POPickerView({ headers, onPick, onBack, onNavigate }) {
                         <span>{progressPct}%</span>
                       </div>
                       <div className="h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                        <div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-green-400"
+                        <div className="h-full rounded-full bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--success)/0.1)]"
                              style={{ width: `${progressPct}%` }} />
                       </div>
                     </div>
                     <div className="text-right">
-                      <div className="text-sm font-bold text-green-600 dark:text-green-300">{fmtRp(po.total_value)}</div>
+                      <div className="text-sm font-bold text-[hsl(var(--success))] ">{fmtRp(po.total_value)}</div>
                       <div className="text-xs text-muted-foreground">{fmtNum(po.total_qty)} pcs</div>
                     </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-violet-400 transition-colors" />
+                    <ChevronRight className="w-4 h-4 text-muted-foreground/50 group-hover:text-[hsl(var(--primary))] transition-colors" />
                   </div>
                 </motion.button>
               );
@@ -239,7 +240,7 @@ function HeaderStrip({ kpis, onBack, onRefresh, loading }) {
           </Button>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold text-foreground font-mono">{kpis.po_number || 'PO'}</h2>
+              <h2 className="text-xl font-bold text-foreground tabular-nums">{kpis.po_number || 'PO'}</h2>
               <StatusBadge status={kpis.status} />
             </div>
             <p className="text-sm text-muted-foreground mt-0.5 flex items-center gap-2">
@@ -247,15 +248,15 @@ function HeaderStrip({ kpis, onBack, onRefresh, loading }) {
               {kpis.deadline && (
                 <>
                   <span className="text-muted-foreground/50">·</span>
-                  <Calendar className="w-3 h-3 text-amber-700 dark:text-amber-400" />
-                  <span className="text-amber-600 dark:text-amber-300">Deadline: {fmtDateOnly(kpis.deadline)}</span>
+                  <Calendar className="w-3 h-3 text-[hsl(var(--warning))] " />
+                  <span className="text-[hsl(var(--warning))] ">Deadline: {fmtDateOnly(kpis.deadline)}</span>
                 </>
               )}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onRefresh} disabled={loading} className="text-muted-foreground hover:text-foreground" data-testid="po360-refresh">
+          <Button variant="outline" size="icon" onClick={onRefresh} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="po360-refresh">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -271,7 +272,7 @@ function HeaderStrip({ kpis, onBack, onRefresh, loading }) {
             </span>
           </div>
           <div className="h-2 rounded-full bg-foreground/10 overflow-hidden">
-            <motion.div className="h-full rounded-full bg-gradient-to-r from-violet-500 to-blue-500"
+            <motion.div className="h-full rounded-full bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)]"
                         initial={{ width: 0 }} animate={{ width: `${kpis.progress_pct || 0}%` }} transition={{ duration: 0.5 }} />
           </div>
         </div>
@@ -283,7 +284,7 @@ function HeaderStrip({ kpis, onBack, onRefresh, loading }) {
             </span>
           </div>
           <div className="h-2 rounded-full bg-foreground/10 overflow-hidden">
-            <motion.div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-green-500"
+            <motion.div className="h-full rounded-full bg-gradient-to-r from-[hsl(var(--warning)/0.1)] to-[hsl(var(--success)/0.1)]"
                         initial={{ width: 0 }} animate={{ width: `${kpis.dispatch_pct || 0}%` }} transition={{ duration: 0.5 }} />
           </div>
         </div>
@@ -294,39 +295,28 @@ function HeaderStrip({ kpis, onBack, onRefresh, loading }) {
         <KPICell label="Total Pcs" value={fmtNum(kpis.total_qty)} icon={Package} tone="slate" />
         <KPICell label="Nilai PO" value={fmtRp(kpis.total_value)} icon={DollarSign} tone="green" small />
         <KPICell label="Sisa Kirim" value={fmtNum(kpis.total_remaining)} icon={Truck} tone="amber" />
-        <KPICell label="Dispatches" value={kpis.dispatch_count || 0} icon={Truck} tone="violet" />
-        <KPICell label="Invoiced" value={fmtRp(kpis.invoiced_amount)} icon={FileText} tone="blue" small />
-        <KPICell label="Outstanding" value={fmtRp(kpis.outstanding_amount)} icon={AlertCircle} tone="red" small />
+        <KPICell label="Pengiriman" value={kpis.dispatch_count || 0} icon={Truck} tone="violet" />
+        <KPICell label="Ditagih" value={fmtRp(kpis.invoiced_amount)} icon={FileText} tone="blue" small />
+        <KPICell label="Sisa tagihan" value={fmtRp(kpis.outstanding_amount)} icon={AlertCircle} tone="red" small />
         <KPICell label="Sample Disetujui" value={kpis.sample_approved || 0} icon={CheckCircle2} tone="emerald" />
-        <KPICell label="Sample Pending" value={kpis.sample_pending || 0} icon={Clock} tone="amber" />
-        <KPICell label="QC Pass" value={kpis.qc_pass || 0} icon={ShieldCheck} tone="green" />
-        <KPICell label="QC Fail" value={kpis.qc_fail || 0} icon={AlertCircle} tone="red" />
-        <KPICell label="Paid" value={fmtRp(kpis.paid_amount)} icon={Banknote} tone="emerald" small />
-        <KPICell label="Invoice Count" value={kpis.invoice_count || 0} icon={FileText} tone="cyan" />
+        <KPICell label="Sample menunggu" value={kpis.sample_pending || 0} icon={Clock} tone="amber" />
+        <KPICell label="QC lolos" value={kpis.qc_pass || 0} icon={ShieldCheck} tone="green" />
+        <KPICell label="QC gagal" value={kpis.qc_fail || 0} icon={AlertCircle} tone="red" />
+        <KPICell label="Dibayar" value={fmtRp(kpis.paid_amount)} icon={Banknote} tone="emerald" small />
+        <KPICell label="Jumlah faktur" value={kpis.invoice_count || 0} icon={FileText} tone="cyan" />
       </div>
     </GlassCard>
   );
 }
 
-function KPICell({ label, value, icon: Icon, tone = 'slate', small = false }) {
-  const toneMap = {
-    slate:   'text-foreground/70',
-    green:   'text-green-600 dark:text-green-300',
-    amber:   'text-amber-600 dark:text-amber-300',
-    violet:  'text-violet-600 dark:text-violet-300',
-    blue:    'text-blue-600 dark:text-blue-300',
-    red:     'text-red-600 dark:text-red-300',
-    emerald: 'text-emerald-600 dark:text-emerald-300',
-    cyan:    'text-cyan-600 dark:text-cyan-300',
-  };
-  return (
-    <div className="p-2.5 rounded-lg bg-foreground/[0.03] border border-foreground/[0.08] hover:bg-foreground/[0.06] transition-colors">
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground mb-1 uppercase tracking-wider">
-        {Icon && <Icon className="w-3 h-3" />} {label}
-      </div>
-      <div className={`${small ? 'text-sm' : 'text-lg'} font-bold ${toneMap[tone]} leading-tight`}>{value}</div>
-    </div>
-  );
+// PANDUAN_UI G5 (2026-11-05): kartu angka memakai StatTile (dulu <div> berbingkai buatan sendiri).
+// `icon`/`small` dibiarkan di tanda tangan supaya pemanggil tidak berubah.
+const KPI_ACCENT = {
+  slate: 'default', green: 'success', amber: 'warning', violet: 'primary',
+  blue: 'primary', red: 'danger', emerald: 'success', cyan: 'primary',
+};
+function KPICell({ label, value, tone = 'slate' }) {
+  return <StatTile label={label} value={value} accent={KPI_ACCENT[tone] || 'default'} />;
 }
 
 // ─── Tab Panels (Self-contained, query backend per-tab needs) ──────────────
@@ -337,7 +327,7 @@ function DetailTab({ data }) {
     <div className="space-y-5">
       <GlassCard className="p-4">
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <Package className="w-4 h-4 text-violet-600 dark:text-violet-300" /> Items PO
+          <Package className="w-4 h-4 text-[hsl(var(--primary))] " /> Item PO
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -347,8 +337,8 @@ function DetailTab({ data }) {
                 <th className="text-left py-2 px-2">Artikel</th>
                 <th className="text-left py-2 px-2">Warna / Size</th>
                 <th className="text-right py-2 px-2">Qty</th>
-                <th className="text-right py-2 px-2">Produced</th>
-                <th className="text-right py-2 px-2">Dispatched</th>
+                <th className="text-right py-2 px-2">Diproduksi</th>
+                <th className="text-right py-2 px-2">Terkirim</th>
                 <th className="text-right py-2 px-2">Sisa</th>
                 <th className="text-right py-2 px-2">CMT/pcs</th>
                 <th className="text-right py-2 px-2">Subtotal</th>
@@ -358,15 +348,15 @@ function DetailTab({ data }) {
             <tbody>
               {(po.items || []).map(it => (
                 <tr key={it.item_id} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
-                  <td className="py-2 px-2 font-mono text-violet-600 dark:text-violet-300">{it.seri_no}</td>
+                  <td className="py-2 px-2 tabular-nums text-[hsl(var(--primary))] ">{it.seri_no}</td>
                   <td className="py-2 px-2 text-foreground">{it.artikel}</td>
                   <td className="py-2 px-2 text-foreground/70">{it.color || '—'} / {it.size || '—'}</td>
                   <td className="py-2 px-2 text-right text-foreground">{fmtNum(it.qty)}</td>
-                  <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300">{fmtNum(it.qty_produced)}</td>
-                  <td className="py-2 px-2 text-right text-green-600 dark:text-green-300">{fmtNum(it.qty_dispatched)}</td>
-                  <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-300">{fmtNum(it.qty_remaining)}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--primary))] ">{fmtNum(it.qty_produced)}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--success))] ">{fmtNum(it.qty_dispatched)}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--warning))] ">{fmtNum(it.qty_remaining)}</td>
                   <td className="py-2 px-2 text-right text-foreground/70">{fmtRp(it.cmt_rate_per_pcs)}</td>
-                  <td className="py-2 px-2 text-right text-green-600 dark:text-green-300 font-semibold">{fmtRp(it.subtotal)}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--success))] font-semibold">{fmtRp(it.subtotal)}</td>
                   <td className="py-2 px-2">
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/70">{it.status}</span>
                   </td>
@@ -380,16 +370,17 @@ function DetailTab({ data }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <GlassCard className="p-4">
           <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-            <Truck className="w-4 h-4 text-amber-600 dark:text-amber-300" /> Riwayat Dispatch ({dispatches.length})
+            <Truck className="w-4 h-4 text-[hsl(var(--warning))] " /> Riwayat Dispatch ({dispatches.length})
           </h3>
           {dispatches.length === 0 ? (
-            <p className="text-xs text-muted-foreground/60 italic">Belum ada dispatch.</p>
+            <EmptyState icon={Truck} title="Belum ada pengiriman"
+              description="Pengiriman barang jadi ke klien akan tercatat di sini." />
           ) : (
             <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {dispatches.map(d => (
                 <div key={d.id} className="p-2 rounded bg-foreground/[0.03] border border-foreground/[0.08]">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono text-amber-600 dark:text-amber-300">{d.dispatch_number}</span>
+                    <span className="text-xs tabular-nums text-[hsl(var(--warning))] ">{d.dispatch_number}</span>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/70">{d.status}</span>
                   </div>
                   <div className="text-xs text-muted-foreground mt-1">{fmtDate(d.created_at)}</div>
@@ -405,16 +396,17 @@ function DetailTab({ data }) {
 
         <GlassCard className="p-4">
           <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-            <BoxesIcon className="w-4 h-4 text-cyan-600 dark:text-cyan-300" /> Material dari Klien ({material_receives.length})
+            <BoxesIcon className="w-4 h-4 text-[hsl(var(--primary))] " /> Material dari Klien ({material_receives.length})
           </h3>
           {material_receives.length === 0 ? (
-            <p className="text-xs text-muted-foreground/60 italic">Belum ada penerimaan material.</p>
+            <EmptyState icon={BoxesIcon} title="Belum ada penerimaan material"
+              description="Material yang dikirim klien akan tercatat di sini setelah diterima gudang." />
           ) : (
             <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {material_receives.map(r => (
                 <div key={r.id} className="p-2 rounded bg-foreground/[0.03] border border-foreground/[0.08]">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono text-cyan-600 dark:text-cyan-300">{r.receive_number || r.id.slice(0, 8)}</span>
+                    <span className="text-xs tabular-nums text-[hsl(var(--primary))] ">{r.receive_number || r.id.slice(0, 8)}</span>
                     <span className="text-[10px] text-muted-foreground">{fmtDate(r.receive_date || r.created_at)}</span>
                   </div>
                   <div className="text-xs text-foreground/70 mt-1">{(r.items || []).length} jenis material</div>
@@ -508,22 +500,22 @@ function BOMTab({ data, poId, headers, onRefresh }) {
   const actionBar = (
     <div className="flex flex-wrap gap-2">
       <Button size="sm" onClick={() => syncBom(null)} disabled={busy || !poId}
-        className="h-8 bg-cyan-600 hover:bg-cyan-700 text-white" data-testid="po360-bom-sync">
+        className="bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-white" data-testid="po360-bom-sync">
         <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${busy ? 'animate-spin' : ''}`} />
         {busy ? 'Menyinkronkan...' : 'Sinkronkan dari Template Aktif'}
       </Button>
       <Button size="sm" variant="outline" onClick={openPicker} disabled={busy || !poId}
-        className="h-8 border-foreground/15" data-testid="po360-bom-pick-version">
+        data-testid="po360-bom-pick-version">
         <Layers className="w-3.5 h-3.5 mr-1.5" /> Pilih Versi Template
       </Button>
     </div>
   );
 
   const picker = pickerOpen && (
-    <GlassCard className="p-4 space-y-2 border-cyan-500/30" data-testid="po360-bom-template-picker">
+    <GlassCard className="p-4 space-y-2 border-[hsl(var(--primary)/0.3)]" data-testid="po360-bom-template-picker">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold text-foreground">Terapkan versi template tertentu</h4>
-        <Button size="sm" variant="ghost" onClick={() => setPickerOpen(false)}><X className="w-4 h-4" /></Button>
+        <Button size="icon-sm" variant="ghost" onClick={() => setPickerOpen(false)} title="Tutup" aria-label="Tutup"><X className="w-4 h-4" /></Button>
       </div>
       {templates.length === 0 ? (
         <p className="text-xs text-muted-foreground italic">
@@ -534,10 +526,10 @@ function BOMTab({ data, poId, headers, onRefresh }) {
           <div className="text-xs">
             <span className="font-semibold text-foreground">v{t.version}</span>
             {t.version_label ? <span className="text-muted-foreground"> · {t.version_label}</span> : null}
-            {t.is_active ? <span className="ml-2 text-emerald-600 dark:text-emerald-300">(aktif)</span> : null}
+            {t.is_active ? <span className="ml-2 text-[hsl(var(--success))] ">(aktif)</span> : null}
             <div className="text-muted-foreground">{(t.materials || []).length} material · {t.buyer_catalog_code || t.buyer_catalog_id}</div>
           </div>
-          <Button size="sm" variant="outline" className="h-7 border-foreground/15"
+          <Button size="sm" variant="outline"
             disabled={busy} onClick={() => syncBom(t.id)}>Terapkan</Button>
         </div>
       ))}
@@ -551,13 +543,13 @@ function BOMTab({ data, poId, headers, onRefresh }) {
     <GlassCard className="p-4 space-y-3" data-testid="po360-material-expectation">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <BoxesIcon className="w-4 h-4 text-amber-600 dark:text-amber-300" />
+          <BoxesIcon className="w-4 h-4 text-[hsl(var(--warning))] " />
           Ekspektasi Material dari Klien
         </h3>
         <div className="flex gap-3 text-xs">
-          <span className="text-muted-foreground">Belum datang: <b className="text-amber-600 dark:text-amber-300">{expect.summary.pending}</b></span>
-          <span className="text-muted-foreground">Sebagian: <b className="text-blue-600 dark:text-blue-300">{expect.summary.partial}</b></span>
-          <span className="text-muted-foreground">Lengkap: <b className="text-emerald-600 dark:text-emerald-300">{expect.summary.complete}</b></span>
+          <span className="text-muted-foreground">Belum datang: <b className="text-[hsl(var(--warning))] ">{expect.summary.pending}</b></span>
+          <span className="text-muted-foreground">Sebagian: <b className="text-[hsl(var(--primary))] ">{expect.summary.partial}</b></span>
+          <span className="text-muted-foreground">Lengkap: <b className="text-[hsl(var(--success))] ">{expect.summary.complete}</b></span>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -579,14 +571,14 @@ function BOMTab({ data, poId, headers, onRefresh }) {
                 <td className="py-2 px-2 text-foreground">{l.material_name}</td>
                 <td className="py-2 px-2 text-foreground/70">{CAT_LABEL[l.material_category] || l.material_category || '—'}</td>
                 <td className="py-2 px-2 text-right text-foreground/70">{fmtNum(l.qty_expected)}</td>
-                <td className="py-2 px-2 text-right text-emerald-600 dark:text-emerald-300">{fmtNum(l.qty_received)}</td>
-                <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-300">{fmtNum(l.qty_outstanding)}</td>
+                <td className="py-2 px-2 text-right text-[hsl(var(--success))] ">{fmtNum(l.qty_received)}</td>
+                <td className="py-2 px-2 text-right text-[hsl(var(--warning))] ">{fmtNum(l.qty_outstanding)}</td>
                 <td className="py-2 px-2 text-muted-foreground">{l.unit || '—'}</td>
                 <td className="py-2 px-2">
                   <StatusBadge status={l.status} dict={{
-                    pending:  { label: 'Belum datang', color: 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-400 dark:border-amber-400/30' },
-                    partial:  { label: 'Sebagian',     color: 'bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-400 dark:border-blue-400/30' },
-                    complete: { label: 'Lengkap',      color: 'bg-green-100 dark:bg-green-500/15 text-green-700 dark:text-green-300 border-green-400 dark:border-green-400/30' },
+                    pending:  { label: 'Belum datang', color: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ' },
+                    partial:  { label: 'Sebagian',     color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+                    complete: { label: 'Lengkap',      color: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' },
                   }} />
                 </td>
               </tr>
@@ -603,15 +595,17 @@ function BOMTab({ data, poId, headers, onRefresh }) {
   if (!bom) {
     return (
       <div className="space-y-4">
-        <GlassCard className="p-8 text-center text-muted-foreground/80 space-y-3">
-          <FileText className="w-12 h-12 mx-auto opacity-30" />
-          <p className="text-sm">Belum ada BOM untuk PO ini.</p>
-          <p className="text-xs">
-            Klik <b>Sinkronkan dari Template Aktif</b> untuk menurunkan kebutuhan material dari
-            BOM Template artikel katalog. Aksesoris otomatis masuk ke kebutuhan PO dan ikut
-            tercetak di Surat Jalan.
-          </p>
-          <div className="flex justify-center">{actionBar}</div>
+        <GlassCard>
+          <EmptyState
+            icon={FileText}
+            title="Belum ada BOM untuk PO ini"
+            description={<>
+              Klik <b>Sinkronkan dari Template Aktif</b> untuk menurunkan kebutuhan material dari
+              BOM Template artikel katalog. Aksesoris otomatis masuk ke kebutuhan PO dan ikut
+              tercetak di Surat Jalan.
+            </>}
+            action={actionBar}
+          />
         </GlassCard>
         {picker}
       </div>
@@ -624,9 +618,9 @@ function BOMTab({ data, poId, headers, onRefresh }) {
         <div className="flex items-start justify-between flex-wrap gap-3">
           <div>
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Layers className="w-4 h-4 text-cyan-600 dark:text-cyan-300" /> Bill of Materials
+              <Layers className="w-4 h-4 text-[hsl(var(--primary))] " /> Bill of Materials
               {bom.source === 'template_manual' && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-500/15 text-violet-700 dark:text-violet-300 border border-violet-400/40">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]  border border-[hsl(var(--primary)/0.4)]">
                   versi dipilih manual (terkunci)
                 </span>
               )}
@@ -640,21 +634,19 @@ function BOMTab({ data, poId, headers, onRefresh }) {
           </div>
           <div className="flex flex-col items-end gap-2">
             <div className="flex gap-4 text-xs">
-              <div><span className="text-muted-foreground">Total Est: </span><span className="text-blue-600 dark:text-blue-300 font-semibold">{fmtRp(totalEst)}</span></div>
-              <div><span className="text-muted-foreground">Total Aktual: </span><span className="text-green-600 dark:text-green-300 font-semibold">{fmtRp(totalAct)}</span></div>
+              <div><span className="text-muted-foreground">Total Est: </span><span className="text-[hsl(var(--primary))] font-semibold">{fmtRp(totalEst)}</span></div>
+              <div><span className="text-muted-foreground">Total Aktual: </span><span className="text-[hsl(var(--success))] font-semibold">{fmtRp(totalAct)}</span></div>
             </div>
             {actionBar}
           </div>
         </div>
 
         {warnings.length > 0 && (
-          <div className="rounded-lg border border-amber-400/40 bg-amber-50 dark:bg-amber-500/10 p-3 space-y-1" data-testid="po360-bom-warnings">
-            {warnings.map((w, i) => (
-              <div key={i} className="text-xs text-amber-800 dark:text-amber-200 flex gap-2">
-                <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /><span>{w}</span>
-              </div>
-            ))}
-          </div>
+          <Notice tone="warning" icon={AlertCircle} testId="po360-bom-warnings">
+            <ul className="space-y-1 text-xs">
+              {warnings.map((w, i) => <li key={i}>{w}</li>)}
+            </ul>
+          </Notice>
         )}
 
         <div className="overflow-x-auto">
@@ -674,12 +666,15 @@ function BOMTab({ data, poId, headers, onRefresh }) {
             </thead>
             <tbody>
               {lines.length === 0 ? (
-                <tr><td colSpan="9" className="py-4 text-center text-muted-foreground/60 italic">Belum ada material line.</td></tr>
+                <tr><td colSpan="9">
+                  <EmptyState icon={Layers} title="Belum ada baris material"
+                    description="Sinkronkan dari template aktif untuk mengisi kebutuhan material PO ini." />
+                </td></tr>
               ) : lines.map((l, idx) => (
                 <tr key={idx} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
                   <td className="py-2 px-2 text-foreground">
                     {l.material_name || l.name}
-                    {l.line_type === 'bulk' && <span className="ml-2 text-[10px] text-cyan-700 dark:text-cyan-300">bulk</span>}
+                    {l.line_type === 'bulk' && <span className="ml-2 text-[10px] text-[hsl(var(--primary))] ">bulk</span>}
                   </td>
                   <td className="py-2 px-2 text-foreground/70">{CAT_LABEL[l.material_category] || l.material_category || l.category || '—'}</td>
                   <td className="py-2 px-2 text-right text-foreground/60">{fmtNum(l.qty_per_pcs)}</td>
@@ -687,8 +682,8 @@ function BOMTab({ data, poId, headers, onRefresh }) {
                   <td className="py-2 px-2 text-right text-foreground/70">{fmtNum(l.qty_actual)}</td>
                   <td className="py-2 px-2 text-muted-foreground">{l.unit || '—'}</td>
                   <td className="py-2 px-2 text-foreground/70">{(l.ownership || 'client_provided') === 'client_provided' ? 'Klien' : 'CV. DA'}</td>
-                  <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300">{fmtRp(costEst(l))}</td>
-                  <td className="py-2 px-2 text-right text-green-600 dark:text-green-300">{fmtRp(costAct(l))}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--primary))] ">{fmtRp(costEst(l))}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--success))] ">{fmtRp(costAct(l))}</td>
                 </tr>
               ))}
             </tbody>
@@ -706,9 +701,9 @@ function SamplesTab({ data }) {
   const revisions = data?.sample_revisions || [];
   if (samples.length === 0) {
     return (
-      <GlassCard className="p-8 text-center text-muted-foreground/60">
-        <Clipboard className="w-12 h-12 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">Belum ada sample untuk PO ini.</p>
+      <GlassCard>
+        <EmptyState icon={Clipboard} title="Belum ada sample untuk PO ini"
+          description="Buat sample untuk PO ini di menu Kelola Sampel." />
       </GlassCard>
     );
   }
@@ -721,14 +716,14 @@ function SamplesTab({ data }) {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-mono font-bold text-foreground">{s.sample_code}</span>
+                  <span className="text-sm tabular-nums font-bold text-foreground">{s.sample_code}</span>
                   <StatusBadge status={s.status} dict={{
                     draft:               { label: 'Draft',             color: 'bg-muted dark:bg-slate-500/15 text-foreground/70 border-border dark:border-slate-400/30' },
-                    in_progress:         { label: 'Sedang Dibuat',     color: 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-400/30' },
-                    submitted:           { label: 'Menunggu Approval', color: 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-400 dark:border-amber-400/30' },
-                    approved:            { label: 'Disetujui',         color: 'bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-300 border-green-400 dark:border-green-400/30' },
-                    rejected:            { label: 'Ditolak',           color: 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300 border-red-400 dark:border-red-400/30' },
-                    revision_requested:  { label: 'Revisi',            color: 'bg-orange-500/15 text-orange-300 border-orange-400/30' },
+                    in_progress:         { label: 'Sedang Dibuat',     color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+                    submitted:           { label: 'Menunggu Approval', color: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ' },
+                    approved:            { label: 'Disetujui',         color: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' },
+                    rejected:            { label: 'Ditolak',           color: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ' },
+                    revision_requested:  { label: 'Revisi',            color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)]' },
                   }} />
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">{s.artikel || '—'} {s.color ? `· ${s.color}` : ''} {s.size ? `· ${s.size}` : ''}</div>
@@ -737,8 +732,8 @@ function SamplesTab({ data }) {
             </div>
             {s.notes && <p className="text-xs text-muted-foreground italic">{s.notes}</p>}
             {revs.length > 0 && (
-              <div className="pl-3 border-l-2 border-orange-400/30 space-y-1">
-                <div className="text-[10px] text-orange-300 uppercase tracking-wider">Riwayat Revisi ({revs.length})</div>
+              <div className="pl-3 border-l-2 border-[hsl(var(--warning)/0.3)] space-y-1">
+                <div className="text-[10px] text-[hsl(var(--warning))] uppercase tracking-wider">Riwayat Revisi ({revs.length})</div>
                 {revs.map(r => (
                   <div key={r.id} className="text-xs text-muted-foreground">
                     <span className="text-muted-foreground/60">{fmtDate(r.created_at)}</span> — {r.reason || r.notes || 'Revisi'}
@@ -757,12 +752,17 @@ function ProductionTab({ data }) {
   const { po } = data || {};
   const items = po?.items || [];
   if (items.length === 0) {
-    return <GlassCard className="p-8 text-center text-muted-foreground/60 text-sm">Belum ada item produksi.</GlassCard>;
+    return (
+      <GlassCard>
+        <EmptyState icon={Activity} title="Belum ada item produksi"
+          description="Tambahkan item di PO ini supaya progres produksinya bisa dipantau." />
+      </GlassCard>
+    );
   }
   return (
     <GlassCard className="p-4 space-y-3">
       <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-        <Activity className="w-4 h-4 text-violet-600 dark:text-violet-300" /> Status Produksi per Item / WO
+        <Activity className="w-4 h-4 text-[hsl(var(--primary))] " /> Status Produksi per Item / WO
       </h3>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
@@ -771,10 +771,10 @@ function ProductionTab({ data }) {
               <th className="text-left py-2 px-2">Seri</th>
               <th className="text-left py-2 px-2">Artikel</th>
               <th className="text-left py-2 px-2">Warna/Size</th>
-              <th className="text-left py-2 px-2">WO Number</th>
+              <th className="text-left py-2 px-2">No. WO</th>
               <th className="text-right py-2 px-2">Target</th>
-              <th className="text-right py-2 px-2">Produced</th>
-              <th className="text-right py-2 px-2">% Progress</th>
+              <th className="text-right py-2 px-2">Diproduksi</th>
+              <th className="text-right py-2 px-2">% Progres</th>
               <th className="text-left py-2 px-2">Status</th>
             </tr>
           </thead>
@@ -783,16 +783,16 @@ function ProductionTab({ data }) {
               const pct = it.qty > 0 ? Math.round(((it.qty_produced || 0) / it.qty) * 100) : 0;
               return (
                 <tr key={it.item_id} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
-                  <td className="py-2 px-2 font-mono text-violet-600 dark:text-violet-300">{it.seri_no}</td>
+                  <td className="py-2 px-2 tabular-nums text-[hsl(var(--primary))] ">{it.seri_no}</td>
                   <td className="py-2 px-2 text-foreground">{it.artikel}</td>
                   <td className="py-2 px-2 text-foreground/70">{it.color || '—'}/{it.size || '—'}</td>
-                  <td className="py-2 px-2 font-mono text-cyan-600 dark:text-cyan-300">{it.wo_number || <span className="text-muted-foreground/50">belum dibuat</span>}</td>
+                  <td className="py-2 px-2 tabular-nums text-[hsl(var(--primary))] ">{it.wo_number || <span className="text-muted-foreground/50">belum dibuat</span>}</td>
                   <td className="py-2 px-2 text-right text-foreground">{fmtNum(it.qty)}</td>
-                  <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300">{fmtNum(it.qty_produced)}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--primary))] ">{fmtNum(it.qty_produced)}</td>
                   <td className="py-2 px-2 text-right">
                     <div className="flex items-center gap-2 justify-end">
                       <div className="w-16 h-1.5 rounded-full bg-foreground/10 overflow-hidden">
-                        <div className="h-full bg-gradient-to-r from-violet-500 to-green-500" style={{ width: `${pct}%` }} />
+                        <div className="h-full bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--success)/0.1)]" style={{ width: `${pct}%` }} />
                       </div>
                       <span className="text-foreground/70 w-8 text-right">{pct}%</span>
                     </div>
@@ -814,28 +814,28 @@ function QCTab({ data }) {
   const qcs = data?.qc_checks || [];
   if (qcs.length === 0) {
     return (
-      <GlassCard className="p-8 text-center text-muted-foreground/60">
-        <ShieldCheck className="w-12 h-12 mx-auto mb-3 opacity-30" />
-        <p className="text-sm">Belum ada QC check untuk PO ini.</p>
+      <GlassCard>
+        <EmptyState icon={ShieldCheck} title="Belum ada pemeriksaan QC untuk PO ini"
+          description="Hasil pemeriksaan QC akan tampil di sini setelah dicatat." />
       </GlassCard>
     );
   }
   return (
     <GlassCard className="p-4 space-y-3">
       <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-        <ShieldCheck className="w-4 h-4 text-green-600 dark:text-green-300" /> Quality Control Checks ({qcs.length})
+        <ShieldCheck className="w-4 h-4 text-[hsl(var(--success))] " /> Pemeriksaan QC ({qcs.length})
       </h3>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="text-muted-foreground border-b border-foreground/10">
               <th className="text-left py-2 px-2">Tanggal</th>
-              <th className="text-left py-2 px-2">Stage</th>
-              <th className="text-right py-2 px-2">Sample Size</th>
-              <th className="text-right py-2 px-2">Defects</th>
-              <th className="text-right py-2 px-2">% Defect</th>
-              <th className="text-left py-2 px-2">Result</th>
-              <th className="text-left py-2 px-2">Checked By</th>
+              <th className="text-left py-2 px-2">Tahap</th>
+              <th className="text-right py-2 px-2">Jumlah diperiksa</th>
+              <th className="text-right py-2 px-2">Cacat</th>
+              <th className="text-right py-2 px-2">% Cacat</th>
+              <th className="text-left py-2 px-2">Hasil</th>
+              <th className="text-left py-2 px-2">Diperiksa oleh</th>
               <th className="text-left py-2 px-2">Catatan</th>
             </tr>
           </thead>
@@ -848,12 +848,12 @@ function QCTab({ data }) {
               return (
                 <tr key={q.id} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
                   <td className="py-2 px-2 text-foreground/70">{fmtDate(q.created_at)}</td>
-                  <td className="py-2 px-2 text-violet-600 dark:text-violet-300">{q.stage || '—'}</td>
+                  <td className="py-2 px-2 text-[hsl(var(--primary))] ">{q.stage || '—'}</td>
                   <td className="py-2 px-2 text-right text-foreground">{fmtNum(sampleSize)}</td>
-                  <td className="py-2 px-2 text-right text-red-600 dark:text-red-300">{fmtNum(defects)}</td>
-                  <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-300">{pct}%</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--destructive))] ">{fmtNum(defects)}</td>
+                  <td className="py-2 px-2 text-right text-[hsl(var(--warning))] ">{pct}%</td>
                   <td className="py-2 px-2">
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isPass ? 'bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-300 border-green-400 dark:border-green-400/30' : 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300 border-red-400 dark:border-red-400/30'}`}>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded border ${isPass ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] '}`}>
                       {(q.result || 'pending').toUpperCase()}
                     </span>
                   </td>
@@ -876,36 +876,37 @@ function BillingTab({ data }) {
   return (
     <div className="space-y-4">
       {arInvoice && (
-        <GlassCard className="p-4 border-emerald-300 dark:border-emerald-400/20">
+        <GlassCard className="p-4 border-[hsl(var(--success)/0.35)] ">
           <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-            <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-300" /> AR Invoice (Finance)
+            <FileText className="w-4 h-4 text-[hsl(var(--success))] " /> Faktur piutang (Keuangan)
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-            <div><span className="text-muted-foreground">Nomor: </span><span className="text-foreground font-mono">{arInvoice.invoice_number}</span></div>
+            <div><span className="text-muted-foreground">Nomor: </span><span className="text-foreground tabular-nums">{arInvoice.invoice_number}</span></div>
             <div><span className="text-muted-foreground">Tanggal: </span><span className="text-foreground">{fmtDateOnly(arInvoice.invoice_date)}</span></div>
-            <div><span className="text-muted-foreground">Total: </span><span className="text-green-600 dark:text-green-300 font-bold">{fmtRp(arInvoice.total_amount)}</span></div>
-            <div><span className="text-muted-foreground">Status: </span><span className="text-emerald-600 dark:text-emerald-300 capitalize">{arInvoice.status}</span></div>
+            <div><span className="text-muted-foreground">Total: </span><span className="text-[hsl(var(--success))] font-bold">{fmtRp(arInvoice.total_amount)}</span></div>
+            <div><span className="text-muted-foreground">Status: </span><span className="text-[hsl(var(--success))] capitalize">{arInvoice.status}</span></div>
           </div>
         </GlassCard>
       )}
 
       <GlassCard className="p-4">
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-blue-600 dark:text-blue-300" /> Maklon Invoices ({invoices.length})
+          <FileText className="w-4 h-4 text-[hsl(var(--primary))] " /> Faktur maklon ({invoices.length})
         </h3>
         {invoices.length === 0 ? (
-          <p className="text-xs text-muted-foreground/60 italic">Belum ada invoice yang dibuat untuk PO ini.</p>
+          <EmptyState icon={FileText} title="Belum ada faktur untuk PO ini"
+            description="Buat faktur dari menu Invoice Klien setelah barang dikirim." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-muted-foreground border-b border-foreground/10">
-                  <th className="text-left py-2 px-2">Invoice #</th>
+                  <th className="text-left py-2 px-2">No. faktur</th>
                   <th className="text-left py-2 px-2">Tanggal</th>
-                  <th className="text-left py-2 px-2">Due Date</th>
+                  <th className="text-left py-2 px-2">Jatuh tempo</th>
                   <th className="text-right py-2 px-2">Total</th>
                   <th className="text-right py-2 px-2">Dibayar</th>
-                  <th className="text-right py-2 px-2">Outstanding</th>
+                  <th className="text-right py-2 px-2">Sisa</th>
                   <th className="text-left py-2 px-2">Status</th>
                 </tr>
               </thead>
@@ -916,12 +917,12 @@ function BillingTab({ data }) {
                   const outstanding = Math.max(0, total - paid);
                   return (
                     <tr key={inv.id} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
-                      <td className="py-2 px-2 font-mono text-blue-600 dark:text-blue-300">{inv.invoice_number}</td>
+                      <td className="py-2 px-2 tabular-nums text-[hsl(var(--primary))] ">{inv.invoice_number}</td>
                       <td className="py-2 px-2 text-foreground/70">{fmtDateOnly(inv.issue_date || inv.invoice_date)}</td>
                       <td className="py-2 px-2 text-foreground/70">{fmtDateOnly(inv.due_date)}</td>
                       <td className="py-2 px-2 text-right text-foreground font-semibold">{fmtRp(total)}</td>
-                      <td className="py-2 px-2 text-right text-green-600 dark:text-green-300">{fmtRp(paid)}</td>
-                      <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-300">{fmtRp(outstanding)}</td>
+                      <td className="py-2 px-2 text-right text-[hsl(var(--success))] ">{fmtRp(paid)}</td>
+                      <td className="py-2 px-2 text-right text-[hsl(var(--warning))] ">{fmtRp(outstanding)}</td>
                       <td className="py-2 px-2">
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-foreground/10 text-foreground/70 capitalize">{inv.status}</span>
                       </td>
@@ -936,19 +937,20 @@ function BillingTab({ data }) {
 
       <GlassCard className="p-4">
         <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <Banknote className="w-4 h-4 text-green-600 dark:text-green-300" /> Pembayaran ({payments.length})
+          <Banknote className="w-4 h-4 text-[hsl(var(--success))] " /> Pembayaran ({payments.length})
         </h3>
         {payments.length === 0 ? (
-          <p className="text-xs text-muted-foreground/60 italic">Belum ada pembayaran tercatat.</p>
+          <EmptyState icon={Banknote} title="Belum ada pembayaran tercatat"
+            description="Pembayaran klien atas faktur PO ini akan tampil di sini." />
         ) : (
           <div className="space-y-1.5">
             {payments.map(p => (
               <div key={p.id} className="flex items-center justify-between p-2 rounded bg-foreground/[0.03] border border-foreground/[0.08]">
                 <div>
-                  <div className="text-xs font-mono text-green-600 dark:text-green-300">{p.payment_number || p.id.slice(0, 8)}</div>
+                  <div className="text-xs tabular-nums text-[hsl(var(--success))] ">{p.payment_number || p.id.slice(0, 8)}</div>
                   <div className="text-[10px] text-muted-foreground">{fmtDateOnly(p.payment_date)} · {p.payment_method || 'transfer'}</div>
                 </div>
-                <div className="text-sm font-bold text-green-600 dark:text-green-300">{fmtRp(p.amount)}</div>
+                <div className="text-sm font-bold text-[hsl(var(--success))] ">{fmtRp(p.amount)}</div>
               </div>
             ))}
           </div>
@@ -969,7 +971,7 @@ function HPPTab({ data }) {
       </div>
       <GlassCard className="p-4 space-y-2">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-violet-600 dark:text-violet-300" /> Snapshot HPP / Margin
+          <BarChart3 className="w-4 h-4 text-[hsl(var(--primary))] " /> Snapshot HPP / Margin
         </h3>
         <table className="w-full text-xs mt-2">
           <tbody className="space-y-1">
@@ -981,7 +983,7 @@ function HPPTab({ data }) {
             <HPPRow label="Margin Aktual" value={hpp.gross_margin_actual} tone="emerald" emphasized />
             <HPPRow label="Sudah Ditagih" value={hpp.invoiced_amount} tone="blue" />
             <HPPRow label="Sudah Dibayar" value={hpp.paid_amount} tone="green" />
-            <HPPRow label="Outstanding" value={hpp.outstanding_amount} tone="red" emphasized />
+            <HPPRow label="Sisa tagihan" value={hpp.outstanding_amount} tone="red" emphasized />
           </tbody>
         </table>
       </GlassCard>
@@ -990,7 +992,7 @@ function HPPTab({ data }) {
 }
 
 function KPIBigCard({ label, value, icon: Icon, tone }) {
-  const t = { green: 'text-green-600 dark:text-green-300 bg-green-50 dark:bg-green-500/10', cyan: 'text-cyan-600 dark:text-cyan-300 bg-cyan-50 dark:bg-cyan-500/10', blue: 'text-blue-600 dark:text-blue-300 bg-blue-50 dark:bg-blue-500/10' }[tone] || 'text-foreground/70 bg-foreground/5';
+  const t = { green: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)] ', cyan: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)] ', blue: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)] ' }[tone] || 'text-foreground/70 bg-foreground/5';
   return (
     <GlassCard className="p-4">
       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
@@ -1002,7 +1004,7 @@ function KPIBigCard({ label, value, icon: Icon, tone }) {
 }
 
 function HPPRow({ label, value, tone = 'slate', emphasized = false }) {
-  const t = { green: 'text-green-600 dark:text-green-300', blue: 'text-blue-600 dark:text-blue-300', cyan: 'text-cyan-600 dark:text-cyan-300', amber: 'text-amber-600 dark:text-amber-300', emerald: 'text-emerald-600 dark:text-emerald-300', red: 'text-red-600 dark:text-red-300', slate: 'text-foreground/70' }[tone];
+  const t = { green: 'text-[hsl(var(--success))] ', blue: 'text-[hsl(var(--primary))] ', cyan: 'text-[hsl(var(--primary))] ', amber: 'text-[hsl(var(--warning))] ', emerald: 'text-[hsl(var(--success))] ', red: 'text-[hsl(var(--destructive))] ', slate: 'text-foreground/70' }[tone];
   return (
     <tr className="border-b border-foreground/5">
       <td className={`py-1.5 px-2 ${emphasized ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{label}</td>
@@ -1017,16 +1019,21 @@ function TimelineTab({ timeline, loading, onRefresh }) {
   if (loading) return <div className="flex items-center justify-center h-40 text-muted-foreground">Memuat timeline...</div>;
   const events = timeline?.events || [];
   if (events.length === 0) {
-    return <GlassCard className="p-8 text-center text-muted-foreground/60 text-sm">Belum ada activity untuk PO ini.</GlassCard>;
+    return (
+      <GlassCard>
+        <EmptyState icon={Clock} title="Belum ada aktivitas untuk PO ini"
+          description="Setiap perubahan PO, pengiriman, QC, dan tagihan akan tercatat di sini." />
+      </GlassCard>
+    );
   }
   return (
     <GlassCard className="p-4 space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-          <Activity className="w-4 h-4 text-violet-600 dark:text-violet-300" /> Timeline Aktivitas ({events.length} event)
+          <Activity className="w-4 h-4 text-[hsl(var(--primary))] " /> Riwayat aktivitas ({events.length} kejadian)
         </h3>
-        <Button variant="ghost" size="sm" onClick={onRefresh} className="text-muted-foreground hover:text-foreground">
-          <RefreshCw className="w-3 h-3 mr-1" /> Refresh
+        <Button variant="outline" size="icon-sm" onClick={onRefresh} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className="w-3.5 h-3.5" />
         </Button>
       </div>
       <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
@@ -1035,9 +1042,9 @@ function TimelineTab({ timeline, loading, onRefresh }) {
             key={`${e.type}-${e.when}-${idx}`}
             initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
             transition={{ delay: idx * 0.02 }}
-            className="flex items-start gap-3 p-3 rounded-lg bg-foreground/[0.03] border-l-2 border-violet-500 dark:border-violet-400/40 hover:bg-foreground/5"
+            className="flex items-start gap-3 p-3 rounded-lg bg-foreground/[0.03] border-l-2 border-[hsl(var(--primary)/0.35)] hover:bg-foreground/5"
           >
-            <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-500/15 flex items-center justify-center flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-[hsl(var(--primary)/0.15)] flex items-center justify-center flex-shrink-0">
               <TimelineIcon name={e.icon} />
             </div>
             <div className="flex-1 min-w-0">
@@ -1048,8 +1055,8 @@ function TimelineTab({ timeline, loading, onRefresh }) {
               <div className="text-[10px] text-muted-foreground/60 mt-0.5 flex items-center gap-2 flex-wrap">
                 <Clock className="w-3 h-3" /> {fmtDate(e.when)}
                 {(e.actor_name || e.actor) && <span>· oleh {e.actor_name || e.actor}</span>}
-                {e.reason && <span className="text-red-600 dark:text-red-300">· Reason: {e.reason}</span>}
-                {e.amount && <span className="text-green-600 dark:text-green-300">· {fmtRp(e.amount)}</span>}
+                {e.reason && <span className="text-[hsl(var(--destructive))] ">· Reason: {e.reason}</span>}
+                {e.amount && <span className="text-[hsl(var(--success))] ">· {fmtRp(e.amount)}</span>}
               </div>
             </div>
           </motion.div>
@@ -1067,7 +1074,7 @@ function TimelineIcon({ name }) {
     'file-text': FileText, 'banknote': Banknote, 'activity': Activity, 'trophy': TrendingUp,
   };
   const Icon = map[name] || Activity;
-  return <Icon className="w-4 h-4 text-violet-600 dark:text-violet-300" />;
+  return <Icon className="w-4 h-4 text-[hsl(var(--primary))] " />;
 }
 
 // ─── Main Component ────────────────────────────────────────────────────────
@@ -1146,7 +1153,7 @@ export default function MaklonPO360Module({ token, deepLinkParams, onNavigate })
     return (
       <div className="space-y-4">
         <GlassCard className="p-8 flex flex-col items-center justify-center text-muted-foreground">
-          <RefreshCw className="w-8 h-8 mb-2 animate-spin text-violet-700 dark:text-violet-400" />
+          <RefreshCw className="w-8 h-8 mb-2 animate-spin text-[hsl(var(--primary))] " />
           Memuat 360° View untuk PO {selectedPoId.slice(0, 8)}…
         </GlassCard>
       </div>
@@ -1156,7 +1163,7 @@ export default function MaklonPO360Module({ token, deepLinkParams, onNavigate })
   if (!data) {
     return (
       <GlassCard className="p-8 text-center text-muted-foreground space-y-3">
-        <AlertCircle className="w-10 h-10 mx-auto text-red-700 dark:text-red-400" />
+        <AlertCircle className="w-10 h-10 mx-auto text-[hsl(var(--destructive))] " />
         <p>Gagal memuat data PO.</p>
         <Button onClick={handleBack} variant="outline" className="border-foreground/10">Kembali ke daftar</Button>
       </GlassCard>
@@ -1169,23 +1176,23 @@ export default function MaklonPO360Module({ token, deepLinkParams, onNavigate })
     { value: 'samples',    label: 'Sample',     icon: Clipboard },
     { value: 'production', label: 'Produksi',   icon: Activity },
     { value: 'qc',         label: 'QC',         icon: ShieldCheck },
-    { value: 'billing',    label: 'Billing',    icon: DollarSign },
+    { value: 'billing',    label: 'Tagihan',    icon: DollarSign },
     { value: 'hpp',        label: 'HPP',        icon: BarChart3 },
-    { value: 'timeline',   label: 'Timeline',   icon: Clock },
+    { value: 'timeline',   label: 'Riwayat',    icon: Clock },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <HeaderStrip kpis={data.kpis || {}} onBack={handleBack} onRefresh={handleRefresh} loading={loading} />
 
       {data.progress_breakdown?.breakdown && (
         <GlassCard className="p-4" data-testid="po360-progress-breakdown">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              <Activity className="w-4 h-4 text-violet-600" /> Progress Multi-State (Barang Jadi vs Reject vs Permak)
+              <Activity className="w-4 h-4 text-[hsl(var(--primary))]" /> Progress Multi-State (Barang Jadi vs Reject vs Permak)
             </h3>
             <div className="text-xs text-muted-foreground">
-              Barang Jadi: <span className="font-semibold text-emerald-600">{fmtNum(data.progress_breakdown.breakdown.qty_good)}</span> ·
+              Barang Jadi: <span className="font-semibold text-[hsl(var(--success))]">{fmtNum(data.progress_breakdown.breakdown.qty_good)}</span> ·
               {' '}Siap kirim: <span className="font-semibold text-foreground">{fmtNum(data.progress_breakdown.breakdown.qty_good_ready)}</span>
             </div>
           </div>
@@ -1201,7 +1208,7 @@ export default function MaklonPO360Module({ token, deepLinkParams, onNavigate })
                 key={t.value}
                 value={t.value}
                 data-testid={`po360-tab-${t.value}`}
-                className="data-[state=active]:bg-violet-600 data-[state=active]:text-foreground text-xs flex items-center gap-1.5"
+                className="data-[state=active]:bg-[hsl(var(--primary))] data-[state=active]:text-foreground text-xs flex items-center gap-1.5"
               >
                 <t.icon className="w-3.5 h-3.5" /> {t.label}
               </TabsTrigger>

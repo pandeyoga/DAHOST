@@ -25,9 +25,9 @@ const fmt = (n) => new Intl.NumberFormat('id-ID').format(n ?? 0);
 const fmtPct = (n) => `${n ?? 0}%`;
 
 const ZONE_TYPE_LABELS = { rm: 'Bahan Baku', fg: 'Produk Jadi', wip: 'WIP', transit: 'Transit', general: 'Umum' };
-const ZONE_TYPE_COLORS = { rm: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-400 border-blue-400 dark:border-blue-500/30', fg: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30', wip: 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-500/30', general: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30', transit: 'bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-400 dark:border-purple-500/30' };
-const STATUS_COLORS = { pending: 'text-amber-700 dark:text-amber-400', partial: 'text-blue-600 dark:text-blue-400', confirmed: 'text-emerald-600 dark:text-emerald-400', cancelled: 'text-muted-foreground/60 dark:text-zinc-500' };
-const RACK_COLORS = { red: 'border-red-500/50 bg-red-100 dark:bg-red-500/10', orange: 'border-orange-500/50 bg-orange-100 dark:bg-orange-500/10', yellow: 'border-amber-500/50 bg-amber-100 dark:bg-amber-500/10', green: 'border-emerald-500/50 bg-emerald-100 dark:bg-emerald-500/10' };
+const ZONE_TYPE_COLORS = { rm: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ', fg: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ', wip: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ', general: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30', transit: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' };
+const STATUS_COLORS = { pending: 'text-[hsl(var(--warning))] ', partial: 'text-[hsl(var(--primary))] ', confirmed: 'text-[hsl(var(--success))] ', cancelled: 'text-muted-foreground/60 dark:text-zinc-500' };
+const RACK_COLORS = { red: 'border-[hsl(var(--destructive)/0.5)] bg-[hsl(var(--destructive)/0.15)] ', orange: 'border-[hsl(var(--warning)/0.5)] bg-[hsl(var(--warning)/0.15)] ', yellow: 'border-[hsl(var(--warning)/0.5)] bg-[hsl(var(--warning)/0.15)] ', green: 'border-[hsl(var(--success)/0.5)] bg-[hsl(var(--success)/0.15)] ' };
 
 function Badge({ cls, children }) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}>{children}</span>;
@@ -103,27 +103,27 @@ function DashboardTab({ token }) {
     <div className="space-y-5">
       {/* OCCUPANCY ALERTS — racks ≥ 90% */}
       {alerts.total_alerts > 0 && (
-        <div data-testid="occupancy-alert-banner" className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded-2xl p-4">
+        <div data-testid="occupancy-alert-banner" className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-2xl p-4">
           <div className="flex items-center gap-2 mb-2">
-            <AlertCircle size={16} className="text-red-700 dark:text-red-400" />
-            <span className="text-sm font-semibold text-red-600 dark:text-red-300">
+            <AlertCircle size={16} className="text-[hsl(var(--destructive))] " />
+            <span className="text-sm font-semibold text-[hsl(var(--destructive))] ">
               Peringatan Kapasitas Rak ({alerts.total_alerts} rak)
             </span>
             <span className="ml-auto text-xs text-muted-foreground">
-              {alerts.critical_count > 0 && <span className="text-red-700 dark:text-red-400 font-bold mr-2">⚠ {alerts.critical_count} kritis (≥95%)</span>}
+              {alerts.critical_count > 0 && <span className="text-[hsl(var(--destructive))] font-bold mr-2">⚠ {alerts.critical_count} kritis (≥95%)</span>}
               {alerts.warning_count} hampir penuh (90-94%)
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto">
             {[...(alerts.critical || []), ...(alerts.warning || [])].slice(0, 12).map(r => (
               <div key={r.rack_id} data-testid="occupancy-alert-row"
-                className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 border ${r.severity === 'critical' ? 'bg-red-100 dark:bg-red-500/15 border-red-500/40' : 'bg-amber-100 dark:bg-amber-500/10 border-amber-400 dark:border-amber-500/30'}`}>
+                className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2 border ${r.severity === 'critical' ? 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.4)]' : 'bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] '}`}>
                 <div className="min-w-0">
-                  <div className="text-xs font-mono font-bold truncate">{r.building_code}-{r.zone_code}-{r.rack_code}</div>
+                  <div className="text-xs tabular-nums font-bold truncate">{r.building_code}-{r.zone_code}-{r.rack_code}</div>
                   <div className="text-[10px] text-muted-foreground truncate">{r.rack_name}</div>
                 </div>
                 <div className="text-right flex-shrink-0">
-                  <div className={`text-sm font-bold ${r.severity === 'critical' ? 'text-red-700 dark:text-red-400' : 'text-amber-700 dark:text-amber-400'}`}>{r.occupancy_pct}%</div>
+                  <div className={`text-sm font-bold ${r.severity === 'critical' ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--warning))] '}`}>{r.occupancy_pct}%</div>
                   <div className="text-[10px] text-muted-foreground">{r.free_slots} slot kosong</div>
                 </div>
               </div>
@@ -156,7 +156,7 @@ function DashboardTab({ token }) {
             <span className="text-xs text-muted-foreground mr-1">Filter Gedung:</span>
             {buildings.map(b => (
               <button key={b.id} data-testid={`building-filter-${b.code}`} onClick={() => setSelectedBldg(b.id)}
-                className={`px-3 py-1.5 rounded-lg text-sm border transition-all ${selectedBldg === b.id ? 'bg-violet-600 border-violet-500 text-foreground' : 'bg-foreground/5 border-foreground/10 text-muted-foreground hover:text-foreground'}`}>
+                className={`px-3 py-1.5 rounded-lg text-sm border transition-all ${selectedBldg === b.id ? 'bg-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] text-foreground' : 'bg-foreground/5 border-foreground/10 text-muted-foreground hover:text-foreground'}`}>
                 <Building2 size={13} className="inline mr-1.5" />{b.name}
               </button>
             ))}
@@ -178,7 +178,7 @@ function DashboardTab({ token }) {
                         <div className="font-semibold text-xs mb-1">{rack.code}</div>
                         <div className="text-[10px] text-muted-foreground">{rack.name}</div>
                         <div className="mt-1.5 h-1.5 rounded-full bg-foreground/10">
-                          <div className={`h-full rounded-full ${rack.color === 'red' ? 'bg-red-500' : rack.color === 'orange' ? 'bg-orange-500' : rack.color === 'yellow' ? 'bg-amber-500' : 'bg-emerald-500'} transition-all`}
+                          <div className={`h-full rounded-full ${rack.color === 'red' ? 'bg-[hsl(var(--destructive))]' : rack.color === 'orange' ? 'bg-[hsl(var(--warning))]' : rack.color === 'yellow' ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--success))]'} transition-all`}
                             style={{ width: `${rack.occupancy_pct}%` }} />
                         </div>
                         <div className="text-[10px] mt-1 text-right">{rack.occupied}/{rack.total}</div>
@@ -311,7 +311,7 @@ function StructureTab({ token }) {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold">Gedung ({buildings.length})</h3>
-            <button data-testid="add-building-btn" onClick={() => openBldgModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-xs font-medium transition-colors">
+            <button data-testid="add-building-btn" onClick={() => openBldgModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
               <Plus size={13} /> Tambah Gedung
             </button>
           </div>
@@ -324,7 +324,7 @@ function StructureTab({ token }) {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {buildings.map(b => (
-                <div key={b.id} data-testid="building-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-violet-400 dark:border-violet-500/30 transition-all cursor-pointer"
+                <div key={b.id} data-testid="building-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-[hsl(var(--primary)/0.35)] transition-all cursor-pointer"
                   onClick={() => { setSelectedBldg(b.id); loadZones(b.id); setView('zones'); }}>
                   <div className="flex items-start justify-between">
                     <div>
@@ -352,13 +352,13 @@ function StructureTab({ token }) {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold">Zona ({zones.length})</h3>
-            <button data-testid="add-zone-btn" onClick={() => openZoneModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-xs font-medium transition-colors">
+            <button data-testid="add-zone-btn" onClick={() => openZoneModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
               <Plus size={13} /> Tambah Zona
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {zones.map(z => (
-              <div key={z.id} data-testid="zone-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-violet-400 dark:border-violet-500/30 cursor-pointer transition-all"
+              <div key={z.id} data-testid="zone-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-[hsl(var(--primary)/0.35)] cursor-pointer transition-all"
                 onClick={() => { setSelectedZone(z.id); loadRacks(z.id); setView('racks'); }}>
                 <div className="flex items-start justify-between mb-2">
                   <div>
@@ -367,12 +367,12 @@ function StructureTab({ token }) {
                   </div>
                   <div className="flex gap-1">
                     <button onClick={e => { e.stopPropagation(); openZoneModal(z); }} className="text-muted-foreground hover:text-foreground p-1"><Edit2 size={13} /></button>
-                    <button onClick={e => { e.stopPropagation(); handleDelete('zone', z.id); }} className="text-muted-foreground hover:text-red-700 dark:text-red-400 p-1"><Trash2 size={13} /></button>
+                    <button onClick={e => { e.stopPropagation(); handleDelete('zone', z.id); }} className="text-muted-foreground hover:text-[hsl(var(--destructive))] p-1"><Trash2 size={13} /></button>
                   </div>
                 </div>
                 <Badge cls={ZONE_TYPE_COLORS[z.zone_type] || ZONE_TYPE_COLORS.general}>{ZONE_TYPE_LABELS[z.zone_type]}</Badge>
                 <div className="text-xs text-muted-foreground mt-2">{z.rack_count} rak</div>
-                <div className={`text-xs mt-1 ${z.location_id ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400'}`} data-testid="zone-location">
+                <div className={`text-xs mt-1 ${z.location_id ? 'text-muted-foreground' : 'text-[hsl(var(--warning))] '}`} data-testid="zone-location">
                   {z.location_id ? `Lokasi: ${z.location_code || ''} ${z.location_name || ''}` : 'Belum ditautkan ke lokasi gudang (opname tidak menjangkau rak zona ini)'}
                 </div>
               </div>
@@ -386,13 +386,13 @@ function StructureTab({ token }) {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold">Rak ({racks.length})</h3>
-            <button data-testid="add-rack-btn" onClick={() => openRackModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-xs font-medium transition-colors">
+            <button data-testid="add-rack-btn" onClick={() => openRackModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
               <Plus size={13} /> Tambah Rak
             </button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {racks.map(rack => (
-              <div key={rack.id} data-testid="rack-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-violet-400 dark:border-violet-500/30 transition-all">
+              <div key={rack.id} data-testid="rack-card" className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 hover:border-[hsl(var(--primary)/0.35)] transition-all">
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="font-bold">{rack.code}</div>
@@ -402,22 +402,22 @@ function StructureTab({ token }) {
                     <button
                       data-testid="print-rack-labels-btn"
                       onClick={() => window.open(`${API}/api/wms/racks/${rack.id}/labels-pdf?token=${encodeURIComponent(token)}`, '_blank')}
-                      className="text-violet-600 dark:text-violet-400 hover:text-violet-600 dark:text-violet-300 p-1"
+                      className="text-[hsl(var(--primary))] hover:text-[hsl(var(--primary))]  p-1"
                       title="Cetak label barcode untuk semua posisi di rak ini">
                       <Printer size={13} />
                     </button>
                     <button onClick={() => openRackModal(rack)} className="text-muted-foreground hover:text-foreground p-1"><Edit2 size={13} /></button>
-                    <button onClick={() => handleDelete('rack', rack.id)} className="text-muted-foreground hover:text-red-700 dark:text-red-400 p-1"><Trash2 size={13} /></button>
+                    <button onClick={() => handleDelete('rack', rack.id)} className="text-muted-foreground hover:text-[hsl(var(--destructive))] p-1"><Trash2 size={13} /></button>
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs mb-2">
                   <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Shelves</div><div className="font-bold">{rack.num_shelves}</div></div>
                   <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Slot/Shelf</div><div className="font-bold">{rack.slots_per_shelf}</div></div>
                   <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Total Posisi</div><div className="font-bold">{rack.total_positions}</div></div>
-                  <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Terisi</div><div className="font-bold text-emerald-600 dark:text-emerald-400">{rack.occupied_positions}</div></div>
+                  <div className="bg-foreground/5 rounded-lg p-2"><div className="text-muted-foreground">Terisi</div><div className="font-bold text-[hsl(var(--success))] ">{rack.occupied_positions}</div></div>
                 </div>
                 <div className="h-1.5 rounded-full bg-foreground/10">
-                  <div className="h-full rounded-full bg-violet-500 transition-all" style={{ width: `${rack.occupancy_pct}%` }} />
+                  <div className="h-full rounded-full bg-[hsl(var(--primary))] transition-all" style={{ width: `${rack.occupancy_pct}%` }} />
                 </div>
                 <div className="text-xs text-right mt-0.5 text-muted-foreground">{rack.occupancy_pct}% terisi</div>
               </div>
@@ -481,7 +481,7 @@ function StructureTab({ token }) {
             </div>
             <div className="flex gap-3 mt-5">
               <button onClick={() => setModal(null)} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-              <button data-testid="modal-save-btn" onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium disabled:opacity-50">
+              <button data-testid="modal-save-btn" onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium disabled:opacity-50">
                 {saving ? 'Menyimpan...' : 'Simpan'}
               </button>
             </div>
@@ -545,7 +545,7 @@ function UnitsTab({ token }) {
     <div className="space-y-4">
       <div className="flex gap-1 p-1 bg-foreground/5 rounded-xl w-fit">
         {['units', 'conversions', 'calculator'].map(t => (
-          <button key={t} onClick={() => setSubTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${subTab === t ? 'bg-violet-600 text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+          <button key={t} onClick={() => setSubTab(t)} className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${subTab === t ? 'bg-[hsl(var(--primary))] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
             {t === 'units' ? 'Master Satuan' : t === 'conversions' ? 'Aturan Konversi' : 'Kalkulator'}
           </button>
         ))}
@@ -562,7 +562,7 @@ function UnitsTab({ token }) {
                 <RefreshCw size={12} /> Seed Default
               </button>
               <button data-testid="add-unit-btn" onClick={() => { setForm({ code: '', name: '', category: 'count', symbol: '', is_base: false }); setModal({ type: 'unit', data: null }); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-xs font-medium transition-colors">
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
                 <Plus size={12} /> Tambah Satuan
               </button>
             </div>
@@ -576,7 +576,7 @@ function UnitsTab({ token }) {
                     <div>
                       <div className="font-bold text-sm">{u.code}</div>
                       <div className="text-xs text-muted-foreground">{u.name}</div>
-                      {u.is_base && <span className="text-[10px] text-violet-600 dark:text-violet-400">base</span>}
+                      {u.is_base && <span className="text-[10px] text-[hsl(var(--primary))] ">base</span>}
                     </div>
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={() => { setForm({...u}); setModal({ type: 'unit', data: u }); }} className="text-muted-foreground hover:text-foreground p-0.5"><Edit2 size={11} /></button>
@@ -595,7 +595,7 @@ function UnitsTab({ token }) {
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-sm font-semibold">Aturan Konversi ({conversions.length})</h3>
             <button data-testid="add-conversion-btn" onClick={() => { setForm({ from_unit_code: '', to_unit_code: '', factor: 1, notes: '' }); setModal({ type: 'conversion', data: null }); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-xs font-medium transition-colors">
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
               <Plus size={12} /> Tambah Konversi
             </button>
           </div>
@@ -607,8 +607,8 @@ function UnitsTab({ token }) {
                   <tr key={c.id} data-testid="conversion-row" className="border-t border-foreground/5">
                     <td className="px-4 py-3 font-bold">{c.from_unit_code}</td>
                     <td className="px-4 py-3 font-bold">{c.to_unit_code}</td>
-                    <td className="px-4 py-3 font-mono text-emerald-600 dark:text-emerald-400">{c.factor}</td>
-                    <td className="px-4 py-3 text-xs text-muted-foreground font-mono">qty × {c.factor}</td>
+                    <td className="px-4 py-3 tabular-nums text-[hsl(var(--success))] ">{c.factor}</td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground tabular-nums">qty × {c.factor}</td>
                     <td className="px-4 py-3 text-xs text-muted-foreground">{c.notes || '-'}</td>
                     <td className="px-4 py-3">
                       <button onClick={() => { setForm({...c}); setModal({ type: 'conversion', data: c }); }} className="text-muted-foreground hover:text-foreground mr-2"><Edit2 size={13} /></button>
@@ -640,10 +640,10 @@ function UnitsTab({ token }) {
                 </SmartNativeSelect>
               </div>
             </div>
-            <button data-testid="calculate-btn" onClick={handleCalc} className="w-full py-2 rounded-xl bg-violet-600 hover:bg-violet-700 text-sm font-medium transition-colors">Hitung Konversi</button>
+            <button data-testid="calculate-btn" onClick={handleCalc} className="w-full py-2 rounded-xl bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors">Hitung Konversi</button>
             {calcResult && (
-              <div className="bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-xl p-4 text-center">
-                <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{fmt(calcResult.result)} {calcResult.to}</div>
+              <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 text-center">
+                <div className="text-2xl font-bold text-[hsl(var(--success))] ">{fmt(calcResult.result)} {calcResult.to}</div>
                 <div className="text-xs text-muted-foreground mt-1">{calcResult.input} {calcResult.from} × {calcResult.factor}</div>
               </div>
             )}
@@ -694,7 +694,7 @@ function UnitsTab({ token }) {
             )}
             <div className="flex gap-3 mt-5">
               <button onClick={() => setModal(null)} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-              <button onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-lg bg-violet-600 hover:bg-violet-700 text-sm font-medium disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
+              <button onClick={handleSave} disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium disabled:opacity-50">{saving ? 'Menyimpan...' : 'Simpan'}</button>
             </div>
           </div>
         </div>
@@ -795,14 +795,14 @@ function ReceivingTab({ token }) {
 
   const TYPE_ICON = { inbound: ArrowDownToLine, outbound_rm: ArrowUpFromLine, outbound_fg: ArrowUpFromLine };
   const TYPE_LABEL = { inbound: 'Inbound FG', outbound_rm: 'Outbound Bahan', outbound_fg: 'Outbound FG' };
-  const TYPE_COLOR = { inbound: 'text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30 bg-emerald-100 dark:bg-emerald-500/10', outbound_rm: 'text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-500/30 bg-amber-100 dark:bg-amber-500/10', outbound_fg: 'text-orange-600 dark:text-orange-400 border-orange-400 dark:border-orange-500/30 bg-orange-100 dark:bg-orange-500/10' };
+  const TYPE_COLOR = { inbound: 'text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)]  bg-[hsl(var(--success)/0.15)] ', outbound_rm: 'text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)]  bg-[hsl(var(--warning)/0.15)] ', outbound_fg: 'text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)]  bg-[hsl(var(--warning)/0.15)] ' };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex gap-1 p-1 bg-foreground/5 rounded-xl">
           {['all', 'inbound', 'outbound_rm', 'outbound_fg'].map(f => (
-            <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filter === f ? 'bg-violet-600 text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
+            <button key={f} onClick={() => setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${filter === f ? 'bg-[hsl(var(--primary))] text-foreground' : 'text-muted-foreground hover:text-foreground'}`}>
               {f === 'all' ? 'Semua' : TYPE_LABEL[f]}
             </button>
           ))}
@@ -841,7 +841,7 @@ function ReceivingTab({ token }) {
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs text-violet-600 dark:text-violet-400">{m.ref_number}</span>
+                    <span className="tabular-nums text-xs text-[hsl(var(--primary))] ">{m.ref_number}</span>
                     <Badge cls={TYPE_COLOR[m.type]}>{TYPE_LABEL[m.type]}</Badge>
                     <span className={`text-xs font-medium ${STATUS_COLORS[m.status]}`}>{m.status}</span>
                   </div>
@@ -853,7 +853,7 @@ function ReceivingTab({ token }) {
                     <button
                       data-testid="scan-in-btn"
                       onClick={() => { setScanModal({ movement: m, mode: 'in' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); setScanLocation(''); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-400 dark:border-emerald-500/30 text-xs hover:bg-emerald-500/30 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.35)]  text-xs hover:bg-[hsl(var(--success)/0.3)] transition-colors"
                     >
                       <Scan size={13} /> Scan In
                     </button>
@@ -862,7 +862,7 @@ function ReceivingTab({ token }) {
                     <button
                       data-testid="scan-out-btn"
                       onClick={() => { setScanModal({ movement: m, mode: 'out' }); setScanQty(String(m.expected_qty - (m.scanned_qty || 0))); setPositionBarcode(''); setPositionInfo(null); setScanLocation(''); }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-400 dark:border-amber-500/30 text-xs hover:bg-amber-500/30 transition-colors"
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.35)]  text-xs hover:bg-[hsl(var(--warning)/0.3)] transition-colors"
                     >
                       <Scan size={13} /> Scan Out
                     </button>
@@ -934,9 +934,9 @@ function ReceivingTab({ token }) {
                 {positionBarcode && (
                   <div className="text-xs mt-1">
                     {positionInfo ? (
-                      <span className="text-emerald-600 dark:text-emerald-400"><MapPin size={11} className="inline mr-1" />{positionInfo.label} — {positionInfo.building_code}/{positionInfo.zone_code}/{positionInfo.rack_code}</span>
+                      <span className="text-[hsl(var(--success))] "><MapPin size={11} className="inline mr-1" />{positionInfo.label} — {positionInfo.building_code}/{positionInfo.zone_code}/{positionInfo.rack_code}</span>
                     ) : (
-                      <span className="text-amber-700 dark:text-amber-400"><AlertCircle size={11} className="inline mr-1" />Posisi tidak ditemukan: {positionBarcode}</span>
+                      <span className="text-[hsl(var(--warning))] "><AlertCircle size={11} className="inline mr-1" />Posisi tidak ditemukan: {positionBarcode}</span>
                     )}
                   </div>
                 )}
@@ -948,7 +948,7 @@ function ReceivingTab({ token }) {
                 data-testid="confirm-scan-btn"
                 onClick={handleScan}
                 disabled={submitting || !scanQty || (needsScanLocation(scanModal) && !scanLocation)}
-                className={`flex-1 py-3 rounded-xl text-foreground text-sm font-medium disabled:opacity-50 transition-colors ${scanModal.mode === 'in' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-amber-600 hover:bg-amber-700'}`}
+                className={`flex-1 py-3 rounded-xl text-foreground text-sm font-medium disabled:opacity-50 transition-colors ${scanModal.mode === 'in' ? 'bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)]' : 'bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)]'}`}
               >
                 {submitting ? 'Memproses...' : scanModal.mode === 'in' ? 'Konfirmasi Terima' : 'Konfirmasi Keluar'}
               </button>
@@ -1015,15 +1015,15 @@ export function PositionsTab({ token }) {
         <div className="space-y-4">
           {searchResult.type === 'position' ? (
             <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-5">
-              <div className="text-xs font-semibold text-violet-600 dark:text-violet-400 mb-3">Posisi Ditemukan</div>
+              <div className="text-xs font-semibold text-[hsl(var(--primary))] mb-3">Posisi Ditemukan</div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">Barcode:</span> <span className="font-mono">{searchResult.result.barcode}</span></div>
+                <div><span className="text-muted-foreground">Barcode:</span> <span className="tabular-nums">{searchResult.result.barcode}</span></div>
                 <div><span className="text-muted-foreground">Label:</span> {searchResult.result.label}</div>
                 <div><span className="text-muted-foreground">Lokasi:</span> {searchResult.result.building_code}/{searchResult.result.zone_code}/{searchResult.result.rack_code}</div>
-                <div><span className="text-muted-foreground">Status:</span> <Badge cls={searchResult.result.status === 'occupied' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30' : 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30'}>{searchResult.result.status}</Badge></div>
+                <div><span className="text-muted-foreground">Status:</span> <Badge cls={searchResult.result.status === 'occupied' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30'}>{searchResult.result.status}</Badge></div>
                 {searchResult.result.material_name && <>
                   <div><span className="text-muted-foreground">Produk:</span> {searchResult.result.material_name}</div>
-                  <div><span className="text-muted-foreground">Stok:</span> <span className="font-bold text-emerald-600 dark:text-emerald-400">{fmt(searchResult.result.qty)} {searchResult.result.unit}</span></div>
+                  <div><span className="text-muted-foreground">Stok:</span> <span className="font-bold text-[hsl(var(--success))] ">{fmt(searchResult.result.qty)} {searchResult.result.unit}</span></div>
                 </>}
               </div>
             </div>
@@ -1048,13 +1048,13 @@ export function PositionsTab({ token }) {
                   <div className="space-y-2">
                     {searchResult.positions.map(pos => (
                       <div key={pos.id} data-testid="position-result" className="flex items-center gap-4 bg-foreground/[0.03] border border-foreground/[0.08] rounded-xl p-3">
-                        <MapPin size={16} className="text-violet-600 dark:text-violet-400 flex-shrink-0" />
+                        <MapPin size={16} className="text-[hsl(var(--primary))] flex-shrink-0" />
                         <div className="flex-1">
-                          <div className="font-mono text-sm text-violet-600 dark:text-violet-400">{pos.barcode}</div>
+                          <div className="tabular-nums text-sm text-[hsl(var(--primary))] ">{pos.barcode}</div>
                           <div className="text-xs text-muted-foreground">{pos.building_code} / {pos.zone_code} / {pos.rack_code} / {pos.label}</div>
                         </div>
                         <div className="text-right">
-                          <div className="font-bold text-emerald-600 dark:text-emerald-400">{fmt(pos.qty)} {pos.unit}</div>
+                          <div className="font-bold text-[hsl(var(--success))] ">{fmt(pos.qty)} {pos.unit}</div>
                         </div>
                       </div>
                     ))}
@@ -1136,7 +1136,7 @@ function AuditTrailTab({ token }) {
       {/* Filters */}
       <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4 space-y-3">
         <div className="flex items-center gap-2">
-          <History size={14} className="text-violet-600 dark:text-violet-400" />
+          <History size={14} className="text-[hsl(var(--primary))] " />
           <span className="text-sm font-semibold">Filter Audit Trail</span>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
@@ -1145,7 +1145,7 @@ function AuditTrailTab({ token }) {
             className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs" />
           <input data-testid="audit-filter-position" placeholder="Barcode posisi" value={filters.position_barcode}
             onChange={e => setFilters({ ...filters, position_barcode: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs font-mono" />
+            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs tabular-nums" />
           <SmartNativeSelect data-testid="audit-filter-building" value={filters.building_id}
             onChange={e => setFilters({ ...filters, building_id: e.target.value })}
             className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs">
@@ -1168,14 +1168,14 @@ function AuditTrailTab({ token }) {
         </div>
         <div className="flex gap-2">
           <button data-testid="audit-apply-filters" onClick={() => { setPage(p => ({ ...p, skip: 0 })); load(); }}
-            className="px-3 py-1.5 rounded-lg bg-violet-600 hover:bg-violet-700 text-xs font-medium">
+            className="px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium">
             <Search size={12} className="inline mr-1" /> Cari
           </button>
           <button onClick={resetFilters} className="px-3 py-1.5 rounded-lg bg-foreground/5 border border-foreground/10 text-xs hover:bg-foreground/10">
             Reset
           </button>
           <button data-testid="audit-export-csv" onClick={exportCSV}
-            className="ml-auto px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-xs font-medium">
+            className="ml-auto px-3 py-1.5 rounded-lg bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)] text-xs font-medium">
             <FileDown size={12} className="inline mr-1" /> Export CSV
           </button>
         </div>
@@ -1184,24 +1184,24 @@ function AuditTrailTab({ token }) {
       {/* Stats cards */}
       {stats && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="bg-foreground/[0.03] border border-violet-300 dark:border-violet-500/20 rounded-2xl p-4">
-            <BarChart3 size={16} className="text-violet-600 dark:text-violet-400 mb-1" />
-            <div className="text-xl font-bold text-violet-600 dark:text-violet-400">{stats.total_adjustments || 0}</div>
+          <div className="bg-foreground/[0.03] border border-[hsl(var(--primary)/0.35)] rounded-2xl p-4">
+            <BarChart3 size={16} className="text-[hsl(var(--primary))] mb-1" />
+            <div className="text-xl font-bold text-[hsl(var(--primary))] ">{stats.total_adjustments || 0}</div>
             <div className="text-xs text-muted-foreground">Total Adjustment</div>
           </div>
-          <div className="bg-foreground/[0.03] border border-emerald-300 dark:border-emerald-500/20 rounded-2xl p-4">
-            <TrendingUp size={16} className="text-emerald-600 dark:text-emerald-400 mb-1" />
-            <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">+{stats.surplus_qty || 0}</div>
+          <div className="bg-foreground/[0.03] border border-[hsl(var(--success)/0.35)] rounded-2xl p-4">
+            <TrendingUp size={16} className="text-[hsl(var(--success))] mb-1" />
+            <div className="text-xl font-bold text-[hsl(var(--success))] ">+{stats.surplus_qty || 0}</div>
             <div className="text-xs text-muted-foreground">Surplus ({stats.surplus_count || 0}x)</div>
           </div>
-          <div className="bg-foreground/[0.03] border border-red-300 dark:border-red-500/20 rounded-2xl p-4">
-            <TrendingDown size={16} className="text-red-700 dark:text-red-400 mb-1" />
-            <div className="text-xl font-bold text-red-700 dark:text-red-400">-{stats.shortage_qty || 0}</div>
+          <div className="bg-foreground/[0.03] border border-[hsl(var(--destructive)/0.35)] rounded-2xl p-4">
+            <TrendingDown size={16} className="text-[hsl(var(--destructive))] mb-1" />
+            <div className="text-xl font-bold text-[hsl(var(--destructive))] ">-{stats.shortage_qty || 0}</div>
             <div className="text-xs text-muted-foreground">Shortage ({stats.shortage_count || 0}x)</div>
           </div>
-          <div className="bg-foreground/[0.03] border border-amber-300 dark:border-amber-500/20 rounded-2xl p-4">
-            <Package size={16} className="text-amber-700 dark:text-amber-400 mb-1" />
-            <div className={`text-xl font-bold ${(stats.net_qty || 0) >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+          <div className="bg-foreground/[0.03] border border-[hsl(var(--warning)/0.35)] rounded-2xl p-4">
+            <Package size={16} className="text-[hsl(var(--warning))] mb-1" />
+            <div className={`text-xl font-bold ${(stats.net_qty || 0) >= 0 ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
               {stats.net_qty > 0 ? '+' : ''}{stats.net_qty || 0}
             </div>
             <div className="text-xs text-muted-foreground">Net Δ</div>
@@ -1214,7 +1214,7 @@ function AuditTrailTab({ token }) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4">
             <div className="flex items-center gap-2 mb-3">
-              <UserIcon size={13} className="text-violet-600 dark:text-violet-400" />
+              <UserIcon size={13} className="text-[hsl(var(--primary))] " />
               <span className="text-sm font-semibold">Top Operator</span>
             </div>
             {stats.by_operator?.length ? (
@@ -1223,12 +1223,12 @@ function AuditTrailTab({ token }) {
                   <div key={op.operator} data-testid="audit-operator-row"
                     className="flex items-center justify-between gap-3 bg-foreground/5 rounded-lg p-2.5 text-xs">
                     <div className="min-w-0 flex-1">
-                      <div className="font-mono truncate">{op.operator}</div>
+                      <div className="tabular-nums truncate">{op.operator}</div>
                       <div className="text-[10px] text-muted-foreground">{op.count} adjustment · aktif {op.last_activity ? new Date(op.last_activity).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</div>
                     </div>
                     <div className="text-right text-[11px]">
-                      <div className="text-emerald-600 dark:text-emerald-400">+{op.surplus_qty}</div>
-                      <div className="text-red-700 dark:text-red-400">-{op.shortage_qty}</div>
+                      <div className="text-[hsl(var(--success))] ">+{op.surplus_qty}</div>
+                      <div className="text-[hsl(var(--destructive))] ">-{op.shortage_qty}</div>
                     </div>
                   </div>
                 ))}
@@ -1237,7 +1237,7 @@ function AuditTrailTab({ token }) {
           </div>
           <div className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-4">
             <div className="flex items-center gap-2 mb-3">
-              <MapPin size={13} className="text-amber-700 dark:text-amber-400" />
+              <MapPin size={13} className="text-[hsl(var(--warning))] " />
               <span className="text-sm font-semibold">Hotspot Posisi (Paling Sering Adjust)</span>
             </div>
             {stats.by_position_hotspots?.length ? (
@@ -1245,11 +1245,11 @@ function AuditTrailTab({ token }) {
                 {stats.by_position_hotspots.map(p => (
                   <div key={p.position_barcode} data-testid="audit-hotspot-row"
                     className="flex items-center justify-between gap-3 bg-foreground/5 rounded-lg p-2.5 text-xs">
-                    <div className="font-mono text-violet-600 dark:text-violet-400">{p.position_barcode}</div>
+                    <div className="tabular-nums text-[hsl(var(--primary))] ">{p.position_barcode}</div>
                     <div className="flex items-center gap-2">
                       <div className="text-right text-[11px]">
                         <div className="font-bold">{p.count}x</div>
-                        <div className={p.net_qty >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}>
+                        <div className={p.net_qty >= 0 ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}>
                           {p.net_qty > 0 ? '+' : ''}{p.net_qty}
                         </div>
                       </div>
@@ -1269,7 +1269,7 @@ function AuditTrailTab({ token }) {
                               setRcaModal({ barcode: p.position_barcode, loading: false, result: null, error: e.message });
                             }
                           }}
-                          className="flex items-center gap-1 px-2 py-1 rounded bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-[10px] font-medium text-foreground"
+                          className="flex items-center gap-1 px-2 py-1 rounded bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] text-[10px] font-medium text-foreground"
                           title="AI Root-Cause Analysis (Claude Sonnet)"
                         >
                           <Info size={10} /> Analisa AI
@@ -1312,16 +1312,16 @@ function AuditTrailTab({ token }) {
               {items.map(r => (
                 <tr key={r.id} data-testid="audit-row" className="border-t border-foreground/5 hover:bg-foreground/[0.03]">
                   <td className="px-3 py-2 whitespace-nowrap">{r.timestamp ? new Date(r.timestamp).toLocaleString('id-ID', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
-                  <td className="px-3 py-2 font-mono text-violet-600 dark:text-violet-400 text-[11px]">{r.session_ref || '—'}</td>
-                  <td className="px-3 py-2 font-mono text-[11px]">{r.created_by || '—'}</td>
+                  <td className="px-3 py-2 tabular-nums text-[hsl(var(--primary))] text-[11px]">{r.session_ref || '—'}</td>
+                  <td className="px-3 py-2 tabular-nums text-[11px]">{r.created_by || '—'}</td>
                   <td className="px-3 py-2 text-[11px]">{r.building_code ? `${r.building_code}/${r.zone_code}/${r.rack_code}` : '—'}</td>
-                  <td className="px-3 py-2 font-mono text-[11px]">{r.position_barcode || '—'}</td>
+                  <td className="px-3 py-2 tabular-nums text-[11px]">{r.position_barcode || '—'}</td>
                   <td className="px-3 py-2">{r.fg_code || '—'}</td>
                   <td className="px-3 py-2 text-right">
                     {r.direction === 'adjust_in' ? (
-                      <span className="text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1"><TrendingUp size={11} /> Surplus</span>
+                      <span className="text-[hsl(var(--success))] flex items-center justify-end gap-1"><TrendingUp size={11} /> Surplus</span>
                     ) : r.direction === 'adjust_out' ? (
-                      <span className="text-red-700 dark:text-red-400 flex items-center justify-end gap-1"><TrendingDown size={11} /> Shortage</span>
+                      <span className="text-[hsl(var(--destructive))] flex items-center justify-end gap-1"><TrendingDown size={11} /> Shortage</span>
                     ) : r.direction}
                   </td>
                   <td className="px-3 py-2 text-right font-bold">{r.qty || 0}</td>
@@ -1349,16 +1349,16 @@ function AuditTrailTab({ token }) {
       {/* RCA Modal */}
       {rcaModal && (
         <div className="fixed inset-0 z-50 bg-foreground/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setRcaModal(null)}>
-          <div data-testid="rca-modal" className="bg-card border border-violet-400 dark:border-violet-500/30 rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+          <div data-testid="rca-modal" className="bg-card border border-[hsl(var(--primary)/0.35)] rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="flex items-start justify-between mb-4">
               <div>
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-violet-600 to-fuchsia-600 flex items-center justify-center">
+                  <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] flex items-center justify-center">
                     <Info size={16} className="text-foreground" />
                   </div>
                   <div>
                     <h3 className="text-lg font-bold">AI Root-Cause Analysis</h3>
-                    <p className="text-xs text-muted-foreground font-mono">{rcaModal.barcode}</p>
+                    <p className="text-xs text-muted-foreground tabular-nums">{rcaModal.barcode}</p>
                   </div>
                 </div>
               </div>
@@ -1369,13 +1369,13 @@ function AuditTrailTab({ token }) {
 
             {rcaModal.loading && (
               <div className="flex flex-col items-center justify-center py-12">
-                <div className="w-10 h-10 rounded-full border-2 border-violet-500 border-t-transparent animate-spin mb-3"></div>
+                <div className="w-10 h-10 rounded-full border-2 border-[hsl(var(--primary)/0.35)] border-t-transparent animate-spin mb-3"></div>
                 <p className="text-sm text-muted-foreground">Claude Sonnet menganalisis pola adjustment...</p>
               </div>
             )}
 
             {rcaModal.error && (
-              <div className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded-xl p-4 text-sm text-red-700 dark:text-red-400">
+              <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4 text-sm text-[hsl(var(--destructive))] ">
                 <AlertCircle size={14} className="inline mr-1" /> {rcaModal.error}
               </div>
             )}
@@ -1386,39 +1386,39 @@ function AuditTrailTab({ token }) {
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
                   <div className="bg-foreground/5 rounded-lg p-2">
                     <div className="text-muted-foreground">Data Points</div>
-                    <div className="font-bold text-violet-600 dark:text-violet-400">{rcaModal.result.data_points}</div>
+                    <div className="font-bold text-[hsl(var(--primary))] ">{rcaModal.result.data_points}</div>
                   </div>
-                  <div className="bg-emerald-100 dark:bg-emerald-500/10 rounded-lg p-2">
+                  <div className="bg-[hsl(var(--success)/0.15)] rounded-lg p-2">
                     <div className="text-muted-foreground">Surplus</div>
-                    <div className="font-bold text-emerald-600 dark:text-emerald-400">+{rcaModal.result.stats.surplus_qty}</div>
+                    <div className="font-bold text-[hsl(var(--success))] ">+{rcaModal.result.stats.surplus_qty}</div>
                   </div>
-                  <div className="bg-red-100 dark:bg-red-500/10 rounded-lg p-2">
+                  <div className="bg-[hsl(var(--destructive)/0.15)] rounded-lg p-2">
                     <div className="text-muted-foreground">Shortage</div>
-                    <div className="font-bold text-red-700 dark:text-red-400">-{rcaModal.result.stats.shortage_qty}</div>
+                    <div className="font-bold text-[hsl(var(--destructive))] ">-{rcaModal.result.stats.shortage_qty}</div>
                   </div>
-                  <div className="bg-amber-100 dark:bg-amber-500/10 rounded-lg p-2">
+                  <div className="bg-[hsl(var(--warning)/0.15)] rounded-lg p-2">
                     <div className="text-muted-foreground">Net Δ</div>
-                    <div className={`font-bold ${rcaModal.result.stats.net_qty >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+                    <div className={`font-bold ${rcaModal.result.stats.net_qty >= 0 ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
                       {rcaModal.result.stats.net_qty > 0 ? '+' : ''}{rcaModal.result.stats.net_qty}
                     </div>
                   </div>
                 </div>
 
                 {/* Analysis */}
-                <div className="bg-gradient-to-br from-violet-500/10 to-fuchsia-500/10 border border-violet-300 dark:border-violet-500/20 rounded-xl p-4">
+                <div className="bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-xl p-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <span className="text-xs font-bold uppercase tracking-wider text-violet-600 dark:text-violet-400">Root Cause Hypothesis</span>
+                    <span className="text-xs font-bold uppercase tracking-wider text-[hsl(var(--primary))] ">Root Cause Hypothesis</span>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full ${
-                      rcaModal.result.analysis.confidence === 'tinggi' ? 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' :
-                      rcaModal.result.analysis.confidence === 'sedang' ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400' :
+                      rcaModal.result.analysis.confidence === 'tinggi' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' :
+                      rcaModal.result.analysis.confidence === 'sedang' ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))] ' :
                       'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400'
                     }`}>
                       confidence: {rcaModal.result.analysis.confidence}
                     </span>
                     <span className={`text-[10px] px-2 py-0.5 rounded-full ml-auto ${
-                      rcaModal.result.analysis.risk_level === 'tinggi' ? 'bg-red-100 dark:bg-red-500/20 text-red-700 dark:text-red-400' :
-                      rcaModal.result.analysis.risk_level === 'sedang' ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400' :
-                      'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                      rcaModal.result.analysis.risk_level === 'tinggi' ? 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] ' :
+                      rcaModal.result.analysis.risk_level === 'sedang' ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))] ' :
+                      'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] '
                     }`}>
                       risk: {rcaModal.result.analysis.risk_level}
                     </span>
@@ -1434,12 +1434,12 @@ function AuditTrailTab({ token }) {
                 {/* Recommended actions */}
                 <div>
                   <div className="text-xs font-bold uppercase tracking-wider text-foreground/80 mb-2">
-                    <Check size={12} className="inline mr-1 text-emerald-600 dark:text-emerald-400" /> Rekomendasi Action Item
+                    <Check size={12} className="inline mr-1 text-[hsl(var(--success))] " /> Rekomendasi Action Item
                   </div>
                   <ol className="space-y-1.5 text-xs">
                     {(rcaModal.result.analysis.recommended_actions || []).map((a, i) => (
                       <li key={i} className="flex gap-2 bg-foreground/5 rounded-lg p-2.5">
-                        <span className="font-mono text-violet-600 dark:text-violet-400 flex-shrink-0">{i + 1}.</span>
+                        <span className="tabular-nums text-[hsl(var(--primary))] flex-shrink-0">{i + 1}.</span>
                         <span>{a}</span>
                       </li>
                     ))}
@@ -1481,7 +1481,7 @@ export default function WMSModule({ token, section }) {
       <div data-testid={`wms-section-${section}`} className="space-y-5 p-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <S.icon size={22} className="text-violet-600 dark:text-violet-400" />
+            <S.icon size={22} className="text-[hsl(var(--primary))] " />
             {S.label}
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">{S.desc}</p>
@@ -1506,7 +1506,7 @@ export default function WMSModule({ token, section }) {
     <div data-testid="wms-module" className="space-y-5 p-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-          <Warehouse size={24} className="text-violet-600 dark:text-violet-400" />
+          <Warehouse size={24} className="text-[hsl(var(--primary))] " />
           Warehouse Management System
         </h1>
         <p className="text-sm text-muted-foreground mt-0.5">Kelola struktur gudang, satuan, receiving, opname, audit trail, dan posisi barang</p>
@@ -1519,7 +1519,7 @@ export default function WMSModule({ token, section }) {
             data-testid={`wms-tab-${t.id}`}
             onClick={() => setTab(t.id)}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all whitespace-nowrap ${
-              activeTab === t.id ? 'bg-violet-600 text-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
+              activeTab === t.id ? 'bg-[hsl(var(--primary))] text-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
             }`}
           >
             <t.icon size={14} /> {t.label}

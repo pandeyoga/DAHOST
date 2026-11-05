@@ -11,18 +11,19 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, EmptyState } from './moduleAtoms';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const STATUS_CONFIG = {
   draft:               { label: 'Draft',             color: 'bg-muted text-foreground border-border dark:bg-slate-500/15 dark:text-slate-300 dark:border-slate-400/30' },
-  in_progress:         { label: 'Sedang Dibuat',     color: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-400/30' },
-  submitted:           { label: 'Menunggu Approval', color: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-400/30' },
-  approved:            { label: 'Disetujui',         color: 'bg-green-100 text-green-700 border-green-300 dark:bg-green-500/15 dark:text-green-300 dark:border-green-400/30' },
-  rejected:            { label: 'Ditolak',           color: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-400/30' },
-  revision_requested:  { label: 'Revisi',            color: 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-400/30' },
+  in_progress:         { label: 'Sedang Dibuat',     color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  submitted:           { label: 'Menunggu Approval', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  approved:            { label: 'Disetujui',         color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
+  rejected:            { label: 'Ditolak',           color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
+  revision_requested:  { label: 'Revisi',            color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
 };
 
 function StatusBadge({ status }) {
@@ -66,13 +67,13 @@ export default function MaklonSampleManagement({ token }) {
     else toast.error((await r.json()).detail || 'Gagal submit');
   };
   const approveSample = async (s) => {
-    if (!window.confirm(`Setujui sample ${s.sample_code}?`)) return;
+    if (!(await confirmDialog({ title: `Setujui sample ${s.sample_code}?`, confirmLabel: 'Setujui' }))) return;
     const r = await fetch(`/api/dewi/maklon/samples/${s.id}/approve`, { method: 'POST', headers, body: JSON.stringify({}) });
     if (r.ok) { toast.success('Sample disetujui'); fetchAll(); }
     else toast.error((await r.json()).detail || 'Gagal menyetujui');
   };
   const deleteSample = async (s) => {
-    if (!window.confirm(`Hapus sample ${s.sample_code}?`)) return;
+    if (!(await confirmDialog({ title: `Hapus sample ${s.sample_code}?`, body: 'Sample yang dihapus tidak bisa dikembalikan.', confirmLabel: 'Hapus', danger: true }))) return;
     const r = await fetch(`/api/dewi/maklon/samples/${s.id}`, { method: 'DELETE', headers });
     if (r.ok) { toast.success('Sample dihapus'); fetchAll(); }
     else toast.error((await r.json()).detail || 'Gagal menghapus');
@@ -87,15 +88,15 @@ export default function MaklonSampleManagement({ token }) {
   });
 
   const stats = [
-    { label: 'Total Sample',   value: summary.total_samples || 0,   color: 'text-blue-400 bg-blue-500/10 border-blue-400/20' },
-    { label: 'Menunggu',       value: summary.pending_approval || 0, color: 'text-amber-400 bg-amber-500/10 border-amber-400/20' },
-    { label: 'Disetujui',      value: summary.approved || 0,        color: 'text-green-400 bg-green-500/10 border-green-400/20' },
-    { label: 'Ditolak',        value: summary.rejected || 0,        color: 'text-red-400 bg-red-500/10 border-red-400/20' },
+    { label: 'Total Sample',   value: summary.total_samples || 0,   color: 'text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Menunggu',       value: summary.pending_approval || 0, color: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.2)]' },
+    { label: 'Disetujui',      value: summary.approved || 0,        color: 'text-[hsl(var(--success))] bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.2)]' },
+    { label: 'Ditolak',        value: summary.rejected || 0,        color: 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.2)]' },
   ];
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-samples">
+    <div className="space-y-4" data-testid="maklon-samples">
       <PageHeader
         title="Sample Management"
         subtitle="Kelola sample produk untuk order maklon dengan workflow approval dari klien"
@@ -103,8 +104,8 @@ export default function MaklonSampleManagement({ token }) {
         testId="maklon-samples-header"
         actions={
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={fetchAll} className="gap-2" data-testid="samples-refresh-btn">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            <Button size="icon" variant="outline" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="samples-refresh-btn">
+              <RefreshCw className="w-3.5 h-3.5" />
             </Button>
             <Button size="sm" onClick={() => setEditDialog({})} className="gap-1.5" data-testid="samples-create-btn">
               <Plus className="w-3.5 h-3.5" /> Buat Sample
@@ -127,8 +128,8 @@ export default function MaklonSampleManagement({ token }) {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
           <TabsTrigger value="all">Semua ({samples.length})</TabsTrigger>
-          <TabsTrigger value="drafts">Draft</TabsTrigger>
-          <TabsTrigger value="pending">Pending Approval</TabsTrigger>
+          <TabsTrigger value="drafts">Draf</TabsTrigger>
+          <TabsTrigger value="pending">Menunggu persetujuan</TabsTrigger>
           <TabsTrigger value="approved">Disetujui</TabsTrigger>
           <TabsTrigger value="rejected">Ditolak</TabsTrigger>
         </TabsList>
@@ -136,14 +137,14 @@ export default function MaklonSampleManagement({ token }) {
         <TabsContent value={tab}>
           <GlassCard className="p-5">
             {loading ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+              <div className="text-center py-8 text-foreground/40 text-sm">Memuat...</div>
             ) : filtered.length === 0 ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Belum ada sample</div>
+              <EmptyState icon={FileCheck} title="Belum ada sample" description="Klik Buat Sample untuk mencatat sample pertama order maklon." testId="samples-empty" />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm" data-testid="samples-table">
                   <thead><tr className="border-b border-foreground/5 text-xs text-foreground/55">
-                    <th className="pb-2 text-left">Sample Code</th>
+                    <th className="pb-2 text-left">Kode sample</th>
                     <th className="pb-2 text-left">Order</th>
                     <th className="pb-2 text-left">Produk</th>
                     <th className="pb-2 text-left">Klien</th>
@@ -154,8 +155,8 @@ export default function MaklonSampleManagement({ token }) {
                   <tbody className="divide-y divide-white/5">
                     {paged.map(s => (
                       <tr key={s.id} className="hover:bg-foreground/[0.03]">
-                        <td className="py-2.5 pr-3 font-mono text-xs text-foreground/70">{s.sample_code}</td>
-                        <td className="py-2.5 pr-3 font-mono text-xs text-foreground/60">{s.order_code}</td>
+                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/70">{s.sample_code}</td>
+                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/60">{s.order_code}</td>
                         <td className="py-2.5 pr-3 text-foreground">{s.product_name}</td>
                         <td className="py-2.5 pr-3 text-foreground/70">{s.client_name}</td>
                         <td className="py-2.5 pr-3 text-center">
@@ -164,22 +165,22 @@ export default function MaklonSampleManagement({ token }) {
                         <td className="py-2.5 pr-3"><StatusBadge status={s.status} /></td>
                         <td className="py-2.5">
                           <div className="flex gap-1 justify-center">
-                            <Button size="icon" variant="ghost" className="w-7 h-7" onClick={() => setViewDialog(s)} title="Detail"><Eye className="w-3.5 h-3.5" /></Button>
+                            <Button size="icon-sm" variant="ghost" onClick={() => setViewDialog(s)} title="Detail"><Eye className="w-3.5 h-3.5" /></Button>
                             {['draft','in_progress','revision_requested'].includes(s.status) && (
                               <>
-                                <Button size="icon" variant="ghost" className="w-7 h-7" onClick={() => setEditDialog({ data: s })} title="Edit"><Edit2 className="w-3.5 h-3.5" /></Button>
-                                <Button size="icon" variant="ghost" className="w-7 h-7 text-blue-400" onClick={() => submitSample(s)} title="Submit"><Send className="w-3.5 h-3.5" /></Button>
+                                <Button size="icon-sm" variant="ghost" onClick={() => setEditDialog({ data: s })} title="Ubah" aria-label="Ubah"><Edit2 className="w-3.5 h-3.5" /></Button>
+                                <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--primary))]" onClick={() => submitSample(s)} title="Kirim untuk persetujuan" aria-label="Kirim untuk persetujuan"><Send className="w-3.5 h-3.5" /></Button>
                               </>
                             )}
                             {s.status === 'submitted' && (
                               <>
-                                <Button size="icon" variant="ghost" className="w-7 h-7 text-green-400" onClick={() => approveSample(s)} title="Setujui"><CheckCircle2 className="w-3.5 h-3.5" /></Button>
-                                <Button size="icon" variant="ghost" className="w-7 h-7 text-orange-400" onClick={() => setReviseDialog(s)} title="Minta Revisi"><RotateCcw className="w-3.5 h-3.5" /></Button>
-                                <Button size="icon" variant="ghost" className="w-7 h-7 text-red-400" onClick={() => setRejectDialog(s)} title="Tolak"><XCircle className="w-3.5 h-3.5" /></Button>
+                                <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--success))]" onClick={() => approveSample(s)} title="Setujui"><CheckCircle2 className="w-3.5 h-3.5" /></Button>
+                                <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--warning))]" onClick={() => setReviseDialog(s)} title="Minta Revisi"><RotateCcw className="w-3.5 h-3.5" /></Button>
+                                <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive))]" onClick={() => setRejectDialog(s)} title="Tolak"><XCircle className="w-3.5 h-3.5" /></Button>
                               </>
                             )}
                             {['draft','in_progress','rejected'].includes(s.status) && (
-                              <Button size="icon" variant="ghost" className="w-7 h-7 text-red-400/70" onClick={() => deleteSample(s)} title="Hapus"><Trash2 className="w-3.5 h-3.5" /></Button>
+                              <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive)/0.7)]" onClick={() => deleteSample(s)} title="Hapus"><Trash2 className="w-3.5 h-3.5" /></Button>
                             )}
                           </div>
                         </td>
@@ -299,8 +300,8 @@ function SampleDialog({ data, orders, headers, onClose, onSuccess }) {
             </div>
             {/* Phase M2.1: Buyer Catalog picker (optional) */}
             {!isEdit && form.order_id && catalogs.length > 0 && (
-              <div className="space-y-1 col-span-2 bg-violet-500/5 border border-violet-400/20 rounded-lg p-2">
-                <Label className="text-xs text-violet-300">📖 Link ke Buyer Catalog (opsional)</Label>
+              <div className="space-y-1 col-span-2 bg-[hsl(var(--primary)/0.05)] border border-[hsl(var(--primary)/0.2)] rounded-lg p-2">
+                <Label className="text-xs text-[hsl(var(--primary))]">📖 Link ke Buyer Catalog (opsional)</Label>
                 <Select value={form.buyer_catalog_id || 'NONE'} onValueChange={handlePickCatalog}>
                   <SelectTrigger className="h-9" data-testid="sample-buyer-catalog-select">
                     <SelectValue placeholder="Pilih artikel dari Buyer Catalog (auto-fill spec)" />
@@ -321,7 +322,7 @@ function SampleDialog({ data, orders, headers, onClose, onSuccess }) {
             )}
             {!isEdit && form.order_id && !loadingCat && catalogs.length === 0 && (
               <div className="col-span-2 text-[10px] text-foreground/45 italic">
-                Belum ada Buyer Catalog active untuk klien ini.
+                Klien ini belum punya Buyer Catalog yang aktif.
               </div>
             )}
             <div className="space-y-1 col-span-2"><Label>Nama Produk Sample *</Label><Input value={form.product_name} onChange={e => set('product_name', e.target.value)} data-testid="sample-product-name-input" /></div>
@@ -385,7 +386,7 @@ function ViewSampleDialog({ sample, headers, onClose }) {
                 {detail.revisions.map(r => (
                   <div key={r.id} className="bg-foreground/5 rounded p-2 text-xs">
                     <div className="flex justify-between">
-                      <span className="font-semibold text-orange-300">Revisi #{r.revision_number}</span>
+                      <span className="font-semibold text-[hsl(var(--warning))]">Revisi #{r.revision_number}</span>
                       <span className="text-foreground/40">{r.requested_by}</span>
                     </div>
                     <div className="mt-1 text-foreground/70">Alasan: {r.reason}</div>

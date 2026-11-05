@@ -27,8 +27,8 @@ export const SETTLEMENT_OPTIONS = [
 ];
 const STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
-  awaiting_settlement: { label: 'Menunggu Penyelesaian', cls: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
-  settled: { label: 'Selesai', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30' },
+  awaiting_settlement: { label: 'Menunggu Penyelesaian', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  settled: { label: 'Selesai', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
   cancelled: { label: 'Batal', cls: 'bg-muted text-muted-foreground border-border line-through' },
 };
 const SHIPPING = ['exchange', 'debit_note', 'refund', 'destroy'];
@@ -195,7 +195,7 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
           <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
           <GlassInput value={notes} onChange={(e) => setNotes(e.target.value)} data-testid="rtp-notes" />
         </div>
-        {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-3 py-2">{err}</div>}
+        {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-3 py-2">{err}</div>}
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={busy} data-testid="rtp-create-submit">{busy ? 'Menyimpan…' : 'Buat Retur (Draft)'}</Button>
@@ -232,7 +232,7 @@ function ReplacementModal({ token, rtp, onClose, onDone }) {
           <option value="">— lokasi penerima —</option>
           {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
         </SmartNativeSelect>
-        {err && <div className="text-sm text-red-700 dark:text-red-400">{err}</div>}
+        {err && <div className="text-sm text-[hsl(var(--destructive))] ">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={busy}>{busy ? 'Memproses…' : 'Terima Pengganti'}</Button>
@@ -295,7 +295,7 @@ export default function PurchaseReturnModule({ token }) {
             data-testid={`rtp-filter-${k}`}>{l}</button>
         ))}
       </div>
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
+      {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-4 py-2">{err}</div>}
       <GlassCard className="overflow-x-auto p-0">
         <table className="w-full text-sm min-w-[900px]">
           <thead className="border-b border-border text-xs text-muted-foreground">
@@ -313,7 +313,7 @@ export default function PurchaseReturnModule({ token }) {
               <tr><td colSpan="8" className="px-3 py-6 text-center text-muted-foreground">Belum ada Retur Pembelian.</td></tr>
             ) : rows.map((r) => (
               <tr key={r.id} className="border-b border-border" data-testid={`rtp-row-${r.id}`}>
-                <td className="px-3 py-2"><button className="font-mono text-xs underline" onClick={() => setDetail(r)}>{r.rtp_number}</button>
+                <td className="px-3 py-2"><button className="tabular-nums text-xs underline" onClick={() => setDetail(r)}>{r.rtp_number}</button>
                   <div className="text-[11px] text-muted-foreground">{fmtDate(r.created_at)}</div></td>
                 <td className="px-3 py-2 text-xs">{r.supplier_name || '-'}<div className="text-muted-foreground">{r.gr_number}{r.po_number ? ` · ${r.po_number}` : ''}</div></td>
                 <td className="px-3 py-2 text-xs">{settlementLabel(r.settlement)}{r.settlement === 'destroy' ? ` (${r.destroy_borne_by === 'da' ? 'DA' : 'pemasok'})` : ''}
@@ -322,7 +322,7 @@ export default function PurchaseReturnModule({ token }) {
                 <td className="px-3 py-2 text-right">{fmtRp(r.total_amount)}</td>
                 <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
                 <td className="px-3 py-2 text-center text-xs">
-                  <span className={r.status === 'awaiting_settlement' && r.age_days >= 14 ? 'text-red-700 dark:text-red-400 font-semibold' : ''}>{r.age_days} hari</span>
+                  <span className={r.status === 'awaiting_settlement' && r.age_days >= 14 ? 'text-[hsl(var(--destructive))]  font-semibold' : ''}>{r.age_days} hari</span>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1 flex-wrap">

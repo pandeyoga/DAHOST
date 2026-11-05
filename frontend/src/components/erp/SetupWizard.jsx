@@ -118,7 +118,7 @@ const STEP_META = [
 
 function StatusIcon({ done }) {
   return done ? (
-    <CheckCircle2 className="w-4 h-4 text-emerald-500 dark:text-emerald-300" />
+    <CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))] " />
   ) : (
     <Circle className="w-4 h-4 text-muted-foreground/50" />
   );
@@ -331,7 +331,7 @@ export function SetupWizard({ open, token, onClose, onNavigate, onComplete }) {
                     <Button
                       onClick={handleSeedSample}
                       disabled={seeding}
-                      className="mt-3 h-9"
+                      className="mt-3"
                       data-testid="setup-seed-sample-btn"
                     >
                       {seeding ? (
@@ -373,21 +373,12 @@ export function SetupWizard({ open, token, onClose, onNavigate, onComplete }) {
                   </div>
                   <div className="flex items-center gap-2">
                     {currentMeta.module && (
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleOpenModule(currentMeta.module)}
-                        className="h-9 border border-[var(--glass-border)]"
-                        data-testid={`setup-open-${currentMeta.key}`}
-                      >
+                      <Button variant="outline" onClick={() => handleOpenModule(currentMeta.module)} data-testid={`setup-open-${currentMeta.key}`} >
                         Buka Modul <ArrowRight className="w-3.5 h-3.5 ml-1" />
                       </Button>
                     )}
                     {currentMeta.moduleSecondary && (
-                      <Button
-                        variant="ghost"
-                        onClick={() => handleOpenModule(currentMeta.moduleSecondary)}
-                        className="h-9 border border-[var(--glass-border)]"
-                      >
+                      <Button variant="outline" onClick={() => handleOpenModule(currentMeta.moduleSecondary)} >
                         Size <ArrowRight className="w-3.5 h-3.5 ml-1" />
                       </Button>
                     )}
@@ -408,47 +399,33 @@ export function SetupWizard({ open, token, onClose, onNavigate, onComplete }) {
         {/* Footer */}
         <div className="px-6 py-3 border-t border-[var(--glass-border)] flex items-center justify-between gap-2 bg-[var(--glass-bg)]">
           <div className="flex items-center gap-2">
-            <Button
+            <Button size="sm"
               variant="ghost"
               onClick={handleDismiss}
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              className="text-xs text-muted-foreground hover:text-foreground"
               data-testid="setup-dismiss-btn"
             >
               Jangan tampilkan lagi
             </Button>
-            <Button
+            <Button size="sm"
               variant="ghost"
               onClick={handleSkip}
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              className="text-xs text-muted-foreground hover:text-foreground"
               data-testid="setup-skip-btn"
             >
               <SkipForward className="w-3 h-3 mr-1" /> Lewati (24 jam)
             </Button>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setStep((s) => Math.max(0, s - 1))}
-              disabled={!canGoPrev}
-              className="h-9 border border-[var(--glass-border)]"
-              data-testid="setup-prev-btn"
-            >
+            <Button variant="outline" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={!canGoPrev} data-testid="setup-prev-btn" >
               <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Sebelumnya
             </Button>
             {canGoNext ? (
-              <Button
-                onClick={() => setStep((s) => Math.min(steps.length - 1, s + 1))}
-                className="h-9"
-                data-testid="setup-next-btn"
-              >
+              <Button onClick={() => setStep((s) => Math.min(steps.length - 1, s + 1))} data-testid="setup-next-btn" >
                 {step === 0 ? 'Mulai' : 'Selanjutnya'} <ArrowRight className="w-3.5 h-3.5 ml-1" />
               </Button>
             ) : (
-              <Button
-                onClick={handleDismiss}
-                className="h-9"
-                data-testid="setup-finish-btn"
-              >
+              <Button onClick={handleDismiss} data-testid="setup-finish-btn" >
                 <CheckCircle2 className="w-4 h-4 mr-1.5" /> Selesai
               </Button>
             )}

@@ -268,7 +268,7 @@ export default function RahazaMaterialRequirementsModule() {
                     type="button"
                     onClick={() => removeLine(idx)}
                     disabled={lines.length === 1}
-                    className="text-foreground/40 hover:text-red-400 disabled:opacity-30 transition-colors"
+                    className="text-foreground/40 hover:text-[hsl(var(--destructive))] disabled:opacity-30 transition-colors"
                     data-testid={`mrp-line-remove-${idx}`}
                   >
                     <Trash2 className="w-4 h-4" />
@@ -330,7 +330,7 @@ export default function RahazaMaterialRequirementsModule() {
           </div>
 
           {(result.warnings || []).length > 0 && (
-            <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-sm text-amber-200"
+            <div className="rounded-lg border border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)] p-3 text-sm text-[hsl(var(--warning))]"
                  data-testid="mrp-warnings">
               {result.warnings.map((w, i) => <div key={i}>• {w}</div>)}
             </div>
@@ -344,7 +344,7 @@ export default function RahazaMaterialRequirementsModule() {
               </h3>
               <Button variant="outline" size="sm" onClick={exportCSV}
                       disabled={agg.length === 0} data-testid="mrp-export-csv">
-                <Download className="w-4 h-4 mr-2" /> Export CSV
+                <Download className="w-4 h-4 mr-2" /> Unduh CSV
               </Button>
             </div>
             {agg.length === 0 ? (
@@ -370,45 +370,45 @@ export default function RahazaMaterialRequirementsModule() {
                 <TableBody>
                   {agg.map((m, idx) => (
                     <TableRow key={idx} data-testid={`mrp-row-${idx}`}>
-                      <TableCell className="font-mono text-xs">{m.code || '—'}</TableCell>
+                      <TableCell className="tabular-nums text-xs">{m.code || '—'}</TableCell>
                       <TableCell className="font-medium">{m.name}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {m.category_name || m.material_type || '—'}
                         {m.is_kglike && <Badge variant="secondary" className="ml-1.5 text-[10px]">kain/benang</Badge>}
                       </TableCell>
-                      <TableCell className="text-right font-mono font-semibold">{fmt(m.total_required)}</TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">{fmt(m.total_required)}</TableCell>
                       <TableCell className="text-xs">{m.unit}</TableCell>
                       {result.include_cost && (
-                        <TableCell className="text-right font-mono text-xs" data-testid={`mrp-unitcost-${idx}`}>
+                        <TableCell className="text-right tabular-nums text-xs" data-testid={`mrp-unitcost-${idx}`}>
                           {rp(m.unit_cost)}
                           {m.cost_source === 'default' && (
-                            <span className="ml-1 text-amber-400" title="Harga default costing-settings (material belum punya unit_cost)">*</span>
+                            <span className="ml-1 text-[hsl(var(--warning))]" title="Harga default costing-settings (material belum punya unit_cost)">*</span>
                           )}
                         </TableCell>
                       )}
                       {result.include_cost && (
-                        <TableCell className="text-right font-mono text-xs font-semibold" data-testid={`mrp-subtotal-${idx}`}>
+                        <TableCell className="text-right tabular-nums text-xs font-semibold" data-testid={`mrp-subtotal-${idx}`}>
                           {rp(m.subtotal_cost)}
                         </TableCell>
                       )}
                       {result.include_stock && (
-                        <TableCell className="text-right font-mono text-xs">
+                        <TableCell className="text-right tabular-nums text-xs">
                           {m.material_id ? fmt(m.onhand) : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                       )}
                       {result.include_stock && (
-                        <TableCell className="text-right font-mono text-xs">
+                        <TableCell className="text-right tabular-nums text-xs">
                           {m.material_id ? fmt(m.available) : <span className="text-muted-foreground">—</span>}
                         </TableCell>
                       )}
                       {result.include_stock && (
-                        <TableCell className="text-right font-mono text-xs font-semibold">
+                        <TableCell className="text-right tabular-nums text-xs font-semibold">
                           {!m.material_id ? (
                             <span className="text-muted-foreground" title="Material belum tertaut ke master stok">n/a</span>
                           ) : m.shortfall > 0 ? (
-                            <span className="text-red-400" data-testid={`mrp-shortfall-${idx}`}>{fmt(m.shortfall)}</span>
+                            <span className="text-[hsl(var(--destructive))]" data-testid={`mrp-shortfall-${idx}`}>{fmt(m.shortfall)}</span>
                           ) : (
-                            <span className="text-emerald-400">0</span>
+                            <span className="text-[hsl(var(--success))]">0</span>
                           )}
                         </TableCell>
                       )}
@@ -422,14 +422,14 @@ export default function RahazaMaterialRequirementsModule() {
           {/* Lines without BOM */}
           {noBom.length > 0 && (
             <GlassPanel className="p-4" data-testid="mrp-no-bom">
-              <h4 className="text-sm font-semibold text-amber-300 flex items-center gap-2 mb-2">
+              <h4 className="text-sm font-semibold text-[hsl(var(--warning))] flex items-center gap-2 mb-2">
                 <AlertTriangle className="w-4 h-4" /> Baris tanpa BOM aktif ({noBom.length})
               </h4>
               <div className="space-y-1 text-xs text-foreground/70">
                 {noBom.map((l, i) => (
                   <div key={i}>
                     • {(l.model_code || l.model_id || '?')} · ukuran {(l.size_code || l.size_id || '?')} ·
-                    {' '}{fmt(l.qty_pcs, 0)} pcs — <span className="text-amber-300/80">{l.reason}</span>
+                    {' '}{fmt(l.qty_pcs, 0)} pcs — <span className="text-[hsl(var(--warning)/0.8)]">{l.reason}</span>
                   </div>
                 ))}
               </div>
@@ -466,9 +466,9 @@ export default function RahazaMaterialRequirementsModule() {
                       <TableRow key={i}>
                         <TableCell className="text-sm">{l.model_code || l.model_id}{l.label ? ` · ${l.label}` : ''}</TableCell>
                         <TableCell className="text-xs">{l.size_code || l.size_id}</TableCell>
-                        <TableCell className="text-right font-mono">{fmt(l.qty_pcs, 0)}</TableCell>
-                        <TableCell className="text-right font-mono text-xs">v{l.version}</TableCell>
-                        <TableCell className="text-right font-mono text-xs">{l.material_count}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmt(l.qty_pcs, 0)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-xs">v{l.version}</TableCell>
+                        <TableCell className="text-right tabular-nums text-xs">{l.material_count}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -484,9 +484,9 @@ export default function RahazaMaterialRequirementsModule() {
 
 function SummaryCard({ label, value, icon: Icon, tone, highlight }) {
   const toneCls = tone === 'danger'
-    ? 'text-red-400'
+    ? 'text-[hsl(var(--destructive))]'
     : tone === 'success'
-      ? 'text-emerald-400'
+      ? 'text-[hsl(var(--success))]'
       : highlight
         ? 'text-primary'
         : 'text-foreground';
@@ -495,7 +495,7 @@ function SummaryCard({ label, value, icon: Icon, tone, highlight }) {
       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
         {Icon && <Icon className={`w-4 h-4 ${toneCls}`} />} {label}
       </div>
-      <div className={`text-2xl font-bold font-mono ${toneCls}`}>{value}</div>
+      <div className={`text-2xl font-bold tabular-nums ${toneCls}`}>{value}</div>
     </GlassPanel>
   );
 }

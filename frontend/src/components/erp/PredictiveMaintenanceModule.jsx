@@ -18,10 +18,10 @@ import {
 } from 'lucide-react';
 
 const STATUS_COLOR = {
-  healthy: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30',
-  monitor: 'bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30',
-  at_risk: 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
-  critical: 'bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30',
+  healthy: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border-[hsl(var(--success)/0.3)]',
+  monitor: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.3)]',
+  at_risk: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.3)]',
+  critical: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.3)]',
 };
 
 const STATUS_LABEL = {
@@ -175,7 +175,7 @@ export default function PredictiveMaintenanceModule({ token }) {
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Wrench className="w-6 h-6 text-orange-500" /> Predictive Maintenance
+            <Wrench className="w-6 h-6 text-[hsl(var(--warning))]" /> Predictive Maintenance
           </h1>
           <p className="text-sm text-muted-foreground">
             Monitoring kesehatan mesin & prediksi maintenance berdasarkan log historis + saran AI (Claude, bila AI aktif).
@@ -259,9 +259,9 @@ export default function PredictiveMaintenanceModule({ token }) {
               </div>
 
               {dashboard.overdue_pm > 0 && (
-                <GlassCard className="p-4 border border-amber-500/30 bg-amber-500/5">
+                <GlassCard className="p-4 border border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.05)]">
                   <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                    <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))]" />
                     <p className="text-sm font-medium text-foreground">
                       {dashboard.overdue_pm} mesin overdue preventive maintenance (&gt;90 hari)
                     </p>
@@ -271,10 +271,10 @@ export default function PredictiveMaintenanceModule({ token }) {
 
               {dashboard.critical_machines?.length > 0 && (
                 <GlassCard className="p-6">
-                  <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-red-500" /> Mesin Kondisi Kritis</h3>
+                  <h3 className="text-base font-semibold mb-3 flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-[hsl(var(--destructive))]" /> Mesin Kondisi Kritis</h3>
                   <div className="space-y-2">
                     {dashboard.critical_machines.map((m) => (
-                      <div key={m.id} className="p-3 rounded-lg bg-red-500/5 border border-red-500/20">
+                      <div key={m.id} className="p-3 rounded-lg bg-[hsl(var(--destructive)/0.05)] border border-[hsl(var(--destructive)/0.2)]">
                         <div className="flex items-center justify-between">
                           <div>
                             <div className="text-sm font-medium">{m.name || m.code}</div>
@@ -304,7 +304,7 @@ export default function PredictiveMaintenanceModule({ token }) {
                   onClick={() => openMachine(m)}
                   onKeyDown={(e) => e.key === 'Enter' && openMachine(m)}
                   data-testid={`pm-machine-${m.id}`}
-                  className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:border-orange-500/40 cursor-pointer transition"
+                  className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:border-[hsl(var(--warning)/0.4)] cursor-pointer transition"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div>
@@ -354,7 +354,7 @@ export default function PredictiveMaintenanceModule({ token }) {
                         <td className="py-2 px-2 text-muted-foreground">{l.technician || '—'}</td>
                         <td className="py-2 px-2 text-right text-xs">{l.cost ? `Rp ${Number(l.cost).toLocaleString('id-ID')}` : '—'}</td>
                         <td className="py-2 px-2 text-right">
-                          <button onClick={() => deleteLog(l.id)} className="text-red-500 hover:underline" data-testid={`pm-log-del-${l.id}`}>
+                          <button onClick={() => deleteLog(l.id)} className="text-[hsl(var(--destructive))] hover:underline" data-testid={`pm-log-del-${l.id}`}>
                             <Trash2 className="w-3.5 h-3.5 inline" />
                           </button>
                         </td>
@@ -376,14 +376,14 @@ export default function PredictiveMaintenanceModule({ token }) {
             <>
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <Cog className="w-5 h-5 text-orange-500" /> {selectedMachine.name || selectedMachine.code}
+                  <Cog className="w-5 h-5 text-[hsl(var(--warning))]" /> {selectedMachine.name || selectedMachine.code}
                 </DialogTitle>
               </DialogHeader>
               {!detailHealth ? (
                 <div className="py-8 text-center text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Memuat...</div>
               ) : (
                 <div className="space-y-4">
-                  <div className="p-3 rounded-xl bg-gradient-to-br from-orange-500/10 to-red-500/10 border border-orange-500/20">
+                  <div className="p-3 rounded-xl bg-gradient-to-br from-[hsl(var(--warning)/0.1)] to-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--warning)/0.2)]">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-sm font-semibold">Health Score</span>
                       <Badge className={STATUS_COLOR[detailHealth.health.status]} variant="outline">
@@ -401,16 +401,16 @@ export default function PredictiveMaintenanceModule({ token }) {
                         {detailHealth.health.factors.map((f, i) => (
                           <div key={i} className="flex items-center justify-between p-2 rounded bg-[var(--glass)] border border-[var(--glass-border)] text-xs">
                             <span>{f.factor}</span>
-                            <span className="text-red-500 font-medium">{f.impact}</span>
+                            <span className="text-[hsl(var(--destructive))] font-medium">{f.impact}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   )}
 
-                  <div className="p-3 rounded-lg bg-gradient-to-br from-indigo-500/10 to-violet-500/10 border border-indigo-500/20">
+                  <div className="p-3 rounded-lg bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.2)]">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-semibold flex items-center gap-1"><Sparkles className="w-4 h-4 text-indigo-500" /> AI Maintenance Advice</span>
+                      <span className="text-sm font-semibold flex items-center gap-1"><Sparkles className="w-4 h-4 text-[hsl(var(--primary))]" /> AI Maintenance Advice</span>
                       <Button size="sm" onClick={runAIPredict} disabled={aiLoading} data-testid="pm-ai-predict">
                         {aiLoading ? <><Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> Generating...</> : <><Sparkles className="w-3.5 h-3.5 mr-1" /> Generate</>}
                       </Button>
@@ -453,11 +453,11 @@ export default function PredictiveMaintenanceModule({ token }) {
 
 function StatCard({ label, value, icon: Icon, color }) {
   const map = {
-    blue: 'from-blue-500/10 to-cyan-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400',
-    emerald: 'from-emerald-500/10 to-teal-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400',
-    amber: 'from-amber-500/10 to-orange-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400',
-    red: 'from-red-500/10 to-rose-500/10 border-red-500/20 text-red-600 dark:text-red-400',
-    indigo: 'from-indigo-500/10 to-violet-500/10 border-indigo-500/20 text-indigo-600 dark:text-indigo-400',
+    blue: 'from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.2)] text-[hsl(var(--primary))] ',
+    emerald: 'from-[hsl(var(--success)/0.1)] to-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.2)] text-[hsl(var(--success))] ',
+    amber: 'from-[hsl(var(--warning)/0.1)] to-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.2)] text-[hsl(var(--warning))] ',
+    red: 'from-[hsl(var(--destructive)/0.1)] to-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.2)] text-[hsl(var(--destructive))] ',
+    indigo: 'from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.2)] text-[hsl(var(--primary))] ',
   };
   return (
     <div className={`p-3 rounded-xl bg-gradient-to-br border ${map[color] || map.blue}`}>

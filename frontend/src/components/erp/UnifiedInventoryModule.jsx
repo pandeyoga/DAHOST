@@ -35,11 +35,11 @@ function fmtDate(d) {
 }
 
 const CATEGORY_COLORS = {
-  wip_internal: 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-400/30',
-  fg_internal: 'bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-300 border-green-400 dark:border-green-400/30',
-  raw_material: 'bg-amber-100 dark:bg-amber-500/15 text-amber-600 dark:text-amber-300 border-amber-400 dark:border-amber-400/30',
-  maklon_wip: 'bg-violet-100 dark:bg-violet-500/15 text-violet-600 dark:text-violet-300 border-violet-400 dark:border-violet-400/30',
-  maklon_fg: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-400 dark:border-emerald-400/30',
+  wip_internal: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ',
+  fg_internal: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ',
+  raw_material: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',
+  maklon_wip: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ',
+  maklon_fg: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ',
 };
 
 // ─── MATERIAL MOVEMENTS DIALOG ─────────────────────────────────────────────────
@@ -75,12 +75,12 @@ function MaterialMovementsDialog({ material, onClose, headers }) {
       </DialogHeader>
 
       <div className="space-y-3">
-        <div className="bg-blue-100 dark:bg-blue-500/10 border border-blue-300 dark:border-blue-400/20 rounded-lg p-3 text-sm">
+        <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-lg p-3 text-sm">
           <div className="grid grid-cols-2 gap-2 text-xs">
-            <div><span className="text-muted-foreground">Kode Barang:</span> <span className="text-foreground font-mono">{material.material_code || material.sku || '—'}</span></div>
+            <div><span className="text-muted-foreground">Kode Barang:</span> <span className="text-foreground tabular-nums">{material.material_code || material.sku || '—'}</span></div>
             <div><span className="text-muted-foreground">Kategori:</span> <span className="text-foreground">{material.category_name || material.inventory_category}</span></div>
-            <div><span className="text-muted-foreground">Current Qty:</span> <span className="text-foreground font-mono">{fmtNum(material.quantity)} {material.unit}</span></div>
-            <div><span className="text-muted-foreground">Available:</span> <span className="text-green-600 dark:text-green-300 font-mono">{fmtNum(material.available_quantity)} {material.unit}</span></div>
+            <div><span className="text-muted-foreground">Current Qty:</span> <span className="text-foreground tabular-nums">{fmtNum(material.quantity)} {material.unit}</span></div>
+            <div><span className="text-muted-foreground">Available:</span> <span className="text-[hsl(var(--success))] tabular-nums">{fmtNum(material.available_quantity)} {material.unit}</span></div>
           </div>
         </div>
 
@@ -94,11 +94,11 @@ function MaterialMovementsDialog({ material, onClose, headers }) {
               <div key={idx} className="bg-foreground/5 rounded-lg p-3 border border-foreground/10">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
-                    <Badge className={mov.movement_type === 'IN' ? 'bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-300' : 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300'}>
+                    <Badge className={mov.movement_type === 'IN' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] '}>
                       {mov.movement_type === 'IN' ? <TrendingUp className="w-3 h-3 mr-1" /> : <TrendingDown className="w-3 h-3 mr-1" />}
                       {mov.movement_type}
                     </Badge>
-                    <span className="text-sm text-foreground font-mono">
+                    <span className="text-sm text-foreground tabular-nums">
                       {mov.movement_type === 'IN' ? '+' : ''}{fmtNum(mov.quantity)} {mov.unit || material.unit}
                     </span>
                   </div>
@@ -183,15 +183,15 @@ function StockAdjustmentDialog({ material, onClose, headers, onSuccess }) {
       </DialogHeader>
 
       <div className="space-y-4 pt-2">
-        <div className="bg-blue-100 dark:bg-blue-500/10 border border-blue-300 dark:border-blue-400/20 rounded-lg p-3 text-sm">
+        <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-lg p-3 text-sm">
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div>
               <span className="text-muted-foreground">Current Qty:</span>{' '}
-              <span className="text-foreground font-mono">{fmtNum(material.quantity)} {material.unit}</span>
+              <span className="text-foreground tabular-nums">{fmtNum(material.quantity)} {material.unit}</span>
             </div>
             <div>
               <span className="text-muted-foreground">Available:</span>{' '}
-              <span className="text-green-600 dark:text-green-300 font-mono">{fmtNum(material.available_quantity)} {material.unit}</span>
+              <span className="text-[hsl(var(--success))] tabular-nums">{fmtNum(material.available_quantity)} {material.unit}</span>
             </div>
           </div>
         </div>
@@ -222,12 +222,12 @@ function StockAdjustmentDialog({ material, onClose, headers, onSuccess }) {
             value={qtyDelta}
             onChange={e => setQtyDelta(e.target.value)}
             placeholder={adjustmentType === 'correction' ? 'e.g. -5 atau 10' : 'e.g. 5'}
-            className="bg-foreground/5 border-foreground/10 font-mono"
+            className="bg-foreground/5 border-foreground/10 tabular-nums"
           />
           {qtyDelta && !isNaN(Number(qtyDelta)) && (
             <div className="text-xs text-muted-foreground">
               Preview: {fmtNum(material.quantity)} → {' '}
-              <span className="text-amber-600 dark:text-amber-300 font-mono">
+              <span className="text-[hsl(var(--warning))] tabular-nums">
                 {fmtNum(
                   Number(material.quantity || 0) +
                   (adjustmentType === 'opname_decrease' || adjustmentType === 'damage'
@@ -278,7 +278,7 @@ function StockAdjustmentDialog({ material, onClose, headers, onSuccess }) {
             data-testid="adjustment-submit-btn"
             onClick={handleSubmit}
             disabled={loading}
-            className="bg-gradient-to-r from-amber-500 to-orange-500 text-foreground"
+            className="bg-gradient-to-r from-[hsl(var(--warning)/0.1)] to-[hsl(var(--warning)/0.1)] text-foreground"
           >
             {loading ? 'Memproses...' : 'Submit Adjustment'}
           </Button>
@@ -443,7 +443,7 @@ export default function UnifiedInventoryModule({ token }) {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] flex items-center justify-center">
               <Package className="w-5 h-5 text-foreground" />
             </div>
             Unified Inventory Viewer
@@ -457,13 +457,13 @@ export default function UnifiedInventoryModule({ token }) {
           </Button>
           <Button onClick={handleExport} variant="outline" size="sm" className="border-foreground/10">
             <Download className="w-4 h-4 mr-2" />
-            Export CSV
+            Unduh CSV
           </Button>
         </div>
       </div>
 
       {/* RC-IA-warehouse-3: viewer read-only. Adjustment RESMI dilakukan di tab "Penyesuaian" (jalur rahaza/material-adjust + posting GL, per-lokasi). */}
-      <div className="flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-3 py-2 text-xs text-blue-700 dark:text-blue-300" data-testid="unified-viewer-readonly-note">
+      <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)] px-3 py-2 text-xs text-[hsl(var(--primary))] " data-testid="unified-viewer-readonly-note">
         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
         <span>Tampilan ini <strong>read-only</strong>. Untuk menyesuaikan stok gunakan tab <strong>“Penyesuaian (Adjustment)”</strong> — jalur resmi yang mencatat pergerakan per-lokasi &amp; posting jurnal (GL).</span>
       </div>
@@ -472,10 +472,10 @@ export default function UnifiedInventoryModule({ token }) {
       <div className="grid grid-cols-5 gap-4">
         {[
           { label: 'Total Items', value: stats.totalItems, color: 'text-foreground' },
-          { label: 'Total Qty', value: fmtNum(stats.totalQty), color: 'text-blue-600 dark:text-blue-300' },
-          { label: 'Available', value: fmtNum(stats.availableQty), color: 'text-green-600 dark:text-green-300' },
-          { label: 'Reserved', value: fmtNum(stats.reservedQty), color: 'text-amber-600 dark:text-amber-300' },
-          { label: 'Low Stock', value: stats.lowStock, color: stats.lowStock > 0 ? 'text-red-600 dark:text-red-300' : 'text-muted-foreground' },
+          { label: 'Total Qty', value: fmtNum(stats.totalQty), color: 'text-[hsl(var(--primary))] ' },
+          { label: 'Available', value: fmtNum(stats.availableQty), color: 'text-[hsl(var(--success))] ' },
+          { label: 'Reserved', value: fmtNum(stats.reservedQty), color: 'text-[hsl(var(--warning))] ' },
+          { label: 'Low Stock', value: stats.lowStock, color: stats.lowStock > 0 ? 'text-[hsl(var(--destructive))] ' : 'text-muted-foreground' },
         ].map(s => (
           <GlassCard key={s.label} className="p-4">
             <div className={`text-2xl font-bold ${s.color}`}>{s.value}</div>
@@ -626,7 +626,7 @@ export default function UnifiedInventoryModule({ token }) {
                   const isLowStock = (item.available_quantity || 0) < (item.reorder_point || 10);
                   return (
                     <tr key={`${item.id || item.material_id || 'row'}-${item.inventory_category || ''}-${item.ownership || ''}-${item.location || ''}-${idx}`} className="border-b border-foreground/5 hover:bg-foreground/5 transition" data-testid={`inv-row-${item.material_code || item.material_id}`}>
-                      <td className="py-3 px-2 text-foreground font-mono text-xs">{item.material_code || item.sku || '—'}</td>
+                      <td className="py-3 px-2 text-foreground tabular-nums text-xs">{item.material_code || item.sku || '—'}</td>
                       <td className="py-3 px-2 text-foreground">{item.material_name}</td>
                       <td className="py-3 px-2 text-foreground/80 text-xs">{item.category_name || '—'}</td>
                       <td className="py-3 px-2 text-foreground/80 text-xs">
@@ -639,14 +639,14 @@ export default function UnifiedInventoryModule({ token }) {
                           {item.inventory_category}
                         </Badge>
                       </td>
-                      <td className="py-3 px-2 text-right text-foreground font-mono">{fmtNum(item.quantity)} {item.unit}</td>
+                      <td className="py-3 px-2 text-right text-foreground tabular-nums">{fmtNum(item.quantity)} {item.unit}</td>
                       <td className="py-3 px-2 text-right">
-                        <span className={`font-mono ${isLowStock ? 'text-red-600 dark:text-red-300' : 'text-green-600 dark:text-green-300'}`}>
+                        <span className={`tabular-nums ${isLowStock ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--success))] '}`}>
                           {fmtNum(item.available_quantity)} {item.unit}
                         </span>
-                        {isLowStock && <AlertCircle className="w-3 h-3 inline ml-1 text-red-700 dark:text-red-400" />}
+                        {isLowStock && <AlertCircle className="w-3 h-3 inline ml-1 text-[hsl(var(--destructive))] " />}
                       </td>
-                      <td className="py-3 px-2 text-right text-amber-600 dark:text-amber-300 font-mono">{fmtNum(item.reserved_quantity || 0)}</td>
+                      <td className="py-3 px-2 text-right text-[hsl(var(--warning))] tabular-nums">{fmtNum(item.reserved_quantity || 0)}</td>
                       <td className="py-3 px-2 text-muted-foreground text-xs">
                         {item.no_stock_row
                           ? <span className="italic text-foreground/40">belum ada baris stok</span>
@@ -661,7 +661,7 @@ export default function UnifiedInventoryModule({ token }) {
                             size="sm"
                             variant="ghost"
                             onClick={() => setMovementsDialog(item)}
-                            className="h-7 px-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-600 dark:text-blue-300"
+                            className="h-7 px-2 text-xs text-[hsl(var(--primary))] hover:text-[hsl(var(--primary))] "
                           >
                             <Eye className="w-3 h-3 mr-1" />
                             Log
@@ -682,11 +682,11 @@ export default function UnifiedInventoryModule({ token }) {
             <div className="flex items-center gap-3 text-xs text-muted-foreground">
               <span>
                 Menampilkan{' '}
-                <span className="text-foreground font-mono">
+                <span className="text-foreground tabular-nums">
                   {((page - 1) * pageSize) + 1}–{Math.min(page * pageSize, pagination.total)}
                 </span>{' '}
                 dari{' '}
-                <span className="text-foreground font-mono">{fmtNum(pagination.total)}</span>{' '}
+                <span className="text-foreground tabular-nums">{fmtNum(pagination.total)}</span>{' '}
                 item
               </span>
               <div className="flex items-center gap-2">
@@ -726,7 +726,7 @@ export default function UnifiedInventoryModule({ token }) {
               >
                 <ChevronLeft className="w-4 h-4" />
               </Button>
-              <span className="px-3 text-xs text-foreground/70 font-mono">
+              <span className="px-3 text-xs text-foreground/70 tabular-nums">
                 Halaman <span className="text-foreground">{page}</span> dari{' '}
                 <span className="text-foreground">{pagination.total_pages}</span>
               </span>

@@ -27,11 +27,11 @@ const API = process.env.REACT_APP_BACKEND_URL || '';
 const fmtNum = (v) => (v === null || v === undefined ? '—' : Number(v).toLocaleString('id-ID', { maximumFractionDigits: 4 }));
 const fmtRp = (v) => 'Rp ' + Math.round(v || 0).toLocaleString('id-ID');
 const STATUS_BADGE = {
-  counting: 'bg-blue-400/10 text-blue-400 border-blue-300/20',
-  submitted: 'bg-amber-400/10 text-amber-400 border-amber-300/20',
-  approving: 'bg-amber-400/10 text-amber-400 border-amber-300/20',
-  approved: 'bg-emerald-400/10 text-emerald-400 border-emerald-300/20',
-  rejected: 'bg-red-400/10 text-red-400 border-red-300/20',
+  counting: 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.2)]',
+  submitted: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.2)]',
+  approving: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.2)]',
+  approved: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.2)]',
+  rejected: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.2)]',
   cancelled: 'bg-muted text-muted-foreground border-[var(--glass-border)]',
 };
 const STATUS_LABEL = {
@@ -41,8 +41,8 @@ const STATUS_LABEL = {
 const KIND_OPTS = [['bahan', 'Kain / Bahan'], ['aksesoris', 'Aksesoris'], ['fg', 'Barang Jadi']];
 const LINE_STATUS = {
   belum: ['Belum dihitung', 'bg-muted text-muted-foreground border-[var(--glass-border)]'],
-  dihitung: ['Dihitung', 'bg-emerald-400/10 text-emerald-400 border-emerald-300/20'],
-  nol: ['Anggap 0', 'bg-amber-400/10 text-amber-400 border-amber-300/20'],
+  dihitung: ['Dihitung', 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.2)]'],
+  nol: ['Anggap 0', 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.2)]'],
 };
 const selectCls = 'w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground';
 
@@ -226,7 +226,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>;
 
   const banner = message && (
-    <div data-testid="opname-message" className={`p-3 rounded-xl text-sm font-medium ${message.type === 'success' ? 'bg-emerald-400/10 text-emerald-400 border border-emerald-300/20' : 'bg-red-400/10 text-red-400 border border-red-300/20'}`}>{message.text}</div>
+    <div data-testid="opname-message" className={`p-3 rounded-xl text-sm font-medium ${message.type === 'success' ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.2)]' : 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.2)]'}`}>{message.text}</div>
   );
 
   // ── DAFTAR ──
@@ -306,7 +306,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               {sessions.map((s) => (
                 <button key={s.id} onClick={() => openSession(s)} className="w-full text-left p-3 rounded-xl border border-[var(--glass-border)] bg-[var(--glass-bg)] hover:bg-[var(--glass-bg-hover)] transition-colors flex items-center justify-between gap-3" data-testid={`opname-session-${s.session_no}`}>
                   <div className="min-w-0">
-                    <p className="text-sm font-medium text-foreground font-mono flex items-center gap-2">{s.session_no}
+                    <p className="text-sm font-medium text-foreground tabular-nums flex items-center gap-2">{s.session_no}
                       {s.archived && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--glass-border)] text-muted-foreground flex items-center gap-1"><Archive className="w-3 h-3" /> arsip</span>}
                       {s.level === 'rak' && <span className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--glass-border)] text-muted-foreground">rak</span>}
                     </p>
@@ -327,7 +327,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       <div className="flex items-center gap-3">
         <IconButton label="Kembali" onClick={backToList} data-testid="opname-back"><ArrowLeft className="w-4 h-4 text-muted-foreground" /></IconButton>
         <div>
-          <h1 className="text-xl font-bold text-foreground font-mono">{sess.session_no}</h1>
+          <h1 className="text-xl font-bold text-foreground tabular-nums">{sess.session_no}</h1>
           <p className="text-muted-foreground text-xs">{sess.scope_label || '-'}{view.archived ? ' · ARSIP baca-saja (mesin lama)' : ''}</p>
         </div>
       </div>
@@ -367,14 +367,14 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
       {banner}
 
       {zeroList && (
-        <GlassCard hover={false} className="p-5 border border-amber-300/30" data-testid="opname-zero-confirm">
-          <h3 className="text-sm font-semibold text-amber-400 flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4" /> {zeroList.length} baris BELUM dihitung</h3>
+        <GlassCard hover={false} className="p-5 border border-[hsl(var(--warning)/0.3)]" data-testid="opname-zero-confirm">
+          <h3 className="text-sm font-semibold text-[hsl(var(--warning))] flex items-center gap-2 mb-2"><AlertTriangle className="w-4 h-4" /> {zeroList.length} baris BELUM dihitung</h3>
           <p className="text-xs text-muted-foreground mb-2">Belum dihitung ≠ 0. Hitung dulu, atau konfirmasi bahwa barang ini memang tidak ada (stok akan menjadi 0 saat disetujui).</p>
           <div className="max-h-48 overflow-y-auto text-xs text-foreground space-y-0.5 mb-3">
             {zeroList.map((z) => <div key={z.key}>{z.material_code} — {z.material_name}{z.bin_label ? ` @ ${z.bin_label}` : ''}</div>)}
           </div>
           <div className="flex gap-2">
-            <Button onClick={() => doAction('submit', { confirm_zero: true })} disabled={busy} className="bg-amber-500 text-white hover:brightness-110" data-testid="opname-confirm-zero">Anggap 0 &amp; Ajukan</Button>
+            <Button onClick={() => doAction('submit', { confirm_zero: true })} disabled={busy} className="bg-[hsl(var(--warning))] text-white hover:brightness-110" data-testid="opname-confirm-zero">Anggap 0 &amp; Ajukan</Button>
             <Button onClick={() => setZeroList(null)} variant="ghost" className="text-muted-foreground">Kembali menghitung</Button>
           </div>
         </GlassCard>
@@ -410,7 +410,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
               <UniversalScanner variant="inline" onScan={doScan} continuous keepFocus autoFocus placeholder="Scan / ketik kode barang lalu Enter..." disabled={isRak && !ctxBin.id} data-testid="opname-item-input" />
             </div>
             {lastScan && (
-              <div className="p-3 rounded-xl border bg-emerald-400/10 border-emerald-300/20" data-testid="opname-last-scan">
+              <div className="p-3 rounded-xl border bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.2)]" data-testid="opname-last-scan">
                 <div className="flex items-center justify-between"><span className="text-sm font-medium text-foreground">{lastScan.material_code}</span><span className="text-lg font-bold text-foreground">{fmtNum(lastScan.counted_qty)} {lastScan.base_uom}</span></div>
                 <p className="text-[11px] text-muted-foreground mt-1">{lastScan.material_name} · {lastScan.bin_label || 'lantai / belum dirak'}</p>
               </div>
@@ -467,20 +467,20 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Baris dihitung</p><p className="text-xl font-bold text-foreground">{totals.counted || 0}/{totals.lines || 0}</p></GlassCard>
             <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Baris berselisih</p><p className="text-xl font-bold text-foreground">{totals.with_variance || 0}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Nilai selisih (WAC snapshot)</p><p className={`text-xl font-bold ${totals.total_variance_value < 0 ? 'text-red-400' : totals.total_variance_value > 0 ? 'text-emerald-400' : 'text-foreground'}`}>{fmtRp(totals.total_variance_value)}</p></GlassCard>
-            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Tanpa WAC (tak berjurnal)</p><p className="text-xl font-bold text-amber-400">{totals.uncosted || 0}</p></GlassCard>
+            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Nilai selisih (WAC snapshot)</p><p className={`text-xl font-bold ${totals.total_variance_value < 0 ? 'text-[hsl(var(--destructive))]' : totals.total_variance_value > 0 ? 'text-[hsl(var(--success))]' : 'text-foreground'}`}>{fmtRp(totals.total_variance_value)}</p></GlassCard>
+            <GlassCard hover={false} className="p-4"><p className="text-xs text-muted-foreground">Tanpa WAC (tak berjurnal)</p><p className="text-xl font-bold text-[hsl(var(--warning))]">{totals.uncosted || 0}</p></GlassCard>
           </div>
           {isRak && <p className="text-xs text-muted-foreground">Hitung level rak hanya memperbaiki PENEMPATAN bin — stok dan jurnal tidak berubah.</p>}
 
           {status === 'submitted' && (
             <div className="flex flex-wrap gap-2" data-testid="opname-approval-actions">
-              <Button onClick={() => doAction('approve')} disabled={busy} className="bg-emerald-500 text-white hover:brightness-110" data-testid="opname-approve-btn"><ShieldCheck className="w-4 h-4 mr-1" /> Approve (Supervisor)</Button>
-              <Button onClick={() => doAction('reject')} disabled={busy} variant="outline" className="border-red-300/30 text-red-400" data-testid="opname-reject-btn"><X className="w-4 h-4 mr-1" /> Tolak</Button>
+              <Button onClick={() => doAction('approve')} disabled={busy} className="bg-[hsl(var(--success))] text-white hover:brightness-110" data-testid="opname-approve-btn"><ShieldCheck className="w-4 h-4 mr-1" /> Approve (Supervisor)</Button>
+              <Button onClick={() => doAction('reject')} disabled={busy} variant="outline" className="border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))]" data-testid="opname-reject-btn"><X className="w-4 h-4 mr-1" /> Tolak</Button>
               <Button onClick={() => doAction('cancel')} disabled={busy} variant="ghost" className="text-muted-foreground" data-testid="opname-cancel-btn">Batalkan</Button>
             </div>
           )}
           {status === 'approved' && (
-            <div className="p-3 rounded-xl bg-emerald-400/10 border border-emerald-300/20 text-sm text-emerald-400 flex items-center gap-2 flex-wrap" data-testid="opname-approved-banner">
+            <div className="p-3 rounded-xl bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.2)] text-sm text-[hsl(var(--success))] flex items-center gap-2 flex-wrap" data-testid="opname-approved-banner">
               <PackageCheck className="w-4 h-4" /> Disetujui {sess.approved_by_name || ''}. {sess.summary?.stock_writes || 0} baris stok ditimpa · {sess.summary?.positions_updated || 0} bin diperbarui
               {sess.je_number ? ` · jurnal ${sess.je_number}` : ''}{sess.summary?.je_error ? ` · jurnal GAGAL: ${sess.summary.je_error}` : ''}
             </div>
@@ -499,15 +499,15 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
                 </thead>
                 <tbody>
                   {lines.map((l) => (
-                    <tr key={l.key} className={`border-b border-[var(--glass-border)]/50 ${l.variance_qty ? 'bg-amber-400/5' : ''}`} data-testid={`opname-var-${l.material_code}`}>
-                      <td className="py-2 font-mono text-foreground">{l.material_code}</td>
+                    <tr key={l.key} className={`border-b border-[var(--glass-border)]/50 ${l.variance_qty ? 'bg-[hsl(var(--warning)/0.05)]' : ''}`} data-testid={`opname-var-${l.material_code}`}>
+                      <td className="py-2 tabular-nums text-foreground">{l.material_code}</td>
                       <td className="text-muted-foreground">{l.material_name}</td>
                       {isRak && <td className="text-muted-foreground text-xs">{l.bin_label}</td>}
                       <td className="text-right text-foreground">{fmtNum(l.snapshot_qty)}</td>
                       {!isRak && <td className="text-right text-muted-foreground">{fmtNum(l.mutation_qty)}</td>}
                       {!isRak && <td className="text-right text-foreground">{fmtNum(l.system_qty)}</td>}
                       <td className="text-right text-foreground">{fmtNum(l.counted_qty)}</td>
-                      <td className={`text-right font-semibold ${l.variance_qty < 0 ? 'text-red-400' : l.variance_qty > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>{l.variance_qty > 0 ? '+' : ''}{fmtNum(l.variance_qty)}</td>
+                      <td className={`text-right font-semibold ${l.variance_qty < 0 ? 'text-[hsl(var(--destructive))]' : l.variance_qty > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'}`}>{l.variance_qty > 0 ? '+' : ''}{fmtNum(l.variance_qty)}</td>
                       {!isRak && <td className="text-right text-muted-foreground">{fmtRp(l.variance_value)}</td>}
                       <td className="pl-3 text-[11px] text-muted-foreground">
                         {LINE_STATUS[l.status]?.[0]}{l.reason === 'rusak' ? ' · rusak (6-4300)' : ''}{isRak && !l.in_snapshot ? ` · ${l.resolution === 'lebih' ? 'barang lebih' : 'pindah penempatan'}` : ''}
@@ -524,7 +524,7 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
 
           {(sess.summary?.findings || []).length > 0 && (
             <GlassCard hover={false} className="p-5">
-              <h3 className="text-sm font-semibold text-amber-400 mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Temuan penempatan</h3>
+              <h3 className="text-sm font-semibold text-[hsl(var(--warning))] mb-2 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Temuan penempatan</h3>
               {sess.summary.findings.map((f, i) => (
                 <p key={i} className="text-xs text-foreground">{f.jenis === 'barang_lebih' ? 'Barang lebih (belum masuk stok — hitung penuh lokasi)' : 'Bin sudah berisi barang lain (1 bin = 1 barang) — dianggap belum dirak'}: {lines.find((x) => x.material_id === f.material_id)?.material_code || f.material_id} × {fmtNum(f.qty)}</p>
               ))}

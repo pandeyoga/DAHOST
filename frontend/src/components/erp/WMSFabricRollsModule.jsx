@@ -47,18 +47,18 @@ const rollRemaining = (r) => Number(r?.qty_remaining ?? (r?.is_weight ? r?.remai
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const QC_STATUS = {
-  pending: { label: 'Pending', color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300 border-amber-400 dark:border-amber-500/30' },
-  pass: { label: 'Pass', color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 border-emerald-400 dark:border-emerald-500/30' },
-  partial: { label: 'Partial', color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-500/30' },
-  reject: { label: 'Reject', color: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300 border-red-400 dark:border-red-500/30' },
+  pending: { label: 'Pending', color: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ' },
+  pass: { label: 'Pass', color: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' },
+  partial: { label: 'Partial', color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+  reject: { label: 'Reject', color: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ' },
 };
 
 const STOCK_STATUS = {
-  in_stock: { label: 'In Stock', color: 'bg-green-100 dark:bg-green-500/20 text-green-600 dark:text-green-300' },
-  partly_issued: { label: 'Sebagian Terpakai', color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300' },
+  in_stock: { label: 'In Stock', color: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' },
+  partly_issued: { label: 'Sebagian Terpakai', color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ' },
   fully_issued: { label: 'Habis', color: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400' },
-  returned: { label: 'Dikembalikan', color: 'bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-300' },
-  rejected: { label: 'Ditolak', color: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300' },
+  returned: { label: 'Dikembalikan', color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ' },
+  rejected: { label: 'Ditolak', color: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] ' },
 };
 
 const fmt = (n) => new Intl.NumberFormat('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n ?? 0);
@@ -375,8 +375,8 @@ export default function WMSFabricRollsModule({ token }) {
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-violet-100 dark:bg-violet-500/20 border border-violet-400 dark:border-violet-500/30">
-                <Package className="w-5 h-5 text-violet-600 dark:text-violet-300" />
+              <div className="p-2.5 rounded-xl bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
+                <Package className="w-5 h-5 text-[hsl(var(--primary))] " />
               </div>
               <div>
                 <h1 className="text-2xl font-semibold text-foreground">Fabric Roll Tracking</h1>
@@ -388,7 +388,7 @@ export default function WMSFabricRollsModule({ token }) {
                 onClick={handleAIAnalysis}
                 disabled={aiLoading}
                 variant="outline"
-                className="border-violet-400 dark:border-violet-500/30 bg-violet-100 dark:bg-violet-500/10 hover:bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-300"
+                className="border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.15)]  hover:bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] "
                 data-testid="ai-analysis-btn"
               >
                 {aiLoading ? (
@@ -400,7 +400,7 @@ export default function WMSFabricRollsModule({ token }) {
               </Button>
               <Button
                 onClick={() => setCreateDialog(true)}
-                className="bg-violet-600 hover:bg-violet-700 text-foreground"
+                className="bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-foreground"
                 data-testid="create-roll-btn"
               >
                 <Plus className="w-4 h-4 mr-2" />
@@ -433,7 +433,7 @@ export default function WMSFabricRollsModule({ token }) {
                 <SelectItem value="reject">Reject</SelectItem>
               </SelectContent>
             </Select>
-            <Button
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
               variant="outline"
               onClick={load}
               disabled={loading}
@@ -445,12 +445,12 @@ export default function WMSFabricRollsModule({ token }) {
             <div className="inline-flex rounded-lg border border-foreground/10 overflow-hidden">
               <button type="button" onClick={() => setView('table')} data-testid="rolls-view-table"
                 className={`px-2.5 text-xs flex items-center gap-1 ${view === 'table'
-                  ? 'bg-violet-600 text-white' : 'bg-foreground/5 text-foreground'}`}>
+                  ? 'bg-[hsl(var(--primary))] text-white' : 'bg-foreground/5 text-foreground'}`}>
                 <Filter size={12} /> Tabel
               </button>
               <button type="button" onClick={() => setView('grid')} data-testid="rolls-view-grid"
                 className={`px-2.5 text-xs flex items-center gap-1 ${view === 'grid'
-                  ? 'bg-violet-600 text-white' : 'bg-foreground/5 text-foreground'}`}>
+                  ? 'bg-[hsl(var(--primary))] text-white' : 'bg-foreground/5 text-foreground'}`}>
                 <Package size={12} /> Kartu
               </button>
             </div>
@@ -470,10 +470,10 @@ export default function WMSFabricRollsModule({ token }) {
             <TabsTrigger value="fully_issued" data-testid="tab-fully-issued">Habis</TabsTrigger>
             {/* FASE H-5: pekerjaan yang menahan bagian potong */}
             <TabsTrigger value="missing" data-testid="tab-missing-rolls"
-              className="data-[state=active]:text-amber-700 dark:data-[state=active]:text-amber-300">
+              className="data-[state=active]:text-[hsl(var(--warning))] dark:data-[state=active]:text-[hsl(var(--warning))]">
               Penerimaan tanpa roll
               {missing.length > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-500 text-white text-[10px] font-semibold"
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning))] text-white text-[10px] font-semibold"
                   data-testid="missing-rolls-count">{missing.length}</span>
               )}
             </TabsTrigger>
@@ -491,14 +491,14 @@ export default function WMSFabricRollsModule({ token }) {
           <div className="space-y-3" data-testid="missing-rolls-panel">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 mt-0.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                <AlertCircle className="w-4 h-4 mt-0.5 text-[hsl(var(--warning))] shrink-0" />
                 <p className="text-xs text-muted-foreground max-w-3xl">
                   Kain yang <strong className="text-foreground">sudah masuk stok</strong> lewat Penerimaan Barang tetapi
                   belum punya satu pun gulungan. Portal Cutting menolak memotong kain tanpa gulungan — terbitkan
                   gulungannya di sini (nomor otomatis{rollPolicy?.next_number ? `, berikutnya ${rollPolicy.next_number}` : ''}).
                 </p>
               </div>
-              <Button variant="outline" onClick={loadMissing} disabled={missingLoading}
+              <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={loadMissing} disabled={missingLoading}
                 className="border-foreground/10" data-testid="refresh-missing-btn">
                 <RefreshCw className={`w-4 h-4 ${missingLoading ? 'animate-spin' : ''}`} />
               </Button>
@@ -506,16 +506,16 @@ export default function WMSFabricRollsModule({ token }) {
 
             {missingLoading ? (
               <div className="flex items-center justify-center h-48">
-                <Loader2 className="w-8 h-8 animate-spin text-amber-500" />
+                <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--warning))]" />
               </div>
             ) : missing.length === 0 ? (
-              <div className="rounded-xl border border-emerald-300 dark:border-emerald-400/25 bg-emerald-50 dark:bg-emerald-400/10 p-8 text-center"
+              <div className="rounded-xl border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]  p-8 text-center"
                 data-testid="missing-rolls-empty">
-                <CheckCircle2 className="w-9 h-9 mx-auto text-emerald-600 dark:text-emerald-400" />
-                <p className="mt-2 font-semibold text-emerald-800 dark:text-emerald-200">
+                <CheckCircle2 className="w-9 h-9 mx-auto text-[hsl(var(--success))] " />
+                <p className="mt-2 font-semibold text-[hsl(var(--success))] ">
                   Semua penerimaan kain sudah punya gulungan
                 </p>
-                <p className="text-xs text-emerald-800/80 dark:text-emerald-300/80 mt-1">
+                <p className="text-xs text-[hsl(var(--success)/0.8)] mt-1">
                   Tidak ada kain yang menahan bagian potong. Gulungan baru akan lahir sendiri
                   dari Penerimaan Barang berikutnya.
                 </p>
@@ -536,9 +536,9 @@ export default function WMSFabricRollsModule({ token }) {
                       {missing.map((m) => (
                         <tr key={m.item_id} className="border-t border-foreground/10 hover:bg-foreground/5"
                           data-testid={`missing-row-${m.material_code}`}>
-                          <td className="px-2.5 py-2 font-mono whitespace-nowrap">{m.receipt_number}</td>
+                          <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{m.receipt_number}</td>
                           <td className="px-2.5 py-2">{m.supplier_name || '-'}</td>
-                          <td className="px-2.5 py-2 font-mono">{m.material_code}</td>
+                          <td className="px-2.5 py-2 tabular-nums">{m.material_code}</td>
                           <td className="px-2.5 py-2">{m.material_name}</td>
                           <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">
                             <strong>{fmtQty(m.accepted_qty)}</strong> {m.unit}
@@ -547,7 +547,7 @@ export default function WMSFabricRollsModule({ token }) {
                           <td className="px-2.5 py-2 whitespace-nowrap">{String(m.created_at || '').slice(0, 10)}</td>
                           <td className="px-2.5 py-2 whitespace-nowrap">
                             <Button size="sm" onClick={() => openIssueRolls(m)}
-                              className="h-7 bg-amber-600 hover:bg-amber-700 text-white text-xs"
+                              className="h-7 bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] text-white text-xs"
                               data-testid={`issue-rolls-btn-${m.material_code}`}>
                               <Plus className="w-3 h-3 mr-1" /> Terbitkan Roll
                             </Button>
@@ -562,7 +562,7 @@ export default function WMSFabricRollsModule({ token }) {
           </div>
         ) : loading ? (
           <div className="flex items-center justify-center h-64" data-testid="loading-rolls">
-            <Loader2 className="w-8 h-8 animate-spin text-violet-600 dark:text-violet-400" />
+            <Loader2 className="w-8 h-8 animate-spin text-[hsl(var(--primary))] " />
           </div>
         ) : filteredRolls.length === 0 ? (
           <EmptyState 
@@ -593,10 +593,10 @@ export default function WMSFabricRollsModule({ token }) {
                         <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
                           <button type="button" onClick={() => toggleSort(k)}
                             data-testid={`rolls-sort-${k}`}
-                            className="inline-flex items-center gap-1 hover:text-violet-500">
+                            className="inline-flex items-center gap-1 hover:text-[hsl(var(--primary))]">
                             {label}
                             <ChevronRight size={10}
-                              className={`${sort.key === k ? 'text-violet-500' : 'opacity-40'} ${
+                              className={`${sort.key === k ? 'text-[hsl(var(--primary))]' : 'opacity-40'} ${
                                 sort.key === k && sort.dir === 'asc' ? '-rotate-90' : 'rotate-90'}`} />
                           </button>
                         </th>
@@ -609,7 +609,7 @@ export default function WMSFabricRollsModule({ token }) {
                       <tr key={roll.id} className="hover:bg-foreground/10 cursor-pointer"
                         onClick={() => handleView(roll)}
                         data-testid={`roll-row-${roll.roll_no}`}>
-                        <td className="px-2.5 py-2 font-mono whitespace-nowrap">{roll.roll_no}</td>
+                        <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{roll.roll_no}</td>
                         <td className="px-2.5 py-2">
                           {roll.material_name}
                           {roll.material_code && (
@@ -622,7 +622,7 @@ export default function WMSFabricRollsModule({ token }) {
                           {roll.color || '—'} / {roll.color_lot || '—'}
                         </td>
                         <td className="px-2.5 py-2 whitespace-nowrap">{roll.supplier_name || '—'}</td>
-                        <td className="px-2.5 py-2 font-mono whitespace-nowrap">{roll.po_no || '—'}</td>
+                        <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{roll.po_no || '—'}</td>
                         <td className="px-2.5 py-2">
                           <span className={`px-2 py-0.5 rounded-full text-xs border ${QC_STATUS[roll.qc_status]?.color || ''}`}>
                             {QC_STATUS[roll.qc_status]?.label || roll.qc_status}
@@ -633,7 +633,7 @@ export default function WMSFabricRollsModule({ token }) {
                             {STOCK_STATUS[roll.status]?.label || roll.status}
                           </span>
                         </td>
-                        <td className="px-2.5 py-2 text-right font-mono whitespace-nowrap"
+                        <td className="px-2.5 py-2 text-right tabular-nums whitespace-nowrap"
                           data-testid={`roll-qty-${roll.roll_no}`}>
                           {fmt(rollRemaining(roll))} / {fmt(rollTotal(roll))}
                           {roll.qty_remaining_m != null && (
@@ -646,7 +646,7 @@ export default function WMSFabricRollsModule({ token }) {
                           {rollUom(roll)}
                         </td>
                         <td className="px-2.5 py-2 whitespace-nowrap">
-                          {roll.position_barcode || <span className="text-amber-500">belum di-putaway</span>}
+                          {roll.position_barcode || <span className="text-[hsl(var(--warning))]">belum di-putaway</span>}
                         </td>
                         <td className="px-2.5 py-2 text-right whitespace-nowrap">
                           <div className="inline-flex gap-1">
@@ -691,7 +691,7 @@ export default function WMSFabricRollsModule({ token }) {
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <QrCode className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                      <QrCode className="w-4 h-4 text-[hsl(var(--primary))] " />
                       <h3 className="font-semibold text-foreground">{roll.roll_no}</h3>
                     </div>
                     <p className="text-sm text-muted-foreground/60 dark:text-zinc-400">{roll.material_name}</p>
@@ -713,7 +713,7 @@ export default function WMSFabricRollsModule({ token }) {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground/60 dark:text-zinc-500">Sisa / Total:</span>
-                    <span className="text-foreground font-mono text-right">
+                    <span className="text-foreground tabular-nums text-right">
                       {fmt(rollRemaining(roll))} / {fmt(rollTotal(roll))} {rollUom(roll)}
                       {roll.qty_remaining_m != null && (
                         <span className="block text-[10px] text-muted-foreground font-sans">
@@ -725,11 +725,11 @@ export default function WMSFabricRollsModule({ token }) {
                   {!roll.is_weight && roll.weight_kg > 0 && (
                     <div className="flex justify-between">
                       <span className="text-muted-foreground/60 dark:text-zinc-500">Berat:</span>
-                      <span className="text-foreground font-mono">{fmt(roll.remaining_kg)} / {fmt(roll.weight_kg)} kg</span>
+                      <span className="text-foreground tabular-nums">{fmt(roll.remaining_kg)} / {fmt(roll.weight_kg)} kg</span>
                     </div>
                   )}
                   {roll.position_barcode && (
-                    <div className="flex items-center gap-2 text-xs text-violet-600 dark:text-violet-400">
+                    <div className="flex items-center gap-2 text-xs text-[hsl(var(--primary))] ">
                       <MapPin className="w-3 h-3" />
                       {roll.position_barcode}
                     </div>
@@ -790,12 +790,12 @@ export default function WMSFabricRollsModule({ token }) {
             <div className="grid grid-cols-2 gap-4 py-4">
               <div>
                 <Label>Nomor Roll</Label>
-                <div className="h-10 px-3 rounded-md border border-violet-300 dark:border-violet-400/30 bg-violet-50 dark:bg-violet-400/10 flex items-center justify-between"
+                <div className="h-10 px-3 rounded-md border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)]  flex items-center justify-between"
                   data-testid="roll-no-auto">
-                  <span className="font-mono text-sm text-violet-800 dark:text-violet-200">
+                  <span className="tabular-nums text-sm text-[hsl(var(--primary))] ">
                     {rollPolicy?.next_number || 'RL-…'}
                   </span>
-                  <span className="text-[10px] uppercase tracking-wide text-violet-700 dark:text-violet-300">otomatis</span>
+                  <span className="text-[10px] uppercase tracking-wide text-[hsl(var(--primary))] ">otomatis</span>
                 </div>
                 <p className="text-[10px] text-muted-foreground mt-1">
                   Pola {rollPolicy?.format || 'RL-{YYYY}{MM}-{SEQ:4}'} — diatur di Administrasi Sistem → Penomoran Dokumen.
@@ -862,7 +862,7 @@ export default function WMSFabricRollsModule({ token }) {
               <Button type="button" variant="outline" onClick={() => setCreateDialog(false)} className="border-foreground/10">
                 Batal
               </Button>
-              <Button type="submit" className="bg-violet-600 hover:bg-violet-700" data-testid="submit-create-roll">
+              <Button type="submit" className="bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]" data-testid="submit-create-roll">
                 <Save className="w-4 h-4 mr-2" />
                 Simpan
               </Button>
@@ -877,7 +877,7 @@ export default function WMSFabricRollsModule({ token }) {
           <DialogContent className="bg-card text-foreground border-foreground/10 max-w-3xl" data-testid="issue-rolls-dialog">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <Package className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                <Package className="w-5 h-5 text-[hsl(var(--warning))] " />
                 Terbitkan Gulungan — {issueRollsDialog.row.material_code}
               </DialogTitle>
             </DialogHeader>
@@ -885,7 +885,7 @@ export default function WMSFabricRollsModule({ token }) {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
                 <div>
                   <p className="text-muted-foreground">Penerimaan</p>
-                  <p className="font-mono text-foreground">{issueRollsDialog.row.receipt_number}</p>
+                  <p className="tabular-nums text-foreground">{issueRollsDialog.row.receipt_number}</p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Supplier</p>
@@ -918,7 +918,7 @@ export default function WMSFabricRollsModule({ token }) {
               <Button type="button" variant="outline" onClick={() => setIssueRollsDialog(null)}
                 className="border-foreground/10">Batal</Button>
               <Button type="button" onClick={submitIssueRolls} disabled={issuing}
-                className="bg-amber-600 hover:bg-amber-700 text-white" data-testid="submit-issue-rolls">
+                className="bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] text-white" data-testid="submit-issue-rolls">
                 {issuing ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                 Terbitkan Gulungan
               </Button>
@@ -933,7 +933,7 @@ export default function WMSFabricRollsModule({ token }) {
           <DialogContent className="bg-card text-foreground border-foreground/10 max-w-3xl" data-testid="view-roll-dialog">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                <QrCode className="w-5 h-5 text-[hsl(var(--primary))] " />
                 Roll {viewDialog.roll?.roll_no}
               </DialogTitle>
             </DialogHeader>
@@ -971,7 +971,7 @@ export default function WMSFabricRollsModule({ token }) {
                   <span className="text-muted-foreground/60 dark:text-zinc-500">Asal gulungan:</span>
                   <p className="text-foreground font-medium">
                     {viewDialog.roll?.source_receipt_number
-                      ? <span className="font-mono">Penerimaan {viewDialog.roll.source_receipt_number}</span>
+                      ? <span className="tabular-nums">Penerimaan {viewDialog.roll.source_receipt_number}</span>
                       : 'dibuat manual di layar Roll Kain'}
                   </p>
                 </div>
@@ -986,7 +986,7 @@ export default function WMSFabricRollsModule({ token }) {
                     {viewDialog.movements?.map((m, i) => (
                       <div key={i} className="bg-foreground/5 border border-foreground/10 rounded p-3 text-sm">
                         <div className="flex justify-between mb-1">
-                          <span className="font-medium text-violet-600 dark:text-violet-400">{m.movement_type}</span>
+                          <span className="font-medium text-[hsl(var(--primary))] ">{m.movement_type}</span>
                           <span className="text-muted-foreground/60 dark:text-zinc-500">{new Date(m.created_at).toLocaleString('id-ID')}</span>
                         </div>
                         <p className="text-muted-foreground/60 dark:text-zinc-400">Qty: {fmt(m.qty)} {m.unit} - {m.notes || 'No notes'}</p>
@@ -1026,7 +1026,7 @@ export default function WMSFabricRollsModule({ token }) {
                 <Button type="button" variant="outline" onClick={() => setPutawayDialog(null)} className="border-foreground/10">
                   Batal
                 </Button>
-                <Button type="submit" className="bg-violet-600 hover:bg-violet-700" data-testid="submit-putaway">
+                <Button type="submit" className="bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]" data-testid="submit-putaway">
                   Simpan
                 </Button>
               </DialogFooter>
@@ -1055,7 +1055,7 @@ export default function WMSFabricRollsModule({ token }) {
                         dulu pilihan meter/kg di sini membuat gulungan yard
                         terkurangi dengan label yang salah. */}
                     <Input value={rollUom(issueDialog)} readOnly
-                      className="bg-foreground/5 border-foreground/10 font-mono"
+                      className="bg-foreground/5 border-foreground/10 tabular-nums"
                       data-testid="input-issue-unit" />
                   </div>
                 </div>
@@ -1085,7 +1085,7 @@ export default function WMSFabricRollsModule({ token }) {
                 <Button type="button" variant="outline" onClick={() => setIssueDialog(null)} className="border-foreground/10">
                   Batal
                 </Button>
-                <Button type="submit" className="bg-violet-600 hover:bg-violet-700" data-testid="submit-issue">
+                <Button type="submit" className="bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]" data-testid="submit-issue">
                   Issue
                 </Button>
               </DialogFooter>
@@ -1100,31 +1100,31 @@ export default function WMSFabricRollsModule({ token }) {
           <DialogContent className="bg-card text-foreground border-foreground/10 max-w-4xl max-h-[85vh] overflow-auto" data-testid="ai-analysis-dialog">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <Brain className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                <Brain className="w-5 h-5 text-[hsl(var(--primary))] " />
                 🤖 AI Quality Pattern Analysis
               </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               {/* Summary Stats */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-violet-100 dark:bg-violet-500/10 border border-violet-300 dark:border-violet-500/20 rounded-lg p-3">
+                <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-lg p-3">
                   <div className="text-xs text-muted-foreground/60 dark:text-zinc-500 mb-1">Total Rejections</div>
-                  <div className="text-2xl font-bold text-violet-600 dark:text-violet-300">{aiAnalysisDialog.data_summary?.total_rejections || 0}</div>
+                  <div className="text-2xl font-bold text-[hsl(var(--primary))] ">{aiAnalysisDialog.data_summary?.total_rejections || 0}</div>
                 </div>
-                <div className="bg-violet-100 dark:bg-violet-500/10 border border-violet-300 dark:border-violet-500/20 rounded-lg p-3">
+                <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-lg p-3">
                   <div className="text-xs text-muted-foreground/60 dark:text-zinc-500 mb-1">Affected Suppliers</div>
-                  <div className="text-2xl font-bold text-violet-600 dark:text-violet-300">{aiAnalysisDialog.data_summary?.affected_suppliers || 0}</div>
+                  <div className="text-2xl font-bold text-[hsl(var(--primary))] ">{aiAnalysisDialog.data_summary?.affected_suppliers || 0}</div>
                 </div>
-                <div className="bg-violet-100 dark:bg-violet-500/10 border border-violet-300 dark:border-violet-500/20 rounded-lg p-3">
+                <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-lg p-3">
                   <div className="text-xs text-muted-foreground/60 dark:text-zinc-500 mb-1">Period</div>
-                  <div className="text-2xl font-bold text-violet-600 dark:text-violet-300">{aiAnalysisDialog.data_summary?.period_days || 30} hari</div>
+                  <div className="text-2xl font-bold text-[hsl(var(--primary))] ">{aiAnalysisDialog.data_summary?.period_days || 30} hari</div>
                 </div>
               </div>
 
               {/* AI Analysis Content */}
               <div className="bg-foreground/5 border border-foreground/10 rounded-lg p-4">
                 <div className="flex items-center gap-2 mb-3">
-                  <Sparkles className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+                  <Sparkles className="w-4 h-4 text-[hsl(var(--primary))] " />
                   <h3 className="font-semibold text-foreground">AI Analysis Results</h3>
                 </div>
                 <div className="prose prose-invert prose-sm max-w-none">
@@ -1142,7 +1142,7 @@ export default function WMSFabricRollsModule({ token }) {
             <DialogFooter>
               <Button 
                 onClick={() => setAiAnalysisDialog(null)} 
-                className="bg-violet-600 hover:bg-violet-700"
+                className="bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]"
                 data-testid="close-ai-dialog"
               >
                 Tutup

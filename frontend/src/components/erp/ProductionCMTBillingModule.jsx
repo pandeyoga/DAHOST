@@ -27,6 +27,8 @@ import StaffEntryBadge from './engine/StaffEntryBadge';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState, Notice, StatTile } from './moduleAtoms';
 
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
@@ -38,10 +40,10 @@ const fmtDate = (d) => {
 
 const STATUS_STYLE = {
   draft:     'bg-muted text-muted-foreground border-border',
-  submitted: 'bg-sky-100 text-sky-700 border-sky-200',
-  approved:  'bg-amber-100 text-amber-700 border-amber-200',
-  paid:      'bg-emerald-100 text-emerald-700 border-emerald-200',
-  cancelled: 'bg-red-100 text-red-700 border-red-200',
+  submitted: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]',
+  approved:  'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]',
+  paid:      'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
+  cancelled: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]',
 };
 
 function StatusPill({ status }) {
@@ -53,23 +55,10 @@ function StatusPill({ status }) {
   );
 }
 
-function Kpi({ icon: Icon, label, value, sub, tone = 'default', testId }) {
-  const tones = {
-    default: 'bg-muted/40 text-foreground',
-    success: 'bg-emerald-50 text-emerald-700',
-    warning: 'bg-amber-50 text-amber-700',
-    danger:  'bg-red-50 text-red-700',
-    primary: 'bg-blue-50 text-blue-700',
-  };
-  return (
-    <div className={`rounded-xl p-3 border border-border/60 ${tones[tone]}`} data-testid={testId}>
-      <div className="flex items-center gap-1.5 text-xs opacity-80">
-        <Icon className="w-3.5 h-3.5" /> {label}
-      </div>
-      <p className="text-xl font-bold mt-1 tabular-nums">{value}</p>
-      {sub && <p className="text-[11px] opacity-70 mt-0.5">{sub}</p>}
-    </div>
-  );
+// PANDUAN_UI G5 (2026-11-05): kartu angka = StatTile netral; warna hanya pada angkanya.
+// `icon` tetap diterima supaya pemanggil tidak berubah.
+function Kpi({ label, value, sub, tone = 'default', testId }) {
+  return <StatTile testId={testId} label={label} value={value} accent={tone} sub={sub} />;
 }
 
 export default function ProductionCMTBillingModule({ portalId, userRole }) {
@@ -117,7 +106,13 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
     } catch (e) { toast.error(`Bayar gagal: ${e?.message || e}`); } finally { setPosting(''); }
   };
   const voidDisbursement = async (did) => {
-    if (!window.confirm('Batalkan pembayaran ini? Jurnal akan di-void.')) return;
+    if (!(await confirmDialog({
+      title: 'Batalkan pembayaran ini?',
+      body: 'Jurnal pembayaran ikut dibatalkan.',
+      confirmLabel: 'Batalkan pembayaran',
+      cancelLabel: 'Kembali',
+      danger: true,
+    }))) return;
     try {
       await apiPost(`/dewi/maklon/finance/cmt-payments/${detail.bill.id}/disbursements/${did}/void`, {});
       toast.success('Pembayaran dibatalkan, jurnal di-void');
@@ -210,7 +205,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Receipt className="w-6 h-6 text-violet-600" /> Invoice — Tagihan CMT
+            <Receipt className="w-6 h-6 text-[hsl(var(--primary))]" /> Invoice — Tagihan CMT
             {businessType && <BizBadge type={businessType} />}
           </h1>
           <p className="text-muted-foreground text-sm mt-0.5">
@@ -218,25 +213,23 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             {businessType && <span className="ml-1 font-medium text-foreground/80">Menampilkan data <strong>{scopeLabel}</strong>.</span>}
           </p>
         </div>
-        <Button variant="outline" onClick={load} data-testid="cmt-billing-refresh" className="h-9">
-          <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Refresh
-        </Button>
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh" >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
       </div>
 
       {error && (
-        <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700" data-testid="cmt-billing-error">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div><p className="font-semibold">Gagal memuat data</p><p className="text-xs mt-0.5">{error}</p></div>
-        </div>
+        <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="cmt-billing-error">
+          <p className="text-xs">{error}</p>
+        </Notice>
       )}
 
       {/* KPI */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Kpi testId="cmt-kpi-total" icon={FileText} label="Total Tagihan" value={fmtNum(summary?.total_bills)} sub={`${fmtNum(summary?.total_pcs)} pcs`} />
         <Kpi testId="cmt-kpi-nilai" icon={Banknote} label="Nilai Tagihan" value={fmtRp(summary?.total_amount)} tone="primary" />
-        <Kpi testId="cmt-kpi-outstanding" icon={Clock} label="Belum Dibayar" value={fmtRp(totalOutstanding)} tone="warning" sub={`${fmtNum(summary?.approved)} approved · ${fmtNum(summary?.draft)} draft`} />
+        <Kpi testId="cmt-kpi-outstanding" icon={Clock} label="Belum Dibayar" value={fmtRp(totalOutstanding)} tone="warning" sub={`${fmtNum(summary?.approved)} disetujui · ${fmtNum(summary?.draft)} draf`} />
         <Kpi testId="cmt-kpi-paid" icon={CheckCircle2} label="Sudah Dibayar" value={fmtRp(summary?.paid_amount)} tone="success" sub={`${fmtNum(summary?.paid)} tagihan`} />
-        <Kpi testId="cmt-kpi-notposted" icon={Landmark} label="Belum Posting GL" value={fmtNum(summary?.not_posted)} tone={summary?.not_posted ? 'danger' : 'success'} sub="perlu jurnal AP" />
+        <Kpi testId="cmt-kpi-notposted" icon={Landmark} label="Belum dijurnal" value={fmtNum(summary?.not_posted)} tone={summary?.not_posted ? 'danger' : 'success'} sub="perlu jurnal utang" />
       </div>
 
       {/* Filter */}
@@ -285,9 +278,9 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             ))}
           </SmartNativeSelect>
         )}
-        <Button variant="ghost" className="h-9 text-xs" onClick={load} data-testid="cmt-billing-apply">Terapkan</Button>
+        <Button variant="ghost" className="text-xs" onClick={load} data-testid="cmt-billing-apply">Terapkan</Button>
         {(partnerId || status || search.trim()) && (
-          <Button variant="outline" className="h-9 text-xs"
+          <Button variant="outline" className="text-xs"
             onClick={() => { setPartnerId(''); setStatus(''); setSearch(''); }}
             data-testid="cmt-billing-reset">
             <X className="mr-1 h-3.5 w-3.5" /> Reset filter
@@ -316,30 +309,29 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
             </thead>
             <tbody className="divide-y divide-border/50">
               {loading ? (
-                <tr><td colSpan={10} className="text-center py-10 text-muted-foreground">
+                <tr><td colSpan={10} className="text-center py-8 text-muted-foreground">
                   <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" /> Memuat tagihan…
                 </td></tr>
               ) : paged.length === 0 ? (
-                <tr><td colSpan={10} className="text-center py-12 text-muted-foreground" data-testid="cmt-billing-empty">
-                  <Receipt className="w-10 h-10 mx-auto mb-2 opacity-25" />
-                  <p className="font-medium">
-                    {(partnerId || status || search.trim())
-                      ? 'Tidak ada tagihan yang cocok dengan filter'
-                      : 'Belum ada tagihan CMT'}
-                  </p>
+                <tr><td colSpan={10} data-testid="cmt-billing-empty">
                   {(partnerId || status || search.trim()) ? (
-                    <Button variant="outline" size="sm" className="mt-3"
-                      onClick={() => { setPartnerId(''); setStatus(''); setSearch(''); }}
-                      data-testid="cmt-billing-empty-reset">
-                      <X className="mr-1 h-3.5 w-3.5" /> Tampilkan semua tagihan
-                    </Button>
+                    <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
+                      description="Ubah atau hapus penyaring untuk melihat tagihan lain."
+                      action={
+                        <Button variant="outline" size="sm"
+                          onClick={() => { setPartnerId(''); setStatus(''); setSearch(''); }}
+                          data-testid="cmt-billing-empty-reset">
+                          <X className="mr-1 h-3.5 w-3.5" /> Tampilkan semua tagihan
+                        </Button>
+                      } />
                   ) : (
-                    <p className="text-xs mt-1">Tagihan terbit otomatis setelah <strong>Terima FG dari CMT</strong> disetujui.</p>
+                    <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
+                      description={<>Tagihan terbit otomatis setelah <strong>Terima FG dari CMT</strong> disetujui.</>} />
                   )}
                 </td></tr>
               ) : paged.map((r) => (
                 <tr key={r.id} className="hover:bg-muted/40" data-testid={`cmt-billing-row-${r.payment_code}`}>
-                  <td className="px-3 py-2.5 font-mono text-xs font-semibold text-violet-700">{r.payment_code || r.id?.slice(0, 8)}</td>
+                  <td className="px-3 py-2.5 tabular-nums text-xs font-semibold text-[hsl(var(--primary))]">{r.payment_code || r.id?.slice(0, 8)}</td>
                   <td className="px-3 py-2.5">
                     <span className="block">{r.cmt_name || '-'}</span>
                     {/* keputusan owner 3a — tagihan ini berdiri di atas angka yang
@@ -372,13 +364,13 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                       selisih — angkanya ditandai untuk Keuangan dan ditampilkan di sini. */}
                   <td className="px-3 py-2.5 text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
                     {Number(r.variance_unresolved_qty || 0) > 0 ? (
-                      <span className="inline-flex flex-col text-amber-800">
+                      <span className="inline-flex flex-col text-[hsl(var(--warning))]">
                         <span className="font-semibold tabular-nums">{fmtNum(r.variance_unresolved_qty)} pcs</span>
                         {Number(r.overbilled_pcs || 0) > 0 && <span>lebih tagih {fmtNum(r.overbilled_pcs)} pcs ({fmtRp(r.overbilled_amount)})</span>}
                         {Number(r.open_short_qty || 0) > 0 && <span>belum sampai {fmtNum(r.open_short_qty)} pcs</span>}
                       </span>
                     ) : r.variance_flagged ? (
-                      <span className="inline-flex items-center gap-1 text-amber-700" title={(r.variance_reasons || []).join('; ') || r.variance_reason || ''}>
+                      <span className="inline-flex items-center gap-1 text-[hsl(var(--warning))]" title={(r.variance_reasons || []).join('; ') || r.variance_reason || ''}>
                         <AlertTriangle className="w-3.5 h-3.5" /> ditandai
                       </span>
                     ) : <span className="text-muted-foreground">—</span>}
@@ -386,19 +378,18 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   <td className="px-3 py-2.5"><StatusPill status={r.status} /></td>
                   <td className="px-3 py-2.5 text-xs">
                     {r.gl_posted
-                      ? <span className="inline-flex items-center gap-1 text-emerald-700 font-medium"><CheckCircle2 className="w-3.5 h-3.5" />{r.gl_je_number || 'posted'}</span>
-                      : <span className="text-amber-700">Belum posting</span>}
+                      ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success))] font-medium"><CheckCircle2 className="w-3.5 h-3.5" />{r.gl_je_number || 'posted'}</span>
+                      : <span className="text-[hsl(var(--warning))]">Belum posting</span>}
                   </td>
                   <td className="px-3 py-2.5">
                     <div className="flex items-center gap-1">
-                      <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => openDetail(r.id)} data-testid={`cmt-billing-detail-${r.payment_code}`}>
+                      <Button size="icon-sm" variant="ghost" title="Lihat detail" aria-label="Lihat detail" onClick={() => openDetail(r.id)} data-testid={`cmt-billing-detail-${r.payment_code}`}>
                         <Eye className="w-3.5 h-3.5" />
                       </Button>
                       {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost && (
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-7 px-2 text-xs"
                           disabled={posting === r.id}
                           onClick={() => postToGl(r.id)}
                           data-testid={`cmt-billing-post-${r.payment_code}`}
@@ -427,41 +418,38 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
           >
             <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card">
               <h3 className="font-bold text-foreground">Detail Tagihan CMT</h3>
-              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setDetail(null)} data-testid="cmt-billing-detail-close">
+              <Button size="icon-sm" variant="ghost" title="Tutup" aria-label="Tutup" onClick={() => setDetail(null)} data-testid="cmt-billing-detail-close">
                 <X className="w-4 h-4" />
               </Button>
             </div>
 
             {detailLoading || detail.loading ? (
-              <div className="p-10 text-center text-muted-foreground">
+              <div className="p-8 text-center text-muted-foreground">
                 <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" /> Memuat…
               </div>
             ) : (
               <div className="p-5 space-y-4">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div><p className="text-xs text-muted-foreground">Kode</p><p className="font-semibold font-mono">{detail.bill?.payment_code}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Kode</p><p className="font-semibold tabular-nums">{detail.bill?.payment_code}</p></div>
                   <div><p className="text-xs text-muted-foreground">Vendor CMT</p><p className="font-semibold">{detail.bill?.cmt_name || '-'}</p></div>
                   <div><p className="text-xs text-muted-foreground">Status</p><StatusPill status={detail.bill?.status} /></div>
                   <div><p className="text-xs text-muted-foreground">Nilai</p><p className="font-semibold">{fmtRp(detail.bill?.amount)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Pcs</p><p className="font-semibold">{fmtNum(detail.bill?.total_pcs)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Reject</p><p className="font-semibold">{fmtNum(detail.bill?.total_rejected)}</p></div>
+                  <div><p className="text-xs text-muted-foreground">Ditolak</p><p className="font-semibold">{fmtNum(detail.bill?.total_rejected)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Penalti</p><p className="font-semibold">{fmtRp(detail.bill?.penalty)}</p></div>
                   <div><p className="text-xs text-muted-foreground">Domain</p><p className="font-semibold capitalize">{detail.bill?.business_type}</p></div>
                   <div><p className="text-xs text-muted-foreground">Selisih belum selesai</p><p className="font-semibold">{fmtNum(detail.bill?.variance_unresolved_qty || 0)} pcs</p></div>
                 </div>
 
                 {detail.bill?.variance_flagged && (
-                  <div data-testid="cmt-bill-variance-alert" className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                    <AlertTriangle className="w-4 h-4 mt-0.5" />
-                    <div>
-                      <p className="font-semibold">{detail.bill?.zero_rate_pcs > 0 ? 'Tagihan perlu diperiksa' : 'Ada selisih qty pada penerimaan'}</p>
-                      {Array.isArray(detail.bill?.variance_reasons) && detail.bill.variance_reasons.length > 0 ? (
-                        <ul className="text-xs mt-0.5 list-disc pl-4">
-                          {detail.bill.variance_reasons.map((r, i) => <li key={i}>{r}</li>)}
-                        </ul>
-                      ) : (detail.bill?.variance_reason && <p className="text-xs mt-0.5">{detail.bill.variance_reason}</p>)}
-                    </div>
-                  </div>
+                  <Notice tone="warning" icon={AlertTriangle} testId="cmt-bill-variance-alert"
+                    title={detail.bill?.zero_rate_pcs > 0 ? 'Tagihan perlu diperiksa' : 'Ada selisih qty pada penerimaan'}>
+                    {Array.isArray(detail.bill?.variance_reasons) && detail.bill.variance_reasons.length > 0 ? (
+                      <ul className="text-xs list-disc pl-4">
+                        {detail.bill.variance_reasons.map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
+                    ) : (detail.bill?.variance_reason && <p className="text-xs">{detail.bill.variance_reason}</p>)}
+                  </Notice>
                 )}
 
                 {Array.isArray(detail.bill?.breakdown) && detail.bill.breakdown.length > 0 && (
@@ -492,9 +480,9 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                   {detail.journal ? (
                     <div className="border border-border rounded-lg overflow-hidden">
                       <div className="px-3 py-2 bg-muted/40 text-xs flex items-center gap-3">
-                        <span className="font-mono font-semibold">{detail.journal.je_number}</span>
+                        <span className="tabular-nums font-semibold">{detail.journal.je_number}</span>
                         <span className="text-muted-foreground">{fmtDate(detail.journal.je_date)}</span>
-                        <span className="ml-auto uppercase text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700">{detail.journal.status}</span>
+                        <span className="ml-auto uppercase text-[10px] px-1.5 py-0.5 rounded bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]">{detail.journal.status}</span>
                       </div>
                       <table className="w-full text-xs">
                         <thead className="bg-muted/20"><tr>
@@ -503,7 +491,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                         <tbody className="divide-y divide-border/50">
                           {(detail.journal.lines || []).map((l, i) => (
                             <tr key={i}>
-                              <td className="px-3 py-2 font-mono">{l.account_code}</td>
+                              <td className="px-3 py-2 tabular-nums">{l.account_code}</td>
                               <td className="px-3 py-2">{l.description}</td>
                               <td className="px-3 py-2 tabular-nums">{l.debit ? fmtRp(l.debit) : '-'}</td>
                               <td className="px-3 py-2 tabular-nums">{l.credit ? fmtRp(l.credit) : '-'}</td>
@@ -516,7 +504,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-3 py-3">
                       <p className="text-xs text-muted-foreground">
                         Belum ada jurnal AP untuk tagihan ini.
-                        {detail.bill?.post_error && <span className="block text-red-600 mt-1">Error terakhir: {detail.bill.post_error}</span>}
+                        {detail.bill?.post_error && <span className="block text-[hsl(var(--destructive))] mt-1">Error terakhir: {detail.bill.post_error}</span>}
                       </p>
                       {canPost && (detail.bill?.status || '').toLowerCase() !== 'cancelled' && (
                         <Button size="sm" onClick={() => postToGl(detail.bill.id)} disabled={posting === detail.bill?.id} data-testid="cmt-billing-detail-post">
@@ -539,7 +527,7 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
                         {disbursements.map(d => (
                           <li key={d.id} className="flex items-center justify-between gap-2" data-testid={`cmt-disb-${d.id}`}>
                             <span>{d.payment_date} · {d.cash_account_name} · {fmtNum(d.amount)} {d.gl_je_number ? `· ${d.gl_je_number}` : ''}</span>
-                            <Button size="sm" variant="ghost" className="h-6 px-2 text-red-600" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Void</Button>
+                            <Button size="sm" variant="outline" className="text-[hsl(var(--destructive))]" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>
                           </li>
                         ))}
                       </ul>

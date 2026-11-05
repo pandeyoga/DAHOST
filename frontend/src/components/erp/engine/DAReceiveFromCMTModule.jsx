@@ -22,7 +22,7 @@
  */
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import {
-  ClipboardCheck, RefreshCw, Search, AlertTriangle, CheckCircle2,
+  ClipboardCheck, RefreshCw, Search, CheckCircle2,
   ChevronDown, ChevronRight, Package, Info, Loader2, Wrench, Undo2, Ban,
   PackageSearch, Pencil, FileWarning, FileText,
 } from 'lucide-react';
@@ -32,6 +32,12 @@ import StaffEntryBadge from './StaffEntryBadge';
 import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
 import { apiGet, apiPost, apiPut, apiFetch } from '../../../lib/api';
 import { MoneyInput } from '../../ui/money-input';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 
 // W5 — kolom yang tercentang saat dialog pertama kali dibuka: VERSI KIRIM MURNI.
 // Kolom hasil QC (Qty Terima / Qty Reject) tetap tersedia tapi harus dicentang
@@ -61,8 +67,8 @@ const fmtDate = (iso) => {
 
 function StatusPill({ status, label }) {
   const map = {
-    on_qc: 'bg-amber-100 text-amber-800 border-amber-300',
-    completed_qc: 'bg-emerald-100 text-emerald-800 border-emerald-300',
+    on_qc: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]',
+    completed_qc: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
     cancelled: 'bg-slate-200 text-slate-700 border-slate-300',
   };
   return (
@@ -74,7 +80,7 @@ function StatusPill({ status, label }) {
 
 function NumBox({ value, onChange, disabled, max, testId, tone = 'default' }) {
   const toneCls = tone === 'reject'
-    ? 'border-red-300 focus:border-red-500 text-red-700'
+    ? 'border-[hsl(var(--destructive)/0.35)] focus:border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]'
     : 'border-border focus:border-[hsl(var(--primary))] text-foreground';
   return (
     <input
@@ -200,7 +206,7 @@ export default function DAReceiveFromCMTModule() {
     const led = res?.qty_ledger;
     const shortPcs = Number(led?.short || 0);
     const parts = [`QC selesai. Stok FG +${fmtNum(receipt.total_qty_actual)} pcs`];
-    if (led?.quarantined) parts.push(`${fmtNum(led.quarantined)} pcs reject masuk karantina`);
+    if (led?.quarantined) parts.push(`${fmtNum(led.quarantined)} pcs ditolak masuk karantina`);
     if (shortPcs > 0) {
       parts.push(`${fmtNum(shortPcs)} pcs BELUM SAMPAI → dokumen selisih ` +
         `${(led.shorts || []).map(s => s.short_number).join(', ')} dibuka & vendor diberi tahu`);
@@ -229,7 +235,7 @@ export default function DAReceiveFromCMTModule() {
     const qa = d.qty_actual !== undefined ? Number(d.qty_actual || 0) : Number(line.qty_actual || 0);
     const rj = d.reject_qty !== undefined ? Number(d.reject_qty || 0) : Number(line.reject_qty || 0);
     if (declared && qa + rj > declared) {
-      toast.error(`Lolos (${qa}) + Reject (${rj}) melebihi kiriman vendor (${declared})`);
+      toast.error(`Lolos (${qa}) + Ditolak (${rj}) melebihi kiriman vendor (${declared})`);
       return;
     }
     setSavingLine(p => ({ ...p, [line.id]: true }));
@@ -322,7 +328,7 @@ export default function DAReceiveFromCMTModule() {
   };
 
   const cancelReceipt = async (receipt) => {
-    if (!window.confirm(`Batalkan penerimaan ${receipt.receipt_code}? (dipakai bila salah input)`)) return;
+    if (!(await confirmDialog({ title: `Batalkan penerimaan ${receipt.receipt_code}?`, body: 'Dipakai bila penerimaan salah input.', confirmLabel: 'Batalkan penerimaan', danger: true }))) return;
     try {
       await apiPost(`/prod/cmt-receipts/${receipt.id}/reject`, { reason: 'Dibatalkan oleh admin' });
       toast.success('Penerimaan dibatalkan');
@@ -401,42 +407,35 @@ export default function DAReceiveFromCMTModule() {
               className="h-9 pl-8 pr-3 w-56 rounded-lg bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground outline-none focus:border-[hsl(var(--primary))]"
             />
           </div>
-          <button onClick={fetchAll} disabled={loading} data-testid="receipt-refresh"
-            className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-foreground/5 inline-flex items-center gap-1.5 disabled:opacity-50">
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-          </button>
+          <Button size="icon" variant="outline" onClick={fetchAll} disabled={loading} data-testid="receipt-refresh"
+            title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
         </div>
       </div>
 
       {/* ── KPI ────────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         {[
-          { k: 'on_qc', label: 'Sedang QC', val: kpi.on_qc, sub: `${fmtNum(kpi.uncounted)} baris belum dihitung`, icon: Package, cls: 'text-amber-700' },
-          { k: 'accepted', label: 'Lolos QC (pcs)', val: kpi.accepted, sub: 'total masuk stok FG', icon: CheckCircle2, cls: 'text-emerald-700' },
-          { k: 'reject', label: 'Reject (pcs)', val: kpi.reject, sub: 'total masuk karantina', icon: AlertTriangle, cls: 'text-red-700' },
-          { k: 'undecided', label: 'Reject belum diputuskan', val: kpi.reject_undecided, sub: 'perlu permak / retur CMT', icon: Wrench, cls: 'text-orange-700' },
-          { k: 'short', label: 'Belum sampai (pcs)', val: kpi.short_open, sub: 'kewajiban vendor — harus dikirim ulang', icon: PackageSearch, cls: 'text-rose-700' },
+          { k: 'on_qc', label: 'Sedang QC', val: kpi.on_qc, sub: `${fmtNum(kpi.uncounted)} baris belum dihitung`, accent: 'warning' },
+          { k: 'accepted', label: 'Lolos QC (pcs)', val: kpi.accepted, sub: 'total masuk stok FG', accent: 'success' },
+          { k: 'reject', label: 'Ditolak (pcs)', val: kpi.reject, sub: 'total masuk karantina', accent: 'danger' },
+          { k: 'undecided', label: 'Ditolak belum diputuskan', val: kpi.reject_undecided, sub: 'perlu permak / retur CMT', accent: 'warning' },
+          { k: 'short', label: 'Belum sampai (pcs)', val: kpi.short_open, sub: 'kewajiban vendor — harus dikirim ulang', accent: 'danger' },
         ].map(c => (
-          <div key={c.k} data-testid={`receipt-kpi-${c.k}`}
-            className="rounded-xl bg-[var(--card-surface,#fff)] border border-[var(--glass-border,rgba(0,0,0,0.08))] shadow-[var(--shadow-card,0_1px_2px_rgba(0,0,0,0.06))] p-3 min-w-0">
-            <div className="flex items-center gap-1.5 mb-1">
-              <c.icon className={`w-3.5 h-3.5 ${c.cls} shrink-0`} />
-              <span className="text-[11px] font-semibold text-muted-foreground truncate">{c.label}</span>
-            </div>
-            <div className={`text-2xl font-bold ${c.cls} leading-tight`}>{fmtNum(c.val)}</div>
-            <div className="text-[11px] text-muted-foreground mt-0.5 break-words">{c.sub}</div>
-          </div>
+          <StatTile key={c.k} testId={`receipt-kpi-${c.k}`} className="min-w-0"
+            label={c.label} value={fmtNum(c.val)} accent={c.accent} sub={c.sub} />
         ))}
       </div>
 
       {/* ── Antrean reject (supaya reject TIDAK PERNAH hilang) ─────────── */}
       {rejectQueue.items?.length > 0 && (
-        <div className="rounded-xl bg-[var(--card-surface,#fff)] border border-orange-300 shadow-[var(--shadow-card,0_1px_2px_rgba(0,0,0,0.06))] overflow-hidden"
+        <GlassCard className="overflow-hidden border-[hsl(var(--warning)/0.35)]"
           data-testid="reject-queue-panel">
-          <div className="px-3 py-2 bg-orange-50 border-b border-orange-200 flex items-center gap-2">
-            <Wrench className="w-4 h-4 text-orange-700 shrink-0" />
-            <span className="text-xs font-bold text-orange-900">
-              Antrean Reject — {fmtNum(rejectQueue.total_qty_undecided)} pcs belum diputuskan
+          <div className="px-3 py-2 bg-[hsl(var(--warning)/0.1)] border-b border-[hsl(var(--warning)/0.35)] flex items-center gap-2">
+            <Wrench className="w-4 h-4 text-[hsl(var(--warning))] shrink-0" />
+            <span className="text-xs font-bold text-[hsl(var(--warning))]">
+              Antrean ditolak — {fmtNum(rejectQueue.total_qty_undecided)} pcs belum diputuskan
             </span>
           </div>
           <div className="overflow-x-auto">
@@ -446,7 +445,7 @@ export default function DAReceiveFromCMTModule() {
                   <th className="px-3 py-2 font-semibold">Penerimaan</th>
                   <th className="px-3 py-2 font-semibold">PO / Vendor</th>
                   <th className="px-3 py-2 font-semibold">SKU</th>
-                  <th className="px-3 py-2 font-semibold text-right">Reject</th>
+                  <th className="px-3 py-2 font-semibold text-right">Ditolak</th>
                   <th className="px-3 py-2 font-semibold text-right">Belum diputuskan</th>
                   <th className="px-3 py-2 font-semibold">Alasan</th>
                   <th className="px-3 py-2 font-semibold text-right">Aksi</th>
@@ -455,29 +454,27 @@ export default function DAReceiveFromCMTModule() {
               <tbody>
                 {rejectQueue.items.map(r => (
                   <tr key={r.receipt_line_id} className="border-t border-foreground/5">
-                    <td className="px-3 py-2 font-mono text-[11px] text-foreground whitespace-nowrap">{r.receipt_code}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] text-foreground whitespace-nowrap">{r.receipt_code}</td>
                     <td className="px-3 py-2 text-foreground">
                       <div className="font-medium truncate max-w-[180px]">{r.po_number || '—'}</div>
                       <div className="text-[11px] text-muted-foreground truncate max-w-[180px]">{r.vendor_name || '—'}</div>
                     </td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-foreground whitespace-nowrap">{r.sku || '—'}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-red-700">{fmtNum(r.qty_reject)}</td>
-                    <td className="px-3 py-2 text-right font-bold text-orange-700">{fmtNum(r.qty_undecided)}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] text-foreground whitespace-nowrap">{r.sku || '—'}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-[hsl(var(--destructive))]">{fmtNum(r.qty_reject)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--warning))]">{fmtNum(r.qty_undecided)}</td>
                     <td className="px-3 py-2 text-muted-foreground max-w-[160px] truncate">{r.reject_reason || '—'}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1.5 flex-wrap">
-                        <button data-testid={`rq-permak-${r.receipt_line_id}`}
+                        <Button size="sm" variant="outline" data-testid={`rq-permak-${r.receipt_line_id}`}
                           onClick={() => openRework({ id: r.receipt_line_id, reject_qty: r.qty_reject, reject_reason: r.reject_reason },
-                            { id: r.receipt_id, receipt_code: r.receipt_code }, 'permak_sendiri')}
-                          className="h-7 px-2 rounded-md border border-border text-[11px] font-medium text-foreground hover:bg-foreground/5 whitespace-nowrap">
+                            { id: r.receipt_id, receipt_code: r.receipt_code }, 'permak_sendiri')}>
                           Permak sendiri
-                        </button>
-                        <button data-testid={`rq-retur-${r.receipt_line_id}`}
+                        </Button>
+                        <Button size="sm" data-testid={`rq-retur-${r.receipt_line_id}`}
                           onClick={() => openRework({ id: r.receipt_line_id, reject_qty: r.qty_reject, reject_reason: r.reject_reason },
-                            { id: r.receipt_id, receipt_code: r.receipt_code }, 'retur_ke_cmt')}
-                          className="h-7 px-2 rounded-md bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-[11px] font-semibold hover:opacity-90 whitespace-nowrap inline-flex items-center gap-1">
+                            { id: r.receipt_id, receipt_code: r.receipt_code }, 'retur_ke_cmt')}>
                           <Undo2 className="w-3 h-3" /> Retur ke CMT
-                        </button>
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -485,19 +482,19 @@ export default function DAReceiveFromCMTModule() {
               </tbody>
             </table>
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {/* ── Selisih kirim: barang BELUM SAMPAI (kewajiban vendor) ───────── */}
       {shorts.items?.length > 0 && (
-        <div className="rounded-xl bg-[var(--card-surface,#fff)] border border-rose-300 shadow-[var(--shadow-card,0_1px_2px_rgba(0,0,0,0.06))] overflow-hidden"
+        <GlassCard className="overflow-hidden border-[hsl(var(--destructive)/0.35)]"
           data-testid="short-shipment-panel">
-          <div className="px-3 py-2 bg-rose-50 border-b border-rose-200 flex items-center gap-2 flex-wrap">
-            <PackageSearch className="w-4 h-4 text-rose-700 shrink-0" />
-            <span className="text-xs font-bold text-rose-900">
+          <div className="px-3 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)] flex items-center gap-2 flex-wrap">
+            <PackageSearch className="w-4 h-4 text-[hsl(var(--destructive))] shrink-0" />
+            <span className="text-xs font-bold text-[hsl(var(--destructive))]">
               Selisih Kirim — {fmtNum(shorts.total_qty_open)} pcs BELUM SAMPAI dari vendor
             </span>
-            <span className="text-[11px] text-rose-700">
+            <span className="text-[11px] text-[hsl(var(--destructive))]">
               Dokumen sudah dikoreksi ke qty yang diterima; sisa kirim vendor terbuka kembali.
             </span>
           </div>
@@ -518,47 +515,40 @@ export default function DAReceiveFromCMTModule() {
               <tbody>
                 {shorts.items.map(s => (
                   <tr key={s.id} className="border-t border-foreground/5">
-                    <td className="px-3 py-2 font-mono text-[11px] font-semibold text-foreground whitespace-nowrap">{s.short_number}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] font-semibold text-foreground whitespace-nowrap">{s.short_number}</td>
                     <td className="px-3 py-2 text-foreground">
                       <div className="font-medium truncate max-w-[170px]">{s.po_number || '—'}</div>
                       <div className="text-[11px] text-muted-foreground truncate max-w-[170px]">{s.vendor_name || '—'}</div>
                     </td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-foreground whitespace-nowrap">{s.sku || '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] text-foreground whitespace-nowrap">{s.sku || '—'}</td>
                     <td className="px-3 py-2 text-right text-muted-foreground">{fmtNum(s.qty_claimed)}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700 font-medium">{fmtNum(s.qty_arrived)}</td>
-                    <td className="px-3 py-2 text-right font-bold text-rose-700">{fmtNum(s.qty_open ?? s.qty_short)}</td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-muted-foreground whitespace-nowrap">{s.receipt_code || '—'}</td>
+                    <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{fmtNum(s.qty_arrived)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--destructive))]">{fmtNum(s.qty_open ?? s.qty_short)}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] text-muted-foreground whitespace-nowrap">{s.receipt_code || '—'}</td>
                     <td className="px-3 py-2 text-right">
-                      <button data-testid={`short-resolve-${s.short_number}`}
+                      <Button size="sm" variant="outline" data-testid={`short-resolve-${s.short_number}`}
                         onClick={() => { setResolveShort(s); setResType('hilang_tanggungan_vendor'); setResNotes(''); }}
-                        className="h-7 px-2.5 rounded-md bg-rose-600 text-white text-[11px] font-semibold hover:bg-rose-700 whitespace-nowrap">
+                        className="text-[hsl(var(--destructive))]">
                         Selesaikan
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="px-3 py-2 bg-rose-50/60 border-t border-rose-200 text-[11px] text-rose-800">
+          <div className="px-3 py-2 bg-[hsl(var(--destructive)/0.6)] border-t border-[hsl(var(--destructive)/0.35)] text-[11px] text-[hsl(var(--destructive))]">
             Jalur normal: vendor menemukan barangnya lalu <strong>mengirim ulang</strong> — selisih
             tertutup OTOMATIS saat penerimaan kiriman ulang selesai QC. Tombol
             <strong> Selesaikan</strong> dipakai bila barang dinyatakan hilang atau ternyata salah input.
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {/* ── Tabs ───────────────────────────────────────────────────────── */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} data-testid={`receipt-tab-${t.id}`}
-            className={`h-8 px-3 rounded-lg text-xs font-semibold border transition-colors whitespace-nowrap ${
-              tab === t.id
-                ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] border-transparent'
-                : 'bg-[var(--card-surface,#fff)] text-foreground border-border hover:bg-foreground/5'}`}>
-            {t.label}
-          </button>
-        ))}
+        <FilterChips value={tab} onChange={setTab} testId="receipt-tab" ariaLabel="Penyaring status penerimaan"
+          options={TABS.map(t => ({ key: t.id, label: t.label }))} />
         <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1 ml-1">
           <Info className="w-3 h-3 shrink-0" />
           Vendor deklarasi kirim → penerimaan otomatis muncul di sini
@@ -566,7 +556,7 @@ export default function DAReceiveFromCMTModule() {
       </div>
 
       {/* ── Tabel utama ───────────────────────────────────────────────── */}
-      <div className="rounded-xl bg-[var(--card-surface,#fff)] border border-[var(--glass-border,rgba(0,0,0,0.08))] shadow-[var(--shadow-card,0_1px_2px_rgba(0,0,0,0.06))] overflow-hidden">
+      <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[1180px]" data-testid="receipt-table">
             <thead className="bg-foreground/[0.04]">
@@ -578,7 +568,7 @@ export default function DAReceiveFromCMTModule() {
                 <th className="px-3 py-2 font-semibold text-right">Klaim vendor</th>
                 <th className="px-3 py-2 font-semibold text-right">Sampai (dokumen)</th>
                 <th className="px-3 py-2 font-semibold text-right">Lolos QC</th>
-                <th className="px-3 py-2 font-semibold text-right">Reject</th>
+                <th className="px-3 py-2 font-semibold text-right">Ditolak</th>
                 <th className="px-3 py-2 font-semibold text-right">Belum sampai</th>
                 <th className="px-3 py-2 font-semibold text-right">Blm diputuskan</th>
                 <th className="px-3 py-2 font-semibold">Status</th>
@@ -587,13 +577,14 @@ export default function DAReceiveFromCMTModule() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={12} className="px-3 py-10 text-center text-muted-foreground">
+                <tr><td colSpan={12} className="px-3 py-6 text-center text-muted-foreground">
                   <Loader2 className="w-4 h-4 animate-spin inline mr-2" /> Memuat…
                 </td></tr>
               )}
               {!loading && filtered.length === 0 && (
-                <tr><td colSpan={12} className="px-3 py-10 text-center text-muted-foreground">
-                  Belum ada penerimaan pada tab ini.
+                <tr><td colSpan={12}>
+                  <EmptyState icon={ClipboardCheck} title="Belum ada penerimaan pada status ini"
+                    description="Penerimaan muncul otomatis setelah vendor CMT mendeklarasikan kiriman." />
                 </td></tr>
               )}
               {!loading && filtered.map(r => {
@@ -611,7 +602,7 @@ export default function DAReceiveFromCMTModule() {
                         </button>
                       </td>
                       <td className="px-3 py-2">
-                        <div className="font-mono text-[11px] font-semibold text-foreground whitespace-nowrap">{r.receipt_code}</div>
+                        <div className="tabular-nums text-[11px] font-semibold text-foreground whitespace-nowrap">{r.receipt_code}</div>
                         <div className="text-[11px] text-muted-foreground whitespace-nowrap">{fmtDate(r.receipt_date || r.created_at)}</div>
                       </td>
                       <td className="px-3 py-2 text-foreground max-w-[180px] break-words">
@@ -629,45 +620,43 @@ export default function DAReceiveFromCMTModule() {
                       <td className="px-3 py-2 text-foreground max-w-[160px] break-words">{r.po_number || '—'}</td>
                       <td className="px-3 py-2 text-right text-muted-foreground">{fmtNum(r.total_claimed_by_cmt ?? r.total_shipped_by_cmt)}</td>
                       <td className="px-3 py-2 text-right font-medium text-foreground">{fmtNum(r.total_shipped_by_cmt)}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-emerald-700">{fmtNum(r.total_qty_actual)}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-red-700">{fmtNum(r.total_qty_reject)}</td>
-                      <td className={`px-3 py-2 text-right font-bold ${Number(r.total_qty_short_open || 0) > 0 ? 'text-rose-700 bg-rose-50' : 'text-muted-foreground'}`}
+                      <td className="px-3 py-2 text-right font-semibold text-[hsl(var(--success))]">{fmtNum(r.total_qty_actual)}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-[hsl(var(--destructive))]">{fmtNum(r.total_qty_reject)}</td>
+                      <td className={`px-3 py-2 text-right font-bold ${Number(r.total_qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground'}`}
                         data-testid={`receipt-short-${r.receipt_code}`}>
                         {fmtNum(r.total_qty_short_open ?? r.total_qty_short)}
                       </td>
-                      <td className="px-3 py-2 text-right font-bold text-orange-700">{fmtNum(r.total_reject_undecided)}</td>
+                      <td className="px-3 py-2 text-right font-bold text-[hsl(var(--warning))]">{fmtNum(r.total_reject_undecided)}</td>
                       <td className="px-3 py-2"><StatusPill status={r.status} label={r.status_label} /></td>
                       <td className="px-3 py-2">
                         <div className="flex items-center justify-end gap-1.5 flex-wrap">
                           {/* W5 — surat jalan CMT → DA (boleh dicetak kapan saja;
                               kolom hasil QC tinggal dicentang bila sudah diisi) */}
-                          <button
+                          <Button size="sm" variant="outline"
                             onClick={() => setSjReceipt(r)}
                             title="Cetak Surat Jalan CMT → DA (pilih kolom)"
-                            data-testid={`receipt-surat-jalan-${r.receipt_code}`}
-                            className="h-7 px-2 rounded-md border border-border text-[11px] font-medium text-foreground hover:bg-foreground/5 inline-flex items-center gap-1 whitespace-nowrap">
+                            data-testid={`receipt-surat-jalan-${r.receipt_code}`}>
                             <FileText className="w-3 h-3" /> Surat Jalan
-                          </button>
+                          </Button>
                           {editable && (
                             <>
-                              <button
+                              <Button size="sm"
                                 onClick={() => completeQc(r)}
                                 disabled={!r.can_complete_qc || finishing[r.id]}
                                 title={r.can_complete_qc ? 'Selesaikan QC' : 'Isi qty lolos semua baris dulu'}
-                                data-testid={`receipt-complete-${r.receipt_code}`}
-                                className="h-7 px-2.5 rounded-md bg-emerald-600 text-white text-[11px] font-semibold hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 whitespace-nowrap">
+                                data-testid={`receipt-complete-${r.receipt_code}`}>
                                 {finishing[r.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
                                 Selesaikan QC
-                              </button>
-                              <button onClick={() => cancelReceipt(r)} data-testid={`receipt-cancel-${r.receipt_code}`}
-                                className="h-7 px-2 rounded-md border border-border text-[11px] text-muted-foreground hover:bg-foreground/5 inline-flex items-center gap-1">
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => cancelReceipt(r)} data-testid={`receipt-cancel-${r.receipt_code}`}
+                                className="text-muted-foreground">
                                 <Ban className="w-3 h-3" /> Batal
-                              </button>
+                              </Button>
                             </>
                           )}
                           {!editable && r.pass_rate != null && (
                             <span className="text-[11px] text-muted-foreground whitespace-nowrap">
-                              Pass {r.pass_rate}% · Reject {r.reject_rate}%
+                              Lolos {r.pass_rate}% · Ditolak {r.reject_rate}%
                             </span>
                           )}
                         </div>
@@ -686,16 +675,17 @@ export default function DAReceiveFromCMTModule() {
                                     <th className="px-3 py-2 font-semibold">Warna · Size</th>
                                     <th className="px-3 py-2 font-semibold text-right">Klaim vendor</th>
                                     <th className="px-3 py-2 font-semibold text-right">Lolos QC</th>
-                                    <th className="px-3 py-2 font-semibold text-right">Reject</th>
+                                    <th className="px-3 py-2 font-semibold text-right">Ditolak</th>
                                     <th className="px-3 py-2 font-semibold text-right">Belum sampai</th>
-                                    <th className="px-3 py-2 font-semibold">Alasan reject</th>
+                                    <th className="px-3 py-2 font-semibold">Alasan ditolak</th>
                                     <th className="px-3 py-2 font-semibold text-right">Aksi</th>
                                   </tr>
                                 </thead>
                                 <tbody>
                                   {(r.lines || []).length === 0 && (
-                                    <tr><td colSpan={8} className="px-3 py-5 text-center text-muted-foreground">
-                                      Belum ada baris — deklarasi vendor mungkin kosong.
+                                    <tr><td colSpan={8}>
+                                      <EmptyState icon={Package} title="Penerimaan ini belum berisi barang"
+                                        description="Deklarasi kirim vendor mungkin kosong — minta vendor melengkapi deklarasinya." />
                                     </td></tr>
                                   )}
                                   {(r.lines || []).map(line => {
@@ -707,7 +697,7 @@ export default function DAReceiveFromCMTModule() {
                                     return (
                                       <tr key={line.id} className="border-t border-foreground/5 align-middle">
                                         <td className="px-3 py-2">
-                                          <div className="font-mono text-[11px] font-semibold text-foreground">{line.sku_code || '—'}</div>
+                                          <div className="tabular-nums text-[11px] font-semibold text-foreground">{line.sku_code || '—'}</div>
                                           <div className="text-[11px] text-muted-foreground break-words max-w-[220px]">{line.product_name || ''}</div>
                                         </td>
                                         <td className="px-3 py-2 text-foreground whitespace-nowrap">
@@ -716,7 +706,7 @@ export default function DAReceiveFromCMTModule() {
                                         <td className="px-3 py-2 text-right font-medium text-foreground">
                                           {fmtNum(claimed)}
                                           {!editable && claimed !== declared && (
-                                            <div className="text-[10px] text-rose-700 font-semibold whitespace-nowrap">
+                                            <div className="text-[10px] text-[hsl(var(--destructive))] font-semibold whitespace-nowrap">
                                               dokumen: {fmtNum(declared)}
                                             </div>
                                           )}
@@ -731,7 +721,7 @@ export default function DAReceiveFromCMTModule() {
                                             disabled={!editable} tone="reject" testId={`line-reject-${line.id}`}
                                             onChange={v => setLineDraft(line, 'reject_qty', v)} />
                                         </td>
-                                        <td className={`px-3 py-2 text-right font-bold ${shortOpen > 0 ? 'text-rose-700 bg-rose-50' : 'text-muted-foreground'}`}
+                                        <td className={`px-3 py-2 text-right font-bold ${shortOpen > 0 ? 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]' : 'text-muted-foreground'}`}
                                           data-testid={`line-short-${line.id}`}
                                           title={shortOpen > 0 ? 'Barang belum sampai — kewajiban vendor, dokumen sudah dikoreksi' : ''}>
                                           {fmtNum(shortOpen)}
@@ -749,41 +739,37 @@ export default function DAReceiveFromCMTModule() {
                                         <td className="px-3 py-2">
                                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
                                             {editable && (
-                                              <button onClick={() => saveLine(r, line)} disabled={!dirty || savingLine[line.id]}
-                                                data-testid={`line-save-${line.id}`}
-                                                className="h-7 px-2.5 rounded-md bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-[11px] font-semibold hover:opacity-90 disabled:opacity-40 inline-flex items-center gap-1 whitespace-nowrap">
+                                              <Button size="sm" onClick={() => saveLine(r, line)} disabled={!dirty || savingLine[line.id]}
+                                                data-testid={`line-save-${line.id}`}>
                                                 {savingLine[line.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : null}
                                                 Simpan
-                                              </button>
+                                              </Button>
                                             )}
                                             {!editable && (
                                               <>
-                                                <button onClick={() => openKoreksi('qc', line, r)}
+                                                <Button size="sm" variant="outline" onClick={() => openKoreksi('qc', line, r)}
                                                   data-testid={`line-koreksi-qc-${line.id}`}
-                                                  title="Koreksi resmi qty lolos QC — stok FG & buku kuantitas ikut dikoreksi"
-                                                  className="h-7 px-2 rounded-md border border-border text-[11px] font-medium text-foreground hover:bg-foreground/5 whitespace-nowrap inline-flex items-center gap-1">
+                                                  title="Koreksi resmi qty lolos QC — stok FG & buku kuantitas ikut dikoreksi">
                                                   <Pencil className="w-3 h-3" /> Koreksi hasil QC
-                                                </button>
-                                                <button onClick={() => openKoreksi('deklarasi', line, r)}
+                                                </Button>
+                                                <Button size="sm" variant="outline" onClick={() => openKoreksi('deklarasi', line, r)}
                                                   data-testid={`line-koreksi-deklarasi-${line.id}`}
                                                   title="Koreksi klaim vendor (dirambatkan ke dokumen deklarasi + notifikasi vendor)"
-                                                  className="h-7 px-2 rounded-md border border-rose-300 text-[11px] font-medium text-rose-700 hover:bg-rose-50 whitespace-nowrap inline-flex items-center gap-1">
+                                                  className="text-[hsl(var(--destructive))]">
                                                   <FileWarning className="w-3 h-3" /> Koreksi deklarasi
-                                                </button>
+                                                </Button>
                                               </>
                                             )}
                                             {!editable && Number(line.reject_qty || 0) > 0 && (
                                               <>
-                                                <button onClick={() => openRework(line, r, 'permak_sendiri')}
-                                                  data-testid={`line-permak-${line.id}`}
-                                                  className="h-7 px-2 rounded-md border border-border text-[11px] font-medium text-foreground hover:bg-foreground/5 whitespace-nowrap">
+                                                <Button size="sm" variant="outline" onClick={() => openRework(line, r, 'permak_sendiri')}
+                                                  data-testid={`line-permak-${line.id}`}>
                                                   Permak sendiri
-                                                </button>
-                                                <button onClick={() => openRework(line, r, 'retur_ke_cmt')}
-                                                  data-testid={`line-retur-${line.id}`}
-                                                  className="h-7 px-2 rounded-md bg-orange-600 text-white text-[11px] font-semibold hover:bg-orange-700 whitespace-nowrap inline-flex items-center gap-1">
+                                                </Button>
+                                                <Button size="sm" onClick={() => openRework(line, r, 'retur_ke_cmt')}
+                                                  data-testid={`line-retur-${line.id}`}>
                                                   <Undo2 className="w-3 h-3" /> Retur CMT
-                                                </button>
+                                                </Button>
                                               </>
                                             )}
                                           </div>
@@ -797,10 +783,10 @@ export default function DAReceiveFromCMTModule() {
                           </div>
                           {editable && (
                             <p className="text-[11px] text-muted-foreground mt-2">
-                              Isi <strong>Lolos QC</strong> dan <strong>Reject</strong> lalu Simpan per baris.
+                              Isi <strong>Lolos QC</strong> dan <strong>Ditolak</strong> lalu Simpan per baris.
                               Setelah semua baris terisi, tombol <strong>Selesaikan QC</strong> aktif —
-                              stok FG naik sebesar qty lolos, reject masuk karantina, tagihan CMT dibuat otomatis.
-                              Bila <strong>lolos + reject &lt; klaim vendor</strong>, sisanya otomatis dicatat sebagai
+                              stok FG naik sebesar qty lolos, barang ditolak masuk karantina, tagihan CMT dibuat otomatis.
+                              Bila <strong>lolos + ditolak &lt; klaim vendor</strong>, sisanya otomatis dicatat sebagai
                               <strong> selisih kirim (belum sampai)</strong>: dokumen deklarasi vendor dikoreksi ke qty
                               yang benar-benar sampai, vendor diberi notifikasi, dan sisa kirim vendor terbuka kembali.
                             </p>
@@ -822,27 +808,27 @@ export default function DAReceiveFromCMTModule() {
             </tbody>
           </table>
         </div>
-      </div>
+      </GlassCard>
 
       {/* ── Dialog rework ─────────────────────────────────────────────── */}
       {rework && (
         <Modal
           onClose={() => setRework(null)}
-          title={rwType === 'retur_ke_cmt' ? 'Retur Reject ke Vendor CMT' : 'Permak Sendiri'}
+          title={rwType === 'retur_ke_cmt' ? 'Retur barang ditolak ke vendor CMT' : 'Permak Sendiri'}
           size="lg">
           <div className="space-y-3" data-testid="rework-dialog">
             <div className="rounded-lg bg-foreground/[0.04] border border-border p-3 text-xs text-foreground">
               <div><span className="text-muted-foreground">Penerimaan:</span> <strong>{rework.receipt.receipt_code}</strong></div>
-              <div><span className="text-muted-foreground">Reject tercatat:</span> <strong>{fmtNum(rework.line.reject_qty)} pcs</strong></div>
+              <div><span className="text-muted-foreground">Ditolak tercatat:</span> <strong>{fmtNum(rework.line.reject_qty)} pcs</strong></div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
                 <span className="text-[11px] font-semibold text-muted-foreground">Jenis penanganan</span>
-                <select value={rwType} onChange={e => setRwType(e.target.value)} data-testid="rework-type"
-                  className="mt-1 w-full h-9 px-2 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground">
+                <SmartNativeSelect value={rwType} onChange={e => setRwType(e.target.value)} data-testid="rework-type"
+                  className="mt-1 w-full">
                   <option value="permak_sendiri">Permak sendiri (diperbaiki di DA)</option>
                   <option value="retur_ke_cmt">Retur ke CMT (vendor kerjakan ulang)</option>
-                </select>
+                </SmartNativeSelect>
               </label>
               <label className="block">
                 <span className="text-[11px] font-semibold text-muted-foreground">Qty</span>
@@ -857,8 +843,8 @@ export default function DAReceiveFromCMTModule() {
               </label>
               <label className="block">
                 <span className="text-[11px] font-semibold text-muted-foreground">Target kembali</span>
-                <input type="date" value={rwDeadline} onChange={e => setRwDeadline(e.target.value)}
-                  className="mt-1 w-full h-9 px-2 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground" />
+                <GlassInput type="date" value={rwDeadline} onChange={e => setRwDeadline(e.target.value)}
+                  className="mt-1" />
               </label>
             </div>
             <label className="block">
@@ -866,21 +852,19 @@ export default function DAReceiveFromCMTModule() {
               <textarea value={rwReason} onChange={e => setRwReason(e.target.value)} rows={2}
                 className="mt-1 w-full px-2 py-1.5 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground" />
             </label>
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-[11px] text-blue-900">
+            <Notice tone="info" icon={Info} className="text-[11px]">
               {rwType === 'retur_ke_cmt'
                 ? 'Barang dikeluarkan dari karantina dan dikirim balik ke vendor lewat Surat Jalan REWORK. Vendor akan melihatnya di Portal Vendor → Penerimaan Material, mengerjakan ulang, lalu mengirim balik melalui deklarasi kirim. Qty diterima PO bertambah saat penerimaan rework selesai QC.'
                 : 'Barang tetap di DA (karantina). Saat permak ditandai BERHASIL, stok FG naik sebesar qty yang diperbaiki dan qty diterima PO bertambah otomatis.'}
-            </div>
+            </Notice>
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setRework(null)}
-                className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-foreground/5">
+              <Button variant="outline" onClick={() => setRework(null)}>
                 Batal
-              </button>
-              <button onClick={submitRework} disabled={rwSaving} data-testid="rework-submit"
-                className="h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-xs font-semibold hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-1.5">
+              </Button>
+              <Button onClick={submitRework} disabled={rwSaving} data-testid="rework-submit">
                 {rwSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
                 Proses
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>
@@ -900,8 +884,8 @@ export default function DAReceiveFromCMTModule() {
                 <span className="text-muted-foreground">Sekarang:</span>{' '}
                 klaim <strong>{fmtNum(koreksi.line.qty_claimed_by_cmt || koreksi.line.qty_shipped_by_cmt)}</strong> ·
                 lolos <strong>{fmtNum(koreksi.line.qty_actual)}</strong> ·
-                reject <strong>{fmtNum(koreksi.line.reject_qty)}</strong> ·
-                belum sampai <strong className="text-rose-700">{fmtNum(koreksi.line.qty_short)}</strong>
+                ditolak <strong>{fmtNum(koreksi.line.reject_qty)}</strong> ·
+                belum sampai <strong className="text-[hsl(var(--destructive))]">{fmtNum(koreksi.line.qty_short)}</strong>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -915,12 +899,12 @@ export default function DAReceiveFromCMTModule() {
               </label>
               {koreksi.mode === 'qc' && (
                 <label className="block">
-                  <span className="text-[11px] font-semibold text-muted-foreground">Qty reject</span>
+                  <span className="text-[11px] font-semibold text-muted-foreground">Qty ditolak</span>
                   <input type="number" min={0} value={korReject} onChange={e => setKorReject(e.target.value)}
                     data-testid="koreksi-reject"
                     className="mt-1 w-full h-9 px-2 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground" />
                   <span className="text-[10px] text-muted-foreground">
-                    Reject yang sudah masuk karantina/permak tidak bisa diubah.
+                    Barang ditolak yang sudah masuk karantina/permak tidak bisa diubah.
                   </span>
                 </label>
               )}
@@ -932,21 +916,19 @@ export default function DAReceiveFromCMTModule() {
                 placeholder={koreksi.mode === 'qc' ? 'mis. salah hitung, aktual 100 pcs' : 'mis. surat jalan vendor tertulis 100, seharusnya 90'}
                 className="mt-1 w-full px-2 py-1.5 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground" />
             </label>
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-[11px] text-blue-900">
+            <Notice tone="info" icon={Info} className="text-[11px]">
               {koreksi.mode === 'qc'
                 ? 'Stok FG dikoreksi sebesar selisihnya lewat SSOT stok, buku kuantitas dihitung ulang dari dokumen, dan dokumen selisih kirim disegarkan. Semua tercatat di jejak audit.'
                 : 'Klaim vendor diperbarui dan dirambatkan ke dokumen deklarasi kirim vendor (dengan jejak audit). Vendor mendapat NOTIFIKASI berisi angka baru; tidak ada proses sanggahan.'}
-            </div>
+            </Notice>
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setKoreksi(null)}
-                className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-foreground/5">
+              <Button variant="outline" onClick={() => setKoreksi(null)}>
                 Batal
-              </button>
-              <button onClick={submitKoreksi} disabled={korSaving} data-testid="koreksi-submit"
-                className="h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] text-xs font-semibold hover:opacity-90 disabled:opacity-50 inline-flex items-center gap-1.5">
+              </Button>
+              <Button onClick={submitKoreksi} disabled={korSaving} data-testid="koreksi-submit">
                 {korSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Pencil className="w-3.5 h-3.5" />}
                 Simpan koreksi
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>
@@ -957,7 +939,7 @@ export default function DAReceiveFromCMTModule() {
         <Modal onClose={() => setResolveShort(null)}
           title={`Selesaikan Selisih Kirim ${resolveShort.short_number}`} size="lg">
           <div className="space-y-3" data-testid="short-resolve-dialog">
-            <div className="rounded-lg bg-rose-50 border border-rose-200 p-3 text-xs text-rose-900 space-y-0.5">
+            <div className="rounded-lg bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] p-3 text-xs text-[hsl(var(--destructive))] space-y-0.5">
               <div><span className="opacity-70">PO / Vendor:</span> <strong>{resolveShort.po_number || '—'}</strong> · {resolveShort.vendor_name || '—'}</div>
               <div><span className="opacity-70">SKU:</span> <strong>{resolveShort.sku || '—'}</strong></div>
               <div>
@@ -968,10 +950,10 @@ export default function DAReceiveFromCMTModule() {
             </div>
             <label className="block">
               <span className="text-[11px] font-semibold text-muted-foreground">Keputusan</span>
-              <select value={resType} onChange={e => setResType(e.target.value)} data-testid="short-resolve-type"
-                className="mt-1 w-full h-9 px-2 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground">
+              <SmartNativeSelect value={resType} onChange={e => setResType(e.target.value)} data-testid="short-resolve-type"
+                className="mt-1 w-full">
                 {SHORT_RESOLUTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
-              </select>
+              </SmartNativeSelect>
             </label>
             <label className="block">
               <span className="text-[11px] font-semibold text-muted-foreground">Catatan</span>
@@ -980,21 +962,19 @@ export default function DAReceiveFromCMTModule() {
                 placeholder="mis. barang tidak ditemukan setelah dicari 3 hari — dibebankan ke vendor"
                 className="mt-1 w-full px-2 py-1.5 rounded-md bg-[var(--card-surface,#fff)] border border-border text-xs text-foreground" />
             </label>
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-[11px] text-blue-900">
+            <Notice tone="info" icon={Info} className="text-[11px]">
               Tidak ada pemotongan tagihan otomatis: keputusan tanggungan hanya DICATAT + vendor
               diberi notifikasi, lalu Finance memprosesnya di modul Tagihan CMT. Tanpa batas waktu —
               selisih boleh tetap terbuka sampai barang ditemukan.
-            </div>
+            </Notice>
             <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setResolveShort(null)}
-                className="h-9 px-3 rounded-lg border border-border text-xs font-medium text-foreground hover:bg-foreground/5">
+              <Button variant="outline" onClick={() => setResolveShort(null)}>
                 Batal
-              </button>
-              <button onClick={submitResolveShort} disabled={resSaving} data-testid="short-resolve-submit"
-                className="h-9 px-4 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 inline-flex items-center gap-1.5">
+              </Button>
+              <Button onClick={submitResolveShort} disabled={resSaving} data-testid="short-resolve-submit">
                 {resSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
                 Simpan keputusan
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

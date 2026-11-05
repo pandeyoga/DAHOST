@@ -39,12 +39,12 @@ function KindTab({ kind, active, onClick }) {
 
 function CartRow({ row, onCopies, onRemove }) {
   return (
-    <tr className={`border-t border-[var(--glass-border)] ${row.master_linked === false ? 'bg-red-50 dark:bg-red-500/10' : ''}`}
+    <tr className={`border-t border-[var(--glass-border)] ${row.master_linked === false ? 'bg-[hsl(var(--destructive)/0.1)] ' : ''}`}
       data-testid={`barcode-cart-row-${row.code}`}>
-      <td className="px-3 py-2 font-mono text-xs text-foreground">
+      <td className="px-3 py-2 tabular-nums text-xs text-foreground">
         {row.code}
         {row.master_linked === false && (
-          <div className="text-[10px] text-red-600 dark:text-red-400 font-sans mt-0.5"
+          <div className="text-[10px] text-[hsl(var(--destructive))] font-sans mt-0.5"
             data-testid={`barcode-unlinked-${row.code}`}>
             Belum ada di master Barang Jadi — labelnya tidak bisa dicetak.
             {row.reason ? ` ${row.reason}` : ''}
@@ -63,7 +63,7 @@ function CartRow({ row, onCopies, onRemove }) {
       </td>
       <td className="px-3 py-2 text-right">
         <button onClick={() => onRemove(row.code)} title="Hapus baris"
-          className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-400/10 text-muted-foreground hover:text-red-600"
+          className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
           data-testid={`barcode-remove-${row.code}`}>
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -79,8 +79,10 @@ export default function WMSBarcodeModule() {
   const [itemsMeta, setItemsMeta] = useState({ total: 0, returned: 0 });
   const [loadingItems, setLoadingItems] = useState(false);
   const [cart, setCart] = useState([]);
-  const [includeStock, setIncludeStock] = useState(true);
-  // 2026-11-02 (keputusan owner): ukuran label barang jadi — standar 100×70 / hangtag 70×40
+  const [includeStock, setIncludeStock] = useState(true);
+
+  // 2026-11-02 (keputusan owner): ukuran label barang jadi — standar 100×70 / hangtag 70×40
+
   const [fgSize, setFgSize] = useState('standard');
   const [note, setNote] = useState('');
   const [pos, setPos] = useState([]);
@@ -152,7 +154,8 @@ export default function WMSBarcodeModule() {
           kind,
           rows: cart.filter(r => r.master_linked !== false)
             .map(r => ({ id: r.material_id || undefined, code: r.code, copies: Number(r.copies) || 1 })),
-          include_stock: kind === 'material' ? includeStock : false,
+          include_stock: kind === 'material' ? includeStock : false,
+
           size: kind === 'fg' ? fgSize : 'standard',
           source: poInfo ? 'produksi' : 'manual',
           po_id: poInfo?.po_id || null,
@@ -225,7 +228,7 @@ export default function WMSBarcodeModule() {
             Sumber: <b className="text-foreground">{poInfo.po_number}</b> ({poInfo.business_type}) ·
             {' '}{poInfo.rows?.length || 0} artikel · {poInfo.total_copies} label
             {poInfo.unlinked_count > 0 && (
-              <span className="text-red-600 dark:text-red-400">
+              <span className="text-[hsl(var(--destructive))] ">
                 {' '}· {poInfo.unlinked_count} artikel belum ada di master
               </span>
             )}
@@ -251,8 +254,7 @@ export default function WMSBarcodeModule() {
                 className="h-9 w-full pl-8 pr-3 rounded-lg border border-input bg-background text-sm text-foreground"
                 data-testid="barcode-search-input" />
             </div>
-            <Button variant="ghost" onClick={loadItems} disabled={loadingItems}
-              className="border border-[var(--glass-border)]" data-testid="barcode-search-btn">
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={loadItems} disabled={loadingItems} data-testid="barcode-search-btn">
               <RefreshCw className={`w-4 h-4 ${loadingItems ? 'animate-spin' : ''}`} />
             </Button>
           </div>
@@ -267,13 +269,13 @@ export default function WMSBarcodeModule() {
                 ) : items.map(it => (
                   <tr key={it.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]">
                     <td className="px-3 py-2">
-                      <div className="font-mono text-xs text-foreground">{it.code}</div>
+                      <div className="tabular-nums text-xs text-foreground">{it.code}</div>
                       <div className="text-xs text-muted-foreground">{it.name}</div>
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{it.unit}</td>
                     <td className="px-3 py-2 text-right">
-                      <Button variant="ghost" onClick={() => addItem(it)}
-                        className="h-7 px-2 border border-[var(--glass-border)]"
+                      <Button size="sm" variant="outline" onClick={() => addItem(it)}
+                        className="px-2"
                         data-testid={`barcode-add-${it.code}`}>
                         <Plus className="w-3.5 h-3.5" />
                       </Button>
@@ -290,7 +292,7 @@ export default function WMSBarcodeModule() {
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <h2 className="text-base font-semibold text-foreground">Daftar cetak</h2>
             <span className={`text-xs px-2 py-1 rounded-full border ${
-              overLimit ? 'bg-red-50 dark:bg-red-500/10 border-red-300/40 text-red-600 dark:text-red-400'
+              overLimit ? 'bg-[hsl(var(--destructive)/0.1)]  border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] '
                 : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-muted-foreground'}`}
               data-testid="barcode-total-labels">
               {totalLabels} label · {cart.length} item
@@ -348,7 +350,7 @@ export default function WMSBarcodeModule() {
             data-testid="barcode-note-input" />
 
           {unlinked.length > 0 && (
-            <div className="flex items-start gap-2 text-xs bg-red-50 dark:bg-red-500/10 border border-red-300/40 rounded-lg px-3 py-2 text-red-700 dark:text-red-300"
+            <div className="flex items-start gap-2 text-xs bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--destructive))] "
               data-testid="barcode-unlinked-warning">
               <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
               <div>
@@ -359,25 +361,23 @@ export default function WMSBarcodeModule() {
             </div>
           )}
           {overLimit && (
-            <div className="text-xs bg-red-50 dark:bg-red-500/10 border border-red-300/40 rounded-lg px-3 py-2 text-red-700 dark:text-red-300"
+            <div className="text-xs bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--destructive))] "
               data-testid="barcode-limit-warning">
               Total {totalLabels} label melebihi batas {MAX_LABELS} lembar per cetak.
               Kurangi jumlahnya atau cetak beberapa kali.
             </div>
           )}
           {error && (
-            <div className="text-xs bg-red-50 dark:bg-red-500/10 border border-red-300/40 rounded-lg px-3 py-2 text-red-700 dark:text-red-300"
+            <div className="text-xs bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--destructive))] "
               data-testid="barcode-error">{error}</div>
           )}
           {okMsg && (
-            <div className="text-xs bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-300/40 rounded-lg px-3 py-2 text-emerald-700 dark:text-emerald-300"
+            <div className="text-xs bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.4)] rounded-lg px-3 py-2 text-[hsl(var(--success))] "
               data-testid="barcode-success">{okMsg}</div>
           )}
 
           <div className="flex items-center justify-between gap-2">
-            <Button variant="ghost" onClick={() => { setCart([]); setPoInfo(null); setOkMsg(''); setError(''); }}
-              disabled={cart.length === 0} className="border border-[var(--glass-border)]"
-              data-testid="barcode-clear-btn">Kosongkan</Button>
+            <Button variant="outline" onClick={() => { setCart([]); setPoInfo(null); setOkMsg(''); setError(''); }} disabled={cart.length === 0} data-testid="barcode-clear-btn">Kosongkan</Button>
             <Button onClick={printPdf}
               disabled={busy || overLimit || cart.filter(r => r.master_linked !== false).length === 0}
               data-testid="barcode-print-btn">
@@ -416,7 +416,7 @@ export default function WMSBarcodeModule() {
               ) : history.map(h => (
                 <tr key={h.id} className="border-t border-[var(--glass-border)]"
                   data-testid={`barcode-history-${h.job_number}`}>
-                  <td className="px-4 py-2 font-mono text-xs text-foreground">{h.job_number}</td>
+                  <td className="px-4 py-2 tabular-nums text-xs text-foreground">{h.job_number}</td>
                   <td className="px-4 py-2 text-xs text-muted-foreground">
                     {h.kind === 'fg' ? (h.size === 'hangtag' ? 'Barang Jadi · hangtag' : 'Barang Jadi') : 'Bahan'}
                   </td>

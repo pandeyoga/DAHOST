@@ -48,6 +48,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 import { PageHeader } from './moduleAtoms';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState } from './EmptyState';
 import MaklonBuyerCatalogDetailDialog from './MaklonBuyerCatalogDetailDialog';
 import ProductionGuideDialog from './ProductionGuideDialog';
@@ -129,15 +130,15 @@ export default function MaklonBuyerCatalogModule({ token }) {
   };
 
   const discontinueItem = async (row) => {
-    if (!window.confirm(`Set artikel "${row.artikel_code}" sebagai discontinued?`)) return;
+    if (!(await confirmDialog({ title: `Hentikan artikel "${row.artikel_code}"?`, body: 'Artikel yang dihentikan tidak bisa dipakai untuk order baru.', confirmLabel: 'Hentikan', danger: true }))) return;
     const r = await fetch(`/api/dewi/maklon/buyer-catalog/${row.id}`, {
       method: 'DELETE',
       headers,
     });
     if (r.ok) {
-      toast.success('Artikel di-discontinue');
+      toast.success('Artikel dihentikan');
       fetchItems();
-    } else toast.error('Gagal melakukan discontinue');
+    } else toast.error('Gagal menghentikan artikel');
   };
 
   const stats = useMemo(
@@ -151,7 +152,7 @@ export default function MaklonBuyerCatalogModule({ token }) {
   );
 
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-buyer-catalog-module">
+    <div className="space-y-4" data-testid="maklon-buyer-catalog-module">
       <PageHeader
         title="Buyer Catalog"
         description="Master artikel buyer Maklon — spesifikasi & harga default langsung dari klien"
@@ -159,13 +160,14 @@ export default function MaklonBuyerCatalogModule({ token }) {
         actions={
           <div className="flex gap-2">
             <Button
-              size="sm"
+              size="icon"
               onClick={fetchItems}
               variant="outline"
-              className="gap-2"
+              title="Muat ulang"
+              aria-label="Muat ulang"
               data-testid="buyer-catalog-refresh-btn"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
             <Button
               size="sm"
@@ -182,10 +184,10 @@ export default function MaklonBuyerCatalogModule({ token }) {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
-          { label: 'Total', value: stats.total, icon: Layers, color: 'text-blue-400 bg-blue-500/10 border-blue-400/20' },
-          { label: 'Aktif', value: stats.active, icon: CheckCircle2, color: 'text-green-400 bg-green-500/10 border-green-400/20' },
-          { label: 'Non-Aktif', value: stats.inactive, icon: Ban, color: 'text-orange-400 bg-orange-500/10 border-orange-400/20' },
-          { label: 'Discontinued', value: stats.discontinued, icon: AlertCircle, color: 'text-red-400 bg-red-500/10 border-red-400/20' },
+          { key: 'total', label: 'Total', value: stats.total, icon: Layers, color: 'text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.2)]' },
+          { key: 'aktif', label: 'Aktif', value: stats.active, icon: CheckCircle2, color: 'text-[hsl(var(--success))] bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.2)]' },
+          { key: 'non-aktif', label: 'Nonaktif', value: stats.inactive, icon: Ban, color: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.2)]' },
+          { key: 'discontinued', label: 'Dihentikan', value: stats.discontinued, icon: AlertCircle, color: 'text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.2)]' },
         ].map((s, i) => (
           <motion.div
             key={s.label}
@@ -197,7 +199,7 @@ export default function MaklonBuyerCatalogModule({ token }) {
               <div className={`w-8 h-8 rounded-lg border ${s.color} flex items-center justify-center mb-2`}>
                 <s.icon className={`w-4 h-4 ${s.color.split(' ')[0]}`} />
               </div>
-              <div className="text-2xl font-bold text-foreground" data-testid={`stat-${s.label.toLowerCase()}`}>
+              <div className="text-2xl font-bold text-foreground" data-testid={`stat-${s.key}`}>
                 {s.value}
               </div>
               <div className="text-xs text-foreground/50">{s.label}</div>
@@ -248,7 +250,7 @@ export default function MaklonBuyerCatalogModule({ token }) {
                 <SelectItem value="all">Semua</SelectItem>
                 <SelectItem value="active">Aktif</SelectItem>
                 <SelectItem value="inactive">Non-Aktif</SelectItem>
-                <SelectItem value="discontinued">Discontinued</SelectItem>
+                <SelectItem value="discontinued">Dihentikan</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -258,7 +260,7 @@ export default function MaklonBuyerCatalogModule({ token }) {
       {/* Items List */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {loading ? (
-          <div className="col-span-2 text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+          <div className="col-span-2 text-center py-6 text-foreground/40 text-sm">Memuat...</div>
         ) : items.length === 0 ? (
           <div className="col-span-2">
             <EmptyState
@@ -288,22 +290,22 @@ export default function MaklonBuyerCatalogModule({ token }) {
                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                     <span className="font-semibold text-foreground truncate">{it.product_name}</span>
                     {it.status === 'inactive' && (
-                      <span className="text-[10px] bg-orange-500/15 text-orange-400 px-1.5 py-0.5 rounded border border-orange-400/25">
+                      <span className="text-[10px] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] px-1.5 py-0.5 rounded border border-[hsl(var(--warning)/0.25)]">
                         Non-Aktif
                       </span>
                     )}
                     {it.status === 'discontinued' && (
-                      <span className="text-[10px] bg-red-500/15 text-red-400 px-1.5 py-0.5 rounded border border-red-400/25">
-                        Discontinued
+                      <span className="text-[10px] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] px-1.5 py-0.5 rounded border border-[hsl(var(--destructive)/0.25)]">
+                        Dihentikan
                       </span>
                     )}
                   </div>
                   <div className="flex items-center gap-2 mb-1 text-xs flex-wrap">
-                    <span className="bg-violet-500/15 text-violet-300 px-1.5 py-0.5 rounded font-mono border border-violet-400/25">
+                    <span className="bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] px-1.5 py-0.5 rounded tabular-nums border border-[hsl(var(--primary)/0.25)]">
                       {it.artikel_code}
                     </span>
                     {it.buyer_ref_code && (
-                      <span className="bg-foreground/5 text-foreground/65 px-1.5 py-0.5 rounded font-mono">
+                      <span className="bg-foreground/5 text-foreground/65 px-1.5 py-0.5 rounded tabular-nums">
                         ↳ {it.buyer_ref_code}
                       </span>
                     )}
@@ -313,13 +315,13 @@ export default function MaklonBuyerCatalogModule({ token }) {
                   </div>
                   <div className="flex items-center gap-2 text-xs flex-wrap">
                     <span className="text-foreground/60">
-                      CMT: <strong className="text-amber-400">{fmtRp(it.default_cmt_price)}</strong>
+                      CMT: <strong className="text-[hsl(var(--warning))]">{fmtRp(it.default_cmt_price)}</strong>
                     </span>
                     {it.default_selling_price > 0 && (
                       <>
                         <span className="text-foreground/30">•</span>
                         <span className="text-foreground/60">
-                          Jual: <strong className="text-emerald-400">{fmtRp(it.default_selling_price)}</strong>
+                          Jual: <strong className="text-[hsl(var(--success))]">{fmtRp(it.default_selling_price)}</strong>
                         </span>
                       </>
                     )}
@@ -329,7 +331,7 @@ export default function MaklonBuyerCatalogModule({ token }) {
                       {(it.color_options || []).slice(0, 4).map((c) => (
                         <span
                           key={c}
-                          className="text-[10px] bg-blue-500/10 text-blue-300 px-1.5 py-0.5 rounded border border-blue-400/20"
+                          className="text-[10px] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] px-1.5 py-0.5 rounded border border-[hsl(var(--primary)/0.2)]"
                         >
                           {c}
                         </span>
@@ -345,7 +347,7 @@ export default function MaklonBuyerCatalogModule({ token }) {
                     </div>
                   )}
                   {it.variants?.length > 0 && (
-                    <div className="mt-1.5 text-[10px] text-violet-300 flex items-center gap-1">
+                    <div className="mt-1.5 text-[10px] text-[hsl(var(--primary))] flex items-center gap-1">
                       <Boxes className="w-3 h-3" /> {it.variants.length} varian SKU
                     </div>
                   )}
@@ -355,37 +357,37 @@ export default function MaklonBuyerCatalogModule({ token }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-xs h-7 border-violet-400/30 text-violet-300 hover:bg-violet-500/10"
+                      className="border-[hsl(var(--primary)/0.3)] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.1)]"
                       onClick={() => setDetailCatalog(it)}
                       data-testid={`buyer-catalog-detail-${it.id}`}
-                      title="Detail + Price History + BOM Templates"
+                      title="Detail, riwayat harga, dan templat BOM"
                     >
                       Detail
                     </Button>
                     <Button
-                      size="icon"
+                      size="icon-sm"
                       variant="ghost"
-                      className="w-7 h-7"
                       onClick={() => setDialog({ data: it })}
                       data-testid={`buyer-catalog-edit-${it.id}`}
-                      title="Edit"
+                      title="Ubah"
+                      aria-label="Ubah"
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </Button>
                     <Button
-                      size="icon"
+                      size="icon-sm"
                       variant="ghost"
-                      className="w-7 h-7 text-primary/70 hover:text-primary"
+                      className="text-primary/70 hover:text-primary"
                       onClick={() => setSopCatalog(it)}
                       data-testid={`buyer-catalog-sop-${it.id}`}
                       title="Panduan Produksi (SOP)"
+                      aria-label="Panduan Produksi (SOP)"
                     >
                       <BookOpen className="w-3.5 h-3.5" />
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-xs h-7"
                       onClick={() => toggleItem(it)}
                       data-testid={`buyer-catalog-toggle-${it.id}`}
                       disabled={it.status === 'discontinued'}
@@ -396,12 +398,12 @@ export default function MaklonBuyerCatalogModule({ token }) {
                   {it.status !== 'discontinued' && (
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="text-xs h-7 text-red-400 hover:bg-red-500/10"
+                      variant="outline"
+                      className="text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)]"
                       onClick={() => discontinueItem(it)}
                       data-testid={`buyer-catalog-discontinue-${it.id}`}
                     >
-                      Discontinue
+                      Hentikan
                     </Button>
                   )}
                   {it.total_qty_produced > 0 && (
@@ -617,7 +619,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
       <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto" data-testid="buyer-catalog-dialog">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-violet-400" />
+            <BookOpen className="w-4 h-4 text-[hsl(var(--primary))]" />
             {isEdit ? 'Edit Buyer Catalog' : 'Tambah Artikel Buyer'}
           </DialogTitle>
         </DialogHeader>
@@ -656,7 +658,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
               <SelectContent>
                 <SelectItem value="active">Aktif</SelectItem>
                 <SelectItem value="inactive">Non-Aktif</SelectItem>
-                <SelectItem value="discontinued">Discontinued</SelectItem>
+                <SelectItem value="discontinued">Dihentikan</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -667,7 +669,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
               value={form.artikel_code}
               onChange={(e) => setForm({ ...form, artikel_code: e.target.value })}
               placeholder="MAK-ZARA-001"
-              className="h-9 font-mono"
+              className="h-9 tabular-nums"
               data-testid="bc-form-artikel-code"
             />
           </div>
@@ -677,7 +679,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
               value={form.buyer_ref_code}
               onChange={(e) => setForm({ ...form, buyer_ref_code: e.target.value })}
               placeholder="Z-W24-001"
-              className="h-9 font-mono"
+              className="h-9 tabular-nums"
               data-testid="bc-form-buyer-ref"
             />
           </div>
@@ -749,9 +751,9 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
             />
           </div>
 
-          <div className="md:col-span-2 space-y-3 rounded-lg border border-border/60 bg-foreground/[0.02] p-3">
+          <GlassCard className="md:col-span-2 space-y-3 p-4">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground/85">
-              <Boxes className="w-3.5 h-3.5 text-violet-400" /> Varian &amp; SKU
+              <Boxes className="w-3.5 h-3.5 text-[hsl(var(--primary))]" /> Varian &amp; SKU
             </div>
 
             {/* Opsi Warna — dari palet standar (kode konsisten utk SKU) */}
@@ -768,13 +770,13 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                       data-testid={`bc-color-chip-${c.code}`}
                       className={`flex items-center gap-1.5 px-2 py-1 rounded-full border text-xs transition-colors ${
                         sel
-                          ? 'bg-violet-500/15 border-violet-400/40 text-foreground'
+                          ? 'bg-[hsl(var(--primary)/0.15)] border-[hsl(var(--primary)/0.4)] text-foreground'
                           : 'border-border/60 text-foreground/65 hover:bg-foreground/5'
                       }`}
                     >
                       <span className="w-3 h-3 rounded-full border border-border/60" style={{ backgroundColor: c.hex }} />
                       {c.name}
-                      <span className="text-[9px] text-foreground/40 font-mono">{c.code}</span>
+                      <span className="text-[9px] text-foreground/40 tabular-nums">{c.code}</span>
                     </button>
                   );
                 })}
@@ -786,7 +788,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                     .map((n) => (
                       <span
                         key={n}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-400/30 text-amber-300 text-[11px]"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))] text-[11px]"
                       >
                         {n}
                         <button type="button" onClick={() => toggleColor(n)}>
@@ -810,7 +812,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                   className="h-8 text-xs w-44"
                   data-testid="bc-form-color-custom"
                 />
-                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={addCustomColor}>
+                <Button type="button" size="sm" variant="outline" onClick={addCustomColor}>
                   + Tambah
                 </Button>
               </div>
@@ -828,9 +830,9 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                       key={s.id}
                       onClick={() => toggleSize(s.code)}
                       data-testid={`bc-size-chip-${s.code}`}
-                      className={`px-2.5 py-1 rounded-md border text-xs font-mono transition-colors ${
+                      className={`px-2.5 py-1 rounded-md border text-xs tabular-nums transition-colors ${
                         sel
-                          ? 'bg-violet-500/15 border-violet-400/40 text-foreground'
+                          ? 'bg-[hsl(var(--primary)/0.15)] border-[hsl(var(--primary)/0.4)] text-foreground'
                           : 'border-border/60 text-foreground/65 hover:bg-foreground/5'
                       }`}
                     >
@@ -843,7 +845,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                   .map((c) => (
                     <span
                       key={c}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-amber-500/10 border border-amber-400/30 text-amber-300 text-xs font-mono"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))] text-xs tabular-nums"
                     >
                       {c}
                       <button type="button" onClick={() => toggleSize(c)}>
@@ -866,7 +868,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                   className="h-8 text-xs w-32"
                   data-testid="bc-form-size-custom"
                 />
-                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={addCustomSize}>
+                <Button type="button" size="sm" variant="outline" onClick={addCustomSize}>
                   + Tambah
                 </Button>
               </div>
@@ -874,22 +876,22 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
 
             {/* SKU preview */}
             <div
-              className="rounded-md bg-violet-500/[0.06] border border-violet-400/20 p-2.5 text-xs"
+              className="rounded-md bg-[hsl(var(--primary))]/[0.06] border border-[hsl(var(--primary)/0.2)] p-2.5 text-xs"
               data-testid="bc-form-sku-preview"
             >
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="text-foreground/75">
-                  Akan terbentuk <strong className="text-violet-300">{skuCount}</strong> varian SKU
+                  Akan terbentuk <strong className="text-[hsl(var(--primary))]">{skuCount}</strong> varian SKU
                   <span className="text-foreground/45"> (Warna × Ukuran)</span>.
                 </div>
                 {exampleSku && (
                   <div className="text-foreground/60">
-                    Contoh SKU: <span className="font-mono text-violet-300">{exampleSku}</span>
+                    Contoh SKU: <span className="tabular-nums text-[hsl(var(--primary))]">{exampleSku}</span>
                   </div>
                 )}
               </div>
               <div className="text-[10px] text-foreground/45 mt-1">
-                Format SKU: <span className="font-mono">KODEARTIKEL-KODEWARNA-SIZE</span>. Kode referensi buyer per
+                Format SKU: <span className="tabular-nums">KODEARTIKEL-KODEWARNA-SIZE</span>. Kode referensi buyer per
                 varian bisa diisi nanti di tab <strong>Varian</strong>.
               </div>
               <label className="flex items-center gap-2 mt-2 cursor-pointer text-foreground/75">
@@ -903,7 +905,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                 Langsung buat varian SKU setelah simpan
               </label>
             </div>
-          </div>
+          </GlassCard>
 
           <div className="md:col-span-2">
             <Label className="text-xs">Foto Hero (URL)</Label>

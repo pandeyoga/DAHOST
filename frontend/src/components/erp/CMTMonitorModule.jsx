@@ -14,6 +14,10 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiGet } from '../../lib/api';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import { EmptyState, Notice, StatTile } from './moduleAtoms';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID');
 const fmtRp = (n) => 'Rp' + Number(n || 0).toLocaleString('id-ID');
@@ -27,18 +31,18 @@ const fmtDate = (v) => {
 };
 
 const BUCKET_META = {
-  telat:         { label: 'TELAT', cls: 'bg-red-100 text-red-700', dot: 'bg-red-500' },
-  jatuh_tempo:   { label: 'Jatuh Tempo', cls: 'bg-orange-100 text-orange-700', dot: 'bg-orange-500' },
-  mendekati:     { label: 'Mendekati', cls: 'bg-amber-100 text-amber-700', dot: 'bg-amber-500' },
-  on_track:      { label: 'On Track', cls: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-500' },
+  telat:         { label: 'TELAT', cls: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]', dot: 'bg-[hsl(var(--destructive))]' },
+  jatuh_tempo:   { label: 'Jatuh Tempo', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]', dot: 'bg-[hsl(var(--warning))]' },
+  mendekati:     { label: 'Mendekati', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]', dot: 'bg-[hsl(var(--warning))]' },
+  on_track:      { label: 'On Track', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]', dot: 'bg-[hsl(var(--success))]' },
   aman:          { label: 'Aman (sudah balik)', cls: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' },
   tanpa_deadline:{ label: 'Tanpa Deadline', cls: 'bg-slate-100 text-slate-500', dot: 'bg-slate-300' },
 };
 
 const CAP_STATUS = {
-  over:        { label: 'Kelebihan Beban', cls: 'bg-red-100 text-red-700', bar: 'bg-red-500' },
-  near:        { label: 'Hampir Penuh', cls: 'bg-amber-100 text-amber-700', bar: 'bg-amber-500' },
-  ok:          { label: 'Aman', cls: 'bg-emerald-100 text-emerald-700', bar: 'bg-emerald-500' },
+  over:        { label: 'Kelebihan Beban', cls: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]', bar: 'bg-[hsl(var(--destructive))]' },
+  near:        { label: 'Hampir Penuh', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]', bar: 'bg-[hsl(var(--warning))]' },
+  ok:          { label: 'Aman', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]', bar: 'bg-[hsl(var(--success))]' },
   no_capacity: { label: 'Kapasitas Belum Diisi', cls: 'bg-slate-100 text-slate-500', bar: 'bg-slate-300' },
 };
 
@@ -51,21 +55,10 @@ const BUCKET_FILTERS = [
   { key: 'aman', label: 'Aman' },
 ];
 
-function Kpi({ label, value, sub, tone = 'default', icon: Icon, testid }) {
-  const tones = {
-    default: 'text-foreground', red: 'text-red-600', amber: 'text-amber-600',
-    emerald: 'text-emerald-600', blue: 'text-blue-600', violet: 'text-violet-600',
-  };
-  return (
-    <div className="rounded-xl border border-border bg-card p-4" data-testid={testid}>
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        {Icon && <Icon size={16} className="text-muted-foreground/60" />}
-      </div>
-      <div className={`mt-1 text-2xl font-bold ${tones[tone]}`}>{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
-    </div>
-  );
+// PANDUAN_UI G5: kartu angka = StatTile (ikon tidak dipakai; nada lama dipetakan ke token).
+const KPI_ACCENT = { default: 'default', red: 'danger', amber: 'warning', emerald: 'success', blue: 'primary', violet: 'primary' };
+function Kpi({ label, value, sub, tone = 'default', testid }) {
+  return <StatTile label={label} value={value} sub={sub} accent={KPI_ACCENT[tone] || 'default'} testId={testid} />;
 }
 
 function BucketBadge({ bucket }) {
@@ -122,80 +115,50 @@ export default function CMTMonitorModule() {
   const b = dash?.buckets || {};
 
   return (
-    <div className="p-6 space-y-4" data-testid="cmt-monitor-module">
+    <div className="space-y-4" data-testid="cmt-monitor-module">
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Siren size={26} className="text-red-600" /> Monitoring CMT
+            <Siren size={26} className="text-[hsl(var(--destructive))]" /> Monitoring CMT
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Dashboard owner &amp; KEJAR CMT — pantau setoran, sisa di CMT, keterlambatan (Target CMT = Deadline Mitra − buffer).
+            Ringkasan pemilik &amp; kejar CMT — pantau setoran, sisa di CMT, keterlambatan (Target CMT = Deadline Mitra − buffer).
           </p>
         </div>
-        <button onClick={load} className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-background hover:bg-muted" data-testid="btn-refresh-monitor">
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-monitor">
+          <RefreshCw size={14} />
+        </Button>
       </div>
 
       {/* Sudut pandang PO — seluruh kartu & papan ikut berubah (INV-F28) */}
       <div className="flex items-center gap-2 flex-wrap">
         <span className="text-xs text-muted-foreground">Sudut pandang:</span>
-        {[
-          { key: 'running', label: 'PO Berjalan', hint: 'Draft · Confirmed · Distributed · In Production' },
-          { key: 'all', label: 'Semua PO', hint: 'termasuk Completed & Closed' },
-        ].map(s => (
-          <button key={s.key} onClick={() => setScope(s.key)} title={s.hint}
-            data-testid={`monitor-scope-${s.key}`}
-            className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-              scope === s.key
-                ? 'bg-red-600 text-white border-red-600'
-                : 'bg-background text-muted-foreground border-border hover:text-foreground'}`}>
-            {s.label}
-          </button>
-        ))}
+        <FilterChips value={scope} onChange={setScope} testId="monitor-scope" ariaLabel="Sudut pandang PO"
+          options={[
+            { key: 'running', label: 'PO berjalan' },
+            { key: 'all', label: 'Semua PO' },
+          ]} />
         <span className="text-xs text-muted-foreground/70">
           {scope === 'running'
-            ? 'PO yang sudah Completed/Closed tidak dihitung.'
+            ? 'PO yang sudah selesai/ditutup tidak dihitung.'
             : 'Menghitung SEMUA PO maklon, termasuk yang sudah selesai.'}
         </span>
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-border">
-        <button onClick={() => setTab('dashboard')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'dashboard' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-dashboard">
-          <LayoutDashboard size={15} /> Dashboard Owner
-        </button>
-        <button onClick={() => setTab('kejar')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'kejar' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-kejar">
-          <ListChecks size={15} /> Kejar CMT
-        </button>
-        <button onClick={() => setTab('intake')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'intake' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-intake">
-          <PackageSearch size={15} /> Potongan Masuk
-        </button>
-        <button onClick={() => setTab('seri')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'seri' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-seri">
-          <ScanLine size={15} /> Cek Seri
-          {seri?.duplicate_count > 0 && (
-            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold">{seri.duplicate_count}</span>
-          )}
-        </button>
-        <button onClick={() => setTab('belanja')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'belanja' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-belanja">
-          <ShoppingCart size={15} /> Rekap Aksesoris
-        </button>
-        <button onClick={() => setTab('kapasitas')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'kapasitas' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-kapasitas">
-          <Gauge size={15} /> Kapasitas CMT
-          {kapasitas?.totals?.over_count > 0 && (
-            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold">{kapasitas.totals.over_count}</span>
-          )}
-        </button>
-        <button onClick={() => setTab('recon')} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px inline-flex items-center gap-1.5 ${tab === 'recon' ? 'border-red-600 text-red-700' : 'border-transparent text-muted-foreground hover:text-foreground'}`} data-testid="tab-monitor-recon">
-          <GitCompare size={15} /> Rekonsiliasi
-          {recon?.overlap_count > 0 && (
-            <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold">{recon.overlap_count}</span>
-          )}
-        </button>
-      </div>
+      {/* Tab isi modul — PANDUAN_UI G4: pil standar, state `tab` tetap */}
+      <FilterChips value={tab} onChange={setTab} testId="tab-monitor" ariaLabel="Bagian monitoring CMT"
+        options={[
+          { key: 'dashboard', label: 'Ringkasan pemilik', icon: LayoutDashboard },
+          { key: 'kejar', label: 'Kejar CMT', icon: ListChecks },
+          { key: 'intake', label: 'Potongan masuk', icon: PackageSearch },
+          { key: 'seri', label: 'Cek seri', icon: ScanLine, count: seri?.duplicate_count > 0 ? seri.duplicate_count : undefined },
+          { key: 'belanja', label: 'Rekap aksesoris', icon: ShoppingCart },
+          { key: 'kapasitas', label: 'Kapasitas CMT', icon: Gauge, count: kapasitas?.totals?.over_count > 0 ? kapasitas.totals.over_count : undefined },
+          { key: 'recon', label: 'Rekonsiliasi', icon: GitCompare, count: recon?.overlap_count > 0 ? recon.overlap_count : undefined },
+        ]} />
 
       {loading && !dash && (
-        <div className="py-16 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={18} /> Memuat...</div>
+        <div className="py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={18} /> Memuat...</div>
       )}
 
       {/* ── DASHBOARD OWNER ── */}
@@ -239,36 +202,30 @@ export default function CMTMonitorModule() {
             <Kpi label="11. Sudah Dikirim ke Buyer" testid="kpi-ke-buyer" value={fmt(dash.qty_shipped_buyer)}
               sub="sudah keluar dari gudang FG" icon={Truck} tone="emerald" />
             {/* 12 — dua biaya dalam satu kartu, tetap terpisah angkanya */}
-            <div className="rounded-xl border border-border bg-card p-4" data-testid="kpi-biaya">
+            <GlassCard className="px-4 py-3" data-testid="kpi-biaya">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">12. Biaya</span>
+                <span className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">12. Biaya</span>
                 <Wallet size={16} className="text-muted-foreground/60" />
               </div>
               <div className="mt-1">
-                <div className="text-lg font-bold text-violet-600" data-testid="kpi-biaya-jahit">{fmtRp(dash.ongkos_jahit_terhitung)}</div>
+                <div className="text-lg font-bold text-[hsl(var(--primary))]" data-testid="kpi-biaya-jahit">{fmtRp(dash.ongkos_jahit_terhitung)}</div>
                 <div className="text-[11px] text-muted-foreground">ongkos jahit (dari qty lolos QC)</div>
               </div>
               <div className="mt-1.5 pt-1.5 border-t border-border">
-                <div className="text-lg font-bold text-blue-600" data-testid="kpi-biaya-permak">{fmtRp(dash.biaya_permak)}</div>
+                <div className="text-lg font-bold text-[hsl(var(--primary))]" data-testid="kpi-biaya-permak">{fmtRp(dash.biaya_permak)}</div>
                 <div className="text-[11px] text-muted-foreground">biaya permak · {fmt(dash.permak_open)} permak aktif</div>
               </div>
-            </div>
+            </GlassCard>
           </div>
 
           {/* ── PEMERIKSA KESEIMBANGAN — 5 identitas, klik untuk lihat PO penyebab ── */}
-          <div className={`rounded-xl border p-3 ${dash.balance?.all_ok ? 'border-emerald-200 bg-emerald-50/50' : 'border-red-200 bg-red-50/50'}`}
-            data-testid="monitor-balance-strip">
-            <div className="flex items-center gap-2 mb-2">
-              {dash.balance?.all_ok
-                ? <CheckCircle2 size={15} className="text-emerald-600" />
-                : <XCircle size={15} className="text-red-600" />}
-              <h3 className={`text-sm font-semibold ${dash.balance?.all_ok ? 'text-emerald-800' : 'text-red-700'}`}>
-                {dash.balance?.all_ok
-                  ? 'Semua angka seimbang — 5 identitas cocok'
-                  : 'Ada angka yang tidak seimbang — klik barisnya untuk lihat PO penyebab'}
-              </h3>
-            </div>
-            <div className="space-y-1">
+          <Notice tone={dash.balance?.all_ok ? 'success' : 'danger'}
+            icon={dash.balance?.all_ok ? CheckCircle2 : XCircle}
+            testId="monitor-balance-strip"
+            title={dash.balance?.all_ok
+              ? 'Semua angka seimbang — 5 identitas cocok'
+              : 'Ada angka yang tidak seimbang — klik barisnya untuk lihat PO penyebab'}>
+            <div className="space-y-1 mt-1">
               {(dash.balance?.checks || []).map(c => (
                 <div key={c.key}>
                   <button type="button"
@@ -276,54 +233,53 @@ export default function CMTMonitorModule() {
                     disabled={c.ok}
                     data-testid={`balance-check-${c.key}`}
                     className={`w-full flex items-center gap-2 text-left text-xs px-2 py-1.5 rounded-lg border transition-colors ${
-                      c.ok ? 'border-emerald-200 bg-card/60 cursor-default'
-                           : 'border-red-200 bg-card hover:bg-red-50'}`}>
-                    <span className={c.ok ? 'text-emerald-600' : 'text-red-600'}>{c.ok ? '✓' : '✗'}</span>
+                      c.ok ? 'border-[hsl(var(--success)/0.35)] bg-card/60 cursor-default'
+                           : 'border-[hsl(var(--destructive)/0.35)] bg-card hover:bg-[hsl(var(--destructive)/0.1)]'}`}>
+                    <span className={c.ok ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}>{c.ok ? '✓' : '✗'}</span>
                     <span className="text-foreground/90 flex-1">{c.label}</span>
-                    <span className="font-mono text-muted-foreground">{fmt(c.left)} vs {fmt(c.right)}</span>
+                    <span className="tabular-nums text-muted-foreground">{fmt(c.left)} vs {fmt(c.right)}</span>
                     {!c.ok && (
                       <>
-                        <span className="font-mono font-bold text-red-600">selisih {fmt(c.diff)}</span>
-                        <ChevronDown size={13} className={`text-red-600 transition-transform ${openBalance === c.key ? 'rotate-180' : ''}`} />
+                        <span className="tabular-nums font-bold text-[hsl(var(--destructive))]">selisih {fmt(c.diff)}</span>
+                        <ChevronDown size={13} className={`text-[hsl(var(--destructive))] transition-transform ${openBalance === c.key ? 'rotate-180' : ''}`} />
                       </>
                     )}
                   </button>
                   {!c.ok && openBalance === c.key && (
-                    <div className="mt-1 ml-6 rounded-lg border border-red-200 bg-card px-3 py-2 text-xs"
+                    <GlassCard className="mt-1 ml-6 px-3 py-2 text-xs"
                       data-testid={`balance-offenders-${c.key}`}>
                       <p className="text-muted-foreground mb-1">PO yang membuat identitas ini pecah:</p>
                       <div className="flex flex-wrap gap-1.5">
                         {(c.offenders || []).length === 0
                           ? <span className="text-muted-foreground italic">tidak ada PO tertentu (selisih dari pembulatan data lama)</span>
                           : c.offenders.map(no => (
-                            <span key={no} className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-mono text-[11px] font-semibold">{no}</span>
+                            <span key={no} className="px-1.5 py-0.5 rounded bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] tabular-nums text-[11px] font-semibold">{no}</span>
                           ))}
                       </div>
                       <p className="text-muted-foreground/80 mt-1.5">
                         Penyebab paling umum: dispatch ke buyer dibuat sebelum ada QC penerimaan
                         (data lama), atau penerimaan belum disetujui.
                       </p>
-                    </div>
+                    </GlassCard>
                   )}
                 </div>
               ))}
             </div>
-          </div>
+          </Notice>
 
           {/* Rincian kiriman anak — supaya tidak ada yang merasa angkanya "hilang" */}
           {dash.qty_sent_extra > 0 && (
-            <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-3 text-xs text-violet-900"
-              data-testid="monitor-extra-breakdown">
+            <Notice tone="info" testId="monitor-extra-breakdown">
               <strong>{fmt(dash.qty_sent_extra)} pcs</strong> kiriman di luar order (tidak ikut
               menambah "Potongan ke CMT" supaya potongan tetap sesuai order):{' '}
               {Object.entries(dash.qty_sent_extra_by_type || {})
                 .map(([k, v]) => `${k === 'REPLACEMENT' ? 'Pengganti' : k === 'ADDITIONAL' ? 'Tambahan' : k} ${fmt(v)} pcs`)
                 .join(' · ')}
-            </div>
+            </Notice>
           )}
 
           {/* Distribusi bucket */}
-          <div className="rounded-xl border border-border bg-card p-4">
+          <GlassCard className="p-4">
             <h3 className="text-sm font-semibold text-foreground mb-3">
               Distribusi Status Kejar ({fmt(dash.total_po)} PO {dash.scope === 'all' ? 'semua' : 'berjalan'})
             </h3>
@@ -336,22 +292,22 @@ export default function CMTMonitorModule() {
                 </div>
               ))}
               {/* Dua penanda yang turun dari kartu (tetap terlihat, tidak dihapus) */}
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-red-200 bg-red-50 text-xs font-semibold text-red-700"
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-xs font-semibold text-[hsl(var(--destructive))]"
                 data-testid="chip-po-telat">
                 <AlertTriangle size={12} /> PO TELAT: {fmt(b.telat)}
-                <span className="font-normal text-red-600/80">({fmt(b.jatuh_tempo)} jatuh tempo)</span>
+                <span className="font-normal text-[hsl(var(--destructive)/0.8)]">({fmt(b.jatuh_tempo)} jatuh tempo)</span>
               </span>
-              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-amber-200 bg-amber-50 text-xs font-semibold text-amber-700"
+              <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-xs font-semibold text-[hsl(var(--warning))]"
                 data-testid="chip-komponen-kurang">
                 <AlertTriangle size={12} /> Komponen Kurang: {fmt(dash.komponen_kurang_open?.requests)}
-                <span className="font-normal text-amber-600/90">({fmt(dash.komponen_kurang_open?.qty)} pcs belum diterima)</span>
+                <span className="font-normal text-[hsl(var(--warning)/0.9)]">({fmt(dash.komponen_kurang_open?.qty)} pcs belum diterima)</span>
               </span>
             </div>
-          </div>
+          </GlassCard>
 
           {/* PO Telat highlight */}
-          <div className="rounded-xl border border-red-200 bg-red-50/50 p-4">
-            <h3 className="text-sm font-semibold text-red-700 mb-2 flex items-center gap-1.5">
+          <GlassCard className="p-4">
+            <h3 className="text-sm font-semibold text-[hsl(var(--destructive))] mb-2 flex items-center gap-1.5">
               <AlertTriangle size={15} /> PO Perlu Dikejar (TELAT)
             </h3>
             {(dash.telat_pos || []).length === 0 ? (
@@ -365,7 +321,7 @@ export default function CMTMonitorModule() {
                       <span className="text-muted-foreground"> · {p.customer_name}</span>
                     </div>
                     <div className="flex items-center gap-4 text-xs">
-                      <span className="text-red-600 font-semibold">Telat {p.overdue_days} hari</span>
+                      <span className="text-[hsl(var(--destructive))] font-semibold">Telat {p.overdue_days} hari</span>
                       <span className="text-muted-foreground">Sisa di CMT: <span className="font-semibold text-foreground">{fmt(p.qty_outstanding_cmt)}</span></span>
                       <span className="text-muted-foreground inline-flex items-center gap-1"><CalendarClock size={12} /> {p.target_cmt_date}</span>
                     </div>
@@ -373,20 +329,15 @@ export default function CMTMonitorModule() {
                 ))}
               </div>
             )}
-          </div>
+          </GlassCard>
         </div>
       )}
 
       {/* ── KEJAR CMT ── */}
       {tab === 'kejar' && (
         <div className="space-y-3" data-testid="monitor-kejar-panel">
-          <div className="flex items-center gap-2 flex-wrap">
-            {BUCKET_FILTERS.map((f) => (
-              <button key={f.key} onClick={() => setBucket(f.key)} className={`px-3 py-1.5 text-xs font-medium rounded-full border transition ${bucket === f.key ? 'bg-red-600 text-white border-red-600' : 'bg-background text-muted-foreground border-border hover:bg-muted'}`} data-testid={`filter-bucket-${f.key || 'all'}`}>
-                {f.label}
-              </button>
-            ))}
-          </div>
+          <FilterChips value={bucket} onChange={setBucket} testId="filter-bucket" ariaLabel="Status kejar"
+            options={BUCKET_FILTERS} />
 
           <div className="rounded-md border border-border overflow-hidden">
             <table className="w-full text-sm">
@@ -406,9 +357,12 @@ export default function CMTMonitorModule() {
               </thead>
               <tbody data-testid="kejar-table-body">
                 {loading ? (
-                  <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</td></tr>
+                  <tr><td colSpan={10} className="px-3 py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</td></tr>
                 ) : !kejar || kejar.rows.length === 0 ? (
-                  <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">Tidak ada PO pada filter ini.</td></tr>
+                  <tr><td colSpan={10}>
+                    <EmptyState icon={ListChecks} title="Tidak ada PO pada penyaring ini"
+                      description="Pilih status kejar lain atau Semua untuk melihat PO lainnya." />
+                  </td></tr>
                 ) : kejar.rows.map((r) => (
                   <tr key={r.po_id} className="border-t border-border hover:bg-muted/30" data-testid={`kejar-row-${r.po_id}`}>
                     <td className="px-3 py-2">
@@ -416,16 +370,16 @@ export default function CMTMonitorModule() {
                       <div className="text-xs text-muted-foreground">{r.customer_name}</div>
                     </td>
                     <td className="px-3 py-2"><BucketBadge bucket={r.bucket} /></td>
-                    <td className="px-3 py-2 text-right font-mono">{fmt(r.qty_ordered)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmt(r.qty_sent_cmt)}</td>
-                    <td className="px-3 py-2 text-right font-mono text-emerald-700">{fmt(r.qty_returned)}</td>
-                    <td className={`px-3 py-2 text-right font-mono font-semibold ${r.qty_outstanding_cmt > 0 ? 'text-amber-700' : 'text-muted-foreground'}`}>{fmt(r.qty_outstanding_cmt)}</td>
-                    <td className="px-3 py-2 text-right font-mono">{fmt(r.kali_setor)}x</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmt(r.qty_ordered)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmt(r.qty_sent_cmt)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-[hsl(var(--success))]">{fmt(r.qty_returned)}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums font-semibold ${r.qty_outstanding_cmt > 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{fmt(r.qty_outstanding_cmt)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{fmt(r.kali_setor)}x</td>
                     <td className="px-3 py-2 text-xs">{r.delivery_deadline || '—'}</td>
                     <td className="px-3 py-2 text-xs">{r.target_cmt_date || '—'}</td>
                     <td className="px-3 py-2 text-right text-xs">
                       {r.bucket === 'telat' || r.bucket === 'jatuh_tempo' ? (
-                        <span className="text-red-600 font-semibold inline-flex items-center gap-1 justify-end"><Clock size={11} /> +{r.overdue_days} hr</span>
+                        <span className="text-[hsl(var(--destructive))] font-semibold inline-flex items-center gap-1 justify-end"><Clock size={11} /> +{r.overdue_days} hr</span>
                       ) : r.days_at_cmt != null ? (
                         <span className="text-muted-foreground">{r.days_at_cmt} hr di CMT</span>
                       ) : '—'}
@@ -454,21 +408,21 @@ export default function CMTMonitorModule() {
             </p>
           </div>
           {loading && !intake ? (
-            <div className="py-16 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
           ) : !intake || intake.batches.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-muted/20 py-14 text-center text-muted-foreground" data-testid="intake-empty">
-              <PackageSearch size={30} className="mx-auto mb-2 opacity-40" />
-              Belum ada batch potongan masuk untuk PO maklon.
-            </div>
+            <GlassCard>
+              <EmptyState icon={PackageSearch} testId="intake-empty" title="Belum ada batch potongan masuk"
+                description="Batch muncul di sini setelah potongan PO maklon dikirim ke CMT." />
+            </GlassCard>
           ) : (
             <div className="space-y-3">
               {intake.batches.map((batch) => (
-                <div key={batch.shipment_id} className="rounded-xl border border-border bg-card overflow-hidden" data-testid={`intake-batch-${batch.shipment_id}`}>
+                <GlassCard key={batch.shipment_id} className="overflow-hidden" data-testid={`intake-batch-${batch.shipment_id}`}>
                   <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 bg-muted/40 border-b border-border">
                     <div className="flex items-center gap-2">
-                      <PackageSearch size={16} className="text-blue-600" />
+                      <PackageSearch size={16} className="text-[hsl(var(--primary))]" />
                       <span className="font-semibold text-foreground">{batch.shipment_number || batch.shipment_id}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-700">{batch.shipment_type || 'NORMAL'}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]">{batch.shipment_type || 'NORMAL'}</span>
                       {batch.status && <span className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">{batch.status}</span>}
                     </div>
                     <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -477,9 +431,9 @@ export default function CMTMonitorModule() {
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-px bg-border text-center text-xs">
-                    <div className="bg-card py-2"><div className="text-muted-foreground">Dikirim</div><div className="font-bold text-blue-700 text-base">{fmt(batch.total_sent)}</div></div>
-                    <div className="bg-card py-2"><div className="text-muted-foreground">Diterima CMT</div><div className="font-bold text-emerald-700 text-base">{batch.total_received == null ? '—' : fmt(batch.total_received)}</div></div>
-                    <div className="bg-card py-2"><div className="text-muted-foreground">Kurang</div><div className={`font-bold text-base ${batch.total_missing ? 'text-red-600' : 'text-muted-foreground'}`}>{batch.total_missing == null ? '—' : fmt(batch.total_missing)}</div></div>
+                    <div className="bg-card py-2"><div className="text-muted-foreground">Dikirim</div><div className="font-bold text-[hsl(var(--primary))] text-base">{fmt(batch.total_sent)}</div></div>
+                    <div className="bg-card py-2"><div className="text-muted-foreground">Diterima CMT</div><div className="font-bold text-[hsl(var(--success))] text-base">{batch.total_received == null ? '—' : fmt(batch.total_received)}</div></div>
+                    <div className="bg-card py-2"><div className="text-muted-foreground">Kurang</div><div className={`font-bold text-base ${batch.total_missing ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{batch.total_missing == null ? '—' : fmt(batch.total_missing)}</div></div>
                   </div>
                   <table className="w-full text-sm">
                     <thead className="bg-muted/30 text-[11px] uppercase text-muted-foreground">
@@ -497,15 +451,15 @@ export default function CMTMonitorModule() {
                         <tr key={it.vsi_id} className="border-t border-border">
                           <td className="px-3 py-1.5"><span className="text-foreground">{it.product_name}</span> <span className="text-xs text-muted-foreground">{it.sku}</span></td>
                           <td className="px-3 py-1.5 text-xs text-muted-foreground">{it.size} · {it.color}</td>
-                          <td className="px-3 py-1.5 font-mono text-xs text-amber-700 font-semibold">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                          <td className="px-3 py-1.5 text-right font-mono">{fmt(it.qty_sent)}</td>
-                          <td className="px-3 py-1.5 text-right font-mono text-emerald-700">{it.received_qty == null ? '—' : fmt(it.received_qty)}</td>
-                          <td className={`px-3 py-1.5 text-right font-mono ${it.missing_qty ? 'text-red-600 font-semibold' : 'text-muted-foreground'}`}>{it.missing_qty == null ? '—' : fmt(it.missing_qty)}</td>
+                          <td className="px-3 py-1.5 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmt(it.qty_sent)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums text-[hsl(var(--success))]">{it.received_qty == null ? '—' : fmt(it.received_qty)}</td>
+                          <td className={`px-3 py-1.5 text-right tabular-nums ${it.missing_qty ? 'text-[hsl(var(--destructive))] font-semibold' : 'text-muted-foreground'}`}>{it.missing_qty == null ? '—' : fmt(it.missing_qty)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </GlassCard>
               ))}
             </div>
           )}
@@ -522,30 +476,28 @@ export default function CMTMonitorModule() {
             <Kpi label="Baris Terdampak" value={fmt(seri?.duplicate_item_count)} sub="baris pakai seri dobel" icon={AlertTriangle} tone={seri?.duplicate_item_count ? 'amber' : 'emerald'} />
           </div>
 
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-2.5 text-xs text-blue-800 flex items-start gap-2">
-            <ShieldCheck size={15} className="mt-0.5 flex-shrink-0" />
-            <span>Sumber seri = <code>po_items.serial_number</code> (diinput saat BUAT ORDER). Deteksi ini <strong>read-only</strong> — tidak mengubah data. Seri yang mewaris ke shipment/job/pengiriman <strong>bukan</strong> dianggap dobel.</span>
-          </div>
+          <Notice tone="info" icon={ShieldCheck}>
+            Sumber seri = <code>po_items.serial_number</code> (diinput saat BUAT ORDER). Deteksi ini <strong>read-only</strong> — tidak mengubah data. Seri yang mewaris ke shipment/job/pengiriman <strong>bukan</strong> dianggap dobel.
+          </Notice>
 
           {loading && !seri ? (
-            <div className="py-16 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
           ) : (seri?.duplicates || []).length === 0 ? (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 py-14 text-center" data-testid="seri-clean">
-              <ShieldCheck size={34} className="mx-auto mb-2 text-emerald-500" />
-              <p className="text-emerald-700 font-medium">Tidak ada seri dobel. 👍</p>
-              <p className="text-xs text-muted-foreground mt-1">Semua nomor seri unik antar baris PO.</p>
-            </div>
+            <GlassCard>
+              <EmptyState icon={ShieldCheck} testId="seri-clean" title="Tidak ada seri dobel"
+                description="Semua nomor seri unik antar baris PO." />
+            </GlassCard>
           ) : (
             <div className="space-y-3">
               {seri.duplicates.map((d) => (
-                <div key={d.serial} className="rounded-xl border border-red-200 bg-red-50/40 overflow-hidden" data-testid={`seri-dup-${d.serial}`}>
-                  <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-2.5 bg-red-100/60 border-b border-red-200">
+                <GlassCard key={d.serial} className="overflow-hidden" data-testid={`seri-dup-${d.serial}`}>
+                  <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-2.5 bg-[hsl(var(--destructive)/0.6)] border-b border-[hsl(var(--destructive)/0.35)]">
                     <div className="flex items-center gap-2">
-                      <Copy size={15} className="text-red-600" />
-                      <span className="font-mono font-bold text-red-700">{d.serial}</span>
-                      <span className="text-xs px-2 py-0.5 rounded-full bg-red-600 text-white font-medium">{d.count}× dipakai</span>
+                      <Copy size={15} className="text-[hsl(var(--destructive))]" />
+                      <span className="tabular-nums font-bold text-[hsl(var(--destructive))]">{d.serial}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--destructive))] text-white font-medium">{d.count}× dipakai</span>
                       {d.has_case_variant && (
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700" title={`Variasi penulisan: ${d.raw_variants.join(' | ')}`}>beda kapital/spasi</span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]" title={`Variasi penulisan: ${d.raw_variants.join(' | ')}`}>beda kapital/spasi</span>
                       )}
                     </div>
                   </div>
@@ -562,18 +514,18 @@ export default function CMTMonitorModule() {
                     </thead>
                     <tbody>
                       {d.usages.map((u) => (
-                        <tr key={u.po_item_id} className="border-t border-red-100" data-testid={`seri-usage-${u.po_item_id}`}>
+                        <tr key={u.po_item_id} className="border-t border-[hsl(var(--destructive)/0.35)]" data-testid={`seri-usage-${u.po_item_id}`}>
                           <td className="px-3 py-1.5"><span className="font-medium text-foreground">{u.po_number}</span> <span className="text-xs text-muted-foreground">{u.customer_name}</span></td>
-                          <td className="px-3 py-1.5 font-mono text-xs text-red-700">{u.serial_raw}</td>
+                          <td className="px-3 py-1.5 tabular-nums text-xs text-[hsl(var(--destructive))]">{u.serial_raw}</td>
                           <td className="px-3 py-1.5"><span className="text-foreground">{u.product_name}</span> <span className="text-xs text-muted-foreground">{u.sku}</span></td>
                           <td className="px-3 py-1.5 text-xs text-muted-foreground">{u.size} · {u.color}</td>
-                          <td className="px-3 py-1.5 text-right font-mono">{fmt(u.qty)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmt(u.qty)}</td>
                           <td className="px-3 py-1.5 text-xs text-muted-foreground">{u.po_status}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </GlassCard>
               ))}
             </div>
           )}
@@ -589,17 +541,16 @@ export default function CMTMonitorModule() {
             <Kpi label="Dari PO (eksplisit)" value={fmt(belanja?.totals?.from_po_accessory)} sub="po_accessories" icon={PackageCheck} tone="emerald" />
             <Kpi label="Dari BOM (turunan)" value={fmt(belanja?.totals?.from_bom)} sub="qty/pcs × order" icon={Factory} tone="amber" />
           </div>
-          <div className="rounded-lg bg-violet-50 border border-violet-200 px-4 py-2.5 text-xs text-violet-800 flex items-start gap-2">
-            <ShieldCheck size={15} className="mt-0.5 flex-shrink-0" />
-            <span>Kebutuhan aksesoris <strong>read-only</strong> = gabungan <code>po_accessories</code> (yang diisi manual di PO) + turunan BOM aktif (<code>qty_per_pcs × qty order</code>). Untuk {fmt(belanja?.po_count)} PO maklon aktif.</span>
-          </div>
+          <Notice tone="info" icon={ShieldCheck}>
+            Kebutuhan aksesoris <strong>read-only</strong> = gabungan <code>po_accessories</code> (yang diisi manual di PO) + turunan BOM aktif (<code>qty_per_pcs × qty order</code>). Untuk {fmt(belanja?.po_count)} PO maklon aktif.
+          </Notice>
           {loading && !belanja ? (
-            <div className="py-16 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
           ) : (belanja?.accessories || []).length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-muted/20 py-14 text-center text-muted-foreground" data-testid="belanja-empty">
-              <ShoppingCart size={30} className="mx-auto mb-2 opacity-40" />
-              Belum ada kebutuhan aksesoris untuk PO maklon aktif.
-            </div>
+            <GlassCard>
+              <EmptyState icon={ShoppingCart} testId="belanja-empty" title="Belum ada kebutuhan aksesoris"
+                description="Isi aksesoris di PO maklon atau aktifkan BOM produknya supaya kebutuhan terhitung." />
+            </GlassCard>
           ) : (
             <>
               <div className="rounded-md border border-border overflow-hidden">
@@ -619,12 +570,12 @@ export default function CMTMonitorModule() {
                       <tr key={a.name} className="border-t border-border hover:bg-muted/30" data-testid={`belanja-row-${a.name}`}>
                         <td className="px-3 py-2">
                           <span className="font-medium text-foreground">{a.name}</span>
-                          {a.code && <span className="text-xs text-muted-foreground ml-1 font-mono">{a.code}</span>}
+                          {a.code && <span className="text-xs text-muted-foreground ml-1 tabular-nums">{a.code}</span>}
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">{a.unit}</td>
-                        <td className="px-3 py-2 text-right font-mono text-emerald-700">{fmt(a.sources?.po_accessory)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-amber-700">{fmt(a.sources?.bom)}</td>
-                        <td className="px-3 py-2 text-right font-mono font-bold text-violet-700">{fmt(a.total_qty)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-[hsl(var(--success))]">{fmt(a.sources?.po_accessory)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-[hsl(var(--warning))]">{fmt(a.sources?.bom)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-bold text-[hsl(var(--primary))]">{fmt(a.total_qty)}</td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">{(a.by_po || []).map(p => p.po_number).join(', ')}</td>
                       </tr>
                     ))}
@@ -639,7 +590,7 @@ export default function CMTMonitorModule() {
                       {belanja.bom_materials.filter(m => !m.is_accessory).map((m) => (
                         <tr key={m.name} className="border-t border-border">
                           <td className="px-3 py-1.5 text-foreground">{m.name} <span className="text-xs text-muted-foreground">({m.category || '—'})</span></td>
-                          <td className="px-3 py-1.5 text-right font-mono">{fmt(m.total_qty)} {m.unit}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmt(m.total_qty)} {m.unit}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -661,12 +612,12 @@ export default function CMTMonitorModule() {
             <Kpi label="CMT Kelebihan Beban" value={fmt(kapasitas?.totals?.over_count)} sub={`${fmt(kapasitas?.totals?.no_capacity_count)} belum set kapasitas`} icon={AlertTriangle} tone={kapasitas?.totals?.over_count ? 'red' : 'emerald'} />
           </div>
           {loading && !kapasitas ? (
-            <div className="py-16 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
           ) : (kapasitas?.vendors || []).length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-muted/20 py-14 text-center text-muted-foreground" data-testid="kapasitas-empty">
-              <Gauge size={30} className="mx-auto mb-2 opacity-40" />
-              Belum ada vendor CMT.
-            </div>
+            <GlassCard>
+              <EmptyState icon={Gauge} testId="kapasitas-empty" title="Belum ada vendor CMT"
+                description="Tambahkan vendor CMT di Master Data supaya kapasitasnya bisa dipantau." />
+            </GlassCard>
           ) : (
             <div className="rounded-md border border-border overflow-hidden">
               <table className="w-full text-sm">
@@ -689,23 +640,23 @@ export default function CMTMonitorModule() {
                       <tr key={v.vendor_id} className="border-t border-border hover:bg-muted/30" data-testid={`kapasitas-row-${v.vendor_id}`}>
                         <td className="px-3 py-2">
                           <span className="font-medium text-foreground">{v.name}</span>
-                          {v.code && <span className="text-xs text-muted-foreground ml-1 font-mono">{v.code}</span>}
+                          {v.code && <span className="text-xs text-muted-foreground ml-1 tabular-nums">{v.code}</span>}
                           {v.capacity_note && <div className="text-[11px] text-muted-foreground/70">{v.capacity_note}</div>}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono">{v.capacity_pcs > 0 ? fmt(v.capacity_pcs) : <span className="text-muted-foreground/50">—</span>}</td>
-                        <td className="px-3 py-2 text-right font-mono text-amber-700">{fmt(v.current_load_pcs)}</td>
-                        <td className={`px-3 py-2 text-right font-mono ${v.available_pcs != null && v.available_pcs < 0 ? 'text-red-600 font-semibold' : 'text-emerald-700'}`}>{v.available_pcs == null ? '—' : fmt(v.available_pcs)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{v.capacity_pcs > 0 ? fmt(v.capacity_pcs) : <span className="text-muted-foreground/50">—</span>}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-[hsl(var(--warning))]">{fmt(v.current_load_pcs)}</td>
+                        <td className={`px-3 py-2 text-right tabular-nums ${v.available_pcs != null && v.available_pcs < 0 ? 'text-[hsl(var(--destructive))] font-semibold' : 'text-[hsl(var(--success))]'}`}>{v.available_pcs == null ? '—' : fmt(v.available_pcs)}</td>
                         <td className="px-3 py-2">
                           {pct == null ? <span className="text-xs text-muted-foreground">—</span> : (
                             <div className="flex items-center gap-2">
                               <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
                                 <div className={`h-full ${meta.bar}`} style={{ width: `${Math.min(pct, 100)}%` }} />
                               </div>
-                              <span className={`text-xs font-mono ${pct > 100 ? 'text-red-600 font-bold' : 'text-muted-foreground'}`}>{pct}%</span>
+                              <span className={`text-xs tabular-nums ${pct > 100 ? 'text-[hsl(var(--destructive))] font-bold' : 'text-muted-foreground'}`}>{pct}%</span>
                             </div>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono">{fmt(v.active_po_count)}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{fmt(v.active_po_count)}</td>
                         <td className="px-3 py-2"><span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${meta.cls}`}>{meta.label}</span></td>
                       </tr>
                     );
@@ -722,36 +673,31 @@ export default function CMTMonitorModule() {
       {tab === 'recon' && (
         <div className="space-y-3" data-testid="monitor-recon-panel">
           {loading && !recon ? (
-            <div className="py-16 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
+            <div className="py-8 text-center text-muted-foreground"><Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...</div>
           ) : (
             <>
-              <div className={`rounded-xl border px-4 py-3 flex items-start gap-3 ${recon?.verdict === 'separated_clean' ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`} data-testid="recon-verdict">
-                {recon?.verdict === 'separated_clean'
-                  ? <CheckCircle2 size={22} className="text-emerald-600 flex-shrink-0 mt-0.5" />
-                  : <AlertTriangle size={22} className="text-red-600 flex-shrink-0 mt-0.5" />}
-                <div>
-                  <p className={`font-semibold ${recon?.verdict === 'separated_clean' ? 'text-emerald-700' : 'text-red-700'}`}>
-                    {recon?.verdict === 'separated_clean' ? 'Terpisah Bersih ✓' : `Tumpang-Tindih Terdeteksi (${recon?.overlap_count})`}
-                  </p>
-                  <p className="text-sm text-muted-foreground">{recon?.verdict_label}</p>
-                </div>
-              </div>
+              <Notice tone={recon?.verdict === 'separated_clean' ? 'success' : 'danger'}
+                icon={recon?.verdict === 'separated_clean' ? CheckCircle2 : AlertTriangle}
+                testId="recon-verdict"
+                title={recon?.verdict === 'separated_clean' ? 'Terpisah bersih ✓' : `Tumpang-tindih terdeteksi (${recon?.overlap_count})`}>
+                {recon?.verdict_label}
+              </Notice>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="rounded-xl border border-border bg-card p-4" data-testid="recon-maklon-domain">
+                <GlassCard className="p-4" data-testid="recon-maklon-domain">
                   <div className="flex items-center gap-2 mb-2">
-                    <PackageSearch size={16} className="text-blue-600" />
+                    <PackageSearch size={16} className="text-[hsl(var(--primary))]" />
                     <span className="font-semibold text-foreground">Domain MAKLON (pcs)</span>
                   </div>
                   <p className="text-xs text-muted-foreground mb-3">SSOT KPI maklon · <code>{recon?.maklon_domain?.collection}</code></p>
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div><span className="text-muted-foreground">Terkirim</span><div className="font-bold text-blue-700">{fmt(recon?.maklon_domain?.total_pcs_sent)} pcs</div></div>
+                    <div><span className="text-muted-foreground">Terkirim</span><div className="font-bold text-[hsl(var(--primary))]">{fmt(recon?.maklon_domain?.total_pcs_sent)} pcs</div></div>
                     <div><span className="text-muted-foreground">Batch kirim</span><div className="font-bold">{fmt(recon?.maklon_domain?.shipment_count)}</div></div>
                     <div><span className="text-muted-foreground">PO</span><div className="font-bold">{fmt(recon?.maklon_domain?.distinct_po)}</div></div>
                     <div><span className="text-muted-foreground">Vendor</span><div className="font-bold">{fmt(recon?.maklon_domain?.distinct_vendor)}</div></div>
                   </div>
-                </div>
-                <div className="rounded-xl border border-border bg-card p-4" data-testid="recon-wms-domain">
+                </GlassCard>
+                <GlassCard className="p-4" data-testid="recon-wms-domain">
                   <div className="flex items-center gap-2 mb-2">
                     <Factory size={16} className="text-slate-500" />
                     <span className="font-semibold text-foreground">Domain WMS/Internal (meter)</span>
@@ -763,12 +709,12 @@ export default function CMTMonitorModule() {
                     <div><span className="text-muted-foreground">Work Order</span><div className="font-bold">{fmt(recon?.wms_domain?.distinct_wo)}</div></div>
                     <div><span className="text-muted-foreground">Nama CMT</span><div className="font-bold">{fmt(recon?.wms_domain?.distinct_cmt_name)}</div></div>
                   </div>
-                </div>
+                </GlassCard>
               </div>
 
               {(recon?.overlaps || []).length > 0 && (
-                <div className="rounded-xl border border-red-200 bg-red-50/40 overflow-hidden">
-                  <div className="px-4 py-2.5 bg-red-100/60 border-b border-red-200 font-semibold text-red-700 text-sm flex items-center gap-2">
+                <GlassCard className="overflow-hidden">
+                  <div className="px-4 py-2.5 bg-[hsl(var(--destructive)/0.6)] border-b border-[hsl(var(--destructive)/0.35)] font-semibold text-[hsl(var(--destructive))] text-sm flex items-center gap-2">
                     <AlertTriangle size={15} /> PO Maklon yang muncul di KEDUA sistem (perlu ditinjau)
                   </div>
                   <table className="w-full text-sm">
@@ -783,28 +729,32 @@ export default function CMTMonitorModule() {
                     </thead>
                     <tbody>
                       {recon.overlaps.map((o, i) => (
-                        <tr key={i} className="border-t border-red-100" data-testid={`recon-overlap-${i}`}>
+                        <tr key={i} className="border-t border-[hsl(var(--destructive)/0.35)]" data-testid={`recon-overlap-${i}`}>
                           <td className="px-3 py-1.5 font-medium text-foreground">{o.po_number}</td>
-                          <td className="px-3 py-1.5 font-mono text-xs">{o.dispatch_no}</td>
+                          <td className="px-3 py-1.5 tabular-nums text-xs">{o.dispatch_no}</td>
                           <td className="px-3 py-1.5 text-xs text-muted-foreground">{o.wo_number}</td>
                           <td className="px-3 py-1.5 text-xs">{o.cmt_name}</td>
-                          <td className="px-3 py-1.5 text-right font-mono">{fmt(o.meter)}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{fmt(o.meter)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </GlassCard>
               )}
 
               {(recon?.cmt_name_matches || []).length > 0 && (
                 <p className="text-xs text-muted-foreground">Nama CMT di WMS yang cocok dengan master vendor: <strong>{recon.cmt_name_matches.join(', ')}</strong> (informasi saja).</p>
               )}
 
-              <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 space-y-1">
-                {(recon?.notes || []).map((n, i) => (
-                  <p key={i} className="flex items-start gap-1.5"><ShieldCheck size={13} className="mt-0.5 flex-shrink-0 text-slate-400" /> {n}</p>
-                ))}
-              </div>
+              {(recon?.notes || []).length > 0 && (
+                <Notice tone="info" className="text-xs">
+                  <div className="space-y-1">
+                    {recon.notes.map((n, i) => (
+                      <p key={i} className="flex items-start gap-1.5"><ShieldCheck size={13} className="mt-0.5 flex-shrink-0 text-slate-400" /> {n}</p>
+                    ))}
+                  </div>
+                </Notice>
+              )}
             </>
           )}
         </div>

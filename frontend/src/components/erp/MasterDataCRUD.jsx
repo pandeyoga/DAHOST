@@ -103,7 +103,7 @@ export default function MasterDataCRUD({
   const activeCol = {
     key: 'active', label: 'Status',
     render: (v) => v
-      ? <span className="inline-flex items-center gap-1 text-xs text-emerald-400"><CheckCircle2 className="w-3.5 h-3.5" /> Aktif</span>
+      ? <span className="inline-flex items-center gap-1 text-xs text-[hsl(var(--success))]"><CheckCircle2 className="w-3.5 h-3.5" /> Aktif</span>
       : <span className="inline-flex items-center gap-1 text-xs text-muted-foreground"><XCircle className="w-3.5 h-3.5" /> Nonaktif</span>,
   };
 
@@ -113,7 +113,7 @@ export default function MasterDataCRUD({
       <div className="flex items-center gap-1">
         <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-foreground" data-testid={`${testIdPrefix}-edit-${row.id}`}><Edit2 className="w-3.5 h-3.5" /></button>
         {row.active && (
-          <button onClick={() => handleDeactivate(row)} className="p-1.5 rounded hover:bg-red-400/10 text-muted-foreground hover:text-red-400" data-testid={`${testIdPrefix}-deactivate-${row.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
+          <button onClick={() => handleDeactivate(row)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))]" data-testid={`${testIdPrefix}-deactivate-${row.id}`}><Trash2 className="w-3.5 h-3.5" /></button>
         )}
       </div>
     ),
@@ -156,11 +156,11 @@ export default function MasterDataCRUD({
       {modalOpen && (
         <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit ${title}` : `Tambah ${title}`}>
           <div className="space-y-4" data-testid={`${testIdPrefix}-form`}>
-            {error && <div className="bg-red-400/10 border border-red-300/20 rounded-lg p-3 text-sm text-red-300" data-testid={`${testIdPrefix}-error`}>{error}</div>}
+            {error && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.2)] rounded-lg p-3 text-sm text-[hsl(var(--destructive))]" data-testid={`${testIdPrefix}-error`}>{error}</div>}
             {fields.filter(f => !(editing && f.createOnly) && !(f.editOnly && !editing)).map(fld => (
               <div key={fld.key}>
                 <label className="block text-sm font-medium text-foreground/70 mb-1.5">
-                  {fld.label} {fld.required && <span className="text-red-400">*</span>}
+                  {fld.label} {fld.required && <span className="text-[hsl(var(--destructive))]">*</span>}
                 </label>
                 {fld.type === 'select' ? (
                   <SmartNativeSelect

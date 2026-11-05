@@ -104,7 +104,7 @@ export default function MasterProductSelect({
         <Label className="flex items-center gap-1.5 text-xs font-medium">
           <Package className="w-3.5 h-3.5 text-muted-foreground" />
           {label}
-          {required && <span className="text-red-500">*</span>}
+          {required && <span className="text-[hsl(var(--destructive))]">*</span>}
         </Label>
       )}
 
@@ -125,7 +125,7 @@ export default function MasterProductSelect({
               </span>
             ) : selected ? (
               <span className="flex items-center gap-1.5 truncate">
-                <span className="font-mono text-[11px] text-muted-foreground">{selected.code}</span>
+                <span className="tabular-nums text-[11px] text-muted-foreground">{selected.code}</span>
                 <span className="truncate">{selected.name}</span>
               </span>
             ) : (
@@ -165,7 +165,7 @@ export default function MasterProductSelect({
                       value === p.model_id ? 'opacity-100' : 'opacity-0')} />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-mono text-[11px] text-muted-foreground">{p.code}</span>
+                        <span className="tabular-nums text-[11px] text-muted-foreground">{p.code}</span>
                         <span className="truncate text-sm">{p.name}</span>
                       </div>
                       <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
@@ -189,7 +189,7 @@ export default function MasterProductSelect({
 
       {/* Master kosong / tidak terbaca — katakan apa adanya + jalan keluarnya. */}
       {!loading && items.length === 0 && (
-        <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-400"
+        <p className="mt-1 flex items-start gap-1.5 text-[11px] text-[hsl(var(--warning))] "
            data-testid={`${testId}-empty`}>
           <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" />
           <span>

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Search, Download, Loader2 } from 'lucide-react';
+import { Search, Download, Loader2, Inbox } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '../moduleAtoms';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useSortableTable } from './useSortableTable';
 import PaginationFooter from './PaginationFooter';
@@ -295,22 +297,22 @@ export default function DataTable({
             placeholder="Cari..."
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
-            className="w-full pl-9 pr-4 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full pl-9 pr-4 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
             data-testid="datatable-search-input"
           />
           {isServerMode && serverLoading && (
-            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 text-blue-500 w-4 h-4 animate-spin" />
+            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 text-[hsl(var(--primary))] w-4 h-4 animate-spin" />
           )}
         </div>
         <div className="flex items-center gap-2">
           {exportData && (
-            <button
+            <Button
+              variant="outline"
               onClick={exportData}
-              className="flex items-center gap-2 px-3 py-2 text-sm border border-border rounded-lg hover:bg-muted/60 text-muted-foreground"
               data-testid="datatable-export-btn"
             >
-              <Download className="w-4 h-4" /> Export
-            </button>
+              <Download /> Unduh
+            </Button>
           )}
           {actions}
         </div>
@@ -318,7 +320,7 @@ export default function DataTable({
 
       {/* Server-mode error banner */}
       {isServerMode && serverError && (
-        <div className="px-4 py-2 bg-red-50 border-b border-red-100 text-sm text-red-700" data-testid="datatable-error">
+        <div className="px-4 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)] text-sm text-[hsl(var(--destructive))]" data-testid="datatable-error">
           ⚠️ {serverError}
         </div>
       )}
@@ -351,7 +353,7 @@ export default function DataTable({
                       {col.label}
                       {isSortable && (
                         <span
-                          className={`text-[10px] ${active ? 'text-blue-600' : 'text-muted-foreground/50'}`}
+                          className={`text-[10px] ${active ? 'text-[hsl(var(--primary))]' : 'text-muted-foreground/50'}`}
                           aria-hidden="true"
                         >
                           {indicatorFor(col.key)}
@@ -415,15 +417,16 @@ export default function DataTable({
             <tbody className="divide-y divide-border/60">
               {isServerMode && serverLoading && renderRows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="text-center py-12 text-muted-foreground/70 text-sm">
-                    <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-blue-500" />
+                  <td colSpan={columns.length} className="text-center py-4 text-muted-foreground/70 text-sm">
+                    <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-[hsl(var(--primary))]" />
                     Memuat data...
                   </td>
                 </tr>
               ) : renderRows.length === 0 ? (
                 <tr>
-                  <td colSpan={columns.length} className="text-center py-12 text-muted-foreground/70 text-sm">
-                    Tidak ada data
+                  <td colSpan={columns.length}>
+                    <EmptyState icon={Inbox} title="Belum ada data"
+                      description={search ? 'Ubah kata pencarian untuk melihat data lain.' : 'Data akan tampil di sini setelah dicatat.'} />
                   </td>
                 </tr>
               ) : (
@@ -487,7 +490,7 @@ export default function DataTable({
                     key={p}
                     onClick={() => setClientPage(p)}
                     className={`w-8 h-8 rounded text-sm ${
-                      clientPage === p ? 'bg-blue-600 text-white' : 'hover:bg-muted text-muted-foreground'
+                      clientPage === p ? 'bg-[hsl(var(--primary))] text-white' : 'hover:bg-muted text-muted-foreground'
                     }`}
                   >
                     {p}

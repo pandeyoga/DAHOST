@@ -189,7 +189,10 @@ async def _collect_shipment_accessories(db, ship: dict, items: list) -> list:
             'source': 'Dikirim',
             'notes': a.get('notes', '') or a.get('shipment_type', ''),
         })
-    for a in po_needs:
+    # 2026-11-05 — kiriman yang sudah mencatat aksesorisnya sendiri hanya mencetak yang IKUT kiriman
+    # itu; kebutuhan seluruh PO dicetak hanya untuk surat jalan lama (tanpa catatan aksesoris), supaya
+    # kiriman sebagian tidak mencetak seluruh kebutuhan PO berulang-ulang.
+    for a in ([] if sent else po_needs):
         if _key(a) in seen:
             continue
         rows.append({

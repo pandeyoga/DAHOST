@@ -36,27 +36,27 @@ const CSV_HEAD_ALL = ['No. Surat Jalan', 'Sumber', 'Jenis', 'Tanggal', 'Tujuan',
 const SJ_VIEW_KEY = 'wms_delivery_notes_view';
 
 const SOURCE_BADGE = {
-  gudang: { label: 'Gudang', cls: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-500/30' },
-  vendor: { label: 'Vendor CMT', cls: 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-500/30' },
-  buyer: { label: 'Buyer', cls: 'bg-purple-100 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-500/30' },
+  gudang: { label: 'Gudang', cls: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' },
+  vendor: { label: 'Vendor CMT', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+  buyer: { label: 'Buyer', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
 };
 const fmtQty = (n) => Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const SJ_TYPES = {
-  'SJ-CMT': { label: 'CMT', color: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300' },
-  'SJ-MAKLON': { label: 'Maklon', color: 'bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-300' },
-  'SJ-SUPPLIER': { label: 'Supplier Return', color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300' },
-  'SJ-INTERNAL': { label: 'Internal Transfer', color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300' },
-  'SJ-ONLINE': { label: 'Online Shop', color: 'bg-pink-100 dark:bg-pink-500/20 text-pink-600 dark:text-pink-300' },
+  'SJ-CMT': { label: 'CMT', color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ' },
+  'SJ-MAKLON': { label: 'Maklon', color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ' },
+  'SJ-SUPPLIER': { label: 'Supplier Return', color: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))] ' },
+  'SJ-INTERNAL': { label: 'Internal Transfer', color: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' },
+  'SJ-ONLINE': { label: 'Online Shop', color: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ' },
 };
 
 const STATUS_COLORS = {
   draft: 'bg-muted dark:bg-zinc-500/20 text-foreground/80',
-  issued: 'bg-blue-100 dark:bg-blue-500/20 text-blue-600 dark:text-blue-300',
-  received: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300',
-  cancelled: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300',
+  issued: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] ',
+  received: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ',
+  cancelled: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] ',
 };
 
 export default function WMSDeliveryNotesModule({ token, onNavigate }) {
@@ -341,8 +341,8 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
         <div className="p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 border border-emerald-400 dark:border-emerald-500/30">
-                <FileText className="w-5 h-5 text-emerald-600 dark:text-emerald-300" />
+              <div className="p-2.5 rounded-xl bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)] ">
+                <FileText className="w-5 h-5 text-[hsl(var(--success))] " />
               </div>
               <div>
                 <h1 className="text-2xl font-semibold text-foreground">Surat Jalan</h1>
@@ -351,7 +351,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
             </div>
             <Button
               onClick={() => setCreateDialog(true)}
-              className="bg-emerald-600 hover:bg-emerald-700 text-foreground"
+              className="bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)] text-foreground"
               data-testid="create-sj-btn"
             >
               <Plus className="w-4 h-4 mr-2" />
@@ -371,7 +371,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                 data-testid="search-sj-input"
               />
             </div>
-            <Button
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
               variant="outline"
               onClick={load}
               disabled={loading}
@@ -387,12 +387,12 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
             <div className="inline-flex rounded-lg border border-foreground/10 overflow-hidden">
               <button type="button" onClick={() => setView('table')} data-testid="sj-view-table"
                 className={`px-2.5 text-xs flex items-center gap-1 ${view === 'table'
-                  ? 'bg-emerald-600 text-white' : 'bg-foreground/5 text-foreground'}`}>
+                  ? 'bg-[hsl(var(--success))] text-white' : 'bg-foreground/5 text-foreground'}`}>
                 Tabel
               </button>
               <button type="button" onClick={() => setView('grid')} data-testid="sj-view-grid"
                 className={`px-2.5 text-xs flex items-center gap-1 ${view === 'grid'
-                  ? 'bg-emerald-600 text-white' : 'bg-foreground/5 text-foreground'}`}>
+                  ? 'bg-[hsl(var(--success))] text-white' : 'bg-foreground/5 text-foreground'}`}>
                 Kartu
               </button>
             </div>
@@ -406,7 +406,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
             <TabsTrigger value="sources" data-testid="tab-all-sources">
               Semua Sumber
               {allMeta.total > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-600 text-white text-[10px] font-semibold"
+                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--success))] text-white text-[10px] font-semibold"
                   data-testid="all-sources-count">{allMeta.total}</span>
               )}
             </TabsTrigger>
@@ -436,7 +436,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                     ['buyer', `Buyer (${allMeta.by_source?.buyer ?? 0})`]].map(([k, lbl]) => (
                     <button key={k} type="button" onClick={() => setSrcFilter(k)}
                       className={`h-8 px-2.5 rounded-lg text-xs border ${srcFilter === k
-                        ? 'bg-emerald-600 text-white border-emerald-600'
+                        ? 'bg-[hsl(var(--success))] text-white border-[hsl(var(--success)/0.35)]'
                         : 'bg-foreground/5 text-foreground border-foreground/10 hover:bg-foreground/10'}`}
                       data-testid={`sj-src-${k}`}>
                       {lbl}
@@ -457,8 +457,8 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                   className="h-8 w-40 bg-foreground/5 border-foreground/10" data-testid="sj-date-to" />
               </div>
               <div className="flex items-center gap-2 ml-auto">
-                <Button variant="outline" onClick={loadAllSources} disabled={allLoading}
-                  className="h-8 border-foreground/10" data-testid="sj-all-refresh">
+                <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={loadAllSources} disabled={allLoading}
+                  className="border-foreground/10" data-testid="sj-all-refresh">
                   <RefreshCw className={`w-4 h-4 ${allLoading ? 'animate-spin' : ''}`} />
                 </Button>
                 <ExportCsvButton filename="surat-jalan-semua-sumber" testId="sj-all-export-csv"
@@ -468,7 +468,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                     r.lines, r.qty])}
                   className="h-8 border-foreground/10"
                   note={`${allRows.length} surat jalan`} />
-                <Button onClick={downloadRecap} className="h-8 bg-emerald-600 hover:bg-emerald-700 text-white"
+                <Button size="sm" onClick={downloadRecap} className="bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)] text-white"
                   data-testid="sj-recap-pdf">
                   <Download className="w-4 h-4 mr-1.5" /> Cetak Rekap
                 </Button>
@@ -508,7 +508,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                         return (
                           <tr key={r.key} className="border-t border-foreground/10 hover:bg-foreground/5"
                             data-testid={`sj-all-row-${r.number}`}>
-                            <td className="px-2.5 py-2 font-mono whitespace-nowrap">{r.number}</td>
+                            <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{r.number}</td>
                             <td className="px-2.5 py-2">
                               <span className={`px-1.5 py-0.5 rounded-full border text-[10px] font-semibold ${b.cls}`}>
                                 {b.label}
@@ -517,21 +517,21 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                             <td className="px-2.5 py-2 whitespace-nowrap">{r.doc_type}</td>
                             <td className="px-2.5 py-2 whitespace-nowrap">{(r.date || '').slice(0, 10) || '-'}</td>
                             <td className="px-2.5 py-2">{r.recipient || '-'}</td>
-                            <td className="px-2.5 py-2 font-mono">{r.reference || '-'}</td>
+                            <td className="px-2.5 py-2 tabular-nums">{r.reference || '-'}</td>
                             <td className="px-2.5 py-2 whitespace-nowrap">{r.status || '-'}</td>
                             <td className="px-2.5 py-2 text-right tabular-nums">{r.lines}</td>
                             <td className="px-2.5 py-2 text-right tabular-nums">{fmtQty(r.qty)}</td>
                             <td className="px-2.5 py-2 whitespace-nowrap">
                               <button type="button"
                                 onClick={() => downloadFromUrl(r.pdf_url, `${(r.number || 'surat-jalan').replace(/[/#]/g, '-')}.pdf`)}
-                                className="text-emerald-700 dark:text-emerald-400 hover:underline mr-2 inline-flex items-center gap-1"
+                                className="text-[hsl(var(--success))] hover:underline mr-2 inline-flex items-center gap-1"
                                 data-testid={`sj-all-pdf-${r.number}`}>
                                 <Download className="w-3 h-3" /> PDF
                               </button>
                               {r.pdf_alt_url && (
                                 <button type="button"
                                   onClick={() => downloadFromUrl(r.pdf_alt_url, `${(r.number || 'sj').replace(/[/#]/g, '-')}-kumulatif.pdf`)}
-                                  className="text-blue-700 dark:text-blue-400 hover:underline mr-2"
+                                  className="text-[hsl(var(--primary))] hover:underline mr-2"
                                   data-testid={`sj-all-pdf-alt-${r.number}`}>
                                   {r.pdf_alt_label || 'PDF kumulatif'}
                                 </button>
@@ -602,10 +602,10 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                         <th key={k} className="px-2.5 py-2 font-semibold whitespace-nowrap">
                           <button type="button" onClick={() => toggleSort(k)}
                             data-testid={`sj-sort-${k}`}
-                            className="inline-flex items-center gap-1 hover:text-emerald-500">
+                            className="inline-flex items-center gap-1 hover:text-[hsl(var(--success))]">
                             {label}
                             <ChevronRight size={10}
-                              className={`${sort.key === k ? 'text-emerald-500' : 'opacity-40'} ${
+                              className={`${sort.key === k ? 'text-[hsl(var(--success))]' : 'opacity-40'} ${
                                 sort.key === k && sort.dir === 'asc' ? '-rotate-90' : 'rotate-90'}`} />
                           </button>
                         </th>
@@ -617,7 +617,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                     {paged.map((note) => (
                       <tr key={note.id} className="hover:bg-foreground/10"
                         data-testid={`sj-row-${note.sj_number}`}>
-                        <td className="px-2.5 py-2 font-mono whitespace-nowrap">{note.sj_number}</td>
+                        <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{note.sj_number}</td>
                         <td className="px-2.5 py-2">
                           <span className={`px-2 py-0.5 rounded-full text-xs ${SJ_TYPES[note.sj_type]?.color || ''}`}>
                             {SJ_TYPES[note.sj_type]?.label || note.sj_type}
@@ -678,7 +678,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="flex items-center gap-2 mb-1">
-                      <FileText className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                      <FileText className="w-4 h-4 text-[hsl(var(--success))] " />
                       <h3 className="font-semibold text-foreground">{note.sj_number}</h3>
                     </div>
                     <p className="text-sm text-muted-foreground/60 dark:text-zinc-400">{note.recipient_name}</p>
@@ -739,7 +739,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="flex-1 border-emerald-300 dark:border-emerald-400/30 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 text-xs"
+                      className="flex-1 border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))]  hover:bg-[hsl(var(--success)/0.1)]  text-xs"
                       onClick={() => handleReceive(note.id)}
                       data-testid={`receive-btn-${note.sj_number}`}
                     >
@@ -839,7 +839,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
               {/* FASE P4: Auto-isi dari BOM (Job Produksi Internal) */}
               <div className="border-t border-foreground/10 pt-4">
                 <div className="flex items-center gap-2 mb-3">
-                  <Layers className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <Layers className="w-4 h-4 text-[hsl(var(--success))] " />
                   <Label className="text-base">Isi dari BOM (Job Internal)</Label>
                 </div>
                 <p className="text-xs text-muted-foreground/60 dark:text-zinc-500 mb-3">
@@ -870,7 +870,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                     variant="outline"
                     onClick={handleFillFromBOM}
                     disabled={bomLoading || !selectedJobId}
-                    className="border-emerald-300 dark:border-emerald-400/30 text-emerald-600 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10"
+                    className="border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))]  hover:bg-[hsl(var(--success)/0.1)] "
                     data-testid="fill-from-bom-btn"
                   >
                     {bomLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Layers className="w-4 h-4 mr-2" />}
@@ -920,7 +920,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                         size="sm"
                         variant="ghost"
                         onClick={() => removeLine(idx)}
-                        className="text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10"
+                        className="text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] "
                         data-testid={`remove-line-${idx}`}
                       >
                         <X className="w-4 h-4" />
@@ -935,7 +935,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
               <Button type="button" variant="outline" onClick={() => setCreateDialog(false)} className="border-foreground/10">
                 Batal
               </Button>
-              <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700" data-testid="submit-create-sj">
+              <Button type="submit" className="bg-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.9)]" data-testid="submit-create-sj">
                 <Save className="w-4 h-4 mr-2" />
                 Simpan
               </Button>
@@ -950,7 +950,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
           <DialogContent className="bg-card text-foreground border-foreground/10 max-w-2xl" data-testid="view-sj-dialog">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+                <FileText className="w-5 h-5 text-[hsl(var(--success))] " />
                 {viewDialog.sj_number}
               </DialogTitle>
             </DialogHeader>

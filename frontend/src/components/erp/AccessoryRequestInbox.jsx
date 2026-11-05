@@ -18,19 +18,19 @@ const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const STATUS_CONF = {
   draft:     { label: 'Draft',     cls: 'bg-muted dark:bg-zinc-500/15 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: Clock },
-  submitted: { label: 'Menunggu',  cls: 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-500 border-amber-400 dark:border-amber-500/30',  Icon: Inbox },
-  allocated: { label: 'Disiapkan', cls: 'bg-sky-100 dark:bg-sky-500/15 text-sky-500 border-sky-400 dark:border-sky-500/30',        Icon: Package },
-  delivered: { label: 'Terkirim',  cls: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-500 border-emerald-400 dark:border-emerald-500/30', Icon: CheckCircle2 },
-  rejected:  { label: 'Ditolak',   cls: 'bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-500 border-red-400 dark:border-red-500/30',        Icon: XCircle },
+  submitted: { label: 'Menunggu',  cls: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',  Icon: Inbox },
+  allocated: { label: 'Disiapkan', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] ',        Icon: Package },
+  delivered: { label: 'Terkirim',  cls: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)] ', Icon: CheckCircle2 },
+  rejected:  { label: 'Ditolak',   cls: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',        Icon: XCircle },
   cancelled: { label: 'Batal',     cls: 'bg-muted dark:bg-zinc-500/15 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: XCircle },
 };
 
 // P3 TD-009 (Session #11.10): request_type discriminator labels
 const TYPE_CONF = {
-  rnd_sample:         { label: 'RnD Sample',      cls: 'bg-violet-100 dark:bg-violet-500/15 text-violet-600 dark:text-violet-300 border-violet-400 dark:border-violet-500/30' },
-  internal_issuance:  { label: 'Internal',        cls: 'bg-cyan-100 dark:bg-cyan-500/15 text-cyan-600 dark:text-cyan-300 border-cyan-400 dark:border-cyan-500/30' },
-  vendor_additional:  { label: 'Vendor Add',      cls: 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-500/30' },
-  vendor_replacement: { label: 'Vendor Replace',  cls: 'bg-fuchsia-100 dark:bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-300 border-fuchsia-400 dark:border-fuchsia-500/30' },
+  rnd_sample:         { label: 'RnD Sample',      cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+  internal_issuance:  { label: 'Internal',        cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+  vendor_additional:  { label: 'Vendor Add',      cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
+  vendor_replacement: { label: 'Vendor Replace',  cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
 };
 
 export default function AccessoryRequestInbox({ token, moduleId }) {
@@ -149,19 +149,19 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
-            <Inbox className="w-5 h-5 text-amber-700 dark:text-amber-500" /> {isRndMonitor ? 'Pantau Request Sample (RnD)' : 'Inbox Request Aksesoris'}
-            <span className="px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300 text-[11px] font-medium border border-emerald-400 dark:border-emerald-500/30">SSOT</span>
+            <Inbox className="w-5 h-5 text-[hsl(var(--warning))] " /> {isRndMonitor ? 'Pantau Request Sample (RnD)' : 'Inbox Request Aksesoris'}
+            <span className="px-2 py-0.5 rounded-md bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  text-[11px] font-medium border border-[hsl(var(--success)/0.35)] ">SSOT</span>
           </h1>
           <p className="text-sm text-foreground/50 mt-0.5">
             {isRndMonitor
               ? 'Pantau status permintaan sample RnD (read-only). Alokasi & pengiriman dilakukan oleh Gudang/Portal Aksesoris.'
-              : <>Semua permintaan aksesoris (RnD sample, internal issuance, vendor add/replace) — backed by <span className="font-mono text-amber-300/80">dewi_accessory_requests</span></>}
+              : <>Semua permintaan aksesoris (RnD sample, internal issuance, vendor add/replace) — backed by <span className="tabular-nums text-[hsl(var(--warning)/0.8)]">dewi_accessory_requests</span></>}
           </p>
         </div>
       </div>
 
       {isRndMonitor && (
-        <div className="flex items-start gap-2 rounded-lg border border-sky-400/40 bg-sky-50 dark:bg-sky-500/10 px-3 py-2 text-xs text-sky-700 dark:text-sky-300" data-testid="acc-req-rnd-monitor-banner">
+        <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--primary)/0.4)] bg-[hsl(var(--primary)/0.1)] px-3 py-2 text-xs text-[hsl(var(--primary))] " data-testid="acc-req-rnd-monitor-banner">
           <Eye className="w-4 h-4 mt-0.5 flex-shrink-0" />
           <span>Mode <b>pantau (read-only)</b> — halaman yang sama dengan inbox Gudang/Aksesoris, difilter ke request <b>RnD Sample</b>. Aksi alokasi/kirim/tolak hanya tersedia di Portal Gudang/Aksesoris.</span>
         </div>
@@ -176,19 +176,19 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
           </GlassCard>
           <GlassCard className="p-3">
             <div className="text-xs text-foreground/50 flex items-center gap-1"><Inbox className="w-3 h-3" /> Menunggu</div>
-            <div className="text-2xl font-bold text-amber-700 dark:text-amber-500 mt-1" data-testid="acc-req-stats-submitted">{stats.submitted}</div>
+            <div className="text-2xl font-bold text-[hsl(var(--warning))] mt-1" data-testid="acc-req-stats-submitted">{stats.submitted}</div>
           </GlassCard>
           <GlassCard className="p-3">
             <div className="text-xs text-foreground/50 flex items-center gap-1"><Package className="w-3 h-3" /> Disiapkan</div>
-            <div className="text-2xl font-bold text-sky-500 mt-1">{stats.allocated}</div>
+            <div className="text-2xl font-bold text-[hsl(var(--primary))] mt-1">{stats.allocated}</div>
           </GlassCard>
           <GlassCard className="p-3">
             <div className="text-xs text-foreground/50 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Terkirim</div>
-            <div className="text-2xl font-bold text-emerald-500 mt-1">{stats.delivered}</div>
+            <div className="text-2xl font-bold text-[hsl(var(--success))] mt-1">{stats.delivered}</div>
           </GlassCard>
-          <GlassCard className="p-3 border-red-400 dark:border-red-500/30">
-            <div className="text-xs text-foreground/50 flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-red-700 dark:text-red-500" /> Urgent</div>
-            <div className="text-2xl font-bold text-red-700 dark:text-red-500 mt-1" data-testid="acc-req-stats-urgent">{stats.urgent_pending}</div>
+          <GlassCard className="p-3 border-[hsl(var(--destructive)/0.35)] ">
+            <div className="text-xs text-foreground/50 flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-[hsl(var(--destructive))] " /> Urgent</div>
+            <div className="text-2xl font-bold text-[hsl(var(--destructive))] mt-1" data-testid="acc-req-stats-urgent">{stats.urgent_pending}</div>
           </GlassCard>
         </div>
       )}
@@ -214,7 +214,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
               data-testid={`acc-req-filter-${opt.v || 'all'}`}
               className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${
                 filterStatus === opt.v
-                  ? 'bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-500 border-amber-500/40'
+                  ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.4)]'
                   : 'bg-foreground/5 text-foreground/50 border-foreground/10 hover:border-foreground/20'
               }`}>
               {opt.label}
@@ -243,7 +243,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
             data-testid={`acc-req-type-${opt.v || 'all'}`}
             className={`px-2.5 py-1 rounded-md text-[11px] font-medium border transition-all ${
               filterType === opt.v
-                ? 'bg-violet-100 dark:bg-violet-500/20 text-violet-600 dark:text-violet-300 border-violet-500/40'
+                ? 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.4)]'
                 : 'bg-foreground/5 text-foreground/50 border-foreground/10 hover:border-foreground/20'
             }`}>
             {opt.label}
@@ -295,9 +295,9 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                 return (
                   <tr key={r.id} className="border-b border-foreground/5 hover:bg-foreground/[0.03] last:border-0">
                     <td className="px-4 py-3">
-                      <div className="font-mono text-xs font-semibold text-foreground">{r.request_code}</div>
+                      <div className="tabular-nums text-xs font-semibold text-foreground">{r.request_code}</div>
                       {r.urgent && (
-                        <span className="inline-flex items-center gap-1 text-[10px] mt-0.5 px-1.5 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-500 border border-red-400 dark:border-red-500/30">
+                        <span className="inline-flex items-center gap-1 text-[10px] mt-0.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.35)] ">
                           <AlertTriangle className="w-2.5 h-2.5" /> URGENT
                         </span>
                       )}
@@ -317,7 +317,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                         </>
                       ) : r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement' ? (
                         <>
-                          <div className="font-medium text-foreground text-sm font-mono">{r.po_number || '—'}</div>
+                          <div className="font-medium text-foreground text-sm tabular-nums">{r.po_number || '—'}</div>
                           <div className="text-xs text-foreground/40 truncate max-w-[180px]">Vendor: {r.vendor_id || '—'}</div>
                         </>
                       ) : (
@@ -350,13 +350,13 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                           <>
                             <Button variant="ghost" size="sm"
                               onClick={() => setActionModal({ id: r.id, type: 'allocate', notes: '' })}
-                              className="h-7 px-2 text-xs text-sky-600 dark:text-sky-400 hover:bg-sky-100 dark:bg-sky-500/10"
+                              className="h-7 px-2 text-xs text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.15)] "
                               data-testid={`acc-req-allocate-${r.id}`}>
                               <Package className="w-3.5 h-3.5 mr-1" /> Siapkan
                             </Button>
                             <Button variant="ghost" size="sm"
                               onClick={() => setActionModal({ id: r.id, type: 'reject', notes: '' })}
-                              className="h-7 px-2 text-xs text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10"
+                              className="h-7 px-2 text-xs text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] "
                               data-testid={`acc-req-reject-${r.id}`}>
                               <XCircle className="w-3.5 h-3.5 mr-1" /> Tolak
                             </Button>
@@ -365,14 +365,14 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                         {r.status === 'allocated' && (
                           <Button variant="ghost" size="sm"
                             onClick={() => setActionModal({ id: r.id, type: 'deliver', notes: '' })}
-                            className="h-7 px-2 text-xs text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 dark:bg-emerald-500/10"
+                            className="h-7 px-2 text-xs text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.15)] "
                             data-testid={`acc-req-deliver-${r.id}`}>
                             <Truck className="w-3.5 h-3.5 mr-1" /> Tandai Kirim
                           </Button>
                         )}
                         {(r.status === 'draft' || r.status === 'rejected' || r.status === 'cancelled') && (
                           <Button variant="ghost" size="sm" onClick={() => setDelId(r.id)}
-                            className="h-7 w-7 p-0 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10"
+                            className="h-7 w-7 p-0 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] "
                             data-testid={`acc-req-delete-${r.id}`}>
                             <Trash2 className="w-3.5 h-3.5" />
                           </Button>
@@ -403,7 +403,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                 {(STATUS_CONF[detail.status] || STATUS_CONF.draft).label}
               </span>
               {detail.urgent && (
-                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-500 border border-red-400 dark:border-red-500/30">
+                <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.35)] ">
                   <AlertTriangle className="w-3 h-3" /> URGENT
                 </span>
               )}
@@ -426,22 +426,22 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                 <>
                   <div>
                     <div className="text-xs text-foreground/50">Vendor ID</div>
-                    <div className="font-mono text-xs">{detail.vendor_id || '—'}</div>
+                    <div className="tabular-nums text-xs">{detail.vendor_id || '—'}</div>
                   </div>
                   <div>
                     <div className="text-xs text-foreground/50">PO Number</div>
-                    <div className="font-mono text-xs">{detail.po_number || '—'}</div>
+                    <div className="tabular-nums text-xs">{detail.po_number || '—'}</div>
                   </div>
                   {detail.original_shipment_id && (
                     <div>
                       <div className="text-xs text-foreground/50">Original Shipment</div>
-                      <div className="font-mono text-xs">{detail.original_shipment_id}</div>
+                      <div className="tabular-nums text-xs">{detail.original_shipment_id}</div>
                     </div>
                   )}
                   {detail.child_shipment_number && (
                     <div>
                       <div className="text-xs text-foreground/50">Child Shipment</div>
-                      <div className="font-mono text-xs text-emerald-600 dark:text-emerald-300">{detail.child_shipment_number}</div>
+                      <div className="tabular-nums text-xs text-[hsl(var(--success))] ">{detail.child_shipment_number}</div>
                     </div>
                   )}
                 </>
@@ -453,7 +453,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                   </div>
                   <div>
                     <div className="text-xs text-foreground/50">Sample Request ID</div>
-                    <div className="font-mono text-xs">{detail.sample_request_id || '—'}</div>
+                    <div className="tabular-nums text-xs">{detail.sample_request_id || '—'}</div>
                   </div>
                 </>
               )}
@@ -480,7 +480,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                   <tbody>
                     {(detail.items || []).map((it, idx) => (
                       <tr key={idx} className="border-t border-foreground/5">
-                        <td className="px-3 py-2 font-mono">{it.material_code || '—'}</td>
+                        <td className="px-3 py-2 tabular-nums">{it.material_code || '—'}</td>
                         <td className="px-3 py-2">{it.material_name}</td>
                         <td className="px-3 py-2">{it.qty}</td>
                         <td className="px-3 py-2">{it.unit}</td>
@@ -508,7 +508,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
               </div>
             )}
             {detail.rejection_reason && (
-              <div className="px-3 py-2 rounded-lg bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 text-sm text-red-700 dark:text-red-400">
+              <div className="px-3 py-2 rounded-lg bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  text-sm text-[hsl(var(--destructive))] ">
                 Alasan reject: {detail.rejection_reason}
               </div>
             )}
@@ -540,7 +540,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
               onClick={actionModal.type === 'allocate' ? handleAllocate
                 : actionModal.type === 'deliver' ? handleDeliver
                 : handleReject}
-              className={actionModal.type === 'reject' ? 'bg-red-600 hover:bg-red-700 text-foreground' : ''}
+              className={actionModal.type === 'reject' ? 'bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] text-foreground' : ''}
               data-testid="acc-req-confirm-action-btn">
               {actionModal.type === 'allocate' ? 'Siapkan'
                 : actionModal.type === 'deliver' ? 'Tandai Kirim'

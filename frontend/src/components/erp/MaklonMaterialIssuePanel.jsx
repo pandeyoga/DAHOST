@@ -142,7 +142,7 @@ export default function MaklonMaterialIssuePanel({ order, headers }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Warehouse className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+          <Warehouse className="w-4 h-4 text-[hsl(var(--primary))] " />
           <span className="text-sm font-semibold text-foreground/80">Material Issue</span>
           <span className="text-xs text-foreground/40">({issues.length} item, total {totalQty.toFixed(2)} unit)</span>
         </div>
@@ -159,7 +159,7 @@ export default function MaklonMaterialIssuePanel({ order, headers }) {
       </div>
 
       {!isInternal && (
-        <div className="flex items-start gap-2 bg-blue-100 dark:bg-blue-500/10 border border-blue-400/25 rounded-lg p-3 text-xs text-blue-600 dark:text-blue-300">
+        <div className="flex items-start gap-2 bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.25)] rounded-lg p-3 text-xs text-[hsl(var(--primary))] ">
           <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           Order ini menggunakan material dari klien. Material Issue hanya untuk order dengan fabric dari internal.
         </div>
@@ -189,7 +189,7 @@ export default function MaklonMaterialIssuePanel({ order, headers }) {
               <div className="space-y-0.5 flex-1 min-w-0">
                 <div className="text-sm font-semibold text-foreground/90">{issue.material_name}</div>
                 <div className="text-[10px] text-foreground/40">
-                  <span className="font-mono">{issue.material_code}</span>
+                  <span className="tabular-nums">{issue.material_code}</span>
                   {' · '}{issue.location_name}
                   {' · '}{new Date(issue.issued_at).toLocaleDateString('id-ID', {day:'2-digit',month:'short',year:'numeric'})}
                   {' · '}{issue.issued_by}
@@ -198,12 +198,12 @@ export default function MaklonMaterialIssuePanel({ order, headers }) {
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="text-right">
-                  <div className="text-sm font-bold text-cyan-600 dark:text-cyan-400">{issue.qty} {issue.unit}</div>
+                  <div className="text-sm font-bold text-[hsl(var(--primary))] ">{issue.qty} {issue.unit}</div>
                   <div className="text-[10px] text-foreground/35">Sisa: {issue.stock_after?.toFixed(2)}</div>
                 </div>
                 <Button
                   size="icon" variant="ghost"
-                  className="w-7 h-7 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/15"
+                  className="w-7 h-7 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] "
                   onClick={() => cancelIssue(issue.id)}
                 >
                   <Trash2 className="w-3 h-3" />
@@ -263,8 +263,8 @@ export default function MaklonMaterialIssuePanel({ order, headers }) {
             {stockInfo && (
               <div className={`flex flex-col gap-1 text-xs p-2 rounded border ${
                 (stockInfo.qty || 0) > 0
-                  ? 'bg-green-100 dark:bg-green-500/10 border-green-500/25 text-green-600 dark:text-green-300'
-                  : 'bg-red-100 dark:bg-red-500/10 border-red-500/25 text-red-600 dark:text-red-300'
+                  ? 'bg-[hsl(var(--success)/0.15)]  border-[hsl(var(--success)/0.25)] text-[hsl(var(--success))] '
+                  : 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.25)] text-[hsl(var(--destructive))] '
               }`}>
                 <div className="flex items-center gap-2">
                   {(stockInfo.qty || 0) > 0

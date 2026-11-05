@@ -8,6 +8,9 @@ import {
 } from 'lucide-react';
 import { apiGet } from '../../../lib/api';
 import { BizBadge } from './BusinessTypeBadge';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import { EmptyState } from '../moduleAtoms';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────────
 const n = v => (Number(v) || 0).toLocaleString('id-ID');
@@ -21,8 +24,8 @@ function getStatus(produced, ordered) {
 
 const STATUS_CONFIG = {
   'not-started': { label: 'Belum Mulai',  bg: 'bg-muted',   text: 'text-muted-foreground',   bar: 'bg-muted-foreground/30',   dot: 'bg-muted-foreground/50'   },
-  'ongoing':     { label: 'Sedang Jalan', bg: 'bg-amber-50',    text: 'text-amber-700',   bar: 'bg-amber-500',   dot: 'bg-amber-500'   },
-  'completed':   { label: 'Selesai',      bg: 'bg-emerald-50',  text: 'text-emerald-700', bar: 'bg-emerald-500', dot: 'bg-emerald-500' },
+  'ongoing':     { label: 'Sedang Jalan', bg: 'bg-[hsl(var(--warning)/0.1)]',    text: 'text-[hsl(var(--warning))]',   bar: 'bg-[hsl(var(--warning))]',   dot: 'bg-[hsl(var(--warning))]'   },
+  'completed':   { label: 'Selesai',      bg: 'bg-[hsl(var(--success)/0.1)]',  text: 'text-[hsl(var(--success))]', bar: 'bg-[hsl(var(--success))]', dot: 'bg-[hsl(var(--success))]' },
   'no-data':     { label: '-',            bg: 'bg-muted/40',    text: 'text-muted-foreground',   bar: 'bg-muted',   dot: 'bg-muted-foreground/30'   },
 };
 
@@ -67,10 +70,10 @@ function ProgressBar({ produced, ordered, compact = false }) {
 function MetricBadge({ label, value, color = 'slate', highlight = false }) {
   const colors = {
     slate:   'bg-muted/40 border-border text-foreground/90',
-    blue:    'bg-blue-50 border-blue-200 text-blue-700',
-    emerald: 'bg-emerald-50 border-emerald-200 text-emerald-700',
-    amber:   'bg-amber-50 border-amber-200 text-amber-700',
-    red:     'bg-red-50 border-red-200 text-red-700',
+    blue:    'bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))]',
+    emerald: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))]',
+    amber:   'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))]',
+    red:     'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]',
   };
   return (
     <div className={`rounded-lg px-2.5 py-1.5 border text-center ${colors[color]} ${highlight ? 'ring-2 ring-offset-1 ring-current' : ''}`}>
@@ -211,22 +214,22 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
   const statCompleted  = allSkus.filter(s => getStatus(s.produced_qty, s.ordered_qty) === 'completed').length;
 
   if (loading) return (
-    <div className="flex items-center justify-center py-20">
+    <div className="flex items-center justify-center py-8">
       <div className="text-center">
-        <RefreshCw className="w-8 h-8 text-blue-500 animate-spin mx-auto mb-3" />
+        <RefreshCw className="w-8 h-8 text-[hsl(var(--primary))] animate-spin mx-auto mb-3" />
         <p className="text-muted-foreground text-sm">Memuat data distribusi kerja...</p>
       </div>
     </div>
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
 
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Factory className="w-6 h-6 text-indigo-600" /> Production Jobs
+            <Factory className="w-6 h-6 text-[hsl(var(--primary))]" /> Production Jobs
             {businessType && <BizBadge type={businessType} />}
           </h1>
           <p className="text-muted-foreground text-sm mt-0.5">
@@ -239,16 +242,16 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={expandAll} className="text-xs text-blue-600 hover:underline px-2 py-1">Expand Semua</button>
-          <button onClick={collapseAll} className="text-xs text-muted-foreground hover:underline px-2 py-1">Collapse</button>
-          <button onClick={fetchData} className="flex items-center gap-1.5 px-3 py-2 border border-border rounded-lg text-sm hover:bg-muted/60 text-muted-foreground">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
-          </button>
+          <Button variant="link" size="sm" onClick={expandAll}>Buka semua</Button>
+          <Button variant="link" size="sm" onClick={collapseAll} className="text-muted-foreground">Tutup semua</Button>
+          <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang">
+            <RefreshCw className="w-4 h-4" />
+          </Button>
         </div>
       </div>
 
       {/* ── Global Progress Banner ───────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-indigo-600 to-blue-600 rounded-2xl p-4 text-white">
+      <div className="bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] rounded-2xl p-4 text-white">
         <div className="flex items-center justify-between mb-2">
           <span className="font-semibold text-sm opacity-90">Progress Global Produksi</span>
           <span className="text-2xl font-extrabold">{globalPct}%</span>
@@ -279,8 +282,8 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: 'SKU Belum Mulai', value: statNotStarted, color: 'bg-muted text-foreground/90', key: 'not-started', dot: 'bg-muted-foreground/50' },
-          { label: 'SKU Sedang Jalan', value: statOngoing, color: 'bg-amber-50 text-amber-700', key: 'ongoing', dot: 'bg-amber-500' },
-          { label: 'SKU Selesai', value: statCompleted, color: 'bg-emerald-50 text-emerald-700', key: 'completed', dot: 'bg-emerald-500' },
+          { label: 'SKU Sedang Jalan', value: statOngoing, color: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]', key: 'ongoing', dot: 'bg-[hsl(var(--warning))]' },
+          { label: 'SKU Selesai', value: statCompleted, color: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]', key: 'completed', dot: 'bg-[hsl(var(--success))]' },
         ].map(s => (
           <button key={s.key}
             onClick={() => setFilterStatus(prev => prev === s.key ? 'all' : s.key)}
@@ -305,7 +308,7 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
               placeholder={`Cari ${searchField === 'all' ? 'PO, vendor, serial, atau SKU' : searchField === 'po' ? 'nomor PO' : searchField === 'vendor' ? 'nama vendor' : searchField === 'serial' ? 'serial number' : 'kode SKU'}...`}
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
-              className="w-full pl-9 pr-9 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 focus:border-transparent"
+              className="w-full pl-9 pr-9 py-2 border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)] focus:border-transparent"
             />
             {searchText && (
               <button onClick={() => setSearchText('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground">
@@ -329,7 +332,7 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                   key={f.key}
                   onClick={() => setSearchField(f.key)}
                   className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all ${
-                    searchField === f.key ? 'bg-card shadow text-indigo-700' : 'text-muted-foreground hover:text-foreground/90'
+                    searchField === f.key ? 'bg-card shadow text-[hsl(var(--primary))]' : 'text-muted-foreground hover:text-foreground/90'
                   }`}
                 >
                   <Icon className="w-3 h-3" />
@@ -343,7 +346,7 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
           <SmartNativeSelect
             value={filterVendor}
             onChange={e => setFilterVendor(e.target.value)}
-            className="border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground/90 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            className="border border-border rounded-lg px-3 py-2 text-sm bg-card text-foreground/90 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
           >
             <option value="">Semua Vendor</option>
             {vendors.map(v => <option key={v.id} value={v.id}>{v.garment_name}</option>)}
@@ -353,7 +356,7 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
           {(searchText || filterVendor || filterStatus !== 'all') && (
             <button
               onClick={() => { setSearchText(''); setFilterVendor(''); setFilterStatus('all'); }}
-              className="flex items-center gap-1 px-3 py-2 text-xs text-red-600 bg-red-50 rounded-lg hover:bg-red-100 font-medium"
+              className="flex items-center gap-1 px-3 py-2 text-xs text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)] rounded-lg hover:bg-[hsl(var(--destructive)/0.15)] font-medium"
             >
               <X className="w-3 h-3" /> Reset Filter
             </button>
@@ -369,21 +372,16 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
 
       {/* ── Hierarchical Tree ────────────────────────────────────────────────── */}
       {filteredHierarchy.length === 0 ? (
-        <div className="text-center py-16 bg-card rounded-2xl border border-border">
+        <GlassCard className="p-4">
           {searchText || filterStatus !== 'all' ? (
-            <>
-              <Search className="w-12 h-12 mx-auto mb-3 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">Tidak ada data yang cocok dengan pencarian.</p>
-              <button onClick={() => { setSearchText(''); setFilterStatus('all'); }} className="text-xs text-blue-600 hover:underline mt-2">Reset pencarian</button>
-            </>
+            <EmptyState icon={Search} title="Tidak ada pekerjaan yang cocok"
+              description="Ubah kata kunci atau penyaring status untuk melihat pekerjaan lain."
+              action={<Button variant="link" size="sm" onClick={() => { setSearchText(''); setFilterStatus('all'); }}>Atur ulang pencarian</Button>} />
           ) : (
-            <>
-              <Factory className="w-12 h-12 mx-auto mb-3 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">Belum ada data distribusi kerja.</p>
-              <p className="text-xs text-muted-foreground/70 mt-1">Data muncul setelah vendor shipment dibuat dan diterima vendor.</p>
-            </>
+            <EmptyState icon={Factory} title="Belum ada distribusi kerja"
+              description="Data muncul setelah pengiriman ke vendor dibuat dan diterima vendor." />
           )}
-        </div>
+        </GlassCard>
       ) : (
         <div className="space-y-3">
           {filteredHierarchy.map(vendor => {
@@ -396,15 +394,15 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
 
                 {/* ── LEVEL 1: Vendor ─────────────────────────────────────── */}
                 <div
-                  className="flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-indigo-50 via-blue-50 to-muted/40 cursor-pointer hover:from-indigo-100 transition-colors select-none"
+                  className="flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-[hsl(var(--primary)/0.1)] via-[hsl(var(--primary)/0.1)] to-muted/40 cursor-pointer hover:from-[hsl(var(--primary)/0.1)] transition-colors select-none"
                   onClick={() => toggle('vendors', vendor.vendor_id)}
                 >
                   <div className="flex-shrink-0 w-5">
                     {vendorExpanded
-                      ? <ChevronDown className="w-4 h-4 text-indigo-600" />
-                      : <ChevronRight className="w-4 h-4 text-indigo-600" />}
+                      ? <ChevronDown className="w-4 h-4 text-[hsl(var(--primary))]" />
+                      : <ChevronRight className="w-4 h-4 text-[hsl(var(--primary))]" />}
                   </div>
-                  <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm">
+                  <div className="w-9 h-9 bg-[hsl(var(--primary))] rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm">
                     <Factory className="w-4.5 h-4.5 text-white" />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -442,21 +440,21 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                           >
                             <div className="flex-shrink-0 w-4 ml-3">
                               {poExpanded
-                                ? <ChevronDown className="w-3.5 h-3.5 text-blue-400" />
-                                : <ChevronRight className="w-3.5 h-3.5 text-blue-400" />}
+                                ? <ChevronDown className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />
+                                : <ChevronRight className="w-3.5 h-3.5 text-[hsl(var(--primary))]" />}
                             </div>
-                            <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                              <BarChart2 className="w-4 h-4 text-blue-600" />
+                            <div className="w-8 h-8 bg-[hsl(var(--primary)/0.15)] rounded-lg flex items-center justify-center flex-shrink-0">
+                              <BarChart2 className="w-4 h-4 text-[hsl(var(--primary))]" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="font-semibold text-sm text-blue-700">{po.po_number}</span>
+                                <span className="font-semibold text-sm text-[hsl(var(--primary))]">{po.po_number}</span>
                                 <StatusBadge produced={po.total_produced} ordered={po.total_ordered} />
                                 {po.po_date && (
                                   <span className="text-xs text-muted-foreground/70">{new Date(po.po_date).toLocaleDateString('id-ID')}</span>
                                 )}
                                 {isOverdue && (
-                                  <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
+                                  <span className="flex items-center gap-1 text-xs text-[hsl(var(--destructive))] font-medium">
                                     <AlertTriangle className="w-3 h-3" /> Terlambat
                                   </span>
                                 )}
@@ -469,7 +467,7 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                             <div className="hidden md:flex items-center gap-2 flex-shrink-0 text-xs">
                               <div className="text-right text-muted-foreground/70">
                                 <div>{po.serials?.length || 0} serial</div>
-                                {po.deadline && <div className={isOverdue ? 'text-red-600 font-medium' : ''}>{new Date(po.deadline).toLocaleDateString('id-ID', { day:'2-digit', month:'short' })}</div>}
+                                {po.deadline && <div className={isOverdue ? 'text-[hsl(var(--destructive))] font-medium' : ''}>{new Date(po.deadline).toLocaleDateString('id-ID', { day:'2-digit', month:'short' })}</div>}
                               </div>
                               <MetricBadge label="Dipesan" value={po.total_ordered} color="slate" />
                               <MetricBadge label="Diproduksi" value={po.total_produced} color="emerald" />
@@ -489,20 +487,20 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                                 return (
                                   <div key={snKey} className="border-b border-border/60/80 last:border-0">
                                     <div
-                                      className="flex items-center gap-3 pl-14 pr-4 py-2.5 hover:bg-amber-50/40 cursor-pointer transition-colors select-none"
+                                      className="flex items-center gap-3 pl-14 pr-4 py-2.5 hover:bg-[hsl(var(--warning)/0.4)] cursor-pointer transition-colors select-none"
                                       onClick={() => toggle('serials', snKey)}
                                     >
                                       <div className="flex-shrink-0 w-4">
                                         {snExpanded
-                                          ? <ChevronDown className="w-3 h-3 text-amber-500" />
-                                          : <ChevronRight className="w-3 h-3 text-amber-500" />}
+                                          ? <ChevronDown className="w-3 h-3 text-[hsl(var(--warning))]" />
+                                          : <ChevronRight className="w-3 h-3 text-[hsl(var(--warning))]" />}
                                       </div>
-                                      <div className="w-7 h-7 bg-amber-100 border border-amber-200 rounded-lg flex items-center justify-center flex-shrink-0">
-                                        <span className="text-[9px] font-extrabold text-amber-700">SN</span>
+                                      <div className="w-7 h-7 bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)] rounded-lg flex items-center justify-center flex-shrink-0">
+                                        <span className="text-[9px] font-extrabold text-[hsl(var(--warning))]">SN</span>
                                       </div>
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 flex-wrap">
-                                          <span className="font-semibold text-sm text-amber-800 font-mono">{sn}</span>
+                                          <span className="font-semibold text-sm text-[hsl(var(--warning))] tabular-nums">{sn}</span>
                                           <StatusBadge produced={serial.total_produced} ordered={serial.total_ordered} />
                                           <span className="text-xs text-muted-foreground/70">{serial.skus?.length || 0} SKU</span>
                                         </div>
@@ -527,16 +525,16 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                                                 <th className="text-right py-2 px-2 text-muted-foreground font-semibold whitespace-nowrap">
                                                   <span title="Qty yang dipesan dalam PO">Dipesan</span>
                                                 </th>
-                                                <th className="text-right py-2 px-2 text-blue-500 font-semibold whitespace-nowrap">
+                                                <th className="text-right py-2 px-2 text-[hsl(var(--primary))] font-semibold whitespace-nowrap">
                                                   <span title="Qty yang diterima dari kiriman ERP">Diterima</span>
                                                 </th>
-                                                <th className="text-right py-2 px-2 text-amber-500 font-semibold whitespace-nowrap">Missing</th>
-                                                <th className="text-right py-2 px-2 text-red-500 font-semibold whitespace-nowrap">Cacat</th>
-                                                <th className="text-right py-2 px-2 text-emerald-600 font-semibold whitespace-nowrap">
+                                                <th className="text-right py-2 px-2 text-[hsl(var(--warning))] font-semibold whitespace-nowrap">Missing</th>
+                                                <th className="text-right py-2 px-2 text-[hsl(var(--destructive))] font-semibold whitespace-nowrap">Cacat</th>
+                                                <th className="text-right py-2 px-2 text-[hsl(var(--success))] font-semibold whitespace-nowrap">
                                                   <span title="Total sudah diproduksi (parent + child jobs)">Diproduksi</span>
                                                 </th>
                                                 <th className="text-right py-2 px-2 text-muted-foreground font-semibold whitespace-nowrap">Sisa Prod.</th>
-                                                <th className="text-right py-2 px-2 text-teal-600 font-semibold whitespace-nowrap">Dikirim</th>
+                                                <th className="text-right py-2 px-2 text-[hsl(var(--success))] font-semibold whitespace-nowrap">Dikirim</th>
                                                 <th className="py-2 px-2 text-muted-foreground font-semibold whitespace-nowrap w-32">Status / Progress</th>
                                               </tr>
                                             </thead>
@@ -548,7 +546,7 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                                                   <tr key={sku.id} className={`hover:bg-muted/60 transition-colors ${cfg.bg}`}>
                                                     <td className="py-2 pr-3">
                                                       <div className="flex flex-col gap-0.5">
-                                                        <span className="font-bold text-foreground font-mono">{sku.sku || sku.product_name}</span>
+                                                        <span className="font-bold text-foreground tabular-nums">{sku.sku || sku.product_name}</span>
                                                         {sku.sku && sku.product_name && sku.sku !== sku.product_name && (
                                                           <span className="text-muted-foreground/70 leading-tight">{sku.product_name}</span>
                                                         )}
@@ -557,14 +555,14 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                                                         )}
                                                         {sku.shipment_type && sku.shipment_type !== 'NORMAL' && (
                                                           <span className={`inline-block w-fit px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                                            sku.shipment_type === 'ADDITIONAL' ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700'
+                                                            sku.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'
                                                           }`}>
                                                             {sku.shipment_type}
                                                           </span>
                                                         )}
                                                         {sku.inspection_status && (
                                                           <span className={`inline-block w-fit px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                                            sku.inspection_status === 'Inspected' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+                                                            sku.inspection_status === 'Inspected' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
                                                           }`}>
                                                             {sku.inspection_status === 'Inspected' ? '✓ Inspected' : '⏳ Pending'}
                                                           </span>
@@ -577,34 +575,34 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                                                     </td>
                                                     {/* Received */}
                                                     <td className="py-2 px-2 text-right">
-                                                      <span className="font-medium text-blue-700">{n(sku.received_qty)}</span>
+                                                      <span className="font-medium text-[hsl(var(--primary))]">{n(sku.received_qty)}</span>
                                                     </td>
                                                     {/* Missing */}
                                                     <td className="py-2 px-2 text-right">
-                                                      <span className={`font-medium ${(sku.missing_qty || 0) > 0 ? 'text-amber-600 font-bold' : 'text-muted-foreground/50'}`}>
+                                                      <span className={`font-medium ${(sku.missing_qty || 0) > 0 ? 'text-[hsl(var(--warning))] font-bold' : 'text-muted-foreground/50'}`}>
                                                         {n(sku.missing_qty)}
                                                         {(sku.missing_qty || 0) > 0 && <AlertTriangle className="inline w-3 h-3 ml-0.5" />}
                                                       </span>
                                                     </td>
                                                     {/* Defect */}
                                                     <td className="py-2 px-2 text-right">
-                                                      <span className={`font-medium ${(sku.defect_qty || 0) > 0 ? 'text-red-600 font-bold' : 'text-muted-foreground/50'}`}>
+                                                      <span className={`font-medium ${(sku.defect_qty || 0) > 0 ? 'text-[hsl(var(--destructive))] font-bold' : 'text-muted-foreground/50'}`}>
                                                         {n(sku.defect_qty)}
                                                       </span>
                                                     </td>
                                                     {/* Produced */}
                                                     <td className="py-2 px-2 text-right">
-                                                      <span className="font-bold text-emerald-700 text-sm">{n(sku.produced_qty)}</span>
+                                                      <span className="font-bold text-[hsl(var(--success))] text-sm">{n(sku.produced_qty)}</span>
                                                     </td>
                                                     {/* Remaining Production */}
                                                     <td className="py-2 px-2 text-right">
-                                                      <span className={`font-medium ${(sku.remaining_production || 0) > 0 ? 'text-orange-600' : 'text-muted-foreground/50'}`}>
+                                                      <span className={`font-medium ${(sku.remaining_production || 0) > 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground/50'}`}>
                                                         {n(sku.remaining_production)}
                                                       </span>
                                                     </td>
                                                     {/* Shipped */}
                                                     <td className="py-2 px-2 text-right">
-                                                      <span className="font-medium text-teal-700">{n(sku.shipped_to_buyer)}</span>
+                                                      <span className="font-medium text-[hsl(var(--success))]">{n(sku.shipped_to_buyer)}</span>
                                                     </td>
                                                     {/* Status + Progress */}
                                                     <td className="py-2 px-2 w-32">
@@ -623,11 +621,11 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
                                                 <tr className="border-t-2 border-border bg-muted/40/80">
                                                   <td className="py-2 pr-3 font-bold text-muted-foreground">Sub-total Serial</td>
                                                   <td className="py-2 px-2 text-right font-bold text-foreground/90">{n(serial.total_ordered)}</td>
-                                                  <td className="py-2 px-2 text-right font-bold text-blue-700">{n(serial.total_received)}</td>
+                                                  <td className="py-2 px-2 text-right font-bold text-[hsl(var(--primary))]">{n(serial.total_received)}</td>
                                                   <td colSpan={2} className="py-2 px-2 text-center text-muted-foreground/70">—</td>
-                                                  <td className="py-2 px-2 text-right font-bold text-emerald-700">{n(serial.total_produced)}</td>
-                                                  <td className="py-2 px-2 text-right font-bold text-orange-600">{n(Math.max(0, serial.total_ordered - serial.total_produced))}</td>
-                                                  <td className="py-2 px-2 text-right font-bold text-teal-700">{n(serial.total_shipped)}</td>
+                                                  <td className="py-2 px-2 text-right font-bold text-[hsl(var(--success))]">{n(serial.total_produced)}</td>
+                                                  <td className="py-2 px-2 text-right font-bold text-[hsl(var(--warning))]">{n(Math.max(0, serial.total_ordered - serial.total_produced))}</td>
+                                                  <td className="py-2 px-2 text-right font-bold text-[hsl(var(--success))]">{n(serial.total_shipped)}</td>
                                                   <td className="py-2 px-2">
                                                     <ProgressBar produced={serial.total_produced} ordered={serial.total_ordered} compact />
                                                   </td>
@@ -656,36 +654,36 @@ export default function WorkOrderModule({ token, userRole, portalId }) {
 
       {/* ── Invalid Records ──────────────────────────────────────────────────── */}
       {(data.invalid_records || []).length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 mt-4">
-          <p className="font-semibold text-red-700 text-sm flex items-center gap-2 mb-2">
+        <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-xl p-4 mt-4">
+          <p className="font-semibold text-[hsl(var(--destructive))] text-sm flex items-center gap-2 mb-2">
             <AlertTriangle className="w-4 h-4" />
             Record Tidak Valid ({data.invalid_records.length}) — Tidak dapat di-mapping ke PO
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead className="bg-red-100">
+              <thead className="bg-[hsl(var(--destructive)/0.15)]">
                 <tr>
-                  <th className="text-left px-3 py-1.5 text-red-700">Shipment</th>
-                  <th className="text-left px-3 py-1.5 text-red-700">Tipe</th>
-                  <th className="text-left px-3 py-1.5 text-red-700">Vendor</th>
-                  <th className="text-left px-3 py-1.5 text-red-700">SKU</th>
-                  <th className="text-left px-3 py-1.5 text-red-700">Produk</th>
-                  <th className="text-left px-3 py-1.5 text-red-700">Error</th>
+                  <th className="text-left px-3 py-1.5 text-[hsl(var(--destructive))]">Shipment</th>
+                  <th className="text-left px-3 py-1.5 text-[hsl(var(--destructive))]">Tipe</th>
+                  <th className="text-left px-3 py-1.5 text-[hsl(var(--destructive))]">Vendor</th>
+                  <th className="text-left px-3 py-1.5 text-[hsl(var(--destructive))]">SKU</th>
+                  <th className="text-left px-3 py-1.5 text-[hsl(var(--destructive))]">Produk</th>
+                  <th className="text-left px-3 py-1.5 text-[hsl(var(--destructive))]">Error</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-red-100">
+              <tbody className="divide-y divide-[hsl(var(--destructive)/0.35)]">
                 {data.invalid_records.map((r, i) => (
-                  <tr key={i} className="hover:bg-red-100/50">
-                    <td className="px-3 py-1.5 font-mono">{r.shipment_number || '-'}</td>
+                  <tr key={i} className="hover:bg-[hsl(var(--destructive)/0.5)]">
+                    <td className="px-3 py-1.5 tabular-nums">{r.shipment_number || '-'}</td>
                     <td className="px-3 py-1.5">
                       <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        r.shipment_type === 'ADDITIONAL' ? 'bg-orange-100 text-orange-700' : 'bg-purple-100 text-purple-700'
+                        r.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'
                       }`}>{r.shipment_type}</span>
                     </td>
                     <td className="px-3 py-1.5">{r.vendor_name || '-'}</td>
-                    <td className="px-3 py-1.5 font-mono">{r.sku || '-'}</td>
+                    <td className="px-3 py-1.5 tabular-nums">{r.sku || '-'}</td>
                     <td className="px-3 py-1.5">{r.product_name || '-'}</td>
-                    <td className="px-3 py-1.5 text-red-600">{r.error}</td>
+                    <td className="px-3 py-1.5 text-[hsl(var(--destructive))]">{r.error}</td>
                   </tr>
                 ))}
               </tbody>

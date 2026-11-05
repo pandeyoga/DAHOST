@@ -43,6 +43,8 @@ import {
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { GlassCard } from '@/components/ui/glass';
+import { EmptyState, Notice, StatTile } from './moduleAtoms';
 import { apiGet, setCmtOverrideVendor, clearCmtOverrideVendor } from '../../lib/api';
 
 import VendorDashboard from './engine/VendorDashboard';
@@ -64,7 +66,7 @@ const ALLOWED_ROLES = ['admin', 'superadmin', 'admin_produksi', 'supervisor_prod
 // 11 modul — urutan & label PERSIS Portal Vendor CMT (VendorPortalApp.jsx),
 // supaya staf yang pernah memandu vendor lewat telepon tidak perlu belajar ulang.
 const MODULES = [
-  { id: 'dashboard', label: 'Dashboard', icon: BarChart2, Comp: VendorDashboard },
+  { id: 'dashboard', label: 'Ringkasan', icon: BarChart2, Comp: VendorDashboard },
   { id: 'receiving', label: 'Penerimaan Material', icon: Package, Comp: VendorReceiving },
   { id: 'inspeksi', label: 'Inspeksi Material', icon: ClipboardCheck, Comp: VendorMaterialInspection },
   { id: 'material-requests', label: 'Permintaan Material', icon: ClipboardList, Comp: VendorMaterialRequests },
@@ -89,8 +91,8 @@ const fmtDateTime = (v) => {
 // ═════════════════════════════════════════════════════════════════════════════
 function AccessDenied({ role }) {
   return (
-    <div className="p-6" data-testid="cmt-override-denied">
-      <div className="mx-auto max-w-xl rounded-xl border border-border bg-card p-6 text-center shadow-sm">
+    <div data-testid="cmt-override-denied">
+      <GlassCard className="p-4 text-center">
         <ShieldCheck className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
         <h2 className="text-lg font-semibold text-foreground">Tidak berwenang</h2>
         <p className="mt-2 text-sm text-muted-foreground">
@@ -98,10 +100,10 @@ function AccessDenied({ role }) {
           jadi hanya dibuka untuk staf yang memang memegang CMT harian.
         </p>
         <p className="mt-3 text-xs text-muted-foreground">
-          Role Anda: <span className="font-mono font-semibold text-foreground">{role || '—'}</span>
-          <br />Role yang diizinkan: <span className="font-mono">{ALLOWED_ROLES.join(' · ')}</span>
+          Role Anda: <span className="tabular-nums font-semibold text-foreground">{role || '—'}</span>
+          <br />Role yang diizinkan: <span className="tabular-nums">{ALLOWED_ROLES.join(' · ')}</span>
         </p>
-      </div>
+      </GlassCard>
     </div>
   );
 }
@@ -114,16 +116,16 @@ function VendorCard({ v, onPick }) {
       type="button"
       onClick={() => onPick(v)}
       data-testid={`cmt-override-vendor-${v.id}`}
-      className="group flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-blue-400 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
+      className="group flex w-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left shadow-sm transition-all hover:border-[hsl(var(--primary)/0.35)] hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))]"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate font-semibold text-foreground">{v.name}</p>
-          <p className="mt-0.5 font-mono text-xs text-muted-foreground">{v.code || '—'}</p>
+          <p className="mt-0.5 tabular-nums text-xs text-muted-foreground">{v.code || '—'}</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           {pending > 0 && (
-            <span className="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-bold text-blue-700">
+            <span className="inline-flex items-center rounded-full bg-[hsl(var(--primary)/0.15)] px-2 py-0.5 text-[11px] font-bold text-[hsl(var(--primary))]">
               {pending} perlu diisi
             </span>
           )}
@@ -155,24 +157,18 @@ function VendorCard({ v, onPick }) {
       </div>
 
       {v.has_active_portal_account ? (
-        <div
-          className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-2 text-[11px] leading-snug text-amber-900"
-          data-testid={`cmt-override-warn-${v.id}`}
-        >
-          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-          <span>
-            Punya akun portal aktif — terakhir login <b>{fmtDateTime(v.last_login_at)}</b>.
-            Hati-hati dobel input.
-          </span>
-        </div>
+        <Notice tone="warning" icon={AlertTriangle} testId={`cmt-override-warn-${v.id}`}
+          className="px-2.5 py-2 text-[11px] leading-snug">
+          Punya akun portal aktif — terakhir login <b>{fmtDateTime(v.last_login_at)}</b>.
+          Hati-hati dobel input.
+        </Notice>
       ) : (
-        <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-2 text-[11px] font-medium text-emerald-800">
-          <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0" />
+        <Notice tone="success" icon={CheckCircle2} className="px-2.5 py-2 text-[11px] font-medium">
           Tanpa akun portal — memang harus diisi staf
-        </div>
+        </Notice>
       )}
 
-      <span className="mt-auto text-xs font-semibold text-blue-700 group-hover:underline">
+      <span className="mt-auto text-xs font-semibold text-[hsl(var(--primary))] group-hover:underline">
         Isi atas nama vendor ini →
       </span>
     </button>
@@ -201,7 +197,7 @@ function AuditPanel({ vendorName }) {
 
   return (
     <div className="space-y-4" data-testid="cmt-override-audit-panel">
-      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <GlassCard className="p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="font-semibold text-foreground">Jejak input — {vendorName}</h3>
@@ -211,33 +207,21 @@ function AuditPanel({ vendorName }) {
               supaya kalau nanti ada selisih tagihan sumbernya bisa ditelusuri.
             </p>
           </div>
-          <Button size="sm" variant="outline" onClick={load} data-testid="cmt-override-audit-refresh">
-            <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Muat ulang
+          <Button size="icon" variant="outline" onClick={load} title="Muat ulang" aria-label="Muat ulang"
+            data-testid="cmt-override-audit-refresh">
+            <RefreshCw className="h-4 w-4" />
           </Button>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3">
-            <p className="text-xs font-medium text-amber-800">Diinput staf DA</p>
-            <p className="mt-0.5 text-2xl font-bold text-amber-900" data-testid="cmt-override-audit-staff">
-              {totals.staff}
-            </p>
-          </div>
-          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
-            <p className="text-xs font-medium text-emerald-800">Diisi vendor sendiri</p>
-            <p className="mt-0.5 text-2xl font-bold text-emerald-900" data-testid="cmt-override-audit-vendor">
-              {totals.vendor}
-            </p>
-          </div>
-          <div className="rounded-lg border border-border bg-muted/40 p-3">
-            <p className="text-xs font-medium text-muted-foreground">Total dokumen</p>
-            <p className="mt-0.5 text-2xl font-bold text-foreground">
-              {(totals.staff || 0) + (totals.vendor || 0)}
-            </p>
-          </div>
+          <StatTile label="Diinput staf DA" accent={Number(totals.staff) ? 'warning' : 'muted'}
+            value={<span data-testid="cmt-override-audit-staff">{totals.staff}</span>} />
+          <StatTile label="Diisi vendor sendiri" accent={Number(totals.vendor) ? 'success' : 'muted'}
+            value={<span data-testid="cmt-override-audit-vendor">{totals.vendor}</span>} />
+          <StatTile label="Total dokumen" value={(totals.staff || 0) + (totals.vendor || 0)} />
         </div>
-      </div>
+      </GlassCard>
 
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+      <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/60">
@@ -251,33 +235,34 @@ function AuditPanel({ vendorName }) {
             </thead>
             <tbody className="divide-y divide-border">
               {loading && (
-                <tr><td colSpan={5} className="py-10 text-center text-muted-foreground">
+                <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">
                   <Loader2 className="mx-auto h-5 w-5 animate-spin" />
                 </td></tr>
               )}
               {!loading && entries.length === 0 && (
-                <tr><td colSpan={5} className="py-12 text-center text-sm text-muted-foreground" data-testid="cmt-override-audit-empty">
-                  Belum ada dokumen yang diinput staf DA untuk vendor ini.
+                <tr><td colSpan={5} data-testid="cmt-override-audit-empty">
+                  <EmptyState icon={UserCog} title="Belum ada input staf DA untuk vendor ini"
+                    description="Dokumen yang Anda simpan atas nama vendor akan tercatat di sini." />
                 </td></tr>
               )}
               {!loading && entries.map((e, i) => (
                 <tr key={`${e.collection}-${e.doc_id}-${i}`} className="hover:bg-muted/40">
                   <td className="px-4 py-2.5 font-medium text-foreground">{e.module}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-blue-700">{e.reference || '—'}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-xs text-[hsl(var(--primary))]">{e.reference || '—'}</td>
                   <td className="px-4 py-2.5">
                     <span className="inline-flex items-center gap-1.5">
-                      <UserCog className="h-3.5 w-3.5 text-amber-700" />
+                      <UserCog className="h-3.5 w-3.5 text-[hsl(var(--warning))]" />
                       <span className="font-medium text-foreground">{e.entered_by || '—'}</span>
                     </span>
                   </td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">{e.entered_by_role || '—'}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-xs text-muted-foreground">{e.entered_by_role || '—'}</td>
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmtDateTime(e.entered_at)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
+      </GlassCard>
     </div>
   );
 }
@@ -385,11 +370,11 @@ export default function CMTOverridePortalModule({ user, token }) {
   if (!selected) {
     const withAccount = vendors.filter(v => v.has_active_portal_account).length;
     return (
-      <div className="space-y-5" data-testid="cmt-override-picker">
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+      <div className="space-y-4" data-testid="cmt-override-picker">
+        <GlassCard className="p-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-blue-600">
+              <div className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-xl bg-[hsl(var(--primary))]">
                 <UserCog className="h-6 w-6 text-white" />
               </div>
               <div>
@@ -399,19 +384,19 @@ export default function CMTOverridePortalModule({ user, token }) {
                   vendor mereka dan mengisinya <b>atas nama vendor</b> — 11 modul, sama
                   persis dengan yang vendor lihat. Setiap dokumen yang Anda simpan
                   menyimpan nama Anda dan muncul dengan badge{' '}
-                  <span className="whitespace-nowrap rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                  <span className="whitespace-nowrap rounded-full border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 text-[11px] font-semibold text-[hsl(var(--warning))]">
                     diinput staf DA
                   </span>{' '}
                   di layar monitoring &amp; invoice.
                 </p>
               </div>
             </div>
-            <Button variant="outline" size="sm" onClick={() => loadVendors(showInactive)}
-              data-testid="cmt-override-refresh">
-              <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
+            <Button variant="outline" size="icon" onClick={() => loadVendors(showInactive)}
+              title="Muat ulang" aria-label="Muat ulang" data-testid="cmt-override-refresh">
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
-        </div>
+        </GlassCard>
 
         {/* ══ REKAP — blok PERTAMA (keputusan owner 4a) ══════════════════════
             Staf membuka pintu ini tiap pagi. Yang pertama dia butuh bukan daftar
@@ -425,7 +410,7 @@ export default function CMTOverridePortalModule({ user, token }) {
             bisa membuka tab Harian pada tanggal itu. */}
         <CMTOverrideRecapPanel onOpenVendor={pickFromRecap} />
 
-        <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+        <GlassCard className="p-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <Building2 className="h-4 w-4 text-muted-foreground" />
@@ -455,31 +440,26 @@ export default function CMTOverridePortalModule({ user, token }) {
               <Building2 className="h-3.5 w-3.5" /> {vendors.length} vendor
             </span>
             {withAccount > 0 && (
-              <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs font-medium text-amber-900">
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-2.5 py-1.5 text-xs font-medium text-[hsl(var(--warning))]">
                 <AlertTriangle className="h-3.5 w-3.5" /> {withAccount} punya akun portal aktif
               </span>
             )}
           </div>
-        </div>
+        </GlassCard>
 
         {err && (
-          <div className="rounded-xl border border-red-300 bg-red-50 p-4 text-sm text-red-800" data-testid="cmt-override-error">
-            {err}
-          </div>
+          <Notice tone="danger" icon={AlertTriangle} testId="cmt-override-error">{err}</Notice>
         )}
 
         {loading ? (
-          <div className="flex items-center justify-center rounded-xl border border-border bg-card py-16">
+          <GlassCard className="flex items-center justify-center p-4">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-          </div>
+          </GlassCard>
         ) : filtered.length === 0 ? (
-          <div className="rounded-xl border border-border bg-card py-16 text-center" data-testid="cmt-override-empty">
-            <Users className="mx-auto mb-3 h-10 w-10 text-muted-foreground/60" />
-            <p className="font-medium text-foreground">Tidak ada vendor CMT yang cocok</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Tambahkan vendor lewat menu <b>Vendor CMT</b> terlebih dahulu.
-            </p>
-          </div>
+          <GlassCard data-testid="cmt-override-empty">
+            <EmptyState icon={Users} title="Tidak ada vendor CMT yang cocok"
+              description={<>Ubah kata pencarian, atau tambahkan vendor lewat menu <b>Vendor CMT</b>.</>} />
+          </GlassCard>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
             {filtered.map(v => <VendorCard key={v.id} v={v} onPick={pickVendor} />)}
@@ -496,65 +476,54 @@ export default function CMTOverridePortalModule({ user, token }) {
     <div className="space-y-4" data-testid="cmt-override-active">
       {/* Spanduk mode override — SELALU terlihat (sticky) supaya tidak ada yang
           mengisi tanpa sadar sedang mewakili vendor. */}
-      <div className="sticky top-0 z-30 rounded-xl border-2 border-amber-400 bg-amber-50 p-3 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg bg-amber-500">
-              <UserCog className="h-5 w-5 text-white" />
-            </div>
-            <div className="min-w-0">
-              <p className="text-[11px] font-bold uppercase tracking-wide text-amber-800">
-                Mode isi atas nama vendor
-              </p>
-              <p className="truncate text-sm text-amber-900">
-                <b data-testid="cmt-override-vendor-name">{selected.name}</b>
-                {selected.code ? <span className="font-mono text-xs"> · {selected.code}</span> : null}
-                <span className="text-amber-800"> — diinput oleh </span>
-                <b data-testid="cmt-override-staff-name">{user?.name || '—'}</b>
-                <span className="font-mono text-xs text-amber-700"> ({role})</span>
-              </p>
-            </div>
-          </div>
+      <Notice tone="warning" icon={UserCog} title="Mode isi atas nama vendor"
+        className="sticky top-0 z-30 items-center shadow-sm"
+        action={
           <Button size="sm" variant="outline" onClick={backToPicker}
-            className="border-amber-400 bg-card text-amber-900 hover:bg-amber-100"
+            className="border-[hsl(var(--warning)/0.35)] bg-card text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.15)]"
             data-testid="cmt-override-change-vendor">
-            <ArrowLeft className="mr-1.5 h-3.5 w-3.5" /> Ganti vendor
+            <ArrowLeft className="h-3.5 w-3.5" /> Ganti vendor
           </Button>
-        </div>
-      </div>
+        }>
+        <p className="truncate">
+          <b data-testid="cmt-override-vendor-name">{selected.name}</b>
+          {selected.code ? <span className="tabular-nums text-xs"> · {selected.code}</span> : null}
+          <span> — diinput oleh </span>
+          <b data-testid="cmt-override-staff-name">{user?.name || '—'}</b>
+          <span className="tabular-nums text-xs"> ({role})</span>
+        </p>
+      </Notice>
 
       {/* Peringatan dobel input (keputusan 5a) — memberi tahu, TIDAK memblokir. */}
       {selected.has_active_portal_account && warnOpen && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-400 bg-card p-4 shadow-sm"
-          data-testid="cmt-override-double-warning">
-          <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" />
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-foreground">Hati-hati dobel input</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Vendor ini <b>punya akun portal aktif</b> (terakhir login{' '}
-              <b>{fmtDateTime(selected.last_login_at)}</b>). Kalau vendor juga mengisi
-              sendiri, angka progress bisa terhitung dua kali — dan tagihan CMT ikut
-              salah. Pastikan sudah sepakat siapa yang mengisi hari ini.
-            </p>
-            {Array.isArray(selected.accounts) && selected.accounts.length > 0 && (
-              <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-                {selected.accounts.map(a => (
-                  <li key={a.email} className="font-mono">
-                    {a.email} — {a.is_active ? 'aktif' : 'non-aktif'} · login terakhir {fmtDateTime(a.last_login_at)}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          <Button size="sm" variant="ghost" onClick={() => setWarnOpen(false)}
-            data-testid="cmt-override-warning-dismiss">
-            Mengerti
-          </Button>
-        </div>
+        <Notice tone="warning" icon={AlertTriangle} title="Hati-hati dobel input"
+          testId="cmt-override-double-warning"
+          action={
+            <Button size="sm" variant="outline" onClick={() => setWarnOpen(false)}
+              data-testid="cmt-override-warning-dismiss">
+              Mengerti
+            </Button>
+          }>
+          <p>
+            Vendor ini <b>punya akun portal aktif</b> (terakhir login{' '}
+            <b>{fmtDateTime(selected.last_login_at)}</b>). Kalau vendor juga mengisi
+            sendiri, angka progress bisa terhitung dua kali — dan tagihan CMT ikut
+            salah. Pastikan sudah sepakat siapa yang mengisi hari ini.
+          </p>
+          {Array.isArray(selected.accounts) && selected.accounts.length > 0 && (
+            <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+              {selected.accounts.map(a => (
+                <li key={a.email} className="tabular-nums">
+                  {a.email} — {a.is_active ? 'aktif' : 'non-aktif'} · login terakhir {fmtDateTime(a.last_login_at)}
+                </li>
+              ))}
+            </ul>
+          )}
+        </Notice>
       )}
 
       {/* Tab 11 modul + jejak audit */}
-      <div className="rounded-xl border border-border bg-card p-2 shadow-sm">
+      <GlassCard className="p-2">
         <div className="flex gap-1 overflow-x-auto pb-1">
           {MODULES.map(m => {
             const Icon = m.icon;
@@ -566,7 +535,7 @@ export default function CMTOverridePortalModule({ user, token }) {
                 onClick={() => setActiveModule(m.id)}
                 data-testid={`cmt-override-tab-${m.id}`}
                 className={`flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-                  on ? 'bg-blue-600 text-white shadow-sm' : 'text-muted-foreground hover:bg-muted'
+                  on ? 'bg-[hsl(var(--primary))] text-white shadow-sm' : 'text-muted-foreground hover:bg-muted'
                 }`}
               >
                 <Icon className="h-3.5 w-3.5" /> {m.label}
@@ -579,18 +548,18 @@ export default function CMTOverridePortalModule({ user, token }) {
             data-testid="cmt-override-tab-audit"
             className={`flex flex-shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
               activeModule === '__audit'
-                ? 'bg-amber-600 text-white shadow-sm'
-                : 'text-amber-800 hover:bg-amber-50'
+                ? 'bg-[hsl(var(--warning))] text-white shadow-sm'
+                : 'text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.1)]'
             }`}
           >
-            <ShieldCheck className="h-3.5 w-3.5" /> Jejak Audit
+            <ShieldCheck className="h-3.5 w-3.5" /> Jejak audit
           </button>
         </div>
-      </div>
+      </GlassCard>
 
-      <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+      <GlassCard className="p-4">
         <div className="mb-3 flex items-center gap-2 border-b border-border pb-3">
-          <Info className="h-4 w-4 flex-shrink-0 text-blue-600" />
+          <Info className="h-4 w-4 flex-shrink-0 text-[hsl(var(--primary))]" />
           <p className="text-xs text-muted-foreground">
             {activeModule === '__audit'
               ? 'Transparansi: dokumen mana yang diketik staf DA vs diisi vendor sendiri.'
@@ -604,7 +573,7 @@ export default function CMTOverridePortalModule({ user, token }) {
           : Active
             ? <Active.Comp token={token} user={vendorUser} onNavigate={setActiveModule} />
             : null}
-      </div>
+      </GlassCard>
     </div>
   );
 }

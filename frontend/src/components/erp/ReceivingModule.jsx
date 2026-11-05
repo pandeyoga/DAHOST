@@ -29,9 +29,9 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numer
 
 const STATUS_STYLES = {
   draft:      'bg-secondary text-muted-foreground border border-border',
-  inspecting: 'bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-300/20',
-  received:   'bg-emerald-50 dark:bg-emerald-400/15 text-emerald-600 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-300/20',
-  failed:     'bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-400 border border-red-300 dark:border-red-300/20',
+  inspecting: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.35)] ',
+  received:   'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.35)] ',
+  failed:     'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.35)] ',
 };
 
 const EMPTY_ITEM = () => ({
@@ -479,20 +479,20 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       </div>
 
       {/* Sprint 1.1 info banner */}
-      <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-blue-100 dark:bg-blue-500/10 border border-blue-300 dark:border-blue-400/20">
-        <Link2 className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
-        <p className="text-xs text-blue-600 dark:text-blue-300">
+      <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
+        <Link2 className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
+        <p className="text-xs text-[hsl(var(--primary))] ">
           <strong>Sync Otomatis:</strong> Jika item dipilih dari master material, stok akan otomatis tercatat di modul Inventory (Material Issue / BOM) saat GR di-<em>Confirm Received</em>.
         </p>
       </div>
 
       {/* ── FASE H-5: peringatan kain yang masuk stok tanpa gulungan ─────────── */}
       {missingRolls.length > 0 && (
-        <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-amber-50 dark:bg-amber-400/10 border border-amber-300 dark:border-amber-400/25"
+        <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] "
           data-testid="gr-missing-rolls-banner">
-          <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+          <AlertCircle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
           <div className="flex-1">
-            <p className="text-xs text-amber-800 dark:text-amber-300">
+            <p className="text-xs text-[hsl(var(--warning))] ">
               <strong>{missingRolls.length} baris penerimaan kain belum punya gulungan.</strong>{' '}
               Kain ini ada di stok tetapi tidak bisa dipotong di Cutting sampai gulungannya diterbitkan
               ({missingRolls.slice(0, 3).map(m => m.material_code).join(', ')}
@@ -501,7 +501,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           </div>
           {onNavigate && (
             <button onClick={() => onNavigate('wms-fabric-rolls')}
-              className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-amber-600 text-white hover:brightness-110"
+              className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-[hsl(var(--warning))] text-white hover:brightness-110"
               data-testid="gr-banner-goto-rolls">
               Terbitkan Roll →
             </button>
@@ -582,10 +582,10 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                   <tr key={r.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)] cursor-pointer"
                       onClick={() => openDetail(r)}
                       data-testid={`receipt-row-${r.receipt_number}`}>
-                    <td className="px-2.5 py-2 font-mono whitespace-nowrap">{r.receipt_number}</td>
+                    <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{r.receipt_number}</td>
                     <td className="px-2.5 py-2">{r.source_label}</td>
                     <td className="px-2.5 py-2 text-muted-foreground">{r.source_type || '—'}</td>
-                    <td className="px-2.5 py-2 font-mono">{r.po_number || '—'}</td>
+                    <td className="px-2.5 py-2 tabular-nums">{r.po_number || '—'}</td>
                     <td className="px-2.5 py-2">
                       <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[r.status] || STATUS_STYLES.draft}`}>{r.status}</span>
                     </td>
@@ -594,7 +594,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     <td className="px-2.5 py-2 text-right font-semibold">{r.received_total.toLocaleString('id-ID')}</td>
                     {/* Qty ditolak diberi warna hanya kalau memang > 0 — angka nol
                         yang diwarnai merah membuat orang berhenti memperhatikan. */}
-                    <td className={`px-2.5 py-2 text-right ${r.rejected_total > 0 ? 'text-red-600 dark:text-red-400 font-semibold' : 'text-muted-foreground'}`}>
+                    <td className={`px-2.5 py-2 text-right ${r.rejected_total > 0 ? 'text-[hsl(var(--destructive))]  font-semibold' : 'text-muted-foreground'}`}>
                       {r.rejected_total.toLocaleString('id-ID')}
                     </td>
                     <td className="px-2.5 py-2 whitespace-nowrap">{fmtDate(r.created_at)}</td>
@@ -622,17 +622,17 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                   <FileText className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-sm font-semibold text-foreground font-mono">{r.receipt_number}</p>
+                  <p className="text-sm font-semibold text-foreground tabular-nums">{r.receipt_number}</p>
                   <p className="text-xs text-muted-foreground">
                     {r.supplier_name || r.source_type} &bull; {r.items?.length || 0} items
                     {r.items?.some(i => i.material_id) && (
-                      <span className="ml-1.5 text-blue-600 dark:text-blue-400 font-medium">
+                      <span className="ml-1.5 text-[hsl(var(--primary))] font-medium">
                         <Link2 className="w-3 h-3 inline" /> synced
                       </span>
                     )}
                     {/* P1.C: Show "From PO" badge if linked */}
                     {r.po_number && (
-                      <span className="ml-1.5 text-emerald-600 dark:text-emerald-400 font-medium">
+                      <span className="ml-1.5 text-[hsl(var(--success))] font-medium">
                         &bull; <Truck className="w-3 h-3 inline" /> Dari PO {r.po_number}
                         {r.enforce_po_qty && <span className="ml-1 text-[10px] opacity-70">(qty terbatas)</span>}
                       </span>
@@ -657,11 +657,11 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         <Modal title="New Goods Receipt" onClose={() => setShowCreate(false)} size="xl">
           <div className="space-y-4">
             {/* Sprint 2.1: PO Selection */}
-            <div className="p-3 rounded-lg bg-blue-100 dark:bg-blue-500/10 border border-blue-300 dark:border-blue-400/20">
+            <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
               <div className="flex items-start gap-2 mb-2">
-                <FileText className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                <FileText className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <label className="text-xs font-semibold text-blue-600 dark:text-blue-300 mb-1 block">Link ke Purchase Order (Optional)</label>
+                  <label className="text-xs font-semibold text-[hsl(var(--primary))] mb-1 block">Link ke Purchase Order (Optional)</label>
                   <Combobox
                     value={form.po_id}
                     onChange={(v) => handlePOPick(v)}
@@ -676,11 +676,11 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     placeholder="Manual (tanpa PO)"
                     searchPlaceholder="Cari PO atau vendor..."
                     emptyMessage="PO tidak ditemukan"
-                    className="border-blue-400 dark:border-blue-400/30"
+                    className="border-[hsl(var(--primary)/0.35)] "
                     data-testid="gr-po-select"
                   />
                   {form.po_number && (
-                    <p className="text-xs text-blue-600 dark:text-blue-300 mt-1">✓ Items akan di-pre-fill dari PO {form.po_number}</p>
+                    <p className="text-xs text-[hsl(var(--primary))] mt-1">✓ Items akan di-pre-fill dari PO {form.po_number}</p>
                   )}
                 </div>
               </div>
@@ -735,7 +735,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     {/* Row 1: Material picker */}
                     <div className="grid grid-cols-2 gap-2">
                       <div>
-                        <label className="text-[10px] text-blue-600 dark:text-blue-400 font-medium flex items-center gap-1">
+                        <label className="text-[10px] text-[hsl(var(--primary))] font-medium flex items-center gap-1">
                           <Link2 className="w-3 h-3" /> Pilih dari Master Material (opsional)
                         </label>
                         <Combobox
@@ -754,7 +754,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                           searchPlaceholder="Cari material..."
                           emptyMessage="Material tidak ditemukan"
                           size="sm"
-                          className="border-blue-400/25"
+                          className="border-[hsl(var(--primary)/0.25)]"
                           data-testid={`item-material-select-${idx}`}
                         />
                       </div>
@@ -806,7 +806,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       </div>
                       {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP) */}
                       <div>
-                        <label className={`text-[10px] ${form.po_id ? 'text-muted-foreground' : 'text-amber-700 dark:text-amber-400 font-semibold'}`}>
+                        <label className={`text-[10px] ${form.po_id ? 'text-muted-foreground' : 'text-[hsl(var(--warning))]  font-semibold'}`}>
                           Harga/sat (Rp){form.po_id ? '' : ' *'}
                         </label>
                         <GlassInput type="number" min="0" step="any" value={item.unit_price ?? ''}
@@ -820,7 +820,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                           <GlassInput type="number" value={item.rejected_qty} onChange={e => updateItem(idx, 'rejected_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-rejected-${idx}`} />
                         </div>
                         {form.items.length > 1 && (
-                          <button onClick={() => removeItem(idx)} className="text-red-700 dark:text-red-400 hover:text-red-600 dark:text-red-300 mt-3.5">
+                          <button onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]  mt-3.5">
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
@@ -828,7 +828,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       {/* FASE 6: alasan reject — qty reject otomatis masuk Karantina QC */}
                       {(parseFloat(item.rejected_qty) || 0) > 0 && (
                         <div className="col-span-2">
-                          <label className="text-[10px] text-amber-700 dark:text-amber-400">
+                          <label className="text-[10px] text-[hsl(var(--warning))] ">
                             {rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}
                           </label>
                           <SmartNativeSelect
@@ -865,7 +865,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       </div>
                     </div>
                     {item.material_id && (
-                      <p className="text-[10px] text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                      <p className="text-[10px] text-[hsl(var(--primary))] flex items-center gap-1">
                         <Link2 className="w-3 h-3" /> Stok akan disinkronkan ke modul Inventory saat GR confirmed
                       </p>
                     )}
@@ -914,16 +914,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
               <p className="text-xs font-medium text-muted-foreground mb-2">Items ({showDetail.items?.length || 0})</p>
               {/* FASE 6: banner karantina bila ada qty reject yang ditahan */}
               {showDetail.quarantine_summary?.total_qty > 0 && (
-                <div className="mb-3 rounded-xl border border-amber-300 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/10 px-3 py-2 flex items-start justify-between gap-3"
+                <div className="mb-3 rounded-xl border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  px-3 py-2 flex items-start justify-between gap-3"
                   data-testid="gr-quarantine-banner">
-                  <div className="text-xs text-amber-800 dark:text-amber-300">
+                  <div className="text-xs text-[hsl(var(--warning))] ">
                     <strong>{showDetail.quarantine_summary.total_qty} unit reject</strong> ditahan di{' '}
                     {showDetail.quarantine_summary.location?.name || 'Karantina QC'} — stok diblokir sampai ada keputusan
                     (lepas ke stok / retur supplier / scrap).
                   </div>
                   {onNavigate && (
                     <button onClick={() => { setShowDetail(null); onNavigate('wh-quarantine'); }}
-                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-amber-600 text-white hover:brightness-110"
+                      className="shrink-0 text-xs px-2.5 py-1 rounded-lg bg-[hsl(var(--warning))] text-white hover:brightness-110"
                       data-testid="gr-open-quarantine">
                       Buka Karantina QC →
                     </button>
@@ -938,21 +938,21 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         <div className="flex items-center gap-1.5">
                           <p className="text-sm font-medium text-foreground">{item.product_name}</p>
                           {item.material_id && (
-                            <span className="text-[10px] text-blue-600 dark:text-blue-400 flex items-center gap-0.5 bg-blue-50 dark:bg-blue-400/10 px-1.5 py-0.5 rounded-full border border-blue-300 dark:border-blue-400/20">
+                            <span className="text-[10px] text-[hsl(var(--primary))] flex items-center gap-0.5 bg-[hsl(var(--primary)/0.1)]  px-1.5 py-0.5 rounded-full border border-[hsl(var(--primary)/0.35)] ">
                               <Link2 className="w-2.5 h-2.5" /> linked
                             </span>
                           )}
                         </div>
-                        <p className="text-xs text-muted-foreground font-mono">{item.sku}</p>
+                        <p className="text-xs text-muted-foreground tabular-nums">{item.sku}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-foreground">Received: <strong>{item.received_qty}</strong> / {item.expected_qty} {item.unit}</p>
-                        {item.rejected_qty > 0 && <p className="text-xs text-red-700 dark:text-red-400">Rejected: {item.rejected_qty}</p>}
+                        {item.rejected_qty > 0 && <p className="text-xs text-[hsl(var(--destructive))] ">Rejected: {item.rejected_qty}</p>}
                         {item.quarantined_qty > 0 && (
-                          <p className="text-xs text-amber-700 dark:text-amber-400">→ Karantina QC: {item.quarantined_qty} {item.unit}</p>
+                          <p className="text-xs text-[hsl(var(--warning))] ">→ Karantina QC: {item.quarantined_qty} {item.unit}</p>
                         )}
                         {item.material_id && showDetail.status === 'received' && (
-                          <p className="text-xs text-emerald-600 dark:text-emerald-400 flex items-center justify-end gap-1">
+                          <p className="text-xs text-[hsl(var(--success))] flex items-center justify-end gap-1">
                             <CheckCircle className="w-3 h-3" /> stok ter-sync
                           </p>
                         )}
@@ -988,7 +988,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                             </p>
                           </div>
                           <div>
-                            <label className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold">
+                            <label className="text-[10px] text-[hsl(var(--success))] font-semibold">
                               Qty Diterima *
                             </label>
                             <GlassInput
@@ -1014,7 +1014,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                             di sini supaya penolakan bukan kejutan setelah diklik. */}
                         {showDetail.enforce_po_qty
                           && acceptedOf(item) - Number(item.expected_qty || 0) > 0.0001 && (
-                          <p className="text-[11px] text-red-700 dark:text-red-400 mt-1.5"
+                          <p className="text-[11px] text-[hsl(var(--destructive))] mt-1.5"
                             data-testid={`gr-detail-over-${idx}`}>
                             Netto diterima {fmtQty(acceptedOf(item))} {item.unit} melebihi sisa PO
                             {' '}{fmtQty(item.expected_qty)} {item.unit} — penerimaan akan ditolak.
@@ -1022,7 +1022,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         )}
                         {(parseFloat(item.rejected_qty) || 0) > 0 && (
                           <div className="mt-1.5">
-                            <label className="text-[10px] text-amber-700 dark:text-amber-400">
+                            <label className="text-[10px] text-[hsl(var(--warning))] ">
                               {rejectHint(rejectCats, item.reject_reason, item.rejected_qty, item.unit)}
                             </label>
                             <SmartNativeSelect
@@ -1039,7 +1039,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         {/* 2026-11-02 (K11): GR tanpa PO — harga satuan wajib sebelum dikonfirmasi */}
                         {!showDetail.po_id && item.material_id && (
                           <div className="mt-1.5">
-                            <label className="text-[10px] text-amber-700 dark:text-amber-400 font-semibold">
+                            <label className="text-[10px] text-[hsl(var(--warning))] font-semibold">
                               Harga satuan (Rp) * — tanpa PO
                             </label>
                             <GlassInput
@@ -1067,29 +1067,29 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       />
                     )}
                     {(item.roll_numbers || []).length > 0 && (
-                      <div className="rounded-lg border border-violet-300 dark:border-violet-400/30 bg-violet-50 dark:bg-violet-400/10 px-2.5 py-2"
+                      <div className="rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)]  px-2.5 py-2"
                         data-testid={`gr-item-rolls-${idx}`}>
-                        <p className="text-[11px] font-semibold text-violet-800 dark:text-violet-200 mb-1">
+                        <p className="text-[11px] font-semibold text-[hsl(var(--primary))] mb-1">
                           {item.roll_numbers.length} gulungan terbit dari baris ini
                         </p>
                         <div className="flex flex-wrap gap-1">
                           {item.roll_numbers.map((no) => (
-                            <span key={no} className="font-mono text-[10px] px-1.5 py-0.5 rounded-md bg-violet-600 text-white">{no}</span>
+                            <span key={no} className="tabular-nums text-[10px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--primary))] text-white">{no}</span>
                           ))}
                         </div>
                       </div>
                     )}
                     {showDetail.status === 'received' && isRollUnit(item.unit)
                       && !(item.roll_numbers || []).length && acceptedOf(item) > 0 && (
-                      <div className="rounded-lg border border-amber-300 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/10 px-2.5 py-2 flex items-start justify-between gap-3"
+                      <div className="rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  px-2.5 py-2 flex items-start justify-between gap-3"
                         data-testid={`gr-item-rolls-missing-${idx}`}>
-                        <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                        <p className="text-[11px] text-[hsl(var(--warning))] ">
                           <strong>{fmtQty(acceptedOf(item))} {item.unit} masuk stok tanpa gulungan.</strong> Cutting menolak
                           memotong kain yang tidak punya gulungan — terbitkan gulungannya di Roll Kain.
                         </p>
                         {onNavigate && (
                           <button onClick={() => { setShowDetail(null); onNavigate('wms-fabric-rolls'); }}
-                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-amber-600 text-white hover:brightness-110"
+                            className="shrink-0 text-[11px] px-2.5 py-1 rounded-lg bg-[hsl(var(--warning))] text-white hover:brightness-110"
                             data-testid={`gr-open-fabric-rolls-${idx}`}>
                             Terbitkan Roll →
                           </button>
@@ -1113,7 +1113,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                 <div>
                   <label className="text-xs font-medium text-muted-foreground mb-1 block">
                     Lokasi Tujuan {!(detailLocationId || showDetail.location_id) && (
-                      <span className="text-amber-700 dark:text-amber-400">— wajib dipilih</span>
+                      <span className="text-[hsl(var(--warning))] ">— wajib dipilih</span>
                     )}
                   </label>
                   <Combobox
@@ -1135,7 +1135,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     dan yang paling sering terjadi adalah ia menekan Confirm tanpa
                     mengisi apa pun (itulah cacat yang diperbaiki). */}
                 <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="outline" className="border-emerald-300 dark:border-emerald-300/30 text-emerald-700 dark:text-emerald-300"
+                  <Button variant="outline" className="border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))] "
                     onClick={() => setDetailItems(items => (items.length ? items : (showDetail.items || []))
                       .map(it => ({ ...it, received_qty: Number(it.expected_qty || 0), rejected_qty: 0 })))}
                     data-testid="gr-detail-receive-all">
@@ -1145,13 +1145,13 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     Total diterima:{' '}
                     <strong className="text-foreground tabular-nums">{fmtQty(detailTotals.received)}</strong>
                     {detailTotals.rejected > 0 && (
-                      <> · ditolak <strong className="text-red-700 dark:text-red-400 tabular-nums">{fmtQty(detailTotals.rejected)}</strong></>
+                      <> · ditolak <strong className="text-[hsl(var(--destructive))] tabular-nums">{fmtQty(detailTotals.rejected)}</strong></>
                     )}
                     {' '}dari {fmtQty(detailTotals.expected)} diharap
                   </span>
                 </div>
                 {detailTotals.touched <= 0 && (
-                  <p className="text-xs text-amber-800 dark:text-amber-300 rounded-lg border border-amber-300 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/10 px-2.5 py-2"
+                  <p className="text-xs text-[hsl(var(--warning))] rounded-lg border border-[hsl(var(--warning)/0.35)]  bg-[hsl(var(--warning)/0.1)]  px-2.5 py-2"
                     data-testid="gr-detail-zero-warning">
                     <strong>Qty diterima masih 0.</strong> Isi dulu jumlah yang benar-benar
                     datang — mengkonfirmasi angka 0 berarti penerimaan tercatat tetapi
@@ -1159,12 +1159,12 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                   </p>
                 )}
                 <div className="flex justify-end gap-2">
-                  <Button variant="outline" onClick={() => { setConfirmDelete(showDetail.id); setShowDetail(null); }} className="border-red-300 dark:border-red-300/20 text-red-700 dark:text-red-400 hover:bg-red-50 dark:bg-red-400/10">
+                  <Button variant="outline" onClick={() => { setConfirmDelete(showDetail.id); setShowDetail(null); }} className="border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.1)] ">
                     <Trash2 className="w-4 h-4 mr-1" /> Delete
                   </Button>
                   <Button onClick={() => handleStatusChange(showDetail, 'received')}
                     disabled={detailTotals.touched <= 0}
-                    className="bg-emerald-500 text-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="bg-[hsl(var(--success))] text-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="confirm-receive-btn">
                     <CheckCircle className="w-4 h-4 mr-1" /> Confirm Received
                   </Button>
@@ -1184,33 +1184,33 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         <Modal title={`Gulungan — ${receiveResult.receipt_number}`} onClose={() => setReceiveResult(null)} size="md">
           <div className="space-y-3" data-testid="gr-roll-result">
             {receiveResult.created.length > 0 && (
-              <div className="rounded-xl border border-emerald-300 dark:border-emerald-400/30 bg-emerald-50 dark:bg-emerald-400/10 p-3">
-                <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-200 mb-1.5">
+              <div className="rounded-xl border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]  p-3">
+                <p className="text-sm font-semibold text-[hsl(var(--success))] mb-1.5">
                   {receiveResult.created.length} gulungan diterbitkan otomatis
                 </p>
                 <div className="flex flex-wrap gap-1">
                   {receiveResult.created.map((no) => (
-                    <span key={no} className="font-mono text-[11px] px-1.5 py-0.5 rounded-md bg-emerald-600 text-white">{no}</span>
+                    <span key={no} className="tabular-nums text-[11px] px-1.5 py-0.5 rounded-md bg-[hsl(var(--success))] text-white">{no}</span>
                   ))}
                 </div>
-                <p className="text-[11px] text-emerald-800/80 dark:text-emerald-300/80 mt-2">
+                <p className="text-[11px] text-[hsl(var(--success)/0.8)] mt-2">
                   Gulungan ini sudah bisa ditunjuk di Portal Cutting — sisa tiap gulungan berkurang saat kainnya dipotong.
                 </p>
               </div>
             )}
             {receiveResult.pending.length > 0 && (
-              <div className="rounded-xl border border-amber-300 dark:border-amber-400/30 bg-amber-50 dark:bg-amber-400/10 p-3">
-                <p className="text-sm font-semibold text-amber-800 dark:text-amber-200 mb-1.5">
+              <div className="rounded-xl border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)]  p-3">
+                <p className="text-sm font-semibold text-[hsl(var(--warning))] mb-1.5">
                   {receiveResult.pending.length} baris kain masuk stok TANPA gulungan
                 </p>
-                <ul className="text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                <ul className="text-xs text-[hsl(var(--warning))] space-y-1">
                   {receiveResult.pending.map((p) => (
-                    <li key={p.item_id} className="font-mono">
+                    <li key={p.item_id} className="tabular-nums">
                       {p.material_code} — {fmtQty(p.accepted_qty)} {p.unit}
                     </li>
                   ))}
                 </ul>
-                <p className="text-[11px] text-amber-800/80 dark:text-amber-300/80 mt-2">
+                <p className="text-[11px] text-[hsl(var(--warning)/0.8)] mt-2">
                   Cutting akan MENOLAK memotong kain tanpa gulungan. Terbitkan gulungannya di
                   Gudang → Roll Kain → tab “Penerimaan tanpa roll”.
                 </p>
@@ -1221,13 +1221,13 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                 className="border-[var(--glass-border)] text-muted-foreground">Tutup</Button>
               {onNavigate && receiveResult.pending.length > 0 && (
                 <Button onClick={() => { setReceiveResult(null); onNavigate('wms-fabric-rolls'); }}
-                  className="bg-amber-600 text-white hover:brightness-110" data-testid="gr-result-goto-rolls">
+                  className="bg-[hsl(var(--warning))] text-white hover:brightness-110" data-testid="gr-result-goto-rolls">
                   Buka Roll Kain →
                 </Button>
               )}
               {onNavigate && receiveResult.pending.length === 0 && receiveResult.created.length > 0 && (
                 <Button onClick={() => { setReceiveResult(null); onNavigate('wms-fabric-rolls'); }}
-                  className="bg-violet-600 text-white hover:brightness-110" data-testid="gr-result-view-rolls">
+                  className="bg-[hsl(var(--primary))] text-white hover:brightness-110" data-testid="gr-result-view-rolls">
                   Lihat Roll Kain →
                 </Button>
               )}

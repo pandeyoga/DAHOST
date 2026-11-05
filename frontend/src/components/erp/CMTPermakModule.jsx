@@ -17,15 +17,28 @@ import Modal from './engine/Modal';
 import ConfirmDialog from './engine/ConfirmDialog';
 import { apiGet, apiPost, apiPut, apiDelete } from '../../lib/api';
 import { MoneyInput } from '@/components/ui/money-input';
+import { Button } from '@/components/ui/button';
+import { GlassInput } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import { EmptyState, StatTile } from './moduleAtoms';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const STATUS_META = {
   open: { label: 'Menunggu', cls: 'bg-slate-100 text-slate-700' },
-  in_progress: { label: 'Dikerjakan', cls: 'bg-blue-100 text-blue-700' },
-  selesai_berhasil: { label: 'Selesai (Berhasil)', cls: 'bg-emerald-100 text-emerald-700' },
+  in_progress: { label: 'Dikerjakan', cls: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' },
+  selesai_berhasil: { label: 'Selesai (Berhasil)', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' },
   gagal_buang: { label: 'Gagal (Dibuang)', cls: 'bg-zinc-200 text-zinc-700' },
 };
 const SOURCE_LABEL = { reject: 'Dari Reject QC', good: 'Dari Barang Jadi' };
+// Angka per pil penyaring diambil dari ringkasan (summary) yang sudah dimuat.
+const TAB_COUNT = {
+  all: (s) => s.total_records ?? 0,
+  open: (s) => s.open ?? 0,
+  in_progress: (s) => s.in_progress ?? 0,
+  selesai_berhasil: (s) => s.selesai_berhasil ?? 0,
+  gagal_buang: (s) => s.gagal_buang ?? 0,
+};
 const TABS = [
   { key: 'all', label: 'Semua' },
   { key: 'open', label: 'Menunggu' },
@@ -37,8 +50,8 @@ const TABS = [
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID');
 const fmtRp = (n) => 'Rp' + Number(n || 0).toLocaleString('id-ID');
 const PERMAK_TYPE_META = {
-  permak_sendiri: { label: 'Permak Sendiri', cls: 'bg-indigo-100 text-indigo-700' },
-  retur_ke_cmt: { label: 'Retur ke CMT', cls: 'bg-orange-100 text-orange-700' },
+  permak_sendiri: { label: 'Permak Sendiri', cls: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' },
+  retur_ke_cmt: { label: 'Retur ke CMT', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' },
 };
 const PROBLEM_OPTS = ['jahitan', 'noda', 'ukuran', 'bahan', 'aksesoris', 'lainnya'];
 const fmtDate = (iso) => {
@@ -52,24 +65,10 @@ function PermakStatusBadge({ status }) {
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${m.cls}`}>{m.label}</span>;
 }
 
-function KpiCard({ label, value, sub, tone = 'default', icon: Icon }) {
-  const tones = {
-    default: 'text-foreground',
-    amber: 'text-amber-600',
-    emerald: 'text-emerald-600',
-    zinc: 'text-zinc-600',
-    blue: 'text-blue-600',
-  };
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">{label}</span>
-        {Icon && <Icon size={16} className="text-muted-foreground/60" />}
-      </div>
-      <div className={`mt-1 text-2xl font-bold ${tones[tone]}`}>{value}</div>
-      {sub && <div className="mt-0.5 text-xs text-muted-foreground">{sub}</div>}
-    </div>
-  );
+// PANDUAN_UI G5: kartu angka = StatTile (nol otomatis abu). Nada lama dipetakan ke token.
+const KPI_ACCENT = { default: 'default', amber: 'warning', emerald: 'success', zinc: 'muted', blue: 'primary' };
+function KpiCard({ label, value, sub, tone = 'default' }) {
+  return <StatTile label={label} value={value} sub={sub} accent={KPI_ACCENT[tone] || 'default'} />;
 }
 
 export default function CMTPermakModule() {
@@ -127,12 +126,12 @@ export default function CMTPermakModule() {
   };
 
   return (
-    <div className="p-6 space-y-4" data-testid="cmt-permak-module">
+    <div className="space-y-4" data-testid="cmt-permak-module">
       {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Wrench size={26} className="text-amber-600" />
+            <Wrench size={26} className="text-[hsl(var(--warning))]" />
             Permak / Perbaikan
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
@@ -141,20 +140,20 @@ export default function CMTPermakModule() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
+          <Button
+            variant="outline" size="icon"
             onClick={load}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-background hover:bg-muted"
+            title="Muat ulang" aria-label="Muat ulang"
             data-testid="btn-refresh-permak"
           >
-            <RefreshCw size={14} /> Refresh
-          </button>
-          <button
+            <RefreshCw className={loading ? 'animate-spin' : ''} />
+          </Button>
+          <Button
             onClick={() => setShowCreate(true)}
-            className="inline-flex items-center gap-2 px-3 py-2 text-sm rounded-md bg-amber-600 text-white hover:bg-amber-700"
             data-testid="btn-open-create-permak"
           >
-            <Plus size={14} /> Buat Permak
-          </button>
+            <Plus /> Buat permak
+          </Button>
         </div>
       </div>
 
@@ -169,21 +168,14 @@ export default function CMTPermakModule() {
         <KpiCard label="Biaya Permak" value={fmtRp(summary?.total_cost)} sub={`sendiri ${fmt(summary?.permak_sendiri)} · retur ${fmt(summary?.retur_ke_cmt)}`} tone="blue" icon={Package} />
       </div>
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 border-b border-border flex-wrap">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
-              tab === t.key ? 'border-amber-600 text-amber-700' : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-            data-testid={`tab-permak-${t.key}`}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      {/* Penyaring status (PANDUAN_UI G4) — testid tetap `tab-permak-<status>` */}
+      <FilterChips
+        value={tab}
+        onChange={setTab}
+        testId="tab-permak"
+        ariaLabel="Penyaring status permak"
+        options={TABS.map((t) => ({ key: t.key, label: t.label, count: summary ? TAB_COUNT[t.key](summary) : undefined }))}
+      />
 
       {/* Search */}
       <div className="relative max-w-md">
@@ -218,18 +210,19 @@ export default function CMTPermakModule() {
           </thead>
           <tbody data-testid="permak-table-body">
             {loading ? (
-              <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
+              <tr><td colSpan={11} className="px-3 py-4 text-center text-muted-foreground">
                 <Loader2 className="inline animate-spin mr-2" size={16} /> Memuat...
               </td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={10} className="px-3 py-10 text-center text-muted-foreground">
-                Belum ada data permak. Klik <strong>Buat Permak</strong> atau kirim dari "Terima FG dari CMT".
+              <tr><td colSpan={11}>
+                <EmptyState icon={Wrench} title="Belum ada permak"
+                  description={<>Klik <strong>Buat permak</strong>, atau kirim barang dari "Terima FG dari CMT".</>} />
               </td></tr>
             ) : filtered.map((r) => {
               const terminal = r.status === 'selesai_berhasil' || r.status === 'gagal_buang';
               return (
                 <tr key={r.id} className="border-t border-border hover:bg-muted/30" data-testid={`permak-row-${r.id}`}>
-                  <td className="px-3 py-2 font-mono text-xs">{r.permak_number}</td>
+                  <td className="px-3 py-2 tabular-nums text-xs">{r.permak_number}</td>
                   <td className="px-3 py-2">
                     <div className="font-medium text-foreground">{r.product_name || r.sku || '—'}</div>
                     <div className="text-xs text-muted-foreground">{r.sku} · {r.color} · {r.size}</div>
@@ -240,11 +233,11 @@ export default function CMTPermakModule() {
                   <td className="px-3 py-2 text-xs">
                     <div className="text-foreground truncate max-w-[160px]">{r.vendor_name || r.vendor_permak || '—'}</div>
                     {r.rework_shipment_number ? (
-                      <div className="font-mono text-[11px] text-orange-700 whitespace-nowrap" title="Surat jalan rework ke vendor">
+                      <div className="tabular-nums text-[11px] text-[hsl(var(--warning))] whitespace-nowrap" title="Surat jalan rework ke vendor">
                         {r.rework_shipment_number}
                       </div>
                     ) : r.permak_type === 'retur_ke_cmt' ? (
-                      <div className="text-[11px] text-red-600">SJ rework belum terbentuk</div>
+                      <div className="text-[11px] text-[hsl(var(--destructive))]">SJ rework belum terbentuk</div>
                     ) : null}
                   </td>
                   <td className="px-3 py-2">
@@ -253,54 +246,58 @@ export default function CMTPermakModule() {
                         {(PERMAK_TYPE_META[r.permak_type] || {}).label || (r.source === 'good' ? 'Dari FG' : 'Dari Reject')}
                       </span>
                       {r.h3_flag && (
-                        <span className="inline-flex w-fit items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-100 text-red-700" title={`Lewat deadline ${Math.abs(r.days_to_deadline)} hari`}>
+                        <span className="inline-flex w-fit items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]" title={`Lewat deadline ${Math.abs(r.days_to_deadline)} hari`}>
                           <AlertTriangle size={10} /> Perlu tindakan
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2 text-right font-mono">{fmt(r.qty)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">
+                  <td className="px-3 py-2 text-right tabular-nums">{fmt(r.qty)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-xs">
                     {terminal ? (
-                      <span><span className="text-emerald-600">{fmt(r.qty_fixed)}</span> / <span className="text-zinc-500">{fmt(r.qty_scrap)}</span></span>
+                      <span><span className="text-[hsl(var(--success))]">{fmt(r.qty_fixed)}</span> / <span className="text-zinc-500">{fmt(r.qty_scrap)}</span></span>
                     ) : '—'}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono text-xs">{r.total_cost ? fmtRp(r.total_cost) : '—'}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-xs">{r.total_cost ? fmtRp(r.total_cost) : '—'}</td>
                   <td className="px-3 py-2"><PermakStatusBadge status={r.status} /></td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{fmtDate(r.created_at)}</td>
                   <td className="px-3 py-2">
                     <div className="flex items-center justify-end gap-1">
                       {r.status === 'open' && (
-                        <button
+                        <Button
+                          variant="ghost" size="icon-sm"
                           onClick={() => setStatusTarget({ record: r, action: 'in_progress' })}
-                          className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
+                          className="text-[hsl(var(--primary))]"
                           data-testid={`btn-start-${r.id}`}
-                          title="Mulai kerjakan"
-                        ><Play size={12} /></button>
+                          title="Mulai kerjakan" aria-label="Mulai kerjakan"
+                        ><Play /></Button>
                       )}
                       {!terminal && (
                         <>
-                          <button
+                          <Button
+                            variant="ghost" size="icon-sm"
                             onClick={() => setStatusTarget({ record: r, action: 'selesai_berhasil' })}
-                            className="text-xs px-2 py-1 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                            className="text-[hsl(var(--success))]"
                             data-testid={`btn-complete-${r.id}`}
-                            title="Selesai (berhasil)"
-                          ><CheckCircle2 size={12} /></button>
-                          <button
+                            title="Selesai (berhasil)" aria-label="Selesai (berhasil)"
+                          ><CheckCircle2 /></Button>
+                          <Button
+                            variant="ghost" size="icon-sm"
                             onClick={() => setStatusTarget({ record: r, action: 'gagal_buang' })}
-                            className="text-xs px-2 py-1 rounded bg-zinc-600 text-white hover:bg-zinc-700"
+                            className="text-muted-foreground"
                             data-testid={`btn-scrap-${r.id}`}
-                            title="Gagal / buang"
-                          ><XCircle size={12} /></button>
+                            title="Gagal / buang" aria-label="Gagal / buang"
+                          ><XCircle /></Button>
                         </>
                       )}
                       {r.status === 'open' && (
-                        <button
+                        <Button
+                          variant="ghost" size="icon-sm"
                           onClick={() => setConfirmDelete(r)}
-                          className="text-xs px-2 py-1 rounded border border-border text-red-600 hover:bg-red-50"
+                          className="text-[hsl(var(--destructive))]"
                           data-testid={`btn-delete-${r.id}`}
-                          title="Hapus"
-                        ><Trash2 size={12} /></button>
+                          title="Hapus" aria-label="Hapus"
+                        ><Trash2 /></Button>
                       )}
                     </div>
                   </td>
@@ -405,7 +402,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
       <div className="space-y-4" data-testid="create-permak-dialog">
         <div>
           <label className="text-xs font-medium text-muted-foreground">PO Maklon</label>
-          <select
+          <SmartNativeSelect
             value={poId}
             onChange={(e) => setPoId(e.target.value)}
             className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
@@ -415,12 +412,12 @@ function CreatePermakDialog({ onClose, onCreated }) {
             {pos.map((p) => (
               <option key={p.po_id} value={p.po_id}>{p.po_number} — {p.status}</option>
             ))}
-          </select>
+          </SmartNativeSelect>
         </div>
 
         <div>
           <label className="text-xs font-medium text-muted-foreground">Item / SKU</label>
-          <select
+          <SmartNativeSelect
             value={itemId}
             onChange={(e) => setItemId(e.target.value)}
             disabled={!poId || loadingItems}
@@ -433,21 +430,21 @@ function CreatePermakDialog({ onClose, onCreated }) {
                 {i.product_name || i.sku} ({i.sku} · {i.color} · {i.size}) — bagus {fmt(i.qty_good)} / reject {fmt(i.qty_reject_qc)}
               </option>
             ))}
-          </select>
+          </SmartNativeSelect>
         </div>
 
         {selectedItem && (
           <div className="grid grid-cols-3 gap-2 text-xs rounded-md bg-muted/40 p-3">
-            <div><span className="text-muted-foreground">Barang Jadi</span><div className="font-semibold text-emerald-600">{fmt(selectedItem.qty_good)}</div></div>
-            <div><span className="text-muted-foreground">Reject QC</span><div className="font-semibold text-red-600">{fmt(selectedItem.qty_reject_qc)}</div></div>
-            <div><span className="text-muted-foreground">Sedang Permak</span><div className="font-semibold text-amber-600">{fmt(selectedItem.qty_rework_open)}</div></div>
+            <div><span className="text-muted-foreground">Barang Jadi</span><div className="font-semibold text-[hsl(var(--success))]">{fmt(selectedItem.qty_good)}</div></div>
+            <div><span className="text-muted-foreground">Reject QC</span><div className="font-semibold text-[hsl(var(--destructive))]">{fmt(selectedItem.qty_reject_qc)}</div></div>
+            <div><span className="text-muted-foreground">Sedang Permak</span><div className="font-semibold text-[hsl(var(--warning))]">{fmt(selectedItem.qty_rework_open)}</div></div>
           </div>
         )}
 
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Sumber</label>
-            <select
+            <SmartNativeSelect
               value={source}
               onChange={(e) => setSource(e.target.value)}
               className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
@@ -455,7 +452,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
             >
               <option value="good">Dari Barang Jadi (mengurangi FG)</option>
               <option value="reject">Dari Reject QC</option>
-            </select>
+            </SmartNativeSelect>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Qty</label>
@@ -472,7 +469,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="text-xs font-medium text-muted-foreground">Tipe Permak</label>
-            <select
+            <SmartNativeSelect
               value={permakType}
               onChange={(e) => setPermakType(e.target.value)}
               className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
@@ -480,18 +477,18 @@ function CreatePermakDialog({ onClose, onCreated }) {
             >
               <option value="permak_sendiri">Permak Sendiri (workshop DA)</option>
               <option value="retur_ke_cmt">Retur ke CMT (dikembalikan)</option>
-            </select>
+            </SmartNativeSelect>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Jenis Masalah</label>
-            <select
+            <SmartNativeSelect
               value={problemType}
               onChange={(e) => setProblemType(e.target.value)}
               className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
               data-testid="select-permak-problem"
             >
               {PROBLEM_OPTS.map((p) => <option key={p} value={p}>{p}</option>)}
-            </select>
+            </SmartNativeSelect>
           </div>
         </div>
 
@@ -512,11 +509,11 @@ function CreatePermakDialog({ onClose, onCreated }) {
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Target Kembali (deadline)</label>
-            <input
+            <GlassInput
               type="date"
               value={returnDeadline}
               onChange={(e) => setReturnDeadline(e.target.value)}
-              className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
+              className="mt-1"
               data-testid="input-permak-deadline"
             />
           </div>
@@ -539,7 +536,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
           policy={numPolicy} value={permakNumber} onChange={setPermakNumber}
           testId="permak-docnum" label="Nomor Permak" />
         {numPolicy?.mode === 'manual' && (
-          <p className="text-[11px] text-amber-700 dark:text-amber-400" data-testid="permak-docnum-warn">
+          <p className="text-[11px] text-[hsl(var(--warning))] " data-testid="permak-docnum-warn">
             Catatan: bila qty yang diminta harus dipecah ke beberapa baris reject,
             satu pengajuan bisa melahirkan lebih dari satu dokumen permak — nomor
             ketikan hanya bisa dipakai untuk pengajuan yang menghasilkan SATU dokumen.
@@ -558,15 +555,14 @@ function CreatePermakDialog({ onClose, onCreated }) {
         </div>
 
         <div className="flex justify-end gap-2 pt-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted">Batal</button>
-          <button
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button
             onClick={submit}
             disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50"
             data-testid="btn-submit-create-permak"
           >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />} Simpan
-          </button>
+            {saving ? <Loader2 className="animate-spin" /> : <Plus />} Simpan
+          </Button>
         </div>
       </div>
     </Modal>
@@ -626,7 +622,7 @@ function StatusDialog({ target, onClose, onDone }) {
               />
             </div>
             <div className="flex justify-between text-xs">
-              <span className="text-emerald-600">Fixed: {fmt(qtyFixed)}</span>
+              <span className="text-[hsl(var(--success))]">Fixed: {fmt(qtyFixed)}</span>
               <span className="text-zinc-500">Scrap: {fmt(qtyScrap)}</span>
             </div>
             <div className="text-[11px] text-muted-foreground flex items-start gap-1">
@@ -655,15 +651,14 @@ function StatusDialog({ target, onClose, onDone }) {
         </div>
 
         <div className="flex justify-end gap-2">
-          <button onClick={onClose} className="px-4 py-2 text-sm rounded-md border border-border hover:bg-muted">Batal</button>
-          <button
+          <Button variant="outline" onClick={onClose}>Batal</Button>
+          <Button
             onClick={submit}
             disabled={saving}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-50"
             data-testid="btn-submit-status"
           >
-            {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />} Konfirmasi
-          </button>
+            {saving ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Konfirmasi
+          </Button>
         </div>
       </div>
     </Modal>

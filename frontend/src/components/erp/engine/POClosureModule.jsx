@@ -23,6 +23,10 @@ import {
   Package, Info, Loader2, Scissors, FileWarning, TrendingDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import { EmptyState, Notice } from '../moduleAtoms';
 import Modal from './Modal';
 import StatusBadge from './StatusBadge';
 import { apiGet, apiPost } from '../../../lib/api';
@@ -139,7 +143,7 @@ export default function POClosureModule({ portalId }) {
   };
 
   return (
-    <div className="p-6 space-y-5" data-testid="po-closure-module">
+    <div className="space-y-4" data-testid="po-closure-module">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -152,45 +156,39 @@ export default function POClosureModule({ portalId }) {
             <b>Close Short</b> dengan alasan — Finance akan menyesuaikan invoice / membuat credit note.
           </p>
         </div>
-        <button
+        <Button
+          variant="outline" size="icon"
           onClick={fetchAll}
+          title="Muat ulang" aria-label="Muat ulang"
           data-testid="po-closure-refresh"
-          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card hover:bg-accent text-sm font-medium text-foreground transition-colors"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-        </button>
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
       </div>
 
       {/* Phase C banner */}
-      <div className="rounded-xl border border-violet-200 bg-violet-50 p-4 flex gap-3">
-        <Info className="w-5 h-5 text-violet-600 shrink-0 mt-0.5" />
-        <div className="text-sm text-violet-900">
-          <b>Aturan Penutupan (Phase C):</b> penutupan memakai <b>qty diterima buyer</b>{' '}
-          (Σ qty_received). Auto-close saat Σditerima ≥ Σdipesan. Close-short hanya sah dari status{' '}
-          <i>In Production / Production Complete / Variance Review / Return Review / Ready to Close</i>{' '}
-          dan bila masih ada kekurangan qty.
-        </div>
-      </div>
+      <Notice tone="info" icon={Info} title="Aturan penutupan">
+        Penutupan memakai <b>qty diterima buyer</b>. PO tertutup otomatis saat jumlah diterima ≥ jumlah
+        dipesan. Close Short hanya sah dari status{' '}
+        <i>In Production / Production Complete / Variance Review / Return Review / Ready to Close</i>{' '}
+        dan bila masih ada kekurangan qty.
+      </Notice>
 
       {/* Tabs + search */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="inline-flex rounded-lg border border-border overflow-hidden" data-testid="po-closure-tabs">
-          {[
-            ['open', 'Perlu Ditutup', counts.open],
-            ['closed', 'Sudah Ditutup', counts.closed],
-            ['all', 'Semua', counts.all],
-          ].map(([k, label, c]) => (
-            <button
-              key={k}
-              onClick={() => setTab(k)}
-              data-testid={`po-closure-tab-${k}`}
-              className={`px-4 py-2 text-sm font-medium transition-colors ${
-                tab === k ? 'bg-primary text-primary-foreground' : 'bg-card text-foreground hover:bg-accent'
-              }`}
-            >
-              {label} <span className="opacity-70">({c})</span>
-            </button>
-          ))}
+        {/* PANDUAN_UI G4 — penyaring status; testid tiap pil tetap `po-closure-tab-<kunci>` */}
+        <div data-testid="po-closure-tabs">
+          <FilterChips
+            value={tab}
+            onChange={setTab}
+            testId="po-closure-tab"
+            ariaLabel="Penyaring status PO"
+            options={[
+              { key: 'open', label: 'Perlu ditutup', count: counts.open },
+              { key: 'closed', label: 'Sudah ditutup', count: counts.closed },
+              { key: 'all', label: 'Semua', count: counts.all },
+            ]}
+          />
         </div>
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -205,7 +203,7 @@ export default function POClosureModule({ portalId }) {
       </div>
 
       {/* Table */}
-      <div className="rounded-xl border border-border overflow-hidden bg-card">
+      <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/60 text-muted-foreground">
@@ -214,7 +212,7 @@ export default function POClosureModule({ portalId }) {
                 <th className="px-4 py-3 font-semibold">BUYER</th>
                 <th className="px-4 py-3 font-semibold text-right whitespace-nowrap">DIPESAN</th>
                 <th className="px-4 py-3 font-semibold text-right whitespace-nowrap">PRODUKSI</th>
-                <th className="px-4 py-3 font-semibold text-right whitespace-nowrap text-red-600">REJECT</th>
+                <th className="px-4 py-3 font-semibold text-right whitespace-nowrap text-[hsl(var(--destructive))]">DITOLAK</th>
                 <th className="px-4 py-3 font-semibold text-right whitespace-nowrap">DIKIRIM</th>
                 <th className="px-4 py-3 font-semibold text-right">DITERIMA</th>
                 <th className="px-4 py-3 font-semibold text-right">KURANG</th>
@@ -224,12 +222,13 @@ export default function POClosureModule({ portalId }) {
             </thead>
             <tbody className="divide-y divide-border">
               {loading ? (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground">
+                <tr><td colSpan={10} className="px-4 py-4 text-center text-muted-foreground">
                   <Loader2 className="w-5 h-5 animate-spin inline mr-2" /> Memuat…
                 </td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-muted-foreground">
-                  <Package className="w-6 h-6 inline mr-2 opacity-50" /> Tidak ada PO pada tab ini.
+                <tr><td colSpan={10}>
+                  <EmptyState icon={Package} title="Tidak ada PO pada penyaring ini"
+                    description="Pilih penyaring lain atau ubah kata pencarian." />
                 </td></tr>
               ) : filtered.map(({ po, fulfillment: f }) => {
                 const short = f?.qty_short ?? 0;
@@ -241,32 +240,32 @@ export default function POClosureModule({ portalId }) {
                     <td className="px-4 py-3 text-foreground/80">{po.customer_name || '—'}</td>
                     <td className="px-4 py-3 text-right tabular-nums">{f ? fmtNum(f.total_ordered) : '—'}</td>
                     {/* FASE 1: penutupan PO WAJIB menampilkan "produced X, reject Y" */}
-                    <td className="px-4 py-3 text-right tabular-nums font-medium text-emerald-700">
+                    <td className="px-4 py-3 text-right tabular-nums font-medium text-[hsl(var(--success))]">
                       {f?.qc ? fmtNum(f.qc.produced) : '—'}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {f?.qc && Number(f.qc.reject || 0) > 0 ? (
-                        <span className="font-semibold text-red-700 whitespace-nowrap">
+                        <span className="font-semibold text-[hsl(var(--destructive))] whitespace-nowrap">
                           {fmtNum(f.qc.reject)}
                           <span className="text-[10px] opacity-80"> ({f.qc.reject_rate_pct}%)</span>
                           {Number(f.qc.rework_open || 0) > 0 && (
-                            <span className="block text-[10px] font-medium text-orange-600">
+                            <span className="block text-[10px] font-medium text-[hsl(var(--warning))]">
                               {fmtNum(f.qc.rework_open)} rework
                             </span>
                           )}
                         </span>
-                      ) : <span className="text-emerald-600">0</span>}
+                      ) : <span className="text-[hsl(var(--success))]">0</span>}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">{f ? fmtNum(f.total_shipped) : '—'}</td>
                     <td className="px-4 py-3 text-right tabular-nums font-medium">{f ? fmtNum(f.total_received) : '—'}</td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       {f && short > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-orange-600 font-medium">
+                        <span className="inline-flex items-center gap-1 text-[hsl(var(--warning))] font-medium">
                           <TrendingDown className="w-3.5 h-3.5" /> {fmtNum(short)}
                           <span className="text-xs opacity-70">({f.qty_short_pct}%)</span>
                         </span>
                       ) : (
-                        <span className="text-emerald-600">0</span>
+                        <span className="text-[hsl(var(--success))]">0</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -281,25 +280,27 @@ export default function POClosureModule({ portalId }) {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {f?.can_close_short ? (
-                        <button
+                        <Button
+                          variant="outline" size="sm"
                           onClick={() => openClose({ po, fulfillment: f })}
                           data-testid={`po-close-short-btn-${po.id}`}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-orange-600 hover:bg-orange-700 text-white text-xs font-semibold transition-colors"
+                          className="text-[hsl(var(--warning))]"
                         >
                           <Scissors className="w-3.5 h-3.5" /> Close Short
-                        </button>
+                        </Button>
                       ) : isTerminal ? (
-                        <button
+                        <Button
+                          variant="outline" size="sm"
                           onClick={() => loadCreditNotes(po.id)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border text-xs text-muted-foreground hover:bg-accent transition-colors"
+                          className="text-muted-foreground"
                         >
                           {cns ? `${cns.length} CN` : 'Lihat CN'}
-                        </button>
+                        </Button>
                       ) : (
                         <span className="text-xs text-muted-foreground">—</span>
                       )}
                       {cns && cns.length > 0 && (
-                        <div className="mt-1 text-[11px] text-orange-600 flex items-center gap-1 justify-end">
+                        <div className="mt-1 text-[11px] text-[hsl(var(--warning))] flex items-center gap-1 justify-end">
                           <FileWarning className="w-3 h-3" /> {cns[0].credit_note_number} · {fmtRp(cns[0].total_amount)}
                         </div>
                       )}
@@ -310,7 +311,7 @@ export default function POClosureModule({ portalId }) {
             </tbody>
           </table>
         </div>
-      </div>
+      </GlassCard>
 
       {/* Close Short modal */}
       {closing && (
@@ -322,26 +323,23 @@ export default function POClosureModule({ portalId }) {
               <div className="grid grid-cols-3 gap-2 mt-2 text-center">
                 <div><div className="text-xs text-muted-foreground">Dipesan</div><div className="font-semibold">{fmtNum(closing.fulfillment.total_ordered)}</div></div>
                 <div><div className="text-xs text-muted-foreground">Diterima</div><div className="font-semibold">{fmtNum(closing.fulfillment.total_received)}</div></div>
-                <div><div className="text-xs text-muted-foreground">Kurang</div><div className="font-semibold text-orange-600">{fmtNum(closing.fulfillment.qty_short)} ({closing.fulfillment.qty_short_pct}%)</div></div>
+                <div><div className="text-xs text-muted-foreground">Kurang</div><div className="font-semibold text-[hsl(var(--warning))]">{fmtNum(closing.fulfillment.qty_short)} ({closing.fulfillment.qty_short_pct}%)</div></div>
                 {closing.fulfillment.qc && (
                   <>
-                    <div><div className="text-xs text-muted-foreground">Produksi vendor</div><div className="font-semibold text-emerald-700">{fmtNum(closing.fulfillment.qc.produced)}</div></div>
-                    <div><div className="text-xs text-muted-foreground">Lolos QC</div><div className="font-semibold text-emerald-700">{fmtNum(closing.fulfillment.qc.accepted)}</div></div>
-                    <div><div className="text-xs text-muted-foreground">Reject</div><div className="font-semibold text-red-700">{fmtNum(closing.fulfillment.qc.reject)} ({closing.fulfillment.qc.reject_rate_pct}%)</div></div>
-                    <div><div className="text-xs text-muted-foreground">Rework belum selesai</div><div className="font-semibold text-orange-700">{fmtNum(closing.fulfillment.qc.rework_open)}</div></div>
+                    <div><div className="text-xs text-muted-foreground">Produksi vendor</div><div className="font-semibold text-[hsl(var(--success))]">{fmtNum(closing.fulfillment.qc.produced)}</div></div>
+                    <div><div className="text-xs text-muted-foreground">Lolos QC</div><div className="font-semibold text-[hsl(var(--success))]">{fmtNum(closing.fulfillment.qc.accepted)}</div></div>
+                    <div><div className="text-xs text-muted-foreground">Ditolak</div><div className="font-semibold text-[hsl(var(--destructive))]">{fmtNum(closing.fulfillment.qc.reject)} ({closing.fulfillment.qc.reject_rate_pct}%)</div></div>
+                    <div><div className="text-xs text-muted-foreground">Rework belum selesai</div><div className="font-semibold text-[hsl(var(--warning))]">{fmtNum(closing.fulfillment.qc.rework_open)}</div></div>
                     <div><div className="text-xs text-muted-foreground">Dibuang (scrap)</div><div className="font-semibold text-foreground">{fmtNum(closing.fulfillment.qc.scrap)}</div></div>
                   </>
                 )}
               </div>
             </div>
 
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 flex gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-              <span className="flex-1">
-                PO akan berstatus <b>Closed Short</b> dan tidak bisa diproses lagi. Jika invoice AR sudah
-                di-<i>issue</i>, sistem membuat <b>Credit Note draft</b> otomatis.
-              </span>
-            </div>
+            <Notice tone="warning" icon={AlertTriangle} className="text-xs">
+              PO akan berstatus <b>Closed Short</b> dan tidak bisa diproses lagi. Jika invoice AR sudah
+              di-<i>issue</i>, sistem membuat <b>Credit Note draft</b> otomatis.
+            </Notice>
 
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">Alasan penutupan *</label>
@@ -371,21 +369,17 @@ export default function POClosureModule({ portalId }) {
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setClosing(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium text-foreground hover:bg-accent transition-colors"
-              >
-                <XCircle className="w-4 h-4 inline mr-1" /> Batal
-              </button>
-              <button
+              <Button variant="outline" onClick={() => setClosing(null)}>
+                <XCircle className="w-4 h-4" /> Batal
+              </Button>
+              <Button
                 onClick={submitClose}
                 disabled={submitting || !reason}
                 data-testid="po-close-short-submit"
-                className="px-4 py-2 rounded-lg bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm font-semibold transition-colors inline-flex items-center gap-2"
               >
                 {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
                 Konfirmasi Close Short
-              </button>
+              </Button>
             </div>
           </div>
         </Modal>

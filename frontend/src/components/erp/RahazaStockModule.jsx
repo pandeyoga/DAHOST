@@ -13,7 +13,7 @@ import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 // Tampilan per 3 kategori bisnis (Bahan/Aksesoris/Produk Jadi).
 const CAT_ICON = { bahan: Scale, aksesoris: Gem, fg: Archive };
 const CAT_LABEL = { bahan: 'Bahan', aksesoris: 'Aksesoris', fg: 'Produk Jadi' };
-const CAT_COLOR = { bahan: 'text-amber-600 dark:text-amber-300', aksesoris: 'text-primary', fg: 'text-emerald-600 dark:text-emerald-300' };
+const CAT_COLOR = { bahan: 'text-[hsl(var(--warning))] ', aksesoris: 'text-primary', fg: 'text-[hsl(var(--success))] ' };
 
 // W1 (sesi #29) — pilihan filter dibangun dari nilai yang BENAR-BENAR ADA di data.
 // Daftar hardcode akan menyesatkan (mis. warna yang tidak dipakai satu pun barang),
@@ -31,8 +31,8 @@ function uniqOptions(rows, field) {
 function expiryWarning(expiry_date) {  if (!expiry_date) return null;
   // hari kalender WIB: kedaluwarsa baru 'lewat' setelah tanggalnya habis, bukan sejak 07:00 WIB
   const days = daysBetweenISO(todayWIB(), toWIBDate(expiry_date));
-  if (days < 0) return { label: 'Kedaluwarsa', cls: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-400/10' };
-  if (days <= 30) return { label: `${days}h lagi`, cls: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-400/10' };
+  if (days < 0) return { label: 'Kedaluwarsa', cls: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)] ' };
+  if (days <= 30) return { label: `${days}h lagi`, cls: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)] ' };
   return null;
 }
 
@@ -82,7 +82,7 @@ function QuickAdjustPopover({ row, token, onDone }) {
       </PopoverTrigger>
       <PopoverContent className="w-56 p-3" align="end">
         <p className="text-xs font-semibold text-foreground mb-2">Adjust Stok</p>
-        <p className="text-[10px] text-muted-foreground mb-2">{row.material_code} · {row.location_code} · Stok: <span className="font-mono font-semibold text-foreground">{Number(row.qty).toFixed(2)} {row.unit}</span></p>
+        <p className="text-[10px] text-muted-foreground mb-2">{row.material_code} · {row.location_code} · Stok: <span className="tabular-nums font-semibold text-foreground">{Number(row.qty).toFixed(2)} {row.unit}</span></p>
         <div className="space-y-2">
           <div>
             <label className="text-[10px] text-muted-foreground uppercase mb-1 block">Delta Qty (+/-)</label>
@@ -92,7 +92,7 @@ function QuickAdjustPopover({ row, token, onDone }) {
               placeholder="+10 atau -5"
               value={delta}
               onChange={e => setDelta(e.target.value)}
-              className="h-8 text-xs font-mono"
+              className="h-8 text-xs tabular-nums"
               autoFocus
               data-testid={`stock-adjust-delta-${row.material_code}`}
             />
@@ -241,7 +241,7 @@ export default function RahazaStockModule({ token }) {
           <p className="text-muted-foreground text-sm mt-1">Stok bahan, aksesoris, dan produk jadi per Gedung / Zona. Transfer A↔B dan penerimaan dicatat di ledger.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={openTransfer} className="border border-[var(--glass-border)]" data-testid="stock-transfer-btn"><ArrowRightLeft className="w-4 h-4 mr-1.5" /> Transfer A↔B</Button>
+          <Button variant="outline" onClick={openTransfer} data-testid="stock-transfer-btn"><ArrowRightLeft className="w-4 h-4 mr-1.5" /> Transfer A↔B</Button>
           <Button onClick={openReceive} data-testid="stock-receive-btn"><ArrowDown className="w-4 h-4 mr-1.5" /> Penerimaan</Button>
         </div>
       </div>
@@ -263,12 +263,12 @@ export default function RahazaStockModule({ token }) {
               </GlassPanel>
             );
           })}
-          <GlassPanel className={`p-3 ${summary.low_stock_count > 0 ? 'border-amber-400 dark:border-amber-300/30' : ''}`}>
+          <GlassPanel className={`p-3 ${summary.low_stock_count > 0 ? 'border-[hsl(var(--warning)/0.35)] ' : ''}`}>
             <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className={`w-4 h-4 ${summary.low_stock_count > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-foreground/30'}`} />
+              <AlertTriangle className={`w-4 h-4 ${summary.low_stock_count > 0 ? 'text-[hsl(var(--warning))] ' : 'text-foreground/30'}`} />
               <span className="text-xs font-semibold text-muted-foreground uppercase">Low Stock</span>
             </div>
-            <div className={`text-xl font-bold ${summary.low_stock_count > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-foreground'}`}>{summary.low_stock_count}</div>
+            <div className={`text-xl font-bold ${summary.low_stock_count > 0 ? 'text-[hsl(var(--warning))] ' : 'text-foreground'}`}>{summary.low_stock_count}</div>
             <div className="text-[10px] text-muted-foreground">material di bawah min</div>
           </GlassPanel>
         </div>
@@ -276,13 +276,13 @@ export default function RahazaStockModule({ token }) {
 
       {/* U8 — Reorder Alert Banner */}
       {reorderAlerts.length > 0 && (
-        <div className="bg-amber-100 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/20 rounded-xl p-3 flex items-start gap-2" data-testid="reorder-alert-banner">
-          <TriangleAlert size={15} className="text-amber-700 dark:text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-3 flex items-start gap-2" data-testid="reorder-alert-banner">
+          <TriangleAlert size={15} className="text-[hsl(var(--warning))] flex-shrink-0 mt-0.5" />
           <div>
-            <span className="text-sm font-semibold text-amber-600 dark:text-amber-300">{reorderAlerts.length} material perlu reorder</span>
+            <span className="text-sm font-semibold text-[hsl(var(--warning))] ">{reorderAlerts.length} material perlu reorder</span>
             <div className="flex flex-wrap gap-1.5 mt-1">
               {reorderAlerts.map(a => (
-                <span key={a.id} className="text-[10px] bg-amber-100 dark:bg-amber-500/20 text-amber-200 px-2 py-0.5 rounded-full border border-amber-300 dark:border-amber-400/20">
+                <span key={a.id} className="text-[10px] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] px-2 py-0.5 rounded-full border border-[hsl(var(--warning)/0.35)] ">
                   {a.code} — butuh {a.shortage} {a.unit}
                 </span>
               ))}
@@ -305,7 +305,7 @@ export default function RahazaStockModule({ token }) {
           <button
             key={l.id}
             onClick={() => setFilterLocation(filterLocation === l.id ? '' : l.id)}
-            className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterLocation === l.id ? 'bg-cyan-100 dark:bg-cyan-500/25 border-cyan-400/40 text-cyan-600 dark:text-cyan-300' : 'bg-foreground/5 border-foreground/10 text-foreground/50 hover:bg-foreground/10'}`}
+            className={`text-xs px-2.5 py-1 rounded-lg border transition-colors ${filterLocation === l.id ? 'bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.4)] text-[hsl(var(--primary))] ' : 'bg-foreground/5 border-foreground/10 text-foreground/50 hover:bg-foreground/10'}`}
             data-testid={`stock-loc-filter-${l.code}`}
             title={l.name || l.code}
           >
@@ -373,7 +373,7 @@ export default function RahazaStockModule({ token }) {
           { key: 'material_code', label: 'Barang', sortable: true,
             render: (r) => (
               <div>
-                <div className="font-mono text-xs">{r.material_code}</div>
+                <div className="tabular-nums text-xs">{r.material_code}</div>
                 <div className="text-[11px] text-foreground/60">{r.material_name}</div>
               </div>
             ) },
@@ -399,7 +399,7 @@ export default function RahazaStockModule({ token }) {
               ? <span className="text-foreground/70">{r.location_code} · {r.location_name}</span>
               : <span className="text-foreground/40 italic text-xs">belum ada baris stok</span> },
           { key: 'qty', label: 'Qty', align: 'right', sortable: true,
-            render: (r) => <span className="font-mono font-semibold">{Number(r.qty).toFixed(r.unit === 'kg' ? 3 : 2)} <span className="text-foreground/60 text-xs">{r.unit}</span></span> },
+            render: (r) => <span className="tabular-nums font-semibold">{Number(r.qty).toFixed(r.unit === 'kg' ? 3 : 2)} <span className="text-foreground/60 text-xs">{r.unit}</span></span> },
           { key: 'min_stock', label: 'Min Stok', align: 'right', sortable: true,
             render: (r) => <span className="text-foreground/60">{r.min_stock_qty || r.min_stock || '—'}</span> },
           { key: 'status', label: 'Status',
@@ -448,15 +448,15 @@ export default function RahazaStockModule({ token }) {
                 <tr key={m.id || `mv-${idx}`} className="border-t border-[var(--glass-border)]">
                   <td className="px-3 py-1.5 text-muted-foreground whitespace-nowrap">{new Date(m.timestamp).toLocaleString('id-ID', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                   <td className="px-3 py-1.5">
-                    {m.type === 'receive'  && <span className="text-emerald-600 dark:text-emerald-300">Receive</span>}
-                    {m.type === 'issue'    && <span className="text-red-600 dark:text-red-300">Issue</span>}
+                    {m.type === 'receive'  && <span className="text-[hsl(var(--success))] ">Receive</span>}
+                    {m.type === 'issue'    && <span className="text-[hsl(var(--destructive))] ">Issue</span>}
                     {m.type === 'transfer' && <span className="text-primary">Transfer</span>}
-                    {m.type === 'adjust'   && <span className="text-amber-600 dark:text-amber-300">Adjust</span>}
+                    {m.type === 'adjust'   && <span className="text-[hsl(var(--warning))] ">Adjust</span>}
                     {/* 2026-11-02 (K9): mutasi mesin opname tunggal */}
-                    {m.type === 'opname'   && <span className="text-sky-600 dark:text-sky-300">Opname</span>}
+                    {m.type === 'opname'   && <span className="text-[hsl(var(--primary))] ">Opname</span>}
                   </td>
                   <td className="px-3 py-1.5 text-foreground">{m.material_code}</td>
-                  <td className="px-3 py-1.5 text-right font-mono font-semibold text-foreground">{Number(m.qty).toFixed(3)} {m.unit || ''}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-foreground">{Number(m.qty).toFixed(3)} {m.unit || ''}</td>
                   <td className="px-3 py-1.5 text-muted-foreground">{m.from_location_name || '—'}</td>
                   <td className="px-3 py-1.5 text-muted-foreground">{m.to_location_name || '—'}</td>
                   <td className="px-3 py-1.5 text-muted-foreground truncate max-w-[160px]">{m.notes || m.ref_type || ''}</td>
@@ -471,23 +471,23 @@ export default function RahazaStockModule({ token }) {
       {receiveOpen && (
         <Modal onClose={() => setReceiveOpen(false)} title="Penerimaan Material" size="md">
           <div className="space-y-3" data-testid="receive-form">
-            {formError && <div className="bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-300/20 rounded-lg p-3 text-sm text-red-600 dark:text-red-300">{formError}</div>}
+            {formError && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--destructive))] ">{formError}</div>}
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <SmartNativeSelect value={receiveForm.material_id} onChange={e => setReceiveForm({...receiveForm, material_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="receive-material">
                 <option value="">— Pilih —</option>
                 {materials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
               </SmartNativeSelect>
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Lokasi Tujuan <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Lokasi Tujuan <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <SmartNativeSelect value={receiveForm.location_id} onChange={e => setReceiveForm({...receiveForm, location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="receive-location">
                 <option value="">— Pilih —</option>
                 {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
               </SmartNativeSelect>
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Qty <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Qty <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <GlassInput type="number" step="0.001" value={receiveForm.qty} onChange={e => setReceiveForm({...receiveForm, qty: e.target.value})} placeholder="0" data-testid="receive-qty" />
             </div>
             <div>
@@ -506,9 +506,9 @@ export default function RahazaStockModule({ token }) {
       {transferOpen && (
         <Modal onClose={() => setTransferOpen(false)} title="Transfer Antar Gudang" size="md">
           <div className="space-y-3" data-testid="transfer-form">
-            {formError && <div className="bg-red-50 dark:bg-red-400/10 border border-red-300 dark:border-red-300/20 rounded-lg p-3 text-sm text-red-600 dark:text-red-300">{formError}</div>}
+            {formError && <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-sm text-[hsl(var(--destructive))] ">{formError}</div>}
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <SmartNativeSelect value={transferForm.material_id} onChange={e => setTransferForm({...transferForm, material_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-material">
                 <option value="">— Pilih —</option>
                 {materials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
@@ -516,14 +516,14 @@ export default function RahazaStockModule({ token }) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Dari Lokasi <span className="text-red-700 dark:text-red-400">*</span></label>
+                <label className="block text-xs font-medium text-foreground/70 mb-1">Dari Lokasi <span className="text-[hsl(var(--destructive))] ">*</span></label>
                 <SmartNativeSelect value={transferForm.from_location_id} onChange={e => setTransferForm({...transferForm, from_location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-from">
                   <option value="">—</option>
                   {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
                 </SmartNativeSelect>
               </div>
               <div>
-                <label className="block text-xs font-medium text-foreground/70 mb-1">Ke Lokasi <span className="text-red-700 dark:text-red-400">*</span></label>
+                <label className="block text-xs font-medium text-foreground/70 mb-1">Ke Lokasi <span className="text-[hsl(var(--destructive))] ">*</span></label>
                 <SmartNativeSelect value={transferForm.to_location_id} onChange={e => setTransferForm({...transferForm, to_location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-to">
                   <option value="">—</option>
                   {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
@@ -531,7 +531,7 @@ export default function RahazaStockModule({ token }) {
               </div>
             </div>
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Qty <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Qty <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <GlassInput type="number" step="0.001" value={transferForm.qty} onChange={e => setTransferForm({...transferForm, qty: e.target.value})} placeholder="0" data-testid="transfer-qty" />
             </div>
             <div>

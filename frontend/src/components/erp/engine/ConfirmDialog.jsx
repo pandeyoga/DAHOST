@@ -4,13 +4,13 @@ import { AlertTriangle } from 'lucide-react';
 export default function ConfirmDialog({ title, message, onConfirm, onCancel, type = 'danger' }) {
   const styles = {
     danger: {
-      icon: 'bg-red-100 text-red-600',
-      btn: 'bg-red-600 hover:bg-red-700 text-white',
+      icon: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
+      btn: 'bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] text-white',
       label: 'Hapus'
     },
     warning: {
-      icon: 'bg-amber-100 text-amber-600',
-      btn: 'bg-amber-600 hover:bg-amber-700 text-white',
+      icon: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+      btn: 'bg-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.9)] text-white',
       label: 'Lanjutkan'
     }
   };

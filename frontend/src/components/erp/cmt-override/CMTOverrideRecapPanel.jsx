@@ -25,6 +25,8 @@
  */
 import { useCallback, useState } from 'react';
 import { CalendarDays, CalendarRange } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
 import CMTOverrideDailyRecap from './CMTOverrideDailyRecap';
 import CMTOverrideWeeklyRecap from './CMTOverrideWeeklyRecap';
 import { dayLabel, isoToday, shiftDay } from './recapDates';
@@ -60,7 +62,7 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
   return (
     <div className="space-y-3" data-testid="cmt-recap-panel-wrap">
       {/* ── Pemilih tab ─────────────────────────────────────────────────── */}
-      <div className="rounded-xl border border-border bg-card p-2 shadow-sm"
+      <GlassCard className="p-2"
         data-testid="cmt-recap-tabs">
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex flex-1 flex-wrap gap-1.5" role="tablist"
@@ -77,7 +79,7 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
                   onClick={() => setTab(id)}
                   className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] ${
                     active
-                      ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                      ? 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary))] text-white shadow-sm'
                       : 'border-border bg-background text-foreground hover:bg-muted'
                   }`}
                   data-testid={`cmt-recap-tab-${id}`}
@@ -105,15 +107,14 @@ export default function CMTOverrideRecapPanel({ onOpenVendor, canFill = true }) 
               <p>{isToday ? 'hari ini (WIB)' : 'tanggal lain — klik "Hari ini" untuk kembali'}</p>
             </div>
             {!isToday && (
-              <button type="button" onClick={() => setDay(isoToday())}
-                className="rounded-md border border-blue-300 bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100"
+              <Button type="button" variant="outline" size="sm" onClick={() => setDay(isoToday())}
                 data-testid="cmt-recap-panel-today">
                 Hari ini
-              </button>
+              </Button>
             )}
           </div>
         </div>
-      </div>
+      </GlassCard>
 
       {tab === 'harian' ? (
         <CMTOverrideDailyRecap

@@ -28,9 +28,9 @@ export async function cuttingApi(method, path, token, body) {
 
 export const STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-400/15 dark:text-slate-300 dark:border-slate-400/30' },
-  in_progress: { label: 'Berjalan', cls: 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
-  completed: { label: 'Selesai', cls: 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30' },
-  cancelled: { label: 'Dibatalkan', cls: 'bg-red-50 text-red-700 border-red-300 dark:bg-red-400/15 dark:text-red-300 dark:border-red-400/30' },
+  in_progress: { label: 'Berjalan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  completed: { label: 'Selesai', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
+  cancelled: { label: 'Dibatalkan', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
 };
 
 export function StatusPill({ status }) {

@@ -88,15 +88,15 @@ export default function VendorVarianceReport({ token, user }) {
 
   const getTypeBadge = (type) => {
     return type === 'OVERPRODUCTION' 
-      ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-700">Over</span>
-      : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">Under</span>;
+      ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]">Over</span>
+      : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]">Under</span>;
   };
 
   const getStatusBadge = (status) => {
     const cfg = {
-      'Reported': 'bg-yellow-100 text-yellow-700',
-      'Acknowledged': 'bg-blue-100 text-blue-700',
-      'Resolved': 'bg-green-100 text-green-700'
+      'Reported': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+      'Acknowledged': 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
+      'Resolved': 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]'
     };
     return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${cfg[status] || 'bg-gray-100 text-gray-700'}`}>{status}</span>;
   };
@@ -110,7 +110,7 @@ export default function VendorVarianceReport({ token, user }) {
           <h2 className="text-2xl font-bold text-foreground">Laporan Variance Produksi</h2>
           <p className="text-sm text-muted-foreground">Laporkan overproduction atau underproduction</p>
         </div>
-        <button onClick={openCreate} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
+        <button onClick={openCreate} className="px-4 py-2 bg-[hsl(var(--primary))] text-white rounded-lg hover:bg-[hsl(var(--primary)/0.9)] flex items-center gap-2">
           <Plus className="w-4 h-4" /> Buat Laporan
         </button>
       </div>
@@ -121,13 +121,13 @@ export default function VendorVarianceReport({ token, user }) {
           <p className="text-xs text-muted-foreground mb-1">Total Laporan</p>
           <p className="text-2xl font-bold text-foreground">{variances.length}</p>
         </div>
-        <div className="bg-orange-50 p-4 rounded-lg border border-orange-200">
-          <p className="text-xs text-orange-600 mb-1">Overproduction</p>
-          <p className="text-2xl font-bold text-orange-700">{variances.filter(v => v.variance_type === 'OVERPRODUCTION').length}</p>
+        <div className="bg-[hsl(var(--warning)/0.1)] p-4 rounded-lg border border-[hsl(var(--warning)/0.35)]">
+          <p className="text-xs text-[hsl(var(--warning))] mb-1">Overproduction</p>
+          <p className="text-2xl font-bold text-[hsl(var(--warning))]">{variances.filter(v => v.variance_type === 'OVERPRODUCTION').length}</p>
         </div>
-        <div className="bg-blue-50 p-4 rounded-lg border border-blue-200">
-          <p className="text-xs text-blue-600 mb-1">Underproduction</p>
-          <p className="text-2xl font-bold text-blue-700">{variances.filter(v => v.variance_type === 'UNDERPRODUCTION').length}</p>
+        <div className="bg-[hsl(var(--primary)/0.1)] p-4 rounded-lg border border-[hsl(var(--primary)/0.35)]">
+          <p className="text-xs text-[hsl(var(--primary))] mb-1">Underproduction</p>
+          <p className="text-2xl font-bold text-[hsl(var(--primary))]">{variances.filter(v => v.variance_type === 'UNDERPRODUCTION').length}</p>
         </div>
       </div>
 
@@ -251,7 +251,7 @@ export default function VendorVarianceReport({ token, user }) {
               <button onClick={() => setShowModal(false)} className="px-4 py-2 bg-card border border-border text-foreground/90 rounded-lg hover:bg-muted/60">
                 Batal
               </button>
-              <button onClick={submit} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+              <button onClick={submit} className="px-4 py-2 bg-[hsl(var(--primary))] text-white rounded-lg hover:bg-[hsl(var(--primary)/0.9)]">
                 Simpan Laporan
               </button>
             </div>

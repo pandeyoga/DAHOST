@@ -68,17 +68,17 @@ const SCHEMA_LABEL = {
 
 // FASE 12 — klasifikasi lokasi (SSOT backend: core/location_resolver.KIND_*)
 const KIND_BADGE = {
-  storage: { label: 'Zona penyimpanan', cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
-  exempt: { label: 'Produksi / Karantina', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400' },
-  unmapped: { label: 'Bukan zona penyimpanan', cls: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' },
+  storage: { label: 'Zona penyimpanan', cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] ' },
+  exempt: { label: 'Produksi / Karantina', cls: 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] ' },
+  unmapped: { label: 'Bukan zona penyimpanan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] ' },
 };
 
 function Stat({ icon: Icon, label, value, hint, tone = 'violet' }) {
   const tones = {
-    violet: 'text-violet-600 dark:text-violet-400 bg-violet-500/5 border-violet-500/20',
-    amber: 'text-amber-700 dark:text-amber-400 bg-amber-500/5 border-amber-500/20',
-    red: 'text-red-700 dark:text-red-400 bg-red-500/5 border-red-500/20',
-    emerald: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 border-emerald-500/20',
+    violet: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.05)] border-[hsl(var(--primary)/0.2)]',
+    amber: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.05)] border-[hsl(var(--warning)/0.2)]',
+    red: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.05)] border-[hsl(var(--destructive)/0.2)]',
+    emerald: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.05)] border-[hsl(var(--success)/0.2)]',
   };
   return (
     <div className={`rounded-xl border p-3 ${tones[tone]}`}>
@@ -189,7 +189,7 @@ export default function StockSchemaHealthModule({ token }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Database className="w-5 h-5 text-violet-500" /> Kesehatan Skema Stok
+            <Database className="w-5 h-5 text-[hsl(var(--primary))]" /> Kesehatan Skema Stok
           </h3>
           <p className="text-sm text-muted-foreground mt-1 max-w-3xl">
             Memastikan setiap baris stok memakai bentuk kanonik (lokasi datar, alias jumlah sinkron,
@@ -205,11 +205,11 @@ export default function StockSchemaHealthModule({ token }) {
       </div>
 
       {err && (
-        <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-lg px-4 py-2"
+        <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  border border-[hsl(var(--destructive)/0.35)]  rounded-lg px-4 py-2"
           data-testid="stock-schema-error">{err}</div>
       )}
       {msg && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2"
+        <div className="text-sm text-[hsl(var(--success))] bg-[hsl(var(--success)/0.15)]  border border-[hsl(var(--success)/0.35)]  rounded-lg px-4 py-2"
           data-testid="stock-schema-msg">{msg}</div>
       )}
 
@@ -240,7 +240,7 @@ export default function StockSchemaHealthModule({ token }) {
                 <div className="text-xs text-muted-foreground">Skema {k}</div>
                 <div className="text-xs">{SCHEMA_LABEL[k]}</div>
               </div>
-              <div className={`text-xl font-bold ${k === 'A' ? 'text-emerald-600 dark:text-emerald-400' : (health?.by_schema?.[k] ? 'text-amber-700 dark:text-amber-400' : 'text-muted-foreground')}`}>
+              <div className={`text-xl font-bold ${k === 'A' ? 'text-[hsl(var(--success))] ' : (health?.by_schema?.[k] ? 'text-[hsl(var(--warning))] ' : 'text-muted-foreground')}`}>
                 {fmtNum(health?.by_schema?.[k])}
               </div>
             </div>
@@ -279,7 +279,7 @@ export default function StockSchemaHealthModule({ token }) {
                       data-testid={`stock-loc-${l.location_id}`}>
                       <td className="px-3 py-2">
                         <div className="font-medium">{l.name || l.code || l.location_id}</div>
-                        <div className="text-xs text-muted-foreground font-mono">{l.code || l.location_id}</div>
+                        <div className="text-xs text-muted-foreground tabular-nums">{l.code || l.location_id}</div>
                       </td>
                       <td className="px-3 py-2">
                         <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${badge.cls}`}>
@@ -296,7 +296,7 @@ export default function StockSchemaHealthModule({ token }) {
           </div>
         )}
         {unmappedLocations.length > 0 && (
-          <div className="mt-3 text-xs text-amber-700 dark:text-amber-400" data-testid="stock-loc-unmapped-note">
+          <div className="mt-3 text-xs text-[hsl(var(--warning))] " data-testid="stock-loc-unmapped-note">
             {unmappedLocations.length} lokasi bukan zona penyimpanan. Rekonsiliasi akan memindahkan
             barisnya ke zona kanonik sesuai kategori material (total stok tidak berubah).
           </div>
@@ -315,22 +315,22 @@ export default function StockSchemaHealthModule({ token }) {
 
       {/* Status + aksi */}
       {health?.healthy ? (
-        <div className="bg-emerald-100 dark:bg-emerald-500/5 border border-emerald-300 dark:border-emerald-500/20 rounded-xl p-4 flex items-start gap-3"
+        <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 flex items-start gap-3"
           data-testid="stock-schema-healthy">
-          <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 mt-0.5" />
+          <CheckCircle2 className="w-5 h-5 text-[hsl(var(--success))] mt-0.5" />
           <div>
-            <div className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Skema stok sehat</div>
+            <div className="text-sm font-medium text-[hsl(var(--success))] ">Skema stok sehat</div>
             <div className="text-xs text-muted-foreground mt-0.5">
               Semua {fmtNum(health?.total_rows)} baris memakai bentuk kanonik. Tidak ada tindakan yang diperlukan.
             </div>
           </div>
         </div>
       ) : (
-        <div className="bg-amber-100 dark:bg-amber-500/5 border border-amber-300 dark:border-amber-500/20 rounded-xl p-4"
+        <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-4"
           data-testid="stock-schema-issues">
           <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="w-4 h-4 text-amber-700 dark:text-amber-400" />
-            <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+            <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] " />
+            <span className="text-sm font-medium text-[hsl(var(--warning))] ">
               {fmtNum(health?.affected_rows)} baris perlu perhatian
             </span>
           </div>
@@ -338,13 +338,13 @@ export default function StockSchemaHealthModule({ token }) {
             {issueRows.map((k) => (
               <div key={k} className="flex items-start gap-3 text-xs" data-testid={`issue-${k}`}>
                 <span className={`shrink-0 px-2 py-0.5 rounded-full font-medium ${reportOnly.includes(k)
-                  ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-                  : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>
+                  ? 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] '
+                  : 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] '}`}>
                   {fmtNum(counts[k])}
                 </span>
                 <div>
                   <div className="font-medium">{labels[k] || k}
-                    {reportOnly.includes(k) && <span className="ml-2 text-red-700 dark:text-red-400">· perlu keputusan manual</span>}
+                    {reportOnly.includes(k) && <span className="ml-2 text-[hsl(var(--destructive))] ">· perlu keputusan manual</span>}
                   </div>
                   <div className="text-muted-foreground">{hints[k]}</div>
                 </div>
@@ -381,7 +381,7 @@ export default function StockSchemaHealthModule({ token }) {
 
       {/* Konfirmasi terapkan */}
       {confirmApply && (
-        <div className="bg-[var(--card-surface)] border-2 border-amber-500/40 rounded-xl p-4" data-testid="stock-schema-confirm">
+        <div className="bg-[var(--card-surface)] border-2 border-[hsl(var(--warning)/0.4)] rounded-xl p-4" data-testid="stock-schema-confirm">
           <div className="text-sm font-medium mb-1">Terapkan rekonsiliasi sekarang?</div>
           <p className="text-xs text-muted-foreground mb-3">
             Bentuk baris stok akan dinormalkan, baris yang berada di luar zona penyimpanan
@@ -420,9 +420,9 @@ export default function StockSchemaHealthModule({ token }) {
               <ul className="space-y-1 text-xs text-muted-foreground max-h-48 overflow-y-auto">
                 {(plan.relocations || []).map((r) => (
                   <li key={r.row_id} className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono">{r.from_location_code || r.from_location_id}</span>
+                    <span className="tabular-nums">{r.from_location_code || r.from_location_id}</span>
                     <ArrowRight className="w-3 h-3" />
-                    <span className="font-mono text-foreground">{r.to_location_code || r.to_location_id}</span>
+                    <span className="tabular-nums text-foreground">{r.to_location_code || r.to_location_id}</span>
                     <span className="ml-1">· {fmtNum(r.qty)}</span>
                   </li>
                 ))}
@@ -430,7 +430,7 @@ export default function StockSchemaHealthModule({ token }) {
             </div>
           )}
           {plan.summary?.unresolved_location > 0 && (
-            <div className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+            <div className="mt-3 text-xs text-[hsl(var(--warning))] ">
               Sebagian baris tanpa lokasi belum bisa diselesaikan karena zona penyimpanan kanonik belum ada —
               buat dulu di menu Struktur Gudang.
             </div>
@@ -463,28 +463,28 @@ export default function StockSchemaHealthModule({ token }) {
               <tr key={d.row_id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`schema-row-${d.row_id}`}>
                 <td className="px-4 py-2.5">
                   <div className="font-medium">{d.material_name}</div>
-                  <div className="text-xs text-muted-foreground font-mono">{d.material_code || d.material_id}</div>
+                  <div className="text-xs text-muted-foreground tabular-nums">{d.material_code || d.material_id}</div>
                 </td>
                 <td className="px-4 py-2.5 text-center">
                   <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${d.schema === 'A'
-                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>{d.schema}</span>
+                    ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] '
+                    : 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] '}`}>{d.schema}</span>
                 </td>
                 <td className="px-4 py-2.5 text-xs">
                   {d.location_id || d.nested_location_id ? (
                     <>
-                      <div className="font-mono">{d.location_code || d.location_id || d.nested_location_id}</div>
+                      <div className="tabular-nums">{d.location_code || d.location_id || d.nested_location_id}</div>
                       {d.location_name && d.location_name !== d.location_code && (
                         <div className="text-muted-foreground">{d.location_name}</div>
                       )}
                     </>
                   ) : (
-                    <span className="text-amber-700 dark:text-amber-400">tanpa lokasi</span>
+                    <span className="text-[hsl(var(--warning))] ">tanpa lokasi</span>
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-xs" data-testid={`schema-suggest-${d.row_id}`}>
                   {d.suggested_location_code ? (
-                    <span className="inline-flex items-center gap-1 font-mono text-emerald-700 dark:text-emerald-400">
+                    <span className="inline-flex items-center gap-1 tabular-nums text-[hsl(var(--success))] ">
                       <ArrowRight className="w-3 h-3" /> {d.suggested_location_code}
                     </span>
                   ) : <span className="text-muted-foreground">—</span>}
@@ -496,8 +496,8 @@ export default function StockSchemaHealthModule({ token }) {
                     {(d.issues || []).map((i) => (
                       <span key={i} title={labels[i] || i}
                         className={`px-2 py-0.5 rounded-full text-[10px] ${reportOnly.includes(i)
-                          ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-                          : 'bg-amber-500/10 text-amber-700 dark:text-amber-400'}`}>{i}</span>
+                          ? 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] '
+                          : 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] '}`}>{i}</span>
                     ))}
                   </div>
                 </td>
@@ -548,7 +548,7 @@ export default function StockSchemaHealthModule({ token }) {
                   {l.rolled_back_at ? (
                     <span className="px-2 py-0.5 rounded-full text-xs bg-muted text-muted-foreground">sudah di-rollback</span>
                   ) : (
-                    <span className="px-2 py-0.5 rounded-full text-xs bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">aktif</span>
+                    <span className="px-2 py-0.5 rounded-full text-xs bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] ">aktif</span>
                   )}
                 </td>
                 <td className="px-4 py-2.5 text-right">

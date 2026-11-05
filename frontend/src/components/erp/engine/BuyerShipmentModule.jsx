@@ -1,7 +1,11 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Plus, Eye, Trash2, Package, CheckCircle, Clock, TruckIcon, Download, ChevronDown, ChevronRight, History, ClipboardCheck, ClipboardList, BarChart3, ListChecks } from 'lucide-react';
+import { Plus, Eye, Trash2, Package, CheckCircle, Clock, TruckIcon, Download, ChevronDown, ChevronRight, History, ClipboardCheck, ClipboardList, BarChart3, ListChecks, RefreshCw } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 import { toast } from 'sonner';
 import DataTable from './DataTable';
 import Modal from './Modal';
@@ -663,29 +667,29 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     ) },
     { key: 'shipment_number', label: 'No. Shipment', render: (v, row) => (
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-bold text-blue-700 whitespace-nowrap">{v}</span>
+        <span className="font-bold text-[hsl(var(--primary))] whitespace-nowrap">{v}</span>
         <BizBadge type={row.business_type} size="xs" />
         {/* FASE 22 (keluhan #6): bedakan surat jalan GABUNGAN dan deklarasi
             vendor→DA. Dulu semuanya tampak sama dan kolom No. PO kosong pada
             surat jalan gabungan sehingga isinya tak bisa ditebak. */}
         {row.is_consolidated && (
-          <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 text-[10px] font-bold whitespace-nowrap"
+          <span className="px-1.5 py-0.5 rounded bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-[10px] font-bold whitespace-nowrap"
             title={`Gabungan ${(row.po_numbers || []).length} PO`}>GABUNGAN</span>
         )}
         {row.receiver_type === 'da' && (
-          <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold whitespace-nowrap"
+          <span className="px-1.5 py-0.5 rounded bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] text-[10px] font-bold whitespace-nowrap"
             title="Deklarasi kirim dari vendor CMT ke DA (bukan pengiriman ke buyer)">VENDOR → DA</span>
         )}
       </div>
     ) },
     { key: 'po_number', label: 'No. PO', render: (v, row) => {
       const nums = row.po_numbers && row.po_numbers.length ? row.po_numbers : (v ? [v] : []);
-      if (nums.length === 0) return <span className="font-mono text-xs text-muted-foreground">-</span>;
-      if (nums.length === 1) return <span className="font-mono text-xs text-foreground/90">{nums[0]}</span>;
+      if (nums.length === 0) return <span className="tabular-nums text-xs text-muted-foreground">-</span>;
+      if (nums.length === 1) return <span className="tabular-nums text-xs text-foreground/90">{nums[0]}</span>;
       return (
         <div className="text-xs">
-          <div className="font-semibold text-purple-700 whitespace-nowrap">{nums.length} PO (gabungan)</div>
-          <div className="font-mono text-[11px] text-muted-foreground break-words">{nums.join(', ')}</div>
+          <div className="font-semibold text-[hsl(var(--primary))] whitespace-nowrap">{nums.length} PO (gabungan)</div>
+          <div className="tabular-nums text-[11px] text-muted-foreground break-words">{nums.join(', ')}</div>
         </div>
       );
     } },
@@ -702,10 +706,10 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         <div className="min-w-[180px]">
           <div className="flex items-center justify-between text-xs mb-1">
             <span className="font-bold text-foreground/90">{fmtNum(totalShipped)} / {fmtNum(totalOrdered)} pcs</span>
-            <span className="font-bold text-blue-600">{progressPct}%</span>
+            <span className="font-bold text-[hsl(var(--primary))]">{progressPct}%</span>
           </div>
           <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
-            <div className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-emerald-500' : progressPct > 0 ? 'bg-blue-500' : 'bg-muted'}`}
+            <div className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-[hsl(var(--success))]' : progressPct > 0 ? 'bg-[hsl(var(--primary))]' : 'bg-muted'}`}
               style={{ width: `${Math.min(progressPct, 100)}%` }} />
           </div>
           <div className="flex items-center justify-between text-[10px] text-muted-foreground/70 mt-0.5">
@@ -717,29 +721,29 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     }},
     { key: 'status', label: 'Status', render: (_, row) => {
       const pct = row.progress_pct || 0;
-      const s = pct >= 100 ? 'Fully Shipped' : pct > 0 ? 'Partially Shipped' : 'Pending';
-      const color = s === 'Fully Shipped' ? 'bg-emerald-100 text-emerald-700' : 
-                    s === 'Partially Shipped' ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground';
+      const s = pct >= 100 ? 'Terkirim penuh' : pct > 0 ? 'Terkirim sebagian' : 'Menunggu';
+      const color = s === 'Terkirim penuh' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 
+                    s === 'Terkirim sebagian' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-muted text-muted-foreground';
       return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${color}`}>{s}</span>;
     }},
     { key: 'actions', label: 'Aksi', render: (_, row) => (
       <div className="flex items-center gap-1">
         {canEdit && (row.progress_pct || 0) < 100 && (
           <button onClick={(e) => { e.stopPropagation(); openContinueModal(row); }}
-            className="px-2 py-1 rounded bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700 whitespace-nowrap flex items-center gap-1"
+            className="px-2 py-1 rounded bg-[hsl(var(--primary))] text-white text-[11px] font-semibold hover:bg-[hsl(var(--primary)/0.9)] whitespace-nowrap flex items-center gap-1"
             data-testid={`continue-dispatch-${row.shipment_number}`}
             title="Kirim sisa pada surat jalan INI (dispatch lanjutan, nomor tidak berubah)">
             <Plus className="w-3 h-3" /> Dispatch
           </button>
         )}
-        <button onClick={() => openDetail(row)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Detail">
+        <button onClick={() => openDetail(row)} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Detail">
           <Eye className="w-4 h-4" />
         </button>
-        <button onClick={() => downloadPDF(row)} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600" title="Cetak Surat Jalan (PDF)" data-testid="buyer-shipment-print-sj">
+        <button onClick={() => downloadPDF(row)} className="p-1.5 rounded hover:bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]" title="Cetak Surat Jalan (PDF)" data-testid="buyer-shipment-print-sj">
           <Download className="w-4 h-4" />
         </button>
         {canCreate && (
-          <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-red-50 text-red-500" title="Hapus">
+          <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]" title="Hapus">
             <Trash2 className="w-4 h-4" />
           </button>
         )}
@@ -762,8 +766,8 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           <p className="text-xs text-muted-foreground">Memuat rincian konsolidasi…</p>
         )}
         {poBreak.length > 0 && (
-          <div className="bg-card rounded-lg border border-purple-200 overflow-hidden">
-            <div className="px-4 py-2 bg-purple-50 border-b border-purple-100 text-xs font-semibold text-purple-800">
+          <div className="bg-card rounded-lg border border-[hsl(var(--primary)/0.35)] overflow-hidden">
+            <div className="px-4 py-2 bg-[hsl(var(--primary)/0.1)] border-b border-[hsl(var(--primary)/0.35)] text-xs font-semibold text-[hsl(var(--primary))]">
               Rincian per PO {poBreak.length > 1 ? `(surat jalan GABUNGAN — ${poBreak.length} PO)` : ''}
             </div>
             <div className="max-w-full overflow-x-auto">
@@ -779,10 +783,10 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 <tbody className="divide-y divide-border/40">
                   {poBreak.map((p, i) => (
                     <tr key={p.po_id || i}>
-                      <td className="px-3 py-1.5 font-mono text-blue-700 whitespace-nowrap">{p.po_number || '-'}</td>
+                      <td className="px-3 py-1.5 tabular-nums text-[hsl(var(--primary))] whitespace-nowrap">{p.po_number || '-'}</td>
                       <td className="px-3 py-1.5 text-foreground/90">{p.customer_name || p.buyer_name || '-'}</td>
                       <td className="px-3 py-1.5 text-right text-muted-foreground">{fmtNum(p.line_count ?? p.item_count ?? (p.items || []).length)}</td>
-                      <td className="px-3 py-1.5 text-right font-bold text-emerald-700">{fmtNum(p.qty_shipped)} pcs</td>
+                      <td className="px-3 py-1.5 text-right font-bold text-[hsl(var(--success))]">{fmtNum(p.qty_shipped)} pcs</td>
                     </tr>
                   ))}
                 </tbody>
@@ -791,11 +795,11 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           </div>
         )}
         {srcReceipts.length > 0 && (
-          <div className="bg-card rounded-lg border border-emerald-200 p-3">
-            <p className="text-xs font-semibold text-emerald-800 mb-1.5">Sumber Penerimaan CMT ({srcReceipts.length})</p>
+          <div className="bg-card rounded-lg border border-[hsl(var(--success)/0.35)] p-3">
+            <p className="text-xs font-semibold text-[hsl(var(--success))] mb-1.5">Sumber Penerimaan CMT ({srcReceipts.length})</p>
             <div className="flex flex-wrap gap-1.5">
               {srcReceipts.map((r, i) => (
-                <span key={r.id || i} className="px-2 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-[11px] font-mono text-emerald-800 whitespace-nowrap">
+                <span key={r.id || i} className="px-2 py-0.5 rounded bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] text-[11px] tabular-nums text-[hsl(var(--success))] whitespace-nowrap">
                   {r.receipt_code || r.id} {r.po_number ? `· ${r.po_number}` : ''}
                 </span>
               ))}
@@ -803,22 +807,22 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           </div>
         )}
         {(childShips.length > 0 || parentShip) && (
-          <div className="bg-card rounded-lg border border-blue-200 p-3">
+          <div className="bg-card rounded-lg border border-[hsl(var(--primary)/0.35)] p-3">
             {parentShip && (
-              <p className="text-xs text-blue-800 mb-1.5">
+              <p className="text-xs text-[hsl(var(--primary))] mb-1.5">
                 Bagian dari surat jalan induk:{' '}
-                <span className="font-mono font-semibold">{parentShip.shipment_number}</span>
+                <span className="tabular-nums font-semibold">{parentShip.shipment_number}</span>
               </p>
             )}
             {childShips.length > 0 && (
               <>
-                <p className="text-xs font-semibold text-blue-800 mb-1.5">Child Shipment ({childShips.length})</p>
+                <p className="text-xs font-semibold text-[hsl(var(--primary))] mb-1.5">Child Shipment ({childShips.length})</p>
                 <div className="space-y-1">
                   {childShips.map((c, i) => (
-                    <div key={c.id || i} className="flex items-center justify-between gap-2 text-[11px] bg-blue-50/60 rounded px-2 py-1">
-                      <span className="font-mono font-semibold text-blue-800 whitespace-nowrap">{c.shipment_number}</span>
+                    <div key={c.id || i} className="flex items-center justify-between gap-2 text-[11px] bg-[hsl(var(--primary)/0.6)] rounded px-2 py-1">
+                      <span className="tabular-nums font-semibold text-[hsl(var(--primary))] whitespace-nowrap">{c.shipment_number}</span>
                       <span className="text-muted-foreground">{c.po_number || '-'}</span>
-                      <span className="font-semibold text-emerald-700 whitespace-nowrap">
+                      <span className="font-semibold text-[hsl(var(--success))] whitespace-nowrap">
                         {fmtNum((c.items || []).reduce((s, x) => s + (x.qty_shipped || 0), 0))} pcs
                       </span>
                     </div>
@@ -838,9 +842,10 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
 
     if (!row.items || row.items.length === 0) {
       return (
-        <div className="bg-blue-50/30 border-t border-blue-100 px-6 py-3">
+        <div className="bg-[hsl(var(--primary)/0.3)] border-t border-[hsl(var(--primary)/0.35)] px-6 py-3">
           {consolidationPanel}
-          <p className="text-xs text-muted-foreground">Belum ada item pada surat jalan ini.</p>
+          <EmptyState icon={Package} title="Belum ada item pada surat jalan ini"
+            description="Tambahkan dispatch ke surat jalan ini untuk mencatat barang yang dikirim." />
         </div>
       );
     }
@@ -866,9 +871,9 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
     const fmtRp = (v) => 'Rp ' + Math.round(v || 0).toLocaleString('id-ID');
     
     return (
-      <div className="bg-blue-50/30 border-t border-blue-100 px-6 py-3">
+      <div className="bg-[hsl(var(--primary)/0.3)] border-t border-[hsl(var(--primary)/0.35)] px-6 py-3">
         {consolidationPanel}
-        <p className="text-xs font-semibold text-blue-700 mb-3 uppercase tracking-wide flex items-center gap-1.5">
+        <p className="text-xs font-semibold text-[hsl(var(--primary))] mb-3 uppercase tracking-wide flex items-center gap-1.5">
           <History className="w-3.5 h-3.5" /> Riwayat Dispatch ({dispatches.length} round)
         </p>
         <div className="space-y-3">
@@ -880,20 +885,20 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               <div key={d.dispatch_seq} className="bg-card rounded-lg border border-border overflow-hidden">
                 <div className="flex items-center justify-between px-4 py-2 bg-muted/40 border-b border-border/60">
                   <div className="flex items-center gap-3">
-                    <span className="w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center">#{d.dispatch_seq}</span>
+                    <span className="w-7 h-7 rounded-full bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-xs font-bold flex items-center justify-center">#{d.dispatch_seq}</span>
                     <div>
                       <p className="text-sm font-semibold text-foreground/90">Dispatch #{d.dispatch_seq}</p>
                       <p className="text-[10px] text-muted-foreground/70">{fmtDate(d.dispatch_date)}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm font-bold text-emerald-700">+{fmtNum(d.total_qty)} pcs</p>
+                    <p className="text-sm font-bold text-[hsl(var(--success))]">+{fmtNum(d.total_qty)} pcs</p>
                     <p className="text-[10px] text-muted-foreground/70">Kumulatif: {fmtNum(cumulativeTotal)} / {fmtNum(row.total_ordered || 0)} pcs</p>
                     {dCogs > 0 && (
-                      <p className="text-[10px] text-indigo-700 font-semibold" data-testid={`dispatch-cogs-${d.dispatch_seq}`}>
+                      <p className="text-[10px] text-[hsl(var(--primary))] font-semibold" data-testid={`dispatch-cogs-${d.dispatch_seq}`}>
                         HPP batch keluar: {fmtRp(dCogs)}
                         {dUncosted > 0 && (
-                          <span className="ml-1 text-amber-700">· {fmtNum(dUncosted)} pcs belum berbiaya</span>
+                          <span className="ml-1 text-[hsl(var(--warning))]">· {fmtNum(dUncosted)} pcs belum berbiaya</span>
                         )}
                       </p>
                     )}
@@ -902,7 +907,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border/60">
-                      <th className="text-left py-1.5 px-3 text-amber-700 font-semibold">Serial</th>
+                      <th className="text-left py-1.5 px-3 text-[hsl(var(--warning))] font-semibold">Serial</th>
                       <th className="text-left py-1.5 px-3 text-muted-foreground">SKU</th>
                       <th className="text-left py-1.5 px-3 text-muted-foreground">Produk</th>
                       <th className="text-left py-1.5 px-3 text-muted-foreground">Size/Warna</th>
@@ -912,12 +917,12 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   </thead>
                   <tbody className="divide-y divide-border/40">
                     {d.items.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-blue-50/30">
-                        <td className="py-1.5 px-3 font-mono text-amber-700 font-semibold">{item.serial_number || '—'}</td>
-                        <td className="py-1.5 px-3 font-mono text-blue-700">{item.sku || '-'}</td>
+                      <tr key={item.id || idx} className="hover:bg-[hsl(var(--primary)/0.3)]">
+                        <td className="py-1.5 px-3 tabular-nums text-[hsl(var(--warning))] font-semibold">{item.serial_number || '—'}</td>
+                        <td className="py-1.5 px-3 tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'}</td>
                         <td className="py-1.5 px-3 text-foreground/90">{item.product_name}</td>
                         <td className="py-1.5 px-3 text-muted-foreground">{item.size || '-'}/{item.color || '-'}</td>
-                        <td className="py-1.5 px-3 text-right font-bold text-emerald-700">{fmtNum(item.qty_shipped)} pcs</td>
+                        <td className="py-1.5 px-3 text-right font-bold text-[hsl(var(--success))]">{fmtNum(item.qty_shipped)} pcs</td>
                         <td className="py-1.5 px-3 text-right" data-testid={`item-cogs-${item.id || idx}`}>
                           {Number(item.fg_cogs || 0) <= 0 ? (
                             <span className="text-muted-foreground/60" title={item.fg_cogs == null
@@ -926,10 +931,10 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                               {item.fg_cogs == null ? '—' : 'belum berbiaya'}
                             </span>
                           ) : (
-                            <span className="font-semibold text-indigo-700">{fmtRp(item.fg_cogs)}</span>
+                            <span className="font-semibold text-[hsl(var(--primary))]">{fmtRp(item.fg_cogs)}</span>
                           )}
                           {Number(item.fg_cogs_uncosted_qty || 0) > 0 && (
-                            <span className="block text-[10px] text-amber-700">
+                            <span className="block text-[10px] text-[hsl(var(--warning))]">
                               {fmtNum(item.fg_cogs_uncosted_qty)} pcs tanpa lapisan biaya
                             </span>
                           )}
@@ -943,9 +948,9 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           })}
         </div>
         {/* Summary bar */}
-        <div className="mt-3 bg-blue-100 rounded-lg p-3 flex items-center justify-between">
-          <span className="text-xs font-semibold text-blue-800">Total Kumulatif</span>
-          <span className="text-sm font-bold text-blue-800">{fmtNum(cumulativeTotal)} / {fmtNum(row.total_ordered || 0)} pcs ({row.progress_pct || 0}%)</span>
+        <div className="mt-3 bg-[hsl(var(--primary)/0.15)] rounded-lg p-3 flex items-center justify-between">
+          <span className="text-xs font-semibold text-[hsl(var(--primary))]">Total Kumulatif</span>
+          <span className="text-sm font-bold text-[hsl(var(--primary))]">{fmtNum(cumulativeTotal)} / {fmtNum(row.total_ordered || 0)} pcs ({row.progress_pct || 0}%)</span>
         </div>
       </div>
     );
@@ -977,7 +982,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
   const partialShipped = filteredShipments.filter(s => (s.progress_pct || 0) > 0 && (s.progress_pct || 0) < 100).length;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -993,34 +998,34 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             )}
           </p>
         </div>
-        {isSuperAdmin && <span className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium"><span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>Mode Superadmin</span>}
+        {isSuperAdmin && <span className="flex items-center gap-1.5 px-2.5 py-1 bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] rounded-lg text-xs font-medium"><span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))]"></span>Mode Superadmin</span>}
       </div>
 
-      {/* Tab toggle */}
-      <div className="flex items-center gap-1 border-b border-border">
-        <button onClick={() => setViewMode('list')} data-testid="tab-shipment-list"
-          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px ${viewMode === 'list' ? 'border-blue-600 text-blue-700' : 'border-transparent text-muted-foreground hover:text-foreground/90'}`}>
-          <ListChecks className="w-4 h-4" /> Daftar Pengiriman
-        </button>
-        <button onClick={() => setViewMode('variance')} data-testid="tab-receipt-variance"
-          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px ${viewMode === 'variance' ? 'border-blue-600 text-blue-700' : 'border-transparent text-muted-foreground hover:text-foreground/90'}`}>
-          <BarChart3 className="w-4 h-4" /> Laporan Selisih Terima
-        </button>
-        {/* FASE E — DAFTAR KEKURANGAN KIRIM. Sengaja TAB di layar ini, bukan menu
-            baru: pekerjaannya sama (mengirim ke buyer), hanya sudut pandangnya
-            "apa yang belum" bukan "apa yang sudah". */}
-        <button onClick={() => { setViewMode('outstanding'); loadOutstanding(); }} data-testid="tab-dispatch-outstanding"
-          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px ${viewMode === 'outstanding' ? 'border-blue-600 text-blue-700' : 'border-transparent text-muted-foreground hover:text-foreground/90'}`}>
-          <ClipboardList className="w-4 h-4" /> Kekurangan Kirim
-          {outstanding.totals?.items > 0 && (
-            <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">{outstanding.totals.items}</span>
-          )}
-        </button>
-      </div>
+      {/* Pilihan tampilan — PANDUAN_UI G4 (2026-11-05): FilterChips bersama, dulu deret tombol bergaris bawah.
+          Kunci pil dipilih supaya data-testid tetap `tab-shipment-list` dst.
+          FASE E — DAFTAR KEKURANGAN KIRIM sengaja tampilan di layar ini, bukan menu baru: pekerjaannya
+          sama (mengirim ke buyer), hanya sudut pandangnya "apa yang belum" bukan "apa yang sudah". */}
+      <FilterChips
+        testId="tab"
+        ariaLabel="Tampilan"
+        hideWhenEmpty={false}
+        value={{ list: 'shipment-list', variance: 'receipt-variance', outstanding: 'dispatch-outstanding' }[viewMode]}
+        onChange={(k) => {
+          const mode = { 'shipment-list': 'list', 'receipt-variance': 'variance', 'dispatch-outstanding': 'outstanding' }[k];
+          setViewMode(mode);
+          if (mode === 'outstanding') loadOutstanding();
+        }}
+        options={[
+          { key: 'shipment-list', label: 'Daftar Pengiriman', icon: ListChecks },
+          { key: 'receipt-variance', label: 'Laporan Selisih Terima', icon: BarChart3 },
+          { key: 'dispatch-outstanding', label: 'Kekurangan Kirim', icon: ClipboardList,
+            count: outstanding.totals?.items > 0 ? outstanding.totals.items : undefined },
+        ]}
+      />
 
       {viewMode === 'outstanding' ? (
         <div className="space-y-4" data-testid="dispatch-outstanding-panel">
-          <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+          <GlassCard className="p-4 space-y-3">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="text-lg font-semibold text-foreground">Kekurangan Kirim ke Buyer</h2>
@@ -1041,15 +1046,14 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                     onChange={e => { setOutShowSettled(e.target.checked); loadOutstanding(outBuyer, e.target.checked); }} />
                   Tampilkan yang sudah lunas
                 </label>
-                <button type="button" onClick={() => loadOutstanding()} data-testid="outstanding-refresh"
-                  className="px-3 py-1.5 text-sm rounded-lg border border-border text-foreground/80 hover:bg-muted transition-colors">
-                  Muat ulang
-                </button>
-                <button type="button" onClick={exportOutstandingCSV} data-testid="outstanding-export-csv"
-                  disabled={!outstanding.items?.length}
-                  className="px-3 py-1.5 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5">
+                <Button type="button" variant="outline" size="icon" onClick={() => loadOutstanding()} data-testid="outstanding-refresh"
+                  title="Muat ulang" aria-label="Muat ulang">
+                  <RefreshCw className={`w-4 h-4 ${outLoading ? 'animate-spin' : ''}`} />
+                </Button>
+                <Button type="button" variant="outline" onClick={exportOutstandingCSV} data-testid="outstanding-export-csv"
+                  disabled={!outstanding.items?.length}>
                   <Download className="w-3.5 h-3.5" /> Unduh CSV
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -1061,25 +1065,21 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   { label: 'Sudah Dikirim', value: outstanding.totals.dispatched, testid: 'outstanding-kpi-dispatched' },
                   { label: 'Siap Dikirim Sekarang', value: outstanding.totals.shippable, testid: 'outstanding-kpi-shippable' },
                 ].map(k => (
-                  <div key={k.label} className="rounded-lg border border-border bg-muted/30 px-3 py-2">
-                    <div className="text-[11px] text-muted-foreground">{k.label}</div>
-                    <div className="text-lg font-bold text-foreground" data-testid={k.testid}>{fmtNum(k.value)}</div>
-                  </div>
+                  <StatTile key={k.label} label={k.label} value={fmtNum(k.value)} testId={k.testid} />
                 ))}
               </div>
             )}
-          </div>
+          </GlassCard>
 
           {/* ── PAPAN SISA KIRIM PER PO ─────────────────────────────────────── */}
           {!outLoading && poBoard.length > 0 && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50/40 overflow-hidden"
-              data-testid="outstanding-po-board">
-              <div className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap border-b border-blue-200 bg-blue-50">
-                <h3 className="text-sm font-semibold text-blue-900 flex items-center gap-1.5">
+            <GlassCard className="overflow-hidden" data-testid="outstanding-po-board">
+              <div className="px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap border-b border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)]">
+                <h3 className="text-sm font-semibold text-[hsl(var(--primary))] flex items-center gap-1.5">
                   <ListChecks className="w-4 h-4" /> Papan Sisa Kirim per PO
-                  <span className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-bold">{poBoard.length}</span>
+                  <span className="px-1.5 py-0.5 rounded-full bg-[hsl(var(--primary))] text-white text-[10px] font-bold">{poBoard.length}</span>
                 </h3>
-                <p className="text-[11px] text-blue-800/80">
+                <p className="text-[11px] text-[hsl(var(--primary)/0.8)]">
                   Satu baris = satu PO. Tombol dispatch <strong>melanjutkan surat jalan yang belum 100%</strong>
                   {' '}(nomor tidak berubah); kalau PO belum punya surat jalan, form terbuka dengan PO itu terpilih.
                 </p>
@@ -1101,16 +1101,16 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   </thead>
                   <tbody>
                     {poBoard.map(g => (
-                      <tr key={g.key} className="border-t border-blue-100 bg-card/40 hover:bg-card/80 transition-colors"
+                      <tr key={g.key} className="border-t border-[hsl(var(--primary)/0.35)] bg-card/40 hover:bg-card/80 transition-colors"
                         data-testid={`po-board-row-${g.po_number}`}>
-                        <td className="px-3 py-2 font-mono text-xs text-blue-700 font-semibold">{g.po_number}</td>
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))] font-semibold">{g.po_number}</td>
                         <td className="px-3 py-2 text-foreground/90">{g.buyer || '-'}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{fmtNum(g.ordered)}</td>
-                        <td className="px-3 py-2 text-right text-amber-700">{fmtNum(g.dispatched)}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{fmtNum(g.dispatched)}</td>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
                             <div className="flex-1 h-1.5 rounded-full bg-border overflow-hidden">
-                              <div className="h-full bg-blue-600 rounded-full" style={{ width: `${g.pct}%` }} />
+                              <div className="h-full bg-[hsl(var(--primary))] rounded-full" style={{ width: `${g.pct}%` }} />
                             </div>
                             <span className="text-[11px] text-muted-foreground w-9 text-right">{g.pct}%</span>
                           </div>
@@ -1118,12 +1118,12 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                         <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtNum(g.remaining)}</td>
                         <td className="px-3 py-2 text-right">
                           {g.shippable > 0
-                            ? <span className="font-bold text-emerald-700" data-testid={`po-board-shippable-${g.po_number}`}>{fmtNum(g.shippable)}</span>
+                            ? <span className="font-bold text-[hsl(var(--success))]" data-testid={`po-board-shippable-${g.po_number}`}>{fmtNum(g.shippable)}</span>
                             : <span className="text-xs text-muted-foreground">belum ada barang</span>}
                         </td>
-                        <td className="px-3 py-2 font-mono text-xs">
+                        <td className="px-3 py-2 tabular-nums text-xs">
                           {g.openShip
-                            ? <span className="text-blue-700">{g.openShip.shipment_number} <span className="text-muted-foreground">({g.openShip.progress_pct || 0}%)</span></span>
+                            ? <span className="text-[hsl(var(--primary))]">{g.openShip.shipment_number} <span className="text-muted-foreground">({g.openShip.progress_pct || 0}%)</span></span>
                             : <span className="text-muted-foreground/70">belum ada</span>}
                         </td>
                         <td className="px-3 py-2 text-right">
@@ -1134,7 +1134,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                               title={g.shippable > 0
                                 ? (g.openShip ? `Tambah dispatch ke ${g.openShip.shipment_number}` : 'Buat surat jalan pertama untuk PO ini')
                                 : 'Barang belum diterima dari CMT'}
-                              className="px-2.5 py-1 rounded-lg bg-blue-600 text-white text-[11px] font-semibold hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 whitespace-nowrap">
+                              className="px-2.5 py-1 rounded-lg bg-[hsl(var(--primary))] text-white text-[11px] font-semibold hover:bg-[hsl(var(--primary)/0.9)] disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1 whitespace-nowrap">
                               <Plus className="w-3 h-3" /> {g.openShip ? 'Lanjut Dispatch' : 'Dispatch Baru'}
                             </button>
                           )}
@@ -1144,7 +1144,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   </tbody>
                 </table>
               </div>
-            </div>
+            </GlassCard>
           )}
 
           {outLoading ? (
@@ -1153,13 +1153,13 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 <div key={i} className="h-11 rounded-lg bg-muted animate-pulse" />
               ))}
             </div>
-          ) : (outstanding.items || []).length === 0 ? (            <div className="rounded-xl border border-border bg-card py-12 text-center" data-testid="outstanding-empty">
-              <CheckCircle className="w-10 h-10 mx-auto mb-3 text-emerald-600 opacity-60" />
-              <p className="text-sm text-foreground/80 font-medium">Tidak ada kekurangan kirim.</p>
-              <p className="text-xs text-muted-foreground mt-1">Semua item sudah terkirim penuh ke buyer.</p>
-            </div>
+          ) : (outstanding.items || []).length === 0 ? (
+            <GlassCard>
+              <EmptyState icon={CheckCircle} testId="outstanding-empty" title="Tidak ada kekurangan kirim"
+                description="Semua item sudah terkirim penuh ke buyer." />
+            </GlassCard>
           ) : (
-            <div className="overflow-x-auto rounded-xl border border-border bg-card">
+            <GlassCard className="overflow-x-auto">
               <table className="w-full text-sm" data-testid="outstanding-table">
                 <thead className="bg-muted/40">
                   <tr>
@@ -1181,23 +1181,23 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   {outstanding.items.map(r => (
                     <tr key={r.key} className="border-t border-border/60 hover:bg-muted/20 transition-colors"
                       data-testid={`outstanding-row-${r.sku || r.key}`}>
-                      <td className="px-3 py-2 font-mono text-xs text-blue-700">{r.po_number || '-'}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{r.po_number || '-'}</td>
                       <td className="px-3 py-2 text-foreground/90">{r.buyer || '-'}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-blue-600">{r.sku || '-'}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{r.sku || '-'}</td>
                       <td className="px-3 py-2 text-foreground/90">{r.product_name || '-'}</td>
                       <td className="px-3 py-2 text-muted-foreground">{r.size || '-'}/{r.color || '-'}</td>
                       <td className="px-3 py-2 text-right text-muted-foreground">{fmtNum(r.ordered)}</td>
                       <td className="px-3 py-2 text-right text-foreground/80">
                         {r.source === 'internal'
-                          ? <span title="Hasil produksi internal">{fmtNum(r.internal_produced)} <span className="text-[10px] text-blue-700 font-semibold">produksi</span></span>
+                          ? <span title="Hasil produksi internal">{fmtNum(r.internal_produced)} <span className="text-[10px] text-[hsl(var(--primary))] font-semibold">produksi</span></span>
                           : <span title="Lolos QC penerimaan dari CMT">{fmtNum(r.good_from_cmt)} <span className="text-[10px] text-muted-foreground">QC</span></span>}
                       </td>
-                      <td className="px-3 py-2 text-right text-emerald-700">{r.source === 'internal' ? '—' : (r.reworked_ok ? `+${fmtNum(r.reworked_ok)}` : '0')}</td>
-                      <td className="px-3 py-2 text-right text-amber-700">{fmtNum(r.dispatched)}</td>
+                      <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{r.source === 'internal' ? '—' : (r.reworked_ok ? `+${fmtNum(r.reworked_ok)}` : '0')}</td>
+                      <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{fmtNum(r.dispatched)}</td>
                       <td className="px-3 py-2 text-right font-semibold text-foreground">{fmtNum(r.remaining_vs_order)}</td>
                       <td className="px-3 py-2 text-right">
                         {r.shippable > 0
-                          ? <span className="font-bold text-emerald-700" data-testid={`outstanding-shippable-${r.sku || r.key}`}>{fmtNum(r.shippable)}</span>
+                          ? <span className="font-bold text-[hsl(var(--success))]" data-testid={`outstanding-shippable-${r.sku || r.key}`}>{fmtNum(r.shippable)}</span>
                           : <span className="text-xs text-muted-foreground" title={r.source === 'internal' ? 'Belum ada hasil produksi' : 'Barang belum diterima dari CMT'}>belum ada barang</span>}
                       </td>
                       <td className="px-3 py-2 text-right text-muted-foreground">
@@ -1209,7 +1209,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   ))}
                 </tbody>
               </table>
-            </div>
+            </GlassCard>
           )}
         </div>
       ) : viewMode === 'variance' ? (
@@ -1222,13 +1222,13 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           stok FG (siap dikirim ulang). Keputusan tanggungan (CMT/DA) diambil
           saat PO ditutup. */}
       {buyerShorts.items?.length > 0 && (
-        <div className="rounded-xl bg-card border border-rose-300 overflow-hidden" data-testid="buyer-short-panel">
-          <div className="px-3 py-2 bg-rose-50 border-b border-rose-200 flex items-center gap-2 flex-wrap">
-            <Package className="w-4 h-4 text-rose-700 shrink-0" />
-            <span className="text-xs font-bold text-rose-900">
+        <div className="rounded-xl bg-card border border-[hsl(var(--destructive)/0.35)] overflow-hidden" data-testid="buyer-short-panel">
+          <div className="px-3 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)] flex items-center gap-2 flex-wrap">
+            <Package className="w-4 h-4 text-[hsl(var(--destructive))] shrink-0" />
+            <span className="text-xs font-bold text-[hsl(var(--destructive))]">
               Selisih Terima Buyer — {fmtNum(buyerShorts.total_qty_open)} pcs BELUM SAMPAI
             </span>
-            <span className="text-[11px] text-rose-700">
+            <span className="text-[11px] text-[hsl(var(--destructive))]">
               Barang sudah dikembalikan ke stok FG · kirim ulang, atau tentukan tanggungan (CMT / DA).
             </span>
           </div>
@@ -1249,20 +1249,20 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               <tbody>
                 {buyerShorts.items.map(s => (
                   <tr key={s.id} className="border-t border-border/60">
-                    <td className="px-3 py-2 font-mono text-[11px] font-semibold text-foreground whitespace-nowrap">{s.short_number}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] font-semibold text-foreground whitespace-nowrap">{s.short_number}</td>
                     <td className="px-3 py-2 text-foreground">
                       <div className="font-medium truncate max-w-[170px]">{s.shipment_number || '—'}</div>
                       <div className="text-[11px] text-muted-foreground truncate max-w-[170px]">{s.po_number || '—'}</div>
                     </td>
                     <td className="px-3 py-2 text-foreground truncate max-w-[150px]">{s.customer_name || '—'}</td>
-                    <td className="px-3 py-2 font-mono text-[11px] text-foreground whitespace-nowrap">{s.sku || '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] text-foreground whitespace-nowrap">{s.sku || '—'}</td>
                     <td className="px-3 py-2 text-right text-muted-foreground">{fmtNum(s.qty_shipped_claimed)}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700 font-medium">{fmtNum(s.qty_received)}</td>
-                    <td className="px-3 py-2 text-right font-bold text-rose-700">{fmtNum(s.qty_open ?? s.qty_short)}</td>
+                    <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{fmtNum(s.qty_received)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--destructive))]">{fmtNum(s.qty_open ?? s.qty_short)}</td>
                     <td className="px-3 py-2 text-right">
                       <button data-testid={`buyer-short-resolve-${s.short_number}`}
                         onClick={() => { setResolveBShort(s); setBResType('dikirim_ulang'); setBResNotes(''); }}
-                        className="h-7 px-2.5 rounded-md bg-rose-600 text-white text-[11px] font-semibold hover:bg-rose-700 whitespace-nowrap">
+                        className="h-7 px-2.5 rounded-md bg-[hsl(var(--destructive))] text-white text-[11px] font-semibold hover:bg-[hsl(var(--destructive)/0.9)] whitespace-nowrap">
                         Putuskan
                       </button>
                     </td>
@@ -1276,45 +1276,28 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       {/* Summary */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Total Shipment', value: totalShipmentCount, icon: TruckIcon, color: 'text-blue-700', bg: 'bg-blue-50' },
-          { label: 'Fully Shipped', value: fullyShipped, icon: CheckCircle, color: 'text-emerald-700', bg: 'bg-emerald-50' },
-          { label: 'Partially Shipped', value: partialShipped, icon: Clock, color: 'text-amber-700', bg: 'bg-amber-50' },
-        ].map(s => {
-          const Icon = s.icon;
-          return (
-            <div key={s.label} className={`${s.bg} rounded-xl p-4 border border-transparent`}>
-              <div className="flex items-center gap-3">
-                <Icon className={`w-6 h-6 ${s.color}`} />
-                <div>
-                  <p className="text-xs text-muted-foreground">{s.label}</p>
-                  <p className={`text-2xl font-bold ${s.color}`}>{s.value}</p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+          { label: 'Total pengiriman', value: totalShipmentCount, accent: 'primary' },
+          { label: 'Terkirim penuh', value: fullyShipped, accent: 'success' },
+          { label: 'Terkirim sebagian', value: partialShipped, accent: 'warning' },
+        ].map(s => (
+          <StatTile key={s.label} label={s.label} value={s.value} accent={s.accent} />
+        ))}
       </div>
 
       <div className="flex items-center gap-2">
         {canEdit && (
-          <button onClick={openCreateModal}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-xl text-sm font-medium hover:bg-blue-700 shadow-sm">
+          <Button onClick={openCreateModal}>
             <Plus className="w-4 h-4" /> Buat Buyer Shipment
-          </button>
+          </Button>
         )}
         <ImportExportPanel importType={null} exportType="buyer-shipments" />
-        <div className="inline-flex rounded-lg border border-border overflow-hidden ml-2" data-testid="shipment-receiver-filter">
-          {[
-            { k: 'buyer', label: `Ke Buyer (${recvCounts.buyer})` },
-            { k: 'da', label: `Deklarasi Vendor → DA (${recvCounts.da})` },
-            { k: 'all', label: `Semua (${recvCounts.all})` },
-          ].map(t => (
-            <button key={t.k} onClick={() => setRecvFilter(t.k)}
-              data-testid={`shipment-recv-${t.k}`}
-              className={`px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors ${recvFilter === t.k ? 'bg-blue-600 text-white' : 'bg-card text-muted-foreground hover:bg-muted/60'}`}>
-              {t.label}
-            </button>
-          ))}
+        <div className="ml-2" data-testid="shipment-receiver-filter">
+          <FilterChips value={recvFilter} onChange={setRecvFilter} testId="shipment-recv" ariaLabel="Penerima" hideWhenEmpty={false}
+            options={[
+              { key: 'buyer', label: 'Ke Buyer', count: recvCounts.buyer },
+              { key: 'da', label: 'Deklarasi Vendor → DA', count: recvCounts.da },
+              { key: 'all', label: 'Semua', count: recvCounts.all },
+            ]} />
         </div>
         {showBizFilter && <div className="ml-auto"><BizFilter value={bizFilter} onChange={setBizFilter} counts={bizCounts} /></div>}
       </div>
@@ -1332,12 +1315,12 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           onClose={() => { setShowModal(false); setContinueShip(null); }} size="2xl">
           <form onSubmit={handleSubmit} className="space-y-4">
             {continueShip && (
-              <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900" data-testid="continue-dispatch-banner">
+              <Notice tone="info" testId="continue-dispatch-banner">
                 Kiriman ini ditambahkan sebagai <strong>dispatch berikutnya</strong> pada surat jalan{' '}
-                <span className="font-mono font-semibold">{continueShip.shipment_number}</span> — nomornya TIDAK berubah,
+                <span className="tabular-nums font-semibold">{continueShip.shipment_number}</span> — nomornya TIDAK berubah,
                 dan progres pengiriman PO naik pada surat jalan yang sama. Qty maksimal tetap
                 &quot;sisa bisa kirim&quot; (lolos QC + hasil permak − yang sudah dikirim).
-              </div>
+              </Notice>
             )}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -1348,18 +1331,18 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal</label>
-                <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm"
+                <GlassInput type="date"
                   value={form.shipment_date} onChange={e => setForm(f => ({...f, shipment_date: e.target.value}))} />
               </div>
             </div>
 
             {/* Phase D: consolidation toggle */}
-            <label className={`flex items-center gap-3 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 ${continueShip ? 'opacity-60' : 'cursor-pointer'}`} data-testid="consolidate-toggle">
+            <label className={`flex items-center gap-3 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)] px-3 py-2 ${continueShip ? 'opacity-60' : 'cursor-pointer'}`} data-testid="consolidate-toggle">
               <input type="checkbox" checked={consolidate} disabled={!!continueShip}
                 onChange={e => toggleConsolidateMode(e.target.checked)} className="w-4 h-4" />
               <span className="text-sm">
-                <span className="font-semibold text-violet-900">Gabungkan beberapa PO (konsolidasi)</span>
-                <span className="block text-xs text-violet-700">1 surat jalan untuk banyak PO milik buyer yang sama — progress tetap dihitung per PO.</span>
+                <span className="font-semibold text-[hsl(var(--primary))]">Gabungkan beberapa PO (konsolidasi)</span>
+                <span className="block text-xs text-[hsl(var(--primary))]">1 surat jalan untuk banyak PO milik buyer yang sama — progress tetap dihitung per PO.</span>
               </span>
             </label>
 
@@ -1392,12 +1375,12 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                     {consBuyers.map(b => <option key={b} value={b}>{b}</option>)}
                   </SmartNativeSelect>
                   {!consLoading && consBuyers.length === 0 && (
-                    <p className="text-xs text-amber-700 mt-1">Belum ada CMT Receipt (Approved) yang bisa dikirim. Proses &quot;Terima FG dari CMT&quot; dulu.</p>
+                    <p className="text-xs text-[hsl(var(--warning))] mt-1">Belum ada CMT Receipt (Approved) yang bisa dikirim. Proses &quot;Terima FG dari CMT&quot; dulu.</p>
                   )}
                 </div>
                 {consBuyer && (
-                  <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 space-y-2">
-                    <div className="text-sm font-semibold text-emerald-900 flex items-center gap-2">
+                  <div className="rounded-md border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] p-3 space-y-2">
+                    <div className="text-sm font-semibold text-[hsl(var(--success))] flex items-center gap-2">
                       <ClipboardCheck className="w-4 h-4" /> Pilih CMT Receipt (Approved) lintas-PO
                     </div>
                     <div className="max-h-56 overflow-y-auto space-y-1">
@@ -1409,14 +1392,14 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                             data-testid={`cons-receipt-${r.receipt_code}`}>
                             <input type="checkbox" checked={form.source_receipt_ids.includes(r.id)} onChange={() => toggleConsReceipt(r)} className="mt-0.5" />
                             <span className="flex-1">
-                              <span className="inline-block px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold mr-1">{r._po_number}</span>
-                              <span className="font-mono text-xs">{r.receipt_code}</span>
+                              <span className="inline-block px-1.5 py-0.5 rounded bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-[10px] font-semibold mr-1">{r._po_number}</span>
+                              <span className="tabular-nums text-xs">{r.receipt_code}</span>
                               {/* FASE E — label diperjelas: angka ini qty LOLOS QC, bukan
                                   "sisa bisa kirim". Dulu tertulis "actual 90 pcs" lalu
                                   tabel menampilkan 80, dan tidak ada yang menjelaskan
                                   bedanya. Sisa bisa kirim ada di kolom tabel. */}
                               <span className="text-muted-foreground text-xs ml-2">· {r.cmt_name || '—'} · lolos QC {Number(actual).toLocaleString('id-ID')} pcs
-                                {rejected > 0 && <span className="text-red-600"> (reject {Number(rejected).toLocaleString('id-ID')})</span>}
+                                {rejected > 0 && <span className="text-[hsl(var(--destructive))]"> (reject {Number(rejected).toLocaleString('id-ID')})</span>}
                               </span>
                             </span>
                           </label>
@@ -1424,7 +1407,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                       })}
                     </div>
                     {form.source_receipt_ids.length > 0 && (
-                      <div className="text-xs text-emerald-800">Dipilih: <strong>{form.source_receipt_ids.length}</strong> receipt dari <strong>{new Set(form.items.map(i => i.po_number)).size}</strong> PO.
+                      <div className="text-xs text-[hsl(var(--success))]">Dipilih: <strong>{form.source_receipt_ids.length}</strong> receipt dari <strong>{new Set(form.items.map(i => i.po_number)).size}</strong> PO.
                         {capTotals && <> Sisa bisa kirim <strong>{Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs</strong> (lolos QC {Number(capTotals.good_from_cmt || 0).toLocaleString('id-ID')}{capTotals.reworked_ok ? ` + permak ${Number(capTotals.reworked_ok).toLocaleString('id-ID')}` : ''} − sudah dikirim {Number(capTotals.dispatched || 0).toLocaleString('id-ID')}).</>}
                       </div>
                     )}
@@ -1434,7 +1417,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             )}
 
             {!consolidate && form.po_id && selectedPO?.business_type === 'internal' && (
-              <div className="rounded-md border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900" data-testid="internal-dispatch-info">
+              <div className="rounded-md border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)] p-3 text-xs text-[hsl(var(--primary))]" data-testid="internal-dispatch-info">
                 <div className="text-sm font-semibold">PO Produksi Internal — serah terima hasil produksi ke gudang stok sendiri</div>
                 Tidak perlu memilih CMT Receipt. Batas qty = <strong>lolos QC (atau hasil produksi sendiri) − sudah diserahkan</strong>.
                 Dokumen ini hanya mencatat serah terima: stok FG sudah bertambah lewat <em>Terima FG dari CMT</em>/scan-in,
@@ -1446,14 +1429,14 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             )}
             {/* Phase B: source_receipt_ids picker (DA dispatch wajib punya CMT Receipt Approved) */}
             {!consolidate && form.po_id && selectedPO?.business_type !== 'internal' && (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 space-y-2">
+              <div className="rounded-md border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] p-3 space-y-2">
                 <div className="flex items-start gap-2">
-                  <ClipboardCheck className="w-4 h-4 mt-0.5 text-emerald-700" />
+                  <ClipboardCheck className="w-4 h-4 mt-0.5 text-[hsl(var(--success))]" />
                   <div className="flex-1">
-                    <div className="text-sm font-semibold text-emerald-900">
+                    <div className="text-sm font-semibold text-[hsl(var(--success))]">
                       Sumber FG (Phase B): pilih CMT Receipt yang sudah di-approve
                     </div>
-                    <div className="text-xs text-emerald-800 mt-0.5">
+                    <div className="text-xs text-[hsl(var(--success))] mt-0.5">
                       Dispatch DA→Buyer wajib mengacu ke penerimaan FG dari CMT
                       (<code>cmt_receipts</code> status <em>Approved</em>). Batas qty kirim
                       = <strong>lolos QC + hasil permak − sudah dikirim</strong> (lihat kolom
@@ -1462,7 +1445,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   </div>
                 </div>
                 {availableReceipts.length === 0 ? (
-                  <div className="text-xs px-2 py-1 bg-amber-50 border border-amber-200 rounded text-amber-800">
+                  <div className="text-xs px-2 py-1 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded text-[hsl(var(--warning))]">
                     Belum ada CMT Receipt status <strong>Approved</strong> untuk PO ini. Minta DA admin
                     proses &quot;Terima FG dari CMT&quot; dulu.
                   </div>
@@ -1482,11 +1465,11 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                           className="mt-0.5"
                         />
                         <span className="flex-1">
-                          <span className="font-mono text-xs">{r.receipt_code}</span>
+                          <span className="tabular-nums text-xs">{r.receipt_code}</span>
                           <span className="text-muted-foreground text-xs ml-2">
                             · {r.cmt_name || '—'} · lolos QC {Number(actual).toLocaleString('id-ID')} pcs
                             {rejected > 0 && (
-                              <span className="text-red-600"> (reject {Number(rejected).toLocaleString('id-ID')})</span>
+                              <span className="text-[hsl(var(--destructive))]"> (reject {Number(rejected).toLocaleString('id-ID')})</span>
                             )}
                           </span>
                         </span>
@@ -1495,7 +1478,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   </div>
                 )}
                 {form.source_receipt_ids.length > 0 && (
-                  <div className="text-xs text-emerald-800" data-testid="single-po-capacity-summary">
+                  <div className="text-xs text-[hsl(var(--success))]" data-testid="single-po-capacity-summary">
                     Dipilih: <strong>{form.source_receipt_ids.length}</strong> receipt.
                     {capLoading ? ' Menghitung sisa bisa kirim…'
                       : capTotals ? <> Sisa bisa kirim <strong>{Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs</strong> (lolos QC {Number(capTotals.good_from_cmt || 0).toLocaleString('id-ID')}{capTotals.reworked_ok ? ` + permak ${Number(capTotals.reworked_ok).toLocaleString('id-ID')}` : ''} − sudah dikirim {Number(capTotals.dispatched || 0).toLocaleString('id-ID')}).</>
@@ -1516,9 +1499,9 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                       : <>Sisa bisa kirim = <strong>lolos QC</strong> + <strong>hasil permak</strong> − <strong>sudah dikirim</strong></>}
                   </span>
                   {capLoading ? (
-                    <span className="text-blue-700 font-medium" data-testid="dispatch-capacity-loading">Menghitung sisa…</span>
+                    <span className="text-[hsl(var(--primary))] font-medium" data-testid="dispatch-capacity-loading">Menghitung sisa…</span>
                   ) : capTotals && (
-                    <span className="text-emerald-800 font-semibold" data-testid="dispatch-capacity-total">
+                    <span className="text-[hsl(var(--success))] font-semibold" data-testid="dispatch-capacity-total">
                       Total sisa bisa kirim: {Number(capTotals.shippable || 0).toLocaleString('id-ID')} pcs
                     </span>
                   )}
@@ -1550,34 +1533,34 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                       return (
                       <tr key={idx} className={`border-t border-border/60 ${lunas ? 'bg-muted/30' : ''}`}
                         data-testid={`dispatch-item-row-${item.sku || idx}`}>
-                        {consolidate && <td className="px-3 py-2"><span className="inline-block px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold">{item.po_number || '-'}</span></td>}
-                        <td className="px-3 py-2 font-mono text-xs text-amber-700">{item.serial_number || '-'}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-blue-600">{item.sku || '-'}</td>
+                        {consolidate && <td className="px-3 py-2"><span className="inline-block px-1.5 py-0.5 rounded bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-[10px] font-semibold">{item.po_number || '-'}</span></td>}
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))]">{item.serial_number || '-'}</td>
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
                         <td className="px-3 py-2 text-foreground/90">{item.product_name}</td>
                         <td className="px-3 py-2 text-muted-foreground">{item.size || '-'}/{item.color || '-'}</td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{Number(item.ordered_qty || 0).toLocaleString('id-ID')}</td>
                         <td className="px-3 py-2 text-right text-foreground/80">{hasCap ? Number((selectedPO?.business_type === 'internal' ? item.internal_produced : item.good_from_cmt) || 0).toLocaleString('id-ID') : '—'}</td>
                         <td className="px-3 py-2 text-right text-foreground/80">
                           {hasCap && Number(item.reworked_ok || 0) > 0
-                            ? <span className="text-emerald-700 font-semibold" title="Reject yang sudah diperbaiki dan sekarang boleh dikirim">+{Number(item.reworked_ok).toLocaleString('id-ID')}</span>
+                            ? <span className="text-[hsl(var(--success))] font-semibold" title="Reject yang sudah diperbaiki dan sekarang boleh dikirim">+{Number(item.reworked_ok).toLocaleString('id-ID')}</span>
                             : (hasCap ? '0' : '—')}
                         </td>
-                        <td className="px-3 py-2 text-right text-amber-700">{hasCap ? Number(item.dispatched || 0).toLocaleString('id-ID') : '—'}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{hasCap ? Number(item.dispatched || 0).toLocaleString('id-ID') : '—'}</td>
                         <td className="px-3 py-2 text-right">
                           {!hasCap ? <span className="text-muted-foreground">—</span> : lunas ? (
                             <span className="inline-block px-1.5 py-0.5 rounded bg-muted text-muted-foreground text-[10px] font-bold" data-testid={`dispatch-item-lunas-${item.sku || idx}`}>{notProduced ? 'BELUM PRODUKSI' : 'LUNAS'}</span>
                           ) : (
-                            <span className="font-bold text-emerald-700" data-testid={`dispatch-item-shippable-${item.sku || idx}`}>{sisa.toLocaleString('id-ID')}</span>
+                            <span className="font-bold text-[hsl(var(--success))]" data-testid={`dispatch-item-shippable-${item.sku || idx}`}>{sisa.toLocaleString('id-ID')}</span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <input type="number" min="0" max={hasCap ? sisa : item.ordered_qty}
                             disabled={lunas}
                             data-testid={`dispatch-item-qty-${item.sku || idx}`}
-                            className="w-24 border border-border rounded px-2 py-1 text-right text-sm bg-background text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="w-24 border border-border rounded px-2 py-1 text-right text-sm bg-background text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)] disabled:opacity-50 disabled:cursor-not-allowed"
                             value={item.qty_shipped} onChange={e => updateItemQty(idx, e.target.value)} />
                           {lowStock && (
-                            <div className="text-[10px] text-amber-700 mt-0.5" title="Stok fisik gudang lebih kecil dari sisa dokumen">
+                            <div className="text-[10px] text-[hsl(var(--warning))] mt-0.5" title="Stok fisik gudang lebih kecil dari sisa dokumen">
                               stok FG {Number(item.fg_stock).toLocaleString('id-ID')}
                             </div>
                           )}
@@ -1594,10 +1577,9 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               <textarea className="w-full border border-border rounded-lg px-3 py-2 text-sm" rows="2"
                 value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} />
             </div>
-            <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700"
-              data-testid="sj-submit-btn">
+            <Button type="submit" data-testid="sj-submit-btn">
               {continueShip ? 'Tambah Dispatch' : 'Simpan'}
-            </button>
+            </Button>
           </form>
         </Modal>
       )}
@@ -1607,7 +1589,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         <Modal title={`Detail: ${detailData.shipment_number}`} onClose={() => setShowDetail(false)} size="xl">
           <div className="space-y-4">
             {/* Summary Card */}
-            <div className="bg-gradient-to-r from-blue-50 to-emerald-50 rounded-xl p-4 border border-blue-100">
+            <div className="bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--success)/0.1)] rounded-xl p-4 border border-[hsl(var(--primary)/0.35)]">
               <div className="grid grid-cols-4 gap-4 text-center">
                 <div>
                   <p className="text-xs text-muted-foreground">Total Order</p>
@@ -1615,19 +1597,19 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Sudah Kirim</p>
-                  <p className="text-xl font-bold text-emerald-700">{fmtNum(detailData.total_shipped)} <span className="text-xs font-normal">pcs</span></p>
+                  <p className="text-xl font-bold text-[hsl(var(--success))]">{fmtNum(detailData.total_shipped)} <span className="text-xs font-normal">pcs</span></p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Sisa</p>
-                  <p className="text-xl font-bold text-amber-700">{fmtNum(detailData.remaining)} <span className="text-xs font-normal">pcs</span></p>
+                  <p className="text-xl font-bold text-[hsl(var(--warning))]">{fmtNum(detailData.remaining)} <span className="text-xs font-normal">pcs</span></p>
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Progress</p>
-                  <p className="text-xl font-bold text-blue-700">{detailData.progress_pct}%</p>
+                  <p className="text-xl font-bold text-[hsl(var(--primary))]">{detailData.progress_pct}%</p>
                 </div>
               </div>
               <div className="w-full h-3 bg-card/70 rounded-full overflow-hidden mt-3">
-                <div className={`h-full rounded-full transition-all ${detailData.progress_pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                <div className={`h-full rounded-full transition-all ${detailData.progress_pct >= 100 ? 'bg-[hsl(var(--success))]' : 'bg-[hsl(var(--primary))]'}`}
                   style={{ width: `${Math.min(detailData.progress_pct || 0, 100)}%` }} />
               </div>
             </div>
@@ -1640,17 +1622,17 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               const totalVar = totalShipped - totalReceived;
               return (
                 <div className="grid grid-cols-3 gap-3" data-testid="received-summary-strip">
-                  <div className="bg-emerald-50 rounded-lg p-3 text-center">
+                  <div className="bg-[hsl(var(--success)/0.1)] rounded-lg p-3 text-center">
                     <p className="text-xs text-muted-foreground">Total Dikirim</p>
-                    <p className="text-lg font-bold text-emerald-700">{fmtNum(totalShipped)} pcs</p>
+                    <p className="text-lg font-bold text-[hsl(var(--success))]">{fmtNum(totalShipped)} pcs</p>
                   </div>
-                  <div className="bg-blue-50 rounded-lg p-3 text-center">
+                  <div className="bg-[hsl(var(--primary)/0.1)] rounded-lg p-3 text-center">
                     <p className="text-xs text-muted-foreground">Total Diterima (aktual)</p>
-                    <p className="text-lg font-bold text-blue-700">{fmtNum(totalReceived)} pcs</p>
+                    <p className="text-lg font-bold text-[hsl(var(--primary))]">{fmtNum(totalReceived)} pcs</p>
                   </div>
-                  <div className={`rounded-lg p-3 text-center ${totalVar !== 0 ? 'bg-red-50' : 'bg-muted/40'}`}>
+                  <div className={`rounded-lg p-3 text-center ${totalVar !== 0 ? 'bg-[hsl(var(--destructive)/0.1)]' : 'bg-muted/40'}`}>
                     <p className="text-xs text-muted-foreground">Selisih</p>
-                    <p className={`text-lg font-bold ${totalVar > 0 ? 'text-red-600' : totalVar < 0 ? 'text-orange-600' : 'text-muted-foreground'}`}>{fmtNum(totalVar)} pcs</p>
+                    <p className={`text-lg font-bold ${totalVar > 0 ? 'text-[hsl(var(--destructive))]' : totalVar < 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{fmtNum(totalVar)} pcs</p>
                   </div>
                 </div>
               );
@@ -1670,8 +1652,8 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 };
               });
               return (
-                <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-3" data-testid="detail-per-po">
-                  <div className="text-sm font-semibold text-violet-900 mb-2">Rincian per PO (surat jalan konsolidasi — {poNumbers.length} PO)</div>
+                <GlassCard className="p-4" data-testid="detail-per-po">
+                  <div className="text-sm font-semibold text-[hsl(var(--primary))] mb-2">Rincian per PO (surat jalan konsolidasi — {poNumbers.length} PO)</div>
                   <table className="w-full text-sm">
                     <thead><tr className="text-xs text-muted-foreground">
                       <th className="text-left py-1">No. PO</th>
@@ -1681,32 +1663,32 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                     </tr></thead>
                     <tbody>
                       {groups.map(g => (
-                        <tr key={g.pn} className="border-t border-violet-100">
-                          <td className="py-1"><span className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold">{g.pn}</span></td>
-                          <td className="py-1 text-right text-emerald-700">{fmtNum(g.shipped)}</td>
-                          <td className="py-1 text-right text-blue-700">{fmtNum(g.received)}</td>
-                          <td className={`py-1 text-right ${(g.shipped - g.received) !== 0 ? 'text-red-600' : 'text-muted-foreground'}`}>{fmtNum(g.shipped - g.received)}</td>
+                        <tr key={g.pn} className="border-t border-[hsl(var(--primary)/0.35)]">
+                          <td className="py-1"><span className="px-1.5 py-0.5 rounded bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-[10px] font-semibold">{g.pn}</span></td>
+                          <td className="py-1 text-right text-[hsl(var(--success))]">{fmtNum(g.shipped)}</td>
+                          <td className="py-1 text-right text-[hsl(var(--primary))]">{fmtNum(g.received)}</td>
+                          <td className={`py-1 text-right ${(g.shipped - g.received) !== 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>{fmtNum(g.shipped - g.received)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
-                </div>
+                </GlassCard>
               );
             })()}
             <div className="grid grid-cols-3 gap-3">
               {[
-                { l: 'No. Shipment', v: <span className="font-bold text-blue-700">{detailData.shipment_number}</span> },
+                { l: 'No. Shipment', v: <span className="font-bold text-[hsl(var(--primary))]">{detailData.shipment_number}</span> },
                 { l: (detailData.po_ids && detailData.po_ids.length > 1) ? 'PO Terkait' : 'No. PO',
                   v: (detailData.po_ids && detailData.po_ids.length > 1)
-                    ? <span className="flex flex-wrap gap-1">{[...new Set((detailData.items || []).map(i => i.po_number).filter(Boolean))].map(pn => <span key={pn} className="px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-semibold">{pn}</span>)}</span>
+                    ? <span className="flex flex-wrap gap-1">{[...new Set((detailData.items || []).map(i => i.po_number).filter(Boolean))].map(pn => <span key={pn} className="px-1.5 py-0.5 rounded bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-[10px] font-semibold">{pn}</span>)}</span>
                     : (detailData.po_number || '-') },
                 { l: 'Customer', v: detailData.customer_name || '-' },
                 { l: 'Vendor', v: detailData.vendor_name || '-' },
                 { l: 'Dibuat', v: fmtDate(detailData.created_at) },
                 { l: 'Status', v: <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                  (detailData.progress_pct || 0) >= 100 ? 'bg-emerald-100 text-emerald-700' :
-                  (detailData.progress_pct || 0) > 0 ? 'bg-amber-100 text-amber-700' : 'bg-muted text-muted-foreground'
-                }`}>{(detailData.progress_pct || 0) >= 100 ? 'Fully Shipped' : (detailData.progress_pct || 0) > 0 ? 'Partially Shipped' : 'Pending'}</span> },
+                  (detailData.progress_pct || 0) >= 100 ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' :
+                  (detailData.progress_pct || 0) > 0 ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-muted text-muted-foreground'
+                }`}>{(detailData.progress_pct || 0) >= 100 ? 'Terkirim penuh' : (detailData.progress_pct || 0) > 0 ? 'Terkirim sebagian' : 'Menunggu'}</span> },
               ].map(it => (
                 <div key={it.l} className="bg-muted/40 rounded-lg p-3">
                   <p className="text-xs text-muted-foreground">{it.l}</p>
@@ -1720,7 +1702,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-semibold text-foreground/90 flex items-center gap-2">
-                    <History className="w-4 h-4 text-blue-500" />
+                    <History className="w-4 h-4 text-[hsl(var(--primary))]" />
                     Riwayat Dispatch ({detailData.dispatches.length} round)
                   </h4>
                   {/* Cumulative PDF Export (total, not per dispatch) */}
@@ -1736,7 +1718,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                       a.click();
                       window.URL.revokeObjectURL(url);
                     } catch (err) { toast.error('Error: ' + err.message); }
-                  }} className="px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg font-medium hover:bg-blue-700 flex items-center gap-1" data-testid="export-cumulative-pdf">
+                  }} className="px-3 py-1.5 bg-[hsl(var(--primary))] text-white text-xs rounded-lg font-medium hover:bg-[hsl(var(--primary)/0.9)] flex items-center gap-1" data-testid="export-cumulative-pdf">
                     PDF Total Kumulatif
                   </button>
                 </div>
@@ -1750,15 +1732,15 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                         <div key={d.dispatch_seq} className="border border-border rounded-lg overflow-hidden">
                           <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40">
                             <div className="flex items-center gap-2">
-                              <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
+                              <span className="w-6 h-6 rounded-full bg-[hsl(var(--primary))] text-white text-xs font-bold flex items-center justify-center">
                                 {d.dispatch_seq}
                               </span>
                               <span className="text-sm font-semibold text-foreground/90">Dispatch #{d.dispatch_seq}</span>
                               <span className="text-xs text-muted-foreground/70">· {fmtDate(d.dispatch_date)}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs">
-                              <span className="text-emerald-700 font-bold">+{fmtNum(d.total_qty)} pcs</span>
-                              <span className="text-blue-700">Kumulatif: {fmtNum(cumulative)}</span>
+                              <span className="text-[hsl(var(--success))] font-bold">+{fmtNum(d.total_qty)} pcs</span>
+                              <span className="text-[hsl(var(--primary))]">Kumulatif: {fmtNum(cumulative)}</span>
                               <span className="text-muted-foreground">Sisa: {fmtNum(remaining)}</span>
                               {/* Per-dispatch PDF button */}
                               <button onClick={async (e) => {
@@ -1774,7 +1756,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                                   a.click();
                                   window.URL.revokeObjectURL(url);
                                 } catch (err) { toast.error('Error: ' + err.message); }
-                              }} className="px-2 py-1 bg-card border border-blue-300 text-blue-600 rounded text-[10px] font-medium hover:bg-blue-50 flex items-center gap-1" data-testid={`export-dispatch-${d.dispatch_seq}-pdf`}>
+                              }} className="px-2 py-1 bg-card border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] rounded text-[10px] font-medium hover:bg-[hsl(var(--primary)/0.1)] flex items-center gap-1" data-testid={`export-dispatch-${d.dispatch_seq}-pdf`}>
                                 PDF D{d.dispatch_seq}
                               </button>
                             </div>
@@ -1798,22 +1780,22 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                                 const variance = (item.qty_shipped || 0) - received;
                                 return (
                                 <tr key={item.id || idx} className="border-t border-border/60 hover:bg-muted/60">
-                                  <td className="py-1.5 px-3 font-mono text-amber-700">{item.serial_number || '—'}</td>
-                                  <td className="py-1.5 px-3 font-mono text-blue-700">{item.sku || '-'}</td>
+                                  <td className="py-1.5 px-3 tabular-nums text-[hsl(var(--warning))]">{item.serial_number || '—'}</td>
+                                  <td className="py-1.5 px-3 tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'}</td>
                                   <td className="py-1.5 px-3 text-foreground/90">{item.product_name} <span className="text-muted-foreground/70">{item.size}/{item.color}</span></td>
-                                  <td className="py-1.5 px-3 text-right font-bold text-emerald-700">
+                                  <td className="py-1.5 px-3 text-right font-bold text-[hsl(var(--success))]">
                                     {fmtNum(item.qty_shipped)}
                                   </td>
-                                  <td className="py-1.5 px-3 text-right font-bold text-blue-700">
+                                  <td className="py-1.5 px-3 text-right font-bold text-[hsl(var(--primary))]">
                                     {fmtNum(received)}
                                     {item.qty_received != null && (
                                       <span title={recvTooltip(item)} data-testid={`received-badge-${item.id}`}
-                                        className="ml-1 inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[9px] font-semibold align-middle cursor-help">
+                                        className="ml-1 inline-flex items-center gap-0.5 px-1 py-0.5 rounded-full bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] text-[9px] font-semibold align-middle cursor-help">
                                         <ClipboardCheck className="w-2.5 h-2.5" />
                                       </span>
                                     )}
                                   </td>
-                                  <td className={`py-1.5 px-3 text-right font-semibold ${variance > 0 ? 'text-red-600' : variance < 0 ? 'text-orange-600' : 'text-muted-foreground/70'}`}>
+                                  <td className={`py-1.5 px-3 text-right font-semibold ${variance > 0 ? 'text-[hsl(var(--destructive))]' : variance < 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground/70'}`}>
                                     {variance > 0 ? fmtNum(variance) : variance < 0 ? `+${fmtNum(-variance)}` : '0'}
                                   </td>
                                   {/* SESI #38 — biaya batch (FIFO) yang dipakai jurnal COGS.
@@ -1828,12 +1810,12 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                                         {item.fg_cogs == null ? '—' : 'belum berbiaya'}
                                       </span>
                                     ) : (
-                                      <span className="font-semibold text-indigo-700">
+                                      <span className="font-semibold text-[hsl(var(--primary))]">
                                         Rp {Math.round(item.fg_cogs).toLocaleString('id-ID')}
                                       </span>
                                     )}
                                     {Number(item.fg_cogs_uncosted_qty || 0) > 0 && (
-                                      <span className="block text-[10px] text-amber-700">
+                                      <span className="block text-[10px] text-[hsl(var(--warning))]">
                                         {fmtNum(item.fg_cogs_uncosted_qty)} pcs tanpa lapisan biaya
                                       </span>
                                     )}
@@ -1841,7 +1823,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                                   {canForceEdit && (
                                     <td className="py-1.5 px-2 text-right whitespace-nowrap">
                                       <button onClick={(e) => { e.stopPropagation(); openRecv(item, d.dispatch_seq); }}
-                                        className="p-1 rounded hover:bg-blue-50 text-blue-600" title="Set qty diterima (aktual)"
+                                        className="p-1 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Set qty diterima (aktual)"
                                         data-testid={`set-received-item-${item.id}`}>
                                         <ClipboardCheck className="w-3.5 h-3.5" />
                                       </button>
@@ -1878,12 +1860,12 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                   <tbody className="divide-y divide-border/60">
                     {detailData.summary_items.map((item, idx) => (
                       <tr key={idx}>
-                        <td className="px-3 py-2 font-mono text-xs text-amber-700">{item.serial_number || '—'}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-blue-700">{item.sku || '-'}</td>
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))]">{item.serial_number || '—'}</td>
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
                         <td className="px-3 py-2">{item.product_name} <span className="text-xs text-muted-foreground/70">{item.size}/{item.color}</span></td>
                         <td className="px-3 py-2 text-right">{fmtNum(item.ordered_qty)}</td>
-                        <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmtNum(item.cumulative_shipped)}</td>
-                        <td className="px-3 py-2 text-right font-bold text-amber-700">{fmtNum(Math.max(0, (item.ordered_qty || 0) - (item.cumulative_shipped || 0)))}</td>
+                        <td className="px-3 py-2 text-right font-bold text-[hsl(var(--success))]">{fmtNum(item.cumulative_shipped)}</td>
+                        <td className="px-3 py-2 text-right font-bold text-[hsl(var(--warning))]">{fmtNum(Math.max(0, (item.ordered_qty || 0) - (item.cumulative_shipped || 0)))}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -1902,27 +1884,27 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
           <form onSubmit={handleSaveRecv} className="space-y-4" data-testid="set-received-form">
             <div className="bg-muted/40 rounded-lg p-3 text-sm space-y-1">
               <div className="flex justify-between"><span className="text-muted-foreground">Produk</span><span className="font-medium text-foreground">{recvItem.product_name || '-'}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">SKU</span><span className="font-mono text-blue-700">{recvItem.sku || '-'}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Serial</span><span className="font-mono text-amber-700">{recvItem.serial_number || '—'}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">SKU</span><span className="tabular-nums text-[hsl(var(--primary))]">{recvItem.sku || '-'}</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Serial</span><span className="tabular-nums text-[hsl(var(--warning))]">{recvItem.serial_number || '—'}</span></div>
               <div className="flex justify-between"><span className="text-muted-foreground">Dispatch</span><span className="font-medium">#{recvItem.dispatch_seq || 1}</span></div>
-              <div className="flex justify-between"><span className="text-muted-foreground">Qty Dikirim</span><span className="font-bold text-emerald-700">{fmtNum(recvItem.qty_shipped)} pcs</span></div>
+              <div className="flex justify-between"><span className="text-muted-foreground">Qty Dikirim</span><span className="font-bold text-[hsl(var(--success))]">{fmtNum(recvItem.qty_shipped)} pcs</span></div>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-foreground/90 mb-1">Qty Diterima aktual (pcs) *</label>
               <input type="number" min="0" autoFocus data-testid="set-received-qty-input"
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                 value={recvForm.qty_received}
                 onChange={e => setRecvForm(f => ({ ...f, qty_received: e.target.value }))} />
               {recvForm.qty_received !== '' && (
                 <p className="text-xs mt-1 text-muted-foreground">
-                  Selisih: <span className={`font-semibold ${(recvItem.qty_shipped - Number(recvForm.qty_received)) !== 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  Selisih: <span className={`font-semibold ${(recvItem.qty_shipped - Number(recvForm.qty_received)) !== 0 ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--success))]'}`}>
                     {fmtNum(recvItem.qty_shipped - Number(recvForm.qty_received))} pcs
                   </span>
                 </p>
               )}
               {recvForm.qty_received !== '' && (recvItem.qty_shipped - Number(recvForm.qty_received)) > 0 && (
-                <div className="mt-2 rounded-lg bg-rose-50 border border-rose-200 p-2.5 text-[11px] text-rose-900"
+                <div className="mt-2 rounded-lg bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] p-2.5 text-[11px] text-[hsl(var(--destructive))]"
                   data-testid="recv-short-notice">
                   <strong>{fmtNum(recvItem.qty_shipped - Number(recvForm.qty_received))} pcs dianggap BELUM SAMPAI.</strong>{' '}
                   Sistem akan: (1) mengoreksi qty pada surat jalan menjadi {fmtNum(Number(recvForm.qty_received))} pcs
@@ -1938,7 +1920,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
               <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan (opsional)</label>
               <textarea rows="2" data-testid="set-received-reason-input"
                 placeholder="Contoh: 3 pcs cacat saat diterima buyer"
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                 value={recvForm.reason}
                 onChange={e => setRecvForm(f => ({ ...f, reason: e.target.value }))} />
             </div>
@@ -1949,7 +1931,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 <div className="space-y-1 max-h-28 overflow-y-auto">
                   {recvItem.received_history.map((h, i) => (
                     <div key={i} className="text-[11px] text-muted-foreground">
-                      <span className="font-mono text-foreground/90">{h.old_qty}→{h.new_qty}</span> • {fmtDate(h.edited_at)} • {h.edited_by}{h.reason ? <span className="italic">: {h.reason}</span> : ''}
+                      <span className="tabular-nums text-foreground/90">{h.old_qty}→{h.new_qty}</span> • {fmtDate(h.edited_at)} • {h.edited_by}{h.reason ? <span className="italic">: {h.reason}</span> : ''}
                     </div>
                   ))}
                 </div>
@@ -1958,7 +1940,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
 
             <div className="flex gap-3">
               <button type="submit" disabled={recvLoading} data-testid="set-received-save-btn"
-                className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
+                className="flex-1 bg-[hsl(var(--primary))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--primary)/0.9)] disabled:opacity-50">
                 {recvLoading ? 'Menyimpan...' : 'Simpan Qty Diterima'}
               </button>
               <button type="button" onClick={() => setRecvItem(null)}
@@ -1982,10 +1964,10 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
         <Modal title={`Putuskan Selisih ${resolveBShort.short_number}`}
           onClose={() => setResolveBShort(null)} size="md">
           <div className="space-y-4" data-testid="buyer-short-dialog">
-            <div className="bg-rose-50 border border-rose-200 rounded-lg p-3 text-sm space-y-1 text-rose-900">
+            <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-lg p-3 text-sm space-y-1 text-[hsl(var(--destructive))]">
               <div className="flex justify-between"><span className="opacity-70">Surat Jalan</span><span className="font-medium">{resolveBShort.shipment_number || '—'}</span></div>
               <div className="flex justify-between"><span className="opacity-70">PO / Buyer</span><span className="font-medium">{resolveBShort.po_number || '—'} · {resolveBShort.customer_name || '—'}</span></div>
-              <div className="flex justify-between"><span className="opacity-70">SKU</span><span className="font-mono">{resolveBShort.sku || '—'}</span></div>
+              <div className="flex justify-between"><span className="opacity-70">SKU</span><span className="tabular-nums">{resolveBShort.sku || '—'}</span></div>
               <div className="flex justify-between"><span className="opacity-70">Dikirim → Diterima</span><span className="font-medium">{fmtNum(resolveBShort.qty_shipped_claimed)} → {fmtNum(resolveBShort.qty_received)} pcs</span></div>
               <div className="flex justify-between"><span className="opacity-70">Belum sampai</span><span className="font-bold">{fmtNum(resolveBShort.qty_open ?? resolveBShort.qty_short)} pcs</span></div>
             </div>
@@ -2007,7 +1989,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 placeholder="mis. hasil investigasi ekspedisi: barang hilang di jalan"
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm" />
             </div>
-            <div className="rounded-lg bg-blue-50 border border-blue-200 p-2.5 text-[11px] text-blue-900">
+            <div className="rounded-lg bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] p-2.5 text-[11px] text-[hsl(var(--primary))]">
               Pilihan <strong>hilang</strong> akan MENGHAPUSBUKUKAN stok FG {fmtNum(resolveBShort.qty_open ?? resolveBShort.qty_short)} pcs
               yang tadi dikembalikan (karena barangnya memang tidak ada), lalu mencatat pihak yang
               menanggung untuk diproses Finance. Pilihan <strong>dikirim ulang</strong> membiarkan
@@ -2016,7 +1998,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
             <div className="flex gap-3">
               <button type="button" onClick={submitResolveBuyerShort} disabled={bResSaving}
                 data-testid="buyer-short-save"
-                className="flex-1 bg-rose-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-rose-700 disabled:opacity-50">
+                className="flex-1 bg-[hsl(var(--destructive))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--destructive)/0.9)] disabled:opacity-50">
                 {bResSaving ? 'Menyimpan...' : 'Simpan Keputusan'}
               </button>
               <button type="button" onClick={() => setResolveBShort(null)}

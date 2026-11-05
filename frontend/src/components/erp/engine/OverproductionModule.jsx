@@ -2,7 +2,13 @@ import { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { RefreshCw, Filter, TrendingUp, TrendingDown, AlertTriangle, X, Eye, CheckCircle, Clock } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { EmptyState, StatTile } from '../moduleAtoms';
 import { apiFetch, apiGet, apiPut } from '../../../lib/api';
+
+// Label layar untuk kode status variance (nilai yang dikirim ke server tetap kode aslinya).
+const STATUS_LABEL = { Reported: 'Dilaporkan', Acknowledged: 'Diketahui', Resolved: 'Diselesaikan' };
 
 export default function OverproductionModule({ token, portalId }) {
   // FASE IA-1 — pemisahan data per proses bisnis (Portal Produksi = internal, Maklon = maklon).
@@ -11,7 +17,7 @@ export default function OverproductionModule({ token, portalId }) {
   const [stats, setStats] = useState(null);
   const [vendors, setVendors] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+
   // Filters
   const [filterType, setFilterType] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
@@ -19,7 +25,7 @@ export default function OverproductionModule({ token, portalId }) {
   const [filterFrom, setFilterFrom] = useState('');
   const [filterTo, setFilterTo] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Detail modal
   const [selectedVariance, setSelectedVariance] = useState(null);
   const [showDetail, setShowDetail] = useState(false);
@@ -38,13 +44,13 @@ export default function OverproductionModule({ token, portalId }) {
       if (filterFrom) params.append('from', filterFrom);
       if (filterTo) params.append('to', filterTo);
       if (searchQuery) params.append('search', searchQuery);
-      
+
       const [vData, sData, vendorData] = await Promise.all([
         apiGet(`/production-variances?${params}`),
         apiGet(`/production-variances/stats?${params}`),
         apiGet('/garments'),
       ]);
-      
+
       setVariances(Array.isArray(vData) ? vData : []);
       setStats(sData);
       setVendors(Array.isArray(vendorData) ? vendorData : []);
@@ -76,36 +82,36 @@ export default function OverproductionModule({ token, portalId }) {
   };
 
   const getTypeBadge = (type) => {
-    return type === 'OVERPRODUCTION' 
-      ? <span className="px-2 py-1 rounded-lg text-sm font-medium bg-orange-100 text-orange-700 flex items-center gap-1">
-          <TrendingUp className="w-4 h-4" /> Overproduction
+    return type === 'OVERPRODUCTION'
+      ? <span className="px-2 py-1 rounded-lg text-sm font-medium bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] flex items-center gap-1">
+          <TrendingUp className="w-4 h-4" /> Kelebihan produksi
         </span>
-      : <span className="px-2 py-1 rounded-lg text-sm font-medium bg-blue-100 text-blue-700 flex items-center gap-1">
-          <TrendingDown className="w-4 h-4" /> Underproduction
+      : <span className="px-2 py-1 rounded-lg text-sm font-medium bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] flex items-center gap-1">
+          <TrendingDown className="w-4 h-4" /> Kekurangan produksi
         </span>;
   };
 
   const getStatusBadge = (status) => {
     const cfg = {
-      'Reported': { bg: 'bg-yellow-100', text: 'text-yellow-700', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
-      'Acknowledged': { bg: 'bg-blue-100', text: 'text-blue-700', icon: <Clock className="w-3.5 h-3.5" /> },
-      'Resolved': { bg: 'bg-green-100', text: 'text-green-700', icon: <CheckCircle className="w-3.5 h-3.5" /> }
+      'Reported': { bg: 'bg-[hsl(var(--warning)/0.15)]', text: 'text-[hsl(var(--warning))]', icon: <AlertTriangle className="w-3.5 h-3.5" /> },
+      'Acknowledged': { bg: 'bg-[hsl(var(--primary)/0.15)]', text: 'text-[hsl(var(--primary))]', icon: <Clock className="w-3.5 h-3.5" /> },
+      'Resolved': { bg: 'bg-[hsl(var(--success)/0.15)]', text: 'text-[hsl(var(--success))]', icon: <CheckCircle className="w-3.5 h-3.5" /> }
     };
     const c = cfg[status] || cfg['Reported'];
     return <span className={`px-2 py-1 rounded-lg text-sm font-medium ${c.bg} ${c.text} flex items-center gap-1`}>
-      {c.icon} {status}
+      {c.icon} {STATUS_LABEL[status] || status}
     </span>;
   };
 
   const fmtNum = (n) => (n || 0).toLocaleString('id-ID');
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '-';
 
-  if (loading) return <div className="p-8">Loading...</div>;
+  if (loading) return <div className="p-4 text-sm text-muted-foreground">Memuat...</div>;
 
   return (
-    <div className="p-6">
+    <div className="space-y-4">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Laporan Variance</h2>
           <p className="text-sm text-muted-foreground">
@@ -117,68 +123,49 @@ export default function OverproductionModule({ token, portalId }) {
             )}
           </p>
         </div>
-        <button onClick={fetchAll} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2">
-          <RefreshCw className="w-4 h-4" /> Refresh
-        </button>
+        <Button variant="outline" size="icon" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw />
+        </Button>
       </div>
 
       {/* Statistics Cards */}
       {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-card p-5 rounded-xl border border-border shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-muted-foreground font-medium">Total Laporan</p>
-              <AlertTriangle className="w-5 h-5 text-muted-foreground/70" />
-            </div>
-            <p className="text-3xl font-bold text-foreground">{fmtNum(stats.total_records)}</p>
-          </div>
-          
-          <div className="bg-gradient-to-br from-orange-50 to-orange-100 p-5 rounded-xl border border-orange-200 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-orange-600 font-medium">Overproduction</p>
-              <TrendingUp className="w-5 h-5 text-orange-500" />
-            </div>
-            <p className="text-3xl font-bold text-orange-700">{fmtNum(stats.overproduction.count)}</p>
-            <p className="text-xs text-orange-600 mt-1">{fmtNum(stats.overproduction.total_qty)} pcs total</p>
-          </div>
-          
-          <div className="bg-gradient-to-br from-blue-50 to-blue-100 p-5 rounded-xl border border-blue-200 shadow-sm">
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs text-blue-600 font-medium">Underproduction</p>
-              <TrendingDown className="w-5 h-5 text-blue-500" />
-            </div>
-            <p className="text-3xl font-bold text-blue-700">{fmtNum(stats.underproduction.count)}</p>
-            <p className="text-xs text-blue-600 mt-1">{fmtNum(stats.underproduction.total_qty)} pcs total</p>
-          </div>
-          
-          <div className="bg-gradient-to-br from-muted/40 to-muted p-5 rounded-xl border border-border shadow-sm">
-            <p className="text-xs text-muted-foreground font-medium mb-2">Status Breakdown</p>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <StatTile label="Total laporan" value={fmtNum(stats.total_records)} />
+          <StatTile label="Kelebihan produksi" accent="warning"
+            value={fmtNum(stats.overproduction.count)}
+            sub={`${fmtNum(stats.overproduction.total_qty)} pcs total`} />
+          <StatTile label="Kekurangan produksi" accent="primary"
+            value={fmtNum(stats.underproduction.count)}
+            sub={`${fmtNum(stats.underproduction.total_qty)} pcs total`} />
+          <GlassCard className="px-4 py-3">
+            <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold mb-2">Rincian status</p>
             <div className="space-y-1">
               {Object.entries(stats.by_status || {}).map(([status, count]) => (
                 <div key={status} className="flex justify-between text-xs">
-                  <span className="text-muted-foreground">{status}:</span>
-                  <span className="font-semibold text-foreground">{count}</span>
+                  <span className="text-muted-foreground">{STATUS_LABEL[status] || status}:</span>
+                  <span className="font-semibold text-foreground tabular-nums">{count}</span>
                 </div>
               ))}
             </div>
-          </div>
+          </GlassCard>
         </div>
       )}
 
       {/* Filters */}
-      <div className="bg-card p-4 rounded-xl border border-border mb-4">
+      <GlassCard className="p-4">
         <div className="flex items-center gap-2 mb-3">
           <Filter className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-semibold text-foreground/90">Filter</span>
+          <span className="text-sm font-semibold text-foreground/90">Penyaring</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-          <select value={filterType} onChange={(e) => setFilterType(e.target.value)}
+          <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)}
             className="px-3 py-2 border border-border rounded-lg text-sm">
-            <option value="">Semua Tipe</option>
-            <option value="OVERPRODUCTION">Overproduction</option>
-            <option value="UNDERPRODUCTION">Underproduction</option>
-          </select>
-          
+            <option value="">Semua tipe</option>
+            <option value="OVERPRODUCTION">Kelebihan produksi</option>
+            <option value="UNDERPRODUCTION">Kekurangan produksi</option>
+          </SmartNativeSelect>
+
           <SmartNativeSelect value={filterVendor} onChange={(e) => setFilterVendor(e.target.value)}
             className="px-3 py-2 border border-border rounded-lg text-sm">
             <option value="">Semua Vendor</option>
@@ -186,29 +173,29 @@ export default function OverproductionModule({ token, portalId }) {
               <option key={v.id} value={v.id}>{v.garment_name}</option>
             ))}
           </SmartNativeSelect>
-          
-          <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
+
+          <SmartNativeSelect value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}
             className="px-3 py-2 border border-border rounded-lg text-sm">
-            <option value="">Semua Status</option>
-            <option value="Reported">Reported</option>
-            <option value="Acknowledged">Acknowledged</option>
-            <option value="Resolved">Resolved</option>
-          </select>
-          
-          <input type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)}
-            className="px-3 py-2 border border-border rounded-lg text-sm" placeholder="Dari Tanggal" />
-          
-          <input type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)}
-            className="px-3 py-2 border border-border rounded-lg text-sm" placeholder="Sampai Tanggal" />
-          
-          <button onClick={fetchAll} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
+            <option value="">Semua status</option>
+            <option value="Reported">Dilaporkan</option>
+            <option value="Acknowledged">Diketahui</option>
+            <option value="Resolved">Diselesaikan</option>
+          </SmartNativeSelect>
+
+          <GlassInput type="date" value={filterFrom} onChange={(e) => setFilterFrom(e.target.value)}
+            title="Dari tanggal" aria-label="Dari tanggal" />
+
+          <GlassInput type="date" value={filterTo} onChange={(e) => setFilterTo(e.target.value)}
+            title="Sampai tanggal" aria-label="Sampai tanggal" />
+
+          <Button onClick={fetchAll}>
             Terapkan
-          </button>
+          </Button>
         </div>
-      </div>
+      </GlassCard>
 
       {/* Variance List */}
-      <div className="bg-card rounded-xl border border-border overflow-hidden shadow-sm">
+      <GlassCard className="overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="bg-muted/40 border-b border-border">
@@ -235,40 +222,38 @@ export default function OverproductionModule({ token, portalId }) {
                   <td className="px-4 py-3">{getStatusBadge(v.status)}</td>
                   <td className="px-4 py-3 text-sm text-muted-foreground">{fmtDate(v.created_at)}</td>
                   <td className="px-4 py-3">
-                    <button onClick={() => openDetail(v)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors" title="Lihat Detail">
-                      <Eye className="w-4 h-4" />
-                    </button>
+                    <Button variant="ghost" size="icon-sm" onClick={() => openDetail(v)}
+                      className="text-[hsl(var(--primary))]" title="Lihat detail" aria-label="Lihat detail">
+                      <Eye />
+                    </Button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        
+
         {variances.length === 0 && (
-          <div className="p-12 text-center">
-            <AlertTriangle className="w-16 h-16 mx-auto mb-4 text-muted-foreground/50" />
-            <p className="text-muted-foreground font-medium">Tidak ada data variance</p>
-            <p className="text-sm text-muted-foreground/70 mt-1">Variance akan muncul ketika vendor melaporkan overproduction atau underproduction</p>
-          </div>
+          <EmptyState icon={AlertTriangle} title="Belum ada laporan variance"
+            description="Variance akan muncul ketika vendor melaporkan kelebihan atau kekurangan produksi." />
         )}
-      </div>
+      </GlassCard>
 
       {/* Detail Modal */}
       {showDetail && selectedVariance && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-card rounded-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="sticky top-0 bg-card border-b border-border px-6 py-4 flex justify-between items-center">
+            <div className="sticky top-0 bg-card border-b border-border px-4 py-4 flex justify-between items-center">
               <div>
-                <h3 className="text-lg font-bold text-foreground">Detail Variance Report</h3>
+                <h3 className="text-lg font-bold text-foreground">Detail laporan variance</h3>
                 <p className="text-sm text-muted-foreground">Job: {selectedVariance.job_number} | PO: {selectedVariance.po_number}</p>
               </div>
-              <button onClick={() => setShowDetail(false)} className="text-muted-foreground/70 hover:text-muted-foreground">
-                <X className="w-5 h-5" />
-              </button>
+              <Button variant="ghost" size="icon-sm" onClick={() => setShowDetail(false)} title="Tutup" aria-label="Tutup">
+                <X />
+              </Button>
             </div>
-            
-            <div className="p-6 space-y-6">
+
+            <div className="p-4 space-y-4">
               {/* Variance Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -315,7 +300,7 @@ export default function OverproductionModule({ token, portalId }) {
                     <table className="w-full">
                       <thead className="bg-muted/40">
                         <tr>
-                          {['Produk', 'SKU', 'Size', 'Color', 'Dipesan', 'Diproduksi', 'Variance'].map(h => (
+                          {['Produk', 'SKU', 'Ukuran', 'Warna', 'Dipesan', 'Diproduksi', 'Variance'].map(h => (
                             <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-foreground/90">{h}</th>
                           ))}
                         </tr>
@@ -339,17 +324,17 @@ export default function OverproductionModule({ token, portalId }) {
               )}
 
               {/* Update Status Section */}
-              <div className="border-t border-border pt-6">
-                <p className="text-sm font-semibold text-foreground/90 mb-3">Update Status Variance</p>
+              <div className="border-t border-border pt-4">
+                <p className="text-sm font-semibold text-foreground/90 mb-3">Ubah status variance</p>
                 <div className="space-y-3">
                   <div>
                     <label className="block text-sm font-medium text-foreground/90 mb-1">Status Baru *</label>
-                    <select value={statusForm.status} onChange={(e) => setStatusForm({ ...statusForm, status: e.target.value })}
+                    <SmartNativeSelect value={statusForm.status} onChange={(e) => setStatusForm({ ...statusForm, status: e.target.value })}
                       className="w-full px-3 py-2 border border-border rounded-lg">
-                      <option value="Reported">Reported</option>
-                      <option value="Acknowledged">Acknowledged (Diketahui)</option>
-                      <option value="Resolved">Resolved (Diselesaikan)</option>
-                    </select>
+                      <option value="Reported">Dilaporkan</option>
+                      <option value="Acknowledged">Diketahui</option>
+                      <option value="Resolved">Diselesaikan</option>
+                    </SmartNativeSelect>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan Admin</label>
@@ -361,13 +346,13 @@ export default function OverproductionModule({ token, portalId }) {
               </div>
             </div>
 
-            <div className="sticky bottom-0 bg-muted/40 border-t border-border px-6 py-4 flex justify-end gap-2">
-              <button onClick={() => setShowDetail(false)} className="px-4 py-2 bg-card border border-border text-foreground/90 rounded-lg hover:bg-muted/60">
+            <div className="sticky bottom-0 bg-muted/40 border-t border-border px-4 py-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setShowDetail(false)}>
                 Tutup
-              </button>
-              <button onClick={updateStatus} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
-                Update Status
-              </button>
+              </Button>
+              <Button onClick={updateStatus}>
+                Simpan status
+              </Button>
             </div>
           </div>
         </div>

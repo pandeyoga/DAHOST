@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput, GlassPanel } from '@/components/ui/glass';
 import Modal from './Modal';
 import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmptyState } from './moduleAtoms';
 
 /* ─── RahazaSOPModule — Admin SOP Management (Phase 18D) ─────────────────────
    Admin interface for creating and managing SOPs per model×process.
@@ -88,7 +90,12 @@ export default function RahazaSOPModule({ token }) {
   };
 
   const handleDelete = async (sop) => {
-    if (!window.confirm(`Nonaktifkan SOP "${sop.title}"?`)) return;
+    if (!(await confirmDialog({
+      title: `Nonaktifkan SOP "${sop.title}"?`,
+      body: 'SOP ini tidak lagi tampil untuk operator.',
+      confirmLabel: 'Nonaktifkan',
+      danger: true,
+    }))) return;
     setDeleting(sop.id);
     try {
       const r = await fetch(`/api/rahaza/sop/${sop.id}`, { method: 'DELETE', headers });
@@ -110,7 +117,7 @@ export default function RahazaSOPModule({ token }) {
   });
 
   return (
-    <div className="space-y-6" data-testid="sop-module">
+    <div className="space-y-4" data-testid="sop-module">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
@@ -160,17 +167,18 @@ export default function RahazaSOPModule({ token }) {
 
       {/* SOP list */}
       {loading ? (
-        <div className="flex justify-center py-12">
+        <div className="flex justify-center py-4">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary))]" />
         </div>
       ) : filtered.length === 0 ? (
-        <GlassCard className="p-8 text-center">
-          <BookOpen className="w-10 h-10 mx-auto mb-3 text-foreground/20" />
-          <p className="text-sm font-medium text-foreground">Belum ada SOP</p>
-          <p className="text-xs text-muted-foreground mt-1">Tambah instruksi kerja untuk operator.</p>
-          <Button onClick={openCreate} className="mt-4 gap-2">
-            <Plus className="w-4 h-4" /> Tambah SOP Pertama
-          </Button>
+        <GlassCard>
+          <EmptyState icon={BookOpen} title="Belum ada SOP"
+            description="Tambah instruksi kerja untuk operator."
+            action={
+              <Button onClick={openCreate}>
+                <Plus className="w-4 h-4" /> Tambah SOP pertama
+              </Button>
+            } />
         </GlassCard>
       ) : (
         <div className="grid gap-3">
@@ -185,8 +193,8 @@ export default function RahazaSOPModule({ token }) {
                     <div className="font-semibold text-sm text-foreground">{sop.title}</div>
                     <div className="text-xs text-muted-foreground mt-0.5 flex items-center gap-2">
                       <span>v{sop.version}</span>
-                      {sop.sam_minutes && <span className="text-primary font-mono">SAM: {sop.sam_minutes}m</span>}
-                      {sop.target_pcs_per_operator && <span className="text-emerald-300 font-mono">{sop.target_pcs_per_operator} pcs/op</span>}
+                      {sop.sam_minutes && <span className="text-primary tabular-nums">SAM: {sop.sam_minutes}m</span>}
+                      {sop.target_pcs_per_operator && <span className="text-[hsl(var(--success))] tabular-nums">{sop.target_pcs_per_operator} pcs/op</span>}
                     </div>
                     <div className="text-xs text-muted-foreground mt-0.5">
                       {sop.model_code} · {sop.process_code}
@@ -194,7 +202,7 @@ export default function RahazaSOPModule({ token }) {
                     <div className="flex items-center gap-2 mt-1">
                       <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${
                         sop.active
-                          ? 'bg-emerald-400/10 text-emerald-300 border-emerald-400/25'
+                          ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]'
                           : 'bg-foreground/5 text-muted-foreground border-foreground/15'
                       }`}>
                         {sop.active ? <CheckCircle className="w-2.5 h-2.5" /> : <XCircle className="w-2.5 h-2.5" />}
@@ -223,7 +231,7 @@ export default function RahazaSOPModule({ token }) {
                     variant="ghost" size="sm"
                     onClick={() => handleDelete(sop)}
                     disabled={deleting === sop.id}
-                    className="h-8 w-8 px-0 text-red-400 hover:bg-red-400/10"
+                    className="h-8 w-8 px-0 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)]"
                     title="Nonaktifkan SOP"
                     data-testid={`sop-delete-btn-${sop.id}`}
                   >
@@ -247,7 +255,7 @@ export default function RahazaSOPModule({ token }) {
           <div className="space-y-4" data-testid="sop-form-modal">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Model <span className="text-red-400">*</span></label>
+                <label className="block text-xs text-muted-foreground mb-1">Model <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <SmartNativeSelect
                   value={form.model_id}
                   onChange={e => setForm(f => ({ ...f, model_id: e.target.value }))}
@@ -260,7 +268,7 @@ export default function RahazaSOPModule({ token }) {
                 </SmartNativeSelect>
               </div>
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Proses <span className="text-red-400">*</span></label>
+                <label className="block text-xs text-muted-foreground mb-1">Proses <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <SmartNativeSelect
                   value={form.process_id}
                   onChange={e => setForm(f => ({ ...f, process_id: e.target.value }))}
@@ -315,7 +323,7 @@ export default function RahazaSOPModule({ token }) {
                 Instruksi Kerja (Markdown)
               </label>
               <textarea
-                className="w-full min-h-[200px] px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground placeholder:text-foreground/40 focus:outline-none focus:ring-1 focus:ring-[hsl(var(--ring))] resize-y font-mono"
+                className="w-full min-h-[200px] px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground placeholder:text-foreground/40 focus:outline-none focus:ring-1 focus:ring-[hsl(var(--ring))] resize-y tabular-nums"
                 placeholder="## Langkah-Langkah\n\n1. Persiapkan bahan...\n2. Atur mesin...\n\n## Catatan Keselamatan\n\n- Gunakan APD sesuai ketentuan"
                 value={form.content_markdown}
                 onChange={e => setForm(f => ({ ...f, content_markdown: e.target.value }))}
@@ -340,12 +348,12 @@ export default function RahazaSOPModule({ token }) {
               <Button
                 onClick={handleSave}
                 disabled={saving}
-                className="flex-1 h-10"
+                className="flex-1"
                 data-testid="sop-form-save-btn"
               >
                 {saving ? 'Menyimpan...' : modal === 'edit' ? 'Simpan Perubahan' : 'Buat SOP'}
               </Button>
-              <Button variant="ghost" onClick={closeModal} className="h-10 px-4">
+              <Button variant="ghost" onClick={closeModal} className="px-4">
                 Batal
               </Button>
             </div>
