@@ -772,7 +772,9 @@ export const PORTAL_NAV = {
         label: 'PENJUALAN MULTI-CHANNEL',
         items: [
           { id: 'marketing-accounts',  label: 'Kelola Akun',       icon: Store },
-          { id: 'marketing-account-review', label: 'Koreksi Data Toko', icon: ClipboardCheck },
+          // 2026-11-05: koreksi data toko = mengubah master toko → hanya owner/admin/SPV/manager
+          { id: 'marketing-account-review', label: 'Koreksi Data Toko', icon: ClipboardCheck,
+            roles: ['owner', 'admin', 'superadmin', 'spv_marketing', 'manager_marketing', 'manager'] },
           { id: 'marketing-sales',     label: 'Input Sales',       icon: TrendingUp },
           { id: 'marketing-import',    label: 'Impor Data',        icon: FileSpreadsheet },
           { id: 'marketing-orders',    label: 'Order Terpadu',     icon: ShoppingBag },

@@ -36,7 +36,7 @@ router = APIRouter(prefix='/api/marketing', tags=['Marketing-Accounts'])
 PLATFORM_TO_COA_CHANNEL = {"shopee": "shopee", "tiktokshop": "tiktok", "tiktok": "tiktok",
                            "tokopedia": "tokopedia"}
 VALID_PLATFORMS = ("shopee", "tiktokshop", "tiktok", "tokopedia")
-TIKTOK_ALIASES = ("tiktok", "tiktokshop")
+TIKTOK_ALIASES = scope.TIKTOK_PLATFORMS
 DEFAULT_CASH_CODE = "1-1201"         # Bank BCA (kanonik 4-digit)
 DEFAULT_RECEIVABLE_CODE = "1-1303"   # Piutang Platform Online Shop
 
@@ -192,13 +192,78 @@ async def _resolve_pic(db, pic_user_id):
     return pid, (user.get("name") or user.get("email"))
 
 
+STORE_MANAGE_DENIED = ("Hanya owner, admin, SPV, atau manager marketing yang boleh menambah, mengubah, "
+                       "atau mengarsipkan toko. Bila ada data toko yang salah, minta mereka memperbaikinya.")
+
+
+def can_manage_stores(user: Optional[dict]) -> bool:
+    """Boleh menambah/mengubah/mengarsipkan master toko? (keputusan owner 5 Nov 2026)
+
+    Dulu siapa pun yang login boleh menambah & mengubah toko. PIC toko lalu membuat toko yang
+    SUDAH ADA (SHOPEE - OUTFIT = SHP-02, TIKTOK - OUTFIT = TTK-02); tiap toko baru juga langsung
+    membuat akun Penjualan + Piutang di Bagan Akun — satu toko jadi tercatat dua kali.
+    """
+    return scope.can_write_target(user) or str((user or {}).get("role") or "").lower() in MGMT_ROLES
+
+
+async def _assert_can_manage_stores(request: Request) -> dict:
+    user = await require_auth(request)
+    if not can_manage_stores(user):
+        raise HTTPException(403, STORE_MANAGE_DENIED)
+    return user
+
+
+async def _find_duplicate_store(db, platform, username, account_name, exclude_id=None):
+    """Toko lain yang SAMA (`scope.store_identity_keys`: platform sama + username ATAU nama
+    sama). Satu toko marketplace hanya boleh tercatat sekali — kode toko berbeda tidak
+    membuatnya toko lain."""
+    keys = scope.store_identity_keys(platform, username, account_name)
+    if not keys:
+        return None
+    rows = await db.marketing_platform_accounts.find(
+        {}, {"_id": 0, "id": 1, "account_code": 1, "account_name": 1, "username": 1,
+             "platform": 1, "status": 1}).to_list(2000)
+    for a in rows:
+        if exclude_id and a.get("id") == exclude_id:
+            continue
+        if keys & scope.store_identity_keys(a.get("platform"), a.get("username"), a.get("account_name")):
+            return a
+    return None
+
+
+def _duplicate_message(a: dict) -> str:
+    inactive = str(a.get("status") or "").lower() == "inactive"
+    return (f"Toko ini sudah tercatat: {a.get('account_code') or '-'} · {a.get('account_name') or '-'} "
+            f"(username {a.get('username') or '-'})."
+            + (" Toko itu berstatus nonaktif — aktifkan kembali, jangan dibuat baru." if inactive else "")
+            + " Satu toko marketplace hanya boleh tercatat sekali supaya omzet, stok, dan jurnalnya "
+              "tidak terbelah.")
+
+
+async def _assert_not_duplicate_on_update(db, account: dict, data) -> None:
+    """Mengganti username/nama tidak boleh membuat toko ini sama dengan toko lain.
+
+    Hanya bagian yang BERUBAH yang dicek: form lama mengirim ulang semua field setiap simpan, dan
+    toko asli tidak boleh jadi tidak bisa disimpan hanya karena sudah ada toko dobel lama.
+    """
+    changed_user = (data.username if data.username is not None
+                    and scope.norm(data.username) != scope.norm(account.get("username")) else "")
+    changed_name = (data.account_name if data.account_name is not None
+                    and scope.norm(data.account_name) != scope.norm(account.get("account_name")) else "")
+    if not (changed_user or changed_name):
+        return
+    dup = await _find_duplicate_store(db, account.get("platform"), changed_user, changed_name,
+                                      exclude_id=account.get("id"))
+    if dup:
+        raise HTTPException(400, _duplicate_message(dup))
+
+
 @router.post("/accounts")
 async def create_platform_account(data: PlatformAccountCreate, request: Request):
     """
-    Create new platform account.
-    PIC Marketing can create unlimited accounts per platform.
+    Create new platform account — hanya owner/admin/SPV/manager (`can_manage_stores`).
     """
-    await require_auth(request)
+    await _assert_can_manage_stores(request)
     db = get_db()
     
     # Validate platform (2026-11-02: `tiktok` diterima sebagai alias `tiktokshop`)
@@ -210,6 +275,10 @@ async def create_platform_account(data: PlatformAccountCreate, request: Request)
     if existing:
         raise HTTPException(400, f"Kode akun '{data.account_code}' sudah dipakai toko "
                                  f"'{existing.get('account_name') or '-'}'. Pakai kode lain.")
+    # 2026-11-05 — toko yang sama (platform + username/nama) tidak boleh dibuat dua kali
+    dup = await _find_duplicate_store(db, data.platform, data.username, data.account_name)
+    if dup:
+        raise HTTPException(400, _duplicate_message(dup))
     
     # ── F0.7 — validasi kode COA harus BENAR-BENAR ada di bagan akun ─────────
     # 2026-11-02 (K4) — rekening pencairan TIDAK diisi dari form toko: toko baru selalu
@@ -607,13 +676,14 @@ async def get_platform_account(account_id: str, request: Request):
 
 @router.put("/accounts/{account_id}")
 async def update_platform_account(account_id: str, data: PlatformAccountUpdate, request: Request):
-    """Update platform account"""
-    await require_auth(request)
+    """Update platform account — hanya owner/admin/SPV/manager (`can_manage_stores`)."""
+    await _assert_can_manage_stores(request)
     db = get_db()
     
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})
     if not account:
         raise HTTPException(404, "Akun toko tidak ditemukan")
+    await _assert_not_duplicate_on_update(db, account, data)
     
     # Build update dict
     update_data = {}
@@ -689,13 +759,14 @@ async def update_platform_account(account_id: str, data: PlatformAccountUpdate, 
     return serialize_doc({"message": "Platform account updated", "account": updated})
 
 
-@router.delete("/accounts/{account_id}", dependencies=only(*MGMT_ROLES))  # T-01 2.3
+@router.delete("/accounts/{account_id}")
 async def archive_platform_account(account_id: str, request: Request):
     """
     Archive (soft delete) platform account.
     Sets status to 'inactive' instead of hard delete.
+    2026-11-05 — penjaganya sama dengan tambah/ubah toko (`can_manage_stores`).
     """
-    await require_auth(request)
+    await _assert_can_manage_stores(request)
     db = get_db()
     
     account = await db.marketing_platform_accounts.find_one({"id": account_id}, {"_id": 0})
