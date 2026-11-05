@@ -56,10 +56,10 @@ const rp = (v) => `Rp ${fmt(Math.round(Number(v || 0)))}`;
 function Chip({ icon: Icon, children, tone = 'slate', testId }) {
   const tones = {
     slate: 'bg-foreground/[0.06] text-foreground border-foreground/15',
-    emerald: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-800 dark:text-emerald-200 border-emerald-400/40',
-    blue: 'bg-blue-100 dark:bg-blue-500/15 text-blue-800 dark:text-blue-200 border-blue-400/40',
-    amber: 'bg-amber-100 dark:bg-amber-500/15 text-amber-900 dark:text-amber-200 border-amber-400/40',
-    rose: 'bg-rose-100 dark:bg-rose-500/15 text-rose-800 dark:text-rose-200 border-rose-400/40',
+    emerald: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.4)]',
+    blue: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.4)]',
+    amber: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.4)]',
+    rose: 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.4)]',
   };
   return (
     <span data-testid={testId}
@@ -157,9 +157,9 @@ function PlanDialog({ product, onClose, onDone }) {
       {plan ? (
         <>
           {/* Ringkasan rencana */}
-          <div className="rounded-lg border border-blue-400/30 bg-blue-500/[0.07] p-3 text-sm"
+          <div className="rounded-lg border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary))]/[0.07] p-3 text-sm"
                data-testid="onb-plan-summary">
-            <div className="flex items-center gap-1.5 font-semibold text-blue-800 dark:text-blue-200 mb-1.5">
+            <div className="flex items-center gap-1.5 font-semibold text-[hsl(var(--primary))] mb-1.5">
               <Eye className="w-4 h-4" />Pratinjau
             </div>
             <div className="text-foreground">{plan.message}</div>
@@ -195,9 +195,9 @@ function PlanDialog({ product, onClose, onDone }) {
 
           {/* Master baru yang akan lahir */}
           {(newColors.length || newSizes.length) ? (
-            <div className="rounded-lg border border-amber-400/30 bg-amber-500/[0.07] p-3 text-xs"
+            <div className="rounded-lg border border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning))]/[0.07] p-3 text-xs"
                  data-testid="onb-new-masters">
-              <div className="font-semibold text-amber-900 dark:text-amber-200 mb-1.5">
+              <div className="font-semibold text-[hsl(var(--warning))] mb-1.5">
                 Master baru yang akan dibuat (disalin apa adanya dari variasi platform — tidak ditebak)
               </div>
               <div className="flex flex-wrap gap-1.5">
@@ -213,15 +213,15 @@ function PlanDialog({ product, onClose, onDone }) {
 
           {/* Peringatan bagian variasi yang tidak terbaca */}
           {plan.warnings?.length ? (
-            <div className="rounded-lg border border-rose-400/30 bg-rose-500/[0.07] p-3 text-xs"
+            <div className="rounded-lg border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive))]/[0.07] p-3 text-xs"
                  data-testid="onb-warnings">
-              <div className="font-semibold text-rose-800 dark:text-rose-200 mb-1 flex items-center gap-1.5">
+              <div className="font-semibold text-[hsl(var(--destructive))] mb-1 flex items-center gap-1.5">
                 <AlertTriangle className="w-3.5 h-3.5" />
                 {plan.warnings.length} variasi punya bagian yang tidak dikenali
               </div>
               {plan.warnings.slice(0, 5).map((w) => (
                 <div key={w.platform_sku_id} className="text-muted-foreground">
-                  <span className="font-mono">{w.platform_sku_id}</span> — {w.variation} →{' '}
+                  <span className="tabular-nums">{w.platform_sku_id}</span> — {w.variation} →{' '}
                   <b>{(w.unreadable || []).join(', ')}</b>
                 </div>
               ))}
@@ -247,7 +247,7 @@ function PlanDialog({ product, onClose, onDone }) {
                 <tbody className="divide-y divide-foreground/5">
                   {(plan.variants || []).map((v) => (
                     <tr key={v.identity_key} className="hover:bg-foreground/[0.03]">
-                      <td className="px-3 py-2 font-mono text-xs font-medium">{v.sku}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs font-medium">{v.sku}</td>
                       <td className="px-3 py-2">{v.color_name}</td>
                       <td className="px-3 py-2">{v.size_code}</td>
                       <td className="px-3 py-2">
@@ -268,8 +268,8 @@ function PlanDialog({ product, onClose, onDone }) {
 
           {applied ? (
             <div className={`rounded-lg border p-3 text-sm ${applied.failures?.length
-              ? 'border-amber-400/30 bg-amber-500/[0.07]'
-              : 'border-emerald-400/30 bg-emerald-500/[0.07]'}`}
+              ? 'border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning))]/[0.07]'
+              : 'border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success))]/[0.07]'}`}
                  data-testid="onb-apply-result">
               <div className="font-semibold text-foreground mb-1 flex items-center gap-1.5">
                 <CheckCircle2 className="w-4 h-4" />Hasil penerapan
@@ -282,7 +282,7 @@ function PlanDialog({ product, onClose, onDone }) {
                 {' '}baris pesanan tertaut: <b>{fmt(applied.order_lines_linked)}</b>
               </div>
               {applied.failures?.length ? (
-                <div className="text-xs text-amber-900 dark:text-amber-200 mt-1">
+                <div className="text-xs text-[hsl(var(--warning))] mt-1">
                   {applied.failures.length} gagal: {applied.failures.slice(0, 3)
                     .map((f) => `${f.platform_sku_id} (${f.message})`).join('; ')}
                 </div>
@@ -378,7 +378,7 @@ export function ProductOnboardingTab({ onDone }) {
         </div>
       ) : products.length === 0 ? (
         <div className="p-10 text-center" data-testid="onb-empty">
-          <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-emerald-600 dark:text-emerald-300" />
+          <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-[hsl(var(--success))] " />
           <div className="font-semibold">Semua produk sudah dikenal gudang</div>
           <p className="text-sm text-muted-foreground mt-1">
             Tidak ada SKU platform yang belum tertaut master. Antrean gudang bisa bekerja.
@@ -496,8 +496,8 @@ function OptionDialog({ option, onClose, onDone }) {
         <DialogTitle>{isNew ? 'Tambah opsi varian' : `Ubah opsi ${option.code}`}</DialogTitle>
         <DialogDescription>
           Opsi adalah <b>dimensi ke-3</b> identitas barang (setelah warna &amp; ukuran).
-          Kodenya masuk ke akhir SKU — contoh <span className="font-mono">BLS-0001-PBL-XL-KRT</span>.
-          Kode <span className="font-mono">NA</span> berarti listing tidak menyebut opsi dan
+          Kodenya masuk ke akhir SKU — contoh <span className="tabular-nums">BLS-0001-PBL-XL-KRT</span>.
+          Kode <span className="tabular-nums">NA</span> berarti listing tidak menyebut opsi dan
           sengaja <b>tidak</b> menambah akhiran SKU.
         </DialogDescription>
       </DialogHeader>
@@ -574,11 +574,11 @@ export function VariantOptionsTab() {
           <SlidersHorizontal className="w-3.5 h-3.5" />Dimensi ke-3: Opsi varian
         </div>
         Sebelum dimensi ini ada, identitas barang hanya <b>warna × ukuran</b> — sehingga{' '}
-        <span className="font-mono">BLACK, XL, PAKAI KARET</span> dan{' '}
-        <span className="font-mono">BLACK, XL, TANPA KARET</span> tertimpa menjadi satu barang.
+        <span className="tabular-nums">BLACK, XL, PAKAI KARET</span> dan{' '}
+        <span className="tabular-nums">BLACK, XL, TANPA KARET</span> tertimpa menjadi satu barang.
         Pada data nyata <b>8 SKU berbeda</b> pernah jatuh ke satu identitas{' '}
-        <span className="font-mono">hitam/XL</span>. Sekarang keduanya punya SKU sendiri:{' '}
-        <span className="font-mono">…-XL-KRT</span> dan <span className="font-mono">…-XL-NOK</span>.
+        <span className="tabular-nums">hitam/XL</span>. Sekarang keduanya punya SKU sendiri:{' '}
+        <span className="tabular-nums">…-XL-KRT</span> dan <span className="tabular-nums">…-XL-NOK</span>.
       </div>
 
       <div className="flex items-center gap-2">
@@ -617,7 +617,7 @@ export function VariantOptionsTab() {
             ) : rows.map((r) => (
               <tr key={r.code} className="hover:bg-foreground/[0.03]"
                   data-testid={`option-row-${r.code}`}>
-                <td className="px-3 py-2 font-mono text-xs font-semibold">{r.code}</td>
+                <td className="px-3 py-2 tabular-nums text-xs font-semibold">{r.code}</td>
                 <td className="px-3 py-2">{r.name}</td>
                 <td className="px-3 py-2 text-xs text-muted-foreground max-w-[22rem]">{r.notes}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{fmt(r.variant_count)}</td>
@@ -635,7 +635,7 @@ export function VariantOptionsTab() {
                   {r.code !== 'NA' && r.active !== false ? (
                     <Button variant="ghost" size="sm" onClick={() => deactivate(r.code)}
                             data-testid={`option-off-${r.code}`}>
-                      <Ban className="w-3.5 h-3.5 text-rose-600 dark:text-rose-300" />
+                      <Ban className="w-3.5 h-3.5 text-[hsl(var(--destructive))] " />
                     </Button>
                   ) : null}
                 </td>

@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '../moduleAtoms';
 import { apiGet, apiPut, apiPost } from '@/lib/api';
 
 const rp = (v) => `Rp ${Math.round(Number(v || 0)).toLocaleString('id-ID')}`;
@@ -27,8 +29,8 @@ const num = (v) => Number(v || 0).toLocaleString('id-ID');
 function SummaryCard({ label, value, hint, tone = 'default', testId }) {
   const tones = {
     default: 'text-foreground',
-    good: 'text-emerald-600 dark:text-emerald-300',
-    warn: 'text-amber-600 dark:text-amber-300',
+    good: 'text-[hsl(var(--success))] ',
+    warn: 'text-[hsl(var(--warning))] ',
   };
   return (
     <GlassCard className="p-4" data-testid={testId}>
@@ -157,7 +159,7 @@ export default function SewingCostModule({ onNavigate }) {
   };
 
   return (
-    <div className="space-y-6" data-testid="sewing-cost-module">
+    <div className="space-y-4" data-testid="sewing-cost-module">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold flex items-center gap-2">
@@ -168,10 +170,10 @@ export default function SewingCostModule({ onNavigate }) {
             (bahan + jahit + permak + upah internal) saat barang jadi diterima gudang.
           </p>
         </div>
-        <button data-testid="sewing-refresh-btn" onClick={loadList}
-          className="px-3 py-2 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-sm flex items-center gap-2">
-          <RefreshCw className="w-4 h-4" /> Muat ulang
-        </button>
+        <Button variant="outline" size="icon" data-testid="sewing-refresh-btn" onClick={loadList}
+          title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -193,7 +195,8 @@ export default function SewingCostModule({ onNavigate }) {
                 <Loader2 className="w-4 h-4 animate-spin" /> memuat…
               </div>
             ) : pos.length === 0 ? (
-              <div className="py-8 text-center text-foreground/50 text-sm">Tidak ada SPK yang cocok.</div>
+              <EmptyState icon={Search} title="Tidak ada SPK yang cocok"
+                description="Ubah kata kunci atau matikan pilihan tarif belum lengkap." />
             ) : pos.map((p) => (
               <button key={p.po_id} data-testid={`sewing-po-${p.po_number}`}
                 onClick={() => loadDetail(p.po_id)}
@@ -204,8 +207,8 @@ export default function SewingCostModule({ onNavigate }) {
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-medium">{p.po_number}</span>
                   {p.complete
-                    ? <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-                    : <AlertTriangle className="w-4 h-4 text-amber-500" />}
+                    ? <CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" />
+                    : <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))]" />}
                 </div>
                 <div className="text-xs text-foreground/50 mt-0.5">
                   {p.business_type === 'internal' ? 'Internal' : p.vendor_name} · {num(p.qty_total)} pcs ·{' '}
@@ -221,8 +224,9 @@ export default function SewingCostModule({ onNavigate }) {
 
         <div className="lg:col-span-2 space-y-4">
           {!detail ? (
-            <GlassCard className="p-10 text-center text-foreground/50 text-sm" data-testid="sewing-empty">
-              Pilih satu SPK di kiri untuk mengisi tarif jahit per SKU.
+            <GlassCard>
+              <EmptyState icon={Scissors} testId="sewing-empty" title="Belum ada SPK dipilih"
+                description="Pilih satu SPK di kiri untuk mengisi tarif jahit per SKU." />
             </GlassCard>
           ) : (
             <>
@@ -246,19 +250,17 @@ export default function SewingCostModule({ onNavigate }) {
                     <span className="text-foreground/50 font-normal"> · {detail.po.vendor_name} · {detail.po.status}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button data-testid="sewing-use-suggestion" onClick={useSuggestions}
-                      className="px-3 py-1.5 rounded-lg bg-foreground/5 hover:bg-foreground/10 text-xs flex items-center gap-1.5">
+                    <Button variant="outline" size="sm" data-testid="sewing-use-suggestion" onClick={useSuggestions}>
                       <Wand2 className="w-3.5 h-3.5" /> Pakai usulan tarif
-                    </button>
+                    </Button>
                     <label className="flex items-center gap-1.5 text-xs text-foreground/60">
                       <input data-testid="sewing-apply-same-sku" type="checkbox" checked={applySameSku}
                         onChange={(e) => setApplySameSku(e.target.checked)} />
                       SKU sama ikut terisi
                     </label>
-                    <button data-testid="sewing-save-btn" onClick={save} disabled={saving}
-                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs flex items-center gap-1.5 disabled:opacity-50">
+                    <Button size="sm" data-testid="sewing-save-btn" onClick={save} disabled={saving}>
                       {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Simpan tarif
-                    </button>
+                    </Button>
                   </div>
                 </div>
 
@@ -305,7 +307,7 @@ export default function SewingCostModule({ onNavigate }) {
                                   onClick={() => linkToMaster(it.po_item_id, c)}
                                   className={`mt-1 mr-1 px-1.5 py-0.5 rounded border text-[11px] disabled:opacity-50 ${
                                     c.confident
-                                      ? 'border-emerald-500/50 text-emerald-600 hover:bg-emerald-500/10'
+                                      ? 'border-[hsl(var(--success)/0.5)] text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.1)]'
                                       : 'border-foreground/20 text-foreground/60 hover:bg-foreground/5'}`}>
                                   tautkan ke {c.code} ({Math.round(c.score * 100)}%) — {(c.reasons || []).join(', ')}
                                 </button>
@@ -317,7 +319,7 @@ export default function SewingCostModule({ onNavigate }) {
                               ) : null}
                               {(it.ssot?.messages || []).map((m) => (
                                 <div key={m} data-testid={`sewing-ssot-${it.sku}`}
-                                  className="text-xs text-red-600 dark:text-red-400 mt-0.5">
+                                  className="text-xs text-[hsl(var(--destructive))] mt-0.5">
                                   {m}
                                 </div>
                               ))}
@@ -329,7 +331,7 @@ export default function SewingCostModule({ onNavigate }) {
                                 .filter((g) => !(it.ssot?.messages || []).length
                                   || !(g.includes('model') || g.includes('BOM')))
                                 .map((g) => (
-                                <div key={g} className="text-xs text-amber-600 dark:text-amber-300 mt-0.5">{g}</div>
+                                <div key={g} className="text-xs text-[hsl(var(--warning))] mt-0.5">{g}</div>
                               ))}
                             </td>
                             <td className="text-right py-2 px-2">{num(it.qty)}</td>

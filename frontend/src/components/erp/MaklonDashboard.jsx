@@ -13,7 +13,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
 import { useToast } from '@/hooks/use-toast';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, EmptyState, Notice } from './moduleAtoms';
 import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
 import apiFetch from '@/lib/apiFetch';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -26,15 +26,15 @@ const ProductionDashboardOverview = lazyRetry(() => import('./ProductionDashboar
 
 const STATUS_CONFIG = {
   draft:          { label: 'Draft',           color: 'bg-muted text-foreground border-border dark:bg-slate-500/15 dark:text-foreground/70 dark:border-slate-400/30' },
-  confirmed:      { label: 'Dikonfirmasi',    color: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-400/30' },
-  material_ready: { label: 'Material Siap',   color: 'bg-cyan-100 text-cyan-700 border-cyan-300 dark:bg-cyan-500/15 dark:text-cyan-300 dark:border-cyan-400/30' },
-  cutting:        { label: 'Cutting',         color: 'bg-violet-100 text-violet-700 border-violet-300 dark:bg-violet-500/15 dark:text-violet-300 dark:border-violet-400/30' },
-  sewing:         { label: 'Sewing',          color: 'bg-purple-100 text-purple-700 border-purple-300 dark:bg-purple-500/15 dark:text-purple-300 dark:border-purple-400/30' },
-  qc:             { label: 'QC',              color: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-400/30' },
-  packing:        { label: 'Packing',         color: 'bg-orange-100 text-orange-700 border-orange-300 dark:bg-orange-500/15 dark:text-orange-300 dark:border-orange-400/30' },
-  completed:      { label: 'Selesai',         color: 'bg-green-100 text-green-700 border-green-300 dark:bg-green-500/15 dark:text-green-300 dark:border-green-400/30' },
-  invoiced:       { label: 'Ditagih',         color: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-500/15 dark:text-emerald-300 dark:border-emerald-400/30' },
-  cancelled:      { label: 'Dibatalkan',      color: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-400/30' },
+  confirmed:      { label: 'Dikonfirmasi',    color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  material_ready: { label: 'Material Siap',   color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  cutting:        { label: 'Cutting',         color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  sewing:         { label: 'Sewing',          color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  qc:             { label: 'QC',              color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  packing:        { label: 'Packing',         color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  completed:      { label: 'Selesai',         color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
+  invoiced:       { label: 'Ditagih',         color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
+  cancelled:      { label: 'Dibatalkan',      color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
 };
 
 function StatusBadge({ status }) {
@@ -157,21 +157,21 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
   };
 
   const stats = [
-    { label: 'Total Klien',        value: summary.total_clients || 0,     icon: Users,         color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border-blue-400/20' },
-    { label: 'Klien Aktif',        value: summary.active_clients || 0,    icon: CheckCircle2,  color: 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 border-green-300 dark:border-green-400/20' },
-    { label: 'Order Aktif',        value: summary.active_orders || 0,     icon: Clock,         color: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border-amber-400/20' },
-    { label: 'Order Selesai',      value: summary.completed_orders || 0,  icon: Package,       color: 'text-violet-600 dark:text-violet-400 bg-violet-50 dark:bg-violet-500/10 border-violet-400/20' },
-    { label: 'Draft',              value: summary.draft_orders || 0,      icon: AlertTriangle, color: 'text-orange-400 bg-orange-500/10 border-orange-400/20' },
-    { label: 'Dikonfirmasi',       value: summary.confirmed_orders || 0,  icon: CheckCircle2,  color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-500/10 border-cyan-400/20' },
-    { label: 'Sedang Produksi',    value: summary.in_production || 0,     icon: Factory,       color: 'text-pink-600 dark:text-pink-400 bg-pink-50 dark:bg-pink-500/10 border-pink-400/20' },
-    { label: 'Total Revenue',      value: `Rp ${(summary.total_revenue || 0).toLocaleString('id-ID')}`, icon: DollarSign, color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-400/20' },
+    { label: 'Total Klien',        value: summary.total_clients || 0,     icon: Users,         color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Klien Aktif',        value: summary.active_clients || 0,    icon: CheckCircle2,  color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)] ' },
+    { label: 'Order Aktif',        value: summary.active_orders || 0,     icon: Clock,         color: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)]  border-[hsl(var(--warning)/0.2)]' },
+    { label: 'Order Selesai',      value: summary.completed_orders || 0,  icon: Package,       color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Draft',              value: summary.draft_orders || 0,      icon: AlertTriangle, color: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.2)]' },
+    { label: 'Dikonfirmasi',       value: summary.confirmed_orders || 0,  icon: CheckCircle2,  color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Sedang Produksi',    value: summary.in_production || 0,     icon: Factory,       color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Total Revenue',      value: `Rp ${(summary.total_revenue || 0).toLocaleString('id-ID')}`, icon: DollarSign, color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)] ' },
   ];
 
 
   const SLA_COLORS = {
-    good: 'text-green-700 dark:text-green-600 bg-green-50 border-green-200 dark:text-green-400 dark:bg-green-500/10 dark:border-green-400/20',
-    warning: 'text-yellow-600 bg-yellow-50 border-yellow-200 dark:text-yellow-400 dark:bg-yellow-500/10 dark:border-yellow-400/20',
-    poor: 'text-red-700 dark:text-red-600 bg-red-50 border-red-200 dark:text-red-400 dark:bg-red-500/10 dark:border-red-400/20',
+    good: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.35)]   ',
+    warning: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.35)]   ',
+    poor: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.35)]   ',
   };
 
   const PERIOD_OPTIONS = [
@@ -193,14 +193,14 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(recentOrders, 10);
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-dashboard">
+    <div className="space-y-4" data-testid="maklon-dashboard">
       <PageHeader
         title="Dashboard Maklon"
-        description="Ringkasan order maklon, klien aktif, performa produksi & monitoring SLA"
+        subtitle="Ringkasan order maklon, klien aktif, performa produksi & monitoring SLA"
         icon={Factory}
         actions={
-          <Button size="sm" onClick={fetchData} variant="outline" className="gap-2" data-testid="refresh-dashboard">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          <Button size="icon" onClick={fetchData} variant="outline" disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="refresh-dashboard">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         }
       />
@@ -209,7 +209,7 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
         <TabsList className="grid w-full grid-cols-4" data-testid="dashboard-tabs">
           <TabsTrigger value="overview" data-testid="tab-overview">
             <Package className="w-4 h-4 mr-2" />
-            Overview
+            Ringkasan
           </TabsTrigger>
           <TabsTrigger value="alur" data-testid="tab-alur-produksi">
             <Factory className="w-4 h-4 mr-2" />
@@ -221,12 +221,12 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
           </TabsTrigger>
           <TabsTrigger value="leadtime" data-testid="tab-leadtime">
             <Calculator className="w-4 h-4 mr-2" />
-            Smart Lead Time
+            Estimasi waktu produksi
           </TabsTrigger>
         </TabsList>
 
         {/* TAB 1: Overview Dashboard */}
-        <TabsContent value="overview" className="space-y-6" data-testid="overview-content">
+        <TabsContent value="overview" className="space-y-4" data-testid="overview-content">
           {/* Stats Grid */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             {stats.map((s, i) => (
@@ -244,7 +244,7 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
 
           {/* Quick Actions */}
           <GlassCard className="p-5">
-            <h3 className="text-sm font-semibold text-foreground/80 mb-3">Quick Actions</h3>
+            <h3 className="text-sm font-semibold text-foreground/80 mb-3">Aksi cepat</h3>
             <div className="flex flex-wrap gap-2">
               <Button size="sm" onClick={() => onNavigate && onNavigate('maklon-clients')} className="gap-1.5" data-testid="btn-kelola-klien">
                 <Users className="w-3.5 h-3.5" /> Kelola Klien
@@ -259,15 +259,16 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
           <GlassCard className="p-5">
             <h3 className="text-sm font-semibold text-foreground/80 mb-4">Order Terbaru</h3>
             {loading ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+              <div className="text-center py-8 text-foreground/40 text-sm">Memuat...</div>
             ) : recentOrders.length === 0 ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Belum ada order maklon</div>
+              <EmptyState icon={Package} title="Belum ada order maklon"
+                description="Buat PO maklon pertama di menu PO Maklon; order terbaru akan tampil di sini." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-foreground/5 text-xs text-foreground/50">
-                      <th className="pb-2 text-left">Order Code</th>
+                      <th className="pb-2 text-left">Kode order</th>
                       <th className="pb-2 text-left">Klien</th>
                       <th className="pb-2 text-left">Produk</th>
                       <th className="pb-2 text-center">Qty</th>
@@ -280,7 +281,7 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                   <tbody className="divide-y divide-white/5">
                     {paged.map((order) => (
                       <tr key={order.id} className="hover:bg-foreground/[0.03] transition-colors">
-                        <td className="py-2.5 pr-3 font-mono text-xs text-foreground/70">{order.order_code}</td>
+                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/70">{order.order_code}</td>
                         <td className="py-2.5 pr-3 text-foreground">{order.client_name}</td>
                         <td className="py-2.5 pr-3">
                           <div className="font-medium text-foreground">{order.product_name}</div>
@@ -344,9 +345,9 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                 {(clientDetail.orders || []).map((o, i) => (
                   <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border text-sm">
                     <div className="flex-shrink-0">
-                      {o.status === 'on_time' ? <CheckCircle2 className="h-4 w-4 text-green-700 dark:text-green-500" /> :
-                       o.status === 'late' ? <XCircle className="h-4 w-4 text-red-700 dark:text-red-500" /> :
-                       <Clock className="h-4 w-4 text-yellow-500" />}
+                      {o.status === 'on_time' ? <CheckCircle2 className="h-4 w-4 text-[hsl(var(--success))] " /> :
+                       o.status === 'late' ? <XCircle className="h-4 w-4 text-[hsl(var(--destructive))] " /> :
+                       <Clock className="h-4 w-4 text-[hsl(var(--warning))]" />}
                     </div>
                     <div className="flex-1">
                       <p className="font-medium">{o.order_code} — {o.garment_type}</p>
@@ -356,7 +357,10 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                     {o.lead_days && <span className="text-xs text-muted-foreground">{o.lead_days}h</span>}
                   </div>
                 ))}
-                {!clientDetail.orders?.length && <div className="text-center py-6 text-sm text-muted-foreground">Belum ada order dalam periode ini</div>}
+                {!clientDetail.orders?.length && (
+                  <EmptyState icon={Package} title="Belum ada order dalam periode ini"
+                    description="Pilih periode yang lebih panjang untuk melihat order klien ini." />
+                )}
               </div>
             </div>
           ) : (
@@ -368,18 +372,18 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                     {PERIOD_OPTIONS.map(o => <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
-                <Button size="sm" variant="outline" onClick={loadSLADashboard} disabled={slaLoading} data-testid="btn-refresh-sla">
-                  <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${slaLoading ? 'animate-spin' : ''}`} />Refresh
+                <Button size="icon" variant="outline" onClick={loadSLADashboard} disabled={slaLoading} title="Muat ulang" aria-label="Muat ulang" data-testid="btn-refresh-sla">
+                  <RefreshCw className={`h-4 w-4 ${slaLoading ? 'animate-spin' : ''}`} />
                 </Button>
               </div>
 
               {/* Overall Stats */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
                 {[
-                  { icon: Users,      label: 'Total Client',   value: slaMeta.total_clients || 0 },
-                  { icon: TrendingUp, label: 'Total Order',     value: slaMeta.total_orders || 0 },
-                  { icon: CheckCircle2,label: 'On-Time Rate',  value: fmtPct(slaMeta.overall_on_time_rate) },
-                  { icon: Clock,      label: 'Avg Lead Days',  value: slaMeta.overall_avg_lead_days ? `${slaMeta.overall_avg_lead_days}h` : '-' },
+                  { icon: Users,      label: 'Total klien',   value: slaMeta.total_clients || 0 },
+                  { icon: TrendingUp, label: 'Total order',     value: slaMeta.total_orders || 0 },
+                  { icon: CheckCircle2,label: 'Tepat waktu',  value: fmtPct(slaMeta.overall_on_time_rate) },
+                  { icon: Clock,      label: 'Rata-rata lama kerja',  value: slaMeta.overall_avg_lead_days ? `${slaMeta.overall_avg_lead_days}h` : '-' },
                 ].map((m, i) => (
                   <Card key={i} className="border border-border">
                     <CardContent className="p-3 flex items-center gap-2">
@@ -394,10 +398,8 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
               {slaLoading ? (
                 <div className="text-center py-8 text-muted-foreground"><RefreshCw className="h-6 w-6 animate-spin mx-auto mb-2" /></div>
               ) : slaItems.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Users className="h-10 w-10 mx-auto mb-2 opacity-20" />
-                  <p className="text-sm">Belum ada data order dalam periode ini</p>
-                </div>
+                <EmptyState icon={Users} title="Belum ada order dalam periode ini"
+                  description="Pilih periode yang lebih panjang untuk melihat SLA per klien." />
               ) : (
                 <div className="space-y-2">
                   {slaItems.map((client, i) => (
@@ -412,11 +414,11 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                           <div className="flex items-center gap-2 mb-1">
                             <p className="font-medium text-sm">{client.client_name}</p>
                             <Badge className={`text-[10px] border ${SLA_COLORS[client.sla_status]}`}>
-                              {client.sla_status === 'good' ? '✅ Good' : client.sla_status === 'warning' ? '⚠️ Warning' : '🚨 Poor'}
+                              {client.sla_status === 'good' ? '✅ Baik' : client.sla_status === 'warning' ? '⚠️ Perlu perhatian' : '🚨 Buruk'}
                             </Badge>
                           </div>
                           <div className="flex gap-4 text-xs text-muted-foreground">
-                            <span>Orders: {client.total_orders}</span>
+                            <span>Order: {client.total_orders}</span>
                             <span>Selesai: {client.completed_orders}</span>
                             <span>Tepat waktu: {client.on_time}</span>
                             <span>Terlambat: {client.late}</span>
@@ -424,7 +426,7 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                         </div>
                         <div className="text-right">
                           <p className="text-lg font-bold">{fmtPct(client.on_time_rate)}</p>
-                          <p className="text-xs text-muted-foreground">Avg {client.avg_lead_days || '-'}h</p>
+                          <p className="text-xs text-muted-foreground">Rata-rata {client.avg_lead_days || '-'}h</p>
                         </div>
                       </div>
                     </button>
@@ -437,11 +439,11 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
 
         {/* TAB 3: Smart Lead Time Estimator */}
         <TabsContent value="leadtime" className="space-y-4" data-testid="leadtime-content">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card className="border border-border">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Calculator className="h-4 w-4 text-blue-500" />Input Parameter
+                  <Calculator className="h-4 w-4 text-[hsl(var(--primary))]" />Input Parameter
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -499,15 +501,13 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
             <Card className="border border-border">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base flex items-center gap-2">
-                  <Target className="h-4 w-4 text-green-700 dark:text-green-500" />Hasil Estimasi
+                  <Target className="h-4 w-4 text-[hsl(var(--success))] " />Hasil Estimasi
                 </CardTitle>
               </CardHeader>
               <CardContent>
                 {!leadTimeResult && !leadTimeLoading && (
-                  <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
-                    <Calculator className="h-10 w-10 mb-3 opacity-20" />
-                    <p className="text-sm">Isi form dan klik Hitung Estimasi</p>
-                  </div>
+                  <EmptyState icon={Calculator} title="Belum ada estimasi"
+                    description="Isi parameter di sebelah kiri lalu klik Hitung Estimasi." />
                 )}
                 {leadTimeResult && (
                   <div className="space-y-4">
@@ -516,12 +516,12 @@ export default function MaklonDashboard({ token, onNavigate, defaultTab }) {
                       <p className="text-sm text-muted-foreground mt-1">Target selesai: {leadTimeResult.target_delivery_date}</p>
                     </div>
                     {leadTimeResult.recommendation && (
-                      <div className="p-3 bg-yellow-50 dark:bg-yellow-500/10 border border-yellow-200 dark:border-yellow-400/20 rounded-lg text-sm text-yellow-800 dark:text-yellow-400">
+                      <Notice tone="warning" icon={AlertTriangle}>
                         {leadTimeResult.recommendation}
-                      </div>
+                      </Notice>
                     )}
                     <div className="space-y-1.5">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Breakdown</p>
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Rincian</p>
                       {[
                         { label: 'Base hari', value: leadTimeResult.breakdown?.base_days },
                         { label: 'Multiplier kompleksitas', value: `×${leadTimeResult.breakdown?.complexity_mult}` },

@@ -42,22 +42,22 @@ export default function RollLinesEditor({
 
   const badge = {
     empty: {
-      cls: 'bg-amber-50 dark:bg-amber-400/10 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-400/30',
+      cls: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ',
       icon: AlertTriangle,
       text: 'Belum ada gulungan — kain ini akan masuk daftar "Penerimaan tanpa roll"',
     },
     match: {
-      cls: 'bg-emerald-50 dark:bg-emerald-400/10 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-400/30',
+      cls: 'bg-[hsl(var(--success)/0.1)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ',
       icon: CheckCircle2,
       text: `Cocok — ${st.count} gulungan = ${fmtQty(st.total)} ${uom}`,
     },
     over: {
-      cls: 'bg-red-50 dark:bg-red-400/10 text-red-700 dark:text-red-300 border-red-300 dark:border-red-400/30',
+      cls: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',
       icon: AlertTriangle,
       text: `Kelebihan ${fmtQty(Math.abs(st.diff), 3)} ${uom} — total gulungan ${fmtQty(st.total)} vs diterima ${fmtQty(accepted)}`,
     },
     under: {
-      cls: 'bg-red-50 dark:bg-red-400/10 text-red-700 dark:text-red-300 border-red-300 dark:border-red-400/30',
+      cls: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ',
       icon: AlertTriangle,
       text: st.hasZero
         ? 'Ada gulungan yang berat/panjangnya masih 0 — isi angkanya'
@@ -67,16 +67,16 @@ export default function RollLinesEditor({
   const BadgeIcon = badge.icon;
 
   return (
-    <div className="rounded-xl border border-violet-300 dark:border-violet-400/30 bg-violet-50/70 dark:bg-violet-400/5 p-3 space-y-2.5"
+    <div className="rounded-xl border border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.7)]  p-3 space-y-2.5"
       data-testid={`${testPrefix}-panel`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-start gap-2">
-          <Layers className="w-4 h-4 mt-0.5 text-violet-600 dark:text-violet-300 shrink-0" />
+          <Layers className="w-4 h-4 mt-0.5 text-[hsl(var(--primary))] shrink-0" />
           <div>
-            <p className="text-xs font-semibold text-violet-800 dark:text-violet-200">
-              {title} <span className="font-normal text-violet-700/80 dark:text-violet-300/80">· nomor roll otomatis{nextNumberHint ? ` (berikutnya ${nextNumberHint})` : ''}</span>
+            <p className="text-xs font-semibold text-[hsl(var(--primary))] ">
+              {title} <span className="font-normal text-[hsl(var(--primary)/0.8)] ">· nomor roll otomatis{nextNumberHint ? ` (berikutnya ${nextNumberHint})` : ''}</span>
             </p>
-            <p className="text-[11px] text-violet-700/80 dark:text-violet-300/70">
+            <p className="text-[11px] text-[hsl(var(--primary)/0.8)] ">
               {subtitle || `Isi berat/panjang tiap gulungan. Totalnya harus sama dengan qty diterima (${fmtQty(accepted)} ${uom}).`}
             </p>
           </div>
@@ -87,11 +87,11 @@ export default function RollLinesEditor({
               type="number" min="1" max="200" value={bulk}
               onChange={(e) => setBulk(e.target.value)}
               placeholder="jml roll"
-              className="h-8 w-24 px-2 rounded-lg border border-violet-300 dark:border-violet-400/30 bg-[var(--input-surface)] text-xs text-foreground"
+              className="h-8 w-24 px-2 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[var(--input-surface)] text-xs text-foreground"
               data-testid={`${testPrefix}-bulk-count`}
             />
             <button type="button" onClick={doSplit}
-              className="h-8 px-2.5 rounded-lg bg-violet-600 text-white text-xs font-medium hover:brightness-110 inline-flex items-center gap-1"
+              className="h-8 px-2.5 rounded-lg bg-[hsl(var(--primary))] text-white text-xs font-medium hover:brightness-110 inline-flex items-center gap-1"
               data-testid={`${testPrefix}-split`}>
               <Wand2 className="w-3.5 h-3.5" /> Bagi rata
             </button>
@@ -100,10 +100,10 @@ export default function RollLinesEditor({
       </div>
 
       {lines.length > 0 && (
-        <div className="rounded-lg border border-violet-200 dark:border-violet-400/20 overflow-hidden bg-[var(--card-surface)]">
+        <div className="rounded-lg border border-[hsl(var(--primary)/0.35)] overflow-hidden bg-[var(--card-surface)]">
           <table className="w-full text-xs" data-testid={`${testPrefix}-table`}>
-            <thead className="bg-violet-100/70 dark:bg-violet-400/10">
-              <tr className="text-left text-violet-900 dark:text-violet-200">
+            <thead className="bg-[hsl(var(--primary)/0.7)] ">
+              <tr className="text-left text-[hsl(var(--primary))] ">
                 <th className="px-2 py-1.5 font-semibold w-10">#</th>
                 <th className="px-2 py-1.5 font-semibold">Nomor roll</th>
                 <th className="px-2 py-1.5 font-semibold w-32">{uom === 'kg' ? 'Berat (kg)' : `Panjang (${uom || 'm'})`}</th>
@@ -114,10 +114,10 @@ export default function RollLinesEditor({
             </thead>
             <tbody>
               {lines.map((l, i) => (
-                <tr key={i} className="border-t border-violet-200/60 dark:border-violet-400/15"
+                <tr key={i} className="border-t border-[hsl(var(--primary)/0.6)] "
                   data-testid={`${testPrefix}-row-${i}`}>
                   <td className="px-2 py-1 text-muted-foreground">{i + 1}</td>
-                  <td className="px-2 py-1 font-mono text-[11px] text-muted-foreground">
+                  <td className="px-2 py-1 tabular-nums text-[11px] text-muted-foreground">
                     {l.roll_no || 'otomatis'}
                   </td>
                   <td className="px-2 py-1">
@@ -126,7 +126,7 @@ export default function RollLinesEditor({
                       disabled={disabled}
                       onChange={(e) => update(i, 'qty', e.target.value)}
                       className={`h-8 w-full px-2 rounded-lg border bg-[var(--input-surface)] text-xs text-foreground tabular-nums ${
-                        num(l.qty) > 0 ? 'border-violet-300 dark:border-violet-400/30' : 'border-red-400 dark:border-red-400/50'}`}
+                        num(l.qty) > 0 ? 'border-[hsl(var(--primary)/0.35)] ' : 'border-[hsl(var(--destructive)/0.35)] '}`}
                       data-testid={`${testPrefix}-qty-${i}`}
                     />
                   </td>
@@ -135,7 +135,7 @@ export default function RollLinesEditor({
                       value={l.color_lot || ''} disabled={disabled}
                       onChange={(e) => update(i, 'color_lot', e.target.value)}
                       placeholder="LOT-A"
-                      className="h-8 w-full px-2 rounded-lg border border-violet-300 dark:border-violet-400/30 bg-[var(--input-surface)] text-xs text-foreground"
+                      className="h-8 w-full px-2 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[var(--input-surface)] text-xs text-foreground"
                       data-testid={`${testPrefix}-lot-${i}`}
                     />
                   </td>
@@ -144,14 +144,14 @@ export default function RollLinesEditor({
                       value={l.notes || ''} disabled={disabled}
                       onChange={(e) => update(i, 'notes', e.target.value)}
                       placeholder="mis. ujung basah"
-                      className="h-8 w-full px-2 rounded-lg border border-violet-300 dark:border-violet-400/30 bg-[var(--input-surface)] text-xs text-foreground"
+                      className="h-8 w-full px-2 rounded-lg border border-[hsl(var(--primary)/0.35)] bg-[var(--input-surface)] text-xs text-foreground"
                       data-testid={`${testPrefix}-notes-${i}`}
                     />
                   </td>
                   {!disabled && (
                     <td className="px-2 py-1 text-right">
                       <button type="button" onClick={() => remove(i)}
-                        className="text-red-600 hover:text-red-500"
+                        className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"
                         aria-label={`Hapus gulungan ${i + 1}`}
                         data-testid={`${testPrefix}-remove-${i}`}>
                         <Trash2 className="w-3.5 h-3.5" />
@@ -168,7 +168,7 @@ export default function RollLinesEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         {!disabled ? (
           <button type="button" onClick={add}
-            className="h-8 px-2.5 rounded-lg border border-violet-300 dark:border-violet-400/30 text-xs font-medium text-violet-800 dark:text-violet-200 hover:bg-violet-100 dark:hover:bg-violet-400/10 inline-flex items-center gap-1"
+            className="h-8 px-2.5 rounded-lg border border-[hsl(var(--primary)/0.35)] text-xs font-medium text-[hsl(var(--primary))]  hover:bg-[hsl(var(--primary)/0.15)]  inline-flex items-center gap-1"
             data-testid={`${testPrefix}-add`}>
             <Plus className="w-3.5 h-3.5" /> Tambah gulungan
           </button>

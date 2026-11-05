@@ -6,12 +6,15 @@ import StatusBadge from './StatusBadge';
 import StaffEntryBadge from './StaffEntryBadge';
 import { BizBadge } from './BusinessTypeBadge';
 import { apiGet } from '../../../lib/api';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 
 function PerformanceBadge({ performance }) {
   const cfg = {
-    'On Track': { cls: 'bg-emerald-100 text-emerald-700 border border-emerald-200', icon: <CheckCircle className="w-3.5 h-3.5" />, label: 'On Track' },
-    'At Risk':  { cls: 'bg-amber-100 text-amber-700 border border-amber-200',   icon: <Clock className="w-3.5 h-3.5" />,          label: 'At Risk' },
-    'Overdue':  { cls: 'bg-red-100 text-red-700 border border-red-200',         icon: <AlertTriangle className="w-3.5 h-3.5" />,   label: 'Overdue' },
+    'On Track': { cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.35)]', icon: <CheckCircle className="w-3.5 h-3.5" />, label: 'Sesuai jadwal' },
+    'At Risk':  { cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border border-[hsl(var(--warning)/0.35)]',   icon: <Clock className="w-3.5 h-3.5" />,          label: 'Berisiko' },
+    'Overdue':  { cls: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.35)]',         icon: <AlertTriangle className="w-3.5 h-3.5" />,   label: 'Lewat tenggat' },
   };
   const c = cfg[performance] || cfg['On Track'];
   return (
@@ -22,7 +25,7 @@ function PerformanceBadge({ performance }) {
 }
 
 function ProgressBar({ pct, performance }) {
-  const color = performance === 'Overdue' ? 'bg-red-500' : performance === 'At Risk' ? 'bg-amber-500' : pct >= 100 ? 'bg-emerald-500' : 'bg-blue-500';
+  const color = performance === 'Overdue' ? 'bg-[hsl(var(--destructive))]' : performance === 'At Risk' ? 'bg-[hsl(var(--warning))]' : pct >= 100 ? 'bg-[hsl(var(--success))]' : 'bg-[hsl(var(--primary))]';
   return (
     <div className="flex items-center gap-2">
       <div className="flex-1 bg-muted rounded-full h-2 overflow-hidden">
@@ -96,7 +99,7 @@ export default function ProductionMonitoringModule({ token, portalId }) {
   const fmtNum = (n) => (n || 0).toLocaleString('id-ID');
 
   return (
-    <div className="space-y-6" data-testid="prod-tracking-module">
+    <div className="space-y-4" data-testid="prod-tracking-module">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -113,56 +116,47 @@ export default function ProductionMonitoringModule({ token, portalId }) {
             )}
           </p>
         </div>
-        <button onClick={fetchData} data-testid="prod-tracking-refresh" className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg text-sm hover:bg-muted/60">
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
-        </button>
+        <Button size="icon" variant="outline" onClick={fetchData} data-testid="prod-tracking-refresh"
+          title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
       </div>
 
       {error && (
-        <div
-          className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700"
-          data-testid="prod-tracking-error"
-        >
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-semibold">Gagal memuat data</p>
-            <p className="text-xs mt-0.5">{error}</p>
-          </div>
-        </div>
+        <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="prod-tracking-error">
+          <span className="text-xs">{error}</span>
+        </Notice>
       )}
 
       {/* Overall Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
         {[
-          { label: 'Vendor Aktif', value: totalStats.vendors, cls: 'text-blue-700', bg: 'bg-blue-50' },
-          { label: 'Prod. Jobs', value: fmtNum(totalStats.totalJobs), cls: 'text-foreground/90', bg: 'bg-muted/40' },
-          { label: 'Total Qty', value: fmtNum(totalStats.totalQty), cls: 'text-foreground/90', bg: 'bg-muted/40' },
-          { label: 'Diproduksi', value: fmtNum(totalStats.totalProduced), cls: 'text-emerald-700', bg: 'bg-emerald-50' },
-          { label: 'Overdue', value: totalStats.overdue, cls: 'text-red-700', bg: 'bg-red-50' },
-          { label: 'At Risk', value: totalStats.atRisk, cls: 'text-amber-700', bg: 'bg-amber-50' },
+          { label: 'Vendor aktif', value: totalStats.vendors, accent: 'primary' },
+          { label: 'Job produksi', value: fmtNum(totalStats.totalJobs), accent: 'default' },
+          { label: 'Total qty', value: fmtNum(totalStats.totalQty), accent: 'default' },
+          { label: 'Diproduksi', value: fmtNum(totalStats.totalProduced), accent: 'success' },
+          { label: 'Lewat tenggat', value: totalStats.overdue, accent: 'danger' },
+          { label: 'Berisiko', value: totalStats.atRisk, accent: 'warning' },
         ].map(s => (
-          <div key={s.label} className={`${s.bg} rounded-xl p-3 border border-transparent`}>
-            <p className="text-xs text-muted-foreground">{s.label}</p>
-            <p className={`text-xl font-bold mt-0.5 ${s.cls}`}>{s.value}</p>
-          </div>
+          <StatTile key={s.label} label={s.label} value={s.value} accent={s.accent} />
         ))}
       </div>
 
       {/* Overall Progress */}
-      <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
+      <GlassCard className="p-4">
         <div className="flex justify-between items-center mb-2">
           <h3 className="font-semibold text-foreground/90 text-sm">Progress Keseluruhan</h3>
-          <span className="text-sm font-bold text-blue-700">
+          <span className="text-sm font-bold text-[hsl(var(--primary))]">
             {fmtNum(totalStats.totalProduced)} / {fmtNum(totalStats.totalQty)} pcs ({overallPct}%)
           </span>
         </div>
         <div className="w-full bg-muted rounded-full h-3">
           <div
-            className={`h-3 rounded-full transition-all duration-500 ${overallPct >= 100 ? 'bg-emerald-500' : 'bg-gradient-to-r from-blue-500 to-emerald-500'}`}
+            className={`h-3 rounded-full transition-all duration-500 ${overallPct >= 100 ? 'bg-[hsl(var(--success))]' : 'bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--success)/0.1)]'}`}
             style={{ width: `${Math.min(100, overallPct)}%` }}
           />
         </div>
-      </div>
+      </GlassCard>
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 items-center">
@@ -170,53 +164,44 @@ export default function ProductionMonitoringModule({ token, portalId }) {
         <SmartNativeSelect
           value={filterVendor}
           onChange={e => { setFilterVendor(e.target.value); setExpanded({}); }}
-          className="border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
         >
           <option value="">Semua Vendor</option>
           {data.map(v => <option key={v.vendor_id} value={v.vendor_id}>{v.vendor_name}</option>)}
         </SmartNativeSelect>
-        <select
+        <SmartNativeSelect
           value={filterPerformance}
           onChange={e => setFilterPerformance(e.target.value)}
-          className="border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
         >
-          <option value="">Semua Performa</option>
-          <option value="On Track">On Track</option>
-          <option value="At Risk">At Risk</option>
-          <option value="Overdue">Overdue</option>
-        </select>
+          <option value="">Semua performa</option>
+          <option value="On Track">Sesuai jadwal</option>
+          <option value="At Risk">Berisiko</option>
+          <option value="Overdue">Lewat tenggat</option>
+        </SmartNativeSelect>
         {(filterVendor || filterPerformance) && (
-          <button onClick={() => { setFilterVendor(''); setFilterPerformance(''); }} className="text-xs text-muted-foreground/70 hover:text-muted-foreground underline">
-            Reset Filter
-          </button>
+          <Button variant="link" size="sm" onClick={() => { setFilterVendor(''); setFilterPerformance(''); }}>
+            Atur ulang penyaring
+          </Button>
         )}
         <span className="ml-auto text-xs text-muted-foreground/70">{filtered.length} vendor ditampilkan</span>
       </div>
 
       {/* Vendor Cards */}
       {loading ? (
-        <div className="text-center py-16 text-muted-foreground/70">
+        <div className="text-center py-8 text-muted-foreground/70">
           <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-3" />
           <p>Memuat data monitoring...</p>
         </div>
       ) : filtered.length === 0 ? (
-        <div className="mx-auto max-w-xl py-14 text-center" data-testid="prod-tracking-empty">
-          <BarChart2 className="mx-auto mb-3 h-12 w-12 opacity-30" />
-          <p className="font-medium text-foreground">Belum ada Production Job untuk dipantau</p>
-          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-            Layar ini membaca <span className="font-mono text-xs">production_jobs</span> —
-            yaitu perintah kerja nyata ke pelaksana. Jadi <strong>PO yang baru dibuat memang belum
-            muncul di sini</strong>: PO harus <strong>dikonfirmasi</strong> dulu, lalu
-            <strong> didistribusi</strong> menjadi job
-            {businessType === 'maklon' ? ' ke vendor CMT (Kirim Material CMT)' : ' ke produksi internal'}.
-            Selama itu belum dilakukan, kosongnya layar ini benar — bukan data yang hilang.
-          </p>
-          <p className="mt-2 text-xs text-muted-foreground/70">
-            Untuk melihat semua PO termasuk yang belum jalan, buka menu PO
-            {businessType === 'maklon' ? ' Maklon' : ' Produksi'} atau Pusat Laporan → kategori{' '}
-            {businessType === 'maklon' ? 'Maklon' : 'Produksi Internal DA'}.
-          </p>
-        </div>
+        <EmptyState
+          testId="prod-tracking-empty"
+          icon={BarChart2}
+          title="Belum ada job produksi untuk dipantau"
+          description={`PO baru muncul di sini setelah dikonfirmasi lalu didistribusikan menjadi job ${
+            businessType === 'maklon' ? 'ke vendor CMT (Kirim Material CMT)' : 'ke produksi internal'
+          }. Semua PO, termasuk yang belum jalan, ada di menu PO ${businessType === 'maklon' ? 'Maklon' : 'Produksi'}.`}
+        />
       ) : (
         <div className="space-y-3">
           {filtered.map(vendor => {
@@ -228,8 +213,8 @@ export default function ProductionMonitoringModule({ token, portalId }) {
 
             return (
               <div key={vendor.vendor_id} className={`bg-card rounded-xl border shadow-sm overflow-hidden transition-all ${
-                vendor.performance === 'Overdue' ? 'border-red-200' :
-                vendor.performance === 'At Risk' ? 'border-amber-200' : 'border-border'
+                vendor.performance === 'Overdue' ? 'border-[hsl(var(--destructive)/0.35)]' :
+                vendor.performance === 'At Risk' ? 'border-[hsl(var(--warning)/0.35)]' : 'border-border'
               }`}>
                 {/* Card Header */}
                 <button
@@ -243,7 +228,7 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 flex-wrap">
                       <span className="font-bold text-foreground">{vendor.vendor_name}</span>
-                      <span className="text-xs text-muted-foreground/70 font-mono">{vendor.vendor_code}</span>
+                      <span className="text-xs text-muted-foreground/70 tabular-nums">{vendor.vendor_code}</span>
                       <PerformanceBadge performance={vendor.performance} />
                       {/* keputusan owner 3a — angka progress vendor ini sebagian/seluruhnya
                           diketik STAF DA (vendor tidak memakai sistem). Wajib kelihatan di
@@ -273,34 +258,34 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground/70">Diproduksi</p>
-                      <p className="font-bold text-emerald-700">{fmtNum(vendor.total_produced)}</p>
+                      <p className="font-bold text-[hsl(var(--success))]">{fmtNum(vendor.total_produced)}</p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground/70">Lolos QC</p>
-                      <p className="font-bold text-emerald-700">{fmtNum(vendor.total_accepted)}</p>
+                      <p className="font-bold text-[hsl(var(--success))]">{fmtNum(vendor.total_accepted)}</p>
                     </div>
                     <div className="text-center">
-                      <p className="text-xs text-muted-foreground/70">Reject</p>
-                      <p className={`font-bold ${Number(vendor.total_reject || 0) > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>
+                      <p className="text-xs text-muted-foreground/70">Ditolak</p>
+                      <p className={`font-bold ${Number(vendor.total_reject || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
                         {fmtNum(vendor.total_reject)}
                         {Number(vendor.total_reject || 0) > 0 && (
-                          <span className="block text-[10px] font-medium text-red-600">{vendor.reject_rate_pct || 0}%</span>
+                          <span className="block text-[10px] font-medium text-[hsl(var(--destructive))]">{vendor.reject_rate_pct || 0}%</span>
                         )}
                       </p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground/70">Rework</p>
-                      <p className={`font-bold ${Number(vendor.total_rework_open || 0) > 0 ? 'text-orange-700' : 'text-muted-foreground'}`}>{fmtNum(vendor.total_rework_open)}</p>
+                      <p className={`font-bold ${Number(vendor.total_rework_open || 0) > 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{fmtNum(vendor.total_rework_open)}</p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground/70">Dikirim</p>
-                      <p className="font-bold text-blue-700">{fmtNum(vendor.total_shipped_to_buyer)}</p>
+                      <p className="font-bold text-[hsl(var(--primary))]">{fmtNum(vendor.total_shipped_to_buyer)}</p>
                     </div>
                     <div className="text-center">
                       <p className="text-xs text-muted-foreground/70">Progress</p>
                       <p className={`font-bold text-lg ${
-                        vendor.performance === 'Overdue' ? 'text-red-600' :
-                        vendor.performance === 'At Risk' ? 'text-amber-600' : 'text-blue-700'
+                        vendor.performance === 'Overdue' ? 'text-[hsl(var(--destructive))]' :
+                        vendor.performance === 'At Risk' ? 'text-[hsl(var(--warning))]' : 'text-[hsl(var(--primary))]'
                       }`}>{vendor.progress_pct || 0}%</p>
                     </div>
                   </div>
@@ -312,15 +297,15 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                     {/* Job Status Sub-stats */}
                     <div className="grid grid-cols-3 gap-3 p-4 bg-muted/40 border-b border-border/60">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-amber-500"></div>
+                        <div className="w-2 h-2 rounded-full bg-[hsl(var(--warning))]"></div>
                         <span className="text-xs text-muted-foreground">Berjalan: <strong>{vendor.jobs_by_status?.in_progress || 0}</strong></span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <div className="w-2 h-2 rounded-full bg-[hsl(var(--success))]"></div>
                         <span className="text-xs text-muted-foreground">Selesai: <strong>{vendor.jobs_by_status?.completed || 0}</strong></span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-blue-500"></div>
+                        <div className="w-2 h-2 rounded-full bg-[hsl(var(--primary))]"></div>
                         <span className="text-xs text-muted-foreground">Total Dikirim: <strong>{fmtNum(vendor.total_shipped_to_buyer)} pcs</strong></span>
                       </div>
                     </div>
@@ -331,7 +316,7 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                         <thead className="bg-muted/40 border-b border-border/60">
                           <tr>
                             {['', 'No. Job', 'No. PO', 'No. Seri', 'Deadline', 'Tersedia', 'Diproduksi', 'Lolos QC', 'Reject', 'Rework', 'Dikirim', 'Sisa', 'Progress', 'Status'].map(h => (
-                              <th key={h} className={`whitespace-nowrap text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider ${h === 'No. Seri' ? 'text-amber-600' : h === 'Reject' ? 'text-red-600' : h === 'Rework' ? 'text-orange-600' : 'text-muted-foreground'}`}>{h}</th>
+                              <th key={h} className={`whitespace-nowrap text-left px-4 py-2.5 text-xs font-semibold uppercase tracking-wider ${h === 'No. Seri' ? 'text-[hsl(var(--warning))]' : h === 'Reject' ? 'text-[hsl(var(--destructive))]' : h === 'Rework' ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{h}</th>
                             ))}
                           </tr>
                         </thead>
@@ -360,10 +345,10 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                                     </button>
                                   )}
                                 </td>
-                                <td className="px-4 py-3 text-sm font-bold text-blue-700">
+                                <td className="px-4 py-3 text-sm font-bold text-[hsl(var(--primary))]">
                                   {job.job_number}
                                   {hasChildren && (
-                                    <span className="ml-1.5 px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium">+{job.child_jobs.length}</span>
+                                    <span className="ml-1.5 px-1.5 py-0.5 bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] rounded text-xs font-medium">+{job.child_jobs.length}</span>
                                   )}
                                   {(job.progress_entry_source === 'staff' || job.progress_entry_source === 'mixed'
                                     || job.job_entered_by_staff) && (
@@ -377,33 +362,33 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                                     </span>
                                   )}
                                 </td>
-                                <td className="px-4 py-3 text-xs font-mono text-muted-foreground">{job.po_number || '-'}</td>
+                                <td className="px-4 py-3 text-xs tabular-nums text-muted-foreground">{job.po_number || '-'}</td>
                                 <td className="px-4 py-3">
                                   {serialNums.length > 0 ? (
                                     <div className="flex flex-wrap gap-1">
                                       {serialNums.map(sn => (
-                                        <span key={sn} className="px-1.5 py-0.5 bg-amber-50 border border-amber-200 rounded text-xs font-mono text-amber-700 font-semibold">{sn}</span>
+                                        <span key={sn} className="px-1.5 py-0.5 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded text-xs tabular-nums text-[hsl(var(--warning))] font-semibold">{sn}</span>
                                       ))}
                                     </div>
                                   ) : <span className="text-muted-foreground/50 text-xs">—</span>}
                                 </td>
                                 <td className="px-4 py-3 text-xs">
-                                  <span className={isOverdue ? 'text-red-600 font-medium' : 'text-muted-foreground'}>{fmtDate(job.deadline || job.delivery_deadline)}</span>
+                                  <span className={isOverdue ? 'text-[hsl(var(--destructive))] font-medium' : 'text-muted-foreground'}>{fmtDate(job.deadline || job.delivery_deadline)}</span>
                                 </td>
-                                <td className="px-4 py-3 text-sm font-medium text-blue-700">{fmtNum(totalAvail)}</td>
-                                <td className="px-4 py-3 text-sm font-medium text-emerald-700">{fmtNum(totalProduced)}</td>
-                                <td className="px-4 py-3 text-sm font-semibold text-emerald-700">{fmtNum(job.accepted_qty)}</td>
-                                <td className={`px-4 py-3 text-sm font-semibold ${Number(job.reject_qty || 0) > 0 ? 'text-red-700' : 'text-muted-foreground'}`}>
+                                <td className="px-4 py-3 text-sm font-medium text-[hsl(var(--primary))]">{fmtNum(totalAvail)}</td>
+                                <td className="px-4 py-3 text-sm font-medium text-[hsl(var(--success))]">{fmtNum(totalProduced)}</td>
+                                <td className="px-4 py-3 text-sm font-semibold text-[hsl(var(--success))]">{fmtNum(job.accepted_qty)}</td>
+                                <td className={`px-4 py-3 text-sm font-semibold ${Number(job.reject_qty || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
                                   {fmtNum(job.reject_qty)}
                                   {Number(job.reject_qty || 0) > 0 && <span className="ml-1 text-[10px]">({job.reject_rate_pct || 0}%)</span>}
                                 </td>
-                                <td className={`px-4 py-3 text-sm font-semibold ${Number(job.rework_open_qty || 0) > 0 ? 'text-orange-700' : 'text-muted-foreground'}`}>{fmtNum(job.rework_open_qty)}</td>
-                                <td className="px-4 py-3 text-sm font-medium text-blue-700">{fmtNum(totalShipped)}</td>
-                                <td className="px-4 py-3 text-sm font-medium text-orange-600">{fmtNum(remaining)}</td>
+                                <td className={`px-4 py-3 text-sm font-semibold ${Number(job.rework_open_qty || 0) > 0 ? 'text-[hsl(var(--warning))]' : 'text-muted-foreground'}`}>{fmtNum(job.rework_open_qty)}</td>
+                                <td className="px-4 py-3 text-sm font-medium text-[hsl(var(--primary))]">{fmtNum(totalShipped)}</td>
+                                <td className="px-4 py-3 text-sm font-medium text-[hsl(var(--warning))]">{fmtNum(remaining)}</td>
                                 <td className="px-4 py-3 w-36">
                                   <div className="flex items-center gap-1.5">
                                     <div className="flex-1 bg-muted rounded-full h-1.5">
-                                      <div className={`h-1.5 rounded-full ${pct >= 100 ? 'bg-emerald-500' : pct >= 50 ? 'bg-blue-500' : pct >= 25 ? 'bg-amber-500' : 'bg-red-400'}`}
+                                      <div className={`h-1.5 rounded-full ${pct >= 100 ? 'bg-[hsl(var(--success))]' : pct >= 50 ? 'bg-[hsl(var(--primary))]' : pct >= 25 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]'}`}
                                         style={{ width: `${Math.min(100, pct)}%` }} />
                                     </div>
                                     <span className="text-xs font-medium text-muted-foreground w-8 text-right">{pct}%</span>
@@ -413,19 +398,19 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                               </tr>,
                               /* Child job rows */
                               ...(isJobExpanded && hasChildren ? job.child_jobs.map(child => (
-                                <tr key={`child-${child.id}`} className="bg-purple-50/30 hover:bg-purple-50/50">
+                                <tr key={`child-${child.id}`} className="bg-[hsl(var(--primary)/0.3)] hover:bg-[hsl(var(--primary)/0.5)]">
                                   <td className="px-4 py-2.5"></td>
                                   <td className="px-4 py-2.5 pl-8">
                                     <div className="flex items-center gap-2">
-                                      <div className="w-3 h-px bg-purple-300 mr-1" />
-                                      <span className="font-bold text-purple-700 text-sm">{child.job_number}</span>
-                                      <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${child.shipment_type === 'ADDITIONAL' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                                      <div className="w-3 h-px bg-[hsl(var(--primary)/0.3)] mr-1" />
+                                      <span className="font-bold text-[hsl(var(--primary))] text-sm">{child.job_number}</span>
+                                      <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${child.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'}`}>
                                         {child.shipment_type}
                                       </span>
                                     </div>
                                   </td>
                                   <td colSpan={11} className="px-4 py-2.5 text-xs text-muted-foreground">
-                                    <span className={`px-2 py-0.5 rounded-full text-xs ${child.status === 'Completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-muted text-muted-foreground'}`}>{child.status}</span>
+                                    <span className={`px-2 py-0.5 rounded-full text-xs ${child.status === 'Completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-muted text-muted-foreground'}`}>{child.status}</span>
                                   </td>
                                   <td className="px-4 py-2.5"></td>
                                 </tr>
@@ -452,7 +437,7 @@ export default function ProductionMonitoringModule({ token, portalId }) {
                             <button
                               key={i}
                               onClick={() => setVendorPage(vendor.vendor_id, i)}
-                              className={`px-2 py-1 text-xs border rounded ${i === currentPage ? 'bg-blue-600 text-white border-blue-600' : 'border-border hover:bg-card'}`}
+                              className={`px-2 py-1 text-xs border rounded ${i === currentPage ? 'bg-[hsl(var(--primary))] text-white border-[hsl(var(--primary)/0.35)]' : 'border-border hover:bg-card'}`}
                             >{i + 1}</button>
                           ))}
                           <button

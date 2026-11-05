@@ -32,10 +32,10 @@ function SourceChip({ row }) {
   const isManual = /manual|koreksi/i.test(label);
   const Icon = isPanel ? Scissors : isManual ? Wrench : ShoppingCart;
   const cls = isPanel
-    ? 'bg-violet-400/10 text-violet-500 border-violet-300/25'
+    ? 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.25)]'
     : isManual
-      ? 'bg-amber-400/10 text-amber-600 border-amber-300/25'
-      : 'bg-emerald-400/10 text-emerald-600 border-emerald-300/25';
+      ? 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]'
+      : 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]';
   return (
     <span className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border ${cls}`}>
       <Icon className="w-3 h-3" /> {label}
@@ -106,7 +106,7 @@ export default function MaterialCostHistoryModule({ token }) {
   const trend = s.change_pct == null ? null : Number(s.change_pct);
   const TrendIcon = trend == null ? Minus : trend > 0 ? TrendingUp : trend < 0 ? TrendingDown : Minus;
   const trendTone = trend == null ? 'text-muted-foreground'
-    : trend > 0 ? 'text-red-500' : trend < 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-muted-foreground';
+    : trend > 0 ? 'text-[hsl(var(--destructive))]' : trend < 0 ? 'text-[hsl(var(--success))] ' : 'text-muted-foreground';
 
   const selected = mats.find(m => m.material_id === selectedId);
 
@@ -122,20 +122,18 @@ export default function MaterialCostHistoryModule({ token }) {
             koreksi manual. Inilah asal angka HPP potongan &amp; HPP produk.
           </p>
         </div>
-        <Button variant="ghost" onClick={() => { loadMats(); loadData(); }}
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={() => { loadMats(); loadData(); }}
           disabled={loadingMats || loadingData} data-testid="cost-history-refresh">
-          <RefreshCw className={`w-4 h-4 mr-1.5 ${(loadingMats || loadingData) ? 'animate-spin' : ''}`} />
-          Muat ulang
-        </Button>
+          <RefreshCw className={`w-4 h-4 ${(loadingMats || loadingData) ? 'animate-spin' : ''}`} /></Button>
       </div>
 
       {matSummary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="cost-history-summary">
           {[
             { k: 'materials', label: 'Barang aktif', v: num(matSummary.materials), tone: 'text-foreground' },
-            { k: 'with_history', label: 'Pernah berubah harga', v: num(matSummary.with_history), tone: 'text-emerald-600 dark:text-emerald-300' },
+            { k: 'with_history', label: 'Pernah berubah harga', v: num(matSummary.with_history), tone: 'text-[hsl(var(--success))] ' },
             { k: 'total_changes', label: 'Total perubahan tercatat', v: num(matSummary.total_changes), tone: 'text-primary' },
-            { k: 'unvalued', label: 'Belum ada harga', v: num(matSummary.unvalued), tone: 'text-amber-600 dark:text-amber-300' },
+            { k: 'unvalued', label: 'Belum ada harga', v: num(matSummary.unvalued), tone: 'text-[hsl(var(--warning))] ' },
           ].map(c => (
             <GlassCard key={c.k} className="p-3">
               <div className={`text-2xl font-bold ${c.tone}`} data-testid={`cost-stat-${c.k}`}>{c.v}</div>
@@ -189,7 +187,7 @@ export default function MaterialCostHistoryModule({ token }) {
                     className={`w-full text-left px-2 py-2 rounded-lg transition-colors ${selectedId === m.material_id ? 'bg-primary/10' : 'hover:bg-[var(--glass-bg-hover)]'}`}
                     data-testid={`cost-pick-${m.code}`}>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[11px] text-muted-foreground">{m.code}</span>
+                      <span className="tabular-nums text-[11px] text-muted-foreground">{m.code}</span>
                       <Badge variant={m.changes ? 'secondary' : 'outline'} className="text-[10px] h-4 px-1.5">
                         {m.changes} kali
                       </Badge>
@@ -228,8 +226,8 @@ export default function MaterialCostHistoryModule({ token }) {
               {[
                 { k: 'current', label: 'Harga sekarang', v: rp(s.current_unit_cost), tone: 'text-foreground' },
                 { k: 'first', label: 'Harga pertama', v: rp(s.first_unit_cost), tone: 'text-muted-foreground' },
-                { k: 'min', label: 'Terendah', v: rp(s.min_unit_cost), tone: 'text-emerald-600 dark:text-emerald-300' },
-                { k: 'max', label: 'Tertinggi', v: rp(s.max_unit_cost), tone: 'text-red-500' },
+                { k: 'min', label: 'Terendah', v: rp(s.min_unit_cost), tone: 'text-[hsl(var(--success))] ' },
+                { k: 'max', label: 'Tertinggi', v: rp(s.max_unit_cost), tone: 'text-[hsl(var(--destructive))]' },
                 { k: 'changes', label: 'Kali berubah', v: num(s.changes), tone: 'text-primary' },
               ].map(c => (
                 <GlassCard key={c.k} className="p-3">
@@ -313,17 +311,17 @@ export default function MaterialCostHistoryModule({ token }) {
                       <td className="px-3 py-2 text-xs text-foreground whitespace-nowrap">{dtFull(r.created_at)}</td>
                       {!selectedId && (
                         <td className="px-3 py-2">
-                          <div className="font-mono text-[11px] text-muted-foreground">{r.material_code}</div>
-                          <div className={r.material_missing ? 'text-[11px] text-amber-600 dark:text-amber-300' : 'text-foreground'}>
+                          <div className="tabular-nums text-[11px] text-muted-foreground">{r.material_code}</div>
+                          <div className={r.material_missing ? 'text-[11px] text-[hsl(var(--warning))] ' : 'text-foreground'}>
                             {r.material_name}
                           </div>
                         </td>
                       )}
                       <td className="px-3 py-2"><SourceChip row={r} /></td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{num(r.qty_in)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{rp(r.unit_cost_in)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">{rp(r.old_unit_cost)}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-foreground">
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{num(r.qty_in)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{rp(r.unit_cost_in)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-muted-foreground">{rp(r.old_unit_cost)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs font-semibold text-foreground">
                         <span className="inline-flex items-center gap-1">
                           <ArrowRight className="w-3 h-3 text-muted-foreground" /> {rp(r.new_unit_cost)}
                         </span>
@@ -332,7 +330,7 @@ export default function MaterialCostHistoryModule({ token }) {
                         {r.change_pct == null ? (
                           <span className="text-[11px] text-muted-foreground">harga pertama</span>
                         ) : (
-                          <span className={`font-mono text-xs font-semibold ${r.change_pct > 0 ? 'text-red-500' : r.change_pct < 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-muted-foreground'}`}
+                          <span className={`tabular-nums text-xs font-semibold ${r.change_pct > 0 ? 'text-[hsl(var(--destructive))]' : r.change_pct < 0 ? 'text-[hsl(var(--success))] ' : 'text-muted-foreground'}`}
                             data-testid={`cost-change-${r.id}`}>
                             {r.change_pct > 0 ? '+' : ''}{r.change_pct}%
                           </span>

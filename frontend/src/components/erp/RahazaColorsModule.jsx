@@ -80,7 +80,7 @@ export function RahazaColorsModule({ token }) {
           </h2>
           <p className="text-muted-foreground text-sm mt-1">
             Palet warna (gaya techpack). Kode singkatan dipakai di SKU varian:
-            <span className="font-mono text-foreground"> KODE-WARNA-SIZE</span>.
+            <span className="tabular-nums text-foreground"> KODE-WARNA-SIZE</span>.
           </p>
         </div>
         <Button onClick={openCreate} className="gap-1.5" data-testid="color-create-btn">
@@ -115,9 +115,9 @@ export function RahazaColorsModule({ token }) {
                       title={row.hex}
                     />
                   </TableCell>
-                  <TableCell className="font-mono font-semibold text-foreground">{row.code}</TableCell>
+                  <TableCell className="tabular-nums font-semibold text-foreground">{row.code}</TableCell>
                   <TableCell className="text-foreground">{row.name}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{row.hex}</TableCell>
+                  <TableCell className="tabular-nums text-xs text-muted-foreground">{row.hex}</TableCell>
                   <TableCell>
                     {row.active === false
                       ? <Badge variant="outline" className="text-muted-foreground">Nonaktif</Badge>
@@ -133,7 +133,7 @@ export function RahazaColorsModule({ token }) {
                       {row.active !== false && (
                         <button
                           onClick={() => handleDelete(row)}
-                          className="p-1.5 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400"
+                          className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
                           title="Nonaktifkan" data-testid={`color-delete-${row.code}`}
                         ><Trash2 className="w-3.5 h-3.5" /></button>
                       )}
@@ -150,13 +150,13 @@ export function RahazaColorsModule({ token }) {
         <Modal onClose={() => setModalOpen(false)} title={editing ? 'Edit Warna' : 'Tambah Warna'} size="sm">
           <div className="space-y-3" data-testid="color-form">
             <div>
-              <label className="text-xs text-muted-foreground">Nama Warna <span className="text-red-400">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama Warna <span className="text-[hsl(var(--destructive))]">*</span></label>
               <GlassInput value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
                 placeholder="cth: Merah Marun" data-testid="color-form-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground">Kode (singkatan) <span className="text-red-400">*</span></label>
+                <label className="text-xs text-muted-foreground">Kode (singkatan) <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <GlassInput value={form.code} onChange={e => setForm({ ...form, code: e.target.value.toUpperCase() })}
                   placeholder="cth: MRN" maxLength={6} data-testid="color-form-code" />
                 <p className="text-[10px] text-muted-foreground mt-1">Dipakai di SKU. Kosongkan = auto 3 huruf.</p>

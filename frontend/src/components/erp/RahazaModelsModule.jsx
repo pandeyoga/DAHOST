@@ -7,7 +7,10 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
 import { DataTable } from './DataTableV2';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, EmptyState, Notice } from './moduleAtoms';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import ImportExportToolbar from './ImportExportToolbar';
 import { toast } from 'sonner';
 import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
@@ -38,10 +41,10 @@ const rupiah = (v) => {
 const HPP_SOURCE_LABEL = {
   // 2026-08-23 — sumber baru & DIDAHULUKAN: HPP lahir dari BOM × harga pembelian
   // + upah CMT/cutting (layar "HPP per Potong"), bukan ketikan master.
-  bom: { text: 'BOM + pembelian', cls: 'bg-emerald-500/10 border-emerald-400/40 text-emerald-700 dark:text-emerald-300' },
-  rnd: { text: 'dari R&D', cls: 'bg-blue-500/10 border-blue-400/40 text-blue-700 dark:text-blue-300' },
-  manual: { text: 'manual', cls: 'bg-amber-500/10 border-amber-400/40 text-amber-700 dark:text-amber-300' },
-  none: { text: 'belum ada', cls: 'bg-red-500/10 border-red-400/40 text-red-700 dark:text-red-300' },
+  bom: { text: 'BOM + pembelian', cls: 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success))] ' },
+  rnd: { text: 'dari R&D', cls: 'bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.4)] text-[hsl(var(--primary))] ' },
+  manual: { text: 'manual', cls: 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning))] ' },
+  none: { text: 'belum ada', cls: 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] ' },
 };
 
 function HppCell({ row }) {
@@ -64,12 +67,12 @@ function ImageThumb({ path, token, onDelete, large = false }) {
   const url = useMemo(() => fileUrl(path, token), [path, token]);
   const sz = large ? 'w-24 h-24' : 'w-12 h-12';
   return (
-    <div className={`relative group ${sz} rounded-lg overflow-hidden border border-[var(--glass-border)] bg-[var(--glass-bg)]`}>
+    <div className={`relative group ${sz} rounded-lg overflow-hidden border border-[var(--glass-border)]`}>
       <img src={url} alt="model" className="w-full h-full object-cover"
         onError={(e) => { e.target.src = IMAGE_FALLBACK; e.target.style.objectFit = 'contain'; e.target.style.padding = '6px'; }} />
       {onDelete && (
         <button onClick={onDelete}
-          className="absolute top-0.5 right-0.5 p-1 rounded-full bg-red-500/90 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-0.5 right-0.5 p-1 rounded-full bg-[hsl(var(--destructive)/0.9)] text-white opacity-0 group-hover:opacity-100 transition-opacity"
           data-testid="model-image-delete" title="Hapus foto">
           <X className="w-3 h-3" />
         </button>
@@ -114,7 +117,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
   };
 
   const handleDeletePhoto = async (path) => {
-    if (!window.confirm('Hapus foto ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus foto ini?', confirmLabel: 'Hapus', danger: true }))) return;
     const r = await fetch(`/api/rahaza/models/${model.id}/images`, {
       method: 'DELETE', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ storage_path: path }),
     });
@@ -166,24 +169,15 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
     } finally { setSaving(false); }
   };
 
-  const TabBtn = ({ id, icon: Icon, label, count }) => (
-    <button onClick={() => setTab(id)}
-      className={`flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border transition-colors ${
-        tab === id ? 'bg-primary/10 border-primary/40 text-foreground' : 'border-[var(--glass-border)] text-muted-foreground hover:bg-[var(--glass-bg-hover)]'}`}
-      data-testid={`panduan-tab-${id}`}>
-      <Icon className="w-4 h-4" /> {label}
-      {count != null && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-foreground/10">{count}</span>}
-    </button>
-  );
-
   return (
     <Modal onClose={onClose} title={`Panduan Produksi · ${model.code} — ${model.name}`} size="lg">
       <div className="space-y-4" data-testid="panduan-produksi-dialog">
-        <div className="flex items-center gap-2 flex-wrap">
-          <TabBtn id="foto" icon={Camera} label="Foto Produk" count={paths.length} />
-          <TabBtn id="sop" icon={ListChecks} label="SOP Produksi" count={steps.length} />
-          <TabBtn id="video" icon={Video} label="Video & Referensi" count={videos.length + refImages.length} />
-        </div>
+        <FilterChips value={tab} onChange={setTab} testId="panduan-tab" ariaLabel="Bagian panduan produksi" hideWhenEmpty={false}
+          options={[
+            { key: 'foto', label: 'Foto produk', icon: Camera, count: paths.length },
+            { key: 'sop', label: 'SOP produksi', icon: ListChecks, count: steps.length },
+            { key: 'video', label: 'Video & referensi', icon: Video, count: videos.length + refImages.length },
+          ]} />
 
         {/* ── FOTO ── */}
         {tab === 'foto' && (
@@ -216,7 +210,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
             </p>
             <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
               {steps.map((st, idx) => (
-                <div key={st.id} className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3" data-testid={`sop-step-${idx}`}>
+                <GlassCard key={st.id} className="p-3" data-testid={`sop-step-${idx}`}>
                   <div className="flex items-start gap-3">
                     <div className="flex flex-col items-center gap-1 pt-1">
                       <span className="w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">{idx + 1}</span>
@@ -236,7 +230,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                             <img src={fileUrl(st.image_path, token)} alt="step" className="w-20 h-20 rounded-lg object-cover border border-[var(--glass-border)]"
                               onError={(e) => { e.target.src = IMAGE_FALLBACK; }} />
                             <button onClick={() => updateStep(idx, { image_path: '' })}
-                              className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-red-500/90 text-white" title="Hapus foto langkah"><X className="w-3 h-3" /></button>
+                              className="absolute -top-1.5 -right-1.5 p-1 rounded-full bg-[hsl(var(--destructive)/0.9)] text-white" title="Hapus foto langkah"><X className="w-3 h-3" /></button>
                           </div>
                         ) : (
                           <label className="w-20 h-20 rounded-lg border-2 border-dashed border-[var(--glass-border)] flex flex-col items-center justify-center gap-1 cursor-pointer hover:border-primary text-muted-foreground"
@@ -245,18 +239,17 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                             <input type="file" accept="image/*" className="hidden" onChange={(e) => uploadStepPhoto(idx, e.target.files?.[0])} />
                           </label>
                         )}
-                        <button onClick={() => removeStep(idx)} className="ml-auto flex items-center gap-1 text-xs text-red-400 hover:text-red-300" data-testid={`sop-step-${idx}-remove`}>
+                        <button onClick={() => removeStep(idx)} className="ml-auto flex items-center gap-1 text-xs text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`sop-step-${idx}-remove`}>
                           <Trash2 className="w-3.5 h-3.5" /> Hapus langkah
                         </button>
                       </div>
                     </div>
                   </div>
-                </div>
+                </GlassCard>
               ))}
               {steps.length === 0 && (
-                <div className="text-center py-6 text-sm text-muted-foreground border border-dashed border-[var(--glass-border)] rounded-lg">
-                  Belum ada langkah. Klik "Tambah Langkah".
-                </div>
+                <EmptyState icon={ListChecks} className="py-8" title="Belum ada langkah"
+                  description='Klik "Tambah Langkah" untuk menulis langkah pertama.' />
               )}
             </div>
             <Button variant="outline" size="sm" onClick={addStep} data-testid="sop-add-step-btn"><Plus className="w-4 h-4 mr-1" /> Tambah Langkah</Button>
@@ -275,18 +268,21 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                 {videos.map((v, idx) => {
                   const yid = ytId(v.url);
                   return (
-                    <div key={idx} className="flex items-center gap-3 rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-2" data-testid={`ref-video-${idx}`}>
+                    <GlassCard key={idx} className="flex items-center gap-3 p-2" data-testid={`ref-video-${idx}`}>
                       {yid ? <img src={`https://img.youtube.com/vi/${yid}/default.jpg`} alt="yt" className="w-16 h-12 rounded object-cover" />
                            : <div className="w-16 h-12 rounded bg-foreground/10 flex items-center justify-center"><Video className="w-5 h-5 text-muted-foreground" /></div>}
                       <div className="flex-1 space-y-1">
                         <GlassInput value={v.title} onChange={(e) => updateVideo(idx, { title: e.target.value })} placeholder="Judul video" data-testid={`ref-video-${idx}-title`} />
                         <GlassInput value={v.url} onChange={(e) => updateVideo(idx, { url: e.target.value })} placeholder="https://youtu.be/... atau link Drive" data-testid={`ref-video-${idx}-url`} />
                       </div>
-                      <button onClick={() => removeVideo(idx)} className="p-1.5 text-red-400 hover:text-red-300" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
-                    </div>
+                      <button onClick={() => removeVideo(idx)} className="p-1.5 text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
+                    </GlassCard>
                   );
                 })}
-                {videos.length === 0 && <div className="text-xs text-muted-foreground py-2">Belum ada video referensi.</div>}
+                {videos.length === 0 && (
+                  <EmptyState icon={Video} className="py-6" title="Belum ada video referensi"
+                    description="Klik tombol Video untuk menambah tautan YouTube atau Drive." />
+                )}
               </div>
             </div>
             <div>
@@ -296,16 +292,19 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
               </div>
               <div className="space-y-2">
                 {refImages.map((v, idx) => (
-                  <div key={idx} className="flex items-center gap-3 rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-2" data-testid={`ref-image-${idx}`}>
+                  <GlassCard key={idx} className="flex items-center gap-3 p-2" data-testid={`ref-image-${idx}`}>
                     <img src={v.url || IMAGE_FALLBACK} alt="ref" className="w-14 h-14 rounded object-cover bg-foreground/5" onError={(e) => { e.target.src = IMAGE_FALLBACK; e.target.style.objectFit = 'contain'; e.target.style.padding = '4px'; }} />
                     <div className="flex-1 space-y-1">
                       <GlassInput value={v.caption} onChange={(e) => updateRefImage(idx, { caption: e.target.value })} placeholder="Keterangan" data-testid={`ref-image-${idx}-caption`} />
                       <GlassInput value={v.url} onChange={(e) => updateRefImage(idx, { url: e.target.value })} placeholder="https://.../gambar.jpg" data-testid={`ref-image-${idx}-url`} />
                     </div>
-                    <button onClick={() => removeRefImage(idx)} className="p-1.5 text-red-400 hover:text-red-300" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
-                  </div>
+                    <button onClick={() => removeRefImage(idx)} className="p-1.5 text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></button>
+                  </GlassCard>
                 ))}
-                {refImages.length === 0 && <div className="text-xs text-muted-foreground py-2">Belum ada gambar referensi.</div>}
+                {refImages.length === 0 && (
+                  <EmptyState icon={ImageIcon} className="py-6" title="Belum ada gambar referensi"
+                    description="Klik tombol Gambar untuk menambah tautan gambar." />
+                )}
               </div>
             </div>
           </div>
@@ -417,9 +416,12 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
   };
 
   const handleDelete = async (row) => {
-    if (!window.confirm(
-      `Nonaktifkan model ${row.code}?\n\nItem katalog marketing yang menawarkan produk ini akan ikut dinonaktifkan `
-      + `supaya barang yang sudah dihentikan tidak bisa dijual.`)) return;
+    if (!(await confirmDialog({
+      title: `Nonaktifkan model ${row.code}?`,
+      body: 'Item katalog marketing yang menawarkan produk ini akan ikut dinonaktifkan '
+        + 'supaya barang yang sudah dihentikan tidak bisa dijual.',
+      confirmLabel: 'Nonaktifkan', danger: true,
+    }))) return;
     const r = await fetch(`/api/rahaza/models/${row.id}`, { method: 'DELETE', headers });
     const d = await r.json().catch(() => ({}));
     if (r.ok) {
@@ -430,14 +432,14 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
   };
 
   const columns = [
-    { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="font-mono text-xs">{row.code}</span> },
+    { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="tabular-nums text-xs">{row.code}</span> },
     { key: 'name', label: 'Nama Model', sortable: true },
     {
       key: 'category_name', label: 'Kategori', sortable: true,
       render: (row) => {
         if (!row.category_id) {
           return (
-            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-amber-500/10 border-amber-400/40 text-amber-700 dark:text-amber-300"
+            <span className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.4)] text-[hsl(var(--warning))] "
               title="Kategori belum dipilih — tidak ditebak oleh sistem" data-testid={`model-nocat-${row.code}`}>
               <AlertTriangle className="w-3 h-3" /> belum dipilih
             </span>
@@ -445,7 +447,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         }
         return (
           <span className="inline-flex items-center gap-1.5" data-testid={`model-cat-${row.code}`}>
-            <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
+            <span className="tabular-nums text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/30">
               {row.category_code || '—'}
             </span>
             <span className="text-sm">{row.category_name || row.category}</span>
@@ -526,7 +528,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
             <Edit2 className="w-3.5 h-3.5" />
           </button>
           <button onClick={(e) => { e.stopPropagation(); handleDelete(row); }}
-            className="p-1.5 rounded hover:bg-red-100 dark:bg-red-500/20 text-muted-foreground hover:text-red-700 dark:text-red-400" title="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
+            className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))] " title="Nonaktifkan" data-testid={`model-deactivate-${row.code}`}>
             <Trash2 className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -539,12 +541,12 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       {(() => {
         const actions = (
           <>
-            <select value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
-              className="px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)] text-sm text-foreground"
+            <SmartNativeSelect value={catFilter} onChange={(e) => setCatFilter(e.target.value)}
+              className="w-56 text-sm"
               data-testid="model-filter-category">
               <option value="">Semua kategori</option>
               {categories.map((c) => <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>)}
-            </select>
+            </SmartNativeSelect>
             <ImportExportToolbar collectionKey="models" label="Model Produk" onImported={fetchRows} />
             <Button onClick={openCreate} className="gap-1.5" data-testid="model-create-btn">
               <Plus className="w-4 h-4" /> Tambah Model
@@ -563,15 +565,11 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
       })()}
 
       {noCategoryCount > 0 && (
-        <div className="flex items-start gap-2 text-[12px] text-amber-800 dark:text-amber-200 bg-amber-500/10 border border-amber-400/40 rounded-lg p-3"
-          data-testid="model-nocat-banner">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>
-            <b>{noCategoryCount} produk belum punya kategori.</b> Sistem <b>tidak menebak</b> —
-            grouping & filter katalog marketing baru bisa dipercaya setelah kategorinya dipilih.
-            Buka Edit pada baris bertanda “belum dipilih”.
-          </span>
-        </div>
+        <Notice tone="warning" icon={AlertTriangle} testId="model-nocat-banner">
+          <b>{noCategoryCount} produk belum punya kategori.</b> Sistem <b>tidak menebak</b> —
+          pengelompokan & filter katalog marketing baru bisa dipercaya setelah kategorinya dipilih.
+          Buka Ubah pada baris bertanda “belum dipilih”.
+        </Notice>
       )}
 
       <GlassCard>
@@ -583,29 +581,28 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
         <Modal onClose={() => setModalOpen(false)} title={editing ? `Edit Model · ${editing.code}` : 'Tambah Model Baru'} size="md">
           <div className="space-y-3" data-testid="model-form">
             {!editing && (
-              <div className="flex items-start gap-2 text-[11px] text-amber-700 dark:text-amber-300 bg-amber-500/10 border border-amber-400/30 rounded-lg p-2" data-testid="model-rnd-hint">
-                <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                <span><b>Disarankan lewat R&D:</b> produk internal idealnya lahir dari modul R&D (publish style → otomatis jadi master + bawa foto desain). Input manual ini untuk kasus khusus.</span>
-              </div>
+              <Notice tone="warning" icon={Info} testId="model-rnd-hint" className="text-xs">
+                <b>Disarankan lewat R&D:</b> produk internal idealnya lahir dari modul R&D (publish style → otomatis jadi master + bawa foto desain). Input manual ini untuk kasus khusus.
+              </Notice>
             )}
             <div>
-              <label className="text-xs text-muted-foreground">Nama Model <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama Model <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Contoh: Vest Rajut Formal" data-testid="model-form-name" />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground">Kategori <span className="text-red-700 dark:text-red-400">*</span></label>
-              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)] text-sm text-foreground" data-testid="model-form-category">
+              <label className="text-xs text-muted-foreground">Kategori <span className="text-[hsl(var(--destructive))] ">*</span></label>
+              <SmartNativeSelect value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                className="w-full text-sm" data-testid="model-form-category">
                 <option value="">— pilih kategori —</option>
                 {categories.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.sku_prefix})</option>)}
-              </select>
+              </SmartNativeSelect>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Dipakai untuk filter & grouping katalog marketing. Daftar ini diambil dari tab <b>Kategori</b>.
               </p>
             </div>
 
             {/* ── Kode produk: otomatis dari prefix kategori (K-1A) ── */}
-            <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3 space-y-2">
+            <GlassCard className="p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs text-muted-foreground">Kode Produk</label>
                 {!editing && (
@@ -619,19 +616,19 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
               {!editing && autoCode ? (
                 <div className="flex items-center gap-2 text-sm text-foreground" data-testid="model-form-code-auto">
                   <Wand2 className="w-4 h-4 text-primary" />
-                  <span className="font-mono">
+                  <span className="tabular-nums">
                     {selectedCat ? `${selectedCat.sku_prefix}-0001` : '(pilih kategori dulu)'}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
                     — nomor urut berikutnya dibuat server; SKU varian menjadi{' '}
-                    <span className="font-mono">{selectedCat ? `${selectedCat.sku_prefix}-0001-NVY-M` : '…'}</span>
+                    <span className="tabular-nums">{selectedCat ? `${selectedCat.sku_prefix}-0001-NVY-M` : '…'}</span>
                   </span>
                 </div>
               ) : (
                 <GlassInput value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
                   placeholder="Contoh: VST-0001" data-testid="model-form-code" />
               )}
-            </div>
+            </GlassCard>
 
             {/* ── HPP · Harga Jual · Berat (F5 — menutup P1 & P4) ── */}
             <div className="grid grid-cols-3 gap-3">
@@ -656,7 +653,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
             </div>
 
             {editing && (
-              <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-3 text-[11px] space-y-1"
+              <GlassCard className="p-3 text-[11px] space-y-1"
                 data-testid="model-form-hpp-info">
                 <div className="flex items-center gap-2">
                   <span className="text-muted-foreground">HPP berlaku:</span>
@@ -684,7 +681,7 @@ export default function RahazaModelsModule({ token, onNavigate, embedded = false
                   data-testid="model-goto-hpp-potong">
                   Hitung HPP dari BOM &amp; harga pembelian (HPP per Potong) →
                 </button>
-              </div>
+              </GlassCard>
             )}
 
             <div className="grid grid-cols-2 gap-3">

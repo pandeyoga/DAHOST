@@ -27,6 +27,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["vendor-shipments"])
 
 
+@router.post("/vendor-shipments/accessory-plan")
+async def vendor_shipment_accessory_plan(request: Request):
+    """Aksesoris yang IKUT kiriman ini — dimuat otomatis di form Kirim Material CMT (2026-11-05).
+
+    PO maklon: BOM PO disegarkan dulu dari BOM template AKTIF di Katalog Buyer (BOM yang diatur
+    manual tidak ditimpa), lalu jatah kiriman = kebutuhan PO × qty dikirim ÷ qty PO
+    (`core.shipment_accessories`). Body: {po_id, items: [{po_item_id, qty_sent}]}
+    """
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    body = await request.json()
+    if not body.get('po_id'):
+        raise HTTPException(400, 'po_id wajib diisi')
+    from core import shipment_accessories as sa
+    return serialize_doc(await sa.accessory_plan(db, body['po_id'], body.get('items') or [], user=user))
+
+
 @router.post("/vendor-shipments/material-preview")
 async def vendor_shipment_material_preview(request: Request):
     """FASE H-1 — PRATINJAU material yang akan KELUAR dari gudang.
@@ -507,9 +525,24 @@ async def create_vendor_shipment(request: Request):
                 'Surat jalan TIDAK dibuat: gagal menerbitkan dokumen pengeluaran '
                 f'material ({e}). Tidak ada stok yang dipotong.')
 
+    # 2026-11-05 — aksesoris ikut tercatat PER KIRIMAN (dulu hanya kebutuhan seluruh PO yang tampil,
+    # sehingga Surat Jalan kiriman sebagian mencetak seluruh kebutuhan PO). Form mengirim
+    # `accessory_items` hasil pratinjau (boleh diubah); klien lama tanpa field itu → dihitung otomatis.
+    acc_recorded = 0
+    if body.get('shipment_type', 'NORMAL') == 'NORMAL' and shipment_po_id and not is_vendor(user):
+        try:
+            from core import shipment_accessories as sa
+            acc_rows = body.get('accessory_items')
+            if acc_rows is None:
+                plan = await sa.accessory_plan(db, shipment_po_id, items_data, refresh_bom=False)
+                acc_rows = [{**r, 'qty_sent': r['qty_suggested']} for r in plan['rows']]
+            acc_recorded = await sa.record_for_shipment(db, shipment, acc_rows)
+        except Exception:  # noqa: BLE001 — surat jalan garmen tetap sah; aksesoris dilaporkan
+            logger.exception('aksesoris kiriman %s gagal dicatat', shipment.get('shipment_number'))
     await log_activity(user['id'], user['name'], 'Create', 'Vendor Shipment', f"Created shipment {body.get('shipment_number')}")
     result = serialize_doc(shipment)
     result['items'] = serialize_doc(inserted_items)
+    result['accessory_lines'] = acc_recorded
     if material_issue:
         result['material_issue'] = {
             'mi_number': (material_issue.get('mi') or {}).get('mi_number')

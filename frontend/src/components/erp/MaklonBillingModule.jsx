@@ -13,7 +13,8 @@ import { toast } from 'sonner';
 import SalesTaxFields from './SalesTaxFields';
 import { useTaxProfile } from '../../lib/taxProfile';
 import { motion } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, EmptyState, Notice } from './moduleAtoms';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import OnwardCTA from './OnwardCTA';
@@ -22,11 +23,11 @@ import { todayWIB } from '@/lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const STATUS_CONFIG = {
-  draft:        { label: 'Draft',        color: 'bg-muted text-foreground border-border dark:bg-slate-500/15 dark:text-foreground/70 dark:border-slate-400/30' },
-  issued:       { label: 'Diterbitkan',  color: 'bg-blue-100 text-blue-700 border-blue-300 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-400/30' },
-  partial_paid: { label: 'Partial',      color: 'bg-amber-100 text-amber-700 border-amber-300 dark:bg-amber-500/15 dark:text-amber-300 dark:border-amber-400/30' },
-  paid:         { label: 'Lunas',        color: 'bg-green-100 text-green-700 border-green-300 dark:bg-green-500/15 dark:text-green-300 dark:border-green-400/30' },
-  overdue:      { label: 'Overdue',      color: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-500/15 dark:text-red-300 dark:border-red-400/30' },
+  draft:        { label: 'Draf',         color: 'bg-muted text-foreground border-border dark:bg-slate-500/15 dark:text-foreground/70 dark:border-slate-400/30' },
+  issued:       { label: 'Diterbitkan',  color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  partial_paid: { label: 'Dibayar sebagian', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  paid:         { label: 'Lunas',        color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
+  overdue:      { label: 'Lewat jatuh tempo', color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
   cancelled:    { label: 'Dibatalkan',   color: 'bg-muted text-muted-foreground border-border dark:bg-slate-500/15 dark:text-muted-foreground dark:border-slate-400/30' },
 };
 
@@ -36,6 +37,7 @@ function StatusBadge({ status }) {
 }
 
 const fmt = formatRupiah;
+const AGING_LABELS = { current: 'Belum jatuh tempo', '1_30': '1-30 hari', '31_60': '31-60 hari', '61_90': '61-90 hari', over_90: '> 90 hari' };
 
 export default function MaklonBillingModule({ token, onNavigate }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -72,7 +74,7 @@ export default function MaklonBillingModule({ token, onNavigate }) {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const cancelInvoice = async (inv) => {
-    if (!window.confirm(`Batalkan invoice ${inv.invoice_number}?`)) return;
+    if (!(await confirmDialog({ title: `Batalkan faktur ${inv.invoice_number}?`, body: 'Faktur yang dibatalkan tidak bisa ditagih lagi.', confirmLabel: 'Batalkan faktur', danger: true }))) return;
     const r = await fetch(`/api/dewi/maklon/invoices/${inv.id}/cancel`, { method: 'POST', headers });
     if (r.ok) { toast.success('Invoice dibatalkan'); fetchAll(); }
     else toast.error((await r.json()).detail || 'Gagal');
@@ -93,27 +95,27 @@ export default function MaklonBillingModule({ token, onNavigate }) {
   };
 
   const stats = [
-    { label: 'Total Invoice',   value: summary.total_invoices || 0,          color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border-blue-400/20' },
-    { label: 'Total Tagihan',   value: fmt(summary.total_billed),             color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-500/10 border-cyan-400/20' },
-    { label: 'Sudah Dibayar',   value: fmt(summary.total_paid),               color: 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 border-green-300 dark:border-green-400/20' },
-    { label: 'Outstanding',     value: fmt(summary.total_outstanding),        color: 'text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 border-amber-400/20' },
-    { label: 'Overdue',         value: `${summary.overdue_count || 0} (${fmt(summary.overdue_amount)})`, color: 'text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border-red-300 dark:border-red-400/20' },
+    { label: 'Total Invoice',   value: summary.total_invoices || 0,          color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Total Tagihan',   value: fmt(summary.total_billed),             color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
+    { label: 'Sudah Dibayar',   value: fmt(summary.total_paid),               color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)] ' },
+    { label: 'Sisa tagihan',    value: fmt(summary.total_outstanding),        color: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)]  border-[hsl(var(--warning)/0.2)]' },
+    { label: 'Lewat jatuh tempo', value: `${summary.overdue_count || 0} (${fmt(summary.overdue_amount)})`, color: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)]  border-[hsl(var(--destructive)/0.35)] ' },
   ];
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(invoices, 10);
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-billing">
+    <div className="space-y-4" data-testid="maklon-billing">
       <PageHeader
         title="Invoice & Billing Maklon"
         subtitle="Generate invoice dari order, kelola payment, laporan aging"
         icon={Banknote}
         actions={
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={fetchAll} className="gap-2" data-testid="billing-refresh-btn">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            <Button size="icon" variant="outline" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="billing-refresh-btn">
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
             <Button size="sm" onClick={() => setGenerateDialog(true)} className="gap-1.5" data-testid="billing-generate-btn">
-              <FileText className="w-3.5 h-3.5" /> Generate Invoice
+              <FileText className="w-3.5 h-3.5" /> Terbitkan faktur
             </Button>
           </div>
         }
@@ -142,52 +144,53 @@ export default function MaklonBillingModule({ token, onNavigate }) {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
-          <TabsTrigger value="invoices">Invoices</TabsTrigger>
-          <TabsTrigger value="aging">Aging Report</TabsTrigger>
+          <TabsTrigger value="invoices">Faktur</TabsTrigger>
+          <TabsTrigger value="aging">Umur piutang</TabsTrigger>
         </TabsList>
 
         <TabsContent value="invoices">
           <GlassCard className="p-5">
             {loading ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+              <div className="text-center py-6 text-foreground/40 text-sm">Memuat...</div>
             ) : invoices.length === 0 ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Belum ada invoice</div>
+              <EmptyState icon={FileText} title="Belum ada faktur"
+                description="Terbitkan faktur dari PO yang sudah dikirim lewat tombol Terbitkan faktur." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm" data-testid="invoices-table">
                   <thead><tr className="border-b border-foreground/5 text-xs text-foreground/50">
-                    <th className="pb-2 text-left">Invoice #</th>
+                    <th className="pb-2 text-left">No. faktur</th>
                     <th className="pb-2 text-left">Klien</th>
                     <th className="pb-2 text-left">Order</th>
-                    <th className="pb-2 text-left">Issue</th>
-                    <th className="pb-2 text-left">Due</th>
+                    <th className="pb-2 text-left">Terbit</th>
+                    <th className="pb-2 text-left">Jatuh tempo</th>
                     <th className="pb-2 text-right">Total</th>
-                    <th className="pb-2 text-right">Paid</th>
-                    <th className="pb-2 text-right">Balance</th>
+                    <th className="pb-2 text-right">Dibayar</th>
+                    <th className="pb-2 text-right">Sisa</th>
                     <th className="pb-2 text-left">Status</th>
                     <th className="pb-2 text-center">Aksi</th>
                   </tr></thead>
                   <tbody className="divide-y divide-white/5">
                     {paged.map(i => (
                       <tr key={i.id} className="hover:bg-foreground/[0.03]">
-                        <td className="py-2.5 pr-3 font-mono text-xs text-foreground/80">{i.invoice_number}</td>
+                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/80">{i.invoice_number}</td>
                         <td className="py-2.5 pr-3 text-foreground">{i.client_name}</td>
-                        <td className="py-2.5 pr-3 font-mono text-xs text-foreground/60">{i.order_code}</td>
+                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/60">{i.order_code}</td>
                         <td className="py-2.5 pr-3 text-xs text-foreground/60">{i.issue_date}</td>
                         <td className="py-2.5 pr-3 text-xs text-foreground/60">{i.due_date}</td>
                         <td className="py-2.5 pr-3 text-right">{fmt(i.total_amount)}</td>
-                        <td className="py-2.5 pr-3 text-right text-green-700 dark:text-green-400">{fmt(i.paid_amount)}</td>
-                        <td className="py-2.5 pr-3 text-right text-amber-600 dark:text-amber-300 font-semibold">{fmt(i.balance_amount)}</td>
+                        <td className="py-2.5 pr-3 text-right text-[hsl(var(--success))] ">{fmt(i.paid_amount)}</td>
+                        <td className="py-2.5 pr-3 text-right text-[hsl(var(--warning))] font-semibold">{fmt(i.balance_amount)}</td>
                         <td className="py-2.5 pr-3"><StatusBadge status={i.status} /></td>
                         <td className="py-2.5">
                           <div className="flex gap-1 justify-center">
-                            <Button size="icon" variant="ghost" className="w-7 h-7" onClick={() => setViewDialog(i)} title="Detail"><Eye className="w-3.5 h-3.5" /></Button>
-                            <Button size="icon" variant="ghost" className="w-7 h-7 text-blue-700 dark:text-blue-400" onClick={() => printInvoicePdf(i)} title="Cetak PDF (Invoice)" data-testid={`maklon-invoice-print-${i.id}`}><FileText className="w-3.5 h-3.5" /></Button>
+                            <Button size="icon-sm" variant="ghost" onClick={() => setViewDialog(i)} title="Detail" aria-label="Detail"><Eye className="w-3.5 h-3.5" /></Button>
+                            <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--primary))]" onClick={() => printInvoicePdf(i)} title="Cetak PDF faktur" aria-label="Cetak PDF faktur" data-testid={`maklon-invoice-print-${i.id}`}><FileText className="w-3.5 h-3.5" /></Button>
                             {['issued','partial_paid','overdue'].includes(i.status) && (
-                              <Button size="icon" variant="ghost" className="w-7 h-7 text-green-700 dark:text-green-400" onClick={() => setPayDialog(i)} title="Bayar"><CreditCard className="w-3.5 h-3.5" /></Button>
+                              <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--success))]" onClick={() => setPayDialog(i)} title="Bayar" aria-label="Bayar"><CreditCard className="w-3.5 h-3.5" /></Button>
                             )}
                             {i.status !== 'cancelled' && i.paid_amount === 0 && (
-                              <Button size="icon" variant="ghost" className="w-7 h-7 text-red-700 dark:text-red-400" onClick={() => cancelInvoice(i)} title="Batal"><X className="w-3.5 h-3.5" /></Button>
+                              <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive))]" onClick={() => cancelInvoice(i)} title="Batalkan faktur" aria-label="Batalkan faktur"><X className="w-3.5 h-3.5" /></Button>
                             )}
                           </div>
                         </td>
@@ -204,8 +207,8 @@ export default function MaklonBillingModule({ token, onNavigate }) {
         <TabsContent value="aging">
           <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
             {['current','1_30','31_60','61_90','over_90'].map(k => {
-              const labels = {current:'Current',1_30:'1-30 hari',31_60:'31-60',61_90:'61-90',over_90:'> 90'};
-              const colors = {current:'text-green-700 dark:text-green-400',1_30:'text-amber-700 dark:text-amber-400',31_60:'text-orange-400',61_90:'text-red-700 dark:text-red-400',over_90:'text-red-700 dark:text-red-500'};
+              const labels = AGING_LABELS;
+              const colors = {current:'text-[hsl(var(--success))] ',1_30:'text-[hsl(var(--warning))] ',31_60:'text-[hsl(var(--warning))]',61_90:'text-[hsl(var(--destructive))] ',over_90:'text-[hsl(var(--destructive))] '};
               return (
                 <GlassCard key={k} className="p-4">
                   <div className="text-xs text-foreground/50">{labels[k]}</div>
@@ -215,26 +218,27 @@ export default function MaklonBillingModule({ token, onNavigate }) {
             })}
           </div>
           <GlassCard className="p-5">
-            <h3 className="text-sm font-semibold text-foreground/80 mb-3">Outstanding Invoices</h3>
+            <h3 className="text-sm font-semibold text-foreground/80 mb-3">Faktur belum lunas</h3>
             {(aging.rows || []).length === 0 ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Tidak ada invoice outstanding</div>
+              <EmptyState icon={Banknote} title="Semua faktur sudah lunas"
+                description="Faktur yang belum dibayar penuh akan muncul di sini." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead><tr className="border-b border-foreground/5 text-xs text-foreground/50">
-                    <th className="pb-2 text-left">Invoice</th><th className="pb-2 text-left">Klien</th>
-                    <th className="pb-2 text-left">Due</th><th className="pb-2 text-right">Outstanding</th>
-                    <th className="pb-2 text-center">Overdue</th><th className="pb-2 text-left">Bucket</th>
+                    <th className="pb-2 text-left">Faktur</th><th className="pb-2 text-left">Klien</th>
+                    <th className="pb-2 text-left">Jatuh tempo</th><th className="pb-2 text-right">Sisa</th>
+                    <th className="pb-2 text-center">Lewat (hari)</th><th className="pb-2 text-left">Kelompok umur</th>
                   </tr></thead>
                   <tbody className="divide-y divide-white/5">
                     {(aging.rows || []).map((r, i) => (
                       <tr key={i}>
-                        <td className="py-2 font-mono text-xs text-foreground/80">{r.invoice_number}</td>
+                        <td className="py-2 tabular-nums text-xs text-foreground/80">{r.invoice_number}</td>
                         <td className="py-2">{r.client_name}</td>
                         <td className="py-2 text-xs text-foreground/60">{r.due_date}</td>
                         <td className="py-2 text-right font-semibold">{fmt(r.balance_amount)}</td>
-                        <td className="py-2 text-center text-xs">{r.days_overdue > 0 ? `${r.days_overdue}d` : '-'}</td>
-                        <td className="py-2 text-xs"><span className={`font-semibold ${r.bucket === 'current' ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>{r.bucket}</span></td>
+                        <td className="py-2 text-center text-xs">{r.days_overdue > 0 ? `${r.days_overdue} hari` : '-'}</td>
+                        <td className="py-2 text-xs"><span className={`font-semibold ${r.bucket === 'current' ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>{AGING_LABELS[r.bucket] || r.bucket}</span></td>
                       </tr>
                     ))}
                   </tbody>
@@ -300,13 +304,12 @@ function GenerateDialog({ orders, headers, onClose, onSuccess }) {
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-lg" data-testid="generate-invoice-dialog">
-        <DialogHeader><DialogTitle>Generate Invoice</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Terbitkan faktur</DialogTitle></DialogHeader>
         <div className="space-y-3 py-2">
           {orders.length === 0 ? (
-            <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-400/30 rounded p-3 text-sm text-amber-600 dark:text-amber-300 flex items-start gap-2">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              Tidak ada order yang bisa diinvoice. Order harus sudah dikonfirmasi dan belum punya invoice.
-            </div>
+            <Notice tone="warning" icon={AlertCircle}>
+              Tidak ada order yang bisa difakturkan. Order harus sudah dikonfirmasi dan belum punya faktur.
+            </Notice>
           ) : (
             <>
               <div className="space-y-1">
@@ -332,9 +335,9 @@ function GenerateDialog({ orders, headers, onClose, onSuccess }) {
               <SalesTaxFields profile={taxProfile} value={taxF} onChange={setTaxF} compact testIdPrefix="maklon-gen-tax" />
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label>Payment Terms</Label>
+                  <Label>Termin pembayaran</Label>
                   <Select value={terms} onValueChange={setTerms}>
-                    <SelectTrigger><SelectValue placeholder="default config" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Bawaan pengaturan" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="net_7">Net 7</SelectItem>
                       <SelectItem value="net_14">Net 14</SelectItem>
@@ -355,7 +358,7 @@ function GenerateDialog({ orders, headers, onClose, onSuccess }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={gen} disabled={saving || orders.length === 0} data-testid="gen-save-btn">{saving ? 'Generating...' : 'Generate'}</Button>
+          <Button onClick={gen} disabled={saving || orders.length === 0} data-testid="gen-save-btn">{saving ? 'Menerbitkan...' : 'Terbitkan'}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -402,8 +405,8 @@ function PaymentDialog({ invoice, headers, onClose, onSuccess }) {
         <div className="space-y-3 py-2">
           <div className="bg-foreground/5 rounded p-3 text-sm grid grid-cols-2 gap-2">
             <div>Total: <span className="font-semibold">{fmt(invoice.total_amount)}</span></div>
-            <div>Paid: <span className="font-semibold text-green-700 dark:text-green-400">{fmt(invoice.paid_amount)}</span></div>
-            <div className="col-span-2 text-amber-600 dark:text-amber-300">Outstanding: <span className="font-semibold">{fmt(invoice.balance_amount)}</span></div>
+            <div>Dibayar: <span className="font-semibold text-[hsl(var(--success))] ">{fmt(invoice.paid_amount)}</span></div>
+            <div className="col-span-2 text-[hsl(var(--warning))] ">Sisa: <span className="font-semibold">{fmt(invoice.balance_amount)}</span></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1"><Label>Jumlah *</Label><MoneyInput value={amount} onChange={e => setAmount(e.target.value)} data-testid="pay-amount-input" /></div>
@@ -482,34 +485,34 @@ function ViewInvoiceDialog({ invoice, headers, onClose }) {
   return (
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Invoice Detail — {detail.invoice_number}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Detail faktur — {detail.invoice_number}</DialogTitle></DialogHeader>
         <div className="space-y-3 py-2 text-sm">
           <div className="grid grid-cols-2 gap-3">
             <div><span className="text-foreground/50">Klien:</span> <span className="font-semibold">{detail.client_name}</span></div>
-            <div><span className="text-foreground/50">Order:</span> <span className="font-mono text-xs">{detail.order_code}</span></div>
+            <div><span className="text-foreground/50">Order:</span> <span className="tabular-nums text-xs">{detail.order_code}</span></div>
             <div><span className="text-foreground/50">Tgl Terbit:</span> {detail.issue_date}</div>
             <div><span className="text-foreground/50">Jatuh Tempo:</span> {detail.due_date}</div>
-            <div><span className="text-foreground/50">Terms:</span> {detail.payment_terms}</div>
+            <div><span className="text-foreground/50">Termin:</span> {detail.payment_terms}</div>
             <div><span className="text-foreground/50">PPN:</span> {detail.tax_pct}%</div>
           </div>
 
-          <div className="rounded-xl border pt-3 border-t border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-            <div className="text-xs font-semibold text-foreground/60 mb-2">Line Items</div>
+          <GlassCard className="p-4">
+            <div className="text-xs font-semibold text-foreground/60 mb-2">Rincian baris</div>
             <table className="w-full text-xs">
               <thead><tr className="text-foreground/50"><th className="text-left pb-1">Deskripsi</th><th className="text-right pb-1">Qty</th><th className="text-right pb-1">Harga</th><th className="text-right pb-1">Subtotal</th></tr></thead>
               <tbody>{(detail.lines || []).map((l, i) => (
                 <tr key={i}><td className="py-1">{l.description}</td><td className="text-right">{l.qty} {l.unit}</td><td className="text-right">{fmt(l.unit_price)}</td><td className="text-right font-semibold">{fmt(l.line_total)}</td></tr>
               ))}</tbody>
             </table>
-          </div>
+          </GlassCard>
 
           <div className="border-t border-foreground/10 pt-3 space-y-1 text-right">
             <div>Subtotal: <span className="font-semibold">{fmt(detail.subtotal)}</span></div>
-            {detail.discount_amount > 0 && <div>Diskon: <span className="text-red-700 dark:text-red-400">- {fmt(detail.discount_amount)}</span></div>}
+            {detail.discount_amount > 0 && <div>Diskon: <span className="text-[hsl(var(--destructive))] ">- {fmt(detail.discount_amount)}</span></div>}
             <div>PPN ({detail.tax_pct}%): <span>{fmt(detail.tax_amount)}</span></div>
             <div className="text-base font-bold">Total: {fmt(detail.total_amount)}</div>
-            <div className="text-green-700 dark:text-green-400">Dibayar: {fmt(detail.paid_amount)}</div>
-            <div className="text-amber-600 dark:text-amber-300 font-semibold">Saldo: {fmt(detail.balance_amount)}</div>
+            <div className="text-[hsl(var(--success))] ">Dibayar: {fmt(detail.paid_amount)}</div>
+            <div className="text-[hsl(var(--warning))] font-semibold">Saldo: {fmt(detail.balance_amount)}</div>
             <div>Status: <StatusBadge status={detail.status} /></div>
           </div>
 
@@ -520,7 +523,7 @@ function ViewInvoiceDialog({ invoice, headers, onClose }) {
                 {detail.payments.map(p => (
                   <div key={p.id} className="flex justify-between bg-foreground/5 rounded px-2 py-1">
                     <span>{p.payment_date} · {p.method}{p.reference_no ? ` · ${p.reference_no}` : ''}</span>
-                    <span className="font-semibold text-green-700 dark:text-green-400">{fmt(p.amount)}</span>
+                    <span className="font-semibold text-[hsl(var(--success))] ">{fmt(p.amount)}</span>
                   </div>
                 ))}
               </div>
@@ -531,7 +534,7 @@ function ViewInvoiceDialog({ invoice, headers, onClose }) {
           <Button variant="outline" onClick={onClose}>Tutup</Button>
           <Button onClick={downloadPdf} disabled={downloading} data-testid="maklon-invoice-print-pdf" className="gap-2">
             <FileText className="w-4 h-4" />
-            {downloading ? 'Menyiapkan…' : 'Cetak PDF (Invoice)'}
+            {downloading ? 'Menyiapkan…' : 'Cetak PDF faktur'}
           </Button>
         </DialogFooter>
       </DialogContent>

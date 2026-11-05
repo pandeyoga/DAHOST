@@ -36,7 +36,7 @@ export default function StaffEntryBadge({
       <span
         data-testid={testId || 'entry-badge-vendor'}
         title="Vendor mengisi sendiri lewat portalnya"
-        className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700"
+        className="inline-flex items-center gap-1 rounded-full border border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] px-2 py-0.5 text-[11px] font-medium text-[hsl(var(--success))]"
       >
         <Users className="h-3 w-3" />
         {compact ? 'vendor' : 'diisi vendor'}
@@ -62,14 +62,14 @@ export default function StaffEntryBadge({
       title={tip}
       className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
         mixed
-          ? 'border border-dashed border-amber-400 bg-amber-50 text-amber-800'
-          : 'border border-amber-300 bg-amber-100 text-amber-800'
+          ? 'border border-dashed border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]'
+          : 'border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
       }`}
     >
       <UserCog className="h-3 w-3 flex-shrink-0" />
       <span className="whitespace-nowrap">{label}</span>
       {!compact && qty ? (
-        <span className="font-mono">· {Number(qty).toLocaleString('id-ID')} pcs</span>
+        <span className="tabular-nums">· {Number(qty).toLocaleString('id-ID')} pcs</span>
       ) : null}
     </span>
   );

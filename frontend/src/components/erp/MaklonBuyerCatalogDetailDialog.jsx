@@ -20,6 +20,8 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { InlineMaterialPicker } from './bom/InlineMaterialPicker';
 import {
   History,
   Package2,
@@ -37,6 +39,7 @@ import {
   ShieldAlert,
   Sparkles,
   Boxes,
+  Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatRupiah } from '@/lib/format';
@@ -55,9 +58,9 @@ export default function MaklonBuyerCatalogDetailDialog({ catalog, headers, onClo
       >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Layers className="w-4 h-4 text-violet-400" />
+            <Layers className="w-4 h-4 text-[hsl(var(--primary))]" />
             {catalog.product_name}
-            <span className="text-xs font-mono bg-violet-500/15 text-violet-300 px-1.5 py-0.5 rounded ml-2 border border-violet-400/25">
+            <span className="text-xs tabular-nums bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] px-1.5 py-0.5 rounded ml-2 border border-[hsl(var(--primary)/0.25)]">
               {catalog.artikel_code}
             </span>
             {catalog.buyer_ref_code && (
@@ -66,7 +69,7 @@ export default function MaklonBuyerCatalogDetailDialog({ catalog, headers, onClo
           </DialogTitle>
           <div className="text-xs text-foreground/55 mt-0.5">
             {catalog.client_name} · {catalog.category || 'Uncategorized'} · Default CMT:{' '}
-            <strong className="text-amber-400">{fmtRp(catalog.default_cmt_price)}</strong>
+            <strong className="text-[hsl(var(--warning))]">{fmtRp(catalog.default_cmt_price)}</strong>
           </div>
         </DialogHeader>
 
@@ -185,13 +188,13 @@ function DetailTab({ catalog, headers }) {
         <div className="flex items-center justify-between mb-2">
           <Label className="text-sm font-medium">Sample Terlink (Phase M2.1)</Label>
           <div className="flex gap-2 text-xs">
-            <span className="bg-green-500/15 text-green-300 px-2 py-0.5 rounded border border-green-400/25">
+            <span className="bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] px-2 py-0.5 rounded border border-[hsl(var(--success)/0.25)]">
               {sum.approved || 0} approved
             </span>
-            <span className="bg-amber-500/15 text-amber-300 px-2 py-0.5 rounded border border-amber-400/25">
+            <span className="bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] px-2 py-0.5 rounded border border-[hsl(var(--warning)/0.25)]">
               {sum.in_progress || 0} on-going
             </span>
-            <span className="bg-red-500/15 text-red-300 px-2 py-0.5 rounded border border-red-400/25">
+            <span className="bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] px-2 py-0.5 rounded border border-[hsl(var(--destructive)/0.25)]">
               {sum.rejected || 0} rejected
             </span>
           </div>
@@ -215,7 +218,7 @@ function DetailTab({ catalog, headers }) {
                 data-testid={`bc-linked-sample-${s.id}`}
               >
                 <div>
-                  <div className="font-mono text-violet-300">{s.sample_code}</div>
+                  <div className="tabular-nums text-[hsl(var(--primary))]">{s.sample_code}</div>
                   <div className="text-foreground/60 mt-0.5">
                     {s.product_name} · {s.target_size} · {s.color_used || '-'}
                   </div>
@@ -223,10 +226,10 @@ function DetailTab({ catalog, headers }) {
                 <span
                   className={`text-[10px] px-1.5 py-0.5 rounded border ${
                     s.status === 'approved'
-                      ? 'bg-green-500/15 text-green-300 border-green-400/30'
+                      ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.3)]'
                       : s.status === 'rejected'
-                      ? 'bg-red-500/15 text-red-300 border-red-400/30'
-                      : 'bg-amber-500/15 text-amber-300 border-amber-400/30'
+                      ? 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.3)]'
+                      : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)]'
                   }`}
                 >
                   {s.status}
@@ -243,11 +246,11 @@ function DetailTab({ catalog, headers }) {
 function Field({ label, value, mono, pill, accent, className }) {
   const accentClass =
     accent === 'amber'
-      ? 'text-amber-400'
+      ? 'text-[hsl(var(--warning))]'
       : accent === 'emerald'
-      ? 'text-emerald-400'
+      ? 'text-[hsl(var(--success))]'
       : accent === 'cyan'
-      ? 'text-cyan-400'
+      ? 'text-[hsl(var(--primary))]'
       : 'text-foreground';
   return (
     <div className={className}>
@@ -255,7 +258,7 @@ function Field({ label, value, mono, pill, accent, className }) {
       {pill ? (
         <span className="inline-block text-xs px-1.5 py-0.5 rounded bg-foreground/[0.08] mt-0.5">{value}</span>
       ) : (
-        <div className={`text-sm ${accentClass} ${mono ? 'font-mono' : ''}`}>{value}</div>
+        <div className={`text-sm ${accentClass} ${mono ? 'tabular-nums' : ''}`}>{value}</div>
       )}
     </div>
   );
@@ -326,7 +329,7 @@ function VariantsTab({ catalog, headers }) {
       <div className="flex items-start justify-between gap-2">
         <div className="text-xs text-foreground/60 bg-foreground/[0.03] rounded p-2 border border-border/60 flex-1">
           Varian ber-SKU otomatis dari kombinasi <strong>Opsi Warna × Opsi Ukuran</strong>.
-          Format SKU: <span className="font-mono text-violet-300">{catalog.artikel_code}-WARNA-SIZE</span>.
+          Format SKU: <span className="tabular-nums text-[hsl(var(--primary))]">{catalog.artikel_code}-WARNA-SIZE</span>.
           Isi <strong>Kode Ref Buyer</strong> per varian bila buyer punya kode sendiri.
         </div>
         <Button size="sm" onClick={generate} disabled={!canGenerate || generating}
@@ -336,7 +339,7 @@ function VariantsTab({ catalog, headers }) {
       </div>
 
       {!canGenerate && (
-        <div className="text-[11px] text-amber-400 flex items-center gap-1.5">
+        <div className="text-[11px] text-[hsl(var(--warning))] flex items-center gap-1.5">
           <AlertTriangle className="w-3.5 h-3.5" />
           Lengkapi Opsi Warna & Opsi Ukuran di tab Detail (edit artikel) sebelum generate.
         </div>
@@ -364,16 +367,16 @@ function VariantsTab({ catalog, headers }) {
               {variants.map((v) => (
                 <tr key={v.id} className={`border-b border-foreground/5 ${v.active === false ? 'opacity-50' : ''}`}
                   data-testid={`bc-variant-row-${v.sku}`}>
-                  <td className="p-2 font-mono text-violet-300">{v.sku}</td>
+                  <td className="p-2 tabular-nums text-[hsl(var(--primary))]">{v.sku}</td>
                   <td className="p-2">{v.color} <span className="text-foreground/40">({v.color_code})</span></td>
-                  <td className="p-2 font-mono">{v.size}</td>
+                  <td className="p-2 tabular-nums">{v.size}</td>
                   <td className="p-2">
                     {editingId === v.id ? (
                       <div className="flex items-center gap-1">
                         <Input value={refDraft} onChange={(e) => setRefDraft(e.target.value)}
                           className="h-7 text-xs w-36" placeholder="Kode buyer"
                           data-testid={`bc-variant-ref-input-${v.sku}`} />
-                        <Button size="icon" variant="ghost" className="h-6 w-6 text-emerald-400"
+                        <Button size="icon" variant="ghost" className="h-6 w-6 text-[hsl(var(--success))]"
                           onClick={() => saveRef(v)} data-testid={`bc-variant-ref-save-${v.sku}`}>
                           <Save className="w-3 h-3" />
                         </Button>
@@ -382,10 +385,10 @@ function VariantsTab({ catalog, headers }) {
                         </Button>
                       </div>
                     ) : (
-                      <button className="flex items-center gap-1.5 hover:text-violet-300 group"
+                      <button className="flex items-center gap-1.5 hover:text-[hsl(var(--primary))] group"
                         onClick={() => { setEditingId(v.id); setRefDraft(v.buyer_ref_code || ''); }}
                         data-testid={`bc-variant-ref-edit-${v.sku}`}>
-                        <span className={v.buyer_ref_code ? 'font-mono' : 'text-foreground/35 italic'}>
+                        <span className={v.buyer_ref_code ? 'tabular-nums' : 'text-foreground/35 italic'}>
                           {v.buyer_ref_code || 'set kode…'}
                         </span>
                         <Edit2 className="w-2.5 h-2.5 opacity-0 group-hover:opacity-60" />
@@ -397,7 +400,7 @@ function VariantsTab({ catalog, headers }) {
                       className={`text-[10px] px-2 py-0.5 rounded border ${
                         v.active === false
                           ? 'bg-foreground/5 text-foreground/40 border-border/60'
-                          : 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30'
+                          : 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.3)]'
                       }`}>
                       {v.active === false ? 'Nonaktif' : 'Aktif'}
                     </button>
@@ -449,8 +452,8 @@ function PriceHistoryTab({ catalog, headers }) {
     <div className="space-y-3">
       <div className="text-xs text-foreground/60 bg-foreground/[0.03] rounded p-2 border border-border/60">
         Audit trail tiap perubahan harga (master update / PO create). Threshold drift:{' '}
-        <span className="text-amber-400 font-medium">warning ≥{t.warn_pct || 10}%</span>,{' '}
-        <span className="text-red-400 font-medium">block ≥{t.block_pct || 25}%</span>.
+        <span className="text-[hsl(var(--warning))] font-medium">warning ≥{t.warn_pct || 10}%</span>,{' '}
+        <span className="text-[hsl(var(--destructive))] font-medium">block ≥{t.block_pct || 25}%</span>.
       </div>
 
       {loading ? (
@@ -468,9 +471,9 @@ function PriceHistoryTab({ catalog, headers }) {
             const isDown = delta < 0;
             const TrendIcon = isUp ? TrendingUp : isDown ? TrendingDown : Sparkles;
             const trendColor = isUp
-              ? 'text-emerald-400'
+              ? 'text-[hsl(var(--success))]'
               : isDown
-              ? 'text-red-400'
+              ? 'text-[hsl(var(--destructive))]'
               : 'text-foreground/50';
             return (
               <div
@@ -480,17 +483,17 @@ function PriceHistoryTab({ catalog, headers }) {
               >
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] uppercase bg-violet-500/15 text-violet-300 px-1.5 py-0.5 rounded border border-violet-400/25">
+                    <span className="text-[10px] uppercase bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] px-1.5 py-0.5 rounded border border-[hsl(var(--primary)/0.25)]">
                       {h.event_type}
                     </span>
                     {h.po_number && (
-                      <span className="text-[10px] font-mono text-cyan-300">{h.po_number}</span>
+                      <span className="text-[10px] tabular-nums text-[hsl(var(--primary))]">{h.po_number}</span>
                     )}
                     <span className="text-foreground/50 text-[10px]">
                       {fmtDate(h.timestamp)} · {h.changed_by_name}
                     </span>
                   </div>
-                  <div className={`flex items-center gap-1 font-mono ${trendColor}`}>
+                  <div className={`flex items-center gap-1 tabular-nums ${trendColor}`}>
                     <TrendIcon className="w-3 h-3" />
                     {pct > 0 ? '+' : ''}
                     {pct.toFixed(1)}%
@@ -611,17 +614,17 @@ function BOMTemplatesTab({ catalog, headers }) {
               key={t.id}
               className={`p-3 rounded-lg border ${
                 t.is_active
-                  ? 'border-emerald-400/30 bg-emerald-500/5'
+                  ? 'border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success)/0.05)]'
                   : 'border-border/60 bg-foreground/[0.03]'
               }`}
               data-testid={`bom-template-${t.id}`}
             >
               <div className="flex items-center justify-between mb-1.5">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-sm font-bold text-violet-300">v{t.version}</span>
+                  <span className="tabular-nums text-sm font-bold text-[hsl(var(--primary))]">v{t.version}</span>
                   <span className="text-sm">{t.version_label}</span>
                   {t.is_active && (
-                    <span className="text-[10px] bg-emerald-500/15 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-400/30 flex items-center gap-0.5">
+                    <span className="text-[10px] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] px-1.5 py-0.5 rounded border border-[hsl(var(--success)/0.3)] flex items-center gap-0.5">
                       <CheckCircle2 className="w-2.5 h-2.5" /> AKTIF
                     </span>
                   )}
@@ -650,7 +653,7 @@ function BOMTemplatesTab({ catalog, headers }) {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-7 w-7 text-red-400 hover:bg-red-500/10"
+                    className="h-7 w-7 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)]"
                     onClick={() => removeT(t)}
                     data-testid={`bom-template-delete-${t.id}`}
                   >
@@ -661,7 +664,7 @@ function BOMTemplatesTab({ catalog, headers }) {
               <div className="text-xs text-foreground/60 flex gap-3 flex-wrap">
                 <span>📦 {t.material_count} material</span>
                 <span>
-                  💰 Cost/pcs: <strong className="text-amber-400">{fmtRp(t.total_cost_per_pcs)}</strong>
+                  💰 Cost/pcs: <strong className="text-[hsl(var(--warning))]">{fmtRp(t.total_cost_per_pcs)}</strong>
                 </span>
                 <span className="text-foreground/40">· {fmtDate(t.updated_at)}</span>
               </div>
@@ -692,11 +695,21 @@ function BOMTemplatesTab({ catalog, headers }) {
 }
 
 // ─── BOM Template Editor (create/edit) ─────────────────────────────────────
+// 2026-11-05 (owner: "BOM di katalog buyer tidak mengambil dari master data") — tiap baris
+// DIPILIH dari master material; nama, kode, satuan, dan harga ikut master (server yang menetapkan).
+// Ketikan bebas hanya untuk bahan milik klien yang tidak ada di master DA.
+const EMPTY_BOM_LINE = {
+  material_id: null, material_code: '', material_name: '', category: '', unit: 'pcs',
+  qty_per_pcs: 0, cost_per_unit: 0, supplier: '', notes: '', ownership: 'client_provided',
+};
+const OWNERSHIP_LABEL = { client_provided: 'Disediakan klien', cv_da_stock: 'Stok DA' };
+
 function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
+  const token = String(headers?.Authorization || '').replace(/^Bearer\s+/i, '');
   const [form, setForm] = useState({
     version_label: data?.version_label || '',
     materials: data?.materials?.length ? data.materials.map((m) => ({ ...m })) : [
-      { material_name: '', category: '', unit: 'pcs', qty_per_pcs: 0, cost_per_unit: 0, supplier: '', notes: '' },
+      { ...EMPTY_BOM_LINE },
     ],
     notes: data?.notes || '',
     set_active: data ? !!data.is_active : true,
@@ -722,15 +735,40 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
       ...f,
       materials: [
         ...f.materials,
-        { material_name: '', category: '', unit: 'pcs', qty_per_pcs: 0, cost_per_unit: 0, supplier: '', notes: '' },
+        { ...EMPTY_BOM_LINE },
       ],
     }));
   const removeMat = (idx) =>
     setForm((f) => ({ ...f, materials: f.materials.filter((_, i) => i !== idx) }));
+  /** Baris diisi dari master material: nama/kode/satuan/kategori ikut master, harga bila masih 0. */
+  const pickMaster = (idx, mat) =>
+    setForm((f) => ({
+      ...f,
+      materials: f.materials.map((m, i) => (i !== idx ? m : {
+        ...m,
+        material_id: mat.id,
+        material_code: mat.code || '',
+        material_name: mat.name || m.material_name,
+        unit: mat.unit || mat.base_unit || m.unit || 'pcs',
+        category: mat.category_name || mat.category || mat.type || m.category,
+        cost_per_unit: Number(m.cost_per_unit) ? m.cost_per_unit : (mat.unit_cost || mat.avg_cost || 0),
+      })),
+    }));
+  const unlinkMaster = (idx) =>
+    setForm((f) => ({
+      ...f,
+      materials: f.materials.map((m, i) => (i !== idx ? m : { ...m, material_id: null, material_code: '' })),
+    }));
 
   const save = async () => {
     if (form.materials.length === 0) return toast.error('Minimal 1 material');
-    if (form.materials.some((m) => !m.material_name.trim())) return toast.error('Nama material wajib diisi');
+    if (form.materials.some((m) => !String(m.material_name || '').trim())) {
+      return toast.error('Pilih material dari master (atau ketik nama bahan milik klien) di setiap baris');
+    }
+    const daTanpaMaster = form.materials.find((m) => m.ownership === 'cv_da_stock' && !m.material_id);
+    if (daTanpaMaster) {
+      return toast.error(`"${daTanpaMaster.material_name}" disediakan dari stok DA — pilih dari master material supaya stoknya bisa dipotong`);
+    }
     setSaving(true);
     try {
       const url =
@@ -771,7 +809,7 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
     <div className="space-y-3" data-testid="bom-template-editor">
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium flex items-center gap-2">
-          <ClipboardCheck className="w-4 h-4 text-violet-400" />
+          <ClipboardCheck className="w-4 h-4 text-[hsl(var(--primary))]" />
           {mode === 'edit' ? `Edit BOM Template v${data.version}` : 'BOM Template Baru'}
         </div>
         <Button size="sm" variant="outline" onClick={onClose}>
@@ -817,7 +855,8 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-border text-foreground/55">
-                <th className="text-left p-1.5 font-normal">Material *</th>
+                <th className="text-left p-1.5 font-normal">Material (dari master) *</th>
+                <th className="text-left p-1.5 font-normal">Disediakan</th>
                 <th className="text-left p-1.5 font-normal">Kategori</th>
                 <th className="text-left p-1.5 font-normal">Unit</th>
                 <th className="text-right p-1.5 font-normal">Qty/pcs</th>
@@ -829,14 +868,53 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
             <tbody>
               {form.materials.map((m, idx) => (
                 <tr key={idx} className="border-b border-foreground/5">
+                  <td className="p-1 min-w-[220px]">
+                    {m.material_id ? (
+                      <div className="flex items-center gap-1" data-testid={`bom-mat-${idx}-linked`}>
+                        <InlineMaterialPicker token={token} onSelect={(mat) => pickMaster(idx, mat)}>
+                          <Button variant="outline" size="sm" className="flex-1 justify-start text-xs"
+                            data-testid={`bom-mat-${idx}-pick`} title="Ganti material dari master">
+                            <span className="tabular-nums text-muted-foreground mr-1">{m.material_code}</span>
+                            <span className="truncate">{m.material_name}</span>
+                          </Button>
+                        </InlineMaterialPicker>
+                        <Button variant="ghost" size="icon-sm" title="Lepas tautan master (bahan milik klien)"
+                          aria-label="Lepas tautan master" onClick={() => unlinkMaster(idx)}>
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <InlineMaterialPicker token={token} onSelect={(mat) => pickMaster(idx, mat)}>
+                          <Button variant="outline" size="sm" className="w-full justify-start text-xs"
+                            data-testid={`bom-mat-${idx}-pick`}>
+                            <Search className="w-3 h-3 mr-1" /> Pilih dari master material
+                          </Button>
+                        </InlineMaterialPicker>
+                        {m.ownership !== 'cv_da_stock' && (
+                          <Input
+                            value={m.material_name}
+                            onChange={(e) => updateMat(idx, 'material_name', e.target.value)}
+                            placeholder="atau ketik bahan milik klien"
+                            className="text-xs"
+                            data-testid={`bom-mat-${idx}-name`}
+                          />
+                        )}
+                        {m.material_name && (
+                          <p className="text-[10px] text-[hsl(var(--warning))]">Belum tertaut master — stok tidak bisa dicek</p>
+                        )}
+                      </div>
+                    )}
+                  </td>
                   <td className="p-1">
-                    <Input
-                      value={m.material_name}
-                      onChange={(e) => updateMat(idx, 'material_name', e.target.value)}
-                      placeholder="Linen Premium"
-                      className="h-7 text-xs"
-                      data-testid={`bom-mat-${idx}-name`}
-                    />
+                    <SmartNativeSelect
+                      value={m.ownership || 'client_provided'}
+                      onChange={(e) => updateMat(idx, 'ownership', e.target.value)}
+                      className="w-32 text-xs"
+                      data-testid={`bom-mat-${idx}-ownership`}
+                    >
+                      {Object.entries(OWNERSHIP_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </SmartNativeSelect>
                   </td>
                   <td className="p-1">
                     <Input
@@ -882,7 +960,7 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
                     <Button
                       size="icon"
                       variant="ghost"
-                      className="h-6 w-6 text-red-400 hover:bg-red-500/10"
+                      className="h-6 w-6 text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)]"
                       onClick={() => removeMat(idx)}
                     >
                       <X className="w-3 h-3" />
@@ -894,7 +972,7 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
           </table>
         </div>
         <div className="text-right mt-2 text-xs text-foreground/65">
-          Total Cost/pcs: <strong className="text-amber-400">{fmtRp(totalCost)}</strong>
+          Total Cost/pcs: <strong className="text-[hsl(var(--warning))]">{fmtRp(totalCost)}</strong>
         </div>
       </div>
 

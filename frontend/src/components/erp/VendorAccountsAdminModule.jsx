@@ -11,19 +11,28 @@ import {
   Loader2, RefreshCw, CheckCircle2, AlertCircle, ChevronDown, X, AlertTriangle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import { EmptyState } from './moduleAtoms';
 import ImportExportToolbar from './ImportExportToolbar';
 
 const TABS = [
-  { id: 'partners', label: 'Vendor Partner', icon: Building2 },
-  { id: 'accounts', label: 'Akun Vendor', icon: Users },
-  { id: 'jobs',     label: 'Semua Jobs', icon: Briefcase },
+  { id: 'partners', label: 'Vendor partner', icon: Building2 },
+  { id: 'accounts', label: 'Akun vendor', icon: Users },
+  { id: 'jobs',     label: 'Semua job', icon: Briefcase },
+];
+
+// Kolom isian formulir vendor partner: [kunci, label, type input]
+const PARTNER_FIELDS = [
+  ['name', 'Nama Vendor *', 'text'], ['code', 'Kode (opsional)', 'text'],
+  ['contact_name', 'Nama Kontak', 'text'], ['contact_phone', 'No. HP', 'tel'],
 ];
 
 const JOB_STATUS_COLOR = {
   open:        'text-muted-foreground',
-  in_progress: 'text-blue-600 dark:text-blue-400',
-  done:        'text-green-700 dark:text-green-400',
-  cancelled:   'text-red-700 dark:text-red-400',
+  in_progress: 'text-[hsl(var(--primary))] ',
+  done:        'text-[hsl(var(--success))] ',
+  cancelled:   'text-[hsl(var(--destructive))] ',
 };
 const JOB_STATUS_OPTIONS = [
   { value: 'open',        label: 'Belum Mulai' },
@@ -36,12 +45,12 @@ const INPUT_CLS = 'w-full px-3 py-2 rounded-lg bg-foreground/[0.08] border borde
 
 function Toast({ msg, type, onClose }) {
   return (
-    <div className={`fixed top-5 right-5 z-[60] flex items-center gap-3 px-4 py-3 rounded-xl shadow-xl border
-      ${type==='ok' ? 'bg-green-100 dark:bg-green-500/20 border-green-400 dark:border-green-400/30 text-green-800 dark:text-green-200' : 'bg-red-100 dark:bg-red-500/20 border-red-400 dark:border-red-400/30 text-red-800 dark:text-red-200'}`}>
+    <GlassCard role="status"
+      className={`fixed top-5 right-5 z-[60] flex items-center gap-3 px-4 py-3 shadow-xl ${type==='ok' ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}`}>
       {type==='ok' ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertCircle className="w-5 h-5 shrink-0" />}
       <span className="text-sm font-medium">{msg}</span>
-      <button onClick={onClose} className="ml-1"><X className="w-4 h-4" /></button>
-    </div>
+      <Button variant="ghost" size="icon-sm" onClick={onClose} title="Tutup" aria-label="Tutup"><X className="w-4 h-4" /></Button>
+    </GlassCard>
   );
 }
 
@@ -52,8 +61,8 @@ function ConfirmDialog({ open, title, message, confirmLabel = 'Hapus', busy, onC
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4" data-testid="confirm-dialog">
       <div className="w-full max-w-md rounded-2xl bg-background border border-foreground/15 shadow-2xl p-5 space-y-4">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-500/15 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5 text-red-600 dark:text-red-400" />
+          <div className="w-10 h-10 rounded-full bg-[hsl(var(--destructive)/0.15)] flex items-center justify-center shrink-0">
+            <AlertTriangle className="w-5 h-5 text-[hsl(var(--destructive))] " />
           </div>
           <div>
             <h4 className="font-semibold text-foreground">{title}</h4>
@@ -63,7 +72,7 @@ function ConfirmDialog({ open, title, message, confirmLabel = 'Hapus', busy, onC
         <div className="flex justify-end gap-2">
           <Button variant="outline" size="sm" onClick={onCancel} disabled={busy} data-testid="confirm-cancel">Batal</Button>
           <Button size="sm" onClick={onConfirm} disabled={busy}
-            className="bg-red-600 hover:bg-red-700 text-white" data-testid="confirm-ok">
+            className="bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] text-white" data-testid="confirm-ok">
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : confirmLabel}
           </Button>
         </div>
@@ -166,11 +175,10 @@ function PartnersTab({ token, showToast }) {
       </div>
 
       {showForm && (
-        <form onSubmit={save} className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3" data-testid="partner-form">
-          <h4 className="text-sm font-semibold">{editId ? 'Edit Vendor' : 'Vendor Baru'}</h4>
+        <GlassCard as="form" onSubmit={save} className="p-4 space-y-3" data-testid="partner-form">
+          <h4 className="text-sm font-semibold">{editId ? 'Ubah vendor' : 'Vendor baru'}</h4>
           <div className="grid grid-cols-2 gap-3">
-            {[['name','Nama Vendor *','text'],['code','Kode (opsional)','text'],
-              ['contact_name','Nama Kontak','text'],['contact_phone','No. HP','tel']].map(([k,l,t]) => (
+            {PARTNER_FIELDS.map(([k,l,t]) => (
               <div key={k} className="space-y-1">
                 <label className="text-[11px] text-muted-foreground uppercase font-semibold">{l}</label>
                 <input type={t} value={form[k]} onChange={e=>setForm(p=>({...p,[k]:e.target.value}))}
@@ -201,47 +209,47 @@ function PartnersTab({ token, showToast }) {
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={()=>{setShowForm(false);setEditId(null);}}>Batal</Button>
           </div>
-        </form>
+        </GlassCard>
       )}
 
       {loading
         ? <div className="flex items-center justify-center py-8 gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin"/>Memuat...</div>
         : list.length === 0
-          ? <p className="text-center py-8 text-sm text-muted-foreground">Belum ada vendor partner.</p>
+          ? <EmptyState icon={Building2} title="Belum ada vendor partner" description="Klik Tambah Partner untuk mendaftarkan vendor CMT pertama." />
           : (
             <div className="space-y-2" data-testid="partners-list">
               {list.map(p => (
-                <div key={p.id} className="flex items-center gap-3 p-3 rounded-xl border border-foreground/10 bg-foreground/5">
+                <GlassCard key={p.id} className="flex items-center gap-3 p-3">
                   <Building2 className="w-8 h-8 text-primary/60 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-sm text-foreground">{p.name}</span>
-                      {p.code && <span className="text-[11px] text-primary/70 font-mono bg-primary/10 px-1.5 rounded">{p.code}</span>}
+                      {p.code && <span className="text-[11px] text-primary/70 tabular-nums bg-primary/10 px-1.5 rounded">{p.code}</span>}
                     </div>
                     <p className="text-xs text-muted-foreground">{p.contact_name || '—'} · {p.contact_phone || '—'}</p>
                     <p className="text-xs text-muted-foreground/70">{p.job_count || 0} job · {p.account_count || 0} akun{(p.capacity_pcs > 0) ? ` · Kapasitas ${Number(p.capacity_pcs).toLocaleString('id-ID')} pcs` : ' · Kapasitas belum diisi'}</p>
                   </div>
                   <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${
-                    p.is_active !== false ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400 border-green-300 dark:border-green-400/20' : 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-300 dark:border-red-400/20'
+                    p.is_active !== false ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] '
                   }`} data-testid={`partner-status-${p.id}`}>{p.is_active !== false ? 'Aktif' : 'Nonaktif'}</span>
                   <div className="flex items-center gap-1 shrink-0">
                     <button onClick={()=>toggleActive(p)} title={p.is_active!==false ? 'Nonaktifkan' : 'Aktifkan'} disabled={busyId===p.id}
-                      className="p-2 rounded-lg hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                      className="p-2 rounded-lg hover:bg-[hsl(var(--warning)/0.1)] text-muted-foreground hover:text-[hsl(var(--warning))] transition-colors"
                       data-testid={`partner-toggle-${p.id}`}>
                       {busyId===p.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
                     </button>
-                    <button onClick={()=>openEdit(p)} title="Edit"
+                    <button onClick={()=>openEdit(p)} title="Ubah"
                       className="p-2 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
                       data-testid={`partner-edit-${p.id}`}>
                       <Pencil className="w-4 h-4" />
                     </button>
                     <button onClick={()=>setConfirm({ partner:p })} title="Hapus permanen"
-                      className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                      className="p-2 rounded-lg hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] transition-colors"
                       data-testid={`partner-delete-${p.id}`}>
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                </div>
+                </GlassCard>
               ))}
             </div>
           )
@@ -363,7 +371,7 @@ function AccountsTab({ token, showToast }) {
       </div>
 
       {showForm && (
-        <form onSubmit={create} className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3" data-testid="account-form">
+        <GlassCard as="form" onSubmit={create} className="p-4 space-y-3" data-testid="account-form">
           <h4 className="text-sm font-semibold">Akun Vendor Baru</h4>
           <div className="space-y-1">
             <label className="text-[11px] text-muted-foreground uppercase font-semibold">Partner Vendor *</label>
@@ -397,17 +405,17 @@ function AccountsTab({ token, showToast }) {
             </Button>
             <Button type="button" variant="outline" size="sm" onClick={()=>setShowForm(false)}>Batal</Button>
           </div>
-        </form>
+        </GlassCard>
       )}
 
       {loading ? (
         <div className="flex justify-center py-8 gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin"/>Memuat...</div>
       ) : list.length === 0 ? (
-        <p className="text-center py-8 text-sm text-muted-foreground">Belum ada akun vendor.</p>
+        <EmptyState icon={Users} title="Belum ada akun vendor" description="Klik Tambah Akun untuk membuat login portal bagi vendor partner." />
       ) : (
         <div className="space-y-2" data-testid="accounts-list">
           {list.map(u => (
-            <div key={u.id} className="flex items-center gap-3 p-3 rounded-xl border border-foreground/10 bg-foreground/5">
+            <GlassCard key={u.id} className="flex items-center gap-3 p-3">
               <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center text-primary text-sm font-bold shrink-0">
                 {u.name?.charAt(0).toUpperCase()}
               </div>
@@ -416,26 +424,26 @@ function AccountsTab({ token, showToast }) {
                 <p className="text-xs text-muted-foreground truncate">{u.email} · {u.partner_name}</p>
               </div>
               <span className={`text-xs px-2 py-0.5 rounded-full border shrink-0 ${
-                u.is_active !== false ? 'bg-green-100 dark:bg-green-500/10 text-green-700 dark:text-green-400 border-green-300 dark:border-green-400/20' : 'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400 border-red-300 dark:border-red-400/20'
+                u.is_active !== false ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] '
               }`}>{u.is_active !== false ? 'Aktif' : 'Nonaktif'}</span>
               <div className="flex items-center gap-1 shrink-0">
                 <button onClick={()=>toggleActive(u)} title={u.is_active!==false ? 'Nonaktifkan' : 'Aktifkan'} disabled={busyId===u.id}
-                  className="p-2 rounded-lg hover:bg-amber-500/10 text-muted-foreground hover:text-amber-600 dark:hover:text-amber-400 transition-colors"
+                  className="p-2 rounded-lg hover:bg-[hsl(var(--warning)/0.1)] text-muted-foreground hover:text-[hsl(var(--warning))] transition-colors"
                   data-testid={`account-toggle-${u.id}`}>
                   {busyId===u.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
                 </button>
-                <button onClick={()=>openEdit(u)} title="Edit"
+                <button onClick={()=>openEdit(u)} title="Ubah"
                   className="p-2 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
                   data-testid={`account-edit-${u.id}`}>
                   <Pencil className="w-4 h-4" />
                 </button>
                 <button onClick={()=>setConfirm({ account:u })} title="Hapus"
-                  className="p-2 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                  className="p-2 rounded-lg hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] transition-colors"
                   data-testid={`account-delete-${u.id}`}>
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
-            </div>
+            </GlassCard>
           ))}
         </div>
       )}
@@ -448,7 +456,7 @@ function AccountsTab({ token, showToast }) {
               <h4 className="font-semibold text-foreground">Edit Akun Vendor</h4>
               <button type="button" onClick={()=>setEditAcc(null)}><X className="w-4 h-4 text-muted-foreground" /></button>
             </div>
-            <p className="text-xs text-muted-foreground font-mono">{editAcc.email}</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{editAcc.email}</p>
             <div className="space-y-1">
               <label className="text-[11px] text-muted-foreground uppercase font-semibold">Nama Lengkap *</label>
               <input value={editForm.name} onChange={e=>setEditForm(p=>({...p,name:e.target.value}))} data-testid="account-edit-name" className={INPUT_CLS} />
@@ -573,13 +581,13 @@ function AllJobsTab({ token, showToast }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className="font-semibold text-sm text-foreground">Semua Jobs ({jobs.length})</h3>
+        <h3 className="font-semibold text-sm text-foreground">Semua job ({jobs.length})</h3>
         <Button size="sm" onClick={openCreate} data-testid="job-create-toggle"><Plus className="w-4 h-4 mr-1" /> Buat Job</Button>
       </div>
 
       {showForm && (
-        <div className="p-3 rounded-xl border border-primary/25 bg-primary/[0.04] space-y-2" data-testid="job-create-form">
-          <h4 className="text-sm font-semibold">{editId ? 'Edit Job' : 'Job Baru'}</h4>
+        <GlassCard className="p-3 space-y-2" data-testid="job-create-form">
+          <h4 className="text-sm font-semibold">{editId ? 'Ubah job' : 'Job baru'}</h4>
           <input value={form.title} onChange={e => setForm(p => ({ ...p, title: e.target.value }))}
             placeholder="Judul job (cth: Jahit Sweater V-Neck 500 pcs)"
             className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground" data-testid="job-form-title" />
@@ -602,8 +610,8 @@ function AllJobsTab({ token, showToast }) {
               className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground appearance-none">
               {['SEWING', 'FINISHING', 'QC', 'EMBROIDERY', 'CUTTING'].map(x => <option key={x} value={x}>{x}</option>)}
             </SmartNativeSelect>
-            <input type="date" value={form.due_date} onChange={e => setForm(p => ({ ...p, due_date: e.target.value }))}
-              className="px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground" data-testid="job-form-due" />
+            <GlassInput type="date" value={form.due_date} onChange={e => setForm(p => ({ ...p, due_date: e.target.value }))}
+              title="Tenggat job" data-testid="job-form-due" />
           </div>
           {editId && (
             <SmartNativeSelect value={form.status} onChange={e => setForm(p => ({ ...p, status: e.target.value }))} data-testid="job-form-status"
@@ -615,22 +623,22 @@ function AllJobsTab({ token, showToast }) {
             <Button variant="ghost" size="sm" onClick={() => {setShowForm(false);setEditId(null);}}>Batal</Button>
             <Button size="sm" onClick={saveJob} disabled={saving} data-testid="job-form-submit">{saving ? 'Menyimpan...' : (editId ? 'Simpan Perubahan' : 'Simpan Job')}</Button>
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {loading
         ? <div className="flex justify-center py-8 gap-2 text-muted-foreground text-sm"><Loader2 className="w-4 h-4 animate-spin"/>Memuat...</div>
         : jobs.length === 0
-          ? <p className="text-center py-8 text-sm text-muted-foreground">Belum ada job.</p>
+          ? <EmptyState icon={Briefcase} title="Belum ada job" description="Klik Buat Job untuk memberi pekerjaan ke vendor CMT." />
           : (
             <div className="space-y-2" data-testid="all-jobs-list">
               {jobs.map(j => {
                 const pct = j.qty_target > 0 ? Math.round((j.qty_done || 0) / j.qty_target * 100) : 0;
                 return (
-                  <div key={j.id} className="p-3 rounded-xl border border-foreground/10 bg-foreground/5">
+                  <GlassCard key={j.id} className="p-3">
                     <div className="flex items-center justify-between gap-2 mb-1.5">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-mono text-xs text-primary">{j.job_number}</span>
+                        <span className="tabular-nums text-xs text-primary">{j.job_number}</span>
                         <span className={`text-xs font-semibold ${JOB_STATUS_COLOR[j.status]}`}>
                           {j.status === 'open' ? 'Belum Mulai' : j.status === 'in_progress' ? 'Berjalan' : j.status === 'done' ? 'Selesai' : j.status === 'cancelled' ? 'Dibatalkan' : j.status}
                         </span>
@@ -638,13 +646,13 @@ function AllJobsTab({ token, showToast }) {
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
                         <span className="text-xs text-muted-foreground mr-1">{j.partner_name}</span>
-                        <button onClick={()=>openEdit(j)} title="Edit"
+                        <button onClick={()=>openEdit(j)} title="Ubah"
                           className="p-1.5 rounded-lg hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
                           data-testid={`job-edit-${j.id}`}>
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button onClick={()=>setConfirm({ job:j })} title="Hapus"
-                          className="p-1.5 rounded-lg hover:bg-red-500/10 text-muted-foreground hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                          className="p-1.5 rounded-lg hover:bg-[hsl(var(--destructive)/0.1)] text-muted-foreground hover:text-[hsl(var(--destructive))] transition-colors"
                           data-testid={`job-delete-${j.id}`}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -657,7 +665,7 @@ function AllJobsTab({ token, showToast }) {
                       </div>
                       <span className="text-xs text-muted-foreground whitespace-nowrap">{j.qty_done || 0}/{j.qty_target} pcs ({pct}%)</span>
                     </div>
-                  </div>
+                  </GlassCard>
                 );
               })}
             </div>
@@ -689,7 +697,7 @@ export default function VendorAccountsAdminModule({ token }) {
   }
 
   return (
-    <div className="space-y-5 p-4 max-w-3xl mx-auto" data-testid="vendor-admin-module">
+    <div className="space-y-4 p-4 max-w-3xl mx-auto" data-testid="vendor-admin-module">
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={()=>setToast(null)} />}
 
       {/* Header */}
@@ -697,25 +705,13 @@ export default function VendorAccountsAdminModule({ token }) {
         <Users className="w-6 h-6 text-primary" />
         <div>
           <h1 className="text-xl font-bold text-foreground">Kelola Vendor CMT</h1>
-          <p className="text-sm text-muted-foreground">Daftarkan vendor, buat akun login, dan pantau semua job — lengkap dengan Edit & Hapus.</p>
+          <p className="text-sm text-muted-foreground">Daftarkan vendor, buat akun login, dan pantau semua job — lengkap dengan ubah & hapus.</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 rounded-xl bg-foreground/5 border border-foreground/10">
-        {TABS.map(t => {
-          const Icon = t.icon;
-          return (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              data-testid={`tab-${t.id}`}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium transition-all
-                ${tab === t.id ? 'bg-primary text-white shadow' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'}`}>
-              <Icon className="w-4 h-4" />
-              <span className="hidden sm:inline">{t.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      <FilterChips value={tab} onChange={setTab} testId="tab" ariaLabel="Bagian kelola vendor"
+        options={TABS.map(t => ({ key: t.id, label: t.label, icon: t.icon }))} />
 
       {/* Tab Content */}
       {tab === 'partners' && <PartnersTab token={token} showToast={showToast} />}

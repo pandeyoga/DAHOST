@@ -39,13 +39,13 @@ export default function VendorSerialTracking({ token, user }) {
       <h2 className="text-xl font-bold text-foreground">Serial Tracking</h2>
 
       <div className="grid grid-cols-3 gap-3">
-        <button onClick={() => setFilter('ongoing')} className={`rounded-lg p-3 border text-center ${filter === 'ongoing' ? 'border-blue-300 bg-blue-50' : 'border-border bg-card'}`}>
-          <p className="text-xl font-bold text-blue-700">{ongoingCount}</p>
-          <p className="text-xs text-blue-600">Ongoing</p>
+        <button onClick={() => setFilter('ongoing')} className={`rounded-lg p-3 border text-center ${filter === 'ongoing' ? 'border-[hsl(var(--primary)/0.35)] bg-[hsl(var(--primary)/0.1)]' : 'border-border bg-card'}`}>
+          <p className="text-xl font-bold text-[hsl(var(--primary))]">{ongoingCount}</p>
+          <p className="text-xs text-[hsl(var(--primary))]">Ongoing</p>
         </button>
-        <button onClick={() => setFilter('completed')} className={`rounded-lg p-3 border text-center ${filter === 'completed' ? 'border-emerald-300 bg-emerald-50' : 'border-border bg-card'}`}>
-          <p className="text-xl font-bold text-emerald-700">{completedCount}</p>
-          <p className="text-xs text-emerald-600">Selesai</p>
+        <button onClick={() => setFilter('completed')} className={`rounded-lg p-3 border text-center ${filter === 'completed' ? 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)]' : 'border-border bg-card'}`}>
+          <p className="text-xl font-bold text-[hsl(var(--success))]">{completedCount}</p>
+          <p className="text-xs text-[hsl(var(--success))]">Selesai</p>
         </button>
         <button onClick={() => setFilter('all')} className={`rounded-lg p-3 border text-center ${filter === 'all' ? 'border-border bg-muted/40' : 'border-border bg-card'}`}>
           <p className="text-xl font-bold text-foreground/90">{serialList.length}</p>
@@ -59,7 +59,7 @@ export default function VendorSerialTracking({ token, user }) {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div></div>
+        <div className="flex justify-center py-8"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[hsl(var(--primary)/0.35)]"></div></div>
       ) : serialList.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground/70"><Hash className="w-10 h-10 mx-auto mb-2 opacity-30" /><p className="text-sm">Tidak ada serial number</p></div>
       ) : (
@@ -67,18 +67,18 @@ export default function VendorSerialTracking({ token, user }) {
           {serialList.map((s, idx) => (
             <div key={`${s.serial_number}-${s.po_id}-${idx}`} className="bg-card rounded-lg border border-border overflow-hidden">
               <button onClick={() => loadTrace(s.serial_number)} className="w-full text-left p-3 flex items-center gap-3" data-testid={`vendor-serial-${idx}`}>
-                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.status === 'ongoing' ? 'bg-blue-500 animate-pulse' : s.status === 'completed' ? 'bg-emerald-500' : 'bg-amber-400'}`}></div>
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${s.status === 'ongoing' ? 'bg-[hsl(var(--primary))] animate-pulse' : s.status === 'completed' ? 'bg-[hsl(var(--success))]' : 'bg-[hsl(var(--warning))]'}`}></div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-foreground text-sm font-mono">{s.serial_number}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${s.status === 'ongoing' ? 'bg-blue-100 text-blue-700' : s.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{s.status === 'ongoing' ? 'Ongoing' : s.status === 'completed' ? 'Selesai' : 'Menunggu'}</span>
+                    <span className="font-bold text-foreground text-sm tabular-nums">{s.serial_number}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${s.status === 'ongoing' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : s.status === 'completed' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{s.status === 'ongoing' ? 'Ongoing' : s.status === 'completed' ? 'Selesai' : 'Menunggu'}</span>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">{s.product_name} · {s.sku} · {s.size}/{s.color}</p>
                 </div>
                 <div className="hidden md:flex items-center gap-4 text-center text-xs flex-shrink-0">
                   <div><p className="text-muted-foreground/70">Order</p><p className="font-bold text-foreground/90">{(s.ordered_qty || 0).toLocaleString('id-ID')}</p></div>
-                  <div><p className="text-muted-foreground/70">Produksi</p><p className="font-bold text-blue-600">{(s.produced_qty || 0).toLocaleString('id-ID')}</p></div>
-                  <div><p className="text-muted-foreground/70">Kirim</p><p className="font-bold text-purple-600">{(s.shipped_qty || 0).toLocaleString('id-ID')}</p></div>
+                  <div><p className="text-muted-foreground/70">Produksi</p><p className="font-bold text-[hsl(var(--primary))]">{(s.produced_qty || 0).toLocaleString('id-ID')}</p></div>
+                  <div><p className="text-muted-foreground/70">Kirim</p><p className="font-bold text-[hsl(var(--primary))]">{(s.shipped_qty || 0).toLocaleString('id-ID')}</p></div>
                 </div>
                 {expandedSN === s.serial_number ? <ChevronDown className="w-4 h-4 text-muted-foreground/70" /> : <ChevronRight className="w-4 h-4 text-muted-foreground/70" />}
               </button>
@@ -87,14 +87,14 @@ export default function VendorSerialTracking({ token, user }) {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
                     <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">PO</p><p className="text-sm font-bold text-foreground/90">{s.po_number}</p></div>
                     <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Customer</p><p className="text-sm font-bold text-foreground/90 truncate">{s.customer_name || '-'}</p></div>
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Status PO</p><p className="text-sm font-bold text-blue-600">{s.po_status}</p></div>
-                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Sisa</p><p className="text-sm font-bold text-amber-600">{(s.remaining_qty || 0).toLocaleString('id-ID')} pcs</p></div>
+                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Status PO</p><p className="text-sm font-bold text-[hsl(var(--primary))]">{s.po_status}</p></div>
+                    <div className="bg-card rounded p-2 text-center border border-border/60"><p className="text-xs text-muted-foreground/70">Sisa</p><p className="text-sm font-bold text-[hsl(var(--warning))]">{(s.remaining_qty || 0).toLocaleString('id-ID')} pcs</p></div>
                   </div>
                   {(traceData.timeline || []).length > 0 && (
                     <div className="space-y-1 max-h-40 overflow-y-auto">
                       {traceData.timeline.slice(0, 10).map((ev, i) => (
                         <div key={i} className="flex items-center gap-2 text-xs">
-                          <div className="w-1.5 h-1.5 rounded-full bg-purple-400 flex-shrink-0"></div>
+                          <div className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))] flex-shrink-0"></div>
                           <span className="font-medium text-foreground/90">{ev.step}</span>
                           {ev.qty > 0 && <span className="bg-muted px-1 rounded">Qty: {ev.qty}</span>}
                           <span className="text-muted-foreground/70 ml-auto">{ev.date ? new Date(ev.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' }) : '-'}</span>

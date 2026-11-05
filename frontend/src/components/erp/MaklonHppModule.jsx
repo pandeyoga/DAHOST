@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { EmptyState, PageHeader } from './moduleAtoms';
 import { fetchMaklonOrders } from '@/lib/maklonOrderAdapter';
 import { formatRupiah } from '@/lib/format';
 
@@ -118,19 +118,19 @@ export default function MaklonHppModule({ token }) {
   const actualMarginPct = hppPerPcs > 0 ? ((actualPrice - hppPerPcs) / hppPerPcs) * 100 : 0;
 
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-hpp">
+    <div className="space-y-4" data-testid="maklon-hpp">
       <PageHeader
         title="HPP Jasa Jahit Maklon"
         subtitle="Hitung harga pokok produksi + margin untuk setiap order maklon"
         icon={Target}
         actions={
-          <Button size="sm" variant="outline" onClick={fetchOrders} className="gap-2" data-testid="hpp-refresh-btn">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          <Button size="icon" variant="outline" onClick={fetchOrders} title="Muat ulang" aria-label="Muat ulang" data-testid="hpp-refresh-btn">
+            <RefreshCw />
           </Button>
         }
       />
 
-      <GlassCard className="p-5">
+      <GlassCard className="p-4">
         <Label className="mb-2 block">Pilih Order</Label>
         <Select value={selectedOrderId} onValueChange={loadOrder}>
           <SelectTrigger className="w-full md:w-96" data-testid="hpp-order-select"><SelectValue placeholder="Pilih order..." /></SelectTrigger>
@@ -143,7 +143,7 @@ export default function MaklonHppModule({ token }) {
       </GlassCard>
 
       {selectedOrder && actual && (
-        <GlassCard className="p-5 space-y-4" data-testid="hpp-actual">
+        <GlassCard className="p-4 space-y-4" data-testid="hpp-actual">
           <div>
             <h3 className="text-sm font-semibold text-foreground/80">HPP Jahit dari angka nyata — {actual.po_number}</h3>
             <p className="text-xs text-foreground/50">Komponen dibaca otomatis: tagihan CMT (tarif PO/SPK), aksesoris milik DA (Material Issue), dan permak. Kain milik klien bukan biaya DA.</p>
@@ -168,10 +168,10 @@ export default function MaklonHppModule({ token }) {
             <div><p className="text-xs text-foreground/60">HPP per pcs ({Number(actual.qty_basis || 0).toLocaleString('id-ID')} pcs lolos QC)</p><p className="font-semibold text-primary">{fmt(actual.hpp_per_pcs)}</p></div>
             <div><p className="text-xs text-foreground/60">Tagihan klien (qty diterima)</p><p className="font-semibold">{fmt(actual.revenue)}</p></div>
             <div><p className="text-xs text-foreground/60">Margin nyata</p>
-              <p className={`font-bold ${actual.margin < 0 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`} data-testid="hpp-actual-margin">{fmt(actual.margin)} ({Number(actual.margin_pct || 0).toFixed(2)}%)</p></div>
+              <p className={`font-bold ${actual.margin < 0 ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--success))] '}`} data-testid="hpp-actual-margin">{fmt(actual.margin)} ({Number(actual.margin_pct || 0).toFixed(2)}%)</p></div>
           </div>
           {(actual.gaps || []).length > 0 && (
-            <ul className="text-xs text-amber-700 dark:text-amber-300 list-disc pl-4">
+            <ul className="text-xs text-[hsl(var(--warning))] list-disc pl-4">
               {actual.gaps.map((g, i) => <li key={i}>{g}</li>)}
             </ul>
           )}
@@ -181,7 +181,7 @@ export default function MaklonHppModule({ token }) {
       {selectedOrder && !actual && (
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-4">
           {/* Components editor */}
-          <GlassCard className="p-5">
+          <GlassCard className="p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-foreground/80">Komponen Biaya</h3>
               <Button size="sm" variant="outline" onClick={addComponent} className="gap-1" data-testid="hpp-add-component-btn">
@@ -189,7 +189,8 @@ export default function MaklonHppModule({ token }) {
               </Button>
             </div>
             {components.length === 0 ? (
-              <div className="text-center py-10 text-foreground/40 text-sm">Belum ada komponen</div>
+              <EmptyState icon={Calculator} className="py-4" title="Belum ada komponen biaya"
+                description="Klik Tambah untuk mencatat bahan, upah, dan biaya lain order ini." />
             ) : (
               <div className="space-y-2">
                 {components.map((c, i) => (
@@ -221,7 +222,7 @@ export default function MaklonHppModule({ token }) {
                       {i === 0 && <Label className="text-[10px]">Subtotal</Label>}
                       <div>{fmt((Number(c.qty) || 0) * (Number(c.unit_cost) || 0))}</div>
                     </div>
-                    <Button size="icon" variant="ghost" className="w-7 h-7 text-red-700 dark:text-red-400" onClick={() => removeComp(i)}><Trash2 className="w-3 h-3" /></Button>
+                    <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive))]" onClick={() => removeComp(i)} title="Hapus komponen" aria-label="Hapus komponen"><Trash2 className="w-3 h-3" /></Button>
                   </div>
                 ))}
               </div>
@@ -240,7 +241,7 @@ export default function MaklonHppModule({ token }) {
           </GlassCard>
 
           {/* Live preview */}
-          <GlassCard className="p-5">
+          <GlassCard className="p-4">
             <h3 className="text-sm font-semibold text-foreground/80 mb-3">Live Calculation</h3>
             <div className="space-y-2 text-sm">
               <div className="flex justify-between"><span className="text-foreground/60">Qty Order:</span><span className="font-semibold">{qty} pcs</span></div>
@@ -250,13 +251,13 @@ export default function MaklonHppModule({ token }) {
               <div className="flex justify-between"><span className="text-foreground/60">HPP per pcs:</span><span className="font-semibold text-primary">{fmt(hppPerPcs)}</span></div>
               <div className="border-t border-foreground/10 pt-2 mt-2" />
               <div className="flex justify-between"><span className="text-foreground/60">Harga Jual Aktual:</span><span>{fmt(actualPrice)}</span></div>
-              <div className="flex justify-between"><span className="text-foreground/60">Harga Saran ({marginPct}%):</span><span className="font-semibold text-green-700 dark:text-green-400">{fmt(suggestedPrice)}</span></div>
-              <div className={`flex justify-between pt-2 border-t border-foreground/10 ${actualMarginPct < 0 ? 'text-red-700 dark:text-red-400' : actualMarginPct < 10 ? 'text-amber-700 dark:text-amber-400' : 'text-green-700 dark:text-green-400'}`}>
+              <div className="flex justify-between"><span className="text-foreground/60">Harga Saran ({marginPct}%):</span><span className="font-semibold text-[hsl(var(--success))] ">{fmt(suggestedPrice)}</span></div>
+              <div className={`flex justify-between pt-2 border-t border-foreground/10 ${actualMarginPct < 0 ? 'text-[hsl(var(--destructive))] ' : actualMarginPct < 10 ? 'text-[hsl(var(--warning))] ' : 'text-[hsl(var(--success))] '}`}>
                 <span>Margin Aktual:</span><span className="font-bold">{actualMarginPct.toFixed(2)}%</span>
               </div>
             </div>
             {actualMarginPct < 5 && selectedOrder && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-3 bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-400/30 rounded p-2 text-xs text-red-600 dark:text-red-300">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-3 bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded p-2 text-xs text-[hsl(var(--destructive))] ">
                 ⚠ Margin di bawah 5%. Pertimbangkan renegosiasi harga atau efisiensi biaya.
               </motion.div>
             )}

@@ -14,10 +14,10 @@ import { cuttingApi, StatusPill, fmtNum, fmtDateTime } from './cuttingApi';
 function KPI({ label, value, sub, icon: Icon, tone = 'primary', testid }) {
   const tones = {
     primary: 'text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.12)] border-[hsl(var(--primary)/0.25)]',
-    amber: 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/25',
-    emerald: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/25',
-    sky: 'text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/25',
-    rose: 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/25',
+    amber: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.25)]',
+    emerald: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.25)]',
+    sky: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)] border-[hsl(var(--primary)/0.25)]',
+    rose: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.25)]',
   };
   return (
     <GlassCard className="p-4" data-testid={testid}>
@@ -61,8 +61,8 @@ export default function CuttingDashboard({ token, onNavigate }) {
     <div className="space-y-5" data-testid="cutting-dashboard">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-orange-500/12 border border-orange-500/25 grid place-items-center">
-            <Scissors className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.25)] grid place-items-center">
+            <Scissors className="w-5 h-5 text-[hsl(var(--warning))] " />
           </div>
           <div>
             <h2 className="text-2xl font-bold text-foreground">Dashboard Cutting</h2>
@@ -81,7 +81,7 @@ export default function CuttingDashboard({ token, onNavigate }) {
       </div>
 
       {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 text-sm text-red-700 dark:text-red-300">
+        <div className="flex items-center gap-2 p-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-sm text-[hsl(var(--destructive))] ">
           <AlertCircle className="w-4 h-4 shrink-0" /> {err}
         </div>
       )}
@@ -149,7 +149,7 @@ export default function CuttingDashboard({ token, onNavigate }) {
               <tbody>
                 {(d?.recent || []).map((r) => (
                   <tr key={r.id} className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/40">
-                    <td className="px-4 py-2 font-mono text-xs text-foreground">{r.number}</td>
+                    <td className="px-4 py-2 tabular-nums text-xs text-foreground">{r.number}</td>
                     <td className="px-4 py-2 text-foreground">{r.style_name || '-'}</td>
                     <td className="px-4 py-2 text-muted-foreground text-xs">{r.input_material_name}</td>
                     <td className="px-4 py-2 text-right tabular-nums text-foreground">

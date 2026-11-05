@@ -1,6 +1,9 @@
 
 import { useState, useRef } from 'react';
 import { Upload, Download, FileSpreadsheet, Loader2, CheckCircle, AlertCircle, X } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Notice } from '../moduleAtoms';
 import { apiFetch, apiPost } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
 
@@ -26,14 +29,14 @@ export default function ImportExportPanel({ token, importType, exportType, expor
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert('Gagal download template: ' + err.message);
+      toast.error('Gagal mengunduh template: ' + err.message);
     }
   };
 
   const handleImport = async (e) => {
     e.preventDefault();
     const file = fileRef.current?.files?.[0];
-    if (!file) return alert('Pilih file terlebih dahulu');
+    if (!file) { toast.error('Pilih file terlebih dahulu'); return; }
 
     setImporting(true);
     setImportResult(null);
@@ -73,7 +76,7 @@ export default function ImportExportPanel({ token, importType, exportType, expor
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch (err) {
-      alert('Export gagal: ' + err.message);
+      toast.error('Unduh gagal: ' + err.message);
     } finally {
       setExporting(false);
     }
@@ -83,23 +86,16 @@ export default function ImportExportPanel({ token, importType, exportType, expor
     <>
       <div className="flex gap-2">
         {importType && (
-          <button
-            onClick={() => { setShowImportModal(true); setImportResult(null); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm font-medium transition-colors"
-          >
+          <Button variant="outline" onClick={() => { setShowImportModal(true); setImportResult(null); }}>
             <Upload className="w-4 h-4" />
-            Import
-          </button>
+            Impor
+          </Button>
         )}
         {exportType && (
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-sm font-medium transition-colors disabled:opacity-50"
-          >
+          <Button variant="outline" onClick={handleExport} disabled={exporting}>
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />}
-            Export Excel
-          </button>
+            Unduh Excel
+          </Button>
         )}
       </div>
 
@@ -109,110 +105,92 @@ export default function ImportExportPanel({ token, importType, exportType, expor
           <div className="bg-card rounded-xl shadow-2xl max-w-lg w-full max-h-[80vh] overflow-auto">
             <div className="flex items-center justify-between p-4 border-b">
               <h3 className="text-lg font-bold text-gray-800">
-                <Upload className="w-5 h-5 inline mr-2 text-green-600" />
-                Import Data
+                <Upload className="w-5 h-5 inline mr-2 text-[hsl(var(--success))]" />
+                Impor data
               </h3>
-              <button onClick={() => setShowImportModal(false)} className="text-gray-400 hover:text-gray-600">
+              <Button variant="ghost" size="icon-sm" onClick={() => setShowImportModal(false)} title="Tutup" aria-label="Tutup">
                 <X className="w-5 h-5" />
-              </button>
+              </Button>
             </div>
 
             <div className="p-4 space-y-4">
               {/* Template Download */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm text-blue-800 mb-2">
-                  <strong>Langkah 1:</strong> Download template Excel terlebih dahulu
+              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3">
+                <p className="text-sm text-[hsl(var(--primary))] mb-2">
+                  <strong>Langkah 1:</strong> Unduh template Excel terlebih dahulu
                 </p>
-                <button
-                  onClick={downloadTemplate}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
-                >
+                <Button variant="outline" size="sm" onClick={downloadTemplate}>
                   <Download className="w-4 h-4" />
-                  Download Template
-                </button>
+                  Unduh template
+                </Button>
               </div>
 
               {/* File Upload */}
               <form onSubmit={handleImport} className="space-y-3">
                 <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
                   <p className="text-sm text-gray-700 mb-2">
-                    <strong>Langkah 2:</strong> Isi template dan upload file
+                    <strong>Langkah 2:</strong> Isi template lalu unggah filenya
                   </p>
                   <input
                     type="file"
                     ref={fileRef}
                     accept=".xlsx,.xls"
-                    className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-50 file:text-green-700 hover:file:bg-green-100"
+                    className="block w-full text-sm text-gray-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-[hsl(var(--success)/0.1)] file:text-[hsl(var(--success))] hover:file:bg-[hsl(var(--success)/0.15)]"
                   />
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={importing}
-                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium disabled:opacity-50 transition-colors"
-                >
+                <Button type="submit" disabled={importing} className="w-full">
                   {importing ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      Mengimport...
+                      Mengimpor...
                     </>
                   ) : (
                     <>
                       <Upload className="w-4 h-4" />
-                      Upload & Import
+                      Unggah & impor
                     </>
                   )}
-                </button>
+                </Button>
               </form>
 
               {/* Import Result */}
               {importResult && (
-                <div className={`border rounded-lg p-3 ${importResult.error ? 'bg-red-50 border-red-200' : 'bg-green-50 border-green-200'}`}>
-                  {importResult.error ? (
-                    <div className="flex items-start gap-2">
-                      <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 flex-shrink-0" />
-                      <div>
-                        <p className="text-sm font-bold text-red-800">Import Gagal</p>
-                        <p className="text-sm text-red-700">{importResult.error}</p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <CheckCircle className="w-5 h-5 text-green-600" />
-                        <p className="text-sm font-bold text-green-800">Import Berhasil!</p>
-                      </div>
-                      <div className="text-sm text-green-700 space-y-1">
+                importResult.error ? (
+                  <Notice tone="danger" icon={AlertCircle} title="Impor gagal">{importResult.error}</Notice>
+                ) : (
+                  <Notice tone="success" icon={CheckCircle} title="Impor berhasil">
+                      <div className="space-y-1">
                         {importResult.imported_products !== undefined && (
-                          <p>✅ {importResult.imported_products} produk diimport</p>
+                          <p>✅ {importResult.imported_products} produk diimpor</p>
                         )}
                         {importResult.imported_variants !== undefined && (
-                          <p>✅ {importResult.imported_variants} varian diimport</p>
+                          <p>✅ {importResult.imported_variants} varian diimpor</p>
                         )}
                         {importResult.imported_garments !== undefined && (
-                          <p>✅ {importResult.imported_garments} vendor diimport</p>
+                          <p>✅ {importResult.imported_garments} vendor diimpor</p>
                         )}
                         {importResult.imported_pos !== undefined && (
-                          <p>✅ {importResult.imported_pos} PO diimport</p>
+                          <p>✅ {importResult.imported_pos} PO diimpor</p>
                         )}
                         {importResult.imported_items !== undefined && (
-                          <p>✅ {importResult.imported_items} item PO diimport</p>
+                          <p>✅ {importResult.imported_items} item PO diimpor</p>
                         )}
                         {importResult.skipped > 0 && (
-                          <p className="text-yellow-700">⚠️ {importResult.skipped} baris dilewati (kosong)</p>
+                          <p className="text-[hsl(var(--warning))]">⚠️ {importResult.skipped} baris dilewati (kosong)</p>
                         )}
                         {importResult.errors?.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-green-200">
-                            <p className="font-medium text-yellow-700 mb-1">⚠️ {importResult.errors.length} peringatan:</p>
-                            <ul className="list-disc list-inside text-xs text-yellow-700 max-h-32 overflow-auto">
+                          <div className="mt-2 pt-2 border-t border-[hsl(var(--success)/0.35)]">
+                            <p className="font-medium text-[hsl(var(--warning))] mb-1">⚠️ {importResult.errors.length} peringatan:</p>
+                            <ul className="list-disc list-inside text-xs text-[hsl(var(--warning))] max-h-32 overflow-auto">
                               {importResult.errors.map((err, i) => <li key={i}>{err}</li>)}
                             </ul>
                           </div>
                         )}
                         {/* Show vendor accounts if garments import */}
                         {importResult.vendor_accounts?.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-green-200">
-                            <p className="font-medium text-green-800 mb-1">Akun Vendor yang Dibuat:</p>
+                          <div className="mt-2 pt-2 border-t border-[hsl(var(--success)/0.35)]">
+                            <p className="font-medium text-[hsl(var(--success))] mb-1">Akun Vendor yang Dibuat:</p>
                             <div className="max-h-40 overflow-auto">
                               <table className="w-full text-xs">
                                 <thead>
@@ -224,10 +202,10 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                                 </thead>
                                 <tbody>
                                   {importResult.vendor_accounts.map((acc, i) => (
-                                    <tr key={i} className="border-t border-green-200">
+                                    <tr key={i} className="border-t border-[hsl(var(--success)/0.35)]">
                                       <td className="py-1">{acc.garment_name}</td>
-                                      <td className="py-1 font-mono">{acc.email}</td>
-                                      <td className="py-1 font-mono">{acc.password}</td>
+                                      <td className="py-1 tabular-nums">{acc.email}</td>
+                                      <td className="py-1 tabular-nums">{acc.password}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -236,9 +214,8 @@ export default function ImportExportPanel({ token, importType, exportType, expor
                           </div>
                         )}
                       </div>
-                    </div>
-                  )}
-                </div>
+                  </Notice>
+                )
               )}
             </div>
           </div>

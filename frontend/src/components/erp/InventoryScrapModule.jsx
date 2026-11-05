@@ -124,10 +124,9 @@ export default function InventoryScrapModule({ token }) {
         subtitle="Catat adjustment stok untuk scrap, damage, theft, atau stock count correction. Sistem otomatis posting GL."
         actions={
           <>
-            <Button variant="ghost" onClick={fetchMovements} className="h-9 border border-[var(--glass-border)]" data-testid="adj-refresh">
-              <RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang
-            </Button>
-            <Button onClick={() => setAdjustForm({ material_id: '', location_id: '', qty: 0, reason: '', adjustment_type: 'scrap' })} className="h-9" data-testid="adj-add">
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchMovements} data-testid="adj-refresh">
+              <RefreshCw className="w-3.5 h-3.5" /></Button>
+            <Button onClick={() => setAdjustForm({ material_id: '', location_id: '', qty: 0, reason: '', adjustment_type: 'scrap' })} data-testid="adj-add">
               <Plus className="w-3.5 h-3.5 mr-1.5" />Buat Adjustment
             </Button>
           </>
@@ -166,12 +165,12 @@ export default function InventoryScrapModule({ token }) {
                   <tr key={m.id} className="border-b border-[var(--glass-border)] hover:bg-[var(--glass-border)]/30" data-testid={`adj-row-${m.id}`}>
                     <td className="py-3 text-xs">{new Date(m.created_at).toLocaleString('id-ID')}</td>
                     <td className="py-3">
-                      <div className="text-xs font-mono text-muted-foreground">{m.material_code}</div>
+                      <div className="text-xs tabular-nums text-muted-foreground">{m.material_code}</div>
                       <div>{m.material_name}</div>
                     </td>
                     <td className="py-3 text-xs">{m.location_name}</td>
-                    <td className="py-3 text-right font-mono">
-                      <span className={Number(m.qty) < 0 ? 'text-red-300' : 'text-emerald-300'}>
+                    <td className="py-3 text-right tabular-nums">
+                      <span className={Number(m.qty) < 0 ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--success))]'}>
                         {Number(m.qty) > 0 ? '+' : ''}{m.qty}
                       </span>
                     </td>
@@ -205,7 +204,7 @@ export default function InventoryScrapModule({ token }) {
               </div>
               <div>
                 {/* 2026-11-02 — No.18(a): lokasi DIPILIH dari daftar gudang, bukan UUID diketik. */}
-                <label className="text-xs uppercase text-muted-foreground">Lokasi <span className="text-red-400">*</span></label>
+                <label className="text-xs uppercase text-muted-foreground">Lokasi <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <StorageLocationSelect
                   token={token}
                   value={adjustForm.location_id}
@@ -217,13 +216,13 @@ export default function InventoryScrapModule({ token }) {
                 />
               </div>
               {stockInfo && (
-                <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg p-3 text-sm">
+                <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.3)] rounded-lg p-3 text-sm">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Stok Saat Ini:</span>
-                    <span className="font-mono font-semibold">{stockInfo.qty} {stockInfo.unit}</span>
+                    <span className="tabular-nums font-semibold">{stockInfo.qty} {stockInfo.unit}</span>
                   </div>
                   {stockInfo.below_min && (
-                    <div className="flex items-center gap-1 mt-1 text-yellow-300 text-xs">
+                    <div className="flex items-center gap-1 mt-1 text-[hsl(var(--warning))] text-xs">
                       <AlertTriangle className="w-3 h-3" />
                       <span>Stok di bawah minimum</span>
                     </div>
@@ -258,7 +257,7 @@ export default function InventoryScrapModule({ token }) {
                 </div>
               </div>
               <div>
-                <label className="text-xs uppercase text-muted-foreground">Alasan <span className="text-red-400">*</span></label>
+                <label className="text-xs uppercase text-muted-foreground">Alasan <span className="text-[hsl(var(--destructive))]">*</span></label>
                 <textarea
                   value={adjustForm.reason}
                   onChange={e => setAdjustForm(f => ({ ...f, reason: e.target.value }))}
@@ -273,7 +272,7 @@ export default function InventoryScrapModule({ token }) {
               </div>
             </div>
             <div className="flex gap-2 mt-6 justify-end">
-              <Button variant="ghost" onClick={() => { setAdjustForm(null); setStockInfo(null); }} className="border border-[var(--glass-border)]" data-testid="adj-cancel">
+              <Button variant="outline" onClick={() => { setAdjustForm(null); setStockInfo(null); }} data-testid="adj-cancel">
                 Batal
               </Button>
               <Button onClick={adjust} data-testid="adj-confirm">

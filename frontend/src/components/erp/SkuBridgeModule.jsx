@@ -52,18 +52,18 @@ const rp = (v) => `Rp ${fmt(Math.round(Number(v || 0)))}`;
 
 const ACTION_META = {
   map: {
-    label: 'Tautkan', tone: 'text-emerald-700 dark:text-emerald-300',
-    chip: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-400/40',
+    label: 'Tautkan', tone: 'text-[hsl(var(--success))] ',
+    chip: 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))]  border-[hsl(var(--success)/0.4)]',
     icon: Link2, hint: 'Varian sudah ada di master — cukup ditautkan',
   },
   create_variant: {
-    label: 'Buat Varian', tone: 'text-blue-700 dark:text-blue-300',
-    chip: 'bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-400/40',
+    label: 'Buat Varian', tone: 'text-[hsl(var(--primary))] ',
+    chip: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.4)]',
     icon: Plus, hint: 'Model sudah ada, warna/ukuran ini belum',
   },
   create_master: {
-    label: 'Buat Master', tone: 'text-amber-700 dark:text-amber-300',
-    chip: 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-400/40',
+    label: 'Buat Master', tone: 'text-[hsl(var(--warning))] ',
+    chip: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.4)]',
     icon: Sparkles, hint: 'Belum ada master yang mirip — buat model + varian baru',
   },
 };
@@ -85,7 +85,7 @@ function Kpi({ icon: Icon, label, value, sub, tone = 'text-foreground', testId }
 /* ─── Bar kemajuan tautan ──────────────────────────────────────────────────── */
 function LinkageBar({ health }) {
   const pct = Number(health?.lines_linked_pct || 0);
-  const tone = pct >= 90 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-500' : 'bg-rose-500';
+  const tone = pct >= 90 ? 'bg-[hsl(var(--success))]' : pct >= 50 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive))]';
   return (
     <GlassCard className="p-5" hover={false} data-testid="linkage-progress">
       <div className="flex items-end justify-between mb-2">
@@ -106,9 +106,9 @@ function LinkageBar({ health }) {
              style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
       </div>
       <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-xs text-muted-foreground">
-        <span>Pesanan siap dikerjakan: <b className="text-emerald-700 dark:text-emerald-300">{fmt(health?.orders_ready)}</b></span>
-        <span>Sebagian tertaut: <b className="text-amber-700 dark:text-amber-300">{fmt(health?.orders_partial)}</b></span>
-        <span>Belum bisa dikerjakan: <b className="text-rose-700 dark:text-rose-300">{fmt(health?.orders_blocked)}</b></span>
+        <span>Pesanan siap dikerjakan: <b className="text-[hsl(var(--success))] ">{fmt(health?.orders_ready)}</b></span>
+        <span>Sebagian tertaut: <b className="text-[hsl(var(--warning))] ">{fmt(health?.orders_partial)}</b></span>
+        <span>Belum bisa dikerjakan: <b className="text-[hsl(var(--destructive))] ">{fmt(health?.orders_blocked)}</b></span>
         <span>Pemetaan aktif: <b>{fmt(health?.bridge_mappings)}</b></span>
       </div>
     </GlassCard>
@@ -179,7 +179,7 @@ function ManualPickDialog({ row, onClose, onDone }) {
             <div className="min-w-0">
               <div className="text-sm font-medium truncate">{c.label || '(tanpa nama)'}</div>
               <div className="text-xs text-muted-foreground">
-                <span className="font-mono">{c.sku || '—'}</span>
+                <span className="tabular-nums">{c.sku || '—'}</span>
                 {' · '}
                 {c.kind === 'catalog_item' ? 'item katalog jual' : 'varian model internal'}
                 {c.stock != null ? ` · stok ${fmt(c.stock)}` : ''}
@@ -268,7 +268,7 @@ function CreateMasterDialog({ row, onClose, onDone }) {
         <div className="font-medium">{row.product_name || '(tanpa nama)'}</div>
         <div className="text-muted-foreground">
           Variasi: <b>{row.variation || '—'}</b> · SKU platform:{' '}
-          <span className="font-mono">{row.platform_sku_id}</span> ·{' '}
+          <span className="tabular-nums">{row.platform_sku_id}</span> ·{' '}
           {fmt(row.pcs)} pcs di {fmt(row.orders)} pesanan
         </div>
       </div>
@@ -311,9 +311,9 @@ function CreateMasterDialog({ row, onClose, onDone }) {
       </div>
 
       {plan?.plan && (
-        <div className="rounded-lg border border-blue-400/30 bg-blue-500/[0.06] p-3 text-xs"
+        <div className="rounded-lg border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary))]/[0.06] p-3 text-xs"
              data-testid="cm-plan">
-          <div className="flex items-center gap-1.5 font-semibold text-blue-700 dark:text-blue-300 mb-1">
+          <div className="flex items-center gap-1.5 font-semibold text-[hsl(var(--primary))] mb-1">
             <Eye className="w-3.5 h-3.5" />Pratinjau
           </div>
           <div>{plan.message}</div>
@@ -402,7 +402,7 @@ function BulkPanel({ onDone }) {
 
       {res && (
         <div className="space-y-3" data-testid="bulk-result">
-          <div className="rounded-lg border border-emerald-400/30 bg-emerald-500/[0.07] p-3 text-sm">
+          <div className="rounded-lg border border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success))]/[0.07] p-3 text-sm">
             <b>{res.message}</b>
             {!res.dry_run && (
               <div className="text-xs text-muted-foreground mt-1">
@@ -510,14 +510,14 @@ function MappedPanel({ reloadKey, onChanged }) {
             <tbody className="divide-y divide-foreground/5">
               {rows.map((r) => (
                 <tr key={r.platform_sku_id} className="hover:bg-foreground/[0.03]">
-                  <td className="px-3 py-2 font-mono text-xs">{r.platform_sku_id}</td>
+                  <td className="px-3 py-2 tabular-nums text-xs">{r.platform_sku_id}</td>
                   <td className="px-3 py-2">
                     <div className="truncate max-w-[22rem]">{r.target_name || '—'}</div>
                     <div className="text-[11px] text-muted-foreground truncate max-w-[22rem]">
                       {r.product_name_sample}
                     </div>
                   </td>
-                  <td className="px-3 py-2 font-mono text-xs">{r.fg_code || '—'}</td>
+                  <td className="px-3 py-2 tabular-nums text-xs">{r.fg_code || '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{fmt(r.orders_using)}</td>
                   <td className="px-3 py-2">
                     <Badge variant="outline" className="text-[10px]">{r.method || 'manual'}</Badge>
@@ -525,7 +525,7 @@ function MappedPanel({ reloadKey, onChanged }) {
                   <td className="px-3 py-2 text-right">
                     <Button size="sm" variant="ghost" onClick={() => unmap(r.platform_sku_id)}
                             data-testid={`unmap-${r.platform_sku_id}`}
-                            className="text-rose-600 dark:text-rose-300">
+                            className="text-[hsl(var(--destructive))] ">
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </td>
@@ -596,10 +596,10 @@ export default function SkuBridgeModule({ onNavigate }) {
 
   const kpis = useMemo(() => ([
     { icon: ShoppingBag, label: 'Pesanan marketing', value: fmt(health?.orders), tone: 'text-foreground', testId: 'kpi-orders' },
-    { icon: CheckCircle2, label: 'Siap dikerjakan gudang', value: fmt(health?.orders_ready), tone: 'text-emerald-600 dark:text-emerald-300', testId: 'kpi-ready' },
-    { icon: AlertTriangle, label: 'Belum bisa dikerjakan', value: fmt(health?.orders_blocked), tone: 'text-rose-600 dark:text-rose-300', testId: 'kpi-blocked' },
-    { icon: PackageSearch, label: 'SKU belum dikenal', value: fmt(health?.unmapped_sku_count), tone: 'text-amber-600 dark:text-amber-300', testId: 'kpi-unmapped' },
-    { icon: Link2, label: 'Pemetaan aktif', value: fmt(health?.bridge_mappings), tone: 'text-blue-600 dark:text-blue-300', testId: 'kpi-mappings' },
+    { icon: CheckCircle2, label: 'Siap dikerjakan gudang', value: fmt(health?.orders_ready), tone: 'text-[hsl(var(--success))] ', testId: 'kpi-ready' },
+    { icon: AlertTriangle, label: 'Belum bisa dikerjakan', value: fmt(health?.orders_blocked), tone: 'text-[hsl(var(--destructive))] ', testId: 'kpi-blocked' },
+    { icon: PackageSearch, label: 'SKU belum dikenal', value: fmt(health?.unmapped_sku_count), tone: 'text-[hsl(var(--warning))] ', testId: 'kpi-unmapped' },
+    { icon: Link2, label: 'Pemetaan aktif', value: fmt(health?.bridge_mappings), tone: 'text-[hsl(var(--primary))] ', testId: 'kpi-mappings' },
   ]), [health]);
 
   return (
@@ -699,7 +699,7 @@ export default function SkuBridgeModule({ onNavigate }) {
               </div>
             ) : rows.length === 0 ? (
               <div className="py-14 text-center" data-testid="unmapped-empty">
-                <CheckCircle2 className="w-12 h-12 mx-auto text-emerald-500/50 mb-3" />
+                <CheckCircle2 className="w-12 h-12 mx-auto text-[hsl(var(--success)/0.5)] mb-3" />
                 <p className="font-medium">Semua SKU marketing sudah dikenal gudang.</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Tidak ada barang yang menggantung tanpa identitas.
@@ -730,7 +730,7 @@ export default function SkuBridgeModule({ onNavigate }) {
                             </div>
                             <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
                               <Store className="w-3 h-3" />{r.account_name || '—'}
-                              <span className="font-mono ml-1">{r.platform_sku_id}</span>
+                              <span className="tabular-nums ml-1">{r.platform_sku_id}</span>
                             </div>
                           </td>
                           <td className="px-3 py-2.5">

@@ -16,9 +16,23 @@ import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB, toWIBDate } from '@/lib/waktu';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import { Notice, StatTile } from '../moduleAtoms';
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
 const CLOSE_REASONS = ['Under Production', 'Over Production', 'Price Adjustment', 'Customer Agreement', 'Other'];
+// Label tampilan alasan tutup PO (nilai yang dikirim ke server tetap kode di atas).
+const CLOSE_REASON_LABELS = {
+  'Under Production': 'Produksi kurang dari order',
+  'Over Production': 'Produksi lebih dari order',
+  'Price Adjustment': 'Penyesuaian harga',
+  'Customer Agreement': 'Kesepakatan dengan pelanggan',
+  Other: 'Lainnya',
+};
 
 export default function ProductionPOModule({ userRole, hasPerm = () => false, businessType, onNavigate }) {
   // FASE 5 DA: businessType 'internal' | 'maklon' | undefined (semua)
@@ -429,7 +443,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       loadAccReq(row.id);
       setCostCheck(null);
       if (isInternal) apiGet(`/production-pos/${row.id}/cost-check`).then(setCostCheck).catch(() => setCostCheck(null));
-    } catch (e) { alert(e.message || 'Gagal memuat detail'); }
+    } catch (e) { toast.error(e.message || 'Gagal memuat detail'); }
   };
 
   // ── ACC-1 — kebutuhan aksesoris PO (BOM explode + posisi stok + kekurangan) ──
@@ -545,7 +559,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       });
       setShowModal(true);
     } catch (err) {
-      alert('Gagal memuat detail PO: ' + (err.message || err));
+      toast.error('Gagal memuat detail PO: ' + (err.message || err));
     }
   };
 
@@ -556,7 +570,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       const data = await apiGet(`/production-pos/${poId}`);
       setDetailData(data);
       refetchPOs();
-    } catch (err) { alert(err.message || 'Transisi status ditolak backend'); }
+    } catch (err) { toast.error(err.message || 'Perubahan status ditolak server'); }
   };
 
   const handleClosePO = async (e) => {
@@ -565,7 +579,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       await apiPost(`/production-pos/${closeTargetPO.id}/close`, closeForm);
       setShowCloseModal(false);
       refetchPOs();
-    } catch (e) { alert(e.message || 'Gagal menutup PO'); }
+    } catch (e) { toast.error(e.message || 'Gagal menutup PO'); }
   };
 
   const handleDelete = async () => {
@@ -574,7 +588,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       await apiDelete(`/production-pos/${confirmDelete.id}`);
       setConfirmDelete(null);
       refetchPOs();
-    } catch (e) { alert(e.message || 'Gagal menghapus PO'); }
+    } catch (e) { toast.error(e.message || 'Gagal menghapus PO'); }
   };
 
   const [expandedPOs, setExpandedPOs] = useState({});
@@ -588,17 +602,17 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     { key: 'po_number', label: 'No. PO / Identifikasi', render: (v, row) => (
       <div>
         <div className="flex items-center gap-2">
-          <span className="font-bold text-blue-700">{v}</span>
+          <span className="font-bold text-[hsl(var(--primary))]">{v}</span>
           <BizBadge type={row.business_type} size="xs" />
         </div>
         <div className="text-xs text-muted-foreground/70 mt-0.5">
-          {row.vendor_name ? <span className="text-purple-600">{row.vendor_name}</span> : <span>-</span>}
+          {row.vendor_name ? <span className="text-[hsl(var(--primary))]">{row.vendor_name}</span> : <span>-</span>}
           {' · '}{fmtDate(row.po_date || row.created_at)}
         </div>
         {(row.serial_numbers || []).length > 0 && (
-          <div className="text-xs text-emerald-600 mt-0.5 flex flex-wrap gap-1">
+          <div className="text-xs text-[hsl(var(--success))] mt-0.5 flex flex-wrap gap-1">
             {row.serial_numbers.slice(0, 3).map((sn, i) => (
-              <span key={i} className="bg-emerald-50 px-1.5 py-0.5 rounded font-mono">{sn}</span>
+              <span key={i} className="bg-[hsl(var(--success)/0.1)] px-1.5 py-0.5 rounded tabular-nums">{sn}</span>
             ))}
             {row.serial_numbers.length > 3 && <span className="text-muted-foreground/70">+{row.serial_numbers.length - 3} lagi</span>}
           </div>
@@ -612,7 +626,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     { key: 'item_count', label: 'Items', render: (v, row) => (
       <button onClick={(e) => { e.stopPropagation(); togglePO(row.id); }}
         data-testid={`po-toggle-items-${row.id}`}
-        className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 bg-muted text-foreground/90 text-xs rounded-full font-medium whitespace-nowrap leading-none hover:bg-blue-100 hover:text-blue-700 transition-colors">
+        className="inline-flex shrink-0 items-center gap-1 px-2 py-0.5 bg-muted text-foreground/90 text-xs rounded-full font-medium whitespace-nowrap leading-none hover:bg-[hsl(var(--primary)/0.15)] hover:text-[hsl(var(--primary))] transition-colors">
         <span className="text-[10px]">{expandedPOs[row.id] ? '▼' : '▶'}</span>
         <span>{v || 0} item</span>
       </button>
@@ -621,12 +635,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     { key: 'deadline', label: 'Deadline Prod.', render: (v) => {
       if (!v) return '-';
       const isOverdue = toWIBDate(v) < todayWIB();
-      return <span className={isOverdue ? 'text-red-600 font-medium' : ''}>{fmtDate(v)}</span>;
+      return <span className={isOverdue ? 'text-[hsl(var(--destructive))] font-medium' : ''}>{fmtDate(v)}</span>;
     }},
     { key: 'delivery_deadline', label: 'Deadline Kirim', render: (v) => {
       if (!v) return '-';
       const isOverdue = toWIBDate(v) < todayWIB();
-      return <span className={isOverdue ? 'text-orange-600 font-medium' : 'text-muted-foreground'}>{fmtDate(v)}</span>;
+      return <span className={isOverdue ? 'text-[hsl(var(--warning))] font-medium' : 'text-muted-foreground'}>{fmtDate(v)}</span>;
     }},
     { key: 'status', label: 'Status / Workflow', render: (v, row) => (
       <div className="space-y-1.5">
@@ -637,34 +651,34 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     { key: 'created_by', label: 'Dibuat' },
     { key: 'actions', label: 'Aksi', render: (_, row) => (
       <div className="flex items-center gap-1">
-        <button onClick={() => openDetail(row)} data-testid={`po-detail-btn-${row.id}`} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Detail"><Eye className="w-4 h-4" /></button>
+        <button onClick={() => openDetail(row)} data-testid={`po-detail-btn-${row.id}`} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Detail"><Eye className="w-4 h-4" /></button>
         {/* 2026-08-01: pintu masuk ke BOM PO Maklon (Detail 360° → tab BOM).
             Sebelumnya BOM Template maklon tidak punya jalur dari daftar PO. */}
         {!isInternal && onNavigate && (
           <button
             onClick={() => onNavigate('maklon-po-360', { po_id: row.id, tab: 'bom' })}
             data-testid={`po-bom-btn-${row.id}`}
-            className="p-1.5 rounded hover:bg-cyan-50 text-cyan-600"
+            className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
             title="BOM & kebutuhan material (Detail 360°)"><Layers className="w-4 h-4" /></button>
         )}
         {canEdit && (
           <>
-            <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-amber-50 text-amber-600" title="Edit"><Pencil className="w-4 h-4" /></button>
+            <button onClick={() => openEdit(row)} className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]" title="Edit"><Pencil className="w-4 h-4" /></button>
             {!['Closed', 'Completed'].includes(row.status) && (
               <>
                 <button
                   onClick={() => setQuickCompletePO(row)}
                   data-testid={`quick-complete-btn-${row.id}`}
-                  className="p-1.5 rounded hover:bg-violet-50 text-violet-600"
+                  className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
                   title="Quick Complete — selesaikan semua flow produksi sekaligus"
                 >
                   <Zap className="w-4 h-4" />
                 </button>
                 <button onClick={() => { setCloseTargetPO(row); setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' }); setShowCloseModal(true); }}
-                  className="p-1.5 rounded hover:bg-orange-50 text-orange-500 text-xs" title="Tutup PO">Close</button>
+                  className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] text-xs" title="Tutup PO">Close</button>
               </>
             )}
-            <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-red-50 text-red-500" title="Hapus"><Trash2 className="w-4 h-4" /></button>
+            <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]" title="Hapus"><Trash2 className="w-4 h-4" /></button>
           </>
         )}
       </div>
@@ -678,13 +692,13 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     // (`max-w-full overflow-x-auto`) supaya kolom paling kanan (Qty) tidak
     // terpotong oleh lebar tabel induk.
     return (
-      <div className="bg-amber-50/30 border-t border-amber-100 px-4 py-3 max-w-full">
+      <div className="bg-[hsl(var(--warning)/0.3)] border-t border-[hsl(var(--warning)/0.35)] px-4 py-3 max-w-full">
         <p className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">Detail Item PO</p>
         <div className="max-w-full overflow-x-auto rounded-lg bg-[var(--card-surface,#fff)] border border-[var(--glass-border,rgba(0,0,0,0.08))]">
           <table className="w-full text-xs min-w-[760px]">
             <thead>
-              <tr className="border-b border-amber-200">
-                <th className="text-left py-1.5 pl-3 pr-3 text-amber-700 font-semibold whitespace-nowrap">Serial/Batch</th>
+              <tr className="border-b border-[hsl(var(--warning)/0.35)]">
+                <th className="text-left py-1.5 pl-3 pr-3 text-[hsl(var(--warning))] font-semibold whitespace-nowrap">Serial/Batch</th>
                 <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">SKU</th>
                 <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">Produk</th>
                 <th className="text-left py-1.5 pr-3 text-muted-foreground font-semibold">Size</th>
@@ -692,11 +706,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 <th className="text-right py-1.5 pr-3 text-muted-foreground font-semibold whitespace-nowrap">Qty</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-amber-100">
+            <tbody className="divide-y divide-[hsl(var(--warning)/0.35)]">
               {row.items.map(item => (
-                <tr key={item.id} className="hover:bg-amber-50">
-                  <td className="py-1.5 pl-3 pr-3 font-mono text-amber-700 font-semibold whitespace-nowrap">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
-                  <td className="py-1.5 pr-3 font-mono text-blue-700">{item.sku || '-'}</td>
+                <tr key={item.id} className="hover:bg-[hsl(var(--warning)/0.1)]">
+                  <td className="py-1.5 pl-3 pr-3 tabular-nums text-[hsl(var(--warning))] font-semibold whitespace-nowrap">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                  <td className="py-1.5 pr-3 tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'}</td>
                   <td className="py-1.5 pr-3 text-foreground/90">{item.product_name}</td>
                   <td className="py-1.5 pr-3 text-muted-foreground">{item.size || '-'}</td>
                   <td className="py-1.5 pr-3 text-muted-foreground">{item.color || '-'}</td>
@@ -711,19 +725,19 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div><h1 className="text-2xl font-bold text-foreground">{isInternal ? 'PO Produksi Internal' : businessType === 'maklon' ? 'PO Maklon' : 'Production PO'}</h1><p className="text-muted-foreground text-sm mt-1">{isInternal ? 'Pesanan produksi untuk gudang sendiri — Model & Varian (Warna · Size · SKU) wajib dipilih' : businessType === 'maklon' ? 'Pesanan jasa maklon per klien — Artikel dari Katalog Buyer + Varian (Warna · Size · SKU)' : 'Kelola pesanan produksi multi-item dengan varian produk'}</p></div>
-        {isSuperAdmin && <span className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-100 text-purple-700 rounded-lg text-xs font-medium"><span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>Mode Superadmin</span>}
+        {isSuperAdmin && <span className="flex items-center gap-1.5 px-2.5 py-1 bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] rounded-lg text-xs font-medium"><span className="w-1.5 h-1.5 rounded-full bg-[hsl(var(--primary))]"></span>Mode Superadmin</span>}
       </div>
 
-      <div className="flex gap-2 flex-wrap">
-        {['', ...STATUS_OPTIONS].map(s => (
-          <button key={s} onClick={() => setFilterStatus(s)}
-            className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${filterStatus === s ? 'bg-blue-600 text-white border-blue-600' : 'border-border text-muted-foreground hover:bg-muted/60'}`}
-            data-testid={`po-filter-${s || 'all'}`}>{s || 'Semua'}</button>
-        ))}
-      </div>
+      <FilterChips
+        value={filterStatus}
+        onChange={setFilterStatus}
+        testId="po-filter"
+        ariaLabel="Penyaring status PO"
+        options={['', ...STATUS_OPTIONS].map(s => ({ key: s, label: s || 'Semua' }))}
+      />
 
       <DataTable
         columns={columns}
@@ -748,7 +762,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               onImportSuccess={() => refetchPOs()} 
             />
             {canCreate && (
-              <button onClick={openCreate} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700" data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</button>
+              <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>
             )}
           </div>
         }
@@ -759,16 +773,15 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         <Modal title={editData ? `Edit PO: ${editData.po_number}` : (isInternal ? 'Buat PO Produksi Internal' : businessType === 'maklon' ? 'Buat PO Maklon' : 'Buat Production PO')} onClose={() => { setShowModal(false); setFormError(null); }} size="xl">
           <form onSubmit={handleSubmit} className="space-y-4">
             {formError && (
-              <div className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2.5 text-sm text-red-700" data-testid="po-form-error">
-                <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                <span className="flex-1">{formError.text}</span>
-                <button type="button" onClick={() => setFormError(null)} className="text-red-400 hover:text-red-600" aria-label="Tutup pesan"><X className="w-3.5 h-3.5" /></button>
-              </div>
+              <Notice tone="danger" icon={AlertTriangle} testId="po-form-error"
+                action={<Button type="button" size="icon-sm" variant="ghost" onClick={() => setFormError(null)} className="text-[hsl(var(--destructive))]" title="Tutup pesan" aria-label="Tutup pesan"><X className="w-3.5 h-3.5" /></Button>}>
+                {formError.text}
+              </Notice>
             )}
             {editData && editData.status === 'Closed' && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm text-orange-700">
-                ⚠️ PO ini berstatus <strong>Closed</strong>. Anda mengedit sebagai Superadmin.
-              </div>
+              <Notice tone="warning" icon={AlertTriangle}>
+                PO ini berstatus <strong>Closed</strong>. Anda mengedit sebagai Superadmin.
+              </Notice>
             )}
             {editData && (
               <div className="bg-muted/40 rounded-xl p-3">
@@ -790,7 +803,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 {numPolicy?.mode === 'auto' && !editData ? (
                   <>
                     <input readOnly disabled data-testid="po-number-auto"
-                      className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono bg-muted/50 text-muted-foreground"
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm tabular-nums bg-muted/50 text-muted-foreground"
                       value={numPolicy.nomor_berikutnya || numPolicy.contoh || 'dibuat otomatis'} />
                     <p className="text-[11px] text-muted-foreground mt-1">
                       Dibuat sistem saat disimpan (pola {numPolicy.format}). Ubah ke manual di
@@ -800,12 +813,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 ) : (
                   <>
                     <input required data-testid="po-number-input"
-                      className="w-full border border-border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm tabular-nums focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                       value={form.po_number} onChange={e => setForm({...form, po_number: e.target.value})}
                       placeholder={numPolicy?.contoh || 'PO-2025-001'} />
                     {numPolicy?.format && !editData && (
                       <p className="text-[11px] text-muted-foreground mt-1">
-                        Wajib mengikuti pola <b className="font-mono">{numPolicy.format}</b> —
+                        Wajib mengikuti pola <b className="tabular-nums">{numPolicy.format}</b> —
                         contoh {numPolicy.contoh}.
                       </p>
                     )}
@@ -815,7 +828,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">{isInternal ? 'Customer / Tujuan FG' : 'Buyer / Customer *'}</label>
                 {isInternal ? (
-                  <input data-testid="po-customer-input" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  <input data-testid="po-customer-input" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                     value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})}
                     placeholder="Gudang FG Sendiri" />
                 ) : (<>
@@ -831,7 +844,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                   placeholder="— Pilih Buyer —"
                 />
                 {!form.buyer_id && (
-                  <input className="w-full border border-border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                  <input className="w-full border border-border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" 
                     value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})} 
                     placeholder="Atau ketik nama customer manual" />
                 )}
@@ -856,15 +869,15 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             <div className="grid grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal PO</label>
-                <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.po_date} onChange={e => setForm({...form, po_date: e.target.value})} />
+                <GlassInput type="date" value={form.po_date} onChange={e => setForm({...form, po_date: e.target.value})} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Deadline Produksi</label>
-                <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.deadline} onChange={e => setForm({...form, deadline: e.target.value})} />
+                <GlassInput type="date" value={form.deadline} onChange={e => setForm({...form, deadline: e.target.value})} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Deadline Pengiriman</label>
-                <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.delivery_deadline} onChange={e => setForm({...form, delivery_deadline: e.target.value})} />
+                <GlassInput type="date" value={form.delivery_deadline} onChange={e => setForm({...form, delivery_deadline: e.target.value})} />
               </div>
             </div>
 
@@ -872,7 +885,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             <div>
               <div className="flex items-center justify-between mb-2">
                 <label className="block text-sm font-semibold text-foreground/90">Item Produk *</label>
-                <button type="button" onClick={addItem} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                <button type="button" onClick={addItem} className="flex items-center gap-1 text-xs text-[hsl(var(--primary))] hover:text-[hsl(var(--primary))] font-medium">
                   <Plus className="w-3.5 h-3.5" /> Tambah Item
                 </button>
               </div>
@@ -887,12 +900,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                   const variantLocked = !isInternal && maklonHasVariants; // Size/Warna/SKU auto dari varian master data
                   const autoLocked = isInternal || variantLocked;
                   return (
-                  <div key={idx} className={`border rounded-xl p-3 ${formError?.itemIdx === idx ? 'border-red-400 bg-red-50/50 ring-1 ring-red-200' : hasShipments ? 'border-amber-300 bg-amber-50/40' : 'border-border bg-muted/40'}`} data-testid={`po-item-row-${idx}`}>
+                  <GlassCard key={idx} className={`p-3 ${formError?.itemIdx === idx ? 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.5)] ring-1 ring-[hsl(var(--destructive)/0.35)]' : hasShipments ? 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.4)]' : ''}`} data-testid={`po-item-row-${idx}`}>
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold text-muted-foreground">
                         Item #{idx + 1}
                         {hasShipments && (
-                          <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800 uppercase tracking-wide">
+                          <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] uppercase tracking-wide">
                             🔒 sudah shipped (qty min: {minQty})
                           </span>
                         )}
@@ -900,7 +913,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       {hasShipments ? (
                         <span className="text-xs text-muted-foreground/70" title="Tidak dapat dihapus karena sudah ada shipment/return">Tidak dapat dihapus</span>
                       ) : (
-                        <button type="button" onClick={() => removeItem(idx)} className="text-red-400 hover:text-red-600"><X className="w-4 h-4" /></button>
+                        <button type="button" onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"><X className="w-4 h-4" /></button>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -933,12 +946,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           data-testid={`po-item-${idx}-variant`}
                         />
                         {item.rahaza_variant_id && item.sku && (
-                          <p className="text-[11px] text-emerald-700 font-medium mt-1" data-testid={`po-item-${idx}-sku-ok`}>
-                            SKU terpilih: <span className="font-mono">{item.sku}</span>
+                          <p className="text-[11px] text-[hsl(var(--success))] font-medium mt-1" data-testid={`po-item-${idx}-sku-ok`}>
+                            SKU terpilih: <span className="tabular-nums">{item.sku}</span>
                           </p>
                         )}
                         {item.model_id && (rahazaVariants[item.model_id] || []).length === 0 && (
-                          <p className="text-[10px] text-amber-600 mt-1">Belum ada varian. Buat di Master Produk → tab Varian.</p>
+                          <Notice tone="warning" className="mt-1 px-3 py-2 text-xs">Belum ada varian. Buat di Master Produk → tab Varian.</Notice>
                         )}
                       </div>
                       </>) : (<>
@@ -959,7 +972,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">Artikel Buyer <span className="text-[10px] text-muted-foreground/60">(bisa custom)</span></label>
-                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs font-mono disabled:bg-muted disabled:text-muted-foreground" value={item.buyer_ref_code || ''} onChange={e => updateItem(idx, 'buyer_ref_code', e.target.value)} placeholder="kode artikel buyer" disabled={hasShipments} />
+                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs tabular-nums disabled:bg-muted disabled:text-muted-foreground" value={item.buyer_ref_code || ''} onChange={e => updateItem(idx, 'buyer_ref_code', e.target.value)} placeholder="kode artikel buyer" disabled={hasShipments} />
                       </div>
                       </>)}
                     </div>
@@ -967,7 +980,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     {!isInternal && item.catalog_item_id && (
                       <div className="mt-2">
                         <label className="block text-xs text-muted-foreground mb-1">
-                          Varian (Warna · Size · SKU){maklonHasVariants && <span className="text-red-500"> *</span>}
+                          Varian (Warna · Size · SKU){maklonHasVariants && <span className="text-[hsl(var(--destructive))]"> *</span>}
                         </label>
                         {maklonHasVariants ? (
                           <SearchableSelect
@@ -984,11 +997,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                             data-testid={`po-item-${idx}-variant`}
                           />
                         ) : (
-                          <p className="text-[10px] text-amber-600 mt-1">Artikel ini belum punya varian ber-SKU. Isi Size/Warna/SKU manual, atau generate varian di Katalog Buyer → tab Varian.</p>
+                          <p className="text-[10px] text-[hsl(var(--warning))] mt-1">Artikel ini belum punya varian ber-SKU. Isi Size/Warna/SKU manual, atau generate varian di Katalog Buyer → tab Varian.</p>
                         )}
                         {maklonHasVariants && item.sku && maklonVariants.some(v => v.sku === item.sku) && (
-                          <p className="text-[11px] text-emerald-700 font-medium mt-1" data-testid={`po-item-${idx}-sku-ok`}>
-                            SKU terpilih: <span className="font-mono">{item.sku}</span>
+                          <p className="text-[11px] text-[hsl(var(--success))] font-medium mt-1" data-testid={`po-item-${idx}-sku-ok`}>
+                            SKU terpilih: <span className="tabular-nums">{item.sku}</span>
                           </p>
                         )}
                       </div>
@@ -1004,17 +1017,17 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">SKU{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
-                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs font-mono disabled:bg-muted disabled:text-muted-foreground" value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="PRD-BLK-M" disabled={hasShipments || autoLocked} />
+                        <input className="w-full border border-border rounded px-2 py-1.5 text-xs tabular-nums disabled:bg-muted disabled:text-muted-foreground" value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="PRD-BLK-M" disabled={hasShipments || autoLocked} />
                       </div>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Qty *{hasShipments && <span className="text-amber-700 ml-1">(min {minQty})</span>}</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Qty *{hasShipments && <span className="text-[hsl(var(--warning))] ml-1">(min {minQty})</span>}</label>
                         <input required type="number" min={hasShipments ? minQty : 1} className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.qty} onChange={e => updateItem(idx, 'qty', e.target.value)} placeholder="100" data-testid={`po-item-${idx}-qty`} />
                       </div>
                     </div>
                     <div className="grid grid-cols-3 gap-2 mt-2">
                       <div className="col-span-1">
-                        <label className="block text-xs text-muted-foreground mb-1">No. Seri / Batch <span className="text-amber-500 font-semibold">*</span></label>
-                        <input required className="w-full border border-amber-200 rounded px-2 py-1.5 text-xs font-mono bg-amber-50 focus:outline-none focus:ring-1 focus:ring-amber-400" value={item.serial_number || ''} onChange={e => handleSerialChange(idx, e.target.value)} placeholder="SN-2025-001" data-testid={`po-item-serial-${idx}`} />
+                        <label className="block text-xs text-muted-foreground mb-1">No. Seri / Batch <span className="text-[hsl(var(--warning))] font-semibold">*</span></label>
+                        <input required className="w-full border border-[hsl(var(--warning)/0.35)] rounded px-2 py-1.5 text-xs tabular-nums bg-[hsl(var(--warning)/0.1)] focus:outline-none focus:ring-1 focus:ring-[hsl(var(--warning)/0.35)]" value={item.serial_number || ''} onChange={e => handleSerialChange(idx, e.target.value)} placeholder="SN-2025-001" data-testid={`po-item-serial-${idx}`} />
                         {(() => {
                           const cur = (item.serial_number || '').trim().toUpperCase().replace(/\s+/g, ' ');
                           if (!cur) return null;
@@ -1027,7 +1040,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           const dbDup = dbUsages.length > 0;
                           if (inFormDup || dbDup) {
                             return (
-                              <p className="text-[10px] text-red-600 mt-1 flex items-start gap-1 font-medium" data-testid={`po-item-serial-warn-${idx}`}>
+                              <p className="text-[10px] text-[hsl(var(--destructive))] mt-1 flex items-start gap-1 font-medium" data-testid={`po-item-serial-warn-${idx}`}>
                                 <AlertTriangle size={11} className="mt-px flex-shrink-0" />
                                 <span>
                                   Seri dobel!{inFormDup ? ' Sama dgn item lain di PO ini.' : ''}
@@ -1038,7 +1051,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                             );
                           }
                           if (chk && !chk.loading && dbUsages.length === 0) {
-                            return <p className="text-[10px] text-emerald-600 mt-1">Seri unik ✓</p>;
+                            return <p className="text-[10px] text-[hsl(var(--success))] mt-1">Seri unik ✓</p>;
                           }
                           return null;
                         })()}
@@ -1054,15 +1067,15 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       </>)}
                     </div>
-                  </div>
+                  </GlassCard>
                   );
                 })}
               </div>
             </div>
 
             {form.items.length > 0 && (
-              <div className="bg-blue-50 rounded-lg p-3 text-sm">
-                <div className="flex justify-between text-blue-700">
+              <div className="bg-[hsl(var(--primary)/0.1)] rounded-lg p-3 text-sm">
+                <div className="flex justify-between text-[hsl(var(--primary))]">
                   <span>Total Item: <strong>{form.items.length}</strong></span>
                   <span>Total Qty: <strong>{form.items.reduce((s, i) => s + (Number(i.qty) || 0), 0).toLocaleString('id-ID')} pcs</strong></span>
                 </div>
@@ -1091,49 +1104,48 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       : 'Pilih artikel Katalog Buyer + isi qty — aksesoris muncul otomatis bila artikel itu punya BOM Template aktif.'}
                   </p>
                 ) : (
-                  <div className="rounded-lg border border-emerald-200 overflow-hidden">
+                  <div className="rounded-lg border border-[hsl(var(--success)/0.35)] overflow-hidden">
                     <table className="w-full text-xs">
-                      <thead className="bg-emerald-50">
+                      <thead className="bg-[hsl(var(--success)/0.1)]">
                         <tr>
-                          <th className="text-left px-3 py-1.5 text-emerald-800">Aksesoris</th>
-                          <th className="text-left px-3 py-1.5 text-emerald-800">Kode</th>
-                          <th className="text-right px-3 py-1.5 text-emerald-800">Kebutuhan</th>
+                          <th className="text-left px-3 py-1.5 text-[hsl(var(--success))]">Aksesoris</th>
+                          <th className="text-left px-3 py-1.5 text-[hsl(var(--success))]">Kode</th>
+                          <th className="text-right px-3 py-1.5 text-[hsl(var(--success))]">Kebutuhan</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-emerald-100 bg-card">
+                      <tbody className="divide-y divide-[hsl(var(--success)/0.35)] bg-card">
                         {bomAcc.rows.map((r, i) => (
                           <tr key={`${r.accessory_name}-${i}`} data-testid={`po-bom-acc-row-${i}`}>
                             <td className="px-3 py-1.5 text-foreground/90">
                               {r.accessory_name}
                               {r.unlinked && (
-                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] text-[10px] font-bold">
                                   belum tertaut master
                                 </span>
                               )}
                             </td>
-                            <td className="px-3 py-1.5 font-mono text-muted-foreground">{r.accessory_code || '-'}</td>
-                            <td className="px-3 py-1.5 text-right font-bold text-emerald-700">
+                            <td className="px-3 py-1.5 tabular-nums text-muted-foreground">{r.accessory_code || '-'}</td>
+                            <td className="px-3 py-1.5 text-right font-bold text-[hsl(var(--success))]">
                               {Number(r.qty_needed || 0).toLocaleString('id-ID')} {r.unit || 'pcs'}
                             </td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
-                    <p className="px-3 py-1.5 bg-emerald-50/60 text-[11px] text-emerald-800">
+                    <p className="px-3 py-1.5 bg-[hsl(var(--success)/0.6)] text-[11px] text-[hsl(var(--success))]">
                       Untuk {Number(bomAcc.total_pcs || 0).toLocaleString('id-ID')} pcs. Baris ini ditulis
                       sistem saat PO disimpan — jangan ditambahkan lagi di bawah (nanti dobel).
                     </p>
                   </div>
                 )}
                 {(bomAcc.warnings || []).length > 0 && (
-                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-0.5"
-                    data-testid="po-bom-acc-warning">
-                    {bomAcc.warnings.map((w, i) => (
-                      <p key={i} className="text-[11px] text-amber-800 flex gap-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-px" />{w}
-                      </p>
-                    ))}
-                  </div>
+                  <Notice tone="warning" icon={AlertTriangle} className="mt-2" testId="po-bom-acc-warning">
+                    <div className="space-y-0.5">
+                      {bomAcc.warnings.map((w, i) => (
+                        <p key={i} className="text-[11px]">{w}</p>
+                      ))}
+                    </div>
+                  </Notice>
                 )}
               </div>
             )}
@@ -1146,14 +1158,14 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     <span className="text-xs font-normal text-muted-foreground"> — hanya yang DI LUAR BOM</span>
                   )}
                 </label>
-                <button type="button" onClick={addAccessoryItem} className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-800 font-medium">
+                <button type="button" onClick={addAccessoryItem} className="flex items-center gap-1 text-xs text-[hsl(var(--success))] hover:text-[hsl(var(--success))] font-medium">
                   <Plus className="w-3.5 h-3.5" /> Tambah Aksesoris
                 </button>
               </div>
               {(form.po_accessories || []).length === 0 && <p className="text-xs text-muted-foreground/70 italic text-center py-2 border border-dashed border-border rounded-lg">Opsional — Klik "Tambah Aksesoris" untuk menambahkan</p>}
               <div className="space-y-2">
                 {(form.po_accessories || []).map((acc, idx) => (
-                  <div key={idx} className="flex items-center gap-2 border border-emerald-200 rounded-lg p-2 bg-emerald-50/50">
+                  <div key={idx} className="flex items-center gap-2 border border-[hsl(var(--success)/0.35)] rounded-lg p-2 bg-[hsl(var(--success)/0.5)]">
                     <div className="flex-1">
                       <SearchableSelect
                         options={accessories.map(a => ({ value: a.id, label: a.accessory_name || a.name, sub: a.accessory_code || a.code || a.category || '' }))}
@@ -1167,7 +1179,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     <span className="text-xs text-muted-foreground w-10">{acc.unit || 'pcs'}</span>
                     <input className="w-32 border border-border rounded px-2 py-1.5 text-xs" 
                       value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Notes" />
-                    <button type="button" onClick={() => removeAccessoryItem(idx)} className="text-red-400 hover:text-red-600"><X className="w-4 h-4" /></button>
+                    <button type="button" onClick={() => removeAccessoryItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"><X className="w-4 h-4" /></button>
                   </div>
                 ))}
               </div>
@@ -1175,7 +1187,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
 
             <div>
               <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan</label>
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
+              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
             </div>
             {editData && (
               <div>
@@ -1189,7 +1201,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               </div>
             )}
             <div className="flex gap-3">
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700">{editData ? 'Simpan Perubahan' : 'Buat PO'}</button>
+              <button type="submit" className="flex-1 bg-[hsl(var(--primary))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--primary)/0.9)]">{editData ? 'Simpan Perubahan' : 'Buat PO'}</button>
               <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
             </div>
           </form>
@@ -1200,22 +1212,22 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       {showCloseModal && closeTargetPO && (
         <Modal title={`Tutup PO Manual: ${closeTargetPO.po_number}`} onClose={() => setShowCloseModal(false)}>
           <form onSubmit={handleClosePO} className="space-y-4">
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+            <Notice tone="warning" icon={AlertTriangle}>
               Tindakan ini akan mengubah status PO menjadi <strong>Closed</strong>. Pastikan alasan dituliskan dengan benar.
-            </div>
+            </Notice>
             <div>
               <label className="block text-sm font-medium text-foreground/90 mb-1">Alasan Penutupan *</label>
-              <select required className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={closeForm.close_reason} onChange={e => setCloseForm({...closeForm, close_reason: e.target.value})}>
-                {CLOSE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+              <SmartNativeSelect className="w-full" value={closeForm.close_reason} onChange={e => setCloseForm({...closeForm, close_reason: e.target.value})}>
+                {CLOSE_REASONS.map(r => <option key={r} value={r}>{CLOSE_REASON_LABELS[r] || r}</option>)}
+              </SmartNativeSelect>
             </div>
             <div>
               <label className="block text-sm font-medium text-foreground/90 mb-1">Keterangan Tambahan</label>
-              <textarea rows="3" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={closeForm.close_notes} onChange={e => setCloseForm({...closeForm, close_notes: e.target.value})} placeholder="Jelaskan detail alasan penutupan PO..." />
+              <textarea rows="3" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" value={closeForm.close_notes} onChange={e => setCloseForm({...closeForm, close_notes: e.target.value})} placeholder="Jelaskan detail alasan penutupan PO..." />
             </div>
             <div className="flex gap-3">
-              <button type="submit" className="flex-1 bg-orange-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-orange-700">Tutup PO</button>
-              <button type="button" onClick={() => setShowCloseModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
+              <Button type="submit" className="flex-1">Tutup PO</Button>
+              <Button type="button" variant="outline" onClick={() => setShowCloseModal(false)} className="flex-1">Batal</Button>
             </div>
           </form>
         </Modal>
@@ -1226,18 +1238,18 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         <Modal title={`Detail PO: ${detailData.po_number}`} onClose={() => setShowDetail(false)} size="xl">
           <div className="space-y-4">
             {isInternal && costCheck && costCheck.items_with_issues > 0 && (
-              <div className="bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-400/30 rounded-lg p-3" data-testid="po-cost-warning">
-                <p className="text-sm font-semibold text-amber-700 dark:text-amber-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" />Harga bahan / upah belum lengkap pada {costCheck.items_with_issues} item — lapisan HPP barang jadi akan bernilai terlalu rendah (bahkan nol).</p>
-                <ul className="mt-1.5 text-xs text-amber-700 dark:text-amber-200 space-y-0.5">
+              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)]  rounded-lg p-3" data-testid="po-cost-warning">
+                <p className="text-sm font-semibold text-[hsl(var(--warning))] flex items-center gap-2"><AlertTriangle className="w-4 h-4" />Harga bahan / upah belum lengkap pada {costCheck.items_with_issues} item — lapisan HPP barang jadi akan bernilai terlalu rendah (bahkan nol).</p>
+                <ul className="mt-1.5 text-xs text-[hsl(var(--warning))] space-y-0.5">
                   {costCheck.items.filter(i => i.issues.length).map(i => (
-                    <li key={i.po_item_id} data-testid={`po-cost-issue-${i.sku}`}><span className="font-mono">{i.sku || i.product_name}</span>: {i.issues.join('; ')} — bahan {fmt(i.material_cost)}/pcs · jahit {fmt(i.sewing_cost)}/pcs</li>
+                    <li key={i.po_item_id} data-testid={`po-cost-issue-${i.sku}`}><span className="tabular-nums">{i.sku || i.product_name}</span>: {i.issues.join('; ')} — bahan {fmt(i.material_cost)}/pcs · jahit {fmt(i.sewing_cost)}/pcs</li>
                   ))}
                 </ul>
-                <p className="text-[11px] text-amber-600 dark:text-amber-300/80 mt-1.5">Isi upah jahit di layar <b>Biaya Jahit SPK</b> dan harga bahan di master material/BOM sebelum barang jadi diterima dari CMT.</p>
+                <p className="text-[11px] text-[hsl(var(--warning))] mt-1.5">Isi upah jahit di layar <b>Biaya Jahit SPK</b> dan harga bahan di master material/BOM sebelum barang jadi diterima dari CMT.</p>
               </div>
             )}
             {isInternal && costCheck && costCheck.ok && (
-              <p className="text-xs text-emerald-600 dark:text-emerald-300" data-testid="po-cost-ok">Harga bahan & upah semua item terisi — estimasi nilai batch {fmt(costCheck.estimated_batch_value)}.</p>
+              <p className="text-xs text-[hsl(var(--success))] " data-testid="po-cost-ok">Harga bahan & upah semua item terisi — estimasi nilai batch {fmt(costCheck.estimated_batch_value)}.</p>
             )}
             {/* PDF Export + Quick Complete */}
             <div className="flex justify-between items-center flex-wrap gap-2">
@@ -1246,7 +1258,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 <button
                   onClick={() => { setShowDetail(false); setQuickCompletePO(detailData); }}
                   data-testid="detail-quick-complete-btn"
-                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-violet-600 to-blue-600 text-white rounded-lg text-sm font-bold hover:from-violet-700 hover:to-blue-700 shadow-md hover:shadow-lg transition-all"
+                  className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] text-white rounded-lg text-sm font-bold hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] shadow-md hover:shadow-lg transition-all"
                 >
                   <Zap className="w-4 h-4" />
                   Quick Complete
@@ -1255,25 +1267,25 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               <button
                 onClick={() => setSppPickerOpen(true)}
                 data-testid="spp-export-pdf-btn"
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 font-medium">
+                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium">
                 📄 Export PDF (SPP) — pilih kolom
               </button>
             </div>
             {/* FASE 5 DA: Aksi status dinamis dari allowed_next backend */}
             {canEdit && (Array.isArray(detailData.allowed_next) && detailData.allowed_next.length > 0 || detailData.can_close) && (
-              <div data-testid="po-detail-actions" className="flex items-center flex-wrap gap-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 rounded-xl p-3">
-                <span className="text-xs font-semibold text-blue-700 dark:text-blue-300 uppercase tracking-wide mr-1">Aksi:</span>
+              <div data-testid="po-detail-actions" className="flex items-center flex-wrap gap-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-3">
+                <span className="text-xs font-semibold text-[hsl(var(--primary))] uppercase tracking-wide mr-1">Aksi:</span>
                 {(detailData.allowed_next || []).map(ns => (
                   <button key={ns} data-testid={`po-action-${ns.toLowerCase().replace(/\s+/g, '-')}`}
                     onClick={() => transitionStatus(detailData.id, ns)}
-                    className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors">
+                    className="px-3 py-1.5 rounded-lg text-sm font-semibold bg-[hsl(var(--primary))] text-white hover:bg-[hsl(var(--primary)/0.9)] transition-colors">
                     → {ns}
                   </button>
                 ))}
                 {detailData.can_close && (
                   <button data-testid="po-action-close"
                     onClick={() => { setShowDetail(false); setCloseTargetPO(detailData); setCloseForm({ close_reason: CLOSE_REASONS[0], close_notes: '' }); setShowCloseModal(true); }}
-                    className="px-3 py-1.5 rounded-lg text-sm font-semibold border border-orange-300 text-orange-600 hover:bg-orange-50 transition-colors">
+                    className="px-3 py-1.5 rounded-lg text-sm font-semibold border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))] hover:bg-[hsl(var(--warning)/0.1)] transition-colors">
                     Tutup PO
                   </button>
                 )}
@@ -1285,7 +1297,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               <POWorkflowIndicator status={detailData.status} />
             </div>
             <div className="grid grid-cols-3 gap-3">
-              {[{l:'No. PO',v:<span className="font-bold text-blue-700">{detailData.po_number}</span>},
+              {[{l:'No. PO',v:<span className="font-bold text-[hsl(var(--primary))]">{detailData.po_number}</span>},
                 {l:'Customer',v:detailData.customer_name},
                 {l:'Vendor',v:detailData.vendor_name||'-'},
                 {l:'Status',v:<StatusBadge status={detailData.status} />},
@@ -1296,10 +1308,10 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               ].map(it => <div key={it.l} className="bg-muted/40 rounded-lg p-3"><p className="text-xs text-muted-foreground">{it.l}</p><div className="font-medium text-sm mt-0.5">{it.v}</div></div>)}
             </div>
             {detailData.close_reason && (
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
-                <p className="text-sm font-semibold text-orange-700">Alasan Penutupan: {detailData.close_reason}</p>
-                {detailData.close_notes && <p className="text-xs text-orange-600 mt-1">{detailData.close_notes}</p>}
-                <p className="text-xs text-orange-500 mt-1">Ditutup oleh: {detailData.closed_by} pada {fmtDate(detailData.closed_at)}</p>
+              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3">
+                <p className="text-sm font-semibold text-[hsl(var(--warning))]">Alasan Penutupan: {CLOSE_REASON_LABELS[detailData.close_reason] || detailData.close_reason}</p>
+                {detailData.close_notes && <p className="text-xs text-[hsl(var(--warning))] mt-1">{detailData.close_notes}</p>}
+                <p className="text-xs text-[hsl(var(--warning))] mt-1">Ditutup oleh: {detailData.closed_by} pada {fmtDate(detailData.closed_at)}</p>
               </div>
             )}
             {detailData.items?.length > 0 && (
@@ -1322,22 +1334,22 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       return (
                         <tr key={it.id} className="border-t border-border/60">
                           <td className="px-3 py-2">{it.product_name}</td>
-                          <td className="px-3 py-2 font-mono text-xs">{it.sku || '-'}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-amber-700 font-medium">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs">{it.sku || '-'}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-medium">{it.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
                           <td className="px-3 py-2 text-xs">{it.size} / {it.color}</td>
                           <td className="px-3 py-2 text-right font-bold">{it.qty?.toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-emerald-700">{fmt(it.selling_price_snapshot)}</td>
-                          <td className="px-3 py-2 text-right text-amber-700">{fmt(it.cmt_price_snapshot)}</td>
-                          <td className={`px-3 py-2 text-right font-medium ${isInternal ? 'text-muted-foreground' : marginPcs >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{isInternal ? '—' : fmt(marginPcs)}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{fmt(it.selling_price_snapshot)}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{fmt(it.cmt_price_snapshot)}</td>
+                          <td className={`px-3 py-2 text-right font-medium ${isInternal ? 'text-muted-foreground' : marginPcs >= 0 ? 'text-[hsl(var(--primary))]' : 'text-[hsl(var(--destructive))]'}`}>{isInternal ? '—' : fmt(marginPcs)}</td>
                         </tr>
                       );
                     })}</tbody>
                     <tfoot><tr className="bg-muted/40 font-bold border-t-2 border-border">
                       <td className="px-3 py-2" colSpan={3}>Total</td>
                       <td className="px-3 py-2 text-right">{detailData.items.reduce((s,i)=>s+(i.qty||0),0).toLocaleString('id-ID')} pcs</td>
-                      <td className="px-3 py-2 text-right text-emerald-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>
-                      <td className="px-3 py-2 text-right text-amber-700">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
-                      <td className="px-3 py-2 text-right text-blue-700">{isInternal ? '—' : fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
+                      <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.selling_price_snapshot||0),0))}</td>
+                      <td className="px-3 py-2 text-right text-[hsl(var(--warning))]">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</td>
+                      <td className="px-3 py-2 text-right text-[hsl(var(--primary))]">{isInternal ? '—' : fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*((i.selling_price_snapshot||0)-(i.cmt_price_snapshot||0)),0))}</td>
                     </tr></tfoot>
                   </table>
                 </div>
@@ -1347,21 +1359,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     nyata (bahan BOM warna varian + jahit SPK) dari /cost-check. */}
                 {isInternal && (
                   <div className="grid grid-cols-3 gap-3" data-testid="po-internal-hpp">
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                      <p className="text-xs text-amber-600 font-medium">Bahan (BOM warna varian)</p>
-                      <p className="text-xl font-bold text-amber-700 mt-1">{fmt((costCheck?.items || []).reduce((s, i) => s + (i.material_cost || 0) * (Number(i.qty) || 0), 0))}</p>
-                      <p className="text-xs text-amber-500 mt-0.5">Harga bahan × qty</p>
-                    </div>
-                    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                      <p className="text-xs text-amber-600 font-medium">Biaya Jahit CMT (SPK)</p>
-                      <p className="text-xl font-bold text-amber-700 mt-1">{fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))}</p>
-                      <p className="text-xs text-amber-500 mt-0.5">Tarif jahit × qty</p>
-                    </div>
-                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                      <p className="text-xs text-blue-600 font-medium">Estimasi HPP Batch</p>
-                      <p className="text-xl font-bold text-blue-700 mt-1" data-testid="po-internal-hpp-batch">{costCheck ? fmt(costCheck.estimated_batch_value) : '…'}</p>
-                      <p className="text-xs text-blue-500 mt-0.5">PO internal = stok sendiri; margin lahir saat barang terjual</p>
-                    </div>
+                    <StatTile label="Bahan (BOM warna varian)" accent="warning" sub="Harga bahan × qty"
+                      value={fmt((costCheck?.items || []).reduce((s, i) => s + (i.material_cost || 0) * (Number(i.qty) || 0), 0))} />
+                    <StatTile label="Biaya jahit CMT (SPK)" accent="warning" sub="Tarif jahit × qty"
+                      value={fmt(detailData.items.reduce((s,i)=>s+(i.qty||0)*(i.cmt_price_snapshot||0),0))} />
+                    <StatTile label="Estimasi HPP batch" accent="primary" sub="PO internal = stok sendiri; margin lahir saat barang terjual"
+                      value={<span data-testid="po-internal-hpp-batch">{costCheck ? fmt(costCheck.estimated_batch_value) : '…'}</span>} />
                   </div>
                 )}
                 {/* Financial Summary */}
@@ -1372,21 +1375,10 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                   const marginPct = totalSales > 0 ? Math.round((grossMargin / totalSales) * 100) : 0;
                   return (
                     <div className="grid grid-cols-3 gap-3">
-                      <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
-                        <p className="text-xs text-emerald-600 font-medium">Total Nilai Penjualan</p>
-                        <p className="text-xl font-bold text-emerald-700 mt-1">{fmt(totalSales)}</p>
-                        <p className="text-xs text-emerald-500 mt-0.5">Selling Price × Qty</p>
-                      </div>
-                      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
-                        <p className="text-xs text-amber-600 font-medium">Total Biaya Vendor (CMT)</p>
-                        <p className="text-xl font-bold text-amber-700 mt-1">{fmt(totalCMT)}</p>
-                        <p className="text-xs text-amber-500 mt-0.5">CMT Price × Qty</p>
-                      </div>
-                      <div className={`border rounded-xl p-4 ${grossMargin >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
-                        <p className={`text-xs font-medium ${grossMargin >= 0 ? 'text-blue-600' : 'text-red-600'}`}>Est. Gross Margin</p>
-                        <p className={`text-xl font-bold mt-1 ${grossMargin >= 0 ? 'text-blue-700' : 'text-red-600'}`}>{fmt(grossMargin)}</p>
-                        <p className={`text-xs mt-0.5 ${grossMargin >= 0 ? 'text-blue-500' : 'text-red-500'}`}>{marginPct}% dari nilai penjualan</p>
-                      </div>
+                      <StatTile label="Total nilai penjualan" accent="success" sub="Harga jual × qty" value={fmt(totalSales)} />
+                      <StatTile label="Total biaya vendor (CMT)" accent="warning" sub="Harga CMT × qty" value={fmt(totalCMT)} />
+                      <StatTile label="Perkiraan laba kotor" accent={grossMargin >= 0 ? 'primary' : 'danger'}
+                        sub={`${marginPct}% dari nilai penjualan`} value={fmt(grossMargin)} />
                     </div>
                   );
                 })()}
@@ -1396,7 +1388,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             <div className="space-y-3" data-testid="po-accessory-requirements">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="font-semibold text-foreground/90 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-xs font-bold">
+                  <span className="w-5 h-5 bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] rounded-full flex items-center justify-center text-xs font-bold">
                     {accReq?.requirements?.length ?? (detailData.po_accessories?.length || 0)}
                   </span>
                   Kebutuhan Aksesoris
@@ -1404,16 +1396,16 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 {accReq?.requirements?.length > 0 && (
                   <div className="flex items-center gap-2">
                     {accReq.summary?.shortage_lines > 0 ? (
-                      <button
+                      <Button
+                        size="sm"
                         onClick={() => createAccRequest(detailData.id, true)}
                         disabled={accReqCreating}
-                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500 text-white hover:brightness-110 disabled:opacity-50"
                         data-testid="po-acc-create-request-btn"
                       >
                         {accReqCreating ? 'Membuat...' : `Buat Permintaan (${accReq.summary.shortage_lines} kurang)`}
-                      </button>
+                      </Button>
                     ) : (
-                      <span className="text-xs text-emerald-700 dark:text-emerald-400 font-medium">
+                      <span className="text-xs text-[hsl(var(--success))] font-medium">
                         Stok mencukupi — tidak perlu permintaan
                       </span>
                     )}
@@ -1423,20 +1415,17 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
 
               {accReqLoading && <p className="text-xs text-muted-foreground">Memuat kebutuhan aksesoris...</p>}
               {accReq?.error && (
-                <p className="text-xs text-red-700 dark:text-red-400">{accReq.error}</p>
+                <p className="text-xs text-[hsl(var(--destructive))] ">{accReq.error}</p>
               )}
 
               {accReqMsg && (
-                <div
-                  data-testid="po-acc-req-message"
-                  className={`text-xs rounded-lg px-3 py-2 border ${
-                    accReqMsg.type === 'success'
-                      ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-400 dark:border-emerald-500/30 text-emerald-800 dark:text-emerald-300'
-                      : 'bg-red-100 dark:bg-red-500/10 border-red-400 dark:border-red-500/30 text-red-800 dark:text-red-300'
-                  }`}
+                <Notice
+                  testId="po-acc-req-message"
+                  tone={accReqMsg.type === 'success' ? 'success' : 'danger'}
+                  className="text-xs"
                 >
                   {accReqMsg.text}
-                </div>
+                </Notice>
               )}
 
               {!accReqLoading && accReq && !accReq.error && accReq.requirements.length === 0 && (
@@ -1448,7 +1437,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               )}
 
               {accReq?.summary?.unlinked_lines > 0 && (
-                <div className="text-xs bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 text-amber-900 dark:text-amber-200 rounded-lg px-3 py-2">
+                <div className="text-xs bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  text-[hsl(var(--warning))]  rounded-lg px-3 py-2">
                   <strong>{accReq.summary.unlinked_lines} baris belum tertaut ke master material</strong> —
                   stoknya tidak bisa dicek dan tidak akan ikut dalam permintaan. Perbaiki di modul BOM
                   (pilih material dari master, atau tombol "Perbaiki Otomatis").
@@ -1458,22 +1447,22 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
               {accReq?.requirements?.length > 0 && (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm" data-testid="po-acc-req-table">
-                    <thead><tr className="bg-emerald-50 dark:bg-emerald-500/10">
-                      <th className="text-left px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">#</th>
-                      <th className="text-left px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">Aksesoris</th>
-                      <th className="text-left px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">Sumber</th>
-                      <th className="text-right px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">Dibutuhkan</th>
-                      <th className="text-right px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">Tersedia</th>
-                      <th className="text-right px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">Kurang</th>
-                      <th className="text-left px-3 py-2 text-xs text-emerald-700 dark:text-emerald-300 font-semibold">Status</th>
+                    <thead><tr className="bg-[hsl(var(--success)/0.1)] ">
+                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">#</th>
+                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Aksesoris</th>
+                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Sumber</th>
+                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Dibutuhkan</th>
+                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Tersedia</th>
+                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Kurang</th>
+                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Status</th>
                     </tr></thead>
                     <tbody>{accReq.requirements.map((a, idx) => (
-                      <tr key={a.id || idx} className="border-t border-emerald-100 dark:border-emerald-500/20 hover:bg-emerald-50/30 dark:hover:bg-emerald-500/5"
+                      <tr key={a.id || idx} className="border-t border-[hsl(var(--success)/0.35)] hover:bg-[hsl(var(--success)/0.3)] "
                         data-testid={`po-acc-req-row-${idx}`}>
                         <td className="px-3 py-2 text-xs text-muted-foreground/70">{idx + 1}</td>
                         <td className="px-3 py-2">
                           <div className="font-medium text-foreground/90">{a.material_name || a.accessory_name}</div>
-                          <div className="font-mono text-xs text-emerald-700 dark:text-emerald-400">{a.material_code || a.accessory_code || '-'}</div>
+                          <div className="tabular-nums text-xs text-[hsl(var(--success))] ">{a.material_code || a.accessory_code || '-'}</div>
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">
                           {a.source === 'bom_auto' ? 'BOM (otomatis)' : 'Manual'}
@@ -1484,13 +1473,13 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                         <td className="px-3 py-2 text-right text-foreground/80">
                           {a.linked ? (a.available || 0).toLocaleString('id-ID') : <span className="text-muted-foreground">-</span>}
                         </td>
-                        <td className={`px-3 py-2 text-right font-semibold ${a.shortage > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        <td className={`px-3 py-2 text-right font-semibold ${a.shortage > 0 ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--success))] '}`}>
                           {a.linked ? (a.shortage || 0).toLocaleString('id-ID') : '-'}
                         </td>
                         <td className="px-3 py-2 text-xs">
-                          {a.status === 'ok' && <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-400/40">Cukup</span>}
-                          {a.status === 'shortage' && <span className="px-2 py-0.5 rounded-full bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-300 border border-red-400/40">Kurang</span>}
-                          {a.status === 'unlinked' && <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-500/15 text-amber-800 dark:text-amber-300 border border-amber-400/40">Belum tertaut</span>}
+                          {a.status === 'ok' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.4)]">Cukup</span>}
+                          {a.status === 'shortage' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.4)]">Kurang</span>}
+                          {a.status === 'unlinked' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.4)]">Belum tertaut</span>}
                         </td>
                       </tr>
                     ))}</tbody>
@@ -1502,7 +1491,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 <div className="text-xs text-muted-foreground" data-testid="po-acc-existing-requests">
                   Permintaan aksesoris untuk PO ini:{' '}
                   {accReq.existing_requests.map(r => (
-                    <span key={r.id} className="inline-block mr-2 px-2 py-0.5 rounded-full border border-border bg-muted/40 font-mono">
+                    <span key={r.id} className="inline-block mr-2 px-2 py-0.5 rounded-full border border-border bg-muted/40 tabular-nums">
                       {r.request_code} · {r.status}
                     </span>
                   ))}
@@ -1542,13 +1531,13 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
             try {
               const q = cols?.length ? `&cols=${encodeURIComponent(cols.join(','))}` : '';
               const res = await apiFetch(`/export-pdf?type=production-po&id=${detailData.id}${q}`);
-              if (!res.ok) { alert('Gagal export PDF'); return; }
+              if (!res.ok) { toast.error('Gagal mengunduh PDF'); return; }
               const blob = await res.blob();
               const url = URL.createObjectURL(blob);
               const a = document.createElement('a');
               a.href = url; a.download = `SPP-${detailData.po_number}.pdf`; a.click();
               URL.revokeObjectURL(url);
-            } catch (e) { alert('Gagal export PDF: ' + e.message); }
+            } catch (e) { toast.error('Gagal mengunduh PDF: ' + e.message); }
           }}
         />
       )}

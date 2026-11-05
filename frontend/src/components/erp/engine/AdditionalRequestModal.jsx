@@ -32,21 +32,21 @@ const MODE_LABELS = {
     subtitle: 'Material yang hilang/kurang saat inspeksi akan diajukan ke ERP untuk dikirim ulang.',
     submitLabel: 'Ajukan ke ERP',
     badge: 'DARI INSPEKSI',
-    badgeColor: 'bg-amber-100 text-amber-800',
+    badgeColor: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
   },
   resubmit: {
     title: 'Ajukan Ulang Permintaan',
     subtitle: 'Permintaan sebelumnya ditolak. Anda dapat merevisi qty/alasan dan mengajukan ulang.',
     submitLabel: 'Kirim Permintaan Baru',
     badge: 'AJUKAN ULANG',
-    badgeColor: 'bg-blue-100 text-blue-800',
+    badgeColor: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
   },
   manual: {
     title: 'Buat Permintaan Material Tambahan',
     subtitle: 'Buat permintaan tambahan secara manual untuk shipment yang sudah ter-inspeksi.',
     submitLabel: 'Kirim Permintaan',
     badge: 'MANUAL',
-    badgeColor: 'bg-emerald-100 text-emerald-800',
+    badgeColor: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
   },
 };
 
@@ -63,21 +63,21 @@ const REPLACEMENT_LABELS = {
     subtitle: 'Material cacat/rusak diajukan ke ERP untuk DIGANTI dengan kiriman baru.',
     submitLabel: 'Ajukan ke ERP',
     badge: 'PENGGANTI',
-    badgeColor: 'bg-red-100 text-red-800',
+    badgeColor: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
   },
   resubmit: {
     title: 'Ajukan Ulang Permintaan Pengganti',
     subtitle: 'Permintaan sebelumnya ditolak. Anda dapat merevisi qty/alasan dan mengajukan ulang.',
     submitLabel: 'Kirim Permintaan Baru',
     badge: 'PENGGANTI · AJUKAN ULANG',
-    badgeColor: 'bg-red-100 text-red-800',
+    badgeColor: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
   },
   manual: {
     title: 'Buat Permintaan Material Pengganti',
     subtitle: 'Untuk material yang CACAT/RUSAK (bukan kurang kirim). Sebutkan cacatnya pada alasan per-item.',
     submitLabel: 'Kirim Permintaan',
     badge: 'PENGGANTI',
-    badgeColor: 'bg-red-100 text-red-800',
+    badgeColor: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
   },
 };
 
@@ -210,7 +210,7 @@ export default function AdditionalRequestModal({
           </span>
           {previousRequestNumber && (
             <span className="text-xs text-muted-foreground">
-              Asal dari permintaan: <span className="font-mono font-semibold text-foreground/90">{previousRequestNumber}</span>
+              Asal dari permintaan: <span className="tabular-nums font-semibold text-foreground/90">{previousRequestNumber}</span>
             </span>
           )}
         </div>
@@ -221,7 +221,7 @@ export default function AdditionalRequestModal({
         <div className="bg-muted/40 border border-border rounded-lg p-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <div>
             <p className="text-xs text-muted-foreground">Shipment Asal</p>
-            <p className="font-mono font-semibold text-blue-700">{shipment?.shipment_number || '-'}</p>
+            <p className="tabular-nums font-semibold text-[hsl(var(--primary))]">{shipment?.shipment_number || '-'}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Vendor</p>
@@ -229,7 +229,7 @@ export default function AdditionalRequestModal({
           </div>
           <div>
             <p className="text-xs text-muted-foreground">PO Number</p>
-            <p className="font-mono text-foreground/90">{shipment?.po_number || '-'}</p>
+            <p className="tabular-nums text-foreground/90">{shipment?.po_number || '-'}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Total Qty Diminta</p>
@@ -242,14 +242,14 @@ export default function AdditionalRequestModal({
         {/* Overall reason */}
         <div>
           <label className="block text-sm font-medium text-foreground/90 mb-1">
-            Alasan Keseluruhan <span className="text-red-500">*</span>
+            Alasan Keseluruhan <span className="text-[hsl(var(--destructive))]">*</span>
           </label>
           <textarea
             rows={2}
             className={`w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 ${
               errors.overallReason
-                ? 'border-red-300 focus:ring-red-300'
-                : 'border-border focus:ring-blue-300'
+                ? 'border-[hsl(var(--destructive)/0.35)] focus:ring-[hsl(var(--destructive)/0.35)]'
+                : 'border-border focus:ring-[hsl(var(--primary)/0.35)]'
             }`}
             value={overallReason}
             onChange={(e) => {
@@ -264,7 +264,7 @@ export default function AdditionalRequestModal({
             data-testid="additional-request-overall-reason"
           />
           {errors.overallReason && (
-            <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
+            <p className="text-xs text-[hsl(var(--destructive))] mt-1 flex items-center gap-1">
               <AlertCircle className="w-3 h-3" /> {errors.overallReason}
             </p>
           )}
@@ -277,7 +277,7 @@ export default function AdditionalRequestModal({
               Item yang Diminta ({items.filter((i) => Number(i.requested_qty) > 0).length})
             </h4>
             {errors.items && (
-              <p className="text-xs text-red-600 flex items-center gap-1">
+              <p className="text-xs text-[hsl(var(--destructive))] flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" /> {errors.items}
               </p>
             )}
@@ -289,11 +289,11 @@ export default function AdditionalRequestModal({
                 <tr>
                   <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Produk</th>
                   <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">SKU</th>
-                  <th className="text-left px-3 py-2 text-xs font-semibold text-amber-700">No. Seri</th>
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-[hsl(var(--warning))]">No. Seri</th>
                   <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Size/Warna</th>
                   <th className="text-right px-3 py-2 text-xs font-semibold text-muted-foreground">Qty Diminta</th>
                   <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">
-                    Alasan <span className="text-red-500">*</span>
+                    Alasan <span className="text-[hsl(var(--destructive))]">*</span>
                   </th>
                   <th className="px-2 py-2 w-10"></th>
                 </tr>
@@ -314,8 +314,8 @@ export default function AdditionalRequestModal({
                       <td className="px-3 py-2">
                         <div className="font-medium text-foreground text-sm">{it.product_name || '-'}</div>
                       </td>
-                      <td className="px-3 py-2 font-mono text-xs text-blue-700">{it.sku || '-'}</td>
-                      <td className="px-3 py-2 font-mono text-xs text-amber-700 font-semibold">
+                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{it.sku || '-'}</td>
+                      <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">
                         {it.serial_number || <span className="text-muted-foreground/50">—</span>}
                       </td>
                       <td className="px-3 py-2 text-xs text-foreground/90">
@@ -328,8 +328,8 @@ export default function AdditionalRequestModal({
                           max={it.max_qty != null ? it.max_qty : undefined}
                           className={`w-20 text-right border rounded px-2 py-1 text-sm font-semibold focus:outline-none focus:ring-2 ${
                             qtyErr
-                              ? 'border-red-300 focus:ring-red-300'
-                              : 'border-border focus:ring-blue-300'
+                              ? 'border-[hsl(var(--destructive)/0.35)] focus:ring-[hsl(var(--destructive)/0.35)]'
+                              : 'border-border focus:ring-[hsl(var(--primary)/0.35)]'
                           }`}
                           value={it.requested_qty}
                           onChange={(e) => updateItem(idx, 'requested_qty', e.target.value)}
@@ -338,28 +338,28 @@ export default function AdditionalRequestModal({
                         {it.max_qty != null && (
                           <p className="text-[10px] text-muted-foreground/70 mt-0.5">maks {it.max_qty}</p>
                         )}
-                        {qtyErr && <p className="text-[10px] text-red-600 mt-0.5">{qtyErr}</p>}
+                        {qtyErr && <p className="text-[10px] text-[hsl(var(--destructive))] mt-0.5">{qtyErr}</p>}
                       </td>
                       <td className="px-3 py-2">
                         <input
                           type="text"
                           className={`w-full border rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 ${
                             reasonErr
-                              ? 'border-red-300 focus:ring-red-300'
-                              : 'border-border focus:ring-blue-300'
+                              ? 'border-[hsl(var(--destructive)/0.35)] focus:ring-[hsl(var(--destructive)/0.35)]'
+                              : 'border-border focus:ring-[hsl(var(--primary)/0.35)]'
                           }`}
                           value={it.reason}
                           onChange={(e) => updateItem(idx, 'reason', e.target.value)}
                           placeholder="Alasan spesifik untuk item ini..."
                           data-testid={`additional-request-item-reason-${idx}`}
                         />
-                        {reasonErr && <p className="text-[10px] text-red-600 mt-0.5">{reasonErr}</p>}
+                        {reasonErr && <p className="text-[10px] text-[hsl(var(--destructive))] mt-0.5">{reasonErr}</p>}
                       </td>
                       <td className="px-2 py-2 text-center">
                         <button
                           type="button"
                           onClick={() => removeItem(idx)}
-                          className="p-1 rounded text-muted-foreground/70 hover:text-red-600 hover:bg-red-50"
+                          className="p-1 rounded text-muted-foreground/70 hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.1)]"
                           title="Hapus baris"
                           data-testid={`additional-request-item-remove-${idx}`}
                         >
@@ -392,7 +392,7 @@ export default function AdditionalRequestModal({
             type="button"
             onClick={handleSubmit}
             disabled={loading}
-            className="flex-1 flex items-center justify-center gap-2 bg-amber-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-amber-700 disabled:opacity-50"
+            className="flex-1 flex items-center justify-center gap-2 bg-[hsl(var(--warning))] text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-[hsl(var(--warning)/0.9)] disabled:opacity-50"
             data-testid="additional-request-submit-btn"
           >
             <Send className="w-4 h-4" /> {loading ? 'Mengirim...' : cfg.submitLabel}

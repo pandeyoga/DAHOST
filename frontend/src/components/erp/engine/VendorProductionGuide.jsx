@@ -73,7 +73,7 @@ export default function VendorProductionGuide() {
           <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
             <Package className="w-3.5 h-3.5" /> {badge}
           </span>
-          {g.code && <span className="font-mono text-xs text-muted-foreground">{g.code}</span>}
+          {g.code && <span className="tabular-nums text-xs text-muted-foreground">{g.code}</span>}
           <span className="text-sm font-semibold text-foreground">{g.name}</span>
         </div>
 
@@ -151,7 +151,7 @@ export default function VendorProductionGuide() {
         )}
 
         {empty && (
-          <div className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2">
+          <div className="text-sm text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 flex items-start gap-2">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             Panduan Produksi untuk artikel ini belum diisi. Admin/PPIC dapat mengisi SOP di
             {g.source_type === 'buyer_catalog' ? ' Katalog Buyer → Panduan Produksi.' : ' Master Produk → Panduan.'}
@@ -177,7 +177,7 @@ export default function VendorProductionGuide() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             {selected.job_number}
-            {selected.po_number ? <> · <span className="font-mono">{selected.po_number}</span></> : null}
+            {selected.po_number ? <> · <span className="tabular-nums">{selected.po_number}</span></> : null}
           </p>
         </div>
 
@@ -186,7 +186,7 @@ export default function VendorProductionGuide() {
             <Loader2 className="w-5 h-5 animate-spin" /> Memuat panduan...
           </div>
         ) : !guide?.has_guide ? (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-700 flex items-start gap-2" data-testid="guide-no-model">
+          <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4 text-sm text-[hsl(var(--warning))] flex items-start gap-2" data-testid="guide-no-model">
             <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
             {guide?.message || 'Belum ada panduan produksi untuk pekerjaan ini.'}
           </div>
@@ -235,9 +235,9 @@ export default function VendorProductionGuide() {
                 data-testid={`guide-job-${j.job_number}`}>
                 <div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-mono text-xs text-primary">{j.job_number}</span>
-                    {j.po_number && <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono">{j.po_number}</span>}
-                    <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${isMaklon ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>{isMaklon ? 'Maklon' : 'Internal'}</span>
+                    <span className="tabular-nums text-xs text-primary">{j.job_number}</span>
+                    {j.po_number && <span className="text-[11px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground tabular-nums">{j.po_number}</span>}
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded font-medium ${isMaklon ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]'}`}>{isMaklon ? 'Maklon' : 'Internal'}</span>
                     {j.status && <span className="text-[11px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">{j.status}</span>}
                   </div>
                   <p className="text-sm text-foreground mt-1">{j.customer_name || j.vendor_name || 'Pekerjaan Produksi'}</p>

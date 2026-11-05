@@ -177,7 +177,7 @@ export default function AccessoriesDashboard({ token }) {
 
       {/* Error */}
       {error && (
-        <div className="bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-xl p-4 text-sm text-red-700 dark:text-red-400">
+        <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4 text-sm text-[hsl(var(--destructive))] ">
           {error}
         </div>
       )}
@@ -222,10 +222,10 @@ export default function AccessoriesDashboard({ token }) {
 
       {/* Active Opname Alert */}
       {dash?.active_opname && (
-        <div className="bg-sky-100 dark:bg-sky-500/10 border border-sky-300 dark:border-sky-500/20 rounded-xl p-4 flex items-center gap-3">
-          <CheckCircle className="w-5 h-5 text-sky-600 dark:text-sky-400 shrink-0" />
+        <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 flex items-center gap-3">
+          <CheckCircle className="w-5 h-5 text-[hsl(var(--primary))] shrink-0" />
           <div>
-            <p className="text-sm font-medium text-sky-600 dark:text-sky-300">Sesi Opname Sedang Berjalan</p>
+            <p className="text-sm font-medium text-[hsl(var(--primary))] ">Sesi Opname Sedang Berjalan</p>
             <p className="text-xs text-muted-foreground">No. sesi: {dash.active_opname}</p>
           </div>
         </div>
@@ -271,10 +271,10 @@ export default function AccessoriesDashboard({ token }) {
         {/* Item yang belum dinilai DIAKUI di layar: nilai stok total pasti
             lebih rendah dari kenyataan selama angka ini > 0. */}
         {unvalued > 0 && (
-          <div className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 dark:border-amber-700 dark:bg-amber-900/25"
+          <div className="mx-3 mt-3 flex items-start gap-2 rounded-lg border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] px-3 py-2 "
                data-testid="acc-unvalued-banner">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p className="text-xs text-amber-900 dark:text-amber-200">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-[hsl(var(--warning))] " />
+            <p className="text-xs text-[hsl(var(--warning))] ">
               <b>{unvalued} item belum punya nilai (HPP).</b> Selama itu belum diisi,
               total nilai stok di atas LEBIH RENDAH dari kenyataan — dan angka itu
               ikut ke laporan keuangan. Urutkan kolom <b>Sudah dinilai</b> untuk melihatnya.
@@ -316,13 +316,13 @@ export default function AccessoriesDashboard({ token }) {
                     return (
                       <tr key={it.id} className="border-t border-border hover:bg-muted/40"
                           data-testid={`acc-stock-row-${it.code}`}>
-                        <td className="px-2.5 py-2 font-mono whitespace-nowrap">{it.code}</td>
+                        <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{it.code}</td>
                         <td className="px-2.5 py-2">{it.name}</td>
                         <td className="px-2.5 py-2 text-muted-foreground">{it.category || '—'}</td>
                         <td className="px-2.5 py-2">{it.unit || '—'}</td>
                         <td className={`px-2.5 py-2 text-right font-semibold ${st === 'Habis'
-                          ? 'text-red-600 dark:text-red-400' : st === 'Hampir habis'
-                            ? 'text-amber-700 dark:text-amber-400' : ''}`}>
+                          ? 'text-[hsl(var(--destructive))] ' : st === 'Hampir habis'
+                            ? 'text-[hsl(var(--warning))] ' : ''}`}>
                           {fmtNum(it.stock_qty)}
                         </td>
                         <td className="px-2.5 py-2 text-right text-muted-foreground">{fmtNum(it.min_stock)}</td>
@@ -330,9 +330,9 @@ export default function AccessoriesDashboard({ token }) {
                         <td className="px-2.5 py-2 text-right font-semibold whitespace-nowrap">{fmtRp(it.stock_value)}</td>
                         <td className="px-2.5 py-2">
                           {it.valued ? (
-                            <span className="text-emerald-600 dark:text-emerald-400">ya</span>
+                            <span className="text-[hsl(var(--success))] ">ya</span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-medium text-amber-900 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-200">
+                            <span className="inline-flex items-center gap-1 rounded border border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.15)] px-1.5 py-0.5 font-medium text-[hsl(var(--warning))] ">
                               BELUM
                             </span>
                           )}
@@ -354,7 +354,7 @@ export default function AccessoriesDashboard({ token }) {
                 <div key={it.id} className="rounded-lg border border-border bg-background p-3"
                      data-testid={`acc-stock-card-${it.code}`}>
                   <p className="text-sm font-medium truncate" title={it.name}>{it.name}</p>
-                  <p className="text-xs font-mono text-muted-foreground">{it.code}</p>
+                  <p className="text-xs tabular-nums text-muted-foreground">{it.code}</p>
                   <div className="mt-2 flex items-end justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground">Stok</p>
@@ -366,7 +366,7 @@ export default function AccessoriesDashboard({ token }) {
                     </div>
                   </div>
                   {!it.valued && (
-                    <p className="mt-1.5 text-[11px] text-amber-700 dark:text-amber-400">belum dinilai</p>
+                    <p className="mt-1.5 text-[11px] text-[hsl(var(--warning))] ">belum dinilai</p>
                   )}
                 </div>
               ))}
@@ -380,14 +380,14 @@ export default function AccessoriesDashboard({ token }) {
       {/* Two-Column Panels */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Low Stock Items */}
-        <div className="bg-amber-100 dark:bg-amber-500/5 border border-amber-300 dark:border-amber-500/20 rounded-xl p-5" data-testid="acc-low-stock-panel">
+        <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-5" data-testid="acc-low-stock-panel">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold flex items-center gap-2">
-              <TrendingDown className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+              <TrendingDown className="w-4 h-4 text-[hsl(var(--warning))] " />
               <span>Item Stok Rendah / Habis</span>
             </h3>
             {dash?.low_stock_items?.length > 0 && (
-              <span className="text-xs text-amber-700 dark:text-amber-400">{dash.low_stock_items.length} item</span>
+              <span className="text-xs text-[hsl(var(--warning))] ">{dash.low_stock_items.length} item</span>
             )}
           </div>
 
@@ -395,7 +395,7 @@ export default function AccessoriesDashboard({ token }) {
             <div className="space-y-2">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
           ) : (dash?.low_stock_items?.length ?? 0) === 0 ? (
             <div className="text-center py-8">
-              <CheckCircle className="w-8 h-8 text-emerald-600 dark:text-emerald-400 mx-auto mb-2" />
+              <CheckCircle className="w-8 h-8 text-[hsl(var(--success))] mx-auto mb-2" />
               <p className="text-sm text-muted-foreground">Semua item stok aman</p>
             </div>
           ) : (
@@ -403,14 +403,14 @@ export default function AccessoriesDashboard({ token }) {
               {dash.low_stock_items.map((item) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between p-2.5 rounded-lg bg-amber-100 dark:bg-amber-500/5 border border-amber-500/15"
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.15)]"
                 >
                   <div className="min-w-0">
                     <p className="text-sm font-medium truncate">{item.name}</p>
                     <p className="text-xs text-muted-foreground">{item.code}</p>
                   </div>
                   <div className="text-right shrink-0 ml-3">
-                    <p className="text-sm text-amber-700 dark:text-amber-400 font-semibold">
+                    <p className="text-sm text-[hsl(var(--warning))] font-semibold">
                       {fmtNum(item.stock_qty)} {item.unit}
                     </p>
                     <p className="text-xs text-muted-foreground">min: {fmtNum(item.min_stock)}</p>
@@ -422,10 +422,10 @@ export default function AccessoriesDashboard({ token }) {
         </div>
 
         {/* PR Pending */}
-        <div className="bg-sky-100 dark:bg-sky-500/5 border border-sky-300 dark:border-sky-500/20 rounded-xl p-5" data-testid="acc-pr-panel">
+        <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-5" data-testid="acc-pr-panel">
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-sm font-semibold flex items-center gap-2">
-              <ShoppingCart className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <ShoppingCart className="w-4 h-4 text-[hsl(var(--primary))] " />
               <span>Ringkasan Pengadaan</span>
             </h3>
           </div>
@@ -433,15 +433,15 @@ export default function AccessoriesDashboard({ token }) {
           <div className="space-y-3">
             <div className="flex justify-between items-center p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02]">
               <span className="text-sm text-muted-foreground">PR Pending Persetujuan</span>
-              <span className="text-sm font-semibold text-sky-600 dark:text-sky-400">{fmtNum(dash?.pending_pr ?? 0)}</span>
+              <span className="text-sm font-semibold text-[hsl(var(--primary))] ">{fmtNum(dash?.pending_pr ?? 0)}</span>
             </div>
             <div className="flex justify-between items-center p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02]">
               <span className="text-sm text-muted-foreground">Sudah Disetujui, Belum Diserahkan</span>
-              <span className="text-sm font-semibold text-teal-600 dark:text-teal-400">{fmtNum(dash?.ready_to_deliver ?? 0)}</span>
+              <span className="text-sm font-semibold text-[hsl(var(--success))] ">{fmtNum(dash?.ready_to_deliver ?? 0)}</span>
             </div>
             <div className="flex justify-between items-center p-3 rounded-lg border border-foreground/10 bg-foreground/[0.02]">
               <span className="text-sm text-muted-foreground">Request Internal Pending</span>
-              <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">{fmtNum(dash?.pending_requests ?? 0)}</span>
+              <span className="text-sm font-semibold text-[hsl(var(--warning))] ">{fmtNum(dash?.pending_requests ?? 0)}</span>
             </div>
           </div>
 

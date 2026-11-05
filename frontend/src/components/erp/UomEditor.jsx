@@ -168,7 +168,7 @@ export const UomEditor = ({
       {/* Baris satuan dasar (read-only) */}
       <div className="flex items-center gap-2 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] px-3 py-2 mb-2">
         <span className="text-[10px] uppercase tracking-wide text-muted-foreground w-20 shrink-0">Dasar</span>
-        <span className="font-mono text-sm text-foreground" data-testid="uom-base-code">{base}</span>
+        <span className="tabular-nums text-sm text-foreground" data-testid="uom-base-code">{base}</span>
         <span className="text-xs text-muted-foreground ml-auto">faktor 1 — tidak dapat diubah di sini</span>
       </div>
 
@@ -200,7 +200,7 @@ export const UomEditor = ({
             </div>
             <div className="col-span-2">
               <label className="block text-[11px] text-muted-foreground mb-1">= {base}</label>
-              <div className="h-9 flex items-center px-2 text-sm font-mono text-muted-foreground truncate"
+              <div className="h-9 flex items-center px-2 text-sm tabular-nums text-muted-foreground truncate"
                 data-testid={`uom-factor-${i}`}>
                 {Number(p.factor || 0).toLocaleString('id-ID')}
               </div>

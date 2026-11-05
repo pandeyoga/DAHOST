@@ -9,8 +9,8 @@ import { AlertTriangle, RefreshCw, Package, Warehouse, RotateCcw, CheckCircle2, 
 import { useToast } from '@/hooks/use-toast';
 
 const SEVERITY_STYLE = {
-  critical: 'border-red-200 bg-red-50 text-red-700',
-  warning:  'border-yellow-200 bg-yellow-50 text-yellow-700',
+  critical: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]',
+  warning:  'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]',
 };
 
 function AlertsTab() {
@@ -39,8 +39,8 @@ function AlertsTab() {
       <div className="flex items-center justify-between mb-4">
         <div className="flex gap-2">
           {meta.critical > 0 && <Badge variant="destructive">{meta.critical} Kritis</Badge>}
-          {meta.warning > 0 && <Badge className="bg-yellow-100 text-yellow-700 border-yellow-200">{meta.warning} Peringatan</Badge>}
-          {meta.total_alerts === 0 && !loading && <Badge variant="outline" className="text-green-600">✅ Tidak ada alert</Badge>}
+          {meta.warning > 0 && <Badge className="bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]">{meta.warning} Peringatan</Badge>}
+          {meta.total_alerts === 0 && !loading && <Badge variant="outline" className="text-[hsl(var(--success))]">✅ Tidak ada alert</Badge>}
         </div>
         <div className="flex items-center gap-2">
           {/* SESI #33 — alert stok tidak lagi jalan buntu: dari sini langsung ke
@@ -63,10 +63,10 @@ function AlertsTab() {
           kalau ambangnya belum pernah diisi. Ini akar keluhan pemilik: menu ini
           selalu sunyi karena 333 dari 333 material tidak punya ambang. */}
       {!loading && meta.materials_missing_threshold > 0 && (
-        <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-300/40 bg-amber-50 dark:bg-amber-400/10 px-4 py-3"
+        <div className="mb-4 flex items-start gap-2 rounded-lg border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] px-4 py-3"
           data-testid="wh-smart-threshold-notice">
-          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-          <div className="text-sm text-amber-700 dark:text-amber-300">
+          <AlertTriangle className="h-4 w-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
+          <div className="text-sm text-[hsl(var(--warning))] ">
             <strong>{meta.materials_missing_threshold} dari {meta.materials_total} material belum punya ambang stok</strong>
             {meta.materials_with_threshold === 0
               ? ' — selama ambangnya kosong, alert stok TIDAK akan pernah berbunyi walau stok habis.'
@@ -93,7 +93,7 @@ function AlertsTab() {
         <div className="text-center py-8"><RefreshCw className="h-6 w-6 animate-spin mx-auto" /></div>
       ) : alerts.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          <CheckCircle2 className="h-10 w-10 text-green-500 mx-auto mb-2" />
+          <CheckCircle2 className="h-10 w-10 text-[hsl(var(--success))] mx-auto mb-2" />
           <p className="text-sm font-medium">
             {meta.materials_with_threshold === 0 ? 'Belum ada yang bisa dipantau' : 'Semua sistem normal'}
           </p>
@@ -202,13 +202,13 @@ function SmartReorderTab() {
                     <p className="font-medium text-sm">{item.name}</p>
                     <Badge variant="outline" className="text-[10px]">{item.sku}</Badge>
                     {item.status === 'low' && <Badge variant="destructive" className="text-[10px]">Stok Rendah</Badge>}
-                    {item.needs_update && <Badge className="text-[10px] bg-blue-100 text-blue-700 border-blue-200">Update RP</Badge>}
+                    {item.needs_update && <Badge className="text-[10px] bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]">Update RP</Badge>}
                   </div>
                   <div className="flex gap-3 mt-1 text-xs text-muted-foreground">
                     <span>Stok: {item.current_qty} {item.unit}</span>
                     <span>RP Saat Ini: {item.current_reorder_point}</span>
                     {item.smart_reorder_point > 0 && (
-                      <span className="text-blue-600 font-medium">Smart RP: {item.smart_reorder_point}</span>
+                      <span className="text-[hsl(var(--primary))] font-medium">Smart RP: {item.smart_reorder_point}</span>
                     )}
                     <span>Avg Harian: {item.avg_daily_consumption}</span>
                   </div>
@@ -325,7 +325,7 @@ function UndoStockTab() {
               <div className="space-y-2">
                 {data.soft_deleted.map((m, i) => (
                   <div key={i} className="flex items-center gap-3 p-3 rounded-lg border border-border text-sm opacity-60">
-                    <XCircle className="h-4 w-4 text-red-700 dark:text-red-400 flex-shrink-0" />
+                    <XCircle className="h-4 w-4 text-[hsl(var(--destructive))] flex-shrink-0" />
                     <div className="flex-1">
                       <p className="font-medium line-through">{m.sku} — {m.movement_type}</p>
                       <p className="text-xs text-muted-foreground">Di-undo oleh {m.deleted_by || '-'}</p>
@@ -349,7 +349,7 @@ export default function WarehouseSmartModule() {
     <div className="p-6 space-y-4">
       <div>
         <h2 className="text-xl font-bold flex items-center gap-2">
-          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-teal-500 to-green-600 flex items-center justify-center">
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-[hsl(var(--success)/0.1)] to-[hsl(var(--success)/0.1)] flex items-center justify-center">
             <Warehouse className="h-4 w-4 text-foreground" />
           </div>
           Smart Warehouse

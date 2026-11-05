@@ -75,8 +75,8 @@ export default function SearchableSelect({
         onClick={() => { if (!disabled) setOpen(o => !o); }}
         data-testid={dataTestId ? `${dataTestId}-trigger` : undefined}
         className={`w-full flex items-center justify-between border rounded-lg px-3 py-2 text-sm bg-card text-left transition-all
-          ${disabled ? 'opacity-50 cursor-not-allowed border-border' : 'cursor-pointer border-border hover:border-border focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-blue-400'}
-          ${open ? 'border-blue-400 ring-2 ring-blue-100' : ''}`}
+          ${disabled ? 'opacity-50 cursor-not-allowed border-border' : 'cursor-pointer border-border hover:border-border focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)] focus:border-[hsl(var(--primary)/0.35)]'}
+          ${open ? 'border-[hsl(var(--primary)/0.35)] ring-2 ring-[hsl(var(--primary)/0.35)]' : ''}`}
       >
         <span className={selected ? 'text-foreground truncate flex-1' : 'text-muted-foreground/70 truncate flex-1'}>
           {selected ? (
@@ -134,8 +134,8 @@ export default function SearchableSelect({
                   type="button"
                   onClick={() => handleSelect(opt)}
                   data-testid={dataTestId ? `${dataTestId}-opt-${oi}` : undefined}
-                  className={`w-full text-left px-3 py-2 text-sm hover:bg-blue-50 transition-colors flex flex-col
-                    ${value === opt.value ? 'bg-blue-50 text-blue-700 font-medium' : 'text-foreground/90'}`}
+                  className={`w-full text-left px-3 py-2 text-sm hover:bg-[hsl(var(--primary)/0.1)] transition-colors flex flex-col
+                    ${value === opt.value ? 'bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] font-medium' : 'text-foreground/90'}`}
                 >
                   <span>{opt.label}</span>
                   {opt.sub && <span className="text-xs text-muted-foreground/70">{opt.sub}</span>}

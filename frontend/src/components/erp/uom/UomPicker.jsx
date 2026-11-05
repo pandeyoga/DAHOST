@@ -105,7 +105,7 @@ export function UomConversionHint({
   const row = (opt.units || []).find((x) => String(x.unit).toLowerCase() === u);
   if (!row) {
     return (
-      <p className={`text-[11px] text-amber-700 dark:text-amber-400 flex items-center gap-1 ${className}`}
+      <p className={`text-[11px] text-[hsl(var(--warning))]  flex items-center gap-1 ${className}`}
         data-testid={testId}>
         <AlertTriangle className="w-3 h-3 shrink-0" />
         Satuan &lsquo;{u}&rsquo; belum punya faktor — lengkapi kemasannya di Master Material.
@@ -113,7 +113,7 @@ export function UomConversionHint({
     );
   }
   return (
-    <p className={`text-[11px] text-emerald-700 dark:text-emerald-400 flex items-center gap-1 ${className}`}
+    <p className={`text-[11px] text-[hsl(var(--success))]  flex items-center gap-1 ${className}`}
       data-testid={testId}>
       {fmtNum(q)} {u} <ArrowRight className="w-3 h-3 shrink-0" />
       <strong>{fmtNum(q * Number(row.factor_to_base))} {base}</strong>

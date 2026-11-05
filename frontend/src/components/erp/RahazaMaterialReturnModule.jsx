@@ -27,10 +27,10 @@ const CONDITIONS = [
 ];
 const STATUS_META = {
   draft: { label: 'Draft', cls: 'bg-muted text-muted-foreground border-border' },
-  submitted: { label: 'Menunggu Supervisor', cls: 'bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-400/15 dark:text-amber-300 dark:border-amber-400/30' },
-  approved: { label: 'Menunggu Gudang', cls: 'bg-sky-100 text-sky-800 border-sky-300 dark:bg-sky-400/15 dark:text-sky-300 dark:border-sky-400/30' },
-  received: { label: 'Diterima Gudang', cls: 'bg-emerald-100 text-emerald-700 border-emerald-300 dark:bg-emerald-400/15 dark:text-emerald-300 dark:border-emerald-400/30' },
-  rejected: { label: 'Ditolak', cls: 'bg-red-100 text-red-700 border-red-300 dark:bg-red-400/15 dark:text-red-300 dark:border-red-400/30' },
+  submitted: { label: 'Menunggu Supervisor', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
+  approved: { label: 'Menunggu Gudang', cls: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
+  received: { label: 'Diterima Gudang', cls: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
+  rejected: { label: 'Ditolak', cls: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
 };
 const inputCls = 'w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]';
 
@@ -110,8 +110,8 @@ function CreateModal({ token, preset, onClose, onSaved }) {
         {src && (
           <GlassCard className="p-0 overflow-x-auto" hover={false}>
             <div className="px-3 py-2 text-xs text-muted-foreground border-b border-border">
-              MI <span className="font-mono">{src.mi_number}</span>
-              {src.vendor_shipment_number ? <> · Surat Jalan <span className="font-mono">{src.vendor_shipment_number}</span></> : null}
+              MI <span className="tabular-nums">{src.mi_number}</span>
+              {src.vendor_shipment_number ? <> · Surat Jalan <span className="tabular-nums">{src.vendor_shipment_number}</span></> : null}
               {src.vendor_name ? ` · ${src.vendor_name}` : ''}
             </div>
             <table className="w-full text-sm min-w-[640px]" data-testid="pmr-source-lines">
@@ -125,7 +125,7 @@ function CreateModal({ token, preset, onClose, onSaved }) {
               <tbody>
                 {src.lines.map((l) => (
                   <tr key={l.material_id} className="border-b border-border">
-                    <td className="px-3 py-2 text-xs"><div className="font-mono">{l.material_code}</div>{l.material_name}</td>
+                    <td className="px-3 py-2 text-xs"><div className="tabular-nums">{l.material_code}</div>{l.material_name}</td>
                     <td className="px-3 py-2 text-right">{fmtNum(l.qty_issued)} {l.unit}</td>
                     <td className="px-3 py-2 text-right">{fmtNum(l.qty_returned)}</td>
                     <td className="px-3 py-2 text-right font-semibold">{fmtNum(l.returnable)}</td>
@@ -152,7 +152,7 @@ function CreateModal({ token, preset, onClose, onSaved }) {
         <p className="text-xs text-muted-foreground">
           Bahan kondisi baik kembali ke stok di lokasi yang dipilih gudang saat menerima, dengan jurnal balik pada HPP saat bahan keluar.
         </p>
-        {err && <div className="text-sm text-red-700 dark:text-red-400" data-testid="pmr-create-error">{err}</div>}
+        {err && <div className="text-sm text-[hsl(var(--destructive))] " data-testid="pmr-create-error">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={busy || !src} data-testid="pmr-create-submit">{busy ? 'Menyimpan…' : 'Ajukan Retur'}</Button>
@@ -185,7 +185,7 @@ function ReceiveModal({ token, doc, onClose, onDone }) {
           <option value="">— lokasi penerima (wajib) —</option>
           {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
         </SmartNativeSelect>
-        {err && <div className="text-sm text-red-700 dark:text-red-400">{err}</div>}
+        {err && <div className="text-sm text-[hsl(var(--destructive))] ">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={busy} data-testid="pmr-receive-submit">{busy ? 'Memproses…' : 'Terima ke Stok'}</Button>
@@ -239,7 +239,7 @@ export default function RahazaMaterialReturnModule({ token, deepLinkParams }) {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>
           <Button onClick={() => setCreating({})} data-testid="pmr-new"><Plus className="w-4 h-4 mr-1" /> Retur Material</Button>
         </div>
       </div>
@@ -250,7 +250,7 @@ export default function RahazaMaterialReturnModule({ token, deepLinkParams }) {
             data-testid={`pmr-filter-${k || 'all'}`}>{l}</button>
         ))}
       </div>
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
+      {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-4 py-2">{err}</div>}
       <GlassCard className="overflow-x-auto p-0">
         <table className="w-full text-sm min-w-[860px]">
           <thead className="border-b border-border text-xs text-muted-foreground">
@@ -267,7 +267,7 @@ export default function RahazaMaterialReturnModule({ token, deepLinkParams }) {
               <tr><td colSpan="6" className="px-3 py-6 text-center text-muted-foreground">Belum ada Retur Material.</td></tr>
             ) : rows.map((r) => (
               <tr key={r.id} className="border-b border-border align-top" data-testid={`pmr-row-${r.ref_no}`}>
-                <td className="px-3 py-2"><div className="font-mono text-xs">{r.ref_no}</div>
+                <td className="px-3 py-2"><div className="tabular-nums text-xs">{r.ref_no}</div>
                   <div className="text-[11px] text-muted-foreground">{fmtDate(r.created_at)} · {r.submitted_by || '-'}</div></td>
                 <td className="px-3 py-2 text-xs">{r.mi_number || '-'}<div className="text-muted-foreground">{r.vendor_shipment_number || r.work_order_code || ''}</div></td>
                 <td className="px-3 py-2 text-xs">
@@ -276,7 +276,7 @@ export default function RahazaMaterialReturnModule({ token, deepLinkParams }) {
                   ))}
                 </td>
                 <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
-                <td className="px-3 py-2 text-xs">{r.gl_je_number || (r.gl_error ? <span className="text-red-700 dark:text-red-400">{r.gl_error}</span> : '-')}</td>
+                <td className="px-3 py-2 text-xs">{r.gl_je_number || (r.gl_error ? <span className="text-[hsl(var(--destructive))] ">{r.gl_error}</span> : '-')}</td>
                 <td className="px-3 py-2">
                   <div className="flex justify-end gap-1 flex-wrap">
                     {r.status === 'draft' && (

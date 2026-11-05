@@ -12,9 +12,9 @@ function fmt(n) {
 }
 
 const SEGMENTS = [
-  { key: 'qty_dispatched', label: 'Terkirim ke Buyer', cls: 'bg-blue-500', dot: 'bg-blue-500' },
-  { key: 'qty_good_ready', label: 'Barang Jadi (siap)', cls: 'bg-emerald-500', dot: 'bg-emerald-500' },
-  { key: 'qty_rework_open', label: 'Sedang Permak', cls: 'bg-amber-500', dot: 'bg-amber-500' },
+  { key: 'qty_dispatched', label: 'Terkirim ke Buyer', cls: 'bg-[hsl(var(--primary))]', dot: 'bg-[hsl(var(--primary))]' },
+  { key: 'qty_good_ready', label: 'Barang Jadi (siap)', cls: 'bg-[hsl(var(--success))]', dot: 'bg-[hsl(var(--success))]' },
+  { key: 'qty_rework_open', label: 'Sedang Permak', cls: 'bg-[hsl(var(--warning))]', dot: 'bg-[hsl(var(--warning))]' },
   { key: 'qty_scrap', label: 'Scrap / Buang', cls: 'bg-zinc-500', dot: 'bg-zinc-500' },
 ];
 

@@ -16,19 +16,19 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 
 const REASON_OPTIONS = [
-  { value: 'surat_jalan_internal', label: 'Surat Jalan Internal',  color: 'text-blue-300 border-blue-300/30 bg-blue-400/10' },
-  { value: 'sample',               label: 'Sample / Contoh',       color: 'text-purple-300 border-purple-300/30 bg-purple-400/10' },
-  { value: 'koreksi_stok',         label: 'Koreksi Stok (Adjustment)', color: 'text-amber-300 border-amber-300/30 bg-amber-400/10' },
-  { value: 'retur',                label: 'Retur / Rusak',          color: 'text-red-300 border-red-300/30 bg-red-400/10' },
+  { value: 'surat_jalan_internal', label: 'Surat Jalan Internal',  color: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
+  { value: 'sample',               label: 'Sample / Contoh',       color: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
+  { value: 'koreksi_stok',         label: 'Koreksi Stok (Adjustment)', color: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)]' },
+  { value: 'retur',                label: 'Retur / Rusak',          color: 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.1)]' },
   { value: 'lainnya',              label: 'Lainnya',                color: 'text-muted-foreground border-[var(--glass-border)] bg-[var(--glass-bg)]' },
 ];
 
 const SOURCE_LABEL = {
-  production_internal:    { label: 'Produksi Internal',  cls: 'text-blue-300 border-blue-300/30 bg-blue-400/10' },
-  production_customer_po: { label: 'Customer PO',        cls: 'text-amber-300 border-amber-300/30 bg-amber-400/10' },
-  production_packing_event: { label: 'Output Packing',  cls: 'text-emerald-300 border-emerald-300/30 bg-emerald-400/10' },
-  shipment_dispatch:      { label: 'Surat Jalan',        cls: 'text-rose-300 border-rose-300/30 bg-rose-400/10' },
-  manual_issue:           { label: 'Issue Manual',       cls: 'text-orange-300 border-orange-300/30 bg-orange-400/10' },
+  production_internal:    { label: 'Produksi Internal',  cls: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
+  production_customer_po: { label: 'Customer PO',        cls: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)]' },
+  production_packing_event: { label: 'Output Packing',  cls: 'text-[hsl(var(--success))] border-[hsl(var(--success)/0.3)] bg-[hsl(var(--success)/0.1)]' },
+  shipment_dispatch:      { label: 'Surat Jalan',        cls: 'text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.1)]' },
+  manual_issue:           { label: 'Issue Manual',       cls: 'text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)] bg-[hsl(var(--warning)/0.1)]' },
 };
 
 const EMPTY_FORM = { material_id: '', location_id: '', qty: '', reason: 'surat_jalan_internal', customer_id: undefined, reference_number: '', notes: '' };
@@ -141,7 +141,7 @@ export default function RahazaFGInventoryModule({ token }) {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Archive className="w-6 h-6 text-emerald-400" />
+            <Archive className="w-6 h-6 text-[hsl(var(--success))]" />
             Inventory Produk Jadi
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -151,13 +151,13 @@ export default function RahazaFGInventoryModule({ token }) {
         <div className="flex items-center gap-2">
           <Button
             onClick={() => { setShowIssueForm(v => !v); setActiveTab('stock'); }}
-            className="gap-1.5 text-xs bg-rose-500/80 hover:bg-rose-500"
+            className="gap-1.5 text-xs bg-[hsl(var(--destructive)/0.8)] hover:bg-[hsl(var(--destructive)/0.9)]"
             data-testid="fg-issue-btn"
           >
             <MinusCircle className="w-3.5 h-3.5" />
             Keluarkan Stok FG
           </Button>
-          <Button variant="ghost" onClick={fetchData} className="gap-1.5 text-xs">
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={fetchData} className="gap-1.5 text-xs">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         </div>
@@ -176,26 +176,26 @@ export default function RahazaFGInventoryModule({ token }) {
         </GlassPanel>
         <GlassPanel className="p-4 text-center">
           <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-1">
-            <ArrowDownCircle className="w-3 h-3 text-emerald-400" /> Masuk Hari Ini
+            <ArrowDownCircle className="w-3 h-3 text-[hsl(var(--success))]" /> Masuk Hari Ini
           </div>
-          <div className="text-2xl font-bold text-emerald-400">+{inToday.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-[hsl(var(--success))]">+{inToday.toLocaleString()}</div>
           <div className="text-[10px] text-muted-foreground">pcs dari produksi</div>
         </GlassPanel>
         <GlassPanel className="p-4 text-center">
           <div className="text-[10px] text-muted-foreground uppercase mb-1 flex items-center justify-center gap-1">
-            <ArrowUpCircle className="w-3 h-3 text-rose-400" /> Keluar Hari Ini
+            <ArrowUpCircle className="w-3 h-3 text-[hsl(var(--destructive))]" /> Keluar Hari Ini
           </div>
-          <div className="text-2xl font-bold text-rose-400">-{outToday.toLocaleString()}</div>
+          <div className="text-2xl font-bold text-[hsl(var(--destructive))]">-{outToday.toLocaleString()}</div>
           <div className="text-[10px] text-muted-foreground">pcs dikirim/dikeluarkan</div>
         </GlassPanel>
       </div>
 
       {/* ── ISSUE FORM (slide-in panel) ─────────────────────────────────── */}
       {showIssueForm && (
-        <GlassCard className="p-5 border border-rose-400/30 bg-rose-400/5">
+        <GlassCard className="p-5 border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.05)]">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold text-foreground flex items-center gap-2">
-              <MinusCircle className="w-4 h-4 text-rose-400" />
+              <MinusCircle className="w-4 h-4 text-[hsl(var(--destructive))]" />
               Pengeluaran Stok Produk Jadi
             </h3>
             <button onClick={() => setShowIssueForm(false)} className="text-muted-foreground hover:text-foreground">
@@ -215,7 +215,7 @@ export default function RahazaFGInventoryModule({ token }) {
                   {items.map(m => (
                     <SelectItem key={m.id} value={m.id} disabled={(stocks[m.id]||0) <= 0}>
                       {m.code} — {m.name}
-                      <span className={`ml-2 text-xs ${(stocks[m.id]||0) > 0 ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+                      <span className={`ml-2 text-xs ${(stocks[m.id]||0) > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground'}`}>
                         ({(stocks[m.id]||0)} pcs tersedia)
                       </span>
                     </SelectItem>
@@ -243,7 +243,7 @@ export default function RahazaFGInventoryModule({ token }) {
                 ))}
               </select>
               {form.material_id && locOptions.length === 0 && (
-                <div className="mt-1 text-xs text-rose-400">Produk ini tidak punya stok di lokasi mana pun.</div>
+                <div className="mt-1 text-xs text-[hsl(var(--destructive))]">Produk ini tidak punya stok di lokasi mana pun.</div>
               )}
               {form.location_id && (
                 <div className="mt-1 text-xs text-muted-foreground">
@@ -263,7 +263,7 @@ export default function RahazaFGInventoryModule({ token }) {
                 data-testid="fg-issue-qty"
               />
               {form.qty && parseFloat(form.qty) > availableStock && (
-                <div className="mt-1 text-xs text-rose-400 flex items-center gap-1">
+                <div className="mt-1 text-xs text-[hsl(var(--destructive))] flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" /> Melebihi stok tersedia
                 </div>
               )}
@@ -339,10 +339,10 @@ export default function RahazaFGInventoryModule({ token }) {
             <Button variant="ghost" onClick={() => { setShowIssueForm(false); setForm(EMPTY_FORM); }}>
               Batal
             </Button>
-            <Button
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
               onClick={handleSubmitIssue}
               disabled={submitting || !form.material_id || !form.qty || parseFloat(form.qty) > availableStock}
-              className="bg-rose-500 hover:bg-rose-600 gap-2"
+              className="bg-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.9)] gap-2"
               data-testid="fg-issue-submit"
             >
               {submitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
@@ -353,13 +353,13 @@ export default function RahazaFGInventoryModule({ token }) {
       )}
 
       {/* Flow Info Banner */}
-      <GlassPanel className="p-3 flex items-start gap-3 border border-blue-400/20 bg-blue-400/5">
-        <Info className="w-4 h-4 text-blue-400 mt-0.5 flex-shrink-0" />
+      <GlassPanel className="p-3 flex items-start gap-3 border border-[hsl(var(--primary)/0.2)] bg-[hsl(var(--primary)/0.05)]">
+        <Info className="w-4 h-4 text-[hsl(var(--primary))] mt-0.5 flex-shrink-0" />
         <div className="text-xs text-muted-foreground leading-relaxed">
           <span className="font-semibold text-foreground mr-1">Alur Stok FG:</span>
-          <span className="text-blue-300">Produksi Internal</span> → WO selesai → FG +qty → <b>Keluarkan Stok</b> manual
+          <span className="text-[hsl(var(--primary))]">Produksi Internal</span> → WO selesai → FG +qty → <b>Keluarkan Stok</b> manual
           <span className="mx-2">|</span>
-          <span className="text-amber-300">Customer PO</span> → WO selesai → FG +qty → Surat Jalan dispatch → FG −qty otomatis
+          <span className="text-[hsl(var(--warning))]">Customer PO</span> → WO selesai → FG +qty → Surat Jalan dispatch → FG −qty otomatis
         </div>
       </GlassPanel>
 
@@ -418,7 +418,7 @@ export default function RahazaFGInventoryModule({ token }) {
                     return (
                       <tr key={m.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]">
                         <td className="px-4 py-2.5">
-                          <span className="font-mono text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 px-2 py-0.5 rounded">
+                          <span className="tabular-nums text-xs bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.2)] text-[hsl(var(--success))] px-2 py-0.5 rounded">
                             {m.code}
                           </span>
                         </td>
@@ -426,14 +426,14 @@ export default function RahazaFGInventoryModule({ token }) {
                           <div className="font-medium text-foreground">{m.name}</div>
                         </td>
                         <td className="px-4 py-2.5 text-center">
-                          <span className={`text-lg font-bold ${qty > 0 ? 'text-emerald-400' : 'text-muted-foreground/50'}`}>
+                          <span className={`text-lg font-bold ${qty > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground/50'}`}>
                             {qty.toLocaleString('id-ID')}
                           </span>
                           <span className="text-xs text-muted-foreground ml-1">pcs</span>
                         </td>
                         <td className="px-4 py-2.5 text-center">
                           {qty > 0 ? (
-                            <Badge variant="outline" className="text-emerald-300 border-emerald-300/30 text-[10px]">
+                            <Badge variant="outline" className="text-[hsl(var(--success))] border-[hsl(var(--success)/0.3)] text-[10px]">
                               <TrendingUp className="w-3 h-3 mr-1" /> Ada Stok
                             </Badge>
                           ) : (
@@ -450,7 +450,7 @@ export default function RahazaFGInventoryModule({ token }) {
                                 setShowIssueForm(true);
                                 window.scrollTo({ top: 0, behavior: 'smooth' });
                               }}
-                              className="text-xs text-rose-300 hover:text-rose-200 underline"
+                              className="text-xs text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))] underline"
                               data-testid={`fg-issue-quick-${m.code}`}
                             >
                               Keluarkan
@@ -512,12 +512,12 @@ export default function RahazaFGInventoryModule({ token }) {
                     const reason = REASON_OPTIONS.find(r => r.value === iss.reason);
                     return (
                       <tr key={iss.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg)]">
-                        <td className="px-4 py-2 font-mono text-primary">{iss.issue_number}</td>
+                        <td className="px-4 py-2 tabular-nums text-primary">{iss.issue_number}</td>
                         <td className="px-4 py-2">
-                          <div className="font-mono text-xs text-emerald-300">{iss.fg_code}</div>
+                          <div className="tabular-nums text-xs text-[hsl(var(--success))]">{iss.fg_code}</div>
                           <div className="text-muted-foreground truncate max-w-[120px]">{iss.fg_name}</div>
                         </td>
-                        <td className="px-4 py-2 text-right font-bold text-rose-400">
+                        <td className="px-4 py-2 text-right font-bold text-[hsl(var(--destructive))]">
                           -{iss.qty} pcs
                         </td>
                         <td className="px-4 py-2">
@@ -570,19 +570,19 @@ export default function RahazaFGInventoryModule({ token }) {
                         <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">
                           {new Date(mv.timestamp).toLocaleString('id-ID', {day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}
                         </td>
-                        <td className="px-4 py-2 font-mono text-emerald-300">{mv.fg_code}</td>
+                        <td className="px-4 py-2 tabular-nums text-[hsl(var(--success))]">{mv.fg_code}</td>
                         <td className="px-4 py-2">
                           {mv.direction === 'in' ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-300">
+                            <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]">
                               <ArrowDownCircle className="w-3 h-3" /> Masuk
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 text-rose-300">
+                            <span className="inline-flex items-center gap-1 text-[hsl(var(--destructive))]">
                               <ArrowUpCircle className="w-3 h-3" /> Keluar
                             </span>
                           )}
                         </td>
-                        <td className={`px-4 py-2 text-right font-bold ${mv.direction==='in' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        <td className={`px-4 py-2 text-right font-bold ${mv.direction==='in' ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}`}>
                           {mv.direction==='in' ? '+' : '-'}{mv.qty}
                         </td>
                         <td className="px-4 py-2">

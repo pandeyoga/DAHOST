@@ -41,7 +41,19 @@ def _now() -> datetime:
 # ──────────────────────────────────────────────────────────────────────────────
 # PYDANTIC MODELS
 # ──────────────────────────────────────────────────────────────────────────────
+OWNERSHIP = ('client_provided', 'cv_da_stock')
+
+
 class BOMMaterialItem(BaseModel):
+    # 2026-11-05 (owner: "BOM di katalog buyer tidak mengambil dari master data") - baris BOM
+    # DIPILIH dari master material (`rahaza_materials`); nama/kode/satuan diambil dari master
+    # saat disimpan (`_resolve_template_materials`). Teks bebas hanya untuk bahan milik klien
+    # yang memang tidak ada di master DA, dan ditandai "belum tertaut".
+    material_id: Optional[str] = Field(default=None, max_length=64)
+    material_code: Optional[str] = Field(default='', max_length=64)
+    # Penyedia bahan: klien (tidak memotong stok DA) atau stok DA (dikeluarkan lewat
+    # pengeluaran material & dibebankan ke 5-4100 - keputusan owner K42).
+    ownership: str = Field(default='client_provided', max_length=32)
     material_name: str = Field(..., min_length=1, max_length=255)
     category: Optional[str] = Field(default='', max_length=64)
     unit: str = Field(default='pcs', max_length=16)
@@ -69,6 +81,14 @@ class BOMMaterialItem(BaseModel):
     # `utils/money.parse_id_number` (titik = ribuan, koma = desimal) yang sudah
     # dipakai di tempat lain — bukan aturan baru. Bila formatnya tidak dikenali,
     # permintaan DITOLAK (422) dengan pesan yang jelas, bukan diam-diam jadi 0.
+    @field_validator('ownership', mode='before')
+    @classmethod
+    def _ownership_sah(cls, v):
+        v = (v or 'client_provided').strip()
+        if v not in OWNERSHIP:
+            raise ValueError("ownership harus 'client_provided' (disediakan klien) atau 'cv_da_stock' (stok DA)")
+        return v
+
     @field_validator('qty_per_pcs', 'cost_per_unit', mode='before')
     @classmethod
     def _angka_locale_id(cls, v, info):
@@ -158,6 +178,60 @@ def _compute_total_cost(materials: List[dict]) -> float:
     return round(total, 2)
 
 
+async def _resolve_template_materials(db, materials: List[dict]) -> List[dict]:
+    """Tautkan setiap baris BOM ke master material (`rahaza_materials`) - master yang menang.
+
+    * `material_id` diisi -> harus ada di master; nama & kode diambil dari master, satuan diisi
+      satuan master bila kosong, harga per satuan diisi harga master bila 0.
+    * `material_id` kosong -> dicoba ditautkan lewat nama/kode yang SAMA PERSIS (data lama);
+      bila tidak ketemu, baris tetap teks bebas dengan `unlinked=True`.
+    * Bahan **stok DA** wajib tertaut master: stoknya dipotong & biayanya dibebankan (K42),
+      jadi tidak boleh berupa ketikan.
+    """
+    ids = [m.get('material_id') for m in materials if m.get('material_id')]
+    by_id = {}
+    if ids:
+        async for d in db.rahaza_materials.find(
+                {'id': {'$in': ids}}, {'_id': 0, 'id': 1, 'code': 1, 'name': 1, 'unit': 1,
+                                       'base_unit': 1, 'type': 1, 'category': 1, 'unit_cost': 1,
+                                       'avg_cost': 1}):
+            by_id[d['id']] = d
+    by_name, by_code = await _material_lookup(db)
+    out = []
+    for idx, m in enumerate(materials, start=1):
+        m = dict(m)
+        mid = (m.get('material_id') or '').strip()
+        mat = by_id.get(mid) if mid else None
+        if mid and not mat:
+            raise HTTPException(400, f"Baris {idx}: material dengan id '{mid}' tidak ada di master material.")
+        if not mat:
+            nm = (m.get('material_name') or '').strip()
+            link = (by_name.get(nm.lower()) or by_code.get(nm.upper())
+                    or by_code.get((m.get('material_code') or '').strip().upper()))
+            if link:
+                mat = await db.rahaza_materials.find_one({'id': link['id']}, {'_id': 0})
+        if mat:
+            m['material_id'] = mat['id']
+            m['material_code'] = mat.get('code') or ''
+            m['material_name'] = mat.get('name') or m.get('material_name')
+            if not (m.get('unit') or '').strip():
+                m['unit'] = mat.get('unit') or mat.get('base_unit') or 'pcs'
+            if not (m.get('category') or '').strip():
+                m['category'] = mat.get('category') or mat.get('type') or ''
+            if not float(m.get('cost_per_unit') or 0):
+                m['cost_per_unit'] = float(mat.get('unit_cost') or mat.get('avg_cost') or 0)
+            m['unlinked'] = False
+        else:
+            if m.get('ownership') == 'cv_da_stock':
+                raise HTTPException(
+                    400, f"Baris {idx} '{m.get('material_name')}': bahan dari stok DA wajib dipilih "
+                         "dari master material (stoknya dipotong saat kirim ke CMT).")
+            m['material_id'] = None
+            m['unlinked'] = True
+        out.append(m)
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CRUD ENDPOINTS
 # ──────────────────────────────────────────────────────────────────────────────
@@ -186,7 +260,7 @@ async def create_bom_template(payload: BOMTemplateIn, user: dict = Depends(requi
     cat = await _ensure_catalog_exists(db, payload.buyer_catalog_id)
 
     version = await _next_version(db, payload.buyer_catalog_id)
-    materials = [m.dict() for m in (payload.materials or [])]
+    materials = await _resolve_template_materials(db, [m.dict() for m in (payload.materials or [])])
     # ValueError dari `_compute_total_cost` = angka biaya tidak sah. Harus 400
     # (bukan 500): pesannya menyebut material mana yang perlu dibetulkan.
     try:
@@ -248,10 +322,10 @@ async def update_bom_template(template_id: str, payload: BOMTemplateUpdate, user
 
     update_data = payload.model_dump(exclude_unset=True)
     if 'materials' in update_data and update_data['materials'] is not None:
-        materials_list = [
+        materials_list = await _resolve_template_materials(db, [
             (m.dict() if isinstance(m, BOMMaterialItem) else m)
             for m in update_data['materials']
-        ]
+        ])
         update_data['materials'] = materials_list
         update_data['material_count'] = len(materials_list)
         try:
@@ -399,6 +473,14 @@ async def _load_maklon_po(db, po_id: str) -> tuple:
     return None, [], ''
 
 
+async def _material_by_ids(db, ids) -> dict:
+    """{id: master material} untuk baris BOM yang sudah tertaut (2026-11-05)."""
+    ids = [i for i in set(ids or []) if i]
+    if not ids:
+        return {}
+    return {d['id']: d async for d in db.rahaza_materials.find({'id': {'$in': ids}}, {'_id': 0})}
+
+
 async def _material_lookup(db) -> tuple:
     """Peta master material untuk menautkan baris BOM (template hanya punya nama)."""
     by_name, by_code = {}, {}
@@ -460,7 +542,7 @@ async def explode_maklon_bom_for_po(db, po_id: str, user: Optional[dict] = None,
 
     materials = []
     for key, row in agg.items():
-        prev = prev_by_key.get(key) or {}
+        prev = prev_by_key.get((row['material_name'].strip().lower(), row['unit'].strip().lower())) or {}
         qty_est = round(row['qty_estimated'], 4)
         qty_act = prev.get('qty_actual')
         cost = float(row['cost_per_unit'] or 0)
@@ -469,7 +551,7 @@ async def explode_maklon_bom_for_po(db, po_id: str, user: Optional[dict] = None,
             'material_name': row['material_name'],
             'material_category': row['material_category'],
             'line_type': row['line_type'],
-            'ownership': prev.get('ownership') or 'client_provided',
+            'ownership': row.get('ownership') or prev.get('ownership') or 'client_provided',
             'unit': row['unit'],
             'qty_estimated': qty_est,
             'qty_actual': qty_act,
@@ -478,7 +560,8 @@ async def explode_maklon_bom_for_po(db, po_id: str, user: Optional[dict] = None,
             'cost_per_unit': cost,
             'estimated_cost': round(qty_est * cost, 2),
             'actual_cost': round(float(qty_act) * cost, 2) if qty_act else prev.get('actual_cost') or 0,
-            'material_id': prev.get('material_id'),
+            'material_id': row.get('material_id') or prev.get('material_id'),
+            'material_code': row.get('material_code') or prev.get('material_code') or '',
             'supplier': row['supplier'],
             'notes': row['notes'] or prev.get('notes', ''),
             'source_template_id': row['source_template_id'],
@@ -518,10 +601,11 @@ async def explode_maklon_bom_for_po(db, po_id: str, user: Optional[dict] = None,
         })
     acc_rows = len(rows)
     by_name, by_code = await _material_lookup(db)
+    by_id = await _material_by_ids(db, [m.get('material_id') for m in materials])
     # simpan hasil konversi pada baris BOM per-PO juga (dipakai SJ & checklist)
     for m in materials:
         nm = (m.get('material_name') or '').strip()
-        mat = by_name.get(nm.lower()) or by_code.get(nm.upper())
+        mat = by_id.get(m.get('material_id')) or by_name.get(nm.lower()) or by_code.get(nm.upper())
         factor, base_unit, status, note = bom_uom.line_factor(mat, m.get('unit'))
         m['unit_base'] = base_unit if mat else m.get('unit')
         m['uom_factor'] = round(factor, 8)
@@ -728,9 +812,12 @@ async def aggregate_template_lines(db, items: List[dict],
                 continue
             unit = (m.get('unit') or 'pcs').strip() or 'pcs'
             line_type, mcat = _classify_line(m)
-            key = (name.lower(), unit.lower())
+            # 2026-11-05 - baris tertaut master dikelompokkan per material, bukan per nama ketikan
+            key = (m.get('material_id') or name.lower(), unit.lower(), m.get('ownership') or 'client_provided')
             row = agg.setdefault(key, {
                 'material_name': name, 'unit': unit, 'material_category': mcat,
+                'material_id': m.get('material_id'), 'material_code': m.get('material_code') or '',
+                'ownership': m.get('ownership') or 'client_provided',
                 'line_type': line_type, 'qty_estimated': 0.0,
                 'cost_per_unit': float(m.get('cost_per_unit') or 0),
                 'supplier': m.get('supplier', ''), 'notes': m.get('notes', ''),
@@ -749,12 +836,13 @@ async def accessory_rows_from_materials(db, materials: List[dict]) -> tuple:
     menentukan (explode menyimpannya, pratinjau hanya menampilkan).
     """
     by_name, by_code = await _material_lookup(db)
+    by_id = await _material_by_ids(db, [m.get('material_id') for m in materials])
     rows, unlinked, uom_issues = [], [], []
     for m in materials:
         if m.get('line_type') != 'accessory' or float(m.get('qty_estimated') or 0) <= 0:
             continue
         nm = (m.get('material_name') or '').strip()
-        mat = by_name.get(nm.lower()) or by_code.get(nm.upper())
+        mat = by_id.get(m.get('material_id')) or by_name.get(nm.lower()) or by_code.get(nm.upper())
         if not mat:
             unlinked.append(nm)
         # 2026-08-02 · SATUAN: qty_needed HARUS satuan dasar material (dibandingkan
@@ -777,6 +865,7 @@ async def accessory_rows_from_materials(db, materials: List[dict]) -> tuple:
             'notes': f"Auto dari BOM Template maklon v{m.get('source_template_version', '-')}"
                      + (f" · {m.get('unit')}→{base_unit}" if factor != 1 else ''),
             'unlinked': mat is None,
+            'ownership': m.get('ownership') or 'client_provided',
         })
     return rows, unlinked, uom_issues
 

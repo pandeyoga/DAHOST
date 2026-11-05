@@ -16,6 +16,9 @@ import { BizBadge, BizFilter, matchBiz } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
+import { GlassCard, GlassInput, GlassPanel } from '@/components/ui/glass';
+import FilterChips from '@/components/ui/filter-chips';
+import { Notice } from '../moduleAtoms';
 
 const TABS = [
   { id: 'shipments', label: 'Daftar Shipment', icon: Truck },
@@ -33,7 +36,7 @@ export default function VendorShipmentModule({ userRole, hasPerm = () => false, 
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-          <Truck className="w-6 h-6 text-blue-600" /> Vendor Shipment
+          <Truck className="w-6 h-6 text-[hsl(var(--primary))]" /> Vendor Shipment
           {businessType && <BizBadge type={businessType} />}
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
@@ -46,20 +49,9 @@ export default function VendorShipmentModule({ userRole, hasPerm = () => false, 
         </p>
       </div>
 
-      {/* Tabs */}
-      <div className="flex border-b border-border">
-        {TABS.map(tab => {
-          const Icon = tab.icon;
-          return (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors -mb-px
-                ${activeTab === tab.id ? 'border-blue-600 text-blue-700' : 'border-transparent text-muted-foreground hover:text-foreground/90'}`}>
-              <Icon className="w-4 h-4" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* Pilihan tampilan — PANDUAN_UI G4 (2026-11-05): FilterChips bersama, dulu deret tombol bergaris bawah. */}
+      <FilterChips value={activeTab} onChange={setActiveTab} ariaLabel="Tampilan" hideWhenEmpty={false}
+        options={TABS.map(tab => ({ key: tab.id, label: tab.label, icon: tab.icon }))} />
 
       {/* Tab Content */}
       {activeTab === 'shipments' && <ShipmentList userRole={userRole} hasPerm={hasPerm} businessType={businessType} />}
@@ -86,6 +78,11 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   // FASE H-1: pratinjau material yang akan keluar dari gudang (BOM × qty kirim)
   const [matPreview, setMatPreview] = useState(null);
   const [matLoading, setMatLoading] = useState(false);
+  // 2026-11-05 (owner: "aksesoris BOM tidak langsung terload di pengiriman CMT") — aksesoris yang
+  // IKUT kiriman ini dihitung server dari BOM PO (maklon: disegarkan dari BOM Katalog Buyer aktif),
+  // sebanding qty garmen yang dikirim; jumlahnya boleh diubah sebelum disimpan.
+  const [accPlan, setAccPlan] = useState(null);
+  const [accQty, setAccQty] = useState({});
   const [form, setForm] = useState({
     shipment_number: '', delivery_note_number: '', vendor_id: '',
     shipment_date: todayWIB(), notes: '', items: []
@@ -234,6 +231,26 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
     return () => clearTimeout(t);
   }, [showModal, itemsSignature]);
 
+  const accKey = (r) => r.accessory_id || r.accessory_code || r.accessory_name;
+  const shipPoId = selectedPO?.id || (form.items[0] || {}).po_id || '';
+  useEffect(() => {
+    if (!showModal || !shipPoId) { setAccPlan(null); return; }
+    const lines = (form.items || []).filter(i => i.po_item_id && Number(i.qty_sent) > 0);
+    const t = setTimeout(async () => {
+      try {
+        const res = await apiPost('/vendor-shipments/accessory-plan', {
+          po_id: shipPoId,
+          items: lines.map(i => ({ po_item_id: i.po_item_id, qty_sent: Number(i.qty_sent) })),
+        });
+        setAccPlan(res || null);
+        setAccQty({});           // qty garmen berubah → jatah dihitung ulang
+      } catch (e) {
+        setAccPlan({ rows: [], warnings: [e.message || 'Aksesoris belum bisa dihitung'] });
+      }
+    }, 450);
+    return () => clearTimeout(t);
+  }, [showModal, shipPoId, itemsSignature]);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!form.items.length) { toast.error('Tambahkan minimal 1 item'); return; }
@@ -264,11 +281,18 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
     }
     try {
       const { shipment_number: _typed, ...rest } = form;
+      const accessory_items = accPlan ? (accPlan.rows || []).map(r => {
+        const typed = accQty[accKey(r)];
+        return { ...r, qty_sent: typed === undefined || typed === '' ? r.qty_suggested : Number(typed),
+                 auto: typed === undefined || typed === '' };
+      }) : undefined;
       const data = await apiPost('/vendor-shipments', {
-        ...rest, ...docNumberPayload(numPolicy, 'shipment_number', _typed), shipment_type: 'NORMAL' });
+        ...rest, ...docNumberPayload(numPolicy, 'shipment_number', _typed), shipment_type: 'NORMAL',
+        ...(accessory_items ? { accessory_items } : {}) });
       const mi = data.material_issue;
       toast.success(
         `Shipment ${data.shipment_number || ''} dibuat`
+        + (data.accessory_lines ? ` · ${data.accessory_lines} aksesoris ikut tercatat` : '')
         + (mi?.mi_number
             ? ` · pengeluaran material ${mi.mi_number} (${mi.material_lines} bahan) otomatis terbit & stok berkurang`
             : ''));
@@ -432,14 +456,14 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   return (
     <div className="space-y-4">
       {/* Info about request-driven child shipments */}
-      <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-sm text-blue-800">
+      <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-xl p-3 text-sm text-[hsl(var(--primary))]">
         ℹ️ Shipment <strong>ADDITIONAL</strong> dan <strong>REPLACEMENT</strong> hanya dapat dibuat setelah vendor mengajukan permintaan dan admin menyetujuinya. Gunakan tab di atas untuk mengelola permintaan.
       </div>
 
       <div className="flex items-center justify-between gap-3">
         <input
           type="text" placeholder="Cari shipment atau vendor..."
-          className="flex-1 max-w-xs border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          className="flex-1 max-w-xs border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
           value={search} onChange={e => setSearch(e.target.value)}
         />
         <div className="flex items-center gap-2">
@@ -447,7 +471,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
           <ImportExportPanel importType={null} exportType="vendor-shipments" />
           {canCreate && (
             <button onClick={() => { setForm({ shipment_number: '', delivery_note_number: '', vendor_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedPO(null); setPoItems([]); setPoAccessories([]); setShowModal(true); }}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+              className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--primary))] text-white rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.9)]">
               <Plus className="w-4 h-4" /> Buat Shipment Normal
             </button>
           )}
@@ -488,22 +512,22 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-bold text-blue-700 font-mono whitespace-nowrap">{row.shipment_number}</span>
+                      <span className="font-bold text-[hsl(var(--primary))] tabular-nums whitespace-nowrap">{row.shipment_number}</span>
                       <BizBadge type={row.business_type} size="xs" />
                       {/* FASE 22 — tipe surat jalan non-normal (REWORK/ADDITIONAL/REPLACEMENT)
                           dulu tidak terlihat di baris induk, jadi admin tidak bisa
                           membedakan kiriman rework dari kiriman material biasa. */}
                       {row.shipment_type && !['NORMAL', 'REGULAR', ''].includes(String(row.shipment_type)) && (
                         <span className={`px-1.5 py-0.5 rounded text-xs font-bold whitespace-nowrap ${
-                          row.shipment_type === 'REWORK' ? 'bg-orange-100 text-orange-700'
-                          : row.shipment_type === 'ADDITIONAL' ? 'bg-amber-100 text-amber-700'
-                          : 'bg-red-100 text-red-700'}`}
+                          row.shipment_type === 'REWORK' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
+                          : row.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
+                          : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'}`}
                           title={row.rework_permak_number ? `Rework dari permak ${row.rework_permak_number}` : row.shipment_type}>
                           {row.shipment_type === 'REWORK' ? '🔄 REWORK' : row.shipment_type}
                         </span>
                       )}
                       {children.length > 0 && (
-                        <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 rounded text-xs font-medium whitespace-nowrap">
+                        <span className="px-1.5 py-0.5 bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] rounded text-xs font-medium whitespace-nowrap">
                           +{children.length} child
                         </span>
                       )}
@@ -517,27 +541,27 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                   <td className="px-4 py-3"><StatusBadge status={row.status} /></td>
                   <td className="px-4 py-3">
                     {row.inspection_status ? (
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${row.inspection_status === 'Inspected' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{row.inspection_status}</span>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${row.inspection_status === 'Inspected' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{row.inspection_status}</span>
                     ) : <span className="text-xs text-muted-foreground/50">Belum</span>}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1">
-                      <button onClick={() => openDetail(row)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Detail"><Eye className="w-4 h-4" /></button>
-                      <button onClick={() => downloadDeliveryNote(row)} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600" title="Cetak Surat Jalan (PDF) — termasuk aksesoris" data-testid={`vendor-shipment-print-sj-${row.id}`}><Download className="w-4 h-4" /></button>
-                      <button onClick={() => downloadProductionGuide(row)} className="p-1.5 rounded hover:bg-indigo-50 text-indigo-600" title="Cetak Panduan Produk & Proses Produksi (PDF)" data-testid={`vendor-shipment-print-guide-${row.id}`}><BookOpen className="w-4 h-4" /></button>
+                      <button onClick={() => openDetail(row)} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Detail"><Eye className="w-4 h-4" /></button>
+                      <button onClick={() => downloadDeliveryNote(row)} className="p-1.5 rounded hover:bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]" title="Cetak Surat Jalan (PDF) — termasuk aksesoris" data-testid={`vendor-shipment-print-sj-${row.id}`}><Download className="w-4 h-4" /></button>
+                      <button onClick={() => downloadProductionGuide(row)} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Cetak Panduan Produk & Proses Produksi (PDF)" data-testid={`vendor-shipment-print-guide-${row.id}`}><BookOpen className="w-4 h-4" /></button>
                       {/* Phase 16: Vendor dapat buat permintaan manual untuk shipment yang sudah ter-inspeksi */}
                       {isVendor && row.inspection_status === 'Inspected' && (
                         <button
                           onClick={() => openManualRequest(row)}
                           disabled={loadingManualReq}
-                          className="p-1.5 rounded hover:bg-amber-50 text-amber-600 disabled:opacity-50"
+                          className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] disabled:opacity-50"
                           title="Buat Permintaan Tambahan Manual"
                           data-testid={`manual-request-btn-${row.id}`}
                         >
                           <FilePlus className="w-4 h-4" />
                         </button>
                       )}
-                      {canDelete && <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-red-50 text-red-500"><Trash2 className="w-4 h-4" /></button>}
+                      {canDelete && <button onClick={() => setConfirmDelete(row)} className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]"><Trash2 className="w-4 h-4" /></button>}
                     </div>
                   </td>
                 </tr>,
@@ -548,8 +572,8 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     <td className="px-4 py-2.5 pl-8">
                       <div className="flex items-center gap-2">
                         <div className="w-3 h-px bg-muted-foreground/30 mr-1" />
-                        <span className="font-mono text-sm font-medium text-foreground/90">{child.shipment_number}</span>
-                        <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${child.shipment_type === 'ADDITIONAL' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{child.shipment_type}</span>
+                        <span className="tabular-nums text-sm font-medium text-foreground/90">{child.shipment_number}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${child.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'}`}>{child.shipment_type}</span>
                       </div>
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground text-xs">{child.vendor_name}</td>
@@ -560,20 +584,20 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     <td className="px-4 py-2.5"><StatusBadge status={child.status} /></td>
                     <td className="px-4 py-2.5">
                       {child.inspection_status ? (
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${child.inspection_status === 'Inspected' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{child.inspection_status}</span>
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${child.inspection_status === 'Inspected' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{child.inspection_status}</span>
                       ) : <span className="text-xs text-muted-foreground/50">Belum</span>}
                     </td>
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-1">
-                        <button onClick={() => openDetail(child)} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Detail"><Eye className="w-4 h-4" /></button>
-                        <button onClick={() => downloadDeliveryNote(child)} className="p-1.5 rounded hover:bg-emerald-50 text-emerald-600" title="Cetak Surat Jalan (PDF) — termasuk aksesoris" data-testid={`vendor-shipment-print-sj-${child.id}`}><Download className="w-4 h-4" /></button>
-                        <button onClick={() => downloadProductionGuide(child)} className="p-1.5 rounded hover:bg-indigo-50 text-indigo-600" title="Cetak Panduan Produk & Proses Produksi (PDF)" data-testid={`vendor-shipment-print-guide-${child.id}`}><BookOpen className="w-4 h-4" /></button>
+                        <button onClick={() => openDetail(child)} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Detail"><Eye className="w-4 h-4" /></button>
+                        <button onClick={() => downloadDeliveryNote(child)} className="p-1.5 rounded hover:bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]" title="Cetak Surat Jalan (PDF) — termasuk aksesoris" data-testid={`vendor-shipment-print-sj-${child.id}`}><Download className="w-4 h-4" /></button>
+                        <button onClick={() => downloadProductionGuide(child)} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Cetak Panduan Produk & Proses Produksi (PDF)" data-testid={`vendor-shipment-print-guide-${child.id}`}><BookOpen className="w-4 h-4" /></button>
                         {/* Phase 16: Vendor manual request untuk child yang sudah ter-inspeksi */}
                         {isVendor && child.inspection_status === 'Inspected' && (
                           <button
                             onClick={() => openManualRequest(child)}
                             disabled={loadingManualReq}
-                            className="p-1.5 rounded hover:bg-amber-50 text-amber-600 disabled:opacity-50"
+                            className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] disabled:opacity-50"
                             title="Buat Permintaan Tambahan Manual"
                             data-testid={`manual-request-btn-${child.id}`}
                           >
@@ -621,7 +645,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Pengiriman</label>
-                <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={form.shipment_date} onChange={e => setForm({...form, shipment_date: e.target.value})} />
+                <GlassInput type="date" value={form.shipment_date} onChange={e => setForm({...form, shipment_date: e.target.value})} />
               </div>
             </div>
 
@@ -635,7 +659,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                 disabled={!form.vendor_id}
               />
               {form.vendor_id && poOptions.length === 0 && (
-                <p className="text-xs text-amber-600 mt-1">Tidak ada PO aktif untuk vendor ini (atau sudah fully shipped).</p>
+                <p className="text-xs text-[hsl(var(--warning))] mt-1">Tidak ada PO aktif untuk vendor ini (atau sudah fully shipped).</p>
               )}
             </div>
 
@@ -644,7 +668,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                 <div className="bg-muted/40 px-3 py-2 flex items-center justify-between">
                   <span className="text-xs font-semibold text-muted-foreground">Items dari PO (klik untuk tambah)</span>
                   <button type="button" onClick={() => { poItems.forEach(pi => addShipmentItem(pi)); }}
-                    className="text-xs bg-blue-600 text-white px-3 py-1 rounded-lg hover:bg-blue-700 font-medium" data-testid="add-all-items-btn">
+                    className="text-xs bg-[hsl(var(--primary))] text-white px-3 py-1 rounded-lg hover:bg-[hsl(var(--primary)/0.9)] font-medium" data-testid="add-all-items-btn">
                     + Add All Items ({poItems.length})
                   </button>
                 </div>
@@ -653,16 +677,16 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     const remaining = typeof pi.remaining_qty_to_vendor === 'number' ? pi.remaining_qty_to_vendor : pi.qty;
                     const alreadySent = typeof pi.total_sent_to_vendor === 'number' ? pi.total_sent_to_vendor : 0;
                     return (
-                      <div key={pi.id} className="flex items-center justify-between px-3 py-2 hover:bg-blue-50 cursor-pointer transition-colors" onClick={() => addShipmentItem(pi)}>
+                      <div key={pi.id} className="flex items-center justify-between px-3 py-2 hover:bg-[hsl(var(--primary)/0.1)] cursor-pointer transition-colors" onClick={() => addShipmentItem(pi)}>
                         <div>
                           <span className="text-sm font-medium text-foreground/90">{pi.product_name}</span>
                           <span className="text-xs text-muted-foreground/70 ml-2">{pi.sku} • {pi.size}/{pi.color}</span>
-                          {pi.serial_number && <span className="text-xs text-amber-600 ml-2">SN: {pi.serial_number}</span>}
+                          {pi.serial_number && <span className="text-xs text-[hsl(var(--warning))] ml-2">SN: {pi.serial_number}</span>}
                         </div>
                         <div className="text-right">
                           <span className="text-xs text-muted-foreground font-medium">{pi.qty?.toLocaleString('id-ID')} pcs</span>
                           <div className="text-[11px] text-muted-foreground/70 mt-0.5">
-                            <span className="text-emerald-600 font-semibold">sisa: {remaining.toLocaleString('id-ID')}</span>
+                            <span className="text-[hsl(var(--success))] font-semibold">sisa: {remaining.toLocaleString('id-ID')}</span>
                             {alreadySent > 0 && <span className="ml-1 text-muted-foreground/70">(terkirim: {alreadySent})</span>}
                           </div>
                         </div>
@@ -673,21 +697,71 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
               </div>
             )}
 
-            {/* PO Accessories Display */}
-            {poAccessories.length > 0 && (
-              <div className="border border-emerald-200 rounded-xl overflow-hidden" data-testid="po-accessories-section">
-                <div className="bg-emerald-50 px-3 py-2">
-                  <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1.5">
-                    🧷 Aksesoris dari PO ({poAccessories.length} item)
-                  </span>
-                  <span className="text-xs text-emerald-600 mt-0.5 block">Aksesoris berikut ditambahkan saat pembuatan PO. Kelola melalui modul Accessory Shipment.</span>
+            {/* Aksesoris ikut kiriman ini (dari BOM PO, dihitung otomatis — 2026-11-05) */}
+            {form.items.length > 0 && accPlan && ((accPlan.rows || []).length > 0 || (accPlan.warnings || []).length > 0) && (
+              <GlassCard className="p-0 overflow-hidden" data-testid="shipment-accessory-plan">
+                <div className="px-3 py-2 border-b border-[var(--glass-border)]">
+                  <p className="text-sm font-semibold text-foreground">Aksesoris ikut kiriman ini ({(accPlan.rows || []).length})</p>
+                  <p className="text-xs text-muted-foreground">
+                    Dihitung dari BOM PO sebanding qty yang dikirim ({accPlan.shipment_qty || 0} dari {accPlan.po_qty || 0} pcs).
+                    Ubah jumlahnya bila perlu — yang tersimpan tercetak di Surat Jalan kiriman ini.
+                  </p>
                 </div>
-                <div className="divide-y divide-emerald-100">
+                {(accPlan.warnings || []).length > 0 && (
+                  <Notice tone="warning" className="m-3" title="Perlu diperiksa">
+                    {(accPlan.warnings || []).slice(0, 4).join(' · ')}
+                  </Notice>
+                )}
+                {(accPlan.rows || []).length > 0 && (
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-muted-foreground border-b border-[var(--glass-border)]">
+                        <th className="text-left px-3 py-1.5 font-normal">Aksesoris</th>
+                        <th className="text-right px-3 py-1.5 font-normal">Kebutuhan PO</th>
+                        <th className="text-right px-3 py-1.5 font-normal">Sudah dikirim</th>
+                        <th className="text-right px-3 py-1.5 font-normal">Ikut kiriman ini</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {accPlan.rows.map(r => (
+                        <tr key={accKey(r)} className="border-b border-[var(--glass-border)] last:border-0"
+                          data-testid={`shipment-acc-${r.accessory_code || r.accessory_name}`}>
+                          <td className="px-3 py-1.5">
+                            <span className="font-medium text-foreground">{r.accessory_name}</span>
+                            {r.accessory_code && <span className="ml-2 tabular-nums text-muted-foreground">{r.accessory_code}</span>}
+                            {r.unlinked && <span className="ml-2 text-[hsl(var(--warning))]">belum tertaut master</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{Number(r.qty_needed || 0).toLocaleString('id-ID')} {r.unit}</td>
+                          <td className="px-3 py-1.5 text-right tabular-nums">{Number(r.qty_sent_before || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-1.5 text-right">
+                            <GlassInput type="number" min="0" step="any" className="w-24 text-right ml-auto"
+                              value={accQty[accKey(r)] ?? r.qty_suggested}
+                              onChange={e => setAccQty(q => ({ ...q, [accKey(r)]: e.target.value }))}
+                              data-testid={`shipment-acc-qty-${r.accessory_code || r.accessory_name}`} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </GlassCard>
+            )}
+
+            {/* PO Accessories Display — sebelum item garmen dipilih: kebutuhan seluruh PO */}
+            {form.items.length === 0 && poAccessories.length > 0 && (
+              <div className="border border-[hsl(var(--success)/0.35)] rounded-xl overflow-hidden" data-testid="po-accessories-section">
+                <div className="bg-[hsl(var(--success)/0.1)] px-3 py-2">
+                  <span className="text-xs font-semibold text-[hsl(var(--success))] flex items-center gap-1.5">
+                    Kebutuhan aksesoris PO ({poAccessories.length} item)
+                  </span>
+                  <span className="text-xs text-[hsl(var(--success))] mt-0.5 block">Kebutuhan seluruh PO. Pilih item garmen di bawah — jatah aksesoris untuk kiriman ini dihitung otomatis.</span>
+                </div>
+                <div className="divide-y divide-[hsl(var(--success)/0.35)]">
                   {poAccessories.map((acc, idx) => (
-                    <div key={acc.id || idx} className="flex items-center justify-between px-3 py-2 bg-card hover:bg-emerald-50/40 transition-colors">
+                    <div key={acc.id || idx} className="flex items-center justify-between px-3 py-2 bg-card hover:bg-[hsl(var(--success)/0.4)] transition-colors">
                       <div>
                         <span className="text-sm font-medium text-foreground/90">{acc.accessory_name}</span>
-                        <span className="text-xs text-emerald-600 ml-2 font-mono">{acc.accessory_code || ''}</span>
+                        <span className="text-xs text-[hsl(var(--success))] ml-2 tabular-nums">{acc.accessory_code || ''}</span>
                         {acc.notes && <span className="text-xs text-muted-foreground/70 ml-2">({acc.notes})</span>}
                       </div>
                       <div className="flex items-center gap-2">
@@ -708,17 +782,17 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     const maxQty = typeof item.remaining_qty_to_vendor === 'number' ? item.remaining_qty_to_vendor : undefined;
                     const over = maxQty !== undefined && item.qty_sent > maxQty;
                     return (
-                      <div key={idx} className={`flex items-center justify-between rounded-lg px-3 py-2 ${over ? 'bg-red-50 border border-red-200' : 'bg-blue-50'}`}>
+                      <GlassPanel key={idx} className={`flex items-center justify-between px-3 py-2 ${over ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.35)]' : ''}`}>
                         <div>
                           <span className="text-sm font-medium text-foreground">{item.product_name}</span>
                           <span className="text-xs text-muted-foreground ml-2">{item.sku} • {item.size}/{item.color}</span>
-                          {item.serial_number && <span className="text-xs text-amber-700 ml-2 font-mono">SN: {item.serial_number}</span>}
+                          {item.serial_number && <span className="text-xs text-[hsl(var(--warning))] ml-2 tabular-nums">SN: {item.serial_number}</span>}
                           {maxQty !== undefined && (
-                            <span className={`text-xs ml-2 font-semibold ${over ? 'text-red-600' : 'text-emerald-700'}`}>
+                            <span className={`text-xs ml-2 font-semibold ${over ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--success))]'}`}>
                               sisa: {maxQty.toLocaleString('id-ID')}
                             </span>
                           )}
-                          {over && <span className="block text-xs text-red-600 mt-0.5">Qty melebihi sisa ke vendor. Kurangi qty atau gunakan permintaan ADDITIONAL.</span>}
+                          {over && <span className="block text-xs text-[hsl(var(--destructive))] mt-0.5">Qty melebihi sisa ke vendor. Kurangi qty atau gunakan permintaan ADDITIONAL.</span>}
                         </div>
                         <div className="flex items-center gap-2">
                           <input type="number" min="1" max={maxQty || undefined} value={item.qty_sent}
@@ -728,10 +802,10 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                               items[idx].qty_sent = v;
                               setForm(f => ({...f, items}));
                             }}
-                            className={`w-20 border rounded px-2 py-1 text-xs text-right ${over ? 'border-red-400' : 'border-border'}`} />
-                          <button type="button" onClick={() => removeItem(idx)} className="text-red-400 hover:text-red-600 text-xs">✕</button>
+                            className={`w-20 border rounded px-2 py-1 text-xs text-right ${over ? 'border-[hsl(var(--destructive)/0.35)]' : 'border-border'}`} />
+                          <button type="button" onClick={() => removeItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))] text-xs">✕</button>
                         </div>
-                      </div>
+                      </GlassPanel>
                     );
                   })}
                 </div>
@@ -743,15 +817,15 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                 dokumen pengeluaran + jurnal. Panel ini menampilkan angkanya SEBELUM
                 Simpan, supaya kekurangan stok tidak baru diketahui saat ditolak. */}
             {form.items.length > 0 && (
-              <div className="rounded-xl border border-border bg-muted/20 overflow-hidden" data-testid="material-preview-panel">
+              <GlassCard className="overflow-hidden" data-testid="material-preview-panel">
                 <div className="px-3 py-2 bg-muted/40 border-b border-border/60 flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-xs font-bold text-foreground">
                     Material yang akan KELUAR dari gudang
                   </span>
                   {matLoading ? (
-                    <span className="text-xs text-blue-700" data-testid="material-preview-loading">Menghitung dari BOM…</span>
+                    <span className="text-xs text-[hsl(var(--primary))]" data-testid="material-preview-loading">Menghitung dari BOM…</span>
                   ) : matPreview?.applicable ? (
-                    <span className={`text-xs font-semibold ${matPreview.has_shortage ? (matPreview.blocking ? 'text-red-600' : 'text-amber-700') : 'text-emerald-700'}`}
+                    <span className={`text-xs font-semibold ${matPreview.has_shortage ? (matPreview.blocking ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--warning))]') : 'text-[hsl(var(--success))]'}`}
                       data-testid="material-preview-status">
                       {matPreview.has_shortage
                         ? (matPreview.blocking
@@ -780,19 +854,19 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                       </thead>
                       <tbody>
                         {matPreview.materials.map(m => (
-                          <tr key={m.code} className={`border-t border-border/50 ${m.shortage ? (m.blocking ? 'bg-red-50 dark:bg-red-500/10' : 'bg-amber-50 dark:bg-amber-500/10') : ''}`}
+                          <tr key={m.code} className={`border-t border-border/50 ${m.shortage ? (m.blocking ? 'bg-[hsl(var(--destructive)/0.1)] ' : 'bg-[hsl(var(--warning)/0.1)] ') : ''}`}
                             data-testid={`material-preview-row-${m.code}`}>
-                            <td className="px-3 py-1.5 font-mono text-blue-700">{m.code}</td>
+                            <td className="px-3 py-1.5 tabular-nums text-[hsl(var(--primary))]">{m.code}</td>
                             <td className="px-3 py-1.5 text-foreground/90">
                               {m.name}
                               {m.shortage && m.problem && (
-                                <span className={`ml-1 font-medium ${m.blocking ? 'text-red-600' : 'text-amber-700'}`}>({m.problem})</span>
+                                <span className={`ml-1 font-medium ${m.blocking ? 'text-[hsl(var(--destructive))]' : 'text-[hsl(var(--warning))]'}`}>({m.problem})</span>
                               )}
                             </td>
-                            <td className="px-3 py-1.5 text-right font-semibold text-amber-700">
+                            <td className="px-3 py-1.5 text-right font-semibold text-[hsl(var(--warning))]">
                               {Number(m.qty_required).toLocaleString('id-ID')} {m.unit}
                             </td>
-                            <td className={`px-3 py-1.5 text-right ${m.shortage ? (m.blocking ? 'text-red-600 font-bold' : 'text-amber-700 font-bold') : 'text-muted-foreground'}`}>
+                            <td className={`px-3 py-1.5 text-right ${m.shortage ? (m.blocking ? 'text-[hsl(var(--destructive))] font-bold' : 'text-[hsl(var(--warning))] font-bold') : 'text-muted-foreground'}`}>
                               {Number(m.available).toLocaleString('id-ID')} {m.unit}
                             </td>
                             <td className="px-3 py-1.5 text-right text-muted-foreground">
@@ -803,13 +877,13 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                       </tbody>
                     </table>
                     {(matPreview.bom_notes || []).length > 0 && (
-                      <p className="px-3 py-2 text-xs text-amber-700 border-t border-border/50">
+                      <p className="px-3 py-2 text-xs text-[hsl(var(--warning))] border-t border-border/50">
                         Catatan BOM: {matPreview.bom_notes.join('; ')}
                       </p>
                     )}
                   </div>
                 )}
-              </div>
+              </GlassCard>
             )}
 
             <div>
@@ -817,7 +891,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
               <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm" value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} />
             </div>
             <div className="flex gap-3">
-              <button type="submit" className="flex-1 bg-blue-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-blue-700">Buat Shipment</button>
+              <button type="submit" className="flex-1 bg-[hsl(var(--primary))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--primary)/0.9)]">Buat Shipment</button>
               <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>
             </div>
           </form>
@@ -833,14 +907,14 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
             <div className="flex flex-wrap justify-end gap-2">
               <button
                 onClick={() => downloadProductionGuide(detailData)}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 font-medium"
+                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--primary))] text-white rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.9)] font-medium"
                 data-testid="vendor-shipment-print-guide-detail"
                 title="Cetak Panduan Produk & Proses Produksi (SOP) untuk artikel pada pengiriman ini">
                 <BookOpen className="w-4 h-4" /> Panduan Produk (PDF)
               </button>
               <button
                 onClick={() => downloadDeliveryNote(detailData)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 font-medium"
+                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium"
                 data-testid="vendor-shipment-print-sj-detail"
                 title="Cetak Surat Jalan pengiriman material (termasuk tabel aksesoris)">
                 <Download className="w-4 h-4" /> Cetak Surat Jalan (PDF)
@@ -848,14 +922,14 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { l: 'No. Shipment', v: <span className="font-bold text-blue-700 font-mono">{detailData.shipment_number}</span> },
-                { l: 'Tipe', v: <span className={`px-2 py-0.5 rounded text-xs font-bold ${detailData.shipment_type === 'ADDITIONAL' ? 'bg-amber-100 text-amber-700' : detailData.shipment_type === 'REPLACEMENT' ? 'bg-red-100 text-red-700' : 'bg-muted text-foreground/90'}`}>{detailData.shipment_type || 'NORMAL'}</span> },
+                { l: 'No. Shipment', v: <span className="font-bold text-[hsl(var(--primary))] tabular-nums">{detailData.shipment_number}</span> },
+                { l: 'Tipe', v: <span className={`px-2 py-0.5 rounded text-xs font-bold ${detailData.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : detailData.shipment_type === 'REPLACEMENT' ? 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]' : 'bg-muted text-foreground/90'}`}>{detailData.shipment_type || 'NORMAL'}</span> },
                 { l: 'Status', v: <StatusBadge status={detailData.status} /> },
-                { l: 'Inspeksi', v: <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${detailData.inspection_status === 'Inspected' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{detailData.inspection_status || 'Belum Diinspeksi'}</span> },
+                { l: 'Inspeksi', v: <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${detailData.inspection_status === 'Inspected' ? 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>{detailData.inspection_status || 'Belum Diinspeksi'}</span> },
                 { l: 'Vendor', v: detailData.vendor_name },
                 { l: 'Tanggal', v: fmtDate(detailData.shipment_date) },
-                { l: 'Total Diterima', v: <span className="text-emerald-700 font-bold">{detailData.total_received || 0} pcs</span> },
-                { l: 'Total Missing', v: <span className={`font-bold ${(detailData.total_missing || 0) > 0 ? 'text-red-600' : 'text-muted-foreground/70'}`}>{detailData.total_missing || 0} pcs</span> },
+                { l: 'Total Diterima', v: <span className="text-[hsl(var(--success))] font-bold">{detailData.total_received || 0} pcs</span> },
+                { l: 'Total Missing', v: <span className={`font-bold ${(detailData.total_missing || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/70'}`}>{detailData.total_missing || 0} pcs</span> },
               ].map(it => (
                 <div key={it.l} className="bg-muted/40 rounded-lg p-3">
                   <p className="text-xs text-muted-foreground">{it.l}</p>
@@ -873,7 +947,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     <tr className="bg-muted">
                       <th className="text-left px-3 py-2 text-xs">Produk</th>
                       <th className="text-left px-3 py-2 text-xs">SKU</th>
-                      <th className="text-left px-3 py-2 text-xs text-amber-700">No. Seri</th>
+                      <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">No. Seri</th>
                       <th className="text-left px-3 py-2 text-xs">Size/Warna</th>
                       <th className="text-right px-3 py-2 text-xs">Qty Dikirim</th>
                       <th className="text-left px-3 py-2 text-xs">PO</th>
@@ -883,8 +957,8 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     {(detailData.items || []).map(item => (
                       <tr key={item.id} className="border-t border-border/60">
                         <td className="px-3 py-2 font-medium">{item.product_name}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-blue-700">{item.sku || '-'}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-amber-700 font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
+                        <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
                         <td className="px-3 py-2 text-xs">{item.size}/{item.color}</td>
                         <td className="px-3 py-2 text-right font-bold">{item.qty_sent?.toLocaleString('id-ID')} pcs</td>
                         <td className="px-3 py-2 text-xs text-muted-foreground">{item.po_number || '-'}</td>
@@ -899,29 +973,29 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
             {(detailData.po_accessories || []).length > 0 && (
               <div data-testid="shipment-detail-accessories">
                 <h4 className="font-semibold text-foreground/90 mb-2 flex items-center gap-2">
-                  <span className="w-5 h-5 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center text-xs font-bold">{detailData.po_accessories.length}</span>
+                  <span className="w-5 h-5 bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] rounded-full flex items-center justify-center text-xs font-bold">{detailData.po_accessories.length}</span>
                   Aksesoris terkait PO
                 </h4>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
-                      <tr className="bg-emerald-50">
-                        <th className="text-left px-3 py-2 text-xs text-emerald-700 font-semibold">Aksesoris</th>
-                        <th className="text-left px-3 py-2 text-xs text-emerald-700 font-semibold">Kode</th>
-                        <th className="text-right px-3 py-2 text-xs text-emerald-700 font-semibold">Qty Dibutuhkan</th>
-                        <th className="text-left px-3 py-2 text-xs text-emerald-700 font-semibold">Satuan</th>
-                        <th className="text-left px-3 py-2 text-xs text-emerald-700 font-semibold">PO</th>
-                        <th className="text-left px-3 py-2 text-xs text-emerald-700 font-semibold">Catatan</th>
+                      <tr className="bg-[hsl(var(--success)/0.1)]">
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Aksesoris</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Kode</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Qty Dibutuhkan</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Satuan</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">PO</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Catatan</th>
                       </tr>
                     </thead>
                     <tbody>
                       {detailData.po_accessories.map((acc, idx) => (
-                        <tr key={acc.id || idx} className="border-t border-emerald-100 hover:bg-emerald-50/30">
+                        <tr key={acc.id || idx} className="border-t border-[hsl(var(--success)/0.35)] hover:bg-[hsl(var(--success)/0.3)]">
                           <td className="px-3 py-2 font-medium text-foreground/90">{acc.accessory_name}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-emerald-700">{acc.accessory_code || '-'}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success))]">{acc.accessory_code || '-'}</td>
                           <td className="px-3 py-2 text-right font-bold text-foreground">{(acc.qty_needed || 0).toLocaleString('id-ID')}</td>
                           <td className="px-3 py-2 text-xs text-muted-foreground">{acc.unit || 'pcs'}</td>
-                          <td className="px-3 py-2 text-xs text-blue-600 font-mono">{acc.po_number || '-'}</td>
+                          <td className="px-3 py-2 text-xs text-[hsl(var(--primary))] tabular-nums">{acc.po_number || '-'}</td>
                           <td className="px-3 py-2 text-xs text-muted-foreground/70">{acc.notes || '-'}</td>
                         </tr>
                       ))}
@@ -940,8 +1014,8 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                     <div key={child.id} className="flex items-center justify-between bg-muted/40 rounded-lg px-3 py-2">
                       <div className="flex items-center gap-2">
                         <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/70" />
-                        <span className="font-mono text-sm font-medium text-blue-700">{child.shipment_number}</span>
-                        <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${child.shipment_type === 'ADDITIONAL' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{child.shipment_type}</span>
+                        <span className="tabular-nums text-sm font-medium text-[hsl(var(--primary))]">{child.shipment_number}</span>
+                        <span className={`px-1.5 py-0.5 rounded text-xs font-bold ${child.shipment_type === 'ADDITIONAL' ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'}`}>{child.shipment_type}</span>
                       </div>
                       <StatusBadge status={child.status} />
                     </div>
@@ -1114,15 +1188,15 @@ function MaterialRequestList({ userRole, requestType }) {
   const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID') : '-';
 
   const STATUS_COLORS = {
-    'Pending': 'bg-amber-100 text-amber-700',
-    'Approved': 'bg-emerald-100 text-emerald-700',
-    'Rejected': 'bg-red-100 text-red-700',
+    'Pending': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+    'Approved': 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
+    'Rejected': 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
   };
 
   const columns = [
-    { key: 'request_number', label: 'No. Permintaan', render: v => <span className="font-bold font-mono text-sm">{v}</span> },
+    { key: 'request_number', label: 'No. Permintaan', render: v => <span className="font-bold tabular-nums text-sm">{v}</span> },
     { key: 'vendor_name', label: 'Vendor' },
-    { key: 'original_shipment_number', label: 'Shipment Asal', render: v => <span className="font-mono text-blue-700 text-xs">{v}</span> },
+    { key: 'original_shipment_number', label: 'Shipment Asal', render: v => <span className="tabular-nums text-[hsl(var(--primary))] text-xs">{v}</span> },
     { key: 'total_requested_qty', label: 'Total Qty', render: v => <span className="font-semibold">{v?.toLocaleString('id-ID')} pcs</span> },
     { key: 'created_at', label: 'Tgl. Permintaan', render: v => fmtDate(v) },
     { key: 'status', label: 'Status', render: v => (
@@ -1133,12 +1207,12 @@ function MaterialRequestList({ userRole, requestType }) {
       render: (_v, row) => <MaterialRequestTracker req={row} /> },
     { key: 'actions', label: 'Aksi', render: (_, row) => (
       <div className="flex items-center gap-1">
-        <button onClick={() => { setSelectedReq(row); setAdminNotes(row.admin_notes || ''); setAccRows((row.accessory_shortages || []).map(a => ({ ...a }))); setShowDetail(true); }} className="p-1.5 rounded hover:bg-blue-50 text-blue-600" title="Detail" data-testid={`material-request-detail-btn-${row.id}`}><Eye className="w-4 h-4" /></button>
+        <button onClick={() => { setSelectedReq(row); setAdminNotes(row.admin_notes || ''); setAccRows((row.accessory_shortages || []).map(a => ({ ...a }))); setShowDetail(true); }} className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]" title="Detail" data-testid={`material-request-detail-btn-${row.id}`}><Eye className="w-4 h-4" /></button>
         {/* Phase 16: Vendor dapat Ajukan Ulang dari request yang Rejected (jika belum diresubmit) */}
         {isVendor && isAdditional && row.status === 'Rejected' && !row.resubmitted_as_id && (
           <button
             onClick={() => openResubmit(row)}
-            className="p-1.5 rounded hover:bg-amber-50 text-amber-600"
+            className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]"
             title="Ajukan Ulang"
             data-testid={`material-request-resubmit-btn-${row.id}`}
           >
@@ -1152,12 +1226,12 @@ function MaterialRequestList({ userRole, requestType }) {
   return (
     <div className="space-y-4">
       {/* Info box */}
-      <div className={`border rounded-xl p-3 text-sm ${isAdditional ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+      <Notice tone={isAdditional ? 'warning' : 'danger'}>
         {isAdditional
-          ? '➕ Permintaan material tambahan dari vendor (akibat material missing saat inspeksi). Setujui untuk membuat child shipment otomatis.'
+          ? '➕ Permintaan material tambahan dari vendor (akibat material kurang saat inspeksi). Setujui untuk membuat child shipment otomatis.'
           : '🔄 Permintaan material pengganti dari vendor (akibat laporan cacat). Setujui untuk membuat child shipment pengganti otomatis.'
         }
-      </div>
+      </Notice>
 
       <DataTable columns={columns} data={requests} searchKeys={['request_number', 'vendor_name']} storageKey="vendorMaterialRequests" />
 
@@ -1178,17 +1252,17 @@ function MaterialRequestList({ userRole, requestType }) {
                     URL.revokeObjectURL(url);
                   } catch (e) { toast.error('Gagal export PDF: ' + e.message); }
                 }}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 font-medium">
+                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium">
                 📄 Export PDF (Surat Permohonan)
               </button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {[
-                { l: 'No. Permintaan', v: <span className="font-bold font-mono">{selectedReq.request_number}</span> },
-                { l: 'Tipe', v: <span className={`px-2 py-0.5 rounded text-xs font-bold ${isAdditional ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>{selectedReq.request_type}</span> },
+                { l: 'No. Permintaan', v: <span className="font-bold tabular-nums">{selectedReq.request_number}</span> },
+                { l: 'Tipe', v: <span className={`px-2 py-0.5 rounded text-xs font-bold ${isAdditional ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'}`}>{selectedReq.request_type}</span> },
                 { l: 'Status', v: <span className={`px-2 py-0.5 rounded text-xs font-bold ${STATUS_COLORS[selectedReq.status]}`}>{selectedReq.status}</span> },
                 { l: 'Vendor', v: selectedReq.vendor_name },
-                { l: 'Shipment Asal', v: <span className="font-mono text-blue-700">{selectedReq.original_shipment_number}</span> },
+                { l: 'Shipment Asal', v: <span className="tabular-nums text-[hsl(var(--primary))]">{selectedReq.original_shipment_number}</span> },
                 { l: 'Total Qty', v: <span className="font-bold">{selectedReq.total_requested_qty?.toLocaleString('id-ID')} pcs</span> },
                 { l: 'Tanggal', v: fmtDate(selectedReq.created_at) },
                 { l: 'Alasan', v: selectedReq.reason || '-' },
@@ -1210,7 +1284,7 @@ function MaterialRequestList({ userRole, requestType }) {
                       <tr className="bg-muted">
                         <th className="text-left px-3 py-2 text-xs">Produk</th>
                         <th className="text-left px-3 py-2 text-xs">SKU</th>
-                        <th className="text-left px-3 py-2 text-xs text-amber-700">No. Seri</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">No. Seri</th>
                         <th className="text-left px-3 py-2 text-xs">Size/Warna</th>
                         <th className="text-right px-3 py-2 text-xs">Qty Diminta</th>
                         <th className="text-left px-3 py-2 text-xs">Alasan</th>
@@ -1220,8 +1294,8 @@ function MaterialRequestList({ userRole, requestType }) {
                       {selectedReq.items.map((item, idx) => (
                         <tr key={idx} className="border-t border-border/60">
                           <td className="px-3 py-2 font-medium">{item.product_name}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-blue-700">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-amber-700 font-semibold">{item.serial_number || '—'}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || '—'}</td>
                           <td className="px-3 py-2 text-xs">{item.size}/{item.color}</td>
                           <td className="px-3 py-2 text-right font-bold">{Number(item.requested_qty)?.toLocaleString('id-ID')} pcs</td>
                           <td className="px-3 py-2 text-xs text-muted-foreground">{item.reason || '-'}</td>
@@ -1235,10 +1309,10 @@ function MaterialRequestList({ userRole, requestType }) {
 
             {selectedReq.status === 'Pending' && accRows.length > 0 && (
               <div data-testid="material-request-accessories">
-                <label className="block text-sm font-semibold text-emerald-700 mb-2">Aksesoris Kurang (dari inspeksi) — ikut dikirim di child shipment</label>
-                <div className="overflow-x-auto border border-emerald-200 rounded-lg">
+                <label className="block text-sm font-semibold text-[hsl(var(--success))] mb-2">Aksesoris Kurang (dari inspeksi) — ikut dikirim di child shipment</label>
+                <div className="overflow-x-auto border border-[hsl(var(--success)/0.35)] rounded-lg">
                   <table className="w-full text-sm">
-                    <thead className="bg-emerald-50"><tr>
+                    <thead className="bg-[hsl(var(--success)/0.1)]"><tr>
                       <th className="text-left px-3 py-2 text-xs">Aksesoris</th>
                       <th className="text-left px-3 py-2 text-xs">Kode</th>
                       <th className="text-right px-3 py-2 text-xs">Kurang</th>
@@ -1248,8 +1322,8 @@ function MaterialRequestList({ userRole, requestType }) {
                       {accRows.map((a, idx) => (
                         <tr key={a.accessory_id || a.accessory_code || idx} className="border-t border-border/60" data-testid={`material-request-acc-row-${a.accessory_code}`}>
                           <td className="px-3 py-2 font-medium">{a.accessory_name || '-'}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-emerald-700">{a.accessory_code || '-'}</td>
-                          <td className="px-3 py-2 text-right text-red-600 font-semibold">{a.missing_qty} {a.unit}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--success))]">{a.accessory_code || '-'}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--destructive))] font-semibold">{a.missing_qty} {a.unit}</td>
                           <td className="px-3 py-2 text-right">
                             <input type="number" min="0" max={a.missing_qty} value={a.qty_sent}
                               data-testid={`material-request-acc-qty-${a.accessory_code}`}
@@ -1265,37 +1339,37 @@ function MaterialRequestList({ userRole, requestType }) {
               </div>
             )}
             {selectedReq.accessory_items_sent?.length > 0 && (
-              <div className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg p-2" data-testid="material-request-acc-sent">
+              <div className="text-xs text-[hsl(var(--success))] bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-2" data-testid="material-request-acc-sent">
                 Aksesoris ikut dikirim: {selectedReq.accessory_items_sent.map(a => `${a.accessory_code || a.accessory_name} ×${a.qty_sent}`).join(', ')}
               </div>
             )}
 
             {selectedReq.child_shipment_number && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">
+              <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success))]">
                 ✅ Child shipment <strong>{selectedReq.child_shipment_number}</strong> sudah dibuat. Disetujui oleh {selectedReq.approved_by} pada {fmtDate(selectedReq.approved_at)}.
               </div>
             )}
 
             {/* Phase 16: Banner status Rejected */}
             {selectedReq.status === 'Rejected' && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm">
-                <p className="font-semibold text-red-800 flex items-center gap-2">
+              <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-lg p-3 text-sm">
+                <p className="font-semibold text-[hsl(var(--destructive))] flex items-center gap-2">
                   <XCircle className="w-4 h-4" /> Permintaan Ditolak
                 </p>
                 {selectedReq.admin_notes && (
-                  <p className="text-red-700 mt-1.5">
+                  <p className="text-[hsl(var(--destructive))] mt-1.5">
                     <span className="font-medium">Alasan admin:</span> {selectedReq.admin_notes}
                   </p>
                 )}
                 {selectedReq.rejected_by && (
-                  <p className="text-red-600 text-xs mt-1">
+                  <p className="text-[hsl(var(--destructive))] text-xs mt-1">
                     Ditolak oleh {selectedReq.rejected_by} pada {fmtDate(selectedReq.rejected_at)}
                   </p>
                 )}
                 {isVendor && isAdditional && !selectedReq.resubmitted_as_id && (
                   <button
                     onClick={() => openResubmit(selectedReq)}
-                    className="mt-3 flex items-center gap-2 bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-700"
+                    className="mt-3 flex items-center gap-2 bg-[hsl(var(--warning))] text-white px-3 py-1.5 rounded-lg text-xs font-medium hover:bg-[hsl(var(--warning)/0.9)]"
                     data-testid="material-request-resubmit-detail-btn"
                   >
                     <RotateCcw className="w-3.5 h-3.5" /> Ajukan Ulang dengan Revisi
@@ -1306,15 +1380,15 @@ function MaterialRequestList({ userRole, requestType }) {
 
             {/* Phase 16: Banner sudah diresubmit */}
             {selectedReq.resubmitted_as_number && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-                ↻ Permintaan ini sudah diajukan ulang sebagai <strong className="font-mono">{selectedReq.resubmitted_as_number}</strong>
+              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
+                ↻ Permintaan ini sudah diajukan ulang sebagai <strong className="tabular-nums">{selectedReq.resubmitted_as_number}</strong>
               </div>
             )}
 
             {/* Phase 16: Banner asal dari resubmit */}
             {selectedReq.previous_request_number && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
-                ↻ Permintaan ini merupakan resubmit dari <strong className="font-mono">{selectedReq.previous_request_number}</strong>
+              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
+                ↻ Permintaan ini merupakan resubmit dari <strong className="tabular-nums">{selectedReq.previous_request_number}</strong>
               </div>
             )}
 
@@ -1322,11 +1396,11 @@ function MaterialRequestList({ userRole, requestType }) {
               <div className="space-y-3 pt-3 border-t border-border">
                 <div>
                   <label className="block text-sm font-medium text-foreground/90 mb-1">
-                    Catatan Admin <span className="text-red-500">(wajib jika menolak)</span>
+                    Catatan Admin <span className="text-[hsl(var(--destructive))]">(wajib jika menolak)</span>
                   </label>
                   <textarea
                     rows="2"
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300"
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                     value={adminNotes}
                     onChange={e => setAdminNotes(e.target.value)}
                     placeholder="Catatan untuk vendor (wajib diisi saat menolak)..."
@@ -1337,7 +1411,7 @@ function MaterialRequestList({ userRole, requestType }) {
                   <button
                     onClick={() => handleAction(selectedReq, 'Approved')}
                     disabled={loading}
-                    className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                    className="flex-1 flex items-center justify-center gap-2 bg-[hsl(var(--success))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--success)/0.9)] disabled:opacity-50"
                     data-testid="material-request-approve-btn"
                   >
                     <CheckCircle className="w-4 h-4" /> {loading ? 'Memproses...' : `Setujui & Buat Child Shipment`}
@@ -1346,14 +1420,14 @@ function MaterialRequestList({ userRole, requestType }) {
                     onClick={() => handleAction(selectedReq, 'Rejected')}
                     disabled={loading || !adminNotes.trim()}
                     title={!adminNotes.trim() ? 'Isi catatan admin terlebih dahulu' : ''}
-                    className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 flex items-center justify-center gap-2 bg-[hsl(var(--destructive))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--destructive)/0.9)] disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="material-request-reject-btn"
                   >
                     <XCircle className="w-4 h-4" /> Tolak
                   </button>
                 </div>
                 {!adminNotes.trim() && (
-                  <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <p className="text-xs text-[hsl(var(--warning))] flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3" /> Tombol &quot;Tolak&quot; akan aktif setelah Anda mengisi catatan admin.
                   </p>
                 )}

@@ -161,13 +161,13 @@ export default function RahazaAQLCalculatorModule({ token }) {
         {/* Result */}
         <GlassCard hover={false} className="p-5" data-testid="aql-result-card">
           <h2 className="font-semibold text-foreground mb-4 flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-400" /> Hasil Sampling Plan
+            <CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Hasil Sampling Plan
           </h2>
           {!result ? (
             <p className="text-sm text-muted-foreground py-8 text-center">Isi input untuk melihat hasil...</p>
           ) : result.error ? (
-            <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30">
-              <p className="text-sm text-red-400">{result.error}</p>
+            <div className="p-4 rounded-xl bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.3)]">
+              <p className="text-sm text-[hsl(var(--destructive))]">{result.error}</p>
             </div>
           ) : (
             <div className="space-y-4">
@@ -177,21 +177,21 @@ export default function RahazaAQLCalculatorModule({ token }) {
                   <p className="text-3xl font-bold text-primary">{result.sample_size}</p>
                   <p className="text-[10px] text-muted-foreground mt-1">pcs di-cek</p>
                 </div>
-                <div className="text-center p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30" data-testid="aql-accept-number">
-                  <p className="text-[10px] uppercase tracking-wider text-emerald-400 mb-1">Accept (Ac)</p>
-                  <p className="text-3xl font-bold text-emerald-400">≤ {result.accept_number}</p>
+                <div className="text-center p-4 rounded-xl bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.3)]" data-testid="aql-accept-number">
+                  <p className="text-[10px] uppercase tracking-wider text-[hsl(var(--success))] mb-1">Accept (Ac)</p>
+                  <p className="text-3xl font-bold text-[hsl(var(--success))]">≤ {result.accept_number}</p>
                   <p className="text-[10px] text-muted-foreground mt-1">defect → LULUS</p>
                 </div>
-                <div className="text-center p-4 rounded-xl bg-red-500/10 border border-red-500/30" data-testid="aql-reject-number">
-                  <p className="text-[10px] uppercase tracking-wider text-red-400 mb-1">Reject (Re)</p>
-                  <p className="text-3xl font-bold text-red-400">≥ {result.reject_number}</p>
+                <div className="text-center p-4 rounded-xl bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.3)]" data-testid="aql-reject-number">
+                  <p className="text-[10px] uppercase tracking-wider text-[hsl(var(--destructive))] mb-1">Reject (Re)</p>
+                  <p className="text-3xl font-bold text-[hsl(var(--destructive))]">≥ {result.reject_number}</p>
                   <p className="text-[10px] text-muted-foreground mt-1">defect → GAGAL</p>
                 </div>
               </div>
 
               <div className="text-xs text-muted-foreground p-3 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                <p>Code letter: <b className="text-foreground font-mono">{result.code_letter}</b>
-                  {result.code_letter !== result.final_code_letter && <> → <b className="text-amber-400 font-mono">{result.final_code_letter}</b> (digeser per master table)</>}
+                <p>Code letter: <b className="text-foreground tabular-nums">{result.code_letter}</b>
+                  {result.code_letter !== result.final_code_letter && <> → <b className="text-[hsl(var(--warning))] tabular-nums">{result.final_code_letter}</b> (digeser per master table)</>}
                 </p>
                 <p className="mt-1">{result.decision_rule}</p>
               </div>
@@ -214,10 +214,10 @@ export default function RahazaAQLCalculatorModule({ token }) {
                   <div
                     className={`mt-3 p-3 rounded-xl border ${
                       decision.type === 'accept'
-                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                        ? 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.3)] text-[hsl(var(--success))]'
                         : decision.type === 'reject'
-                        ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                        : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                        ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.3)] text-[hsl(var(--destructive))]'
+                        : 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))]'
                     }`}
                     data-testid="aql-decision"
                   >
@@ -254,7 +254,7 @@ export default function RahazaAQLCalculatorModule({ token }) {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {Object.entries(reference.aql_meaning || {}).map(([v, desc]) => (
               <div key={v} className="flex items-start gap-3 p-3 rounded-lg bg-[var(--glass-bg)] border border-[var(--glass-border)]">
-                <span className="text-sm font-bold font-mono text-primary min-w-[3rem]">AQL {v}</span>
+                <span className="text-sm font-bold tabular-nums text-primary min-w-[3rem]">AQL {v}</span>
                 <span className="text-xs text-muted-foreground">{desc}</span>
               </div>
             ))}

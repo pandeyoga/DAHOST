@@ -4,7 +4,7 @@ import {
   PackageCheck, Truck, Link2, AlertTriangle, CheckCircle2, ChevronRight,
   ExternalLink, Info, ArrowRight, Zap, Warehouse
 } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { GlassCard, GlassPanel } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, EmptyState, Notice } from './moduleAtoms';
 import { fetchMaklonOrders } from '@/lib/maklonOrderAdapter';
 import MaklonMaterialIssuePanel from './MaklonMaterialIssuePanel';
 import ProgressBreakdownBar from './engine/ProgressBreakdownBar';
@@ -20,24 +20,24 @@ import ProgressBreakdownBar from './engine/ProgressBreakdownBar';
 // ─── STAGE CONFIG ────────────────────────────────────────────────────────────
 const STAGE_CONFIG = {
   draft:          { label: 'Draft',         icon: Package,        color: 'text-muted-foreground bg-muted dark:bg-slate-500/10 border-border dark:border-slate-400/30',   pct: 0 },
-  confirmed:      { label: 'Dikonfirmasi',  icon: Package,        color: 'text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/10 border-blue-400 dark:border-blue-400/30',      pct: 5 },
-  material_ready: { label: 'Material Siap', icon: Package,        color: 'text-cyan-600 dark:text-cyan-400 bg-cyan-100 dark:bg-cyan-500/10 border-cyan-400 dark:border-cyan-400/30',      pct: 10 },
-  cutting:        { label: 'Cutting',       icon: Scissors,       color: 'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10 border-violet-400 dark:border-violet-400/30', pct: 30 },
-  sewing:         { label: 'Sewing',        icon: Shirt,          color: 'text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-500/10 border-purple-400 dark:border-purple-400/30', pct: 50 },
-  qc:             { label: 'QC',            icon: ClipboardCheck, color: 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10 border-amber-400 dark:border-amber-400/30',   pct: 70 },
-  packing:        { label: 'Packing',       icon: PackageCheck,   color: 'text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-500/10 border-orange-400 dark:border-orange-400/30', pct: 85 },
-  completed:      { label: 'Selesai',       icon: Truck,          color: 'text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-500/10 border-green-400 dark:border-green-400/30',   pct: 100 },
-  invoiced:       { label: 'Ditagih',       icon: Truck,          color: 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border-emerald-400 dark:border-emerald-400/30', pct: 100 },
+  confirmed:      { label: 'Dikonfirmasi',  icon: Package,        color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.35)] ',      pct: 5 },
+  material_ready: { label: 'Material Siap', icon: Package,        color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.35)] ',      pct: 10 },
+  cutting:        { label: 'Cutting',       icon: Scissors,       color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.35)] ', pct: 30 },
+  sewing:         { label: 'Sewing',        icon: Shirt,          color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.35)] ', pct: 50 },
+  qc:             { label: 'QC',            icon: ClipboardCheck, color: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] ',   pct: 70 },
+  packing:        { label: 'Packing',       icon: PackageCheck,   color: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] ', pct: 85 },
+  completed:      { label: 'Selesai',       icon: Truck,          color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)]  border-[hsl(var(--success)/0.35)] ',   pct: 100 },
+  invoiced:       { label: 'Ditagih',       icon: Truck,          color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)]  border-[hsl(var(--success)/0.35)] ', pct: 100 },
 };
 
 const STAGES_ORDER = ['confirmed', 'material_ready', 'cutting', 'sewing', 'qc', 'packing', 'completed'];
 
 const WO_STATUS_COLOR = {
   draft:          'text-muted-foreground bg-muted dark:bg-slate-500/10 border-border dark:border-slate-400/30',
-  released:       'text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/10 border-blue-400 dark:border-blue-400/30',
-  in_production:  'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10 border-violet-400 dark:border-violet-400/30',
-  completed:      'text-green-700 dark:text-green-400 bg-green-100 dark:bg-green-500/10 border-green-400 dark:border-green-400/30',
-  cancelled:      'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 border-red-400 dark:border-red-400/30',
+  released:       'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.35)] ',
+  in_production:  'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)]  border-[hsl(var(--primary)/0.35)] ',
+  completed:      'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)]  border-[hsl(var(--success)/0.35)] ',
+  cancelled:      'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.35)] ',
 };
 const WO_STATUS_LABEL = {
   draft: 'Draft', released: 'Released', in_production: 'In Produksi',
@@ -142,12 +142,12 @@ function StageQtyDialog({ order, stage, onClose, onSuccess, headers }) {
           {stage === 'qc' && (
             <>
               <div className="space-y-1.5">
-                <Label className="text-xs text-green-700 dark:text-green-400">QC Lolos / Pass (pcs)</Label>
-                <Input type="number" min="0" value={vals.qty_pass} onChange={e => setVals(p=>({...p,qty_pass:e.target.value}))} placeholder="0" className="border-green-400 dark:border-green-500/30 focus:border-green-500/60" />
+                <Label className="text-xs text-[hsl(var(--success))] ">QC Lolos / Pass (pcs)</Label>
+                <Input type="number" min="0" value={vals.qty_pass} onChange={e => setVals(p=>({...p,qty_pass:e.target.value}))} placeholder="0" className="border-[hsl(var(--success)/0.35)] focus:border-[hsl(var(--success)/0.6)]" />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs text-red-700 dark:text-red-400">QC Gagal / Fail (pcs)</Label>
-                <Input type="number" min="0" value={vals.qty_fail} onChange={e => setVals(p=>({...p,qty_fail:e.target.value}))} placeholder="0" className="border-red-400 dark:border-red-500/30 focus:border-red-500/60" />
+                <Label className="text-xs text-[hsl(var(--destructive))] ">QC Gagal / Fail (pcs)</Label>
+                <Input type="number" min="0" value={vals.qty_fail} onChange={e => setVals(p=>({...p,qty_fail:e.target.value}))} placeholder="0" className="border-[hsl(var(--destructive)/0.35)] focus:border-[hsl(var(--destructive)/0.6)]" />
               </div>
               {vals.qty_pass !== '' && vals.qty_fail !== '' && (
                 <div className="text-xs text-foreground/50 bg-foreground/5 p-2 rounded">
@@ -230,14 +230,14 @@ function StageAdvanceDialog({ fromStage, toStage, order, headers, onClose, onSuc
             <StageBadge status={toStage} />
           </div>
           {(gateError || localGate) && (
-            <div className="flex items-start gap-2 bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 rounded-lg p-3 text-xs text-amber-600 dark:text-amber-300">
+            <div className="flex items-start gap-2 bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-lg p-3 text-xs text-[hsl(var(--warning))] ">
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
               <div>
                 <div className="font-semibold mb-1">Stage Gate Peringatan</div>
                 <div>{gateError || localGate}</div>
                 <div className="mt-2 flex items-center gap-2">
                   <input type="checkbox" id="force-cb" checked={force} onChange={e => setForce(e.target.checked)} />
-                  <label htmlFor="force-cb" className="cursor-pointer text-amber-200">Lanjutkan paksa (override)</label>
+                  <label htmlFor="force-cb" className="cursor-pointer text-[hsl(var(--warning))]">Lanjutkan paksa (override)</label>
                 </div>
               </div>
             </div>
@@ -368,8 +368,8 @@ export default function MaklonProductionTracking({ token }) {
         { key: 'sewing_output',  label: 'Output', val: sq.sewing_output },
       ] },
     { stage: 'qc',       label: 'QC',       items: [
-        { key: 'qc_pass', label: 'Pass', val: sq.qc_pass, color: 'text-green-700 dark:text-green-400' },
-        { key: 'qc_fail', label: 'Fail', val: sq.qc_fail, color: 'text-red-700 dark:text-red-400' },
+        { key: 'qc_pass', label: 'Pass', val: sq.qc_pass, color: 'text-[hsl(var(--success))] ' },
+        { key: 'qc_fail', label: 'Fail', val: sq.qc_fail, color: 'text-[hsl(var(--destructive))] ' },
       ] },
     { stage: 'packing',  label: 'Packing',  items: [
         { key: 'packing_output', label: 'Output', val: sq.packing_output },
@@ -377,19 +377,19 @@ export default function MaklonProductionTracking({ token }) {
   ];
 
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-tracking">
+    <div className="space-y-4" data-testid="maklon-tracking">
       <PageHeader
         title="Tracking Produksi Maklon"
         subtitle="Monitor & input progress per tahap — terintegrasi dengan Work Order produksi"
         icon={Activity}
         actions={
-          <Button size="sm" variant="outline" onClick={fetchOrders} className="gap-2" data-testid="tracking-refresh-btn">
-            <RefreshCw className="w-3.5 h-3.5" /> Refresh
+          <Button size="icon" variant="outline" onClick={fetchOrders} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="tracking-refresh-btn">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
         }
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4">
         {/* ── Order List ── */}
         <GlassCard className="p-4 max-h-[780px] overflow-y-auto space-y-1.5">
           <h3 className="text-xs font-semibold text-foreground/60 uppercase tracking-wider mb-3">
@@ -401,13 +401,15 @@ export default function MaklonProductionTracking({ token }) {
             )}
           </h3>
           {loading ? (
-            <div className="text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+            <div className="text-center py-8 text-foreground/40 text-sm">Memuat...</div>
           ) : orders.length === 0 ? (
-            <div className="py-8 text-center text-xs leading-relaxed text-foreground/50"
-                 data-testid="maklon-order-empty">
-              Belum ada PO maklon. PO dibuat di menu <span className="font-medium text-foreground/70">PO Maklon</span>,
-              lalu dikonfirmasi dan didistribusi supaya progres produksinya muncul di sini.
-            </div>
+            <EmptyState
+              icon={Package}
+              testId="maklon-order-empty"
+              title="Belum ada PO maklon"
+              description={<>PO dibuat di menu <span className="font-medium text-foreground/70">PO Maklon</span>,
+                lalu dikonfirmasi dan didistribusi supaya progres produksinya muncul di sini.</>}
+            />
           ) : (
             orders.map(o => {
               const c = STAGE_CONFIG[o.status] || STAGE_CONFIG.draft;
@@ -424,10 +426,10 @@ export default function MaklonProductionTracking({ token }) {
                   data-order-id={o.id}
                 >
                   <div className="flex justify-between items-start mb-1.5">
-                    <span className="font-mono text-[10px] text-foreground/50">{o.order_code}</span>
+                    <span className="tabular-nums text-[10px] text-foreground/50">{o.order_code}</span>
                     <div className="flex items-center gap-1">
                       {woCount > 0 && (
-                        <span className="text-[9px] bg-blue-100 dark:bg-blue-500/20 border border-blue-400 dark:border-blue-400/30 text-blue-600 dark:text-blue-300 rounded px-1.5 py-0.5 flex items-center gap-0.5">
+                        <span className="text-[9px] bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  text-[hsl(var(--primary))]  rounded px-1.5 py-0.5 flex items-center gap-0.5">
                           <Link2 className="w-2.5 h-2.5" />{woCount} WO
                         </span>
                       )}
@@ -442,7 +444,7 @@ export default function MaklonProductionTracking({ token }) {
                     </div>
                     <div className="h-1.5 bg-foreground/10 rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-gradient-to-r from-violet-400 to-purple-500 transition-all duration-500"
+                        className="h-full bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] transition-all duration-500"
                         style={{ width: `${o.progress_percentage || 0}%` }}
                       />
                     </div>
@@ -456,19 +458,19 @@ export default function MaklonProductionTracking({ token }) {
         {/* ── Detail Panel ── */}
         <div className="space-y-4 min-w-0">
           {!selectedOrder ? (
-            <GlassCard className="p-14 text-center text-foreground/50">
-              <Activity className="w-10 h-10 mx-auto mb-3 opacity-20" />
-              <div className="text-sm">Pilih order untuk melihat detail tracking</div>
+            <GlassCard>
+              <EmptyState icon={Activity} title="Belum ada order dipilih"
+                description="Pilih order di daftar kiri untuk melihat detail tracking." />
             </GlassCard>
           ) : loadingDetail ? (
-            <GlassCard className="p-14 text-center text-foreground/40 text-sm">Memuat detail...</GlassCard>
+            <GlassCard className="p-8 text-center text-foreground/40 text-sm">Memuat detail...</GlassCard>
           ) : currentOrder ? (
             <>
               {/* Header Card */}
               <GlassCard className="p-5 space-y-4">
                 <div className="flex justify-between items-start">
                   <div>
-                    <div className="font-mono text-[10px] text-foreground/40 mb-0.5">{currentOrder.order_code}</div>
+                    <div className="tabular-nums text-[10px] text-foreground/40 mb-0.5">{currentOrder.order_code}</div>
                     <h3 className="text-xl font-bold text-foreground">{currentOrder.product_name}</h3>
                     <div className="text-sm text-foreground/50 mt-0.5">
                       {currentOrder.client_name} · {currentOrder.qty_ordered} pcs · Deadline {currentOrder.deadline_date}
@@ -476,7 +478,7 @@ export default function MaklonProductionTracking({ token }) {
                     <div className="flex items-center gap-2 mt-2">
                       <StageBadge status={currentOrder.status} />
                       {syncMode === 'wo' && (
-                        <span className="text-[10px] bg-blue-100 dark:bg-blue-500/15 border border-blue-400/25 text-blue-600 dark:text-blue-300 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        <span className="text-[10px] bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.25)] text-[hsl(var(--primary))]  px-2 py-0.5 rounded-full flex items-center gap-1">
                           <Zap className="w-2.5 h-2.5" /> WO Sync Aktif
                         </span>
                       )}
@@ -490,18 +492,18 @@ export default function MaklonProductionTracking({ token }) {
 
                 {/* Canonical multi-state progress (Barang Jadi vs Reject vs Permak) */}
                 {canonProgress && (
-                  <div className="mb-4 rounded-lg border border-border bg-card/60 p-3" data-testid="tracking-progress-breakdown">
+                  <GlassPanel className="mb-4 p-4" data-testid="tracking-progress-breakdown">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold text-foreground flex items-center gap-1.5">
                         <Activity className="w-3.5 h-3.5 text-primary" /> Progress Multi-State
                       </span>
                       <span className="text-[11px] text-muted-foreground">
-                        Barang Jadi: <span className="font-semibold text-emerald-600">{canonProgress.qty_good}</span> ·
-                        {' '}Permak: <span className="font-semibold text-amber-600">{canonProgress.qty_rework_open}</span>
+                        Barang Jadi: <span className="font-semibold text-[hsl(var(--success))]">{canonProgress.qty_good}</span> ·
+                        {' '}Permak: <span className="font-semibold text-[hsl(var(--warning))]">{canonProgress.qty_rework_open}</span>
                       </span>
                     </div>
                     <ProgressBreakdownBar breakdown={canonProgress} />
-                  </div>
+                  </GlassPanel>
                 )}
 
                 {/* Stage Timeline */}
@@ -550,7 +552,7 @@ export default function MaklonProductionTracking({ token }) {
                 )}
                 {isTerminal && (
                   <div className="pt-3 border-t border-foreground/5">
-                    <div className="flex items-center gap-2 text-xs text-green-700 dark:text-green-400">
+                    <div className="flex items-center gap-2 text-xs text-[hsl(var(--success))] ">
                       <CheckCircle2 className="w-3.5 h-3.5" />
                       Order selesai — {currentOrder.completion_date || ''}
                     </div>
@@ -585,7 +587,7 @@ export default function MaklonProductionTracking({ token }) {
                       >
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-semibold text-foreground/70">{label}</span>
-                          {hasData && <CheckCircle2 className="w-3 h-3 text-green-700 dark:text-green-400" />}
+                          {hasData && <CheckCircle2 className="w-3 h-3 text-[hsl(var(--success))] " />}
                         </div>
                         {items.map(item => (
                           <div key={item.key} className="flex justify-between text-xs">
@@ -613,8 +615,8 @@ export default function MaklonProductionTracking({ token }) {
                 {(sq.qc_pass > 0 || sq.qc_fail > 0) && (
                   <div className="mt-3 flex items-center gap-4 text-xs bg-foreground/5 rounded-lg p-2.5">
                     <span className="text-foreground/50">QC Summary:</span>
-                    <span className="text-green-700 dark:text-green-400 font-semibold">✓ Pass: {sq.qc_pass || 0}</span>
-                    <span className="text-red-700 dark:text-red-400 font-semibold">✗ Fail: {sq.qc_fail || 0}</span>
+                    <span className="text-[hsl(var(--success))] font-semibold">✓ Pass: {sq.qc_pass || 0}</span>
+                    <span className="text-[hsl(var(--destructive))] font-semibold">✗ Fail: {sq.qc_fail || 0}</span>
                     <span className="text-foreground/50">
                       Reject rate: {(((sq.qc_fail || 0) / ((sq.qc_pass || 0) + (sq.qc_fail || 0) || 1)) * 100).toFixed(1)}%
                     </span>
@@ -630,7 +632,7 @@ export default function MaklonProductionTracking({ token }) {
               <GlassCard className="p-5" data-testid="maklon-ssot-panel">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
                   <h4 className="flex items-center gap-2 text-sm font-semibold text-foreground/80">
-                    <Link2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                    <Link2 className="h-4 w-4 text-[hsl(var(--primary))] " />
                     Produksi Nyata (Job &amp; Buku Kuantitas)
                   </h4>
                   <span className="rounded bg-foreground/5 px-2 py-1 text-[10px] text-foreground/50">
@@ -664,26 +666,22 @@ export default function MaklonProductionTracking({ token }) {
                     </div>
 
                     {(ssot.jobs || []).length === 0 ? (
-                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3"
-                           data-testid="maklon-no-job-hint">
-                        <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
-                          PO ini belum punya Production Job
-                        </p>
-                        <p className="mt-1 text-xs leading-relaxed text-amber-700/80 dark:text-amber-300/80">
+                      <Notice tone="warning" icon={AlertTriangle} title="PO ini belum punya job produksi" testId="maklon-no-job-hint">
+                        <p className="text-xs leading-relaxed">
                           Progres produksi baru muncul setelah PO <strong>dikonfirmasi</strong> lalu
-                          <strong> didistribusi</strong> menjadi Production Job ke pelaksana
+                          <strong> didistribusi</strong> menjadi job produksi ke pelaksana
                           (produksi internal atau vendor CMT). Selama belum didistribusi,
                           angka di atas wajar bernilai 0 — bukan data yang hilang.
                         </p>
-                      </div>
+                      </Notice>
                     ) : (
-                      <div className="space-y-2" data-testid="maklon-job-list">
+                      <div className="divide-y divide-foreground/[0.08]" data-testid="maklon-job-list">
                         {ssot.jobs.map(j => (
                           <div key={j.id}
-                               className="flex items-center justify-between rounded-lg border border-foreground/[0.08] bg-foreground/[0.03] px-3 py-2.5">
+                               className="flex items-center justify-between px-1 py-2.5">
                             <div className="min-w-0 space-y-0.5">
                               <div className="flex items-center gap-2">
-                                <span className="font-mono text-xs font-semibold text-foreground/80">{j.job_number}</span>
+                                <span className="tabular-nums text-xs font-semibold text-foreground/80">{j.job_number}</span>
                                 <WoBadge status={j.status} />
                               </div>
                               <div className="text-[10px] text-foreground/40">
@@ -704,7 +702,7 @@ export default function MaklonProductionTracking({ token }) {
                         <div className="space-y-1.5">
                           {ssot.dispatches.map(d => (
                             <div key={d.id} className="flex items-center justify-between text-xs">
-                              <span className="font-mono text-foreground/70">{d.dispatch_number}</span>
+                              <span className="tabular-nums text-foreground/70">{d.dispatch_number}</span>
                               <span className="text-foreground/50">{d.dispatch_date}</span>
                               <span className="font-semibold tabular-nums text-foreground">{d.qty} pcs</span>
                               <span className="text-foreground/50">{d.status}</span>
@@ -720,17 +718,18 @@ export default function MaklonProductionTracking({ token }) {
               {/* ── QC & Samples Row ── */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <GlassCard className="p-4">
-                  <h4 className="text-xs font-semibold text-foreground/60 uppercase tracking-wider mb-3">QC per Stage</h4>
+                  <h4 className="text-xs font-semibold text-foreground/60 uppercase tracking-wider mb-3">QC per tahap</h4>
                   {Object.keys(qcData.stages_summary || {}).length === 0 ? (
-                    <div className="text-foreground/40 text-xs py-4 text-center">Belum ada QC tercatat</div>
+                    <EmptyState icon={ClipboardCheck} title="Belum ada QC tercatat"
+                      description="Hasil QC per tahap akan tampil setelah pemeriksaan dicatat." />
                   ) : (
                     <div className="space-y-2">
                       {Object.entries(qcData.stages_summary).map(([st, d]) => (
                         <div key={st} className="flex items-center justify-between text-xs">
                           <Badge variant="outline" className="text-[10px]">{st}</Badge>
                           <div className="text-right">
-                            <div className="text-foreground/70">{d.qty_passed}/{d.qty_inspected} pass</div>
-                            <div className={`text-[10px] ${d.reject_rate_pct > 5 ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}`}>
+                            <div className="text-foreground/70">{d.qty_passed}/{d.qty_inspected} lolos</div>
+                            <div className={`text-[10px] ${d.reject_rate_pct > 5 ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--success))] '}`}>
                               Reject {d.reject_rate_pct}%
                             </div>
                           </div>
@@ -740,15 +739,16 @@ export default function MaklonProductionTracking({ token }) {
                   )}
                 </GlassCard>
                 <GlassCard className="p-4">
-                  <h4 className="text-xs font-semibold text-foreground/60 uppercase tracking-wider mb-3">Samples ({samples.length})</h4>
+                  <h4 className="text-xs font-semibold text-foreground/60 uppercase tracking-wider mb-3">Sample ({samples.length})</h4>
                   {samples.length === 0 ? (
-                    <div className="text-foreground/40 text-xs py-4 text-center">Belum ada sample</div>
+                    <EmptyState icon={Shirt} title="Belum ada sample"
+                      description="Sample untuk order ini dibuat di menu Kelola Sampel." />
                   ) : (
                     <div className="space-y-2">
                       {samples.map(s => (
                         <div key={s.id} className="flex items-center justify-between text-xs">
                           <div>
-                            <div className="font-mono text-[10px] text-foreground/50">{s.sample_code}</div>
+                            <div className="tabular-nums text-[10px] text-foreground/50">{s.sample_code}</div>
                             <div className="text-foreground/70">{s.product_name}</div>
                           </div>
                           <Badge variant="outline" className="text-[10px]">{s.status}</Badge>

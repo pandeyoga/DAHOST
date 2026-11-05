@@ -1,24 +1,24 @@
 const statusColors = {
   // General
-  active: 'bg-emerald-100 text-emerald-700',
+  active: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
   inactive: 'bg-muted text-muted-foreground',
   // PO Status
   Draft: 'bg-muted text-foreground/90',
-  Confirmed: 'bg-indigo-100 text-indigo-700',
-  Distributed: 'bg-blue-100 text-blue-700',
-  'In Production': 'bg-amber-100 text-amber-700',
-  'Production Complete': 'bg-teal-100 text-teal-700',
-  'Ready to Close': 'bg-violet-100 text-violet-700',
-  Completed: 'bg-emerald-100 text-emerald-700',
-  'Closed Short': 'bg-orange-100 text-orange-700',
+  Confirmed: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
+  Distributed: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
+  'In Production': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+  'Production Complete': 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
+  'Ready to Close': 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
+  Completed: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
+  'Closed Short': 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
   Closed: 'bg-muted text-muted-foreground',
   // Work Order Status
   Waiting: 'bg-muted text-muted-foreground',
-  'In Progress': 'bg-blue-100 text-blue-700',
+  'In Progress': 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]',
   // Invoice Status
-  Unpaid: 'bg-red-100 text-red-700',
-  Partial: 'bg-amber-100 text-amber-700',
-  Paid: 'bg-emerald-100 text-emerald-700',
+  Unpaid: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]',
+  Partial: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]',
+  Paid: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]',
 };
 
 export default function StatusBadge({ status }) {

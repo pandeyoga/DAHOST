@@ -138,7 +138,7 @@ export function PdfColumnPicker({
             <Loader2 className="animate-spin mx-auto mb-2" size={18} /> Memuat daftar kolom…
           </div>
         ) : err ? (
-          <div className="py-6 text-sm text-amber-700 dark:text-amber-300" data-testid="pdf-picker-error">{err}</div>
+          <div className="py-6 text-sm text-[hsl(var(--warning))] " data-testid="pdf-picker-error">{err}</div>
         ) : (
           <>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">

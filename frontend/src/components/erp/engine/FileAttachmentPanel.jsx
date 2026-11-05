@@ -1,12 +1,16 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { Paperclip, Upload, Trash2, Download, File, FileImage, FileSpreadsheet, Archive } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { apiGet, apiPost, apiDelete } from '../../../lib/api';
 
 function getFileIcon(ext) {
-  if (['jpg','jpeg','png','webp','gif'].includes(ext)) return <FileImage className="w-4 h-4 text-blue-500" />;
-  if (['xlsx','xls','csv'].includes(ext)) return <FileSpreadsheet className="w-4 h-4 text-emerald-600" />;
-  if (['zip','rar'].includes(ext)) return <Archive className="w-4 h-4 text-amber-600" />;
+  if (['jpg','jpeg','png','webp','gif'].includes(ext)) return <FileImage className="w-4 h-4 text-[hsl(var(--primary))]" />;
+  if (['xlsx','xls','csv'].includes(ext)) return <FileSpreadsheet className="w-4 h-4 text-[hsl(var(--success))]" />;
+  if (['zip','rar'].includes(ext)) return <Archive className="w-4 h-4 text-[hsl(var(--warning))]" />;
   return <File className="w-4 h-4 text-muted-foreground" />;
 }
 
@@ -45,7 +49,7 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
       const data = await apiPost('/upload', formData);
       setAttachments(prev => [...prev, data]);
     } catch (e) {
-      alert('Upload gagal: ' + e.message);
+      toast.error('Unggah gagal: ' + e.message);
     } finally {
       setUploading(false);
     }
@@ -65,12 +69,12 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
   };
 
   const handleDelete = async (att) => {
-    if (!confirm(`Hapus file "${att.original_name}"?`)) return;
+    if (!(await confirmDialog({ title: `Hapus file "${att.original_name}"?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await apiDelete(`/upload?id=${att.id}`);
       setAttachments(prev => prev.filter(a => a.id !== att.id));
     } catch (e) {
-      alert(e.message || 'Gagal menghapus');
+      toast.error(e.message || 'Gagal menghapus');
     }
   };
 
@@ -88,32 +92,33 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
         <h4 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
           <Paperclip className="w-4 h-4" /> Lampiran ({attachments.length})
         </h4>
-        <button
+        <Button
           type="button"
+          size="sm"
+          variant="outline"
           onClick={() => fileInputRef.current?.click()}
           disabled={uploading}
-          className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >
           <Upload className="w-3.5 h-3.5" />
-          {uploading ? 'Mengupload...' : 'Upload File'}
-        </button>
+          {uploading ? 'Mengunggah...' : 'Unggah file'}
+        </Button>
         <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileChange}
           accept=".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.zip" />
       </div>
 
-      <div
-        className={`border-2 border-dashed rounded-lg p-3 text-center text-xs transition-colors ${
-          dragOver ? 'border-blue-400 bg-blue-50' : 'border-border bg-muted/40'
+      <GlassCard
+        className={`border-2 border-dashed p-3 text-center text-xs shadow-none transition-colors ${
+          dragOver ? 'border-[hsl(var(--primary)/0.35)]' : ''
         }`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
       >
         <Upload className="w-4 h-4 mx-auto mb-1 text-muted-foreground/70" />
-        <span className="text-muted-foreground/70">Drag & drop file di sini atau klik tombol Upload</span>
+        <span className="text-muted-foreground/70">Seret & lepas file di sini atau klik tombol Unggah file</span>
         <br />
         <span className="text-muted-foreground/50">PDF, JPG, PNG, XLSX, ZIP — maks. 10MB</span>
-      </div>
+      </GlassCard>
 
       {attachments.length > 0 && (
         <div className="space-y-1.5">
@@ -128,15 +133,16 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
                 href={att.public_path}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="p-1 rounded hover:bg-blue-50 text-blue-500"
-                title="Download"
+                className="p-1 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
+                title="Unduh"
+                aria-label="Unduh"
               >
                 <Download className="w-3.5 h-3.5" />
               </a>
               <button
                 type="button"
                 onClick={() => handleDelete(att)}
-                className="p-1 rounded hover:bg-red-50 text-red-400"
+                className="p-1 rounded hover:bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))]"
                 title="Hapus"
               >
                 <Trash2 className="w-3.5 h-3.5" />

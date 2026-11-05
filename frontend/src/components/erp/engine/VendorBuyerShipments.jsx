@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Plus, Send, Download, Filter, Search, ChevronDown, ChevronRight, X, CheckCircle, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { EmptyState, Notice } from '../moduleAtoms';
 import Modal from './Modal';
 import { apiGet, apiPost } from '../../../lib/api';
 import { todayWIB } from '../../../lib/waktu';
@@ -167,8 +170,8 @@ export default function VendorBuyerShipments({ user }) {
 
   const fmtDate = d => d ? new Date(d).toLocaleDateString('id-ID') : '-';
   const getStatusColor = (s) => {
-    if (s === 'Fully Shipped') return 'bg-emerald-100 text-emerald-700 border border-emerald-200';
-    if (s === 'Partially Shipped') return 'bg-amber-100 text-amber-700 border border-amber-200';
+    if (s === 'Fully Shipped') return 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.35)]';
+    if (s === 'Partially Shipped') return 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border border-[hsl(var(--warning)/0.35)]';
     return 'bg-muted text-muted-foreground';
   };
 
@@ -179,41 +182,37 @@ export default function VendorBuyerShipments({ user }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="flex items-start justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Deklarasi Pengiriman ke DA</h1>
           <p className="text-muted-foreground text-sm mt-1">Kirim produk jadi (FG) dari CMT ke Gudang DA. DA akan verifikasi qty aktual + reject, lalu baru dispatch ke buyer.</p>
         </div>
-        <button onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
-          className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700"
+        <Button onClick={() => { setForm({ job_id: '', shipment_date: todayWIB(), notes: '', items: [] }); setSelectedJob(null); setJobItems([]); setShowModal(true); }}
           data-testid="btn-create-cmt-shipment">
-          <Plus className="w-4 h-4" /> Deklarasi Kirim ke DA
-        </button>
+          <Plus /> Deklarasi kirim ke DA
+        </Button>
       </div>
 
       {/* Phase B info banner */}
-      <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 flex items-start gap-2"
-           data-testid="phase-b-banner">
-        <CheckCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-blue-700" />
-        <span>
-          <strong>Perubahan alur (Phase B — CMT → DA → Buyer):</strong> vendor CMT tidak lagi kirim langsung
-          ke buyer. Setiap deklarasi pengiriman disini akan otomatis dibuatkan <em>CMT Receipt</em> draft di
-          sisi DA. Setelah DA verifikasi &amp; approve (bisa reject sebagian bila cacat), stok FG DA naik dan
-          AP CMT muncul di Finance = Σ qty_actual × cmt_rate. Baru DA yang dispatch ke buyer.
-        </span>
-      </div>
+      <Notice tone="info" icon={CheckCircle} testId="phase-b-banner" className="text-xs"
+        title="Perubahan alur: CMT → DA → Buyer">
+        Vendor CMT tidak lagi kirim langsung ke buyer. Setiap deklarasi pengiriman di sini otomatis
+        dibuatkan <em>CMT Receipt</em> draf di sisi DA. Setelah DA memverifikasi dan menyetujui (bisa
+        menolak sebagian bila cacat), stok FG DA naik dan utang CMT tercatat di Keuangan sebesar qty
+        aktual × tarif CMT. Baru DA yang mengirim ke buyer.
+      </Notice>
 
       {/* ── KEWAJIBAN: barang yang BELUM SAMPAI di DA ────────────────────────
           Aturan owner: qty pada dokumen deklarasi disesuaikan dengan yang
           benar-benar diterima DA; kekurangannya tetap kewajiban vendor. */}
       {shorts.items?.length > 0 && (
-        <div className="rounded-xl border border-rose-300 bg-card overflow-hidden" data-testid="vendor-short-panel">
-          <div className="px-3 py-2 bg-rose-50 border-b border-rose-200">
-            <p className="text-sm font-bold text-rose-900">
+        <GlassCard className="overflow-hidden border-[hsl(var(--destructive)/0.35)]" data-testid="vendor-short-panel">
+          <div className="px-3 py-2 bg-[hsl(var(--destructive)/0.1)] border-b border-[hsl(var(--destructive)/0.35)]">
+            <p className="text-sm font-bold text-[hsl(var(--destructive))]">
               ⚠ {Number(shorts.total_qty_open || 0).toLocaleString('id-ID')} pcs BELUM SAMPAI di DA — harus dicari &amp; dikirim ulang
             </p>
-            <p className="text-[11px] text-rose-700 mt-0.5">
+            <p className="text-[11px] text-[hsl(var(--destructive))] mt-0.5">
               DA hanya menerima lebih sedikit dari klaim kirim Anda. Dokumen deklarasi sudah
               dikoreksi mengikuti qty yang diterima, dan <strong>sisa kirim Anda bertambah</strong> —
               silakan buat <em>Dispatch</em> baru untuk mengirim ulang kekurangannya.
@@ -235,27 +234,27 @@ export default function VendorBuyerShipments({ user }) {
               <tbody>
                 {shorts.items.map(s => (
                   <tr key={s.id} className="border-t border-border/60">
-                    <td className="px-3 py-2 font-mono text-[11px] font-semibold">{s.short_number}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px] font-semibold">{s.short_number}</td>
                     <td className="px-3 py-2">{s.po_number || '—'}</td>
-                    <td className="px-3 py-2 font-mono text-[11px]">{s.sku || '—'}</td>
+                    <td className="px-3 py-2 tabular-nums text-[11px]">{s.sku || '—'}</td>
                     <td className="px-3 py-2 text-right text-muted-foreground">{Number(s.qty_claimed || 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right text-emerald-700 font-medium">{Number(s.qty_arrived || 0).toLocaleString('id-ID')}</td>
-                    <td className="px-3 py-2 text-right font-bold text-rose-700">{Number(s.qty_open ?? s.qty_short ?? 0).toLocaleString('id-ID')}</td>
+                    <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">{Number(s.qty_arrived || 0).toLocaleString('id-ID')}</td>
+                    <td className="px-3 py-2 text-right font-bold text-[hsl(var(--destructive))]">{Number(s.qty_open ?? s.qty_short ?? 0).toLocaleString('id-ID')}</td>
                     <td className="px-3 py-2 text-muted-foreground">{s.short_date || '—'}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </GlassCard>
       )}
 
       <div className="space-y-4">
         {shipments.length === 0 ? (
-          <div className="bg-card rounded-xl border border-border p-12 text-center">
-            <Send className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-            <p className="text-muted-foreground/70">Belum ada data pengiriman</p>
-          </div>
+          <GlassCard>
+            <EmptyState icon={Send} title="Belum ada data pengiriman"
+              description="Klik Deklarasi kirim ke DA untuk mencatat pengiriman pertama." />
+          </GlassCard>
         ) : shipments.map(s => {
           // Use backend-calculated fixed totals
           const totalOrdered = s.total_ordered || 0;
@@ -285,7 +284,7 @@ export default function VendorBuyerShipments({ user }) {
                     {/* Add dispatch button — only if not fully shipped */}
                     {progressPct < 100 && (
                       <button onClick={() => openDispatch(s)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-sm hover:bg-emerald-100 border border-emerald-200">
+                        className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] rounded-lg text-sm hover:bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]">
                         <Plus className="w-3.5 h-3.5" /> Dispatch
                       </button>
                     )}
@@ -294,7 +293,7 @@ export default function VendorBuyerShipments({ user }) {
                       <Download className="w-3.5 h-3.5" /> PDF
                     </button>
                     <button onClick={() => loadDispatches(s.id)}
-                      className="flex items-center gap-1 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm hover:bg-blue-100">
+                      className="flex items-center gap-1 px-3 py-1.5 bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.15)]">
                       {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} Riwayat
                     </button>
                   </div>
@@ -304,10 +303,10 @@ export default function VendorBuyerShipments({ user }) {
                 <div className="mt-3 bg-muted/40 rounded-lg p-3">
                   <div className="flex items-center justify-between text-sm mb-1.5">
                     <span className="font-bold text-foreground/90">{totalShipped.toLocaleString('id-ID')} / {totalOrdered.toLocaleString('id-ID')} pcs</span>
-                    <span className={`font-bold ${progressPct >= 100 ? 'text-emerald-700' : 'text-blue-700'}`}>{progressPct}%</span>
+                    <span className={`font-bold ${progressPct >= 100 ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--primary))]'}`}>{progressPct}%</span>
                   </div>
                   <div className="w-full h-2.5 bg-muted rounded-full overflow-hidden">
-                    <div className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-emerald-500' : progressPct > 50 ? 'bg-blue-500' : 'bg-amber-500'}`}
+                    <div className={`h-full rounded-full transition-all ${progressPct >= 100 ? 'bg-[hsl(var(--success))]' : progressPct > 50 ? 'bg-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning))]'}`}
                       style={{ width: `${Math.min(progressPct, 100)}%` }} />
                   </div>
                   <div className="flex items-center justify-between text-xs text-muted-foreground/70 mt-1">
@@ -332,26 +331,26 @@ export default function VendorBuyerShipments({ user }) {
                         <div key={d.dispatch_seq} className="px-5 py-3 border-b border-border/60 last:border-0">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
-                              <span className="w-6 h-6 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center">{d.dispatch_seq}</span>
+                              <span className="w-6 h-6 rounded-full bg-[hsl(var(--primary))] text-white text-xs font-bold flex items-center justify-center">{d.dispatch_seq}</span>
                               <span className="text-xs font-bold text-foreground/90">Dispatch #{d.dispatch_seq}</span>
                               <span className="text-xs text-muted-foreground/70">{fmtDate(d.dispatch_date)}</span>
                             </div>
                             <div className="flex items-center gap-3 text-xs">
-                              <span className="text-emerald-700 font-bold">+{(d.total_qty || 0).toLocaleString('id-ID')} pcs</span>
-                              <span className="text-blue-700">Kumulatif: {cumulative.toLocaleString('id-ID')}/{totalOrdered.toLocaleString('id-ID')}</span>
+                              <span className="text-[hsl(var(--success))] font-bold">+{(d.total_qty || 0).toLocaleString('id-ID')} pcs</span>
+                              <span className="text-[hsl(var(--primary))]">Kumulatif: {cumulative.toLocaleString('id-ID')}/{totalOrdered.toLocaleString('id-ID')}</span>
                               <span className="text-muted-foreground/70">Sisa: {dispatchRemaining.toLocaleString('id-ID')}</span>
                             </div>
                           </div>
                           <div className="mt-2 grid grid-cols-4 gap-1.5">
                             {(d.items || []).map(it => (
                               <div key={it.id} className="bg-card rounded px-2 py-1.5 text-xs border border-border/60">
-                                <p className="font-mono text-amber-700 font-semibold">{it.serial_number || '—'}</p>
-                                <p className="font-mono text-blue-600">{it.sku || '-'}</p>
+                                <p className="tabular-nums text-[hsl(var(--warning))] font-semibold">{it.serial_number || '—'}</p>
+                                <p className="tabular-nums text-[hsl(var(--primary))]">{it.sku || '-'}</p>
                                 <p className="font-bold">{(it.qty_shipped || 0).toLocaleString('id-ID')} pcs</p>
                                 {it.edit_history?.length > 0 && (
                                   <span data-testid={`vendor-edited-badge-${it.id}`}
                                     title={(it.edit_history || []).map(h => `${fmtDate(h.edited_at)} • ${h.old_qty}→${h.new_qty} pcs • ${h.edited_by}: ${h.reason}`).join('\n')}
-                                    className="mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700 text-[9px] font-semibold cursor-help">
+                                    className="mt-1 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] text-[9px] font-semibold cursor-help">
                                     <Pencil className="w-2.5 h-2.5" /> diedit admin
                                   </span>
                                 )}
@@ -375,7 +374,7 @@ export default function VendorBuyerShipments({ user }) {
           <form onSubmit={handleSubmit} className="space-y-4">
             {/* Show info if this is a continuation */}
             {form.job_id && shipments.find(s => s.job_id === form.job_id) && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+              <div className="bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--warning))]">
                 📦 <strong>Pengiriman Lanjutan</strong>: Dispatch baru akan ditambahkan ke record pengiriman yang sudah ada untuk job ini.
               </div>
             )}
@@ -387,11 +386,11 @@ export default function VendorBuyerShipments({ user }) {
                 <input
                   type="text"
                   placeholder="🔍 Cari nomor job atau PO..."
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 mb-2"
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)] mb-2"
                   value={searchJob}
                   onChange={e => setSearchJob(e.target.value)}
                 />
-                <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
                   value={form.job_id} onChange={e => { setSearchJob(''); loadJobItems(e.target.value); }}>
                   <option value="">— Pilih Job Produksi —</option>
                   {/* Jobs with available qty to ship — shown by default */}
@@ -442,22 +441,22 @@ export default function VendorBuyerShipments({ user }) {
                   })()}
                 </SmartNativeSelect>
                 {/* Toggle show all */}
-                <button type="button" className="text-xs text-blue-600 hover:underline mt-1" onClick={() => setShowAllJobs(v => !v)}>
+                <button type="button" className="text-xs text-[hsl(var(--primary))] hover:underline mt-1" onClick={() => setShowAllJobs(v => !v)}>
                   {showAllJobs ? '▲ Sembunyikan job selesai/belum mulai' : '▼ Tampilkan semua job'}
                 </button>
-                {jobs.length === 0 && <p className="text-xs text-amber-600 mt-1">Belum ada Production Job.</p>}
+                {jobs.length === 0 && <p className="text-xs text-[hsl(var(--warning))] mt-1">Job produksi untuk vendor ini belum tersedia.</p>}
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Dispatch</label>
-                <input type="date" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                <GlassInput type="date"
                   value={form.shipment_date} onChange={e => setForm(f => ({ ...f, shipment_date: e.target.value }))} />
               </div>
             </div>
 
             {selectedJob && (
-              <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm">
-                <p className="font-semibold text-blue-700">{selectedJob.job_number} — {selectedJob.po_number}</p>
-                <p className="text-xs text-blue-500 mt-0.5">Qty kirim tidak boleh melebihi sisa yang belum dikirim</p>
+              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm">
+                <p className="font-semibold text-[hsl(var(--primary))]">{selectedJob.job_number} — {selectedJob.po_number}</p>
+                <p className="text-xs text-[hsl(var(--primary))] mt-0.5">Qty kirim tidak boleh melebihi sisa yang belum dikirim</p>
               </div>
             )}
 
@@ -468,39 +467,39 @@ export default function VendorBuyerShipments({ user }) {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/40">
                       <tr>
-                        <th className="text-left px-3 py-2 text-xs text-amber-600">Serial</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">Serial</th>
                         <th className="text-left px-3 py-2 text-xs text-muted-foreground">Produk / SKU</th>
                         <th className="text-right px-3 py-2 text-xs text-muted-foreground">Dipesan</th>
-                        <th className="text-right px-3 py-2 text-xs text-emerald-600">Diproduksi</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-amber-50">Diklaim ke DA</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-blue-50">Diterima DA</th>
-                        <th className="text-right px-3 py-2 text-xs text-rose-600 bg-rose-50">Belum sampai</th>
-                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-emerald-50">Sisa Kirim</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))]">Diproduksi</th>
+                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--warning)/0.1)]">Diklaim ke DA</th>
+                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--primary)/0.1)]">Diterima DA</th>
+                        <th className="text-right px-3 py-2 text-xs text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]">Belum sampai</th>
+                        <th className="text-right px-3 py-2 text-xs text-muted-foreground bg-[hsl(var(--success)/0.1)]">Sisa Kirim</th>
                         <th className="text-right px-3 py-2 text-xs text-foreground/90 font-bold">Kirim Sekarang *</th>
                       </tr>
                     </thead>
                     <tbody>
                       {form.items.map((item, idx) => (
                         <tr key={idx} className="border-t border-border/60">
-                          <td className="px-3 py-2 font-mono text-xs text-amber-700 font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">{item.serial_number || <span className="text-muted-foreground/50">—</span>}</td>
                           <td className="px-3 py-2">
                             <p className="font-medium">{item.product_name}</p>
-                            <p className="text-xs font-mono text-blue-600">{item.sku || '-'} · {item.size}/{item.color}</p>
+                            <p className="text-xs tabular-nums text-[hsl(var(--primary))]">{item.sku || '-'} · {item.size}/{item.color}</p>
                           </td>
                           <td className="px-3 py-2 text-right text-muted-foreground">{(item.ordered_qty || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-emerald-700 font-medium">
+                          <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-medium">
                             {(item.produced_qty || 0).toLocaleString('id-ID')}
                             {item.child_produced_qty > 0 && (
-                              <span className="block text-xs text-purple-600">+{item.child_produced_qty} child</span>
+                              <span className="block text-xs text-[hsl(var(--primary))]">+{item.child_produced_qty} child</span>
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right text-amber-700 bg-amber-50">{(item.shipped_to_da || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-blue-700 bg-blue-50">{(item.received_by_da || 0).toLocaleString('id-ID')}</td>
-                          <td className={`px-3 py-2 text-right font-bold bg-rose-50 ${(item.qty_short_open || 0) > 0 ? 'text-rose-700' : 'text-muted-foreground/60'}`}>{(item.qty_short_open || 0).toLocaleString('id-ID')}</td>
-                          <td className="px-3 py-2 text-right text-emerald-700 font-bold bg-emerald-50">{(item.remaining_to_ship || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]">{(item.shipped_to_da || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]">{(item.received_by_da || 0).toLocaleString('id-ID')}</td>
+                          <td className={`px-3 py-2 text-right font-bold bg-[hsl(var(--destructive)/0.1)] ${(item.qty_short_open || 0) > 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground/60'}`}>{(item.qty_short_open || 0).toLocaleString('id-ID')}</td>
+                          <td className="px-3 py-2 text-right text-[hsl(var(--success))] font-bold bg-[hsl(var(--success)/0.1)]">{(item.remaining_to_ship || 0).toLocaleString('id-ID')}</td>
                           <td className="px-3 py-2">
                             <input type="number" min="0" max={item.remaining_to_ship}
-                              className={`w-24 border rounded px-2 py-1 text-sm text-right ml-auto block focus:outline-none focus:ring-1 ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-red-400 text-red-600' : 'border-border focus:ring-emerald-500'}`}
+                              className={`w-24 border rounded px-2 py-1 text-sm text-right ml-auto block focus:outline-none focus:ring-1 ${Number(item.qty_shipped) > Number(item.remaining_to_ship) ? 'border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]' : 'border-border focus:ring-[hsl(var(--success)/0.35)]'}`}
                               value={item.qty_shipped}
                               onChange={e => updateQty(idx, e.target.value)} />
                           </td>
@@ -511,12 +510,12 @@ export default function VendorBuyerShipments({ user }) {
                       <tr>
                         <td colSpan={2} className="px-3 py-2">Total</td>
                         <td className="px-3 py-2 text-right">{form.items.reduce((s, i) => s + (Number(i.ordered_qty) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-emerald-700">{form.items.reduce((s, i) => s + (Number(i.produced_qty) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-amber-700 bg-amber-50">{form.items.reduce((s, i) => s + (Number(i.shipped_to_da) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-blue-700 bg-blue-50">{form.items.reduce((s, i) => s + (Number(i.received_by_da) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-rose-700 bg-rose-50">{form.items.reduce((s, i) => s + (Number(i.qty_short_open) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-emerald-700 bg-emerald-50">{form.items.reduce((s, i) => s + (Number(i.remaining_to_ship) || 0), 0).toLocaleString('id-ID')}</td>
-                        <td className="px-3 py-2 text-right text-blue-700">{form.items.reduce((s, i) => s + (Number(i.qty_shipped) || 0), 0).toLocaleString('id-ID')} pcs</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--success))]">{form.items.reduce((s, i) => s + (Number(i.produced_qty) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.shipped_to_da) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.received_by_da) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.qty_short_open) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--success))] bg-[hsl(var(--success)/0.1)]">{form.items.reduce((s, i) => s + (Number(i.remaining_to_ship) || 0), 0).toLocaleString('id-ID')}</td>
+                        <td className="px-3 py-2 text-right text-[hsl(var(--primary))]">{form.items.reduce((s, i) => s + (Number(i.qty_shipped) || 0), 0).toLocaleString('id-ID')} pcs</td>
                       </tr>
                     </tfoot>
                   </table>
@@ -526,13 +525,13 @@ export default function VendorBuyerShipments({ user }) {
 
             <div>
               <label className="block text-sm font-medium text-foreground/90 mb-1">Catatan</label>
-              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              <textarea rows="2" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
                 value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
             </div>
 
             <div className="flex gap-3">
               <button type="submit" disabled={loading}
-                className="flex-1 bg-emerald-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+                className="flex-1 bg-[hsl(var(--success))] text-white py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--success)/0.9)] disabled:opacity-50">
                 {loading ? 'Menyimpan...' : 'Kirim'}
               </button>
               <button type="button" onClick={() => setShowModal(false)} className="flex-1 border border-border py-2 rounded-lg text-sm hover:bg-muted/60">Batal</button>

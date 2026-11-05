@@ -24,13 +24,13 @@ import { useToast } from '../../hooks/use-toast';
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const STATUS_CONFIG = {
-  normal:   { color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-400 dark:border-emerald-500/30', icon: CheckCircle2,  label: 'Normal' },
-  warning:  { color: 'text-amber-700 dark:text-amber-400',   bg: 'bg-amber-100 dark:bg-amber-500/10 border-amber-400 dark:border-amber-500/30',     icon: AlertTriangle, label: 'Perhatian' },
-  critical: { color: 'text-red-700 dark:text-red-400',     bg: 'bg-red-100 dark:bg-red-500/10 border-red-400 dark:border-red-500/30',         icon: XCircle,       label: 'Kritis' },
+  normal:   { color: 'text-[hsl(var(--success))] ', bg: 'bg-[hsl(var(--success)/0.15)]  border-[hsl(var(--success)/0.35)] ', icon: CheckCircle2,  label: 'Normal' },
+  warning:  { color: 'text-[hsl(var(--warning))] ',   bg: 'bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] ',     icon: AlertTriangle, label: 'Perhatian' },
+  critical: { color: 'text-[hsl(var(--destructive))] ',     bg: 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.35)] ',         icon: XCircle,       label: 'Kritis' },
 };
 
 function UtilBar({ pct, status }) {
-  const colors = { normal: 'bg-emerald-500', warning: 'bg-amber-500', critical: 'bg-red-500' };
+  const colors = { normal: 'bg-[hsl(var(--success))]', warning: 'bg-[hsl(var(--warning))]', critical: 'bg-[hsl(var(--destructive))]' };
   return (
     <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
       <div
@@ -53,7 +53,7 @@ function UtilTrendChart({ data, capacity }) {
       {data.map(d => {
         const heightPct = (d.output_pcs / maxPcs) * 100;
         const cfg = STATUS_CONFIG[d.status] || STATUS_CONFIG.normal;
-        const barColor = d.status === 'critical' ? 'bg-red-500' : d.status === 'warning' ? 'bg-amber-500' : 'bg-emerald-500';
+        const barColor = d.status === 'critical' ? 'bg-[hsl(var(--destructive))]' : d.status === 'warning' ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--success))]';
         return (
           <div key={d.date} className="flex-1 flex flex-col items-center group relative">
             <div
@@ -148,7 +148,7 @@ export default function CapacityPlanningModule({ user, headers }) {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
-            <BarChart3 className="text-blue-600 dark:text-blue-400" /> Perencanaan Kapasitas
+            <BarChart3 className="text-[hsl(var(--primary))] " /> Perencanaan Kapasitas
           </h2>
           <p className="text-sm text-muted-foreground/60 dark:text-zinc-400 mt-1">Analisis kapasitas produksi berbasis rule & data historis</p>
         </div>
@@ -172,7 +172,7 @@ export default function CapacityPlanningModule({ user, headers }) {
             </div>
             <div className="text-xs text-muted-foreground/60 dark:text-zinc-500 mt-0.5">
               {overview?.load?.overdue_count > 0 && (
-                <span className="text-red-700 dark:text-red-400">{overview.load.overdue_count} overdue</span>
+                <span className="text-[hsl(var(--destructive))] ">{overview.load.overdue_count} overdue</span>
               )}
             </div>
           </CardContent>
@@ -223,7 +223,7 @@ export default function CapacityPlanningModule({ user, headers }) {
               <span>100%</span>
             </div>
             {overview.downtime_today_min > 0 && (
-              <p className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+              <p className="text-xs text-[hsl(var(--warning))] mt-2">
                 ⚠ Downtime hari ini: {overview.downtime_today_min} menit
               </p>
             )}
@@ -235,7 +235,7 @@ export default function CapacityPlanningModule({ user, headers }) {
       <Card className="bg-card border-border">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-medium text-foreground/80 flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-blue-600 dark:text-blue-400" /> Output Harian (7 Hari Terakhir)
+            <TrendingUp className="w-4 h-4 text-[hsl(var(--primary))] " /> Output Harian (7 Hari Terakhir)
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -248,7 +248,7 @@ export default function CapacityPlanningModule({ user, headers }) {
         <Card className="bg-card border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-foreground/80 flex items-center gap-2">
-              <Factory className="w-4 h-4 text-blue-600 dark:text-blue-400" /> Cek Kelayakan WO Baru
+              <Factory className="w-4 h-4 text-[hsl(var(--primary))] " /> Cek Kelayakan WO Baru
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -274,31 +274,31 @@ export default function CapacityPlanningModule({ user, headers }) {
                 />
               </div>
             </div>
-            <Button
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
               onClick={handleCheckWO} disabled={checking}
-              className="w-full bg-blue-600 hover:bg-blue-700"
+              className="w-full bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]"
               data-testid="btn-check-wo"
             >
-              {checking ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <Factory className="w-4 h-4 mr-1" />}
+              {checking ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Factory className="w-4 h-4 mr-1" />}
               Cek Kapasitas
             </Button>
             {checkResult && (
-              <div className={`rounded-lg p-3 border ${checkResult.feasible ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-400 dark:border-emerald-500/30' : 'bg-red-100 dark:bg-red-500/10 border-red-400 dark:border-red-500/30'}`}>
-                <div className={`font-semibold flex items-center gap-1 mb-2 ${checkResult.feasible ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+              <div className={`rounded-lg p-3 border ${checkResult.feasible ? 'bg-[hsl(var(--success)/0.15)]  border-[hsl(var(--success)/0.35)] ' : 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.35)] '}`}>
+                <div className={`font-semibold flex items-center gap-1 mb-2 ${checkResult.feasible ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>
                   {checkResult.feasible ? <CheckCircle2 className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
                   {checkResult.feasible ? 'Layak' : 'Tidak Layak dalam Target'}
                 </div>
                 <div className="text-xs text-muted-foreground/60 dark:text-zinc-400 space-y-1">
                   <div>Butuh: <span className="text-foreground">{checkResult.days_needed} hari</span> (kapasitas {checkResult.effective_daily_capacity} pcs/hari)</div>
-                  <div>Utilisasi proyeksi: <span className={checkResult.projected_utilization?.status === 'critical' ? 'text-red-700 dark:text-red-400' : 'text-foreground'}>{checkResult.projected_utilization?.utilization_pct}%</span></div>
+                  <div>Utilisasi proyeksi: <span className={checkResult.projected_utilization?.status === 'critical' ? 'text-[hsl(var(--destructive))] ' : 'text-foreground'}>{checkResult.projected_utilization?.utilization_pct}%</span></div>
                   {!checkResult.feasible && (
-                    <div>Mulai disarankan: <span className="text-amber-700 dark:text-amber-400">{checkResult.recommended_start_date}</span></div>
+                    <div>Mulai disarankan: <span className="text-[hsl(var(--warning))] ">{checkResult.recommended_start_date}</span></div>
                   )}
                 </div>
                 {checkResult.warnings?.length > 0 && (
                   <ul className="mt-2 space-y-1">
                     {checkResult.warnings.map((w, i) => (
-                      <li key={i} className="text-xs text-amber-600 dark:text-amber-300 flex gap-1">
+                      <li key={i} className="text-xs text-[hsl(var(--warning))] flex gap-1">
                         <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0" /> {w}
                       </li>
                     ))}
@@ -313,7 +313,7 @@ export default function CapacityPlanningModule({ user, headers }) {
         <Card className="bg-card border-border">
           <CardHeader className="pb-3">
             <CardTitle className="text-sm font-medium text-foreground/80 flex items-center gap-2">
-              <PlayCircle className="w-4 h-4 text-purple-600 dark:text-purple-400" /> Simulasi Jadwal WO
+              <PlayCircle className="w-4 h-4 text-[hsl(var(--primary))] " /> Simulasi Jadwal WO
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -339,20 +339,20 @@ export default function CapacityPlanningModule({ user, headers }) {
                 />
               </div>
             </div>
-            <Button
+            <Button title="Muat ulang" aria-label="Muat ulang" size="icon"
               onClick={handleSimulate} disabled={simulating}
-              className="w-full bg-purple-600 hover:bg-purple-700"
+              className="w-full bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)]"
               data-testid="btn-simulate"
             >
-              {simulating ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-1" />}
+              {simulating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4 mr-1" />}
               Simulasi
             </Button>
             {simResult && (
-              <div className="rounded-lg p-3 bg-purple-100 dark:bg-purple-500/10 border border-purple-400 dark:border-purple-500/30">
+              <div className="rounded-lg p-3 bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
                 <div className="text-xs text-muted-foreground/60 dark:text-zinc-400 space-y-1">
                   <div>Produk: <span className="text-foreground">{simResult.product_name || '—'}</span></div>
                   <div>Mulai: <span className="text-foreground">{simResult.start_date}</span></div>
-                  <div>Estimasi selesai: <span className="text-purple-600 dark:text-purple-300 font-medium">{simResult.estimated_completion}</span></div>
+                  <div>Estimasi selesai: <span className="text-[hsl(var(--primary))] font-medium">{simResult.estimated_completion}</span></div>
                   <div>Hari dibutuhkan: <span className="text-foreground">{simResult.days_needed} + {simResult.buffer_days} buffer</span></div>
                   <div className="mt-1 text-muted-foreground/60 dark:text-zinc-500">{simResult.note}</div>
                 </div>
@@ -370,8 +370,8 @@ export default function CapacityPlanningModule({ user, headers }) {
         >
           <CardTitle className="text-sm font-medium text-foreground/80 flex items-center justify-between">
             <span className="flex items-center gap-2">
-              <Wrench className="w-4 h-4 text-orange-600 dark:text-orange-400" />
-              Bottleneck Mesin (7 Hari Terakhir) {bottlenecks.length > 0 && <Badge variant="outline" className="text-orange-600 dark:text-orange-400 border-orange-400 dark:border-orange-500/30">{bottlenecks.length}</Badge>}
+              <Wrench className="w-4 h-4 text-[hsl(var(--warning))] " />
+              Bottleneck Mesin (7 Hari Terakhir) {bottlenecks.length > 0 && <Badge variant="outline" className="text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)] ">{bottlenecks.length}</Badge>}
             </span>
             {showBottlenecks ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </CardTitle>
@@ -390,15 +390,15 @@ export default function CapacityPlanningModule({ user, headers }) {
                     </div>
                     <div className="text-right">
                       <p className={`text-sm font-medium ${
-                        b.severity === 'high' ? 'text-red-700 dark:text-red-400' :
-                        b.severity === 'medium' ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+                        b.severity === 'high' ? 'text-[hsl(var(--destructive))] ' :
+                        b.severity === 'medium' ? 'text-[hsl(var(--warning))] ' : 'text-[hsl(var(--success))] '
                       }`}>{b.total_downtime_min} menit</p>
                       <Badge
                         variant="outline"
                         className={`text-xs ${
-                          b.severity === 'high' ? 'text-red-700 dark:text-red-400 border-red-400 dark:border-red-500/30' :
-                          b.severity === 'medium' ? 'text-amber-700 dark:text-amber-400 border-amber-400 dark:border-amber-500/30' :
-                          'text-emerald-600 dark:text-emerald-400 border-emerald-400 dark:border-emerald-500/30'
+                          b.severity === 'high' ? 'text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] ' :
+                          b.severity === 'medium' ? 'text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ' :
+                          'text-[hsl(var(--success))]  border-[hsl(var(--success)/0.35)] '
                         }`}
                       >{b.severity}</Badge>
                     </div>

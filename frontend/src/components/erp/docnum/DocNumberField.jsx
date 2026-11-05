@@ -66,7 +66,7 @@ export default function DocNumberField({
   return (
     <div className={className} data-testid={`${testId}-wrap`}>
       <label className="block text-xs font-medium text-foreground/80 mb-1">
-        {title}{manual && <span className="text-red-500"> *</span>}
+        {title}{manual && <span className="text-[hsl(var(--destructive))]"> *</span>}
         <span className="text-[11px] text-muted-foreground font-normal">
           {policy ? (manual ? ' (manual)' : ' (otomatis)') : ' (memuat kebijakan…)'}
         </span>
@@ -80,11 +80,11 @@ export default function DocNumberField({
             value={value || ''}
             onChange={(e) => onChange?.(e.target.value)}
             placeholder={policy?.contoh || ''}
-            className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground font-mono focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
+            className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
           />
           <p className="text-[11px] text-muted-foreground mt-1" data-testid={`${testId}-hint`}>
-            Wajib mengikuti pola <b className="font-mono text-foreground">{policy.format}</b>
-            {policy.contoh && <> — contoh <span className="font-mono">{policy.contoh}</span></>}.
+            Wajib mengikuti pola <b className="tabular-nums text-foreground">{policy.format}</b>
+            {policy.contoh && <> — contoh <span className="tabular-nums">{policy.contoh}</span></>}.
             Ubah ke otomatis di Administrasi Sistem → Penomoran Dokumen.
           </p>
         </>
@@ -94,10 +94,10 @@ export default function DocNumberField({
             readOnly disabled
             data-testid={`${testId}-auto`}
             value={policy?.nomor_berikutnya || policy?.contoh || 'dibuat otomatis saat disimpan'}
-            className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-muted/50 text-sm text-muted-foreground font-mono"
+            className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-muted/50 text-sm text-muted-foreground tabular-nums"
           />
           <p className="text-[11px] text-muted-foreground mt-1" data-testid={`${testId}-hint`}>
-            Dibuat sistem saat disimpan{policy?.format && <> (pola <span className="font-mono">{policy.format}</span>)</>}.
+            Dibuat sistem saat disimpan{policy?.format && <> (pola <span className="tabular-nums">{policy.format}</span>)</>}.
             Ubah ke manual di Administrasi Sistem → Penomoran Dokumen.
           </p>
         </>

@@ -17,8 +17,10 @@ import Modal from './Modal';
 import AdditionalRequestModal from './AdditionalRequestModal';
 import MaterialRequestTracker from './MaterialRequestTracker';
 import { apiGet, apiFetch } from '../../../lib/api';
-// F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
-import { tone } from '@/lib/tone';
+import { Button } from '@/components/ui/button';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import { EmptyState, Notice, StatTile } from '../moduleAtoms';
 
 const TABS = [
   { id: 'ADDITIONAL', label: 'Permintaan Tambahan', icon: Plus, color: 'amber' },
@@ -26,9 +28,9 @@ const TABS = [
 ];
 
 const STATUS_COLORS = {
-  Pending: 'bg-amber-100 text-amber-700 border-amber-200',
-  Approved: 'bg-emerald-100 text-emerald-700 border-emerald-200',
-  Rejected: 'bg-red-100 text-red-700 border-red-200',
+  Pending: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]',
+  Approved: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
+  Rejected: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]',
 };
 
 const STATUS_ICONS = {
@@ -248,12 +250,12 @@ export default function VendorMaterialRequests({ user }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <ClipboardList className="w-6 h-6 text-emerald-600" />
+            <ClipboardList className="w-6 h-6 text-[hsl(var(--success))]" />
             Permintaan Material
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
@@ -261,112 +263,70 @@ export default function VendorMaterialRequests({ user }) {
           </p>
         </div>
         {isAdditional ? (
-          <button
+          <Button
             onClick={() => openShipmentPicker('ADDITIONAL')}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 shadow-sm"
             data-testid="vendor-create-manual-request-btn"
           >
             <Plus className="w-4 h-4" /> Buat Permintaan Manual
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button
             onClick={() => openShipmentPicker('REPLACEMENT')}
-            className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 shadow-sm"
             data-testid="vendor-create-replacement-request-btn"
           >
             <Plus className="w-4 h-4" /> Buat Permintaan Pengganti
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-border">
-        {TABS.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-5 py-3 text-sm font-medium border-b-2 transition-colors -mb-px ${
-                active
-                  ? 'border-primary text-primary'
-                  : 'border-transparent text-muted-foreground hover:text-foreground/90'
-              }`}
-              data-testid={`vendor-mr-tab-${tab.id.toLowerCase()}`}
-            >
-              <Icon className="w-4 h-4" />
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      {/* PANDUAN_UI G4: pil standar; kunci huruf kecil supaya data-testid tetap vendor-mr-tab-<jenis> */}
+      <FilterChips value={activeTab.toLowerCase()} onChange={(k) => setActiveTab(String(k).toUpperCase())}
+        testId="vendor-mr-tab" ariaLabel="Jenis permintaan"
+        options={TABS.map((t) => ({ key: t.id.toLowerCase(), label: t.label, icon: t.icon }))} />
 
       {/* Stats Bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* `key` menjaga data-testid lama (vendor-mr-stat-pending, …) walau labelnya diterjemahkan */}
         {[
-          { label: 'Total', value: stats.total, color: 'slate' },
-          { label: 'Pending', value: stats.pending, color: 'amber', icon: Clock },
-          { label: 'Disetujui', value: stats.approved, color: 'emerald', icon: CheckCircle },
-          { label: 'Ditolak', value: stats.rejected, color: 'red', icon: XCircle },
-        ].map((s) => {
-          const Icon = s.icon;
-          return (
-            <div
-              key={s.label}
-              className={`bg-card border border-border rounded-xl p-3 flex items-center gap-3`}
-              data-testid={`vendor-mr-stat-${s.label.toLowerCase()}`}
-            >
-              {Icon && (
-                <div
-                  className={`w-9 h-9 rounded-lg flex items-center justify-center border ${tone(s.color).chip}`}
-                >
-                  <Icon className={`w-4 h-4 ${tone(s.color).text}`} />
-                </div>
-              )}
-              <div>
-                <p className="text-xs text-muted-foreground">{s.label}</p>
-                <p className="font-bold text-foreground">{s.value}</p>
-              </div>
-            </div>
-          );
-        })}
+          { key: 'total', label: 'Total', value: stats.total, accent: 'default' },
+          { key: 'pending', label: 'Menunggu', value: stats.pending, accent: 'warning' },
+          { key: 'disetujui', label: 'Disetujui', value: stats.approved, accent: 'success' },
+          { key: 'ditolak', label: 'Ditolak', value: stats.rejected, accent: 'danger' },
+        ].map((s) => (
+          <StatTile key={s.key} label={s.label} value={s.value} accent={s.accent}
+            testId={`vendor-mr-stat-${s.key}`} />
+        ))}
       </div>
 
       {/* Info banner */}
-      <div
-        className={`border rounded-xl p-3 text-sm ${
-          isAdditional
-            ? 'bg-amber-50 border-amber-200 text-amber-800'
-            : 'bg-red-50 border-red-200 text-red-800'
-        }`}
-      >
+      <Notice tone={isAdditional ? 'warning' : 'danger'}>
         {isAdditional
           ? '➕ Permintaan tambahan dibuat saat ada material missing/kurang dari inspeksi. Anda dapat mengajukan ulang jika ditolak admin, atau membuat permintaan manual untuk shipment yang sudah ter-inspeksi.'
           : '🔄 Permintaan pengganti untuk material CACAT/RUSAK (bukan kurang kirim). Klik "Buat Permintaan Pengganti", pilih surat jalan yang sudah ter-inspeksi, lalu isi qty + cacatnya per item. Setelah disetujui ERP, terbit surat jalan pengganti (kode "-R1") yang muncul di Penerimaan Material Anda.'}
-      </div>
+      </Notice>
 
       {/* Filter row */}
       <div className="flex gap-2 flex-wrap">
         <input
           type="text"
           placeholder="Cari nomor permintaan, shipment, atau PO..."
-          className="flex-1 min-w-64 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          className="flex-1 min-w-64 border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--success)/0.35)]"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           data-testid="vendor-mr-search"
         />
-        <select
-          className="border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+        <SmartNativeSelect
+          className="w-48 text-sm"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
           data-testid="vendor-mr-status-filter"
         >
           <option value="all">Semua Status</option>
-          <option value="Pending">Pending</option>
+          <option value="Pending">Menunggu</option>
           <option value="Approved">Disetujui</option>
           <option value="Rejected">Ditolak</option>
-        </select>
+        </SmartNativeSelect>
       </div>
 
       {/* List */}
@@ -374,15 +334,11 @@ export default function VendorMaterialRequests({ user }) {
         {loading ? (
           <div className="p-8 text-center text-muted-foreground/70 text-sm">Memuat data...</div>
         ) : filtered.length === 0 ? (
-          <div className="p-12 text-center">
-            <ClipboardList className="w-12 h-12 text-muted-foreground/50 mx-auto mb-3" />
-            <p className="text-muted-foreground text-sm">Belum ada {currentTab.label.toLowerCase()}</p>
-            {isAdditional && (
-              <p className="text-muted-foreground/70 text-xs mt-1">
-                Permintaan otomatis terbuat saat ada missing material di inspeksi, atau klik "Buat Permintaan Manual".
-              </p>
-            )}
-          </div>
+          <EmptyState icon={ClipboardList}
+            title={`Belum ada ${currentTab.label.toLowerCase()}`}
+            description={isAdditional
+              ? 'Permintaan otomatis terbuat saat ada material kurang di inspeksi, atau klik "Buat Permintaan Manual".'
+              : 'Klik "Buat Permintaan Pengganti" untuk material yang cacat atau rusak.'} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -394,7 +350,7 @@ export default function VendorMaterialRequests({ user }) {
                   <th className="text-right px-4 py-2.5 text-xs font-semibold text-muted-foreground">Total Qty</th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Tanggal</th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Status</th>
-                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Child Shipment</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Shipment turunan</th>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-muted-foreground">Aksi</th>
                 </tr>
               </thead>
@@ -405,26 +361,26 @@ export default function VendorMaterialRequests({ user }) {
                   return (
                     <tr key={row.id} className="hover:bg-muted/60 transition-colors">
                       <td className="px-4 py-3">
-                        <div className="font-bold font-mono text-sm text-emerald-700">
+                        <div className="font-bold tabular-nums text-sm text-[hsl(var(--success))]">
                           {row.request_number}
                         </div>
                         {row.previous_request_number && (
-                          <div className="text-xs text-blue-600 flex items-center gap-1 mt-0.5">
+                          <div className="text-xs text-[hsl(var(--primary))] flex items-center gap-1 mt-0.5">
                             <RotateCcw className="w-3 h-3" />
-                            <span className="font-mono">resubmit dari {row.previous_request_number}</span>
+                            <span className="tabular-nums">resubmit dari {row.previous_request_number}</span>
                           </div>
                         )}
                         {row.resubmitted_as_number && (
                           <div className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                             <RotateCcw className="w-3 h-3" />
-                            <span className="font-mono">→ {row.resubmitted_as_number}</span>
+                            <span className="tabular-nums">→ {row.resubmitted_as_number}</span>
                           </div>
                         )}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-blue-700">
+                      <td className="px-4 py-3 tabular-nums text-xs text-[hsl(var(--primary))]">
                         {row.original_shipment_number || '-'}
                       </td>
-                      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.po_number || '-'}</td>
+                      <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{row.po_number || '-'}</td>
                       <td className="px-4 py-3 text-right font-semibold">
                         {Number(row.total_requested_qty || 0).toLocaleString('id-ID')} pcs
                       </td>
@@ -447,7 +403,7 @@ export default function VendorMaterialRequests({ user }) {
                         <div className="flex items-center gap-1">
                           <button
                             onClick={() => openDetail(row)}
-                            className="p-1.5 rounded hover:bg-blue-50 text-blue-600"
+                            className="p-1.5 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"
                             title="Detail"
                             data-testid={`vendor-mr-detail-btn-${row.id}`}
                           >
@@ -456,7 +412,7 @@ export default function VendorMaterialRequests({ user }) {
                           {canResubmit && (
                             <button
                               onClick={() => openResubmit(row)}
-                              className="p-1.5 rounded hover:bg-amber-50 text-amber-600"
+                              className="p-1.5 rounded hover:bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]"
                               title="Ajukan Ulang"
                               data-testid={`vendor-mr-resubmit-btn-${row.id}`}
                             >
@@ -486,7 +442,7 @@ export default function VendorMaterialRequests({ user }) {
             <div className="flex justify-end">
               <button
                 onClick={() => downloadPDF(selectedReq)}
-                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 font-medium"
+                className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--destructive))] text-white rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.9)] font-medium"
                 data-testid="vendor-mr-pdf-btn"
               >
                 <FileText className="w-4 h-4" /> Export PDF
@@ -496,13 +452,13 @@ export default function VendorMaterialRequests({ user }) {
             {/* Header info */}
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {[
-                { l: 'No. Permintaan', v: <span className="font-bold font-mono">{selectedReq.request_number}</span> },
+                { l: 'No. Permintaan', v: <span className="font-bold tabular-nums">{selectedReq.request_number}</span> },
                 {
                   l: 'Tipe',
                   v: (
                     <span
                       className={`px-2 py-0.5 rounded text-xs font-bold ${
-                        isAdditional ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'
+                        isAdditional ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'
                       }`}
                     >
                       {selectedReq.request_type}
@@ -519,7 +475,7 @@ export default function VendorMaterialRequests({ user }) {
                     </span>
                   ),
                 },
-                { l: 'Shipment Asal', v: <span className="font-mono text-blue-700">{selectedReq.original_shipment_number}</span> },
+                { l: 'Shipment Asal', v: <span className="tabular-nums text-[hsl(var(--primary))]">{selectedReq.original_shipment_number}</span> },
                 { l: 'PO Number', v: selectedReq.po_number || '-' },
                 { l: 'Total Qty', v: <span className="font-bold">{Number(selectedReq.total_requested_qty || 0).toLocaleString('id-ID')} pcs</span> },
                 { l: 'Tanggal', v: fmtDate(selectedReq.created_at) },
@@ -543,7 +499,7 @@ export default function VendorMaterialRequests({ user }) {
                       <tr>
                         <th className="text-left px-3 py-2 text-xs">Produk</th>
                         <th className="text-left px-3 py-2 text-xs">SKU</th>
-                        <th className="text-left px-3 py-2 text-xs text-amber-700">No. Seri</th>
+                        <th className="text-left px-3 py-2 text-xs text-[hsl(var(--warning))]">No. Seri</th>
                         <th className="text-left px-3 py-2 text-xs">Size/Warna</th>
                         <th className="text-right px-3 py-2 text-xs">Qty</th>
                         <th className="text-left px-3 py-2 text-xs">Alasan</th>
@@ -553,8 +509,8 @@ export default function VendorMaterialRequests({ user }) {
                       {selectedReq.items.map((item, idx) => (
                         <tr key={idx} className="border-t border-border/60">
                           <td className="px-3 py-2 font-medium">{item.product_name}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-blue-700">{item.sku || '-'}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-amber-700 font-semibold">
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--primary))]">{item.sku || '-'}</td>
+                          <td className="px-3 py-2 tabular-nums text-xs text-[hsl(var(--warning))] font-semibold">
                             {item.serial_number || <span className="text-muted-foreground/50">—</span>}
                           </td>
                           <td className="px-3 py-2 text-xs">{item.size}/{item.color}</td>
@@ -572,30 +528,30 @@ export default function VendorMaterialRequests({ user }) {
 
             {/* Status banners */}
             {selectedReq.child_shipment_number && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 text-sm text-emerald-800">
-                ✅ Disetujui! Child shipment <strong className="font-mono">{selectedReq.child_shipment_number}</strong> sudah dibuat oleh {selectedReq.approved_by} pada {fmtDate(selectedReq.approved_at)}.
+              <div className="bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--success))]">
+                ✅ Disetujui! Child shipment <strong className="tabular-nums">{selectedReq.child_shipment_number}</strong> sudah dibuat oleh {selectedReq.approved_by} pada {fmtDate(selectedReq.approved_at)}.
               </div>
             )}
 
             {selectedReq.status === 'Rejected' && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm">
-                <p className="font-semibold text-red-800 flex items-center gap-2">
+              <div className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.35)] rounded-lg p-3 text-sm">
+                <p className="font-semibold text-[hsl(var(--destructive))] flex items-center gap-2">
                   <XCircle className="w-4 h-4" /> Permintaan Ditolak
                 </p>
                 {selectedReq.admin_notes && (
-                  <p className="text-red-700 mt-1.5">
+                  <p className="text-[hsl(var(--destructive))] mt-1.5">
                     <span className="font-medium">Alasan admin:</span> {selectedReq.admin_notes}
                   </p>
                 )}
                 {selectedReq.rejected_by && (
-                  <p className="text-red-600 text-xs mt-1">
+                  <p className="text-[hsl(var(--destructive))] text-xs mt-1">
                     Ditolak oleh {selectedReq.rejected_by} pada {fmtDate(selectedReq.rejected_at)}
                   </p>
                 )}
                 {isAdditional && !selectedReq.resubmitted_as_id && (
                   <button
                     onClick={() => openResubmit(selectedReq)}
-                    className="mt-3 flex items-center gap-2 bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-700"
+                    className="mt-3 flex items-center gap-2 bg-[hsl(var(--warning))] text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-[hsl(var(--warning)/0.9)]"
                     data-testid="vendor-mr-resubmit-detail-btn"
                   >
                     <RotateCcw className="w-4 h-4" /> Ajukan Ulang dengan Revisi
@@ -605,16 +561,16 @@ export default function VendorMaterialRequests({ user }) {
             )}
 
             {selectedReq.resubmitted_as_number && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
                 ↻ Permintaan ini sudah diajukan ulang sebagai{' '}
-                <strong className="font-mono">{selectedReq.resubmitted_as_number}</strong>
+                <strong className="tabular-nums">{selectedReq.resubmitted_as_number}</strong>
               </div>
             )}
 
             {selectedReq.previous_request_number && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+              <div className="bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-lg p-3 text-sm text-[hsl(var(--primary))]">
                 ↻ Permintaan ini merupakan resubmit dari{' '}
-                <strong className="font-mono">{selectedReq.previous_request_number}</strong>
+                <strong className="tabular-nums">{selectedReq.previous_request_number}</strong>
               </div>
             )}
           </div>
@@ -631,49 +587,43 @@ export default function VendorMaterialRequests({ user }) {
           size="lg"
         >
           <div className="space-y-3">
-            <div className={`border rounded-lg p-3 text-sm ${createType === 'REPLACEMENT'
-              ? 'bg-red-50 border-red-200 text-red-800'
-              : 'bg-amber-50 border-amber-200 text-amber-800'}`}
-              data-testid="ship-picker-hint">
-              <AlertCircle className="w-4 h-4 inline mr-1.5" />
+            <Notice tone={createType === 'REPLACEMENT' ? 'danger' : 'warning'} icon={AlertCircle}
+              testId="ship-picker-hint">
               {createType === 'REPLACEMENT'
                 ? 'Pilih surat jalan yang sudah ter-inspeksi, lalu tandai item yang CACAT/RUSAK beserta qty penggantinya.'
                 : 'Pilih shipment yang sudah ter-inspeksi untuk membuat permintaan material tambahan secara manual.'}
-            </div>
+            </Notice>
             {loadingShipPicker ? (
               <div className="p-8 text-center text-muted-foreground/70 text-sm">Memuat shipment...</div>
             ) : inspectedShipments.length === 0 ? (
-              <div className="p-8 text-center">
-                <Truck className="w-10 h-10 text-muted-foreground/50 mx-auto mb-2" />
-                <p className="text-muted-foreground text-sm">Belum ada shipment yang ter-inspeksi.</p>
-                <p className="text-muted-foreground/70 text-xs mt-1">Lakukan inspeksi material terlebih dahulu di menu "Inspeksi Material".</p>
-              </div>
+              <EmptyState icon={Truck} className="py-8" title="Belum ada shipment yang ter-inspeksi"
+                description='Lakukan inspeksi material terlebih dahulu di menu "Inspeksi Material".' />
             ) : (
               <div className="space-y-2 max-h-96 overflow-y-auto">
                 {inspectedShipments.map((s) => (
                   <button
                     key={s.id}
                     onClick={() => pickShipmentForManual(s)}
-                    className="w-full text-left p-3 border border-border rounded-lg hover:bg-emerald-50 hover:border-emerald-300 transition-colors"
+                    className="w-full text-left p-3 border border-border rounded-lg hover:bg-[hsl(var(--success)/0.1)] hover:border-[hsl(var(--success)/0.35)] transition-colors"
                     data-testid={`vendor-pick-shipment-${s.id}`}
                   >
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-bold font-mono text-sm text-blue-700">{s.shipment_number}</p>
+                        <p className="font-bold tabular-nums text-sm text-[hsl(var(--primary))]">{s.shipment_number}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {(s.items || []).length} item • Tanggal: {fmtDate(s.shipment_date)}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700">
-                          Inspected
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]">
+                          Terinspeksi
                         </span>
                         {s.shipment_type && s.shipment_type !== 'NORMAL' && (
                           <span
                             className={`px-1.5 py-0.5 rounded text-xs font-bold ${
                               s.shipment_type === 'ADDITIONAL'
-                                ? 'bg-amber-100 text-amber-700'
-                                : 'bg-red-100 text-red-700'
+                                ? 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'
+                                : 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]'
                             }`}
                           >
                             {s.shipment_type}

@@ -98,7 +98,7 @@ function StockLevelTab({ token }) {
         </select>
       </div>
 
-      {error && <p className="text-sm text-red-700 dark:text-red-400">{error}</p>}
+      {error && <p className="text-sm text-[hsl(var(--destructive))] ">{error}</p>}
 
       {loading ? (
         <div className="space-y-2">{[...Array(5)].map((_, i) => <Skeleton key={i} className="h-12" />)}</div>
@@ -123,13 +123,13 @@ function StockLevelTab({ token }) {
                 const min = item.min_stock ?? 0;
                 const status = qty <= 0 ? 'Habis' : (min > 0 && qty <= min) ? 'Rendah' : 'Aman';
                 const statusCls = qty <= 0
-                  ? 'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10'
+                  ? 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.15)] '
                   : (min > 0 && qty <= min)
-                  ? 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10'
-                  : 'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10';
+                  ? 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] '
+                  : 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)] ';
                 return (
                   <tr key={item.id} className="hover:bg-foreground/[0.03] transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{item.code || '-'}</td>
+                    <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{item.code || '-'}</td>
                     <td className="px-4 py-3 font-medium">{item.name}</td>
                     <td className="px-4 py-3 text-muted-foreground">{item.category || '-'}</td>
                     <td className="px-4 py-3 text-right font-semibold">{fmtNum(qty)} {item.unit}</td>

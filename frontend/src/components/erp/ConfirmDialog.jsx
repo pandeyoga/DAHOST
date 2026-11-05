@@ -4,13 +4,13 @@ import { GlassCard } from '@/components/ui/glass';
 export default function ConfirmDialog({ title, message, onConfirm, onCancel, type = 'danger' }) {
   const styles = {
     danger: {
-      icon: 'bg-red-50 dark:bg-red-400/15 text-red-700 dark:text-red-400',
+      icon: 'bg-[hsl(var(--destructive)/0.1)]  text-[hsl(var(--destructive))] ',
       btn: 'bg-destructive hover:brightness-110 text-destructive-foreground',
       label: 'Hapus'
     },
     warning: {
-      icon: 'bg-amber-50 dark:bg-amber-400/15 text-amber-700 dark:text-amber-400',
-      btn: 'bg-amber-500 hover:brightness-110 text-foreground',
+      icon: 'bg-[hsl(var(--warning)/0.1)]  text-[hsl(var(--warning))] ',
+      btn: 'bg-[hsl(var(--warning))] hover:brightness-110 text-foreground',
       label: 'Lanjutkan'
     }
   };

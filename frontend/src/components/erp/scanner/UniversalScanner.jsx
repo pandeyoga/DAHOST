@@ -149,7 +149,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
       {tab === 'camera' && (
         <div className="space-y-2">
           <div className={`rounded-xl overflow-hidden border-2 transition-colors ${
-            justRead ? 'border-emerald-500' : 'border-[var(--glass-border)]'}`}>
+            justRead ? 'border-[hsl(var(--success)/0.35)]' : 'border-[var(--glass-border)]'}`}>
             <div
               id={elementId}
               className="w-full aspect-square bg-black/85"
@@ -160,11 +160,11 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
             <div
               className={`flex items-center justify-between rounded-lg px-3 py-2 text-xs border ${
                 justRead
-                  ? 'bg-emerald-50 dark:bg-emerald-400/10 border-emerald-300 dark:border-emerald-400/30 text-emerald-700 dark:text-emerald-300'
+                  ? 'bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)]  text-[hsl(var(--success))] '
                   : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-muted-foreground'}`}
               data-testid="scanner-continuous-status"
             >
-              <span className="inline-flex items-center gap-1.5 font-mono truncate">
+              <span className="inline-flex items-center gap-1.5 tabular-nums truncate">
                 <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
                 {reads.last || 'Siap — scan berkali-kali tanpa menutup kamera'}
               </span>
@@ -186,7 +186,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
           </div>
           {cameraError && (
             <div
-              className="bg-red-50 dark:bg-red-400/10 border border-red-300/20 rounded-lg p-2.5 text-xs text-red-600 dark:text-red-300 flex items-start gap-2"
+              className="bg-[hsl(var(--destructive)/0.1)] border border-[hsl(var(--destructive)/0.2)] rounded-lg p-2.5 text-xs text-[hsl(var(--destructive))]  flex items-start gap-2"
               data-testid="scanner-camera-error"
             >
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
@@ -215,7 +215,7 @@ function ScannerModalContent({ onScan, onClose, title = 'Scan Barcode', continuo
             value={manual}
             onChange={(e) => setManual(e.target.value)}
             placeholder="Ketik atau scan..."
-            className="font-mono"
+            className="tabular-nums"
             data-testid="scanner-manual-input"
           />
           <Button
@@ -322,7 +322,7 @@ function ScannerInline({
           placeholder={placeholder}
           disabled={disabled}
           autoFocus={autoFocus}
-          className={`font-mono pr-10 transition-shadow ${flashAt ? 'ring-2 ring-emerald-500' : ''} ${inputClassName}`}
+          className={`tabular-nums pr-10 transition-shadow ${flashAt ? 'ring-2 ring-[hsl(var(--success)/0.35)]' : ''} ${inputClassName}`}
           data-testid="scanner-inline-input"
         />
         <button

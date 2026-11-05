@@ -10,8 +10,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, Notice } from './moduleAtoms';
 import { EmptyState } from './EmptyState';
+import FilterChips from '@/components/ui/filter-chips';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import ImportExportToolbar from './ImportExportToolbar';
 
 const PRODUCT_SPECIALIZATIONS = ['Rok', 'Blouse', 'Dress', 'Celana', 'Set/Setelan', 'Baju Anak', 'Hijab', 'Aksesoris', 'Lainnya'];
@@ -47,18 +49,18 @@ export default function MaklonClientManagement({ token }) {
   const filteredClients = clients;
 
   return (
-    <div className="p-6 space-y-6" data-testid="maklon-clients">
+    <div className="space-y-4" data-testid="maklon-clients">
       <PageHeader
         title="Master Klien Maklon"
-        description="Database klien jasa maklon, kontrak, dan riwayat kerjasama"
+        subtitle="Database klien jasa maklon, kontrak, dan riwayat kerjasama"
         icon={Users}
         actions={
           <div className="flex gap-2">
             <ImportExportToolbar collectionKey="maklon_clients" label="Klien Maklon" onImported={fetchClients} />
-            <Button size="sm" onClick={fetchClients} variant="outline" className="gap-2">
-              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            <Button size="icon" onClick={fetchClients} variant="outline" disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </Button>
-            <Button size="sm" onClick={() => setClientDialog({})} className="gap-1.5">
+            <Button onClick={() => setClientDialog({})} className="gap-1.5">
               <Plus className="w-3.5 h-3.5" /> Tambah Klien
             </Button>
           </div>
@@ -68,9 +70,9 @@ export default function MaklonClientManagement({ token }) {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: 'Total Klien', value: clients.length, color: 'text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-500/10 border-blue-400/20', icon: Users },
-          { label: 'Aktif', value: clients.filter(c => c.status === 'active').length, color: 'text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-500/10 border-green-300 dark:border-green-400/20', icon: CheckCircle2 },
-          { label: 'Non-Aktif', value: clients.filter(c => c.status === 'inactive').length, color: 'text-orange-400 bg-orange-500/10 border-orange-400/20', icon: Ban },
+          { label: 'Total Klien', value: clients.length, color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]', icon: Users },
+          { label: 'Aktif', value: clients.filter(c => c.status === 'active').length, color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)] ', icon: CheckCircle2 },
+          { label: 'Non-Aktif', value: clients.filter(c => c.status === 'inactive').length, color: 'text-[hsl(var(--warning))] bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.2)]', icon: Ban },
         ].map((s, i) => (
           <motion.div key={s.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 * i }}>
             <GlassCard className={`p-4 border ${s.color.split(' ')[2]}`}>
@@ -85,23 +87,17 @@ export default function MaklonClientManagement({ token }) {
       </div>
 
       {/* Filter */}
-      <div className="flex gap-2">
-        {['all', 'active', 'inactive'].map(s => (
-          <Button
-            key={s}
-            size="sm"
-            variant={filterStatus === s ? 'default' : 'outline'}
-            onClick={() => setFilterStatus(s)}
-          >
-            {s === 'all' ? 'Semua' : s === 'active' ? 'Aktif' : 'Non-Aktif'}
-          </Button>
-        ))}
-      </div>
+      <FilterChips value={filterStatus} onChange={setFilterStatus} ariaLabel="Status klien" hideWhenEmpty={false}
+        options={[
+          { key: 'all', label: 'Semua' },
+          { key: 'active', label: 'Aktif' },
+          { key: 'inactive', label: 'Non-Aktif' },
+        ]} />
 
       {/* Client Cards */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         {loading ? (
-          <div className="col-span-2 text-center py-10 text-foreground/40 text-sm">Memuat...</div>
+          <div className="col-span-2 text-center py-8 text-foreground/40 text-sm">Memuat...</div>
         ) : filteredClients.length === 0 ? (
           <div className="col-span-2">
             <EmptyState
@@ -117,8 +113,8 @@ export default function MaklonClientManagement({ token }) {
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="font-semibold text-foreground">{c.name}</span>
-                    <span className="text-[10px] bg-foreground/[0.08] px-1.5 py-0.5 rounded text-foreground/50 font-mono">{c.code}</span>
-                    {c.status === 'inactive' && <span className="text-[10px] bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-400 px-1.5 py-0.5 rounded border border-red-400 dark:border-red-400/25">Nonaktif</span>}
+                    <span className="text-[10px] bg-foreground/[0.08] px-1.5 py-0.5 rounded text-foreground/50 tabular-nums">{c.code}</span>
+                    {c.status === 'inactive' && <span className="text-[10px] bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  px-1.5 py-0.5 rounded border border-[hsl(var(--destructive)/0.35)] ">Nonaktif</span>}
                   </div>
                   <div className="space-y-1 text-xs text-foreground/50">
                     {c.pic_name && <div className="flex items-center gap-1"><span className="text-foreground/70">{c.pic_name}</span></div>}
@@ -132,20 +128,20 @@ export default function MaklonClientManagement({ token }) {
                   </div>
                   {(c.product_specialization || []).length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
-                      {c.product_specialization.slice(0,3).map(s => <span key={s} className="text-[10px] bg-violet-100 dark:bg-violet-500/15 text-violet-600 dark:text-violet-300 px-1.5 py-0.5 rounded border border-violet-400 dark:border-violet-400/25">{s}</span>)}
+                      {c.product_specialization.slice(0,3).map(s => <span key={s} className="text-[10px] bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]  px-1.5 py-0.5 rounded border border-[hsl(var(--primary)/0.35)] ">{s}</span>)}
                       {c.product_specialization.length > 3 && <span className="text-[10px] text-foreground/40">+{c.product_specialization.length-3}</span>}
                     </div>
                   )}
                 </div>
                 <div className="flex flex-col items-end gap-1">
                   <div className="flex items-center gap-0.5">
-                    {[1,2,3,4,5].map(n => <Star key={n} className={`w-3 h-3 ${n <= Math.round(c.rating||0) ? 'text-amber-700 dark:text-amber-400 fill-amber-400' : 'text-foreground/20'}`} />)}
+                    {[1,2,3,4,5].map(n => <Star key={n} className={`w-3 h-3 ${n <= Math.round(c.rating||0) ? 'text-[hsl(var(--warning))]  fill-[hsl(var(--warning))]' : 'text-foreground/20'}`} />)}
                   </div>
                   <div className="flex gap-1 mt-1">
-                    <Button size="icon" variant="ghost" className="w-7 h-7" onClick={() => setViewDialog(c)} data-testid={`maklon-client-view-${c.id}`}><Eye className="w-3.5 h-3.5" /></Button>
-                    <Button size="icon" variant="ghost" className="w-7 h-7" onClick={() => setClientDialog({ data: c })} data-testid={`maklon-client-edit-${c.id}`}><Edit2 className="w-3.5 h-3.5" /></Button>
-                    <Button size="icon" variant="ghost" className="w-7 h-7 text-violet-600 dark:text-violet-300 hover:bg-violet-100 dark:bg-violet-500/15" onClick={() => setPortalDialog(c)} title="Akses Portal Klien" data-testid={`maklon-client-portal-${c.id}`}><KeyRound className="w-3.5 h-3.5" /></Button>
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => toggleClient(c)}>{c.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
+                    <Button size="icon-sm" variant="ghost" onClick={() => setViewDialog(c)} title="Lihat detail" aria-label="Lihat detail" data-testid={`maklon-client-view-${c.id}`}><Eye className="w-3.5 h-3.5" /></Button>
+                    <Button size="icon-sm" variant="ghost" onClick={() => setClientDialog({ data: c })} title="Ubah" aria-label="Ubah" data-testid={`maklon-client-edit-${c.id}`}><Edit2 className="w-3.5 h-3.5" /></Button>
+                    <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.15)] " onClick={() => setPortalDialog(c)} title="Akses Portal Klien" aria-label="Akses Portal Klien" data-testid={`maklon-client-portal-${c.id}`}><KeyRound className="w-3.5 h-3.5" /></Button>
+                    <Button size="sm" variant="outline" onClick={() => toggleClient(c)}>{c.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
                   </div>
                 </div>
               </div>
@@ -210,7 +206,11 @@ function PortalAccessDialog({ client, headers, onClose }) {
   };
 
   const reset = async (acc) => {
-    if (!window.confirm(`Reset password untuk ${acc.email}?`)) return;
+    if (!(await confirmDialog({
+      title: `Reset password untuk ${acc.email}?`,
+      body: 'Password lama tidak berlaku lagi. Password baru ditampilkan sekali setelah ini.',
+      confirmLabel: 'Reset password',
+    }))) return;
     try {
       const r = await fetch(`/api/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}/reset-password`, {
         method: 'POST', headers, body: JSON.stringify({}),
@@ -238,7 +238,12 @@ function PortalAccessDialog({ client, headers, onClose }) {
   };
 
   const removeAccount = async (acc) => {
-    if (!window.confirm(`Hapus akun portal ${acc.email}?`)) return;
+    if (!(await confirmDialog({
+      title: `Hapus akun portal ${acc.email}?`,
+      body: 'Klien tidak bisa login lagi dengan akun ini.',
+      confirmLabel: 'Hapus',
+      danger: true,
+    }))) return;
     try {
       const r = await fetch(`/api/dewi/maklon/clients/${client.id}/portal-accounts/${acc.id}`, {
         method: 'DELETE', headers,
@@ -260,62 +265,64 @@ function PortalAccessDialog({ client, headers, onClose }) {
       <DialogContent className="max-w-xl" data-testid="maklon-portal-access-dialog">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="w-4 h-4 text-violet-600 dark:text-violet-400" /> Akses Portal Klien — {client.name}
+            <KeyRound className="w-4 h-4 text-[hsl(var(--primary))] " /> Akses Portal Klien — {client.name}
           </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-3 py-2 text-sm">
-          <div className="rounded-lg border border-violet-400 dark:border-violet-400/25 bg-violet-50 dark:bg-violet-500/5 p-3 text-xs text-foreground/75">
-            <div className="font-medium text-violet-600 dark:text-violet-300 mb-1">Portal Klien Maklon (Phase 4)</div>
-            Klien dapat login di <code className="font-mono text-violet-600 dark:text-violet-300">/client</code> untuk melihat status order, approve sample, dan invoice secara mandiri.
-          </div>
+          <Notice tone="info" title="Portal klien maklon">
+            <span className="text-xs">
+              Klien dapat login di <code className="tabular-nums text-[hsl(var(--primary))] ">/client</code> untuk melihat status order, menyetujui sample, dan melihat faktur secara mandiri.
+            </span>
+          </Notice>
 
           {credential && (
-            <div className="rounded-lg border border-emerald-400/25 bg-emerald-500/5 p-3 space-y-2">
-              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-300 text-xs font-medium">
-                <ShieldCheck className="w-3.5 h-3.5" /> Kredensial Sekali Tampil — Catat Sekarang
-              </div>
+            <Notice tone="success" icon={ShieldCheck} title="Kredensial sekali tampil — catat sekarang">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/55 text-xs w-16">Email:</span>
-                  <code className="font-mono text-xs text-foreground flex-1">{credential.email}</code>
-                  <Button size="icon" variant="ghost" className="w-6 h-6" onClick={() => copy(credential.email)}><Copy className="w-3 h-3" /></Button>
+                  <code className="tabular-nums text-xs text-foreground flex-1">{credential.email}</code>
+                  <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.email)} title="Salin email" aria-label="Salin email"><Copy className="w-3 h-3" /></Button>
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-foreground/55 text-xs w-16">Password:</span>
-                  <code className="font-mono text-xs text-foreground flex-1">{credential.password}</code>
-                  <Button size="icon" variant="ghost" className="w-6 h-6" onClick={() => copy(credential.password)}><Copy className="w-3 h-3" /></Button>
+                  <code className="tabular-nums text-xs text-foreground flex-1">{credential.password}</code>
+                  <Button size="icon-sm" variant="ghost" onClick={() => copy(credential.password)} title="Salin password" aria-label="Salin password"><Copy className="w-3 h-3" /></Button>
                 </div>
               </div>
-              <div className="text-[11px] text-foreground/55">Klien wajib mengganti password saat login pertama.</div>
-            </div>
+              <div className="text-[11px] text-foreground/55 mt-1">Klien wajib mengganti password saat login pertama.</div>
+            </Notice>
           )}
 
           {loading ? (
             <div className="text-foreground/40 text-xs py-4 text-center">Memuat akun...</div>
           ) : accounts.length === 0 && !provisionMode ? (
-            <div className="rounded-lg border border-dashed border-foreground/10 p-6 text-center">
-              <KeyRound className="w-8 h-8 mx-auto text-foreground/30 mb-2" />
-              <div className="text-foreground/55 text-sm mb-3">Belum ada akun portal untuk klien ini.</div>
-              <Button size="sm" onClick={() => setProvisionMode(true)} data-testid="maklon-portal-provision-btn">
-                <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat Akun Portal
-              </Button>
-            </div>          ) : (
+            <EmptyState
+              icon={KeyRound}
+              title="Belum ada akun portal untuk klien ini"
+              description="Buat akun supaya klien bisa memantau order dan sample sendiri."
+              action={
+                <Button size="sm" onClick={() => setProvisionMode(true)} data-testid="maklon-portal-provision-btn">
+                  <Plus className="w-3.5 h-3.5 mr-1.5" /> Buat Akun Portal
+                </Button>
+              }
+            />
+          ) : (
             <div className="space-y-2">
               {accounts.map((acc) => (
                 <div key={acc.id} className="rounded-lg border border-foreground/[0.08] p-3 flex items-center justify-between gap-2" data-testid={`maklon-portal-account-${acc.id}`}>
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-foreground text-sm truncate">{acc.email}</div>
                     <div className="text-xs text-foreground/55 flex items-center gap-2 flex-wrap">
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${acc.status === 'active' ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300' : 'bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-600 dark:text-red-300'}`}>{acc.status}</span>
-                      {acc.must_change_password && <span className="text-[10px] text-amber-700 dark:text-amber-400">Wajib ganti pwd</span>}
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded ${acc.status === 'active' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  '}`}>{acc.status === 'active' ? 'Aktif' : 'Nonaktif'}</span>
+                      {acc.must_change_password && <span className="text-[10px] text-[hsl(var(--warning))] ">Wajib ganti pwd</span>}
                       {acc.last_login_at && <span className="text-[10px] text-foreground/40">Login terakhir: {new Date(acc.last_login_at).toLocaleDateString('id-ID')}</span>}
                     </div>
                   </div>
                   <div className="flex gap-1 flex-shrink-0">
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => reset(acc)} data-testid={`maklon-portal-reset-${acc.id}`}>Reset Pwd</Button>
-                    <Button size="sm" variant="outline" className="text-xs h-7" onClick={() => toggle(acc)}>{acc.status === 'active' ? 'Nonaktif' : 'Aktif'}</Button>
-                    <Button size="icon" variant="ghost" className="w-7 h-7 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/15" onClick={() => removeAccount(acc)}><Ban className="w-3.5 h-3.5" /></Button>
+                    <Button size="sm" variant="outline" onClick={() => reset(acc)} data-testid={`maklon-portal-reset-${acc.id}`}>Reset password</Button>
+                    <Button size="sm" variant="outline" onClick={() => toggle(acc)}>{acc.status === 'active' ? 'Nonaktifkan' : 'Aktifkan'}</Button>
+                    <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)] " onClick={() => removeAccount(acc)} title="Hapus akun" aria-label="Hapus akun"><Ban className="w-3.5 h-3.5" /></Button>
                   </div>
                 </div>
               ))}
@@ -326,8 +333,8 @@ function PortalAccessDialog({ client, headers, onClose }) {
           )}
 
           {provisionMode && (
-            <div className="rounded-lg border border-violet-400 dark:border-violet-400/25 bg-violet-50 dark:bg-violet-500/5 p-3 space-y-2">
-              <div className="text-xs font-medium text-violet-600 dark:text-violet-300">Buat Akun Portal Baru</div>
+            <GlassCard className="p-4 space-y-2">
+              <div className="text-xs font-medium text-[hsl(var(--primary))] ">Buat Akun Portal Baru</div>
               <div className="space-y-1.5">
                 <Label className="text-xs">Email Login *</Label>
                 <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="klien@perusahaan.id" data-testid="maklon-portal-email-input" />
@@ -336,14 +343,14 @@ function PortalAccessDialog({ client, headers, onClose }) {
                 <Label className="text-xs">Nama PIC (opsional)</Label>
                 <Input value={picName} onChange={(e) => setPicName(e.target.value)} />
               </div>
-              <div className="text-[11px] text-foreground/55">Password akan di-generate otomatis dan ditampilkan setelah submit.</div>
+              <div className="text-[11px] text-foreground/55">Password dibuat otomatis dan ditampilkan setelah akun dibuat.</div>
               <div className="flex gap-2 justify-end pt-1">
-                <Button size="sm" variant="ghost" onClick={() => setProvisionMode(false)}>Batal</Button>
+                <Button size="sm" variant="outline" onClick={() => setProvisionMode(false)}>Batal</Button>
                 <Button size="sm" onClick={provision} disabled={submitting} data-testid="maklon-portal-provision-submit">
                   {submitting ? 'Membuat...' : 'Buat Akun'}
                 </Button>
               </div>
-            </div>
+            </GlassCard>
           )}
         </div>
 
@@ -393,7 +400,7 @@ function ClientDialog({ data, headers, onClose, onSuccess }) {
             <div className="space-y-1"><Label>Payment Terms</Label><Select value={form.payment_terms} onValueChange={v => set('payment_terms', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="net_7">Net 7</SelectItem><SelectItem value="net_14">Net 14</SelectItem><SelectItem value="net_30">Net 30</SelectItem><SelectItem value="net_60">Net 60</SelectItem></SelectContent></Select></div>
             <div className="space-y-1"><Label>Quality Standard</Label><Select value={form.quality_standard} onValueChange={v => set('quality_standard', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">Standard</SelectItem><SelectItem value="premium">Premium</SelectItem><SelectItem value="luxury">Luxury</SelectItem></SelectContent></Select></div>
           </div>
-          <div className="space-y-1"><Label>Spesialisasi Produk</Label><div className="flex flex-wrap gap-1.5 pt-1">{PRODUCT_SPECIALIZATIONS.map(s => <button key={s} onClick={() => toggleSpec(s)} className={`text-xs px-2.5 py-1 rounded-full border transition-all ${form.product_specialization.includes(s) ? 'bg-violet-500/20 border-violet-500 dark:border-violet-400/40 text-violet-600 dark:text-violet-300' : 'bg-foreground/5 border-foreground/10 text-foreground/60 hover:border-foreground/25'}`}>{s}</button>)}</div></div>
+          <div className="space-y-1"><Label>Spesialisasi Produk</Label><div className="flex flex-wrap gap-1.5 pt-1">{PRODUCT_SPECIALIZATIONS.map(s => <button key={s} onClick={() => toggleSpec(s)} className={`text-xs px-2.5 py-1 rounded-full border transition-all ${form.product_specialization.includes(s) ? 'bg-[hsl(var(--primary)/0.2)] border-[hsl(var(--primary)/0.35)]  text-[hsl(var(--primary))] ' : 'bg-foreground/5 border-foreground/10 text-foreground/60 hover:border-foreground/25'}`}>{s}</button>)}</div></div>
           <div className="space-y-1"><Label>Catatan</Label><Textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} /></div>
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Batal</Button><Button onClick={save} disabled={saving}>{saving ? 'Menyimpan...' : (isEdit ? 'Simpan' : 'Tambah Klien')}</Button></DialogFooter>
@@ -420,7 +427,7 @@ function ViewClientDialog({ client, onClose }) {
           <InfoRow label="Payment Terms" value={client.payment_terms} />
           <InfoRow label="Quality Standard" value={client.quality_standard} />
           <InfoRow label="Rating" value={`${client.rating || 0}/5`} />
-          <InfoRow label="Status" value={<span className={`px-2 py-0.5 rounded text-xs ${client.status === 'active' ? 'bg-green-100 dark:bg-green-500/15 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-400'}`}>{client.status === 'active' ? 'Aktif' : 'Non-Aktif'}</span>} />
+          <InfoRow label="Status" value={<span className={`px-2 py-0.5 rounded text-xs ${client.status === 'active' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] '}`}>{client.status === 'active' ? 'Aktif' : 'Non-Aktif'}</span>} />
           {(client.product_specialization || []).length > 0 && <InfoRow label="Spesialisasi" value={(client.product_specialization || []).join(', ')} />}
           <InfoRow label="Catatan" value={client.notes} />
         </div>

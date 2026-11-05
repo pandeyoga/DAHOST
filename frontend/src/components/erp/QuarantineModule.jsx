@@ -56,10 +56,10 @@ const SOURCE_LABEL = {
 
 function Stat({ icon: Icon, label, value, hint, tone = 'violet' }) {
   const tones = {
-    violet: 'text-violet-600 dark:text-violet-400 bg-violet-500/5 border-violet-500/20',
-    amber: 'text-amber-700 dark:text-amber-400 bg-amber-500/5 border-amber-500/20',
-    red: 'text-red-700 dark:text-red-400 bg-red-500/5 border-red-500/20',
-    emerald: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 border-emerald-500/20',
+    violet: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.05)] border-[hsl(var(--primary)/0.2)]',
+    amber: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.05)] border-[hsl(var(--warning)/0.2)]',
+    red: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.05)] border-[hsl(var(--destructive)/0.2)]',
+    emerald: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.05)] border-[hsl(var(--success)/0.2)]',
   };
   return (
     <div className={`rounded-xl border p-3 ${tones[tone]}`}>
@@ -76,12 +76,12 @@ function Stat({ icon: Icon, label, value, hint, tone = 'violet' }) {
 function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit }) {
   const CONF = {
     release: {
-      title: 'Lepas ke Stok', color: 'bg-emerald-600',
+      title: 'Lepas ke Stok', color: 'bg-[hsl(var(--success))]',
       desc: 'Barang lolos re-inspeksi / sudah di-rework. Stok akan kembali TERSEDIA di lokasi tujuan.',
       needLoc: true,
     },
     scrap: {
-      title: 'Scrap (Buang)', color: 'bg-red-600',
+      title: 'Scrap (Buang)', color: 'bg-[hsl(var(--destructive))]',
       desc: 'Barang dibuang. Bila barang sudah masuk nilai persediaan, jurnal kerugian (write-off) akan di-posting otomatis.',
       needLoc: false,
     },
@@ -192,7 +192,7 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
             </div>
           )}
 
-          {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-3 py-2">{err}</div>}
+          {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-3 py-2">{err}</div>}
         </div>
 
         <div className="flex justify-end gap-2 mt-5">
@@ -276,7 +276,7 @@ function ManualModal({ token, locations, onClose, onSaved }) {
             <textarea rows="2" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-notes" />
           </div>
-          {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-3 py-2">{err}</div>}
+          {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-3 py-2">{err}</div>}
         </div>
         <div className="flex justify-end gap-2 mt-5">
           <button onClick={onClose} className="px-4 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
@@ -387,7 +387,7 @@ export default function QuarantineModule({ token: tokenProp }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-amber-600 dark:text-amber-400" /> Karantina QC
+            <ShieldAlert className="w-5 h-5 text-[hsl(var(--warning))] " /> Karantina QC
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             Barang <strong>reject QC</strong> ditahan di sini — stok tercatat tapi <strong>diblokir</strong> (tidak bisa dipakai produksi/penjualan)
@@ -395,7 +395,7 @@ export default function QuarantineModule({ token: tokenProp }) {
           </p>
           {locInfo && (
             <p className="text-xs text-muted-foreground mt-1">
-              Lokasi: <span className="font-mono">{locInfo.code}</span> · {locInfo.name}
+              Lokasi: <span className="tabular-nums">{locInfo.code}</span> · {locInfo.name}
             </p>
           )}
         </div>
@@ -412,7 +412,7 @@ export default function QuarantineModule({ token: tokenProp }) {
       </div>
 
       {toast && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-2 flex items-center gap-2"
+        <div className="text-sm text-[hsl(var(--success))] bg-[hsl(var(--success)/0.15)]  border border-[hsl(var(--success)/0.2)] rounded-lg px-4 py-2 flex items-center gap-2"
           data-testid="quarantine-toast">
           <CheckCircle2 className="w-4 h-4" /> {toast}
         </div>
@@ -424,16 +424,16 @@ export default function QuarantineModule({ token: tokenProp }) {
           produksi atau DIKIRIM KE PEMBELI. Penanda `quarantine/blocked` pada baris
           stok hanya menyembunyikannya dari dropdown, tidak menghalangi perhitungan. */}
       {unblockedCount > 0 && (
-        <div className="rounded-xl border-2 border-red-500 bg-red-100 dark:bg-red-500/15 px-4 py-3"
+        <div className="rounded-xl border-2 border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.15)] px-4 py-3"
           data-testid="quarantine-unblocked-banner">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex items-start gap-3">
-              <ShieldOff className="w-6 h-6 text-red-700 dark:text-red-400 shrink-0 mt-0.5" />
+              <ShieldOff className="w-6 h-6 text-[hsl(var(--destructive))] shrink-0 mt-0.5" />
               <div>
-                <div className="font-bold text-red-800 dark:text-red-300">
+                <div className="font-bold text-[hsl(var(--destructive))] ">
                   Ketersediaan BELUM terblokir — {fmtNum(unblockedCount)} item karantina ({fmtNum(unblockedQty)} unit)
                 </div>
-                <p className="text-sm text-red-800/90 dark:text-red-300/90 mt-1 max-w-3xl">
+                <p className="text-sm text-[hsl(var(--destructive)/0.9)] mt-1 max-w-3xl">
                   Barang <strong>REJECT</strong> ini masih terhitung sebagai stok <strong>TERSEDIA</strong>, sehingga
                   bisa ikut dipilih untuk produksi atau <strong>terkirim ke pembeli</strong>. Perlu tindakan manual:
                   tekan <em>Coba Blokir Ulang</em> pada barisnya. Bila tetap gagal, stok fisik di lokasi karantina
@@ -443,7 +443,7 @@ export default function QuarantineModule({ token: tokenProp }) {
                   <div className="flex flex-wrap gap-2 mt-2">
                     {(summary.unblocked_groups || []).map((g) => (
                       <span key={`${g.material_id}-${g.location_id}`}
-                        className="px-2 py-0.5 rounded-full text-xs bg-red-200 dark:bg-red-500/20 text-red-900 dark:text-red-200 font-mono">
+                        className="px-2 py-0.5 rounded-full text-xs bg-[hsl(var(--destructive)/0.2)] text-[hsl(var(--destructive))]  tabular-nums">
                         {g.material_code || g.material_id} · belum terblokir {fmtNum(g.shortfall)} {g.unit}
                       </span>
                     ))}
@@ -453,7 +453,7 @@ export default function QuarantineModule({ token: tokenProp }) {
             </div>
             {!needsAction && (
               <button onClick={() => { setStatus('open'); setNeedsAction(true); }}
-                className="px-3 py-2 text-sm bg-red-600 text-white rounded-lg hover:brightness-110 whitespace-nowrap"
+                className="px-3 py-2 text-sm bg-[hsl(var(--destructive))] text-white rounded-lg hover:brightness-110 whitespace-nowrap"
                 data-testid="quarantine-show-needs-action">
                 Lihat daftar
               </button>
@@ -479,7 +479,7 @@ export default function QuarantineModule({ token: tokenProp }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">Alasan reject:</span>
           {Object.entries(summary.by_reason).map(([code, qty]) => (
-            <span key={code} className="px-2 py-0.5 rounded-full text-xs bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
+            <span key={code} className="px-2 py-0.5 rounded-full text-xs bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] ">
               {code} · {fmtNum(qty)}
             </span>
           ))}
@@ -490,7 +490,7 @@ export default function QuarantineModule({ token: tokenProp }) {
       <div className="flex flex-wrap items-center gap-2 border-b border-border">
         <button onClick={() => { setNeedsAction(false); setLegacyOnly(false); }}
           className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${!needsAction && !legacyOnly
-            ? 'border-violet-600 text-violet-700 dark:text-violet-400'
+            ? 'border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] '
             : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           data-testid="quarantine-tab-all">
           Semua Item Karantina
@@ -498,19 +498,19 @@ export default function QuarantineModule({ token: tokenProp }) {
         {/* 2026-11-02 (K11): retur supplier lama (sebelum dokumen Retur Pembelian) — diselesaikan manual */}
         <button onClick={() => { setNeedsAction(false); setLegacyOnly(true); }}
           className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 ${legacyOnly
-            ? 'border-sky-600 text-sky-700 dark:text-sky-400'
+            ? 'border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] '
             : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           data-testid="quarantine-tab-legacy-returns">
           Retur Lama Tanpa Penyelesaian
         </button>
         <button onClick={() => { setStatus('open'); setLegacyOnly(false); setNeedsAction(true); }}
           className={`px-3 py-2 text-sm font-medium -mb-px border-b-2 flex items-center gap-2 ${needsAction
-            ? 'border-red-600 text-red-700 dark:text-red-400'
+            ? 'border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))] '
             : 'border-transparent text-muted-foreground hover:text-foreground'}`}
           data-testid="quarantine-tab-needs-action">
           Perlu Tindakan Manual
           <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold ${unblockedCount > 0
-            ? 'bg-red-600 text-white'
+            ? 'bg-[hsl(var(--destructive))] text-white'
             : 'bg-foreground/10 text-muted-foreground'}`} data-testid="quarantine-needs-action-badge">
             {fmtNum(unblockedCount)}
           </span>
@@ -533,7 +533,7 @@ export default function QuarantineModule({ token: tokenProp }) {
         </SmartNativeSelect>
       </div>
 
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
+      {err && <div className="text-sm text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  rounded-lg px-4 py-2">{err}</div>}
 
       {/* Table */}
       <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
@@ -569,22 +569,22 @@ export default function QuarantineModule({ token: tokenProp }) {
               <tr key={it.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`quarantine-row-${it.id}`}>
                 <td className="px-4 py-3">
                   <div className="font-medium">{it.material_name || '-'}</div>
-                  <div className="font-mono text-xs text-muted-foreground">{it.material_code}</div>
+                  <div className="tabular-nums text-xs text-muted-foreground">{it.material_code}</div>
                   {Number(it.legacy_return_qty || 0) > 0 && (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-sky-100 dark:bg-sky-500/15 text-sky-800 dark:text-sky-300"
+                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] "
                       title="Retur ke pemasok sebelum ada dokumen Retur Pembelian — belum tercatat penyelesaiannya (tukar / nota debit / refund). Selesaikan manual bersama Keuangan."
                       data-testid={`quarantine-legacy-return-${it.id}`}>
                       <Undo2 className="w-3 h-3" /> Retur lama tanpa penyelesaian · {fmtNum(it.legacy_return_qty)} {it.unit}
                     </span>
                   )}
                   {it.availability_blocked === false ? (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-red-600 text-white"
+                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] font-bold bg-[hsl(var(--destructive))] text-white"
                       title={`Barang reject ini MASIH terhitung tersedia sebanyak ${fmtNum(it.availability_shortfall)} ${it.unit} — bisa ikut dipakai produksi atau terkirim ke pembeli.`}
                       data-testid={`quarantine-unblocked-badge-${it.id}`}>
                       <ShieldOff className="w-3 h-3" /> TIDAK TERBLOKIR
                     </span>
                   ) : it.status === 'open' ? (
-                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                    <span className="inline-flex items-center gap-1 mt-1 px-1.5 py-0.5 rounded text-[11px] bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] "
                       title="Ketersediaan terblokir penuh — barang ini tidak bisa dipakai produksi/penjualan."
                       data-testid={`quarantine-blocked-badge-${it.id}`}>
                       <Lock className="w-3 h-3" /> terblokir
@@ -599,18 +599,18 @@ export default function QuarantineModule({ token: tokenProp }) {
                 <td className="px-4 py-3 text-xs">
                   {(it.reject_reasons || []).length === 0 ? <span className="text-muted-foreground">-</span> :
                     (it.reject_reasons || []).map((r, i) => (
-                      <div key={i} className="text-amber-700 dark:text-amber-400">{r.code} {r.qty ? `· ${fmtNum(r.qty)}` : ''}</div>
+                      <div key={i} className="text-[hsl(var(--warning))] ">{r.code} {r.qty ? `· ${fmtNum(r.qty)}` : ''}</div>
                     ))}
                 </td>
                 <td className="px-4 py-3 text-right">{fmtNum(it.qty)} <span className="text-xs text-muted-foreground">{it.unit}</span></td>
                 <td className="px-4 py-3 text-right font-semibold">{fmtNum(it.remaining_qty)}</td>
                 <td className="px-4 py-3 text-right text-xs">
                   {Number(it.unit_cost || 0) > 0 ? fmtRp(it.value) :
-                    <span className="text-amber-700 dark:text-amber-400" title="Harga satuan material belum diisi — jurnal keuangan akan dilewati">harga belum diisi</span>}
+                    <span className="text-[hsl(var(--warning))] " title="Harga satuan material belum diisi — jurnal keuangan akan dilewati">harga belum diisi</span>}
                   <div className="text-muted-foreground">{it.valued ? 'sudah bernilai' : 'belum bernilai'}</div>
                 </td>
                 <td className="px-4 py-3 text-center text-xs">
-                  <span className={Number(it.age_days) >= 14 ? 'text-red-700 dark:text-red-400 font-medium' : 'text-muted-foreground'}>
+                  <span className={Number(it.age_days) >= 14 ? 'text-[hsl(var(--destructive))]  font-medium' : 'text-muted-foreground'}>
                     {fmtNum(it.age_days)} hari
                   </span>
                   <div className="text-muted-foreground">{fmtDate(it.created_at)}</div>
@@ -620,7 +620,7 @@ export default function QuarantineModule({ token: tokenProp }) {
                     <div className="flex items-center justify-end gap-1.5 flex-wrap">
                       {it.availability_blocked === false && (
                         <button onClick={() => retryBlock(it)} disabled={retrying === it.id}
-                          className="px-2.5 py-1.5 text-xs bg-red-600 text-white rounded-lg hover:brightness-110 flex items-center gap-1 disabled:opacity-60"
+                          className="px-2.5 py-1.5 text-xs bg-[hsl(var(--destructive))] text-white rounded-lg hover:brightness-110 flex items-center gap-1 disabled:opacity-60"
                           title="Pasang ulang blokir ketersediaan agar barang reject ini tidak terhitung tersedia"
                           data-testid={`quarantine-retry-block-${it.id}`}>
                           <ShieldOff className="w-3.5 h-3.5" />
@@ -628,18 +628,18 @@ export default function QuarantineModule({ token: tokenProp }) {
                         </button>
                       )}
                       <button onClick={() => setModal({ item: it, action: 'release' })}
-                        className="px-2.5 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:brightness-110 flex items-center gap-1"
+                        className="px-2.5 py-1.5 text-xs bg-[hsl(var(--success))] text-white rounded-lg hover:brightness-110 flex items-center gap-1"
                         data-testid={`quarantine-release-${it.id}`}>
                         <PackageCheck className="w-3.5 h-3.5" /> Lepas
                       </button>
                       <button onClick={() => setRtpItem(it)}
-                        className="px-2.5 py-1.5 text-xs bg-sky-600 text-white rounded-lg hover:brightness-110 flex items-center gap-1"
+                        className="px-2.5 py-1.5 text-xs bg-[hsl(var(--primary))] text-white rounded-lg hover:brightness-110 flex items-center gap-1"
                         title="Dokumen Retur Pembelian: tukar barang / potong tagihan / refund / diterima dengan diskon / dimusnahkan"
                         data-testid={`quarantine-return-${it.id}`}>
                         <Undo2 className="w-3.5 h-3.5" /> Buat Retur Pembelian
                       </button>
                       <button onClick={() => setModal({ item: it, action: 'scrap' })}
-                        className="px-2.5 py-1.5 text-xs border border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-500/10 flex items-center gap-1"
+                        className="px-2.5 py-1.5 text-xs border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  rounded-lg hover:bg-[hsl(var(--destructive)/0.1)]  flex items-center gap-1"
                         data-testid={`quarantine-scrap-${it.id}`}>
                         <Trash2 className="w-3.5 h-3.5" /> Scrap
                       </button>
@@ -662,7 +662,7 @@ export default function QuarantineModule({ token: tokenProp }) {
       {pg.total > 0 && <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />}
 
       <div className="text-xs text-muted-foreground flex items-start gap-2 bg-[var(--glass-bg)] border border-border rounded-lg px-4 py-3">
-        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+        <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-[hsl(var(--warning))] " />
         <span>
           <strong>Cara kerja:</strong> saat Penerimaan Barang (GR) diset <em>received</em>, qty <em>accepted</em> masuk stok normal dan qty <em>reject</em>
           otomatis masuk Karantina QC. Bila reject baru ditemukan setelah barang masuk, gunakan re-inspeksi QC pada GR

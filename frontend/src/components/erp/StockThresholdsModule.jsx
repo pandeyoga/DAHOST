@@ -9,9 +9,9 @@ import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
 
 const STATUS_META = {
-  critical:     { label: 'Kritis',        cls: 'bg-red-400/10 text-red-500 border-red-300/25' },
-  low:          { label: 'Perlu pesan',   cls: 'bg-amber-400/10 text-amber-500 border-amber-300/25' },
-  ok:           { label: 'Aman',          cls: 'bg-emerald-400/10 text-emerald-600 border-emerald-300/25' },
+  critical:     { label: 'Kritis',        cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
+  low:          { label: 'Perlu pesan',   cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]' },
+  ok:           { label: 'Aman',          cls: 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.25)]' },
   no_threshold: { label: 'Belum diambang', cls: 'bg-muted/30 text-muted-foreground border-border' },
 };
 
@@ -273,9 +273,8 @@ export default function StockThresholdsModule({ token, onNavigate }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={fetchRows} disabled={loading} data-testid="threshold-refresh">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-          </Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={fetchRows} disabled={loading} data-testid="threshold-refresh">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
           <Button variant="outline" onClick={() => goto('wh-shopping-list')}
             data-testid="threshold-goto-shopping">
             <ShoppingCart className="w-4 h-4 mr-1.5" /> Daftar Belanja Mingguan
@@ -292,10 +291,10 @@ export default function StockThresholdsModule({ token, onNavigate }) {
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="threshold-summary">
           {[
-            { k: 'with_threshold', label: 'Sudah punya ambang', v: summary.with_threshold, tone: 'text-emerald-600 dark:text-emerald-300' },
-            { k: 'missing_threshold', label: 'Belum diisi', v: summary.missing_threshold, tone: 'text-amber-600 dark:text-amber-300' },
-            { k: 'critical', label: 'Stok kritis', v: summary.critical, tone: 'text-red-500' },
-            { k: 'low', label: 'Perlu pesan ulang', v: summary.low, tone: 'text-amber-500' },
+            { k: 'with_threshold', label: 'Sudah punya ambang', v: summary.with_threshold, tone: 'text-[hsl(var(--success))] ' },
+            { k: 'missing_threshold', label: 'Belum diisi', v: summary.missing_threshold, tone: 'text-[hsl(var(--warning))] ' },
+            { k: 'critical', label: 'Stok kritis', v: summary.critical, tone: 'text-[hsl(var(--destructive))]' },
+            { k: 'low', label: 'Perlu pesan ulang', v: summary.low, tone: 'text-[hsl(var(--warning))]' },
           ].map(c => (
             <GlassCard key={c.k} className="p-3">
               <div className={`text-2xl font-bold ${c.tone}`} data-testid={`threshold-stat-${c.k}`}>{c.v}</div>
@@ -306,9 +305,9 @@ export default function StockThresholdsModule({ token, onNavigate }) {
       )}
 
       {summary && summary.with_threshold === 0 && (
-        <div className="flex items-start gap-2 bg-amber-400/10 border border-amber-300/25 rounded-lg px-4 py-3" data-testid="threshold-empty-warning">
-          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-          <div className="text-sm text-amber-600 dark:text-amber-300">
+        <div className="flex items-start gap-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.25)] rounded-lg px-4 py-3" data-testid="threshold-empty-warning">
+          <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
+          <div className="text-sm text-[hsl(var(--warning))] ">
             <strong>Belum ada satu pun ambang stok yang diisi</strong> — itulah sebabnya menu
             Alert &amp; Reorder selalu kosong dan Daftar Belanja Mingguan kosong. Pakai panel
             <em> Isi Ambang Massal</em> di bawah: mulai dari <em>lot pembelian</em> (paling banyak
@@ -404,12 +403,12 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                     {preview.dry_run ? 'Pratinjau' : 'Diterapkan'} · dasar {preview.basis_label}
                   </span>
                   <span className="text-muted-foreground">diperiksa {preview.scanned} barang</span>
-                  <span className="text-emerald-600 dark:text-emerald-300"
+                  <span className="text-[hsl(var(--success))] "
                     data-testid="threshold-preview-eligible">
                     {preview.dry_run ? `${preview.eligible} akan diisi` : `${preview.applied} terisi`}
                   </span>
                   {preview.skipped_count > 0 && (
-                    <span className="text-amber-600 dark:text-amber-300"
+                    <span className="text-[hsl(var(--warning))] "
                       data-testid="threshold-preview-skipped">
                       {preview.skipped_count} dilewati
                     </span>
@@ -432,11 +431,11 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                         {preview.preview.slice(0, 30).map(p => (
                           <tr key={p.material_id} className="border-t border-[var(--glass-border)]"
                             data-testid={`threshold-preview-row-${p.code}`}>
-                            <td className="px-3 py-1.5 font-mono text-foreground">{p.code}</td>
-                            <td className="px-3 py-1.5 text-right font-mono text-foreground">{fmt(p.onhand)} {p.unit}</td>
-                            <td className="px-3 py-1.5 text-right font-mono text-muted-foreground">{fmt(p.current_min)}</td>
-                            <td className="px-3 py-1.5 text-right font-mono font-semibold text-foreground">{fmt(p.min_stock_qty)}</td>
-                            <td className="px-3 py-1.5 text-right font-mono text-foreground">{fmt(p.reorder_point)}</td>
+                            <td className="px-3 py-1.5 tabular-nums text-foreground">{p.code}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-foreground">{fmt(p.onhand)} {p.unit}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">{fmt(p.current_min)}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums font-semibold text-foreground">{fmt(p.min_stock_qty)}</td>
+                            <td className="px-3 py-1.5 text-right tabular-nums text-foreground">{fmt(p.reorder_point)}</td>
                             <td className="px-3 py-1.5 text-muted-foreground">{p.basis_note}</td>
                           </tr>
                         ))}
@@ -451,7 +450,7 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                 )}
                 {!!(preview.skipped || []).length && (
                   <div className="px-3 py-2 text-[11px] text-muted-foreground border-t border-[var(--glass-border)]">
-                    <strong className="text-amber-600 dark:text-amber-300">Dilewati:</strong>{' '}
+                    <strong className="text-[hsl(var(--warning))] ">Dilewati:</strong>{' '}
                     {preview.skipped.slice(0, 4).map(s => `${s.code} (${s.reason})`).join(' · ')}
                     {preview.skipped.length > 4 && ` · dan ${preview.skipped.length - 4} lainnya`}
                   </div>
@@ -526,12 +525,12 @@ export default function StockThresholdsModule({ token, onNavigate }) {
                       <input type="checkbox" checked={isSel} onChange={() => toggle(r.material_id)}
                         data-testid={`threshold-check-${r.code}`} />
                     </td>
-                    <td className="px-3 py-2 font-mono text-xs text-foreground whitespace-nowrap">{r.code}</td>
+                    <td className="px-3 py-2 tabular-nums text-xs text-foreground whitespace-nowrap">{r.code}</td>
                     <td className="px-3 py-2 text-foreground">
                       {r.name}
                       <span className="block text-[10px] text-muted-foreground">{r.type} · {r.unit}</span>
                     </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-foreground whitespace-nowrap">
+                    <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground whitespace-nowrap">
                       {fmt(r.onhand)} {r.unit}
                     </td>
                     <td className="px-3 py-2 text-right">

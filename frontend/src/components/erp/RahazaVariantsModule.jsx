@@ -105,7 +105,7 @@ export function RahazaVariantsModule({ token }) {
           </h2>
           <p className="text-muted-foreground text-sm mt-1">
             Varian = Warna × Size dengan SKU unik otomatis
-            (<span className="font-mono text-foreground">KODE-WARNA-SIZE</span>).
+            (<span className="tabular-nums text-foreground">KODE-WARNA-SIZE</span>).
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -159,7 +159,7 @@ export function RahazaVariantsModule({ token }) {
                   </TableCell></TableRow>
                 ) : variants.map(v => (
                   <TableRow key={v.id} data-testid={`variant-row-${v.sku}`}>
-                    <TableCell className="font-mono font-semibold text-foreground">{v.sku}</TableCell>
+                    <TableCell className="tabular-nums font-semibold text-foreground">{v.sku}</TableCell>
                     <TableCell>
                       <span className="inline-block w-6 h-6 rounded-md border border-[var(--glass-border)]"
                         style={{ backgroundColor: v.color_hex || '#ccc' }} title={v.color_hex} />
@@ -169,7 +169,7 @@ export function RahazaVariantsModule({ token }) {
                     <TableCell className="text-right">
                       <button
                         onClick={() => handleDelete(v)}
-                        className="p-1.5 rounded hover:bg-red-500/15 text-muted-foreground hover:text-red-400"
+                        className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))]"
                         title="Hapus varian" data-testid={`variant-delete-${v.sku}`}
                       ><Trash2 className="w-3.5 h-3.5" /></button>
                     </TableCell>
@@ -228,7 +228,7 @@ export function RahazaVariantsModule({ token }) {
                   const checked = genSizeIds.includes(s.id);
                   return (
                     <label key={s.id}
-                      className={`flex items-center justify-center gap-1.5 border rounded-lg px-2 py-2 cursor-pointer text-sm font-mono transition-colors ${
+                      className={`flex items-center justify-center gap-1.5 border rounded-lg px-2 py-2 cursor-pointer text-sm tabular-nums transition-colors ${
                         checked ? 'bg-primary/10 border-primary/40 text-foreground' : 'bg-[var(--glass-bg)] border-[var(--glass-border)] text-foreground/70 hover:bg-[var(--glass-bg-hover)]'
                       }`}
                       data-testid={`variant-gen-size-${s.code}`}>

@@ -37,10 +37,10 @@ const SEVERITY_META = {
   },
   warning: {
     icon: AlertTriangle,
-    bg: 'bg-amber-400/8 dark:bg-amber-400/10',
-    border: 'border-amber-300/30',
-    iconColor: 'text-amber-500 dark:text-amber-300',
-    tag: 'bg-amber-400/15 text-amber-600 dark:text-amber-300',
+    bg: 'bg-[hsl(var(--warning)/0.08)] ',
+    border: 'border-[hsl(var(--warning)/0.3)]',
+    iconColor: 'text-[hsl(var(--warning))] ',
+    tag: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] ',
     label: 'Perlu Perhatian',
   },
   info: {
@@ -53,10 +53,10 @@ const SEVERITY_META = {
   },
   success: {
     icon: CheckCircle2,
-    bg: 'bg-emerald-400/8 dark:bg-emerald-400/10',
-    border: 'border-emerald-300/30',
-    iconColor: 'text-emerald-500 dark:text-emerald-300',
-    tag: 'bg-emerald-400/15 text-emerald-600 dark:text-emerald-300',
+    bg: 'bg-[hsl(var(--success)/0.08)] ',
+    border: 'border-[hsl(var(--success)/0.3)]',
+    iconColor: 'text-[hsl(var(--success))] ',
+    tag: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] ',
     label: 'OK',
   },
 };
@@ -161,8 +161,8 @@ export function NextActionWidget({
         data-testid="next-action-widget-empty"
       >
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-emerald-400/10 border border-emerald-300/25 grid place-items-center flex-shrink-0">
-            <CheckCircle2 className="w-4.5 h-4.5 text-emerald-500 dark:text-emerald-300" />
+          <div className="w-9 h-9 rounded-xl bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.25)] grid place-items-center flex-shrink-0">
+            <CheckCircle2 className="w-4.5 h-4.5 text-[hsl(var(--success))] " />
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-sm font-semibold text-foreground">Semua terkendali</div>
@@ -291,9 +291,9 @@ export function NextActionWidget({
                   <div className="flex items-center justify-end mt-2">
                     <Button
                       size="sm"
-                      variant="ghost"
+                      variant="outline"
                       onClick={() => handleCTA(a)}
-                      className="h-7 px-2.5 text-xs border border-[var(--glass-border)] hover:border-[hsl(var(--primary)/0.4)]"
+                      className="h-7 px-2.5 text-xs hover:border-[hsl(var(--primary)/0.4)]"
                       data-testid={`nae-cta-${a.id}`}
                     >
                       {a.cta_label || 'Buka'}

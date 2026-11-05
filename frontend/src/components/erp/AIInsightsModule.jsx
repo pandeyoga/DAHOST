@@ -33,8 +33,8 @@ function Badge({ cls, children }) {
 }
 
 function ConfidenceBadge({ level }) {
-  const cls = level === 'tinggi' ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-500 border-emerald-400 dark:border-emerald-500/30'
-            : level === 'sedang' ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-500 border-amber-400 dark:border-amber-500/30'
+  const cls = level === 'tinggi' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)] '
+            : level === 'sedang' ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] '
             : 'bg-muted dark:bg-zinc-500/15 text-muted-foreground dark:text-zinc-500 border-border dark:border-zinc-500/30';
   return <Badge cls={cls}>confidence: {level}</Badge>;
 }
@@ -44,9 +44,9 @@ function RiskBadge({ level }) {
   if (!level || level === 'tidak dapat dinilai') {
     return <Badge cls="bg-muted text-muted-foreground border-border">risk: tidak dapat dinilai</Badge>;
   }
-  const cls = level === 'tinggi' ? 'bg-red-100 dark:bg-red-500/15 text-red-700 dark:text-red-500 border-red-400 dark:border-red-500/30'
-            : level === 'sedang' ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-500 border-amber-400 dark:border-amber-500/30'
-            : 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-500 border-emerald-400 dark:border-emerald-500/30';
+  const cls = level === 'tinggi' ? 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))]  border-[hsl(var(--destructive)/0.35)] '
+            : level === 'sedang' ? 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] '
+            : 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)] ';
   return <Badge cls={cls}>risk: {level}</Badge>;
 }
 
@@ -68,13 +68,13 @@ function AnalysisResult({ result, type }) {
               <div className="text-foreground/55">Process Dianalisis</div>
               <div className="font-bold text-foreground">{s.processes_analyzed || 0}</div>
             </div>
-            <div className="bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg p-2">
+            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-lg p-2">
               <div className="text-foreground/55">WO On-Time</div>
-              <div className="font-bold text-emerald-500">{s.wo_on_time || 0}</div>
+              <div className="font-bold text-[hsl(var(--success))]">{s.wo_on_time || 0}</div>
             </div>
-            <div className="bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-lg p-2">
+            <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-2">
               <div className="text-foreground/55">WO Overdue</div>
-              <div className="font-bold text-red-700 dark:text-red-500">{s.wo_overdue || 0}</div>
+              <div className="font-bold text-[hsl(var(--destructive))] ">{s.wo_overdue || 0}</div>
             </div>
           </>
         )}
@@ -84,17 +84,17 @@ function AnalysisResult({ result, type }) {
               <div className="text-foreground/55">Total Checked</div>
               <div className="font-bold text-foreground">{s.total_checked || 0}</div>
             </div>
-            <div className="bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg p-2">
+            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-lg p-2">
               <div className="text-foreground/55">Pass</div>
-              <div className="font-bold text-emerald-500">{s.total_pass || 0}</div>
+              <div className="font-bold text-[hsl(var(--success))]">{s.total_pass || 0}</div>
             </div>
-            <div className="bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-lg p-2">
+            <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-2">
               <div className="text-foreground/55">Fail</div>
-              <div className="font-bold text-red-700 dark:text-red-500">{s.total_fail || 0}</div>
+              <div className="font-bold text-[hsl(var(--destructive))] ">{s.total_fail || 0}</div>
             </div>
-            <div className={`border rounded-lg p-2 ${(s.fail_rate_pct || 0) >= 10 ? 'bg-red-100 dark:bg-red-500/10 border-red-400 dark:border-red-500/30' : 'bg-amber-100 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/20'}`}>
+            <div className={`border rounded-lg p-2 ${(s.fail_rate_pct || 0) >= 10 ? 'bg-[hsl(var(--destructive)/0.15)]  border-[hsl(var(--destructive)/0.35)] ' : 'bg-[hsl(var(--warning)/0.15)]  border-[hsl(var(--warning)/0.35)] '}`}>
               <div className="text-foreground/55">Fail Rate</div>
-              <div className={`font-bold ${(s.fail_rate_pct || 0) >= 10 ? 'text-red-700 dark:text-red-500' : 'text-amber-700 dark:text-amber-500'}`}>{s.fail_rate_pct || 0}%</div>
+              <div className={`font-bold ${(s.fail_rate_pct || 0) >= 10 ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--warning))] '}`}>{s.fail_rate_pct || 0}%</div>
             </div>
           </>
         )}
@@ -102,8 +102,8 @@ function AnalysisResult({ result, type }) {
 
       {/* Key finding cards */}
       {type === 'production' && s.top_bottleneck_process && (
-        <div className="bg-amber-100 dark:bg-amber-500/10 border border-amber-400 dark:border-amber-500/30 rounded-xl p-3 flex items-center gap-3">
-          <TrendingDown size={20} className="text-amber-700 dark:text-amber-500 flex-shrink-0" />
+        <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-3 flex items-center gap-3">
+          <TrendingDown size={20} className="text-[hsl(var(--warning))] flex-shrink-0" />
           <div>
             <div className="text-xs text-foreground/60">Bottleneck Process Teratas</div>
             <div className="font-bold text-foreground">{s.top_bottleneck_process.process}</div>
@@ -113,8 +113,8 @@ function AnalysisResult({ result, type }) {
       )}
 
       {type === 'qc' && s.worst_line && (
-        <div className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded-xl p-3 flex items-center gap-3">
-          <AlertCircle size={20} className="text-red-700 dark:text-red-500 flex-shrink-0" />
+        <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-3 flex items-center gap-3">
+          <AlertCircle size={20} className="text-[hsl(var(--destructive))] flex-shrink-0" />
           <div>
             <div className="text-xs text-foreground/60">Line dengan Fail Rate Tertinggi</div>
             <div className="font-bold text-foreground">{s.worst_line.line}</div>
@@ -124,9 +124,9 @@ function AnalysisResult({ result, type }) {
       )}
 
       {/* Claude analysis card */}
-      <div className="bg-gradient-to-br from-violet-500/10 to-fuchsia-500/10 border border-violet-300 dark:border-violet-500/20 rounded-xl p-4">
+      <div className="bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] rounded-xl p-4">
         <div className="flex items-center gap-2 mb-2 flex-wrap">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-violet-500">Root Cause Hypothesis</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[hsl(var(--primary))]">Root Cause Hypothesis</span>
           <ConfidenceBadge level={a.confidence} />
           <RiskBadge level={a.risk_level} />
         </div>
@@ -136,13 +136,13 @@ function AnalysisResult({ result, type }) {
         <p className="text-xs text-foreground/70 leading-relaxed mb-3">{a.reasoning}</p>
         {(type === 'production' && a.bottleneck_process) && (
           <div className="text-xs text-foreground/60 mb-1">
-            <Target size={10} className="inline mr-1 text-amber-700 dark:text-amber-500" /> Bottleneck: <span className="font-mono font-bold">{a.bottleneck_process}</span>
-            {a.weakest_line && <> · Line terlemah: <span className="font-mono">{a.weakest_line}</span></>}
+            <Target size={10} className="inline mr-1 text-[hsl(var(--warning))] " /> Bottleneck: <span className="tabular-nums font-bold">{a.bottleneck_process}</span>
+            {a.weakest_line && <> · Line terlemah: <span className="tabular-nums">{a.weakest_line}</span></>}
           </div>
         )}
         {(type === 'qc' && a.primary_defect_pattern) && (
           <div className="text-xs text-foreground/60 mb-1">
-            <Info size={10} className="inline mr-1 text-violet-500" /> Pola defect utama: {a.primary_defect_pattern}
+            <Info size={10} className="inline mr-1 text-[hsl(var(--primary))]" /> Pola defect utama: {a.primary_defect_pattern}
           </div>
         )}
       </div>
@@ -150,12 +150,12 @@ function AnalysisResult({ result, type }) {
       {/* Action items */}
       <div>
         <div className="text-[10px] font-bold uppercase tracking-wider text-foreground/70 mb-2">
-          <Check size={11} className="inline mr-1 text-emerald-500" /> Rekomendasi Action
+          <Check size={11} className="inline mr-1 text-[hsl(var(--success))]" /> Rekomendasi Action
         </div>
         <ol className="space-y-1.5 text-xs">
           {(a.recommended_actions || []).map((act, i) => (
             <li key={i} className="flex gap-2 bg-[var(--card-surface)] border border-border rounded-lg p-2.5">
-              <span className="font-mono font-bold text-violet-500 flex-shrink-0">{i + 1}.</span>
+              <span className="tabular-nums font-bold text-[hsl(var(--primary))] flex-shrink-0">{i + 1}.</span>
               <span className="text-foreground/90">{act}</span>
             </li>
           ))}
@@ -197,7 +197,7 @@ function RCASection({ token, type, title, icon: Icon, description }) {
     <div className="bg-[var(--card-surface)] border border-border rounded-2xl p-5 space-y-4" data-testid={`rca-section-${type}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-start gap-3">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${type === 'production' ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-500' : 'bg-fuchsia-100 dark:bg-fuchsia-500/15 text-fuchsia-500'}`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${type === 'production' ? 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]' : 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]'}`}>
             <Icon size={20} />
           </div>
           <div>
@@ -211,14 +211,14 @@ function RCASection({ token, type, title, icon: Icon, description }) {
         {PERIOD_OPTIONS.map(o => (
           <button key={o.v} onClick={() => setDays(o.v)}
             data-testid={`rca-period-${type}-${o.v}`}
-            className={`px-2.5 py-1 rounded-md text-xs transition-colors ${days === o.v ? 'bg-violet-600 text-foreground' : 'bg-[var(--input-surface)] text-foreground/65 hover:text-foreground'}`}>
+            className={`px-2.5 py-1 rounded-md text-xs transition-colors ${days === o.v ? 'bg-[hsl(var(--primary))] text-foreground' : 'bg-[var(--input-surface)] text-foreground/65 hover:text-foreground'}`}>
             {o.label}
           </button>
         ))}
         <button
           data-testid={`rca-run-${type}`}
           onClick={run} disabled={loading}
-          className="ml-auto px-4 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 text-foreground disabled:opacity-50 flex items-center gap-1.5"
+          className="ml-auto px-4 py-1.5 rounded-lg text-xs font-medium bg-gradient-to-r from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] hover:from-[hsl(var(--primary)/0.1)] hover:to-[hsl(var(--primary)/0.1)] text-foreground disabled:opacity-50 flex items-center gap-1.5"
         >
           {loading ? <><RefreshCw size={12} className="animate-spin" /> Menganalisis...</> : <><Sparkles size={12} /> Generate Analysis</>}
         </button>
@@ -226,13 +226,13 @@ function RCASection({ token, type, title, icon: Icon, description }) {
 
       {loading && (
         <div className="flex flex-col items-center justify-center py-8 text-xs text-foreground/60">
-          <div className="w-10 h-10 rounded-full border-2 border-violet-500 border-t-transparent animate-spin mb-3"></div>
+          <div className="w-10 h-10 rounded-full border-2 border-[hsl(var(--primary)/0.35)] border-t-transparent animate-spin mb-3"></div>
           <p>Claude menganalisis pola data... (5-30 detik)</p>
         </div>
       )}
 
       {error && !loading && (
-        <div className="bg-red-100 dark:bg-red-500/10 border border-red-400 dark:border-red-500/30 rounded-lg p-3 text-xs text-red-700 dark:text-red-500">
+        <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-lg p-3 text-xs text-[hsl(var(--destructive))] ">
           <AlertCircle size={12} className="inline mr-1" /> {error}
         </div>
       )}
@@ -268,7 +268,7 @@ function HistorySection({ token }) {
   return (
     <div className="bg-[var(--card-surface)] border border-border rounded-2xl p-5">
       <div className="flex items-center gap-2 mb-3">
-        <History size={14} className="text-violet-500" />
+        <History size={14} className="text-[hsl(var(--primary))]" />
         <h3 className="text-sm font-semibold">Riwayat Analisis Anda ({items.length})</h3>
         <button onClick={load} className="ml-auto text-xs text-foreground/60 hover:text-foreground">
           <RefreshCw size={11} className={`inline ${loading ? 'animate-spin' : ''}`} />
@@ -280,7 +280,7 @@ function HistorySection({ token }) {
       <div className="space-y-2">
         {items.map(h => (
           <div key={h.id} data-testid="rca-history-row" className="flex items-center gap-3 bg-[var(--input-surface)] rounded-lg p-2.5 text-xs">
-            <div className={`w-6 h-6 rounded flex-shrink-0 flex items-center justify-center ${h.type === 'production' ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-500' : 'bg-fuchsia-100 dark:bg-fuchsia-500/15 text-fuchsia-500'}`}>
+            <div className={`w-6 h-6 rounded flex-shrink-0 flex items-center justify-center ${h.type === 'production' ? 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]' : 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]'}`}>
               {h.type === 'production' ? <Factory size={12} /> : <Shield size={12} />}
             </div>
             <div className="flex-1 min-w-0">
@@ -305,7 +305,7 @@ export default function AIInsightsModule({ token }) {
   return (
     <div className="space-y-5" data-testid="ai-insights-module">
       <div className="flex items-start gap-3">
-        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center flex-shrink-0">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[hsl(var(--primary)/0.1)] to-[hsl(var(--primary)/0.1)] flex items-center justify-center flex-shrink-0">
           <Brain size={20} className="text-foreground" />
         </div>
         <div>

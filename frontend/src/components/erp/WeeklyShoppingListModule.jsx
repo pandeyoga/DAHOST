@@ -25,8 +25,8 @@ const rp = (v) => `Rp${Math.round(Number(v) || 0).toLocaleString('id-ID')}`;
 const num = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
 
 const STATUS_META = {
-  critical: { label: 'Kritis', cls: 'bg-red-400/10 text-red-500 border-red-300/25' },
-  low: { label: 'Perlu pesan', cls: 'bg-amber-400/10 text-amber-500 border-amber-300/25' },
+  critical: { label: 'Kritis', cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
+  low: { label: 'Perlu pesan', cls: 'bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.25)]' },
 };
 
 export default function WeeklyShoppingListModule({ token, onNavigate }) {
@@ -133,13 +133,13 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
       sub: `${summary.critical || 0} kritis · ${summary.with_supplier || 0} punya supplier`,
       tone: 'text-primary', icon: ShoppingCart },
     { k: 'value', label: 'Perkiraan nilai belanja', v: rp(summary.est_total_value),
-      sub: 'dari harga supplier / HPP pembelian', tone: 'text-emerald-600 dark:text-emerald-300',
+      sub: 'dari harga supplier / HPP pembelian', tone: 'text-[hsl(var(--success))] ',
       icon: Wallet },
     { k: 'unvalued', label: 'Belum berharga', v: num(summary.unvalued_count),
-      sub: 'tidak dihitung ke perkiraan total', tone: 'text-amber-600 dark:text-amber-300',
+      sub: 'tidak dihitung ke perkiraan total', tone: 'text-[hsl(var(--warning))] ',
       icon: Info },
     { k: 'no_threshold', label: 'Belum berambang', v: num(summary.without_threshold),
-      sub: `dari ${num(summary.total_materials)} barang aktif`, tone: 'text-red-500', icon: BellRing },
+      sub: `dari ${num(summary.total_materials)} barang aktif`, tone: 'text-[hsl(var(--destructive))]', icon: BellRing },
   ] : [];
 
   return (
@@ -155,9 +155,8 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={load} disabled={loading} data-testid="shopping-refresh">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Muat ulang
-          </Button>
+          <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="ghost" onClick={load} disabled={loading} data-testid="shopping-refresh">
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
           <Button onClick={() => setDialogOpen(true)} disabled={!chosen.length}
             data-testid="shopping-create-pr">
             <FileText className="w-4 h-4 mr-1.5" />
@@ -198,10 +197,10 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           )}
 
           {summary && summary.without_threshold > 0 && (
-            <div className="flex items-start gap-2 rounded-lg border border-amber-300/40 bg-amber-50 dark:bg-amber-400/10 px-4 py-3"
+            <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--warning)/0.4)] bg-[hsl(var(--warning)/0.1)] px-4 py-3"
               data-testid="shopping-threshold-notice">
-              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-              <div className="text-sm text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] shrink-0 mt-0.5" />
+              <div className="text-sm text-[hsl(var(--warning))] ">
                 {summary.without_threshold_note}
                 <button onClick={() => goto('wh-master', 'thresholds')}
                   className="ml-1 underline font-medium" data-testid="shopping-goto-thresholds">
@@ -212,10 +211,10 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
           )}
 
           {lastPR && (
-            <div className="flex items-start gap-2 rounded-lg border border-emerald-300/40 bg-emerald-50 dark:bg-emerald-400/10 px-4 py-3"
+            <div className="flex items-start gap-2 rounded-lg border border-[hsl(var(--success)/0.4)] bg-[hsl(var(--success)/0.1)] px-4 py-3"
               data-testid="shopping-pr-result">
-              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-              <div className="text-sm text-emerald-700 dark:text-emerald-300">
+              <CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))] shrink-0 mt-0.5" />
+              <div className="text-sm text-[hsl(var(--success))] ">
                 <strong>{lastPR.request_number}</strong> dibuat sebagai draft ·{' '}
                 {(lastPR.items || []).length} barang · {rp(lastPR.total_estimated)}.{' '}
                 <button onClick={() => goto('proc-requests')} className="underline font-medium"
@@ -317,45 +316,45 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                             data-testid={`shopping-check-${r.code}`} />
                         </td>
                         <td className="px-3 py-2">
-                          <div className="font-mono text-xs text-foreground">{r.code}</div>
+                          <div className="tabular-nums text-xs text-foreground">{r.code}</div>
                           <div className="text-foreground">{r.name}</div>
                           <div className="text-[10px] text-muted-foreground">{r.type} · {r.base_uom}</div>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-foreground">
+                        <td className="px-3 py-2 text-right tabular-nums text-xs whitespace-nowrap text-foreground">
                           {num(r.onhand)} {r.base_uom}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-xs whitespace-nowrap text-foreground">
+                        <td className="px-3 py-2 text-right tabular-nums text-xs whitespace-nowrap text-foreground">
                           {num(r.alert_at)}
                           <span className="block text-[10px] text-muted-foreground font-sans"
                             title={r.threshold_basis_note || ''}>
                             {r.threshold_basis ? `dasar: ${r.threshold_basis}` : r.threshold_source}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-xs text-red-500 whitespace-nowrap">
+                        <td className="px-3 py-2 text-right tabular-nums text-xs text-[hsl(var(--destructive))] whitespace-nowrap">
                           {num(r.shortage)}
                         </td>
                         <td className="px-3 py-2 text-right whitespace-nowrap" data-testid={`shopping-qty-${r.code}`}>
-                          <span className="font-mono text-xs font-semibold text-foreground">
+                          <span className="tabular-nums text-xs font-semibold text-foreground">
                             {num(r.qty_buy)} {r.purchase_uom}
                           </span>
                           {r.purchase_factor !== 1 && (
                             <span className="block text-[10px] text-muted-foreground">= {num(r.qty_buy_base)} {r.base_uom}</span>
                           )}
                           {r.qty_note && (
-                            <span className="block text-[10px] text-amber-600 dark:text-amber-300">{r.qty_note}</span>
+                            <span className="block text-[10px] text-[hsl(var(--warning))] ">{r.qty_note}</span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-right whitespace-nowrap">
                           {r.valued ? (
                             <>
-                              <span className="font-mono text-xs text-foreground">{rp(r.price_per_purchase_uom)}</span>
+                              <span className="tabular-nums text-xs text-foreground">{rp(r.price_per_purchase_uom)}</span>
                               <span className="block text-[10px] text-muted-foreground">/{r.purchase_uom} · {r.price_source === 'supplier_price_list' ? 'harga supplier' : 'HPP pembelian'}</span>
                             </>
                           ) : (
-                            <span className="text-[11px] text-amber-600 dark:text-amber-300">belum ada harga</span>
+                            <span className="text-[11px] text-[hsl(var(--warning))] ">belum ada harga</span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-foreground whitespace-nowrap"
+                        <td className="px-3 py-2 text-right tabular-nums text-xs font-semibold text-foreground whitespace-nowrap"
                           data-testid={`shopping-total-${r.code}`}>
                           {r.valued ? rp(r.est_total) : '—'}
                         </td>
@@ -377,7 +376,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                         </td>
                         <td className="px-3 py-2">
                           {r.already_requested ? (
-                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-sky-400/10 text-sky-600 border-sky-300/25"
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full border bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.25)]"
                               data-testid={`shopping-pr-flag-${r.code}`}
                               title={`Dibuat ${String((r.pr || {}).created_at || '').slice(0, 10)}`}>
                               <CheckCircle2 className="w-3 h-3" /> {(r.pr || {}).number || 'sudah diminta'}
@@ -388,7 +387,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                             </span>
                           )}
                           {!r.valued && (
-                            <span className="block text-[10px] text-amber-600 dark:text-amber-300 mt-0.5">belum berharga</span>
+                            <span className="block text-[10px] text-[hsl(var(--warning))] mt-0.5">belum berharga</span>
                           )}
                         </td>
                       </tr>
@@ -452,11 +451,11 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                 ) : history.items.map(h => (
                   <tr key={h.id} className="border-t border-[var(--glass-border)] hover:bg-[var(--glass-bg-hover)]"
                     data-testid={`shopping-history-row-${h.number}`}>
-                    <td className="px-3 py-2 font-mono text-xs text-foreground">{h.number}</td>
+                    <td className="px-3 py-2 tabular-nums text-xs text-foreground">{h.number}</td>
                     <td className="px-3 py-2 text-xs text-foreground">{h.week}</td>
                     <td className="px-3 py-2"><Badge variant="secondary" className="text-[10px]">{h.status}</Badge></td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{h.lines}</td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{rp(h.total_estimated)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{h.lines}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{rp(h.total_estimated)}</td>
                     <td className="px-3 py-2 text-xs text-foreground">{h.requested_by_name || '—'}</td>
                     <td className="px-3 py-2 text-[11px] text-muted-foreground">
                       {(h.materials || []).map(m => `${m.code || ''} ${num(m.qty)} ${m.uom}`).join(' · ')}
@@ -489,11 +488,11 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                   {chosen.map(c => (
                     <tr key={c.material_id} className="border-t border-[var(--glass-border)]">
                       <td className="px-3 py-2 text-foreground">
-                        <span className="font-mono text-xs">{c.code}</span> {c.name}
+                        <span className="tabular-nums text-xs">{c.code}</span> {c.name}
                       </td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{num(c.qty_buy)} {c.purchase_uom}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{c.valued ? rp(c.price_per_purchase_uom) : '—'}</td>
-                      <td className="px-3 py-2 text-right font-mono text-xs text-foreground">{c.valued ? rp(c.est_total) : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{num(c.qty_buy)} {c.purchase_uom}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{c.valued ? rp(c.price_per_purchase_uom) : '—'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-xs text-foreground">{c.valued ? rp(c.est_total) : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -504,7 +503,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               <span className="font-bold text-foreground" data-testid="shopping-dialog-total">{rp(chosenTotal)}</span>
             </div>
             {chosen.some(c => !c.valued) && (
-              <div className="text-xs text-amber-600 dark:text-amber-300">
+              <div className="text-xs text-[hsl(var(--warning))] ">
                 Ada barang tanpa harga — barisnya tetap masuk PR dengan harga 0 supaya bagian
                 pengadaan mengisi harga penawaran, tetapi tidak dihitung ke perkiraan nilai.
               </div>

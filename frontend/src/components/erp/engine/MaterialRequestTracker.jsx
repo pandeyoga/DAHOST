@@ -13,10 +13,10 @@
  */
 import { Check, Clock, X, Truck, ClipboardCheck, FileText } from 'lucide-react';
 
-const DONE = 'bg-emerald-100 text-emerald-700 border-emerald-200';
-const NOW = 'bg-blue-100 text-blue-700 border-blue-200';
+const DONE = 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]';
+const NOW = 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]';
 const WAIT = 'bg-muted text-muted-foreground border-border';
-const STOP = 'bg-red-100 text-red-700 border-red-200';
+const STOP = 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]';
 
 export const MaterialRequestTracker = ({ req, compact = true }) => {
   if (!req) return null;
@@ -52,7 +52,7 @@ export const MaterialRequestTracker = ({ req, compact = true }) => {
         return (
           <span key={s.key} className="flex items-center">
             {i > 0 && <span className="w-2 h-px bg-border mx-0.5" />}
-            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium whitespace-nowrap ${s.cls} ${s.mono ? 'font-mono' : ''}`}
+            <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[10px] font-medium whitespace-nowrap ${s.cls} ${s.mono ? 'tabular-nums' : ''}`}
               data-testid={`mr-tracker-${req.id}-${s.key}`}>
               <Icon className="w-2.5 h-2.5" />{s.label}
             </span>

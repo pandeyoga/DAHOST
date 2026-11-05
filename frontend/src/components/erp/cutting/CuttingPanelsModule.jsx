@@ -31,8 +31,8 @@ import { GlassCard } from '@/components/ui/glass';
 import { cuttingApi, fmtNum, fmtRp, fmtDate } from './cuttingApi';
 
 const VALUE_BADGE = {
-  valued: { text: 'bernilai', cls: 'text-emerald-600 dark:text-emerald-300' },
-  unvalued: { text: 'belum bernilai', cls: 'text-amber-600 dark:text-amber-300' },
+  valued: { text: 'bernilai', cls: 'text-[hsl(var(--success))] ' },
+  unvalued: { text: 'belum bernilai', cls: 'text-[hsl(var(--warning))] ' },
 };
 
 export default function CuttingPanelsModule({ token, onNavigate }) {
@@ -108,8 +108,8 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
     <div className="space-y-5" data-testid="cutting-panels-module">
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-emerald-500/12 border border-emerald-500/25 grid place-items-center">
-            <Package className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
+          <div className="w-11 h-11 rounded-2xl bg-[hsl(var(--success)/0.12)] border border-[hsl(var(--success)/0.25)] grid place-items-center">
+            <Package className="w-5 h-5 text-[hsl(var(--success))] " />
           </div>
           <div>
             <h2 className="text-2xl font-bold text-foreground">Master Potongan</h2>
@@ -150,7 +150,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
         </GlassCard>
         <GlassCard className="p-4">
           <p className="text-xs text-muted-foreground">Belum Bernilai</p>
-          <p className={`text-2xl font-bold mt-1 ${unvaluedCount ? 'text-amber-600 dark:text-amber-300' : 'text-foreground'}`}
+          <p className={`text-2xl font-bold mt-1 ${unvaluedCount ? 'text-[hsl(var(--warning))] ' : 'text-foreground'}`}
             data-testid="cutting-panels-unvalued-count">{fmtNum(unvaluedCount)}</p>
           <p className="text-[11px] text-muted-foreground mt-0.5">harga kain asalnya belum ada</p>
         </GlassCard>
@@ -158,11 +158,11 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
 
       {/* ── POTONGAN YATIM ─────────────────────────────────────────────────── */}
       {orphans.length > 0 && (
-        <GlassCard className="p-4 border-amber-400/50 bg-amber-50/70 dark:bg-amber-500/10"
+        <GlassCard className="p-4 border-[hsl(var(--warning)/0.5)] bg-[hsl(var(--warning)/0.7)] "
           data-testid="cutting-panels-orphan-card">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="flex items-start gap-2">
-              <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-300 mt-0.5 shrink-0" />
+              <AlertTriangle className="w-5 h-5 text-[hsl(var(--warning))] mt-0.5 shrink-0" />
               <div>
                 <p className="text-sm font-semibold text-foreground">
                   {orphans.length} master potongan YATIM
@@ -184,7 +184,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
                   Bersihkan {cleanable.length} master?
                 </span>
                 <button onClick={runCleanup} disabled={cleaning || !cleanable.length}
-                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-red-600 text-white text-sm disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[hsl(var(--destructive))] text-white text-sm disabled:opacity-50"
                   data-testid="cutting-panels-cleanup-confirm">
                   {cleaning ? <Loader2 className="w-4 h-4 animate-spin" />
                     : <CheckCircle2 className="w-4 h-4" />} Ya, bersihkan
@@ -195,7 +195,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
               </div>
             ) : (
               <button onClick={() => setConfirming(true)} disabled={!cleanable.length}
-                className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-amber-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[hsl(var(--warning))] text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 title={cleanable.length ? 'Hapus master potongan yang belum pernah dipakai'
                   : 'Tidak ada yang bisa dibersihkan — semuanya masih dipakai'}
                 data-testid="cutting-panels-cleanup-btn">
@@ -207,7 +207,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-xs" data-testid="cutting-panels-orphan-table">
               <thead>
-                <tr className="text-left text-[11px] text-muted-foreground border-b border-amber-400/40">
+                <tr className="text-left text-[11px] text-muted-foreground border-b border-[hsl(var(--warning)/0.4)]">
                   <th className="py-1.5 pr-3 font-medium">Kode</th>
                   <th className="py-1.5 pr-3 font-medium">Alasan yatim</th>
                   <th className="py-1.5 pr-3 font-medium">Kain asal</th>
@@ -218,11 +218,11 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
               </thead>
               <tbody>
                 {orphans.map((r) => (
-                  <tr key={r.id} className="border-b border-amber-400/20 last:border-0"
+                  <tr key={r.id} className="border-b border-[hsl(var(--warning)/0.2)] last:border-0"
                     data-testid={`cutting-panels-orphan-row-${r.code}`}>
-                    <td className="py-1.5 pr-3 font-mono text-foreground">{r.code}</td>
+                    <td className="py-1.5 pr-3 tabular-nums text-foreground">{r.code}</td>
                     <td className="py-1.5 pr-3 text-foreground/90">{r.reason_text}</td>
-                    <td className="py-1.5 pr-3 font-mono text-muted-foreground">
+                    <td className="py-1.5 pr-3 tabular-nums text-muted-foreground">
                       {r.source_material_code || '—'}
                     </td>
                     <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">
@@ -233,11 +233,11 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
                     </td>
                     <td className="py-1.5">
                       {r.cleanable ? (
-                        <span className="inline-flex items-center gap-1 text-emerald-700 dark:text-emerald-300">
+                        <span className="inline-flex items-center gap-1 text-[hsl(var(--success))] ">
                           <CheckCircle2 className="w-3 h-3" /> aman dihapus
                         </span>
                       ) : (
-                        <span className="inline-flex items-start gap-1 text-amber-700 dark:text-amber-300">
+                        <span className="inline-flex items-start gap-1 text-[hsl(var(--warning))] ">
                           <ShieldAlert className="w-3 h-3 mt-0.5 shrink-0" />
                           <span>{r.block_reason || 'masih dipakai'}</span>
                         </span>
@@ -262,7 +262,7 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
       </GlassCard>
 
       {err && (
-        <div className="flex items-center gap-2 p-3 rounded-lg border border-red-300 bg-red-50 dark:bg-red-500/10 dark:border-red-500/30 text-sm text-red-700 dark:text-red-300">
+        <div className="flex items-center gap-2 p-3 rounded-lg border border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.1)] text-sm text-[hsl(var(--destructive))] ">
           <AlertCircle className="w-4 h-4" /> {err}
         </div>
       )}
@@ -305,10 +305,10 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
                   return (
                     <tr key={m.id} className="border-b border-[var(--glass-border)] last:border-0 hover:bg-[var(--nav-pill-active)]/40"
                       data-testid={`cutting-panels-row-${m.code}`}>
-                      <td className="px-4 py-2.5 font-mono text-xs text-foreground">
+                      <td className="px-4 py-2.5 tabular-nums text-xs text-foreground">
                         {m.code}
                         {m.orphan && (
-                          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-amber-600 dark:text-amber-300"
+                          <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-[hsl(var(--warning))] "
                             title={m.orphan_reason_text || 'yatim'}>
                             <AlertTriangle className="w-3 h-3" /> yatim
                           </span>
@@ -320,12 +320,12 @@ export default function CuttingPanelsModule({ token, onNavigate }) {
                       </td>
                       <td className="px-4 py-2.5 text-xs">
                         <span className="inline-flex items-center gap-1 text-muted-foreground">
-                          <span className="font-mono">{m.source_material_code || '-'}</span>
+                          <span className="tabular-nums">{m.source_material_code || '-'}</span>
                           <ArrowRight className="w-3 h-3" />
-                          <span className="font-mono text-foreground">{m.code}</span>
+                          <span className="tabular-nums text-foreground">{m.code}</span>
                         </span>
                       </td>
-                      <td className="px-4 py-2.5 text-xs font-mono text-muted-foreground">
+                      <td className="px-4 py-2.5 text-xs tabular-nums text-muted-foreground">
                         {m.cutting_order_number || '—'}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-medium text-foreground">

@@ -13,8 +13,8 @@ export function BizBadge({ type, size = 'sm', className = '' }) {
   const Icon = isMaklon ? Handshake : Factory;
   const pad = size === 'xs' ? 'px-1.5 py-0.5 text-[10px]' : 'px-2 py-0.5 text-xs';
   const tone = isMaklon
-    ? 'bg-purple-100 text-purple-700 border-purple-200'
-    : 'bg-sky-100 text-sky-700 border-sky-200';
+    ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]'
+    : 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]';
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-full border font-semibold ${pad} ${tone} ${className}`}
@@ -55,12 +55,12 @@ export function BizFilter({ value = 'all', onChange, counts = null, className = 
             aria-selected={active}
             onClick={() => onChange(o.v)}
             data-testid={`biz-filter-${o.v}`}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400
-              ${active ? 'bg-card text-blue-700 shadow-sm' : 'text-muted-foreground hover:text-foreground/90'}`}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)]
+              ${active ? 'bg-card text-[hsl(var(--primary))] shadow-sm' : 'text-muted-foreground hover:text-foreground/90'}`}
           >
             {o.l}
             {count != null && (
-              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${active ? 'bg-blue-100 text-blue-700' : 'bg-muted text-muted-foreground'}`}>
+              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${active ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-muted text-muted-foreground'}`}>
                 {count}
               </span>
             )}

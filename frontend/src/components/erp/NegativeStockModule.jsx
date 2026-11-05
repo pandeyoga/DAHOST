@@ -50,7 +50,7 @@ export default function NegativeStockModule({ token }) {
       </div>
 
       {on !== null && (
-        <div className={`rounded-lg border px-3 py-2 text-xs flex items-center gap-2 ${on ? 'border-amber-300 bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-300' : 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300'}`}
+        <div className={`rounded-lg border px-3 py-2 text-xs flex items-center gap-2 ${on ? 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning))]  ' : 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))]  '}`}
           data-testid="negative-stock-mode">
           <AlertTriangle size={14} />
           {on
@@ -79,12 +79,12 @@ export default function NegativeStockModule({ token }) {
                 Tidak ada stok minus.
               </td></tr>
             ) : rows.map(r => (
-              <tr key={r.id || `${r.material_id}-${r.location_id}`} className="border-t border-border/60 bg-rose-50/40 dark:bg-rose-500/5"
+              <tr key={r.id || `${r.material_id}-${r.location_id}`} className="border-t border-border/60 bg-[hsl(var(--destructive)/0.4)] "
                 data-testid={`negative-stock-row-${r.material_code}`}>
-                <td className="px-3 py-1.5 font-mono text-blue-700">{r.material_code}</td>
+                <td className="px-3 py-1.5 tabular-nums text-[hsl(var(--primary))]">{r.material_code}</td>
                 <td className="px-3 py-1.5">{r.material_name}</td>
                 <td className="px-3 py-1.5">{r.location_code || '-'} {r.location_name ? `· ${r.location_name}` : ''}</td>
-                <td className="px-3 py-1.5 text-right font-bold text-rose-700">{fmt(r.qty)}</td>
+                <td className="px-3 py-1.5 text-right font-bold text-[hsl(var(--destructive))]">{fmt(r.qty)}</td>
                 <td className="px-3 py-1.5">{r.unit || '-'}</td>
                 <td className="px-3 py-1.5 text-muted-foreground">{r.updated_at ? new Date(r.updated_at).toLocaleString('id-ID') : '-'}</td>
               </tr>

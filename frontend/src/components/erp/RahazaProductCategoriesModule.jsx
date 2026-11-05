@@ -105,14 +105,14 @@ export default function RahazaProductCategoriesModule({ token }) {
     {
       key: 'sku_prefix', label: 'Prefix SKU', sortable: true,
       render: (row) => (
-        <span className="font-mono text-xs px-2 py-1 rounded bg-primary/10 text-primary border border-primary/30"
+        <span className="tabular-nums text-xs px-2 py-1 rounded bg-primary/10 text-primary border border-primary/30"
           data-testid={`cat-prefix-${row.code}`}>
           {row.sku_prefix || '—'}
         </span>
       ),
     },
     { key: 'name', label: 'Nama Kategori', sortable: true },
-    { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="font-mono text-xs text-muted-foreground">{row.code}</span> },
+    { key: 'code', label: 'Kode', sortable: true, render: (row) => <span className="tabular-nums text-xs text-muted-foreground">{row.code}</span> },
     {
       key: 'usage', label: 'Dipakai',
       render: (row) => {
@@ -132,7 +132,7 @@ export default function RahazaProductCategoriesModule({ token }) {
     {
       key: 'created_from', label: 'Asal',
       render: (row) => {
-        const map = { seed: ['Bawaan', 'text-muted-foreground'], manual: ['Manual', 'text-foreground'], migrasi: ['Hasil migrasi', 'text-amber-700 dark:text-amber-300'] };
+        const map = { seed: ['Bawaan', 'text-muted-foreground'], manual: ['Manual', 'text-foreground'], migrasi: ['Hasil migrasi', 'text-[hsl(var(--warning))] '] };
         const [label, cls] = map[row.created_from] || ['—', 'text-muted-foreground'];
         return <span className={`text-xs ${cls}`}>{label}</span>;
       },
@@ -141,8 +141,8 @@ export default function RahazaProductCategoriesModule({ token }) {
       key: 'active', label: 'Status',
       render: (row) => (
         <span className={`text-xs px-2 py-0.5 rounded-full border ${row.active === false
-          ? 'bg-red-500/10 border-red-400/40 text-red-700 dark:text-red-300'
-          : 'bg-emerald-500/10 border-emerald-400/40 text-emerald-700 dark:text-emerald-300'}`}>
+          ? 'bg-[hsl(var(--destructive)/0.1)] border-[hsl(var(--destructive)/0.4)] text-[hsl(var(--destructive))] '
+          : 'bg-[hsl(var(--success)/0.1)] border-[hsl(var(--success)/0.4)] text-[hsl(var(--success))] '}`}>
           {row.active === false ? 'Non-aktif' : 'Aktif'}
         </span>
       ),
@@ -158,13 +158,13 @@ export default function RahazaProductCategoriesModule({ token }) {
           </button>
           {row.active === false ? (
             <button onClick={(e) => { e.stopPropagation(); handleReactivate(row); }}
-              className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-emerald-600"
+              className="p-1.5 rounded hover:bg-[var(--glass-bg-hover)] text-muted-foreground hover:text-[hsl(var(--success))]"
               title="Aktifkan kembali" data-testid={`cat-reactivate-${row.code}`}>
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
           ) : (
             <button onClick={(e) => { e.stopPropagation(); handleDeactivate(row); }}
-              className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-500/20 text-muted-foreground hover:text-red-700 dark:hover:text-red-400"
+              className="p-1.5 rounded hover:bg-[hsl(var(--destructive)/0.15)] text-muted-foreground hover:text-[hsl(var(--destructive))] "
               title="Nonaktifkan (ditolak bila masih dipakai)" data-testid={`cat-deactivate-${row.code}`}>
               <Ban className="w-3.5 h-3.5" />
             </button>
@@ -200,9 +200,9 @@ export default function RahazaProductCategoriesModule({ token }) {
         <Info className="w-4 h-4 shrink-0 mt-0.5 text-primary" />
         <div className="space-y-1">
           <p><b>Prefix SKU</b> membuat kategori terlihat pada kode barang. Contoh: kategori <b>Vest</b>
-            berprefix <span className="font-mono">VST</span> ⇒ produk baru otomatis berkode
-            <span className="font-mono"> VST-0001</span>, dan SKU variannya menjadi
-            <span className="font-mono"> VST-0001-NVY-M</span>.</p>
+            berprefix <span className="tabular-nums">VST</span> ⇒ produk baru otomatis berkode
+            <span className="tabular-nums"> VST-0001</span>, dan SKU variannya menjadi
+            <span className="tabular-nums"> VST-0001-NVY-M</span>.</p>
           <p className="text-muted-foreground">Kategori yang masih dipakai produk / barang jadi / item katalog
             <b> tidak bisa dinonaktifkan</b> — pindahkan dulu produknya.</p>
         </div>
@@ -220,13 +220,13 @@ export default function RahazaProductCategoriesModule({ token }) {
           title={editing ? `Ubah Kategori · ${editing.name}` : 'Tambah Kategori Produk'} size="md">
           <div className="space-y-3" data-testid="cat-form">
             <div>
-              <label className="text-xs text-muted-foreground">Nama Kategori <span className="text-red-700 dark:text-red-400">*</span></label>
+              <label className="text-xs text-muted-foreground">Nama Kategori <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <GlassInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="Contoh: Vest" data-testid="cat-form-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs text-muted-foreground">Prefix SKU <span className="text-red-700 dark:text-red-400">*</span></label>
+                <label className="text-xs text-muted-foreground">Prefix SKU <span className="text-[hsl(var(--destructive))] ">*</span></label>
                 <GlassInput value={form.sku_prefix}
                   onChange={(e) => setForm({ ...form, sku_prefix: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '') })}
                   placeholder="VST" maxLength={6} data-testid="cat-form-prefix" />

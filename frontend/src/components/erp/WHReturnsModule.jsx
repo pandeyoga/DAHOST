@@ -52,28 +52,28 @@ const TYPE_LABELS = {
   customer_refund:   'Tipe 2 — Customer',
 };
 const TYPE_COLORS = {
-  expedition_return: 'text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-500/10',
-  customer_refund:   'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10',
+  expedition_return: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] ',
+  customer_refund:   'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] ',
 };
 const STATUS_COLORS = {
-  Pending:   'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10',
-  Received:  'text-sky-600 dark:text-sky-400 bg-sky-100 dark:bg-sky-500/10',
-  Inspected: 'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10',
-  Resolved:  'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
+  Pending:   'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] ',
+  Received:  'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] ',
+  Inspected: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] ',
+  Resolved:  'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)] ',
   Cancelled: 'text-muted-foreground bg-muted dark:bg-slate-500/10',
-  Reversed:  'text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-500/10',
+  Reversed:  'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] ',
 };
 const CONDITION_COLORS = {
-  'Baik':              'text-emerald-600 dark:text-emerald-400',
-  'Rusak':             'text-red-700 dark:text-red-400',
-  'Rusak Ringan':      'text-amber-700 dark:text-amber-400',
-  'Rusak Berat':       'text-orange-600 dark:text-orange-400',
-  'Tidak Layak Jual':  'text-red-700 dark:text-red-400',
+  'Baik':              'text-[hsl(var(--success))] ',
+  'Rusak':             'text-[hsl(var(--destructive))] ',
+  'Rusak Ringan':      'text-[hsl(var(--warning))] ',
+  'Rusak Berat':       'text-[hsl(var(--warning))] ',
+  'Tidak Layak Jual':  'text-[hsl(var(--destructive))] ',
 };
 const CAUSE_COLORS = {
-  'Kesalahan Gudang':     'text-red-700 dark:text-red-400',
-  'Kesalahan Customer':   'text-amber-700 dark:text-amber-400',
-  'Kesalahan Ekspedisi':  'text-orange-600 dark:text-orange-400',
+  'Kesalahan Gudang':     'text-[hsl(var(--destructive))] ',
+  'Kesalahan Customer':   'text-[hsl(var(--warning))] ',
+  'Kesalahan Ekspedisi':  'text-[hsl(var(--warning))] ',
   'Lainnya':              'text-muted-foreground',
 };
 
@@ -91,8 +91,8 @@ function StockBadge({ ret }) {
     const sellable = ret.stock_effect === 'sellable';
     return (
       <span className={`px-2 py-0.5 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
-        sellable ? 'text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10'
-                 : 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10'}`}
+        sellable ? 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)] '
+                 : 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] '}`}
         data-testid={`stock-badge-${ret.id}`}>
         <Package className="w-3 h-3" />
         {sellable ? `+${ret.restock_qty} stok jual` : `+${ret.restock_qty} karantina`}
@@ -101,7 +101,7 @@ function StockBadge({ ret }) {
   }
   if (ret.link_status && ret.link_status !== 'linked') {
     return (
-      <span className="px-2 py-0.5 rounded-full text-xs font-medium text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 inline-flex items-center gap-1"
+      <span className="px-2 py-0.5 rounded-full text-xs font-medium text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  inline-flex items-center gap-1"
         data-testid={`stock-badge-${ret.id}`}>
         <Link2 className="w-3 h-3" /> belum tertaut master
       </span>
@@ -119,7 +119,7 @@ function SourceBadge({ ret }) {
   const fromMkt = !!ret.source_marketing_return_id;
   return (
     <span className={`px-2 py-0.5 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
-      fromMkt ? 'text-sky-600 dark:text-sky-400 bg-sky-100 dark:bg-sky-500/10'
+      fromMkt ? 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] '
               : 'text-muted-foreground bg-secondary'}`}
       data-testid={`source-badge-${ret.id}`}>
       {fromMkt ? <><Store className="w-3 h-3" /> Marketing</> : <>Manual</>}
@@ -173,12 +173,12 @@ function ReturnRow({ ret, onView, onDelete, onQuickRestock }) {
     && (ret.material_id || ret.fg_material_id);
   return (
     <tr className="border-b border-border hover:bg-foreground/[0.02] cursor-pointer" onClick={() => onView(ret)} data-testid={`ret-row-${ret.id}`}>
-      <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{ret.return_code}</td>
+      <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{ret.return_code}</td>
       <td className="px-4 py-3"><SourceBadge ret={ret} /></td>
       <td className="px-4 py-3 font-medium text-sm">{ret.order_number || ret.resi_number || '-'}</td>
       <td className="px-4 py-3 text-sm">
         <div className="font-medium">{ret.product_name || '-'}</div>
-        <div className="text-xs text-muted-foreground font-mono">{ret.sku_code || '—'}</div>
+        <div className="text-xs text-muted-foreground tabular-nums">{ret.sku_code || '—'}</div>
       </td>
       <td className="px-4 py-3 text-sm text-center">{ret.qty || 0}</td>
       <td className="px-4 py-3"><Badge label={ret.status} colorClass={STATUS_COLORS[ret.status]} /></td>
@@ -188,7 +188,7 @@ function ReturnRow({ ret, onView, onDelete, onQuickRestock }) {
         <div className="flex items-center justify-end gap-1">
           {canQuick && onQuickRestock && (
             <button onClick={e => { e.stopPropagation(); onQuickRestock(ret); }}
-              className="px-2 py-1 rounded-lg text-xs font-medium bg-emerald-600/10 border border-emerald-400 dark:border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-600/20 inline-flex items-center gap-1"
+              className="px-2 py-1 rounded-lg text-xs font-medium bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))]  hover:bg-[hsl(var(--success)/0.2)] inline-flex items-center gap-1"
               data-testid={`quick-restock-${ret.id}`} title="Terima (qty aktual) & putuskan masuk stok">
               <Zap className="w-3 h-3" /> Terima &amp; Putuskan
             </button>
@@ -197,8 +197,8 @@ function ReturnRow({ ret, onView, onDelete, onQuickRestock }) {
             <Eye className="w-4 h-4 text-muted-foreground" />
           </button>
           {ret.status === 'Pending' && !ret.restocked && (
-            <button onClick={e => { e.stopPropagation(); onDelete(ret); }} className="p-1 hover:bg-red-100 dark:bg-red-500/10 rounded" data-testid={`del-ret-${ret.id}`}>
-              <Trash2 className="w-4 h-4 text-red-700 dark:text-red-400" />
+            <button onClick={e => { e.stopPropagation(); onDelete(ret); }} className="p-1 hover:bg-[hsl(var(--destructive)/0.15)] rounded" data-testid={`del-ret-${ret.id}`}>
+              <Trash2 className="w-4 h-4 text-[hsl(var(--destructive))] " />
             </button>
           )}
         </div>
@@ -322,7 +322,7 @@ function CreateModal({ onClose, onSaved, token, defaultType }) {
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
               placeholder="Barang tidak sampai / ukuran tidak sesuai / dll..." data-testid="ret-reason" />
           </div>
-          {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
+          {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
         </div>
         <div className="flex gap-3 mt-5">
           <button onClick={onClose} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5" data-testid="cancel-create-return">Batal</button>
@@ -503,7 +503,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
             </div>
             {linked ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">Kode master:</span> <span className="ml-1 font-mono" data-testid="ret-sku-code">{data.sku_code || '—'}</span></div>
+                <div><span className="text-muted-foreground">Kode master:</span> <span className="ml-1 tabular-nums" data-testid="ret-sku-code">{data.sku_code || '—'}</span></div>
                 <div><span className="text-muted-foreground">Nama:</span> <span className="ml-1">{data.product_name || '—'}</span></div>
                 <div><span className="text-muted-foreground">Kategori:</span> <span className="ml-1">{data.material_category || '—'}</span></div>
                 <div><span className="text-muted-foreground">Warna / Opsi:</span> <span className="ml-1">{[data.material_color, data.material_option].filter(Boolean).join(' · ') || '—'}</span></div>
@@ -522,7 +522,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               </div>
             ) : (
               <div className="space-y-2">
-                <div className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-300">
+                <div className="flex items-start gap-2 text-sm text-[hsl(var(--warning))] ">
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   <span data-testid="ret-link-reason">{data.link_reason || 'Barang retur ini belum tertaut ke master produk jadi, jadi stok tidak bisa ditambah.'}</span>
                 </div>
@@ -546,17 +546,17 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               </div>
             )}
             {data.restock_error && (
-              <div className="text-xs text-red-700 dark:text-red-400">Gagal restock: {data.restock_error}</div>
+              <div className="text-xs text-[hsl(var(--destructive))] ">Gagal restock: {data.restock_error}</div>
             )}
-            {info && <div className="text-xs text-emerald-700 dark:text-emerald-400" data-testid="ret-info">{info}</div>}
+            {info && <div className="text-xs text-[hsl(var(--success))] " data-testid="ret-info">{info}</div>}
           </div>
 
           {/* Step: Received */}
           {data.status !== 'Pending' && (
-            <div className="bg-sky-100 dark:bg-sky-500/5 border border-sky-300 dark:border-sky-500/20 rounded-xl p-4">
+            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
-                <PackageOpen className="w-4 h-4 text-sky-600 dark:text-sky-400" />
-                <span className="text-sm font-semibold text-sky-600 dark:text-sky-400">Penerimaan & Unboxing</span>
+                <PackageOpen className="w-4 h-4 text-[hsl(var(--primary))] " />
+                <span className="text-sm font-semibold text-[hsl(var(--primary))] ">Penerimaan & Unboxing</span>
                 <span className="text-xs text-muted-foreground ml-auto">{fmtDate(data.received_at)} · {data.received_by}</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
@@ -569,10 +569,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* Step: Inspected */}
           {['Inspected', 'Resolved'].includes(data.status) && (
-            <div className="bg-violet-100 dark:bg-violet-500/5 border border-violet-300 dark:border-violet-500/20 rounded-xl p-4">
+            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
-                <ClipboardCheck className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                <span className="text-sm font-semibold text-violet-600 dark:text-violet-400">Hasil Inspeksi</span>
+                <ClipboardCheck className="w-4 h-4 text-[hsl(var(--primary))] " />
+                <span className="text-sm font-semibold text-[hsl(var(--primary))] ">Hasil Inspeksi</span>
                 <span className="text-xs text-muted-foreground ml-auto">{fmtDate(data.inspected_at)} · {data.inspected_by}</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
@@ -592,27 +592,27 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* Step: Resolved */}
           {data.status === 'Resolved' && (
-            <div className="bg-emerald-100 dark:bg-emerald-500/5 border border-emerald-300 dark:border-emerald-500/20 rounded-xl p-4">
+            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4">
               <div className="flex items-center gap-2 mb-2">
-                <PackageCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-400">Resolusi</span>
+                <PackageCheck className="w-4 h-4 text-[hsl(var(--success))] " />
+                <span className="text-sm font-semibold text-[hsl(var(--success))] ">Resolusi</span>
                 <span className="text-xs text-muted-foreground ml-auto">{fmtDate(data.resolved_at)} · {data.resolved_by}</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
                 <div><span className="text-muted-foreground">Aksi:</span> <span className="ml-1 font-medium">{data.action_taken}</span></div>
-                {data.reshipment_resi && <div><span className="text-muted-foreground">Resi Reshipment:</span> <span className="ml-1 font-mono">{data.reshipment_resi}</span></div>}
+                {data.reshipment_resi && <div><span className="text-muted-foreground">Resi Reshipment:</span> <span className="ml-1 tabular-nums">{data.reshipment_resi}</span></div>}
                 {data.appeal_status && <div><span className="text-muted-foreground">Status Appeal:</span> <span className="ml-1">{data.appeal_status}</span></div>}
                 {data.received_qty != null && <div><span className="text-muted-foreground">Qty Diterima:</span> <span className="ml-1">{data.received_qty} pcs</span></div>}
                 {data.restock_qty > 0 && <div><span className="text-muted-foreground">Qty Restock:</span> <span className="ml-1">{data.restock_qty} pcs</span></div>}
                 {data.marketing_rejected_after_decision && (
-                  <div className="sm:col-span-2 text-xs text-amber-700 dark:text-amber-300" data-testid="wh-mkt-rejected-after">
+                  <div className="sm:col-span-2 text-xs text-[hsl(var(--warning))] " data-testid="wh-mkt-rejected-after">
                     Marketing menolak/menghapus retur ini SETELAH keputusan gudang. Bila barang harus keluar lagi,
                     tekan <b>Balik Keputusan</b> (stok keluar berjejak + jurnal pembalik).
                   </div>
                 )}
                 <div className="sm:col-span-2 pt-1">
                   <button onClick={doReverse} disabled={saving}
-                    className="px-3 py-1.5 border border-amber-500/50 text-amber-700 dark:text-amber-300 rounded-lg text-xs hover:bg-amber-500/10 disabled:opacity-50"
+                    className="px-3 py-1.5 border border-[hsl(var(--warning)/0.5)] text-[hsl(var(--warning))] rounded-lg text-xs hover:bg-[hsl(var(--warning)/0.1)] disabled:opacity-50"
                     data-testid="btn-reverse-decision">
                     Balik Keputusan (jurnal pembalik + stok keluar)
                   </button>
@@ -621,7 +621,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                 {data.source_marketing_return_id && (
                   <div className="sm:col-span-2 pt-1">
                     <span className="text-muted-foreground">Retur Toko asal:</span>
-                    <span className="ml-1 font-mono text-xs">{data.source_marketing_return_id.slice(0, 8)}…</span>
+                    <span className="ml-1 tabular-nums text-xs">{data.source_marketing_return_id.slice(0, 8)}…</span>
                   </div>
                 )}
               </div>
@@ -683,26 +683,26 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Lanjutkan Proses</h4>
               <div className="flex flex-wrap gap-2">
                 {!data.restocked && linked && (
-                  <button onClick={() => openStep('quick')} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:brightness-110" data-testid="btn-quick-restock">
+                  <button onClick={() => openStep('quick')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--success))] text-white rounded-lg text-sm hover:brightness-110" data-testid="btn-quick-restock">
                     <Zap className="w-4 h-4" /> Terima &amp; Putuskan (1 klik)
                   </button>
                 )}
                 {data.status === 'Pending' && (
-                  <button onClick={() => openStep('receive')} className="flex items-center gap-2 px-4 py-2 bg-sky-600 text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-receive">
+                  <button onClick={() => openStep('receive')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-receive">
                     <PackageOpen className="w-4 h-4" /> Terima Barang (Unboxing)
                   </button>
                 )}
                 {data.status === 'Received' && (
-                  <button onClick={() => openStep('inspect')} className="flex items-center gap-2 px-4 py-2 bg-violet-600 text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-inspect">
+                  <button onClick={() => openStep('inspect')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-inspect">
                     <ClipboardCheck className="w-4 h-4" /> Inspeksi Kondisi
                   </button>
                 )}
                 {data.status === 'Inspected' && (
-                  <button onClick={() => openStep('resolve')} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-resolve">
+                  <button onClick={() => openStep('resolve')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--success))] text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-resolve">
                     <CheckCircle className="w-4 h-4" /> Selesaikan (Resolusi)
                   </button>
                 )}
-                <button onClick={() => openStep('cancel')} className="flex items-center gap-2 px-3 py-2 border border-red-400 dark:border-red-500/30 text-red-700 dark:text-red-400 rounded-lg text-sm hover:bg-red-100 dark:bg-red-500/10">
+                <button onClick={() => openStep('cancel')} className="flex items-center gap-2 px-3 py-2 border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.15)] ">
                   <XCircle className="w-4 h-4" /> Batalkan
                 </button>
               </div>
@@ -711,8 +711,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* QUICK RESTOCK form (W4) */}
           {step === 'quick' && (
-            <div className="bg-emerald-100 dark:bg-emerald-500/5 border border-emerald-300 dark:border-emerald-500/20 rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-2">
+            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 space-y-3">
+              <h4 className="font-semibold text-[hsl(var(--success))] flex items-center gap-2">
                 <Zap className="w-4 h-4" /> Terima &amp; Masukkan ke Stok
               </h4>
               <p className="text-xs text-muted-foreground">
@@ -741,10 +741,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                 <input value={form.action_notes || ''} onChange={e => setForm({ ...form, action_notes: e.target.value })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Opsional" data-testid="quick-note" />
               </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400" data-testid="quick-err">{err}</div>}
+              {err && <div className="text-xs text-[hsl(var(--destructive))] " data-testid="quick-err">{err}</div>}
               <div className="flex gap-2">
                 <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doQuickRestock} disabled={saving} className="px-4 py-1.5 bg-emerald-600 text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-quick-restock-btn">
+                <button onClick={doQuickRestock} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--success))] text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-quick-restock-btn">
                   {saving ? '...' : 'Masukkan ke Stok'}
                 </button>
               </div>
@@ -755,8 +755,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* RECEIVE form */}
           {step === 'receive' && (
-            <div className="bg-sky-100 dark:bg-sky-500/5 border border-sky-300 dark:border-sky-500/20 rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-sky-600 dark:text-sky-400 flex items-center gap-2"><PackageOpen className="w-4 h-4" /> Terima & Unboxing</h4>
+            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 space-y-3">
+              <h4 className="font-semibold text-[hsl(var(--primary))] flex items-center gap-2"><PackageOpen className="w-4 h-4" /> Terima & Unboxing</h4>
               <div>
                 {/* 2026-11-02 (K1) — qty AKTUAL di paket = batas qty keputusan */}
                 <label className="text-xs text-muted-foreground block mb-1">Qty Aktual Diterima * (pengajuan {data.qty})</label>
@@ -780,10 +780,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
                   placeholder="Barang tampak normal, bungkus dalam sobek, item masih berplastik..." data-testid="unboxing-notes" />
               </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
+              {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
               <div className="flex gap-2">
                 <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doReceive} disabled={saving} className="px-4 py-1.5 bg-sky-600 text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-receive-btn">
+                <button onClick={doReceive} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-receive-btn">
                   {saving ? '...' : 'Konfirmasi Terima'}
                 </button>
               </div>
@@ -792,8 +792,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* INSPECT form */}
           {step === 'inspect' && (
-            <div className="bg-violet-100 dark:bg-violet-500/5 border border-violet-300 dark:border-violet-500/20 rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-violet-600 dark:text-violet-400 flex items-center gap-2"><ClipboardCheck className="w-4 h-4" /> Inspeksi Kondisi Item</h4>
+            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 space-y-3">
+              <h4 className="font-semibold text-[hsl(var(--primary))] flex items-center gap-2"><ClipboardCheck className="w-4 h-4" /> Inspeksi Kondisi Item</h4>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Kondisi Item *</label>
@@ -825,10 +825,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                   {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
                 </select>
               </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
+              {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
               <div className="flex gap-2">
                 <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doInspect} disabled={saving} className="px-4 py-1.5 bg-violet-600 text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-inspect-btn">
+                <button onClick={doInspect} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-inspect-btn">
                   {saving ? '...' : 'Simpan Inspeksi'}
                 </button>
               </div>
@@ -837,8 +837,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* RESOLVE form */}
           {step === 'resolve' && (
-            <div className="bg-emerald-100 dark:bg-emerald-500/5 border border-emerald-300 dark:border-emerald-500/20 rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-2"><CheckCircle className="w-4 h-4" /> Resolusi Return</h4>
+            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 space-y-3">
+              <h4 className="font-semibold text-[hsl(var(--success))] flex items-center gap-2"><CheckCircle className="w-4 h-4" /> Resolusi Return</h4>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Tindakan yang Diambil *</label>
                 <select value={form.action_taken || data.recommended_action || ''} onChange={e => setForm({ ...form, action_taken: e.target.value })}
@@ -879,10 +879,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
                   placeholder="Catatan tambahan tindakan yang diambil..." />
               </div>
-              {err && <div className="text-xs text-red-700 dark:text-red-400">{err}</div>}
+              {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
               <div className="flex gap-2">
                 <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doResolve} disabled={saving} className="px-4 py-1.5 bg-emerald-600 text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-resolve-btn">
+                <button onClick={doResolve} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--success))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-resolve-btn">
                   {saving ? '...' : 'Selesaikan'}
                 </button>
               </div>
@@ -891,8 +891,8 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
 
           {/* CANCEL form */}
           {step === 'cancel' && (
-            <div className="bg-red-100 dark:bg-red-500/5 border border-red-300 dark:border-red-500/20 rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-red-700 dark:text-red-400 flex items-center gap-2"><XCircle className="w-4 h-4" /> Batalkan Return</h4>
+            <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4 space-y-3">
+              <h4 className="font-semibold text-[hsl(var(--destructive))] flex items-center gap-2"><XCircle className="w-4 h-4" /> Batalkan Return</h4>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Alasan Pembatalan</label>
                 <textarea value={form.reason || ''} onChange={e => setForm({ ...form, reason: e.target.value })} rows="2"
@@ -901,7 +901,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               </div>
               <div className="flex gap-2">
                 <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doCancel} disabled={saving} className="px-4 py-1.5 bg-red-600 text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-cancel-btn">
+                <button onClick={doCancel} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--destructive))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-cancel-btn">
                   {saving ? '...' : 'Ya, Batalkan'}
                 </button>
               </div>
@@ -1006,19 +1006,19 @@ function DashboardTab({ token, onView, onDelete, onQuickRestock }) {
       {/* Type breakdown */}
       {summary && (
         <div className="grid grid-cols-2 gap-3">
-          <div className="bg-orange-100 dark:bg-orange-500/5 border border-orange-300 dark:border-orange-500/20 rounded-xl p-4 flex items-center gap-3">
-            <Truck className="w-8 h-8 text-orange-600 dark:text-orange-400" />
+          <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-4 flex items-center gap-3">
+            <Truck className="w-8 h-8 text-[hsl(var(--warning))] " />
             <div>
               <div className="text-xs text-muted-foreground">Tipe 1 — Ekspedisi</div>
-              <div className="text-2xl font-bold text-orange-600 dark:text-orange-400">{summary.expedition_returns}</div>
+              <div className="text-2xl font-bold text-[hsl(var(--warning))] ">{summary.expedition_returns}</div>
               <div className="text-xs text-muted-foreground">paket kembali dari ekspedisi</div>
             </div>
           </div>
-          <div className="bg-violet-100 dark:bg-violet-500/5 border border-violet-300 dark:border-violet-500/20 rounded-xl p-4 flex items-center gap-3">
-            <RotateCcw className="w-8 h-8 text-violet-600 dark:text-violet-400" />
+          <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 flex items-center gap-3">
+            <RotateCcw className="w-8 h-8 text-[hsl(var(--primary))] " />
             <div>
               <div className="text-xs text-muted-foreground">Tipe 2 — Customer</div>
-              <div className="text-2xl font-bold text-violet-600 dark:text-violet-400">{summary.customer_refunds}</div>
+              <div className="text-2xl font-bold text-[hsl(var(--primary))] ">{summary.customer_refunds}</div>
               <div className="text-xs text-muted-foreground">customer request refund</div>
             </div>
           </div>
@@ -1029,7 +1029,7 @@ function DashboardTab({ token, onView, onDelete, onQuickRestock }) {
       {actionItems.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-700 dark:text-amber-400" />
+            <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] " />
             Perlu Tindakan Segera ({actionItems.length})
           </h3>
           <ReturnsTable returns={actionItems} loading={loading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />
@@ -1038,7 +1038,7 @@ function DashboardTab({ token, onView, onDelete, onQuickRestock }) {
 
       {!loading && actionItems.length === 0 && (
         <div className="text-center py-12 text-muted-foreground">
-          <CheckCircle className="w-12 h-12 mx-auto mb-3 text-emerald-600 dark:text-emerald-400 opacity-50" />
+          <CheckCircle className="w-12 h-12 mx-auto mb-3 text-[hsl(var(--success))] opacity-50" />
           <p className="font-medium">Semua return sudah ditangani!</p>
           <p className="text-sm">Tidak ada yang perlu tindakan saat ini.</p>
         </div>
@@ -1141,17 +1141,17 @@ export default function WHReturnsModule({ token, onNavigate }) {
         </div>
         <div className="flex gap-2 flex-wrap">
           <button onClick={pullFromMarketing} disabled={pulling}
-            className="flex items-center gap-2 px-3 py-2 bg-sky-600/10 border border-sky-400 dark:border-sky-500/30 text-sky-700 dark:text-sky-400 rounded-lg text-sm hover:bg-sky-600/20 disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))]  rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.2)] disabled:opacity-50"
             data-testid="btn-pull-marketing">
             <DownloadCloud className={`w-4 h-4 ${pulling ? 'animate-pulse' : ''}`} />
             {pulling ? 'Menarik...' : 'Tarik Retur dari Marketing'}
           </button>
           <button onClick={() => quickCreate('expedition_return')}
-            className="flex items-center gap-2 px-3 py-2 bg-orange-600/10 border border-orange-400 dark:border-orange-500/30 text-orange-600 dark:text-orange-400 rounded-lg text-sm hover:bg-orange-600/20" data-testid="btn-add-expedition">
+            className="flex items-center gap-2 px-3 py-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))]  rounded-lg text-sm hover:bg-[hsl(var(--warning)/0.2)]" data-testid="btn-add-expedition">
             <Truck className="w-4 h-4" /> + Tipe 1
           </button>
           <button onClick={() => quickCreate('customer_refund')}
-            className="flex items-center gap-2 px-3 py-2 bg-violet-600/10 border border-violet-400 dark:border-violet-500/30 text-violet-600 dark:text-violet-400 rounded-lg text-sm hover:bg-violet-600/20" data-testid="btn-add-customer">
+            className="flex items-center gap-2 px-3 py-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))]  rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.2)]" data-testid="btn-add-customer">
             <RotateCcw className="w-4 h-4" /> + Tipe 2
           </button>
           <button onClick={() => { setCreateType(null); setShowCreate(true); }}
@@ -1168,19 +1168,19 @@ export default function WHReturnsModule({ token, onNavigate }) {
         <div className="rounded-xl border border-border p-4 bg-[var(--card-surface)]" data-testid="mkt-bridge-banner">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
-              <Store className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+              <Store className="w-4 h-4 text-[hsl(var(--primary))] " />
               <span className="text-sm font-semibold">Jembatan Retur Marketing → Gudang</span>
             </div>
             <div className="flex flex-wrap gap-4 text-sm">
               <span><span className="text-muted-foreground">Retur pembeli:</span> <strong data-testid="gap-mkt-total">{gap.marketing_returns_total}</strong></span>
               <span><span className="text-muted-foreground">Sudah terhubung:</span> <strong data-testid="gap-bridged">{gap.already_bridged}</strong></span>
               <span><span className="text-muted-foreground">Belum ditarik:</span>
-                <strong className={gap.pending_bridge > 0 ? 'text-amber-700 dark:text-amber-400 ml-1' : 'text-emerald-700 dark:text-emerald-400 ml-1'}
+                <strong className={gap.pending_bridge > 0 ? 'text-[hsl(var(--warning))]  ml-1' : 'text-[hsl(var(--success))]  ml-1'}
                   data-testid="gap-pending">{gap.pending_bridge}</strong>
               </span>
-              <span><span className="text-muted-foreground">Sudah masuk stok:</span> <strong className="text-emerald-700 dark:text-emerald-400" data-testid="gap-restocked">{gap.restocked}</strong></span>
+              <span><span className="text-muted-foreground">Sudah masuk stok:</span> <strong className="text-[hsl(var(--success))] " data-testid="gap-restocked">{gap.restocked}</strong></span>
               {gap.needs_link > 0 && (
-                <span><span className="text-muted-foreground">Perlu dipilih produknya:</span> <strong className="text-red-700 dark:text-red-400" data-testid="gap-needs-link">{gap.needs_link}</strong></span>
+                <span><span className="text-muted-foreground">Perlu dipilih produknya:</span> <strong className="text-[hsl(var(--destructive))] " data-testid="gap-needs-link">{gap.needs_link}</strong></span>
               )}
             </div>
           </div>
