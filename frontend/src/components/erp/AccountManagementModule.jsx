@@ -29,7 +29,7 @@ import {
 } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput, GlassTable } from '@/components/ui/glass';
 import AccountAssignView from './marketing/AccountAssignView';
-import { isStoreScopedUser, NO_STORE_HINT } from './marketing/NoStoreScopeNotice';
+import { isStoreScopedUser, NO_STORE_HINT, canManageStores } from './marketing/NoStoreScopeNotice';
 import { usePlatformBalances } from './finance/PlatformBalanceCards';
 import { formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
@@ -863,7 +863,7 @@ function AccountManagementBase({ token, onNavigate }) {
           breakdown={acc.health_breakdown} testId={`acc-health-${acc.account_code}`} /></td>
       <td className="px-3 py-2.5 align-top sticky right-0 bg-[hsl(var(--card))] border-l border-[var(--glass-border)]">
         <div className="flex items-center justify-end gap-1">
-          {acc.needs_owner_review && (
+          {canManageStores() && acc.needs_owner_review && (
             <Button
               size="icon" variant="ghost" className="h-7 w-7 text-emerald-500 hover:bg-emerald-500/10"
               title="Tandai sudah ditinjau owner"
@@ -874,20 +874,22 @@ function AccountManagementBase({ token, onNavigate }) {
               {reviewingId === acc.id ? <Loader2 size={12} className="animate-spin" /> : <BadgeCheck size={13} />}
             </Button>
           )}
-          <Button
-            size="icon" variant="ghost" className="h-7 w-7"
-            title="Edit akun" onClick={() => handleEdit(acc)}
-            data-testid={`edit-acc-${acc.account_code}`}
-          >
-            <Pencil size={12} />
-          </Button>
-          <Button
-            size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:bg-red-500/10"
-            title="Arsipkan akun" onClick={() => setArchiveTarget(acc)}
-            data-testid={`archive-acc-${acc.account_code}`}
-          >
-            <Archive size={12} />
-          </Button>
+          {canManageStores() && (<>
+            <Button
+              size="icon" variant="ghost" className="h-7 w-7"
+              title="Edit akun" onClick={() => handleEdit(acc)}
+              data-testid={`edit-acc-${acc.account_code}`}
+            >
+              <Pencil size={12} />
+            </Button>
+            <Button
+              size="icon" variant="ghost" className="h-7 w-7 text-red-400 hover:bg-red-500/10"
+              title="Arsipkan akun" onClick={() => setArchiveTarget(acc)}
+              data-testid={`archive-acc-${acc.account_code}`}
+            >
+              <Archive size={12} />
+            </Button>
+          </>)}
         </div>
       </td>
     </tr>
@@ -963,6 +965,7 @@ function AccountManagementBase({ token, onNavigate }) {
         </div>
       </dl>
 
+      {canManageStores() && (
       <div className="flex items-center gap-2 pt-3 mt-3 border-t border-[var(--glass-border)]">
         <Button size="sm" variant="outline" className="flex-1" onClick={() => handleEdit(acc)} data-testid={`edit-acc-card-${acc.account_code}`}>
           <Pencil className="w-3 h-3 mr-1" /> Edit
@@ -983,6 +986,7 @@ function AccountManagementBase({ token, onNavigate }) {
           <Archive className="w-3 h-3" />
         </Button>
       </div>
+      )}
     </GlassCard>
   );
 
@@ -998,20 +1002,23 @@ function AccountManagementBase({ token, onNavigate }) {
             <Button onClick={fetchAccounts} variant="outline" size="sm" data-testid="refresh-accounts-btn">
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Muat ulang
             </Button>
-            <Button onClick={recomputeHealth} variant="outline" size="sm" disabled={scoring}
-              data-testid="recompute-health-btn">
-              {scoring ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                : <Calculator className="w-3.5 h-3.5 mr-1.5" />} Hitung Ulang Skor
-            </Button>
-            <Button
-              onClick={() => (onNavigate ? onNavigate('marketing-account-review')
-                : (window.location.hash = 'marketing-account-review'))}
-              variant="outline" size="sm" data-testid="open-bulk-review-btn">
-              <ClipboardCheck className="w-3.5 h-3.5 mr-1.5" /> Koreksi Data Toko
-            </Button>
-            <Button onClick={handleCreate} size="sm" data-testid="create-account-btn">
-              <Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Akun
-            </Button>
+            {/* 2026-11-05: menambah/mengubah toko hanya owner/admin/SPV/manager (PIC toko dulu bisa membuat toko dobel) */}
+            {canManageStores() && (<>
+              <Button onClick={recomputeHealth} variant="outline" size="sm" disabled={scoring}
+                data-testid="recompute-health-btn">
+                {scoring ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                  : <Calculator className="w-3.5 h-3.5 mr-1.5" />} Hitung Ulang Skor
+              </Button>
+              <Button
+                onClick={() => (onNavigate ? onNavigate('marketing-account-review')
+                  : (window.location.hash = 'marketing-account-review'))}
+                variant="outline" size="sm" data-testid="open-bulk-review-btn">
+                <ClipboardCheck className="w-3.5 h-3.5 mr-1.5" /> Koreksi Data Toko
+              </Button>
+              <Button onClick={handleCreate} size="sm" data-testid="create-account-btn">
+                <Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Akun
+              </Button>
+            </>)}
           </div>
         }
       />

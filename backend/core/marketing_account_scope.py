@@ -85,6 +85,29 @@ def norm(s: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "", str(s).strip().lower())
 
 
+# ── identitas toko: kapan dua catatan adalah toko YANG SAMA ─────────────────
+# 2026-11-05 (owner) — satu toko marketplace hanya boleh tercatat sekali. Dipakai penolak di
+# `routes.marketing_accounts` DAN migrasi `2026_11_05_toko_dobel` supaya aturannya satu.
+TIKTOK_PLATFORMS = ("tiktok", "tiktokshop")
+
+
+def platform_family(platform: Any) -> str:
+    p = str(platform or "").strip().lower()
+    return "tiktok" if p in TIKTOK_PLATFORMS else p
+
+
+def store_identity_keys(platform: Any, username: Any, account_name: Any) -> set:
+    """Kunci identitas toko: platform yang sama + username ATAU nama yang sama
+    (tanpa beda huruf/spasi/titik — "outfit.boutique" = "outfit boutique")."""
+    fam = platform_family(platform)
+    keys = set()
+    if norm(username):
+        keys.add((fam, "username", norm(username)))
+    if norm(account_name):
+        keys.add((fam, "name", norm(account_name)))
+    return keys
+
+
 # ── indeks akun (satu query, dipakai berulang) ───────────────────────────────
 async def account_index(db) -> Dict[str, Any]:
     """Bangun indeks akun sekali untuk dipakai banyak baris (impor bisa ribuan baris).
