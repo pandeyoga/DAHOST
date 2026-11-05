@@ -225,6 +225,9 @@ class FakeDB:
             self._cols[name] = FakeCollection(name)
         return self._cols[name]
 
+    async def list_collection_names(self):
+        return list(self._cols.keys())
+
 
 class FakeRequest:
     """Request FastAPI palsu: hanya `await request.json()` dan `request.state`."""
