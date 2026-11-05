@@ -46,14 +46,14 @@ export function Toolbar({ filters, tools, className, testId = 'page-toolbar' }) 
 }
 
 export default function PageLayout({
-  title, subtitle, actions, filters, tools, summary, detail, footer, children, className, testId,
+  title, subtitle, actions, filters, tools, summary, detail, footer, children, className, testId, headerTestId,
 }) {
   const hasFilters = filled(filters);
   // Tanpa penyaring, alat (muat ulang, unduh) ikut kepala/baris tab: [Ikon] [Kedua] [Utama].
   const headerActions = !hasFilters && filled(tools) ? <>{tools}{actions}</> : actions;
   return (
     <div className={cn('space-y-4 min-w-0', className)} data-testid={testId} data-page-layout="">
-      <PageHeader title={title} subtitle={subtitle} actions={filled(headerActions) ? headerActions : null} />
+      <PageHeader title={title} subtitle={subtitle} testId={headerTestId} actions={filled(headerActions) ? headerActions : null} />
       {hasFilters && <Toolbar filters={filters} tools={tools} />}
       {summary}
       {detail}
@@ -68,7 +68,7 @@ export default function PageLayout({
  * Pengganti popup/Sheet untuk daftar dan detail: isi tidak terpotong, tabel bisa memakai lebar penuh.
  * Esc atau tombol × menutup. Saat dibuka, halaman bergulir ke panel.
  */
-export function DetailPanel({ title, description, actions, onClose, children, testId = 'detail-panel' }) {
+export function DetailPanel({ title, description, actions, onClose, children, testId = 'detail-panel', closeTestId }) {
   const ref = useRef(null);
   useEffect(() => { ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, []);
   useEffect(() => {
@@ -88,7 +88,7 @@ export function DetailPanel({ title, description, actions, onClose, children, te
           <div className="flex items-center gap-2 shrink-0">
             {actions}
             {onClose && (
-              <Button variant="outline" size="icon" onClick={onClose} title="Tutup" aria-label="Tutup" data-testid={`${testId}-close`}>
+              <Button variant="outline" size="icon" onClick={onClose} title="Tutup" aria-label="Tutup" data-testid={closeTestId || `${testId}-close`}>
                 <X className="w-4 h-4" />
               </Button>
             )}

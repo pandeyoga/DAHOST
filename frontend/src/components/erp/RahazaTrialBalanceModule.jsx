@@ -1,13 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Scale, Download, FileBarChart, Search } from 'lucide-react';
+import { RefreshCw, Download, FileBarChart, Search, CheckCircle2, AlertTriangle } from 'lucide-react';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { StatTile, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
+import { TYPE_LABELS, TYPE_ORDER } from './RahazaCOATreeNode';
 import { Skeleton } from '@/components/ui/skeleton';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 });
+const HEAD = [['Saldo awal', 'opening'], ['Mutasi', 'period'], ['Saldo akhir', 'end']];
 
+/**
+ * Buku Besar › Saldo semua akun (neraca saldo).
+ * 2026-11-05 (PANDUAN_UI G1/G7/G11): cetakan PageLayout; label Indonesia (dulu "Trial Balance", "Period Debit",
+ * "UNBALANCED!", tipe akun berkode ASSET); angka tanpa huruf mesin ketik dan tanpa warna hijau/biru; tabel tidak
+ * lagi bergulir di wadah setinggi 600 px (baris total tertutup tombol chat).
+ */
 export default function RahazaTrialBalanceModule({ token }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -32,16 +42,16 @@ export default function RahazaTrialBalanceModule({ token }) {
 
   const exportCSV = () => {
     if (!data?.rows) return;
-    const rows = data.rows.map(r => [r.code, r.name, r.type, r.opening_debit, r.opening_credit, r.period_debit, r.period_credit, r.end_debit, r.end_credit]);
+    const rows = data.rows.map(r => [r.code, r.name, TYPE_LABELS[r.type] || r.type, r.opening_debit, r.opening_credit, r.period_debit, r.period_credit, r.end_debit, r.end_credit]);
     const csv = [
-      ['Kode', 'Nama', 'Tipe', 'Opening Debit', 'Opening Credit', 'Period Debit', 'Period Credit', 'End Debit', 'End Credit'],
+      ['Kode', 'Nama', 'Tipe', 'Saldo awal debit', 'Saldo awal kredit', 'Mutasi debit', 'Mutasi kredit', 'Saldo akhir debit', 'Saldo akhir kredit'],
       ...rows,
     ].map(r => r.map(c => typeof c === 'string' && c.includes(',') ? `"${c}"` : c).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `trial-balance-${from}-${to}.csv`;
+    link.download = `saldo-semua-akun-${from}-${to}.csv`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -52,110 +62,94 @@ export default function RahazaTrialBalanceModule({ token }) {
     const s = search.toLowerCase();
     return r.code.toLowerCase().includes(s) || r.name.toLowerCase().includes(s);
   });
+  const tot = data?.totals || {};
+  const cell = (v) => (v ? fmt(v) : '');
 
   return (
-    <div className="space-y-5" data-testid="rahaza-tb-page">
-      <PageHeader
-        icon={Scale}
-        title="Trial Balance (Neraca Saldo)"
-        subtitle="Laporan saldo semua akun untuk verifikasi double-entry. Debit harus sama dengan Credit."
-        actions={
-          <>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="tb-refresh"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button variant="outline" onClick={exportCSV} disabled={!data?.rows?.length} data-testid="tb-export"><Download className="w-3.5 h-3.5 mr-1.5" />Unduh CSV</Button>
-          </>
-        }
-      />
-
-      <div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2">
-          <PeriodPicker value={period} onChange={setPeriod} testId="tb-period" />
-          </div>
-          <select
-            value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value)}
-            className="h-8 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-xs text-foreground"
-            data-testid="tb-type"
-          >
-            <option value="">Semua Tipe</option>
-            <option value="ASSET">Aset</option>
-            <option value="LIABILITY">Liabilitas</option>
-            <option value="EQUITY">Ekuitas</option>
-            <option value="REVENUE">Pendapatan</option>
-            <option value="COGS">HPP</option>
-            <option value="EXPENSE">Beban</option>
-          </select>
-          <label className="inline-flex items-center gap-2 text-xs text-foreground/80">
-            <input type="checkbox" checked={showZero} onChange={e => setShowZero(e.target.checked)} data-testid="tb-show-zero" />
-            Tampilkan akun saldo 0
-          </label>
-          <div className="relative flex-1 min-w-[180px] max-w-xs">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari akun…" className="pl-8 h-8" data-testid="tb-search" />
-          </div>
+    <PageLayout
+      testId="rahaza-tb-page"
+      title="Saldo semua akun"
+      subtitle="Saldo awal, mutasi, dan saldo akhir tiap akun. Total debit harus sama dengan total kredit."
+      filters={<>
+        <PeriodPicker value={period} onChange={setPeriod} testId="tb-period" />
+        <SmartNativeSelect value={typeFilter} onChange={e => setTypeFilter(e.target.value)} searchable={false}
+          className="h-9 w-44" aria-label="Tipe akun" data-testid="tb-type">
+          <option value="">Semua tipe</option>
+          {TYPE_ORDER.map((k) => <option key={k} value={k}>{TYPE_LABELS[k]}</option>)}
+        </SmartNativeSelect>
+        <div className="relative w-64 max-w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari kode / nama akun…" className="pl-9 h-9" data-testid="tb-search" />
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Period Debit" value={fmt(data?.totals?.period_debit)} testId="tb-kpi-pd" />
-        <StatTile label="Period Credit" value={fmt(data?.totals?.period_credit)} testId="tb-kpi-pc" />
-        <StatTile label="Ending Debit" value={fmt(data?.totals?.end_debit)} accent="primary" testId="tb-kpi-ed" />
-        <StatTile
-          label={data?.balanced ? 'Ending Credit (Balanced ✓)' : 'Ending Credit (UNBALANCED!)'}
-          value={fmt(data?.totals?.end_credit)}
-          accent={data?.balanced ? 'success' : 'danger'}
-          testId="tb-kpi-ec"
-        />
-      </div>
-
+        <label className="inline-flex items-center gap-2 text-sm text-foreground/80">
+          <input type="checkbox" checked={showZero} onChange={e => setShowZero(e.target.checked)} data-testid="tb-show-zero" />
+          Tampilkan akun saldo 0
+        </label>
+      </>}
+      tools={<>
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="tb-refresh"><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" onClick={exportCSV} disabled={!data?.rows?.length} data-testid="tb-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+      </>}
+      summary={data?.totals && data.rows?.length > 0 && <>
+        <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="tb-balanced">
+          {data.balanced
+            ? <><CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Seimbang: total saldo akhir debit = kredit</>
+            : <><AlertTriangle className="w-4 h-4" /> Tidak seimbang — saldo akhir debit {fmt(tot.end_debit)} ≠ kredit {fmt(tot.end_credit)}</>}
+        </p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatTile label="Mutasi debit" value={fmt(tot.period_debit)} testId="tb-kpi-pd" />
+          <StatTile label="Mutasi kredit" value={fmt(tot.period_credit)} testId="tb-kpi-pc" />
+          <StatTile label="Saldo akhir debit" value={fmt(tot.end_debit)} testId="tb-kpi-ed" />
+          <StatTile label="Saldo akhir kredit" value={fmt(tot.end_credit)} accent={data.balanced ? 'default' : 'danger'} testId="tb-kpi-ec" />
+        </div>
+      </>}
+    >
       <GlassCard className="p-0 overflow-hidden">
         {loading ? (
           <div className="space-y-2 p-4">{Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-12 rounded-lg" />)}</div>
         ) : filtered.length === 0 ? (
-          <div className="py-16 text-center text-muted-foreground">
-            <FileBarChart className="w-10 h-10 mx-auto mb-2 opacity-40" />
-            Tidak ada data. Coba ubah periode atau centang “Tampilkan akun saldo 0”.
-          </div>
+          <EmptyState icon={FileBarChart} title="Tidak ada akun yang cocok"
+            description="Ubah periode, pencarian, atau centang “Tampilkan akun saldo 0”." />
         ) : (
-          <div className="overflow-x-auto max-h-[600px]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-[var(--card-surface)] backdrop-blur-sm">
-                <tr className="text-left text-[10px] uppercase text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="py-2 px-2">Kode</th>
-                  <th className="py-2 px-2">Akun</th>
-                  <th className="py-2 px-2">Tipe</th>
-                  <th className="py-2 px-2 text-right">Saldo Awal (Dr)</th>
-                  <th className="py-2 px-2 text-right">Saldo Awal (Cr)</th>
-                  <th className="py-2 px-2 text-right">Mutasi Debit</th>
-                  <th className="py-2 px-2 text-right">Mutasi Credit</th>
-                  <th className="py-2 px-2 text-right">Saldo Akhir (Dr)</th>
-                  <th className="py-2 px-2 text-right">Saldo Akhir (Cr)</th>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="tb-table">
+              <thead>
+                <tr>
+                  <th rowSpan={2} className="text-left">Kode</th>
+                  <th rowSpan={2} className="text-left">Akun</th>
+                  <th rowSpan={2} className="text-left">Tipe</th>
+                  {HEAD.map(([l]) => <th key={l} colSpan={2} className="text-center border-l border-[var(--glass-border)]">{l}</th>)}
+                </tr>
+                <tr>
+                  {HEAD.map(([l]) => [
+                    <th key={`${l}-d`} className="text-right border-l border-[var(--glass-border)]">Debit</th>,
+                    <th key={`${l}-k`} className="text-right">Kredit</th>,
+                  ])}
                 </tr>
               </thead>
               <tbody>
                 {filtered.map(r => (
                   <tr key={r.code} className="border-b border-[var(--glass-border)] hover:bg-foreground/5" data-testid={`tb-row-${r.code}`}>
-                    <td className="py-1.5 px-2 font-mono text-xs">{r.code}</td>
-                    <td className="py-1.5 px-2">{r.name}</td>
-                    <td className="py-1.5 px-2 text-[10px] uppercase text-muted-foreground">{r.type}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs">{r.opening_debit ? fmt(r.opening_debit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs">{r.opening_credit ? fmt(r.opening_credit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs text-emerald-300">{r.period_debit ? fmt(r.period_debit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs text-sky-300">{r.period_credit ? fmt(r.period_credit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs font-semibold">{r.end_debit ? fmt(r.end_debit) : ''}</td>
-                    <td className="py-1.5 px-2 text-right font-mono text-xs font-semibold">{r.end_credit ? fmt(r.end_credit) : ''}</td>
+                    <td className="whitespace-nowrap text-muted-foreground">{r.code}</td>
+                    <td>{r.name}</td>
+                    <td className="whitespace-nowrap text-muted-foreground">{TYPE_LABELS[r.type] || r.type}</td>
+                    <td className="text-right tabular-nums border-l border-[var(--glass-border)]">{cell(r.opening_debit)}</td>
+                    <td className="text-right tabular-nums">{cell(r.opening_credit)}</td>
+                    <td className="text-right tabular-nums border-l border-[var(--glass-border)]">{cell(r.period_debit)}</td>
+                    <td className="text-right tabular-nums">{cell(r.period_credit)}</td>
+                    <td className="text-right tabular-nums font-semibold border-l border-[var(--glass-border)]">{cell(r.end_debit)}</td>
+                    <td className="text-right tabular-nums font-semibold">{cell(r.end_credit)}</td>
                   </tr>
                 ))}
                 {data?.totals && (
-                  <tr className="font-semibold bg-[var(--card-surface)] border-t-2 border-[var(--glass-border)]">
-                    <td colSpan={3} className="py-2 px-2 text-right text-xs uppercase">TOTAL</td>
-                    <td className="py-2 px-2 text-right font-mono text-xs">{fmt(data.totals.opening_debit)}</td>
-                    <td className="py-2 px-2 text-right font-mono text-xs">{fmt(data.totals.opening_credit)}</td>
-                    <td className="py-2 px-2 text-right font-mono text-xs text-emerald-300">{fmt(data.totals.period_debit)}</td>
-                    <td className="py-2 px-2 text-right font-mono text-xs text-sky-300">{fmt(data.totals.period_credit)}</td>
-                    <td className="py-2 px-2 text-right font-mono text-xs">{fmt(data.totals.end_debit)}</td>
-                    <td className="py-2 px-2 text-right font-mono text-xs">{fmt(data.totals.end_credit)}</td>
+                  <tr className="font-semibold border-t-2 border-[var(--glass-border)]" data-testid="tb-totals">
+                    <td colSpan={3}>Total</td>
+                    <td className="text-right tabular-nums border-l border-[var(--glass-border)]">{fmt(tot.opening_debit)}</td>
+                    <td className="text-right tabular-nums">{fmt(tot.opening_credit)}</td>
+                    <td className="text-right tabular-nums border-l border-[var(--glass-border)]">{fmt(tot.period_debit)}</td>
+                    <td className="text-right tabular-nums">{fmt(tot.period_credit)}</td>
+                    <td className="text-right tabular-nums border-l border-[var(--glass-border)]">{fmt(tot.end_debit)}</td>
+                    <td className="text-right tabular-nums">{fmt(tot.end_credit)}</td>
                   </tr>
                 )}
               </tbody>
@@ -163,6 +157,6 @@ export default function RahazaTrialBalanceModule({ token }) {
           </div>
         )}
       </GlassCard>
-    </div>
+    </PageLayout>
   );
 }

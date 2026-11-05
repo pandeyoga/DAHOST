@@ -1,11 +1,17 @@
 /**
  * WithdrawalImportPanel — pratinjau impor laporan penarikan Shopee/TikTok (tahap 2).
  * Kolom yang dipakai ditampilkan & bisa diganti; baris bermasalah ditandai, bukan dibuang.
+ *
+ * 2026-11-05 (PANDUAN_UI G3/G6/G7): pilihan & tombol komponen aplikasi (dulu <select>/<button> buatan),
+ * tanggal "04 Nov 2026", nomor & uang tidak dipatah ke dua baris, warna hanya token.
  */
 import { useMemo, useState } from 'react';
 import { X, Loader2, CheckCircle2, AlertTriangle, Upload } from 'lucide-react';
 import { toast } from 'sonner';
-import { formatRupiah as rp } from '@/lib/format';
+import { formatRupiah as rp, formatDateID } from '@/lib/format';
+import { Button } from '@/components/ui/button';
+import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { BankSelect } from './PayoutBankLinks';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -63,49 +69,51 @@ export function WithdrawalImportPanel({ result, file, accounts, accountId, banks
   };
 
   if (!result) return null;
+  const problemCount = rows.length - rows.filter((r) => r.ok).length;
   return (
-    <div className="rounded-lg border border-foreground/10 p-3 space-y-3" data-testid="wd-import-panel">
+    <GlassCard className="p-4 space-y-3" data-testid="wd-import-panel">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-sm font-medium flex items-center gap-2">
+        <h4 className="text-sm font-medium flex items-center gap-2 flex-wrap">
           <Upload className="w-4 h-4" /> Pratinjau impor — {result.filename}
-          <span className="text-xs text-foreground/50 font-normal">{result.row_count} baris · terdeteksi {result.platform_guess || 'platform tak dikenal'}</span>
+          <span className="text-xs text-muted-foreground font-normal">{result.row_count} baris · terdeteksi {result.platform_guess || 'platform tak dikenal'}</span>
         </h4>
-        <button data-testid="wd-import-close" onClick={onClose} className="p-1 rounded hover:bg-foreground/10"><X className="w-4 h-4" /></button>
+        <Button variant="outline" size="icon" data-testid="wd-import-close" onClick={onClose} title="Tutup" aria-label="Tutup">
+          <X className="w-4 h-4" />
+        </Button>
       </div>
 
       <div className="grid md:grid-cols-6 gap-2 text-xs">
         <label className="space-y-1">
-          <span className="text-foreground/60">Toko</span>
-          <select data-testid="wd-import-account" value={accountId} onChange={(e) => changeAccount(e.target.value)}
-            className="w-full h-8 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-xs">
+          <span className="text-muted-foreground">Toko</span>
+          <SmartNativeSelect data-testid="wd-import-account" value={accountId} onChange={(e) => changeAccount(e.target.value)}
+            className="h-8 w-full">
             <option value="">— pilih toko —</option>
             {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name} · {a.platform}</option>)}
-          </select>
+          </SmartNativeSelect>
         </label>
         {ROLES.map(([role, label]) => (
           <label key={role} className="space-y-1">
-            <span className="text-foreground/60">Kolom {label}</span>
-            <select data-testid={`wd-import-map-${role}`} value={result.mapping?.[role] || ''} disabled={busy === 'map'}
-              onChange={(e) => remap(role, e.target.value)}
-              className="w-full h-8 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-xs">
+            <span className="text-muted-foreground">Kolom {label}</span>
+            <SmartNativeSelect data-testid={`wd-import-map-${role}`} value={result.mapping?.[role] || ''} disabled={busy === 'map'}
+              onChange={(e) => remap(role, e.target.value)} className="h-8 w-full">
               <option value="">— tidak dipakai —</option>
               {(result.headers || []).map((h) => <option key={h} value={h}>{h}</option>)}
-            </select>
+            </SmartNativeSelect>
           </label>
         ))}
       </div>
 
       {accountId ? (
-        <div className="text-xs text-foreground/60 flex flex-wrap items-center gap-2" data-testid="wd-import-balance">
-          <span>Saldo platform toko: <b className="text-foreground">{rp(result.available_balance || 0)}</b> · masuk ke rekening</span>
-          <div className="w-72"><BankSelect banks={banks} value={cashCode} onChange={setCash} testId="wd-import-bank" className="h-8 text-xs" /></div>
+        <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-2" data-testid="wd-import-balance">
+          <span>Saldo platform toko: <b className="text-foreground tabular-nums">{rp(result.available_balance || 0)}</b> · masuk ke rekening</span>
+          <div className="w-72"><BankSelect banks={banks} value={cashCode} onChange={setCash} testId="wd-import-bank" className="h-8" /></div>
         </div>
       ) : null}
 
-      <div className="max-h-72 overflow-auto rounded-lg border border-foreground/10">
+      <div className="max-h-72 overflow-auto rounded-lg border border-[var(--glass-border)]">
         <table className="w-full text-xs" data-testid="wd-import-table">
           <thead className="sticky top-0 bg-background">
-            <tr className="text-[10px] uppercase tracking-wide text-foreground/50 border-b border-foreground/10">
+            <tr className="border-b border-[var(--glass-border)]">
               <th className="px-2 py-1.5 text-left">Simpan</th>
               <th className="px-2 py-1.5 text-left">#</th>
               <th className="px-2 py-1.5 text-left">Tanggal</th>
@@ -117,17 +125,17 @@ export function WithdrawalImportPanel({ result, file, accounts, accountId, banks
           </thead>
           <tbody>
             {rows.map((r) => (
-              <tr key={r.row} className={`border-b border-foreground/5 ${r.ok ? '' : 'opacity-60'}`} data-testid={`wd-import-row-${r.row}`}>
+              <tr key={r.row} className={`border-b border-[var(--glass-border)] ${r.ok ? '' : 'opacity-60'}`} data-testid={`wd-import-row-${r.row}`}>
                 <td className="px-2 py-1"><input type="checkbox" disabled={!r.ok} checked={r.ok && !excluded[r.row]}
                   onChange={(e) => setExcluded({ ...excluded, [r.row]: !e.target.checked })} data-testid={`wd-import-check-${r.row}`} /></td>
-                <td className="px-2 py-1 text-foreground/50">{r.row}</td>
-                <td className="px-2 py-1">{r.withdrawal_date || '—'}</td>
-                <td className="px-2 py-1 font-mono">{r.reference || <span className="text-foreground/40">otomatis</span>}</td>
-                <td className="px-2 py-1 text-right tabular-nums">{r.amount != null ? rp(r.amount) : '—'}</td>
+                <td className="px-2 py-1 text-muted-foreground tabular-nums">{r.row}</td>
+                <td className="px-2 py-1 whitespace-nowrap">{r.withdrawal_date ? formatDateID(r.withdrawal_date) : '—'}</td>
+                <td className="px-2 py-1 whitespace-nowrap">{r.reference || <span className="text-muted-foreground">otomatis</span>}</td>
+                <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{r.amount != null ? rp(r.amount) : '—'}</td>
                 <td className="px-2 py-1">{r.status || '—'}</td>
                 <td className="px-2 py-1">
-                  {r.ok ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> siap</span>
-                    : <span className="text-amber-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {r.reason}</span>}
+                  {r.ok ? <span className="text-[hsl(var(--success))] flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> siap</span>
+                    : <span className="text-[hsl(var(--warning))] flex items-center gap-1"><AlertTriangle className="w-3 h-3" /> {r.reason}</span>}
                 </td>
               </tr>
             ))}
@@ -137,15 +145,14 @@ export function WithdrawalImportPanel({ result, file, accounts, accountId, banks
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs" data-testid="wd-import-summary">
-          <b>{selected.length}</b> baris akan disimpan · total <b>{rp(total)}</b>
-          {rows.length - rows.filter((r) => r.ok).length ? <span className="text-foreground/50"> · {rows.length - rows.filter((r) => r.ok).length} baris ditandai bermasalah</span> : null}
+          <b>{selected.length}</b> baris akan disimpan · total <b className="tabular-nums">{rp(total)}</b>
+          {problemCount ? <span className="text-muted-foreground"> · {problemCount} baris ditandai bermasalah</span> : null}
         </div>
-        <button data-testid="wd-import-commit" disabled={busy === 'commit' || !selected.length || !accountId} onClick={commit}
-          className="h-9 px-4 rounded-lg bg-primary text-primary-foreground text-sm flex items-center gap-1.5 disabled:opacity-50">
+        <Button data-testid="wd-import-commit" disabled={busy === 'commit' || !selected.length || !accountId} onClick={commit}>
           {busy === 'commit' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
           Simpan {selected.length} penarikan
-        </button>
+        </Button>
       </div>
-    </div>
+    </GlassCard>
   );
 }

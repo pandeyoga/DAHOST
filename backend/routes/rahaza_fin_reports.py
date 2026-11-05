@@ -143,8 +143,10 @@ async def general_ledger(
         else:
             balance = -running
         lines.append({
+            "id": r.get("id"),
             "date": r["date"],
             "je_number": r.get("je_number"),
+            "je_id": r.get("je_id"),   # 2026-11-04: layar membuka isi jurnal di bawah barisnya (PANDUAN_UI G13)
             "description": r.get("description") or "",
             "source": r.get("source_module"),
             "debit": r.get("debit", 0),

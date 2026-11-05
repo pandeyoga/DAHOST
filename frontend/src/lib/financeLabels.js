@@ -74,3 +74,28 @@ export function finStatus(code) {
   const k = String(code || '').toLowerCase();
   return FIN_STATUS[k] || { label: code || '—', tone: 'default' };
 }
+
+/**
+ * Memo jurnal / keterangan transaksi yang ditulis server dalam bahasa Inggris ("AR Invoice …",
+ * "Payment for …", "Invoice …") → bahasa Indonesia untuk layar (PANDUAN_UI G11). Data & unduhan CSV tetap
+ * memakai teks aslinya; perbaikan tuntas ada di sumber (backend). Satu sumber untuk semua layar
+ * (2026-11-05 — dulu peta sendiri di Buku Jurnal dan di Umur piutang). Awalan yang lebih panjang ditaruh
+ * lebih dulu ("AR Invoice" sebelum "Invoice", "COGS Shipment" sebelum "COGS").
+ */
+const MEMO_PREFIX_ID = [
+  ['AR Invoice', 'Faktur penjualan'], ['AP Invoice', 'Faktur pemasok'], ['Payroll Run', 'Penggajian'],
+  ['Material Receive', 'Penerimaan bahan'], ['Material Issue', 'Pemakaian bahan'], ['Material Scrap', 'Bahan rusak'],
+  ['Employee Loan Disbursement', 'Pencairan pinjaman karyawan'], ['Loan Repayment', 'Cicilan pinjaman'],
+  ['Depreciation', 'Penyusutan'], ['Credit Note', 'Nota kredit'], ['COGS Shipment', 'HPP pengiriman'],
+  ['COGS', 'HPP'], ['Bank Recon Adjustment', 'Penyesuaian rekonsiliasi bank'], ['Bad Debt Write-off', 'Hapus buku piutang'],
+  ['Asset Disposal', 'Pelepasan aset'], ['Asset Acquisition', 'Perolehan aset'], ['Stock Adjust', 'Penyesuaian stok'],
+  ['Kas Kecil Expense', 'Pengeluaran kas kecil'], ['Return Kas Kecil', 'Pengembalian kas kecil'], ['Expense', 'Pengeluaran'],
+  ['Reimburse', 'Penggantian biaya'], ['Settlement Dinas', 'Penyelesaian dinas'], ['Variance', 'Selisih'],
+  ['Payment for', 'Pembayaran faktur'], ['Invoice', 'Faktur'],
+];
+
+export function humanMemo(text) {
+  const m = String(text ?? '');
+  for (const [en, id] of MEMO_PREFIX_ID) if (m === en || m.startsWith(`${en} `)) return id + m.slice(en.length);
+  return m;
+}

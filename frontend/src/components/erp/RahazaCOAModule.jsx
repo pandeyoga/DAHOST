@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  Plus, RefreshCw, BookOpen, Sparkles, Search, FolderTree, Table2, AlertTriangle, ExternalLink,
+  Plus, RefreshCw, Sparkles, Search, FolderTree, Table2, AlertTriangle, ExternalLink,
   CheckCircle2, XCircle, ChevronsDownUp, ChevronsUpDown, Loader2, Info, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -10,12 +10,13 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
-import { PageHeader } from './moduleAtoms';
+import ViewToggle from '@/components/ui/view-toggle';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
 import {
   TypeBadge, CoaTreeView, UsageBadge, RowActions, buildTree, TYPE_LABELS, TYPE_ORDER, NB_LABELS, LEVEL_META,
 } from './RahazaCOATreeNode';
 import ImportExportToolbar from './ImportExportToolbar';
+import { Notice } from './moduleAtoms';
 
 // 2026-11-02 (S2-H) — permintaan owner: "untuk Chart of akun itu tolong tandai mana yang terhubung atau
 // tidak karena takutnya salah hapus … cek ui uxnya". Sumber keterikatan = backend core/coa_bindings
@@ -359,9 +360,7 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
           </fieldset>
         </div>
         {serverError && (
-          <div className="rounded-md border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-300 flex gap-2" role="alert" data-testid="coa-editor-error">
-            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /><span>{serverError}</span>
-          </div>
+          <Notice tone="danger" icon={AlertTriangle} testId="coa-editor-error">{serverError}</Notice>
         )}
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose} data-testid="coa-editor-cancel">Batal</Button>
@@ -380,7 +379,46 @@ const ACTION_ROWS = [
   ['make_leaf', 'Jadikan akun rinci'], ['change_type', 'Ubah tipe'], ['change_code', 'Ubah kode'],
 ];
 
-function UsageSheet({ acc, api, onClose, onEdit, onDelete, onReactivate, openScreen }) {
+// 2026-11-04 (PANDUAN_UI G11, arahan owner): keterikatan ditulis dalam bahasa staf. API tetap mengirim label &
+// alamat teknis (dipakai pemeriksa/tes); layar menerjemahkan dan TIDAK menampilkan alamat program
+// (`rahaza_coa_auto_settings…`, `routes.coa_auto.DEFAULT_ENTITY_TYPES…`).
+const GROUP_TEXT = {
+  profil: 'Dipakai jurnal otomatis', toko: 'Dipakai toko online', rekening: 'Dipakai rekening kas & bank',
+  peta_channel: 'Peta akun channel lama (masih dibaca faktur)', auto_coa: 'Akun induk untuk akun otomatis',
+  entitas: 'Akun milik pemasok, vendor, atau pelanggan', subledger: 'Akun otomatis milik relasi',
+  pemetaan_gl: 'Dipakai kategori klaim / kas kecil', kas_kecil: 'Dipakai dana kas kecil', kategori_aset: 'Dipakai kategori aset',
+  aset_tetap: 'Dipakai aset tetap', anggaran: 'Dipakai anggaran', kode_posting: 'Dipakai langsung saat sistem mencatat jurnal',
+  kode_sinkron: 'Dipakai saat sistem membuat akun otomatis', kode_cadangan: 'Akun pengganti bila pengaturan kosong',
+  kode_laporan: 'Dibaca laporan', jurnal: 'Sudah dipakai di jurnal', jurnal_draft: 'Dipakai di jurnal draf', anak: 'Punya akun anak',
+  flag: 'Penanda akun', sinkron_toko: 'Akun pendapatan toko (diatur otomatis)', seed: 'Akun bawaan sistem',
+};
+const ENTITY_TEXT = { cmt_vendor: 'vendor CMT', supplier: 'pemasok', customer: 'pelanggan', channel: 'toko online',
+  maklon_client: 'klien maklon', bank: 'rekening bank' };
+const TECH_TEXT_RX = /\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[a-z_]+\.[a-z_.]+\b|\[\(/;
+export function humanBinding(label) {
+  let t = String(label || '').trim();
+  const auto = t.match(/^Auto Akun\s*›\s*(.+?):\s*induk sub-ledger$/i);
+  if (auto) return `Akun induk untuk ${auto[1].replace(/\s*\((AR|AP)\)/g, '').replace(/\s+—\s+/g, ' — ').toLowerCase()}. Saat data baru dibuat, sistem membuat akun anak di bawah akun ini.`;
+  if (/^Auto Akun:\s*induk bawaan sub-ledger$/i.test(t)) return 'Akun induk bawaan untuk akun yang dibuat otomatis.';
+  const sub = t.match(/^Sub-ledger (\w+)(?: \(relasi [\w-]+\))?$/i);
+  if (sub) return `Akun otomatis milik ${ENTITY_TEXT[sub[1]] || sub[1].replace(/_/g, ' ')}.`;
+  t = t.replace(/:\s*induk sub-ledger\b/gi, ': akun induk untuk akun otomatis')
+    .replace(/sub-ledger/gi, 'akun anak otomatis').replace(/\s*\((AR|AP)\)/g, '')
+    .replace(/\(posted\)/gi, '(terjurnal)').replace(/\bposted\b/gi, 'terjurnal').replace(/\(Cr\)/g, '(kredit)').replace(/\(Dr\)/g, '(debit)')
+    .replace(/^Auto Akun\s*[›:]\s*/i, '');
+  return t;
+}
+const humanDetail = (d) => (d && !/^\d+$/.test(d) && !TECH_TEXT_RX.test(d) ? d : '');
+const LEVEL_TEXT = {
+  BEBAS: () => 'Tidak dipakai di mana pun — aman dihapus.',
+  SEED: () => 'Akun bawaan sistem: tidak bisa dihapus permanen (akan dibuat ulang), tapi boleh dinonaktifkan.',
+  STRUKTUR: () => 'Dipakai sebagai induk akun lain atau dibaca laporan.',
+  SISTEM: (n) => `Dipakai sistem di ${n} tempat. Ubah dulu pengaturannya di layar terkait sebelum menghapus atau menonaktifkan.`,
+};
+
+// 2026-11-04 (PANDUAN_UI G13): keterikatan dibuka DI HALAMAN (panel lebar di atas pohon akun) — dulu laci samping
+// yang sempit; tautan "Buka …" menghimpit teks sampai terpotong per huruf.
+function UsagePanel({ acc, api, onClose, onEdit, onDelete, onReactivate, openScreen }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   useEffect(() => {
@@ -390,88 +428,74 @@ function UsageSheet({ acc, api, onClose, onEdit, onDelete, onReactivate, openScr
   }, [acc, api]);
   const s = data?.summary;
   return (
-    <Sheet open={!!acc} onOpenChange={(o) => { if (!o) onClose(); }}>
-      <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto p-4 sm:p-6" data-testid="coa-usage-sheet">
-        <SheetHeader className="text-left pr-6">
-          <SheetTitle className="flex items-center gap-2 flex-wrap">
-            <span className="font-mono text-base">{acc?.code}</span>
-            {acc && <TypeBadge type={acc.type} />}
-            {acc?.active === false && <span className="text-[10px] px-1.5 py-0.5 rounded border border-foreground/20">nonaktif</span>}
-          </SheetTitle>
-          <SheetDescription className="text-foreground/80">{acc?.name}</SheetDescription>
-        </SheetHeader>
-        {!data && !err && <div className="py-10 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
-        {err && <p className="text-sm text-red-600 dark:text-red-400 mt-4">{err}</p>}
-        {acc && data && (
-          <div className="mt-4 space-y-4">
-            <div className={`rounded-md border p-3 text-sm ${LEVEL_META[s.level]?.cls || ''}`} data-testid="coa-usage-level">
-              <p className="font-semibold">{data.level_label}{s.count ? ` · ${s.count} keterikatan` : ''}</p>
-              <p className="text-xs mt-0.5 opacity-90">
-                {s.level === 'BEBAS' && 'Tidak dirujuk apa pun — aman dihapus permanen.'}
-                {s.level === 'SEED' && 'Akun bawaan sistem: tidak dihapus permanen (akan dibuat ulang), tapi bisa dinonaktifkan.'}
-                {s.level === 'STRUKTUR' && 'Dipakai struktur pohon atau dibaca laporan/validator.'}
-                {s.level === 'SISTEM' && 'Dipakai posting/konfigurasi. Ubah rujukannya di layar terkait sebelum menghapus/menonaktifkan.'}
-              </p>
-              {(s.journal_lines > 0 || s.draft_entries > 0) && (
-                <p className="text-xs mt-1">{s.journal_lines} baris jurnal posted · {s.draft_entries} jurnal draft</p>
-              )}
-            </div>
+    <DetailPanel
+      testId="coa-usage-sheet"
+      title={<span className="flex items-center gap-2 flex-wrap"><span>{acc.code} · {acc.name}</span><TypeBadge type={acc.type} />
+        {acc.active === false && <span className="text-[10px] px-1.5 py-0.5 rounded border border-foreground/20">nonaktif</span>}</span>}
+      description={data ? `${data.level_label}${s.count ? ` · ${s.count} keterikatan` : ''}` : 'Memuat keterikatan…'}
+      onClose={onClose}
+      actions={data && <>
+        <Button variant="outline" onClick={() => onEdit(acc)}>Ubah</Button>
+        {acc.active === false
+          ? <Button onClick={() => onReactivate(acc)} data-testid="coa-usage-reactivate">Aktifkan lagi</Button>
+          : <Button variant="outline" onClick={() => onDelete(acc)}>
+            {data.actions.delete.allowed ? 'Hapus permanen' : (data.actions.deactivate.allowed ? 'Nonaktifkan' : 'Kenapa terkunci?')}
+          </Button>}
+      </>}
+    >
+      {!data && !err && <div className="py-6 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
+      {err && <p className="text-sm text-[hsl(var(--destructive))]">{err}</p>}
+      {data && (
+        <div className="space-y-4">
+          <div className={`rounded-md border p-3 text-sm ${LEVEL_META[s.level]?.cls || ''}`} data-testid="coa-usage-level">
+            <p>{(LEVEL_TEXT[s.level] || (() => ''))(s.count)}</p>
+            {(s.journal_lines > 0 || s.draft_entries > 0) && (
+              <p className="text-xs mt-1">{s.journal_lines} baris jurnal terjurnal · {s.draft_entries} jurnal draf</p>
+            )}
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">
             {data.groups.map((g) => (
-              <section key={g.kind} aria-label={g.label}>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground flex items-center gap-2">
-                  <span className={`inline-block w-2 h-2 rounded-full ${g.level === 'SISTEM' ? 'bg-red-500' : g.level === 'STRUKTUR' ? 'bg-amber-500' : 'bg-slate-400'}`} />
-                  {g.label} <span className="font-normal">({g.items.length})</span>
-                </h3>
+              <section key={g.kind} aria-label={GROUP_TEXT[g.kind] || g.label}>
+                <p className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <span className={`inline-block w-2 h-2 rounded-full ${g.level === 'SISTEM' ? 'bg-[hsl(var(--destructive))]' : g.level === 'STRUKTUR' ? 'bg-[hsl(var(--warning))]' : 'bg-foreground/30'}`} />
+                  {GROUP_TEXT[g.kind] || humanBinding(g.label)} <span className="font-normal text-muted-foreground">({g.items.length})</span>
+                </p>
                 <ul className="mt-1.5 space-y-1.5">
                   {g.items.slice(0, 30).map((it, i) => (
-                    <li key={`${g.kind}-${i}`} className="rounded border border-[var(--glass-border)] px-2.5 py-2 text-sm flex items-start gap-2">
-                      <div className="min-w-0 flex-1">
-                        <p className="break-words">{it.label}</p>
-                        <p className="text-[11px] text-muted-foreground break-all">
-                          {it.source}{it.active === false ? ' · tidak aktif' : ''}{it.detail && !/^\d+$/.test(it.detail) ? ` · ${it.detail}` : ''}
-                        </p>
-                      </div>
+                    <li key={`${g.kind}-${i}`} className="text-sm border-l-2 border-[var(--glass-border)] pl-3">
+                      <p className="break-words">{humanBinding(it.label)}{it.active === false ? ' (tidak aktif)' : ''}</p>
+                      {humanDetail(it.detail) && <p className="text-xs text-muted-foreground">{humanDetail(it.detail)}</p>}
                       {it.screen?.module && (
-                        <button type="button" onClick={() => openScreen(it.screen, it.ref_id)}
-                          className="shrink-0 inline-flex items-center gap-1 text-xs text-primary hover:underline h-8 px-2 rounded hover:bg-primary/10"
-                          aria-label={`Buka ${it.screen.label}`}>
-                          <ExternalLink className="w-3.5 h-3.5" /><span className="hidden sm:inline">{it.screen.label}</span><span className="sm:hidden">Buka</span>
-                        </button>
+                        <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => openScreen(it.screen, it.ref_id)}>
+                          <ExternalLink className="w-3.5 h-3.5" />Buka {it.screen.label}
+                        </Button>
                       )}
                     </li>
                   ))}
-                  {g.items.length > 30 && <li className="text-xs text-muted-foreground">+{g.items.length - 30} lagi</li>}
+                  {g.items.length > 30 && <li className="text-xs text-muted-foreground pl-3">+{g.items.length - 30} lagi</li>}
                 </ul>
               </section>
             ))}
-            <section aria-label="Aksi yang tersedia">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Aksi</h3>
-              <ul className="mt-1.5 space-y-1">
-                {ACTION_ROWS.map(([k, label]) => {
-                  const a = data.actions[k] || {};
-                  return (
-                    <li key={k} className="text-sm flex items-start gap-2">
-                      {a.allowed ? <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />}
-                      <span className="min-w-0"><span className={a.allowed ? '' : 'text-muted-foreground'}>{label}</span>
-                        {!a.allowed && a.reasons?.length > 0 && <span className="block text-[11px] text-muted-foreground break-words">{a.reasons.slice(0, 3).join('; ')}{a.reasons.length > 3 ? ` (+${a.reasons.length - 3})` : ''}</span>}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button variant="outline" onClick={() => onEdit(acc)}>Ubah</Button>
-              {acc.active === false
-                ? <Button onClick={() => onReactivate(acc)} data-testid="coa-usage-reactivate">Aktifkan lagi</Button>
-                : <Button variant="outline" onClick={() => onDelete(acc)}>
-                  {data.actions.delete.allowed ? 'Hapus permanen' : (data.actions.deactivate.allowed ? 'Nonaktifkan' : 'Kenapa terkunci?')}
-                </Button>}
-            </div>
           </div>
-        )}
-      </SheetContent>
-    </Sheet>
+          <section aria-label="Aksi yang tersedia">
+            <p className="text-sm font-semibold text-foreground">Yang boleh dilakukan pada akun ini</p>
+            <ul className="mt-1.5 grid gap-1 sm:grid-cols-2">
+              {ACTION_ROWS.map(([k, label]) => {
+                const a = data.actions[k] || {};
+                return (
+                  <li key={k} className="text-sm flex items-start gap-2">
+                    {a.allowed ? <CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))] shrink-0 mt-0.5" /> : <XCircle className="w-4 h-4 text-muted-foreground shrink-0 mt-0.5" />}
+                    <span className="min-w-0"><span className={a.allowed ? '' : 'text-muted-foreground'}>{label}</span>
+                      {!a.allowed && a.reasons?.length > 0 && <span className="block text-xs text-muted-foreground break-words">{a.reasons.slice(0, 3).map(humanBinding).join('; ')}{a.reasons.length > 3 ? ` (+${a.reasons.length - 3})` : ''}</span>}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        </div>
+      )}
+    </DetailPanel>
   );
 }
 
@@ -520,22 +544,21 @@ function DeleteDialog({ acc, api, onClose, onDone, openUsage }) {
               {(act.delete?.reasons || []).slice(0, 6).map((r, i) => <li key={i} className="break-words">{r}</li>)}
               {(act.delete?.reasons || []).length > 6 && <li>+{act.delete.reasons.length - 6} lagi</li>}
             </ul>
-            {mode === 'deactivate' && <p className="rounded-md bg-amber-500/10 border border-amber-500/30 p-2">Anda bisa <b>menonaktifkannya</b>: akun hilang dari pilihan akun, riwayat jurnal & rujukan tetap utuh, dan bisa diaktifkan lagi kapan saja.</p>}
+            {mode === 'deactivate' && <Notice tone="warning">Anda bisa <b>menonaktifkannya</b>: akun hilang dari pilihan akun, riwayat jurnal & rujukan tetap utuh, dan bisa diaktifkan lagi kapan saja.</Notice>}
             {mode === 'locked' && (
-              <div className="rounded-md bg-red-500/10 border border-red-500/30 p-2">
-                <p className="font-medium">Menonaktifkan pun belum bisa:</p>
+              <Notice tone="danger" title="Menonaktifkan pun belum bisa:">
                 <ul className="list-disc pl-5 text-[13px]">{(act.deactivate?.reasons || []).slice(0, 5).map((r, i) => <li key={i} className="break-words">{r}</li>)}</ul>
                 <p className="text-[12px] mt-1">Ganti dulu rujukannya di layar terkait (lihat rincian keterikatan).</p>
-              </div>
+              </Notice>
             )}
           </div>
         )}
-        {err && <p className="text-sm text-red-600 dark:text-red-400" role="alert">{err}</p>}
+        {err && <p className="text-sm text-[hsl(var(--destructive))]" role="alert">{err}</p>}
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           {data && mode === 'locked' && <Button onClick={() => { onClose(); openUsage(acc); }}>Lihat keterikatan</Button>}
           {data && mode !== 'locked' && (
-            <Button className={`h-10 ${mode === 'delete' ? 'bg-red-600 hover:bg-red-700 text-white' : ''}`} disabled={busy} onClick={run} data-testid="coa-delete-confirm">
+            <Button variant={mode === 'delete' ? 'destructive' : 'default'} disabled={busy} onClick={run} data-testid="coa-delete-confirm">
               {busy && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}{mode === 'delete' ? 'Hapus permanen' : 'Nonaktifkan'}
             </Button>
           )}
@@ -558,46 +581,39 @@ function IntegrityBanner({ data, openScreen }) {
   const skipped = (data.sync_skipped || []).length;
   if (!rows.length && !warn && !skipped) return null;
   return (
-    <GlassCard className={`p-3 sm:p-4 ${rows.length ? 'border-red-500/50' : 'border-amber-500/40'}`} data-testid="coa-integrity-banner">
-      <div className="flex items-start gap-2">
-        <AlertTriangle className={`w-5 h-5 shrink-0 ${rows.length ? 'text-red-600' : 'text-amber-600'}`} />
-        <div className="min-w-0 flex-1 text-sm">
-          <p className="font-semibold">
-            {rows.length ? `${rows.length} akun dirujuk konfigurasi tetapi bermasalah` : 'Catatan integritas Bagan Akun'}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {[warn && `${warn} kode cadangan akan terpakai karena peran profil kosong`, skipped && `${skipped} akun dilewati sinkron toko (buatan/ubahan pengguna)`].filter(Boolean).join(' · ') || 'Posting otomatis ke akun ini akan gagal sampai rujukannya diperbaiki.'}
-          </p>
-          <button type="button" className="text-xs text-primary underline mt-1" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-            {open ? 'Sembunyikan rincian' : 'Lihat rincian'}
-          </button>
-          {open && (
-            <ul className="mt-2 space-y-1.5">
-              {rows.map((r) => (
-                <li key={`${r.code}-${r.what}`} className="rounded border border-[var(--glass-border)] p-2">
-                  <p><span className="font-mono">{r.code}</span> {r.name || ''} — <b>{r.what}</b></p>
-                  <p className="text-[11px] text-muted-foreground break-words">{(r.refs || []).slice(0, 3).join(' · ')}</p>
-                  {(r.screens || []).slice(0, 2).map((s) => (
-                    <button key={s.label} type="button" onClick={() => openScreen(s)} className="text-[11px] text-primary mr-3 hover:underline">Buka {s.label}</button>
-                  ))}
-                </li>
+    <Notice tone={rows.length ? 'danger' : 'warning'} icon={AlertTriangle} testId="coa-integrity-banner"
+      title={rows.length ? `${rows.length} akun dirujuk konfigurasi tetapi bermasalah` : 'Catatan integritas Bagan Akun'}>
+      <p className="text-xs text-muted-foreground">
+        {[warn && `${warn} kode cadangan akan terpakai karena peran profil kosong`, skipped && `${skipped} akun dilewati sinkron toko (buatan/ubahan pengguna)`].filter(Boolean).join(' · ') || 'Posting otomatis ke akun ini akan gagal sampai rujukannya diperbaiki.'}
+      </p>
+      <Button variant="link" size="sm" className="h-auto p-0 text-xs mt-1" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        {open ? 'Sembunyikan rincian' : 'Lihat rincian'}
+      </Button>
+      {open && (
+        <ul className="mt-2 space-y-1.5">
+          {rows.map((r) => (
+            <li key={`${r.code}-${r.what}`} className="rounded border border-[var(--glass-border)] p-2">
+              <p><span className="font-mono">{r.code}</span> {r.name || ''} — <b>{r.what}</b></p>
+              <p className="text-[11px] text-muted-foreground break-words">{(r.refs || []).slice(0, 3).join(' · ')}</p>
+              {(r.screens || []).slice(0, 2).map((s) => (
+                <Button key={s.label} variant="link" size="sm" onClick={() => openScreen(s)} className="h-auto p-0 text-[11px] mr-3">Buka {s.label}</Button>
               ))}
-              {(data.fallback_warnings || []).map((w) => (
-                <li key={`fb-${w.role}-${w.code}`} className="rounded border border-amber-500/30 p-2 text-[12px]">
-                  Peran <span className="font-mono">{w.role}</span> kosong → program memakai <span className="font-mono">{w.code}</span> {w.name || ''} ({w.label}).
-                  <button type="button" onClick={() => openScreen({ module: 'fin-settings-hub', tab: 'mapping', view: 'posting', label: 'Pemetaan akun otomatis' }, w.role.split('.')[0])} className="text-primary ml-2 hover:underline">Isi di Pemetaan akun otomatis</button>
-                </li>
-              ))}
-              {(data.sync_skipped || []).map((x) => (
-                <li key={`sk-${x.code}`} className="rounded border border-foreground/15 p-2 text-[12px]">
-                  <span className="font-mono">{x.code}</span> {x.name} — tidak dinonaktifkan sinkron toko: {x.reason}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </GlassCard>
+            </li>
+          ))}
+          {(data.fallback_warnings || []).map((w) => (
+            <li key={`fb-${w.role}-${w.code}`} className="rounded border border-[hsl(var(--warning)/0.3)] p-2 text-[12px]">
+              Peran <span className="font-mono">{w.role}</span> kosong → program memakai <span className="font-mono">{w.code}</span> {w.name || ''} ({w.label}).
+              <Button variant="link" size="sm" onClick={() => openScreen({ module: 'fin-settings-hub', tab: 'mapping', view: 'posting', label: 'Pemetaan akun otomatis' }, w.role.split('.')[0])} className="h-auto p-0 text-[12px] ml-2">Isi di Pemetaan akun otomatis</Button>
+            </li>
+          ))}
+          {(data.sync_skipped || []).map((x) => (
+            <li key={`sk-${x.code}`} className="rounded border border-foreground/15 p-2 text-[12px]">
+              <span className="font-mono">{x.code}</span> {x.name} — tidak dinonaktifkan sinkron toko: {x.reason}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Notice>
   );
 }
 
@@ -626,7 +642,7 @@ function AccountCards({ list, q, onEdit, onDelete, onReactivate, onUsage }) {
           </li>
         ))}
       </ul>
-      <div className="hidden md:block max-h-[65vh] overflow-auto">
+      <div className="hidden md:block overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 bg-[var(--card-surface)] backdrop-blur-sm z-[1]">
             <tr className="text-left text-[11px] text-muted-foreground border-b border-[var(--glass-border)]">
@@ -782,82 +798,72 @@ export default function RahazaCOAModule({ token, onNavigate }) {
   const free = accounts.filter((a) => a.active !== false && a.usage?.level === 'BEBAS').length;
   const inactive = accounts.filter((a) => a.active === false).length;
 
+  // PANDUAN_UI G1/G6 (2026-11-04): cetakan PageLayout — cari, tipe, dan pil keterikatan di toolbar kiri; pohon/tabel,
+  // buka/tutup semua, muat ulang, impor/unduh di kanan; ringkasan satu baris. Dulu semuanya bertumpuk di dalam kartu.
   return (
-    <div className="space-y-4 min-w-0" data-testid="rahaza-coa-page">
-      <PageHeader
-        icon={BookOpen}
-        eyebrow="Portal Keuangan · Master Akuntansi"
-        title="Bagan Akun"
-        subtitle="Lencana menandai akun yang terhubung ke posting & konfigurasi — klik untuk melihat ke mana saja, sebelum mengubah atau menghapus."
-        actions={(
-          <Button onClick={() => setEditing({})} data-testid="coa-add">
-            <Plus className="w-4 h-4 mr-1.5" />Tambah<span className="hidden sm:inline">&nbsp;akun</span>
-          </Button>
-        )}
-      />
-
-      <IntegrityBanner data={integrity} openScreen={openScreen} />
-
-      <GlassCard className="p-3 sm:p-4 min-w-0">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative w-80 max-w-full">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
-              <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode, nama, penanda, keterikatan…"
-                className="pl-8 pr-8 h-9" aria-label="Cari akun" data-testid="coa-search" />
-              {search && (
-                <button type="button" onClick={() => setSearch('')} className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 grid place-items-center text-muted-foreground" aria-label="Hapus pencarian">
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-            <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className={`${selectCls} h-9 w-44`} aria-label="Filter tipe" data-testid="coa-type-filter">
-              <option value="">Semua tipe</option>
-              {TYPE_ORDER.map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
-            </select>
-            <FilterChips value={view} onChange={setView} testId="coa-view" ariaLabel="Tampilan" hideWhenEmpty={false}
-              options={[{ key: 'tree', label: 'Pohon', icon: FolderTree }, { key: 'flat', label: 'Tabel', icon: Table2 }]} />
-          </div>
-
-          <FilterChips value={filter} onChange={setFilter} testId="coa-filter" ariaLabel="Filter keterikatan" hideWhenEmpty={false}
-            options={FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key] ?? 0 }))} />
-
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-            <p>
-              <span className="font-semibold text-foreground">{accounts.length - inactive}</span> aktif ·{' '}
-              <span className="text-red-700 dark:text-red-300 font-medium">{sys} terhubung sistem</span> ·{' '}
-              {free} bebas · {inactive} nonaktif
-              {filtering && <> · <span className="text-foreground">{matched.size} cocok</span></>}
-            </p>
-            <div className="flex flex-wrap items-center gap-1">
-              {view === 'tree' && (
-                <>
-                  <Button variant="outline" size="sm" onClick={() => setOpen(new Set(accounts.map((a) => a.code)))} aria-label="Buka semua">
-                    <ChevronsUpDown className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Buka semua</span>
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => setOpen(new Set())} aria-label="Tutup semua">
-                    <ChevronsDownUp className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Tutup semua</span>
-                  </Button>
-                </>
-              )}
-              <Button variant="outline" size="sm" className="h-8" onClick={fetchData} aria-label="Muat ulang" data-testid="coa-refresh">
-                <RefreshCw className="w-4 h-4 sm:mr-1" /><span className="hidden sm:inline">Muat ulang</span>
-              </Button>
-              <ImportExportToolbar collectionKey="coa_accounts" label="Bagan Akun" onImported={fetchData} />
-            </div>
-          </div>
-
-          <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-            <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" aria-hidden="true" />
-            <span>
-              <span className="text-red-700 dark:text-red-300 font-medium">Terhubung</span> = dipakai posting/konfigurasi (tidak bisa dihapus) ·{' '}
-              <span className="text-amber-700 dark:text-amber-300 font-medium">Struktur</span> = induk/penanda laporan ·{' '}
-              <span className="font-medium">Bawaan</span> = akun sistem (bisa dinonaktifkan) · <span className="font-medium">Bebas</span> = aman dihapus.
-            </span>
-          </p>
+    <PageLayout
+      testId="rahaza-coa-page"
+      title="Bagan Akun"
+      subtitle="Lencana menandai akun yang dipakai sistem — klik akun untuk melihat dipakai di mana sebelum mengubah atau menghapus."
+      actions={(
+        <Button onClick={() => setEditing({})} data-testid="coa-add">
+          <Plus className="w-4 h-4" />Tambah akun
+        </Button>
+      )}
+      filters={<>
+        <div className="relative w-72 max-w-full">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" aria-hidden="true" />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode, nama, penanda, keterikatan…"
+            className="pl-8 pr-8 h-9" aria-label="Cari akun" data-testid="coa-search" />
+          {search && (
+            <Button variant="ghost" size="icon-sm" onClick={() => setSearch('')} className="absolute right-1 top-1/2 -translate-y-1/2" aria-label="Hapus pencarian" title="Hapus pencarian">
+              <X className="w-4 h-4" />
+            </Button>
+          )}
         </div>
-
-        <div className="mt-3">
+        <SmartNativeSelect value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)} className="h-9 w-44" aria-label="Filter tipe" data-testid="coa-type-filter" searchable={false}>
+          <option value="">Semua tipe</option>
+          {TYPE_ORDER.map((t) => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
+        </SmartNativeSelect>
+        <FilterChips value={filter} onChange={setFilter} testId="coa-filter" ariaLabel="Filter keterikatan" hideWhenEmpty={false}
+          options={FILTERS.map((f) => ({ key: f.key, label: f.label, count: counts[f.key] ?? 0 }))} />
+      </>}
+      tools={<>
+        {view === 'tree' && (
+          <>
+            <Button variant="outline" size="icon" onClick={() => setOpen(new Set(accounts.map((a) => a.code)))} aria-label="Buka semua" title="Buka semua">
+              <ChevronsUpDown className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="icon" onClick={() => setOpen(new Set())} aria-label="Tutup semua" title="Tutup semua">
+              <ChevronsDownUp className="w-4 h-4" />
+            </Button>
+          </>
+        )}
+        <ViewToggle value={view} onChange={setView} testId="coa-view"
+          options={[{ key: 'tree', label: 'Tampilan pohon', icon: FolderTree }, { key: 'flat', label: 'Tampilan tabel', icon: Table2 }]} />
+        <Button variant="outline" size="icon" onClick={fetchData} aria-label="Muat ulang" title="Muat ulang" data-testid="coa-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+        <ImportExportToolbar collectionKey="coa_accounts" label="Bagan Akun" onImported={fetchData} />
+      </>}
+      summary={<>
+        <IntegrityBanner data={integrity} openScreen={openScreen} />
+        <p className="text-sm text-muted-foreground" data-testid="coa-summary">
+          <span className="font-semibold text-foreground">{accounts.length - inactive}</span> aktif ·{' '}
+          <span className="text-[hsl(var(--destructive))] font-medium">{sys} dipakai sistem</span> · {free} bebas · {inactive} nonaktif
+          {filtering && <> · <span className="text-foreground">{matched.size} cocok</span></>}
+          <span className="ml-2 inline-flex items-center gap-1 text-xs" title="Dipakai sistem = tidak bisa dihapus · Struktur = induk/penanda laporan · Bawaan = akun sistem (bisa dinonaktifkan) · Bebas = aman dihapus">
+            <Info className="w-3.5 h-3.5" aria-hidden="true" />arti lencana
+          </span>
+        </p>
+      </>}
+      detail={usageAcc && (
+        <UsagePanel acc={usageAcc} api={api} onClose={() => setUsageAcc(null)} openScreen={openScreen}
+          onEdit={(a) => { setUsageAcc(null); setEditing(a); }} onDelete={(a) => { setUsageAcc(null); setDelAcc(a); }} onReactivate={reactivate} />
+      )}
+    >
+      <GlassCard className="p-3 sm:p-4 min-w-0">
+        <div>
           {loading && <div className="py-12 grid place-items-center text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin" /></div>}
           {!loading && loadError && <p className="py-6 text-center text-sm text-red-600 dark:text-red-400">{loadError}</p>}
           {!loading && !loadError && accounts.length === 0 && (
@@ -880,10 +886,8 @@ export default function RahazaCOAModule({ token, onNavigate }) {
         <AccountEditorDialog initial={editing.id ? editing : null} accounts={accounts} api={api}
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); fetchData(); }} />
       )}
-      <UsageSheet acc={usageAcc} api={api} onClose={() => setUsageAcc(null)} openScreen={openScreen}
-        onEdit={(a) => { setUsageAcc(null); setEditing(a); }} onDelete={(a) => { setUsageAcc(null); setDelAcc(a); }} onReactivate={reactivate} />
       <DeleteDialog acc={delAcc} api={api} onClose={() => setDelAcc(null)} openUsage={setUsageAcc}
         onDone={() => { setDelAcc(null); fetchData(); }} />
-    </div>
+    </PageLayout>
   );
 }

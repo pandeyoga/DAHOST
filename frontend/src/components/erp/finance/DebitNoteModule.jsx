@@ -7,11 +7,15 @@
  *   · sesudah faktur → Dr Hutang Usaha / Cr klaim (saldo hutang = faktur − nota debit).
  * DA bukan PKP → tanpa PPN retur. Cetak: tombol Cetak (cetak/simpan PDF dari browser).
  * Backend: /api/rahaza/debit-notes, /api/rahaza/purchase-returns/{id}/refund.
+ *
+ * 2026-11-05 (PANDUAN_UI G1/G3/G10): cetakan PageLayout — pil penyaring di toolbar kiri, muat ulang di kanan;
+ * tombol di baris tabel bergaris (dulu tombol utama berulang); tampilan kosong memakai EmptyState.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { PageHeader } from '../moduleAtoms';
+import { EmptyState, Notice } from '../moduleAtoms';
+import PageLayout from '../layout/PageLayout';
 import FilterChips from '@/components/ui/filter-chips';
-import { FileMinus, Printer, RefreshCw, Wallet } from 'lucide-react';
+import { AlertCircle, FileMinus, Printer, RefreshCw, Scale, Undo2, Wallet } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
@@ -34,10 +38,10 @@ function printDebitNote(dn) {
   const w = window.open('', '_blank', 'width=820,height=900');
   if (!w) { toast.error('Popup diblokir browser — izinkan popup untuk mencetak.'); return; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(dn.dn_number)}</title>
-    <style>body{font-family:Arial,sans-serif;font-size:12px;margin:32px;color:#111}h1{font-size:18px;margin:0}
+    <style>body{font-family:Arial,sans-serif;font-size:12px;margin:32px;color:#111}.doc-title{font-size:18px;font-weight:bold;margin:0}
     table{width:100%;border-collapse:collapse;margin-top:12px}td,th{border:1px solid #999;padding:6px}
     th{background:#eee;text-align:left}.meta td{border:none;padding:2px 8px 2px 0}</style></head><body>
-    <h1>NOTA DEBIT</h1><div>CV. Dewi Aditya</div>
+    <div class="doc-title">NOTA DEBIT</div><div>CV. Dewi Aditya</div>
     <table class="meta"><tr><td>No.</td><td><b>${esc(dn.dn_number)}</b></td><td>Tanggal</td><td>${esc(dn.date)}</td></tr>
     <tr><td>Kepada</td><td>${esc(dn.supplier_name)}</td><td>Dasar retur</td><td>${esc(dn.rtp_number)} · GR ${esc(dn.gr_number)}${dn.po_number ? ` · ${esc(dn.po_number)}` : ''}</td></tr></table>
     <p>Tagihan Saudara kami kurangi sebagai berikut (${esc(settlementLabel(dn.settlement))}):</p>
@@ -79,7 +83,7 @@ function IssueModal({ token, rtp, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title={`Terbitkan Nota Debit · ${rtp.rtp_number}`} onClose={onClose} size="md">
+    <Modal title={`Terbitkan nota debit · ${rtp.rtp_number}`} onClose={onClose} size="md">
       <div className="space-y-3 text-sm" data-testid="dn-issue-modal">
         <div className="text-xs text-muted-foreground">
           {rtp.supplier_name} · GR {rtp.gr_number} · {settlementLabel(rtp.settlement)} · harga dasar = harga GR, tanpa PPN.
@@ -108,7 +112,7 @@ function IssueModal({ token, rtp, onClose, onDone }) {
           </div>
         </div>
         <GlassInput value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Catatan" />
-        {err && <div className="text-sm text-red-700 dark:text-red-400">{err}</div>}
+        {err && <div className="text-sm text-[hsl(var(--destructive))]">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={busy} data-testid="dn-issue-submit">{busy ? 'Memproses…' : 'Terbitkan'}</Button>
@@ -135,7 +139,7 @@ function RefundModal({ token, rtp, onClose, onDone }) {
     } catch (e) { setErr(e.message); setBusy(false); }
   };
   return (
-    <Modal title={`Catat Refund · ${rtp.rtp_number}`} onClose={onClose} size="sm">
+    <Modal title={`Catat refund · ${rtp.rtp_number}`} onClose={onClose} size="sm">
       <div className="space-y-3 text-sm">
         <div className="text-xs text-muted-foreground">Klaim {fmtRp(rtp.total_claim_amount)} — Dr rekening / Cr klaim retur pemasok.</div>
         <SmartNativeSelect value={accId} onChange={(e) => setAccId(e.target.value)}
@@ -144,10 +148,10 @@ function RefundModal({ token, rtp, onClose, onDone }) {
           {accs.map((a) => <option key={a.id} value={a.id}>{a.code ? `${a.code} · ` : ''}{a.name}</option>)}
         </SmartNativeSelect>
         <GlassInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        {err && <div className="text-sm text-red-700 dark:text-red-400">{err}</div>}
+        {err && <div className="text-sm text-[hsl(var(--destructive))]">{err}</div>}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={busy}>{busy ? 'Memproses…' : 'Catat Refund'}</Button>
+          <Button onClick={submit} disabled={busy}>{busy ? 'Memproses…' : 'Catat refund'}</Button>
         </div>
       </div>
     </Modal>
@@ -179,106 +183,129 @@ export default function DebitNoteModule({ token }) {
   const todo = useMemo(() => rtps.filter((r) => (r.status === 'awaiting_settlement'
     && (r.settlement === 'debit_note' || r.settlement === 'refund' || (r.settlement === 'destroy' && r.destroy_borne_by === 'supplier')))
     || (r.status === 'draft' && r.settlement === 'accept_discount')), [rtps]);
+  const balItems = bal.items || [];
 
   return (
-    <div className="space-y-4" data-testid="debit-note-module">
-      <PageHeader
-        title="Nota Debit (Retur)"
-        subtitle="Penyelesaian retur pembelian: mengurangi hutang ke pemasok (sebelum faktur: hutang belum ditagih)."
-        actions={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>}
-      />
-      <FilterChips value={tab} onChange={setTab} testId="dn-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
-        options={[{ key: 'todo', label: 'Perlu diselesaikan', count: todo.length }, { key: 'list', label: 'Sudah terbit' }, { key: 'balance', label: 'Saldo per pemasok' }]} />
-      {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
-
+    <PageLayout
+      testId="debit-note-module"
+      title="Nota Debit (Retur)"
+      subtitle="Penyelesaian retur pembelian: mengurangi hutang ke pemasok (sebelum faktur: hutang belum ditagih)."
+      filters={
+        <FilterChips value={tab} onChange={setTab} testId="dn-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
+          options={[
+            { key: 'todo', label: 'Perlu diselesaikan', count: todo.length },
+            { key: 'list', label: 'Sudah terbit', count: dns.length },
+            { key: 'balance', label: 'Saldo per pemasok', count: balItems.length },
+          ]} />
+      }
+      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load}><RefreshCw className="w-4 h-4" /></Button>}
+      summary={err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
+    >
       {tab === 'todo' && (
         <GlassCard className="overflow-x-auto p-0">
-          <table className="w-full text-sm min-w-[800px]">
-            <thead className="border-b border-border text-xs text-muted-foreground"><tr>
-              <th className="text-left px-3 py-2">Retur</th><th className="text-left px-3 py-2">Pemasok · GR</th>
-              <th className="text-left px-3 py-2">Penyelesaian</th><th className="text-right px-3 py-2">Nilai</th>
-              <th className="text-center px-3 py-2">Status</th><th className="text-center px-3 py-2">Umur</th><th className="text-right px-3 py-2">Aksi</th>
-            </tr></thead>
-            <tbody>
-              {todo.length === 0 ? (
-                <tr><td colSpan="7" className="px-3 py-6 text-center text-muted-foreground">Tidak ada retur yang menunggu Keuangan.</td></tr>
-              ) : todo.map((r) => (
-                <tr key={r.id} className="border-b border-border" data-testid={`dn-todo-${r.id}`}>
-                  <td className="px-3 py-2 font-mono text-xs">{r.rtp_number}</td>
-                  <td className="px-3 py-2 text-xs">{r.supplier_name}<div className="text-muted-foreground">{r.gr_number}</div></td>
-                  <td className="px-3 py-2 text-xs">{settlementLabel(r.settlement)}</td>
-                  <td className="px-3 py-2 text-right">{fmtRp(r.total_amount)}</td>
-                  <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
-                  <td className="px-3 py-2 text-center text-xs">{r.age_days} hari</td>
-                  <td className="px-3 py-2 text-right">
-                    {r.settlement === 'refund' ? (
-                      <Button size="sm" onClick={() => setRefunding(r)} data-testid={`dn-refund-${r.id}`}><Wallet className="w-3.5 h-3.5 mr-1" />Catat Refund</Button>
-                    ) : (
-                      <Button size="sm" onClick={() => setIssuing(r)} data-testid={`dn-issue-${r.id}`}><FileMinus className="w-3.5 h-3.5 mr-1" />Terbitkan Nota Debit</Button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {todo.length === 0 ? (
+            <EmptyState icon={Undo2} title="Tidak ada retur yang menunggu Keuangan"
+              description="Retur pembelian yang perlu nota debit atau refund akan muncul di sini." />
+          ) : (
+            <table className="w-full text-sm min-w-[800px]">
+              <thead className="border-b border-border text-xs text-muted-foreground"><tr>
+                <th className="text-left px-3 py-2">Retur</th><th className="text-left px-3 py-2">Pemasok · GR</th>
+                <th className="text-left px-3 py-2">Penyelesaian</th><th className="text-right px-3 py-2">Nilai</th>
+                <th className="text-center px-3 py-2">Status</th><th className="text-right px-3 py-2">Umur</th><th className="text-right px-3 py-2">Aksi</th>
+              </tr></thead>
+              <tbody>
+                {todo.map((r) => (
+                  <tr key={r.id} className="border-b border-border" data-testid={`dn-todo-${r.id}`}>
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">{r.rtp_number}</td>
+                    <td className="px-3 py-2 text-xs">{r.supplier_name}<div className="text-muted-foreground whitespace-nowrap">{r.gr_number}</div></td>
+                    <td className="px-3 py-2 text-xs">{settlementLabel(r.settlement)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(r.total_amount)}</td>
+                    <td className="px-3 py-2 text-center"><StatusBadge status={r.status} /></td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap text-xs">{r.age_days} hari</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      {r.settlement === 'refund' ? (
+                        <Button size="sm" variant="outline" onClick={() => setRefunding(r)} data-testid={`dn-refund-${r.id}`}><Wallet className="w-3.5 h-3.5" />Catat refund</Button>
+                      ) : (
+                        <Button size="sm" variant="outline" onClick={() => setIssuing(r)} data-testid={`dn-issue-${r.id}`}><FileMinus className="w-3.5 h-3.5" />Terbitkan nota debit</Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </GlassCard>
       )}
 
       {tab === 'list' && (
         <GlassCard className="overflow-x-auto p-0">
-          <table className="w-full text-sm min-w-[800px]">
-            <thead className="border-b border-border text-xs text-muted-foreground"><tr>
-              <th className="text-left px-3 py-2">No. Nota</th><th className="text-left px-3 py-2">Tanggal</th>
-              <th className="text-left px-3 py-2">Pemasok</th><th className="text-left px-3 py-2">Dasar</th>
-              <th className="text-right px-3 py-2">Nilai</th><th className="text-right px-3 py-2">Kurangi Hutang</th>
-              <th className="text-right px-3 py-2">Kurangi GRNI</th><th className="text-left px-3 py-2">Jurnal</th><th />
-            </tr></thead>
-            <tbody>
-              {dns.length === 0 ? (
-                <tr><td colSpan="9" className="px-3 py-6 text-center text-muted-foreground">Belum ada Nota Debit.</td></tr>
-              ) : dns.map((d) => (
-                <tr key={d.id} className="border-b border-border">
-                  <td className="px-3 py-2 font-mono text-xs">{d.dn_number}</td>
-                  <td className="px-3 py-2 text-xs">{d.date || fmtDate(d.created_at)}</td>
-                  <td className="px-3 py-2 text-xs">{d.supplier_name}</td>
-                  <td className="px-3 py-2 text-xs">{d.rtp_number} · {settlementLabel(d.settlement)}</td>
-                  <td className="px-3 py-2 text-right">{fmtRp(d.total_amount)}</td>
-                  <td className="px-3 py-2 text-right">{fmtRp(d.ap_amount)}</td>
-                  <td className="px-3 py-2 text-right">{fmtRp(d.grni_amount)}</td>
-                  <td className="px-3 py-2 text-xs">{d.je_number || (d.gl_error ? `GAGAL: ${d.gl_error}` : '—')}</td>
-                  <td className="px-3 py-2 text-right"><Button size="sm" variant="outline" onClick={() => printDebitNote(d)}><Printer className="w-3.5 h-3.5" /></Button></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {dns.length === 0 ? (
+            <EmptyState icon={FileMinus} title="Belum ada nota debit"
+              description="Nota debit muncul setelah diterbitkan dari daftar Perlu diselesaikan." />
+          ) : (
+            <table className="w-full text-sm min-w-[800px]">
+              <thead className="border-b border-border text-xs text-muted-foreground"><tr>
+                <th className="text-left px-3 py-2">No. nota</th><th className="text-left px-3 py-2">Tanggal</th>
+                <th className="text-left px-3 py-2">Pemasok</th><th className="text-left px-3 py-2">Dasar</th>
+                <th className="text-right px-3 py-2">Nilai</th><th className="text-right px-3 py-2">Kurangi hutang</th>
+                <th className="text-right px-3 py-2">Kurangi hutang belum ditagih</th><th className="text-left px-3 py-2">Jurnal</th><th />
+              </tr></thead>
+              <tbody>
+                {dns.map((d) => (
+                  <tr key={d.id} className="border-b border-border">
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">{d.dn_number}</td>
+                    <td className="px-3 py-2 text-xs whitespace-nowrap">{fmtDate(d.date || d.created_at)}</td>
+                    <td className="px-3 py-2 text-xs">{d.supplier_name}</td>
+                    <td className="px-3 py-2 text-xs">{d.rtp_number} · {settlementLabel(d.settlement)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(d.total_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(d.ap_amount)}</td>
+                    <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(d.grni_amount)}</td>
+                    <td className="px-3 py-2 text-xs">{d.je_number
+                      ? <span className="whitespace-nowrap">{d.je_number}</span>
+                      : (d.gl_error ? <span className="text-[hsl(var(--destructive))]">Gagal: {d.gl_error}</span> : '—')}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Button size="icon-sm" variant="ghost" onClick={() => printDebitNote(d)} title="Cetak nota debit" aria-label="Cetak nota debit"><Printer className="w-3.5 h-3.5" /></Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </GlassCard>
       )}
 
       {tab === 'balance' && (
         <GlassCard className="overflow-x-auto p-0">
-          <table className="w-full text-sm min-w-[700px]">
-            <thead className="border-b border-border text-xs text-muted-foreground"><tr>
-              <th className="text-left px-3 py-2">Pemasok</th><th className="text-right px-3 py-2">Sisa Faktur</th>
-              <th className="text-right px-3 py-2">Nota Debit (hutang)</th><th className="text-right px-3 py-2">Saldo Hutang</th>
-            </tr></thead>
-            <tbody>
-              {(bal.items || []).map((s) => (
-                <tr key={`${s.supplier_id}-${s.supplier_name}`} className="border-b border-border">
-                  <td className="px-3 py-2">{s.supplier_name || '-'}</td>
-                  <td className="px-3 py-2 text-right">{fmtRp(s.invoice_balance)} <span className="text-[11px] text-muted-foreground">({s.invoice_count})</span></td>
-                  <td className="px-3 py-2 text-right">{fmtRp(s.debit_note_ap)} <span className="text-[11px] text-muted-foreground">({s.debit_note_count})</span></td>
-                  <td className={`px-3 py-2 text-right font-semibold ${s.net_payable < 0 ? 'text-emerald-700 dark:text-emerald-400' : ''}`}>{fmtRp(s.net_payable)}</td>
-                </tr>
-              ))}
-              <tr><td className="px-3 py-2 font-semibold" colSpan="3">Total</td><td className="px-3 py-2 text-right font-bold">{fmtRp(bal.total_net_payable)}</td></tr>
-            </tbody>
-          </table>
-          <p className="text-[11px] text-muted-foreground px-3 py-2">Saldo negatif = pemasok berutang ke DA (faktur sudah dibayar lalu terkena nota debit).</p>
+          {balItems.length === 0 ? (
+            <EmptyState icon={Scale} title="Belum ada saldo pemasok"
+              description="Saldo hutang per pemasok setelah dikurangi nota debit akan tampil di sini." />
+          ) : (
+            <>
+              <table className="w-full text-sm min-w-[700px]">
+                <thead className="border-b border-border text-xs text-muted-foreground"><tr>
+                  <th className="text-left px-3 py-2">Pemasok</th><th className="text-right px-3 py-2">Sisa faktur</th>
+                  <th className="text-right px-3 py-2">Nota debit (hutang)</th><th className="text-right px-3 py-2">Saldo hutang</th>
+                </tr></thead>
+                <tbody>
+                  {balItems.map((s) => (
+                    <tr key={`${s.supplier_id}-${s.supplier_name}`} className="border-b border-border">
+                      <td className="px-3 py-2">{s.supplier_name || '-'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(s.invoice_balance)} <span className="text-[11px] text-muted-foreground">({s.invoice_count})</span></td>
+                      <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{fmtRp(s.debit_note_ap)} <span className="text-[11px] text-muted-foreground">({s.debit_note_count})</span></td>
+                      <td className={`px-3 py-2 text-right tabular-nums whitespace-nowrap font-semibold ${s.net_payable < 0 ? 'text-[hsl(var(--success))]' : ''}`}>{fmtRp(s.net_payable)}</td>
+                    </tr>
+                  ))}
+                  <tr><td className="px-3 py-2 font-semibold" colSpan="3">Total</td><td className="px-3 py-2 text-right tabular-nums whitespace-nowrap font-bold">{fmtRp(bal.total_net_payable)}</td></tr>
+                </tbody>
+              </table>
+              <p className="text-[11px] text-muted-foreground px-3 py-2">Saldo negatif = pemasok berutang ke DA (faktur sudah dibayar lalu terkena nota debit).</p>
+            </>
+          )}
         </GlassCard>
       )}
 
       {issuing && <IssueModal token={token} rtp={issuing} onClose={() => setIssuing(null)} onDone={() => { setIssuing(null); setTab('list'); load(); }} />}
       {refunding && <RefundModal token={token} rtp={refunding} onClose={() => setRefunding(null)} onDone={() => { setRefunding(null); load(); }} />}
-    </div>
+    </PageLayout>
   );
 }

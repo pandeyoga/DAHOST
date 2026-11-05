@@ -1,28 +1,73 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, XCircle, Clock, Eye, FileText, RefreshCw, AlertCircle, ArrowRight, History } from 'lucide-react';
+import { CheckCircle, XCircle, FileText, RefreshCw, ArrowRight, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { PageHeader } from './moduleAtoms';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Textarea } from '@/components/ui/textarea';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
 import FilterChips from '@/components/ui/filter-chips';
 import { toast } from 'sonner';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import Modal from './Modal';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 
-const STATUS_COLORS = {
-  Pending: 'bg-amber-100 text-amber-700 border border-amber-200',
-  Approved: 'bg-emerald-100 text-emerald-700 border border-emerald-200',
-  Rejected: 'bg-red-100 text-red-700 border border-red-200',
+/*
+ * Persetujuan Perubahan Faktur (menu Keuangan).
+ * 2026-11-05 (PANDUAN_UI G1/G8/G10/G13): cetakan PageLayout; status berbahasa Indonesia lewat StatusBadge (dulu
+ * "Pending/Approved/Rejected" berwarna palet langsung); rincian permintaan dibuka DI HALAMAN di atas daftar
+ * (dulu popup); tampilan kosong di kartu daftar (dulu teks berjarak besar di luar kartu → pita kosong 80 px).
+ */
+const STATUS_META = {
+  Pending: { label: 'Menunggu', tone: 'warning' },
+  Approved: { label: 'Disetujui', tone: 'success' },
+  Rejected: { label: 'Ditolak', tone: 'danger' },
 };
-
-const STATUS_ICONS = {
-  Pending: Clock,
-  Approved: CheckCircle,
-  Rejected: XCircle,
-};
+const CATEGORY_LABEL = { VENDOR: 'Pemasok', CUSTOMER: 'Pelanggan' };
+const COLUMNS = ['Status', 'No. faktur', 'No. PO', 'Kategori', 'Ringkasan perubahan', 'Diajukan oleh', 'Waktu pengajuan', 'Aksi'];
 
 const fmt = formatRupiah;
 const fmtDate = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-';
+
+function ReqStatus({ status }) {
+  const m = STATUS_META[status];
+  return <StatusBadge status={status} label={m?.label || status} tone={m?.tone || 'default'} />;
+}
+
+/** Satu pasang nilai sebelum → sesudah (netral; warna tidak dipakai sebagai hiasan — G8). */
+function BeforeAfter({ label, before, after, big }) {
+  return (
+    <div className="grid grid-cols-2 gap-4">
+      <div className="rounded-[var(--radius-md)] bg-foreground/[0.03] p-3">
+        <p className="text-xs text-muted-foreground font-medium mb-1">Sebelum · {label}</p>
+        <p className={`text-foreground/70 ${big ? 'text-lg font-bold tabular-nums' : 'text-sm'}`}>{before}</p>
+      </div>
+      <div className="rounded-[var(--radius-md)] bg-[hsl(var(--primary)/0.06)] p-3">
+        <p className="text-xs text-muted-foreground font-medium mb-1">Sesudah · {label}</p>
+        <p className={`text-foreground ${big ? 'text-lg font-bold tabular-nums' : 'text-sm'}`}>{after}</p>
+      </div>
+    </div>
+  );
+}
+
+function ItemList({ title, items, tint }) {
+  return (
+    <div className={`rounded-[var(--radius-md)] p-3 ${tint ? 'bg-[hsl(var(--primary)/0.06)]' : 'bg-foreground/[0.03]'}`}>
+      <p className="text-xs text-muted-foreground font-medium mb-2">{title}</p>
+      <div className="space-y-1.5">
+        {(items || []).map((item, idx) => (
+          <div key={idx} className="bg-[var(--card-surface)] rounded p-2 text-xs border border-[var(--glass-border)]">
+            <p className="font-medium text-foreground">{item.product_name}</p>
+            <p className="text-muted-foreground">{item.sku} · {item.size}/{item.color}</p>
+            <div className="flex justify-between mt-1 tabular-nums">
+              <span>Qty: <strong>{item.invoice_qty}</strong></span>
+              <span>Subtotal: <strong>{fmt(item.subtotal || 0)}</strong></span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function ApprovalModule({ token, userRole }) {
   const [requests, setRequests] = useState([]);
@@ -62,6 +107,7 @@ export default function ApprovalModule({ token, userRole }) {
   };
 
   const openDetail = async (req) => {
+    if (showDetail && selectedRequest?.id === req.id) { setShowDetail(false); return; }
     setSelectedRequest(req);
     setApprovalNotes('');
     setShowDetail(true);
@@ -82,14 +128,14 @@ export default function ApprovalModule({ token, userRole }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.detail || data.error || data.message || 'Gagal approve request');
+        toast.error(data.detail || data.error || data.message || 'Gagal menyetujui permintaan');
       } else {
-        toast.success('Request approved! Invoice telah diupdate.');
+        toast.success('Perubahan disetujui; faktur sudah diperbarui.');
         setShowDetail(false);
         fetchRequests();
       }
     } catch (e) {
-      toast.error('Error: ' + e.message);
+      toast.error('Gagal: ' + e.message);
     } finally {
       setActionLoading(false);
     }
@@ -98,7 +144,7 @@ export default function ApprovalModule({ token, userRole }) {
   const handleReject = async () => {
     if (!selectedRequest) return;
     if (!approvalNotes.trim()) {
-      toast.error('Catatan/alasan reject wajib diisi');
+      toast.error('Alasan penolakan wajib diisi');
       return;
     }
     if (!(await confirmDialog(`Tolak perubahan faktur ${selectedRequest.invoice_number}?`))) return;
@@ -114,14 +160,14 @@ export default function ApprovalModule({ token, userRole }) {
       });
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.detail || data.error || data.message || 'Gagal reject request');
+        toast.error(data.detail || data.error || data.message || 'Gagal menolak permintaan');
       } else {
-        toast.success('Request rejected');
+        toast.success('Permintaan ditolak.');
         setShowDetail(false);
         fetchRequests();
       }
     } catch (e) {
-      toast.error('Error: ' + e.message);
+      toast.error('Gagal: ' + e.message);
     } finally {
       setActionLoading(false);
     }
@@ -143,96 +189,29 @@ export default function ApprovalModule({ token, userRole }) {
 
     const changes = [];
 
-    // Compare discount
     const discountChange = compareField('discount', before, after);
     if (discountChange) {
-      changes.push(
-        <div key="discount" className="grid grid-cols-2 gap-4">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-xs text-red-600 font-medium mb-1">BEFORE - Diskon</p>
-            <p className="font-bold text-red-700">{fmt(discountChange.before)}</p>
-          </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-            <p className="text-xs text-emerald-600 font-medium mb-1">AFTER - Diskon</p>
-            <p className="font-bold text-emerald-700">{fmt(discountChange.after)}</p>
-          </div>
-        </div>
-      );
+      changes.push(<BeforeAfter key="discount" label="Diskon" before={fmt(discountChange.before)} after={fmt(discountChange.after)} />);
     }
 
-    // Compare notes
     const notesChange = compareField('notes', before, after);
     if (notesChange) {
-      changes.push(
-        <div key="notes" className="grid grid-cols-2 gap-4">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-xs text-red-600 font-medium mb-1">BEFORE - Catatan</p>
-            <p className="text-sm text-foreground">{notesChange.before || '-'}</p>
-          </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-            <p className="text-xs text-emerald-600 font-medium mb-1">AFTER - Catatan</p>
-            <p className="text-sm text-foreground">{notesChange.after || '-'}</p>
-          </div>
-        </div>
-      );
+      changes.push(<BeforeAfter key="notes" label="Catatan" before={notesChange.before || '-'} after={notesChange.after || '-'} />);
     }
 
-    // Compare total_amount
     const totalChange = compareField('total_amount', before, after);
     if (totalChange) {
-      changes.push(
-        <div key="total" className="grid grid-cols-2 gap-4">
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-            <p className="text-xs text-red-600 font-medium mb-1">BEFORE - Total Amount</p>
-            <p className="font-bold text-red-700 text-lg">{fmt(totalChange.before)}</p>
-          </div>
-          <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-            <p className="text-xs text-emerald-600 font-medium mb-1">AFTER - Total Amount</p>
-            <p className="font-bold text-emerald-700 text-lg">{fmt(totalChange.after)}</p>
-          </div>
-        </div>
-      );
+      changes.push(<BeforeAfter key="total" label="Total" big before={fmt(totalChange.before)} after={fmt(totalChange.after)} />);
     }
 
-    // Compare invoice_items
     const itemsChange = compareField('invoice_items', before, after);
     if (itemsChange) {
       changes.push(
         <div key="items" className="space-y-3">
-          <h4 className="font-semibold text-foreground">Perubahan Item Invoice</h4>
+          <p className="font-semibold text-foreground">Perubahan item faktur</p>
           <div className="grid grid-cols-2 gap-4">
-            {/* BEFORE */}
-            <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-              <p className="text-xs text-red-600 font-medium mb-2">BEFORE</p>
-              <div className="space-y-1.5">
-                {(itemsChange.before || []).map((item, idx) => (
-                  <div key={idx} className="bg-[var(--card-surface)] rounded p-2 text-xs border border-red-100">
-                    <p className="font-medium text-foreground">{item.product_name}</p>
-                    <p className="text-muted-foreground font-mono">{item.sku} · {item.size}/{item.color}</p>
-                    <div className="flex justify-between mt-1">
-                      <span>Qty: <strong>{item.invoice_qty}</strong></span>
-                      <span>Subtotal: <strong>{fmt(item.subtotal || 0)}</strong></span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            {/* AFTER */}
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
-              <p className="text-xs text-emerald-600 font-medium mb-2">AFTER</p>
-              <div className="space-y-1.5">
-                {(itemsChange.after || []).map((item, idx) => (
-                  <div key={idx} className="bg-[var(--card-surface)] rounded p-2 text-xs border border-emerald-100">
-                    <p className="font-medium text-foreground">{item.product_name}</p>
-                    <p className="text-muted-foreground font-mono">{item.sku} · {item.size}/{item.color}</p>
-                    <div className="flex justify-between mt-1">
-                      <span>Qty: <strong>{item.invoice_qty}</strong></span>
-                      <span>Subtotal: <strong>{fmt(item.subtotal || 0)}</strong></span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <ItemList title="Sebelum" items={itemsChange.before} />
+            <ItemList title="Sesudah" items={itemsChange.after} tint />
           </div>
         </div>
       );
@@ -244,207 +223,172 @@ export default function ApprovalModule({ token, userRole }) {
   const filtered = requests;
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(filtered, 10);
-  return (
-    <div className="space-y-4" data-testid="approval-module">
-      <PageHeader
-        title="Persetujuan Perubahan Faktur"
-        subtitle="Admin mengajukan perubahan faktur; superadmin/admin menyetujui atau menolak. Semua perubahan tercatat di riwayat faktur."
-        testId="approval-module-title"
-        actions={<Button variant="outline" size="icon" onClick={fetchRequests} title="Muat ulang" aria-label="Muat ulang" data-testid="approval-refresh-button"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
-      />
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center">
+  const detail = showDetail && selectedRequest && (
+    <DetailPanel
+      title={`Permintaan ubah faktur ${selectedRequest.invoice_number}`}
+      description={selectedRequest.change_summary}
+      onClose={() => setShowDetail(false)}
+      testId="approval-detail-modal"
+      actions={
+        <Button
+          variant="link"
+          size="sm"
+          onClick={() => {
+            setShowDetail(false);
+            toast.info(`Buka faktur ${selectedRequest.invoice_number} di menu Faktur untuk melihat isinya.`);
+          }}
+          data-testid="view-invoice-link"
+        >
+          <FileText className="w-3.5 h-3.5" /> Lihat faktur
+        </Button>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-3 gap-3 text-sm">
+          <div>
+            <p className="text-xs text-muted-foreground">Status</p>
+            <div className="mt-1"><ReqStatus status={selectedRequest.status} /></div>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Diajukan oleh</p>
+            <p className="font-medium mt-0.5">{selectedRequest.requested_by_name}</p>
+            <p className="text-xs text-muted-foreground">{selectedRequest.requested_by}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Waktu pengajuan</p>
+            <p className="font-medium mt-0.5 whitespace-nowrap">{fmtDate(selectedRequest.requested_at)}</p>
+          </div>
+        </div>
+
+        <div>
+          <p className="font-semibold text-foreground mb-3 flex items-center gap-2">
+            <ArrowRight className="w-4 h-4 text-muted-foreground" />
+            Perbandingan sebelum &amp; sesudah
+          </p>
+          <div className="space-y-4">
+            {renderComparison()}
+          </div>
+        </div>
+
+        {/* Catatan keputusan (bila sudah disetujui/ditolak) */}
+        {selectedRequest.status !== 'Pending' && selectedRequest.approval_notes && (
+          <div className="text-sm">
+            <p className="text-xs text-muted-foreground font-semibold mb-1">Catatan keputusan</p>
+            <p className="text-foreground">{selectedRequest.approval_notes}</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Oleh: {selectedRequest.approved_by_name} pada {fmtDate(selectedRequest.approved_at)}
+            </p>
+          </div>
+        )}
+
+        {/* Setujui/Tolak (hanya untuk yang menunggu) */}
+        {selectedRequest.status === 'Pending' && canApprove && (
+          <div className="border-t border-[var(--glass-border)] pt-4 space-y-3 max-w-2xl">
+            <label className="block text-sm font-medium text-foreground" htmlFor="approval-notes">Catatan (opsional untuk menyetujui, wajib untuk menolak)</label>
+            <Textarea
+              id="approval-notes"
+              rows={3}
+              value={approvalNotes}
+              onChange={(e) => setApprovalNotes(e.target.value)}
+              placeholder="Contoh: disetujui sesuai kesepakatan dengan pelanggan…"
+              data-testid="approval-notes-textarea"
+            />
+            <div className="flex gap-2">
+              <Button onClick={handleApprove} disabled={actionLoading} data-testid="approve-button">
+                <CheckCircle className="w-4 h-4" />
+                {actionLoading ? 'Memproses…' : 'Setujui'}
+              </Button>
+              <Button variant="outline" onClick={handleReject} disabled={actionLoading} data-testid="reject-button">
+                <XCircle className="w-4 h-4" />
+                {actionLoading ? 'Memproses…' : 'Tolak'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </DetailPanel>
+  );
+
+  return (
+    <PageLayout
+      testId="approval-module"
+      title="Persetujuan perubahan faktur"
+      subtitle="Perubahan faktur yang diajukan admin; superadmin/admin menyetujui atau menolak."
+      filters={<>
         <FilterChips value={filterStatus} onChange={setFilterStatus} testId="filter-status" ariaLabel="Status permintaan" hideWhenEmpty={false}
           options={[{ key: 'Pending', label: 'Menunggu' }, { key: 'Approved', label: 'Disetujui' }, { key: 'Rejected', label: 'Ditolak' }, { key: '', label: 'Semua' }]} />
-        <div className="ml-auto">
-          <input
+        <div className="relative w-72 max-w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <GlassInput
             type="text"
-            placeholder="Cari no. faktur atau pengaju…"
+            placeholder="Cari no. faktur atau pengaju, lalu Enter"
+            aria-label="Cari"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && fetchRequests()}
-            className="px-3 py-1.5 border border-border rounded-lg text-sm w-72"
+            className="h-9 pl-9"
             data-testid="approval-search-input"
           />
         </div>
-      </div>
-
-      {/* Request List */}
+      </>}
+      tools={<Button variant="outline" size="icon" onClick={fetchRequests} title="Muat ulang" aria-label="Muat ulang" data-testid="approval-refresh-button"><RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>}
+      detail={detail}
+    >
       {loading ? (
-        <div className="text-center py-16" data-testid="approval-loading">
-          <RefreshCw className="w-8 h-8 animate-spin mx-auto mb-3 text-muted-foreground" />
-          <p className="text-muted-foreground">Memuat...</p>
-        </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-16 text-muted-foreground" data-testid="approval-empty">
-          <FileText className="w-12 h-12 mx-auto mb-3 opacity-30" />
-          <p className="font-medium">Tidak ada permintaan perubahan faktur di sini</p>
+        <div className="flex items-center justify-center h-48" data-testid="approval-loading">
+          <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
         </div>
       ) : (
-        <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-hidden shadow-sm" data-testid="approval-list">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--glass-bg)] border-b">
-              <tr>
-                {['Status', 'No. Invoice', 'PO Number', 'Kategori', 'Ringkasan Perubahan', 'Requested By', 'Requested At', 'Aksi'].map(h => (
-                  <th key={h} className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {paged.map(req => {
-                const StatusIcon = STATUS_ICONS[req.status] || Clock;
-                return (
-                  <tr key={req.id} className="hover:bg-[var(--glass-bg)]" data-testid="approval-request-row">
-                    <td className="px-3 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[req.status] || 'bg-secondary text-muted-foreground'}`}>
-                        <StatusIcon className="w-3 h-3" />
-                        {req.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 font-bold text-primary">{req.invoice_number}</td>
-                    <td className="px-3 py-3 font-mono text-xs text-muted-foreground">{req.po_number || '-'}</td>
-                    <td className="px-3 py-3">
-                      <span className={`px-2 py-0.5 rounded-full text-xs ${req.invoice_category === 'VENDOR' ? 'bg-amber-100 text-amber-700' : 'bg-primary/15 text-primary'}`}>
-                        {req.invoice_category}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-foreground max-w-xs">
-                      <div className="truncate" title={req.change_summary}>{req.change_summary}</div>
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground">
-                      <p className="font-medium">{req.requested_by_name}</p>
-                      <p className="text-xs text-muted-foreground">{req.requested_by}</p>
-                    </td>
-                    <td className="px-3 py-3 text-muted-foreground text-xs">{fmtDate(req.requested_at)}</td>
-                    <td className="px-3 py-3">
-                      <button
-                        onClick={() => openDetail(req)}
-                        className="flex items-center gap-1 px-3 py-1.5 bg-teal-600 text-foreground rounded-lg text-xs hover:bg-teal-700"
-                        data-testid="approval-view-detail-button"
-                      >
-                        <Eye className="w-3.5 h-3.5" /> Detail
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-        </div>
+        <GlassCard className="p-0 overflow-hidden" data-testid="approval-list">
+          {filtered.length === 0 ? (
+            <EmptyState icon={FileText} testId="approval-empty"
+              title={filterStatus === 'Pending' ? 'Tidak ada perubahan faktur yang menunggu' : 'Tidak ada permintaan perubahan faktur di sini'}
+              description={searchQuery ? 'Ubah atau kosongkan pencarian.' : 'Permintaan muncul di sini setelah admin mengajukan perubahan faktur.'} />
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[var(--glass-bg)] border-b">
+                    <tr>
+                      {COLUMNS.map(h => (
+                        <th key={h} className="text-left px-3 py-3 text-xs font-semibold text-muted-foreground uppercase whitespace-nowrap">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {paged.map(req => {
+                      const open = showDetail && selectedRequest?.id === req.id;
+                      return (
+                        <tr key={req.id} className={`hover:bg-[var(--glass-bg)] ${open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`} data-testid="approval-request-row">
+                          <td className="px-3 py-3"><ReqStatus status={req.status} /></td>
+                          <td className="px-3 py-3 whitespace-nowrap font-semibold">{req.invoice_number}</td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground whitespace-nowrap">{req.po_number || '-'}</td>
+                          <td className="px-3 py-3 text-xs whitespace-nowrap">{CATEGORY_LABEL[req.invoice_category] || req.invoice_category}</td>
+                          <td className="px-3 py-3 text-foreground max-w-xs">
+                            <div className="truncate" title={req.change_summary}>{req.change_summary}</div>
+                          </td>
+                          <td className="px-3 py-3 text-muted-foreground">
+                            <p className="font-medium">{req.requested_by_name}</p>
+                            <p className="text-xs text-muted-foreground">{req.requested_by}</p>
+                          </td>
+                          <td className="px-3 py-3 text-muted-foreground text-xs whitespace-nowrap">{fmtDate(req.requested_at)}</td>
+                          <td className="px-3 py-3 whitespace-nowrap">
+                            <Button variant="outline" size="sm" onClick={() => openDetail(req)} data-testid="approval-view-detail-button">
+                              {open ? 'Tutup' : 'Rincian'}
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-3" />
+            </>
+          )}
+        </GlassCard>
       )}
-
-      {/* Detail Modal */}
-      {showDetail && selectedRequest && (
-        <Modal
-          title={`Request Edit: ${selectedRequest.invoice_number}`}
-          onClose={() => setShowDetail(false)}
-          size="xl"
-        >
-          <div className="space-y-5" data-testid="approval-detail-modal">
-            {/* Meta Info */}
-            <div className="grid grid-cols-3 gap-3">
-              <div className="bg-[var(--glass-bg)] rounded-lg p-3">
-                <p className="text-xs text-muted-foreground">Status</p>
-                <div className="mt-1">
-                  <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[selectedRequest.status]}`}>
-                    {selectedRequest.status}
-                  </span>
-                </div>
-              </div>
-              <div className="bg-[var(--glass-bg)] rounded-lg p-3">
-                <p className="text-xs text-muted-foreground">Requested By</p>
-                <p className="font-medium text-sm mt-0.5">{selectedRequest.requested_by_name}</p>
-                <p className="text-xs text-muted-foreground">{selectedRequest.requested_by}</p>
-              </div>
-              <div className="bg-[var(--glass-bg)] rounded-lg p-3">
-                <p className="text-xs text-muted-foreground">Requested At</p>
-                <p className="font-medium text-sm mt-0.5">{fmtDate(selectedRequest.requested_at)}</p>
-              </div>
-            </div>
-
-            {/* Change Summary */}
-            <div className="bg-primary/10 border border-primary/20 rounded-lg p-3">
-              <p className="text-xs text-primary font-semibold mb-1">Ringkasan Perubahan</p>
-              <p className="text-sm text-primary">{selectedRequest.change_summary}</p>
-            </div>
-
-            {/* Comparison */}
-            <div>
-              <h3 className="font-semibold text-foreground mb-3 flex items-center gap-2">
-                <ArrowRight className="w-5 h-5 text-teal-600" />
-                Perbandingan Before & After
-              </h3>
-              <div className="space-y-4">
-                {renderComparison()}
-              </div>
-            </div>
-
-            {/* Approval Notes (if already approved/rejected) */}
-            {selectedRequest.status !== 'Pending' && selectedRequest.approval_notes && (
-              <div className="bg-[var(--glass-bg)] border border-border rounded-lg p-3">
-                <p className="text-xs text-muted-foreground font-semibold mb-1">Catatan Approval/Reject</p>
-                <p className="text-sm text-foreground">{selectedRequest.approval_notes}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Oleh: {selectedRequest.approved_by_name} pada {fmtDate(selectedRequest.approved_at)}
-                </p>
-              </div>
-            )}
-
-            {/* Action: Approve/Reject (only for Pending) */}
-            {selectedRequest.status === 'Pending' && canApprove && (
-              <div className="border-t border-border pt-4">
-                <label className="block text-sm font-medium text-foreground mb-2">Catatan Approval/Reject (opsional untuk approve, wajib untuk reject)</label>
-                <textarea
-                  rows="3"
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm mb-3"
-                  value={approvalNotes}
-                  onChange={(e) => setApprovalNotes(e.target.value)}
-                  placeholder="Contoh: Approved sesuai kesepakatan dengan customer..."
-                  data-testid="approval-notes-textarea"
-                />
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleApprove}
-                    disabled={actionLoading}
-                    className="flex-1 flex items-center justify-center gap-2 bg-emerald-600 text-foreground py-2 rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
-                    data-testid="approve-button"
-                  >
-                    <CheckCircle className="w-4 h-4" />
-                    {actionLoading ? 'Memproses…' : 'Setujui'}
-                  </button>
-                  <button
-                    onClick={handleReject}
-                    disabled={actionLoading}
-                    className="flex-1 flex items-center justify-center gap-2 bg-red-600 text-foreground py-2 rounded-lg text-sm font-medium hover:bg-red-700 disabled:opacity-50"
-                    data-testid="reject-button"
-                  >
-                    <XCircle className="w-4 h-4" />
-                    {actionLoading ? 'Memproses…' : 'Tolak'}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Link to Invoice */}
-            <div className="border-t border-border pt-3">
-              <p className="text-xs text-muted-foreground mb-2">Quick Link</p>
-              <button
-                onClick={() => {
-                  setShowDetail(false);
-                  // In a real app, navigate to invoice detail
-                  toast.info(`Navigasi ke invoice detail: ${selectedRequest.invoice_number} (implementasi bisa ditambahkan via parent callback)`);
-                }}
-                className="flex items-center gap-2 px-3 py-1.5 bg-primary text-foreground rounded-lg text-xs hover:brightness-110"
-                data-testid="view-invoice-link"
-              >
-                <FileText className="w-3.5 h-3.5" /> Lihat Invoice {selectedRequest.invoice_number}
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </div>
+    </PageLayout>
   );
 }

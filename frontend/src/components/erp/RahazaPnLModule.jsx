@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, FileBarChart } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
+import { StatTile, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -15,6 +16,7 @@ const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigit
  * 2026-11-04 (PANDUAN_UI G7): satu tabel laporan — dulu tiap kelompok satu kartu bulat dan subtotal
  * berupa "pil" berlabel Inggris (Gross Profit / Operating Income), angka berhuruf mesin ketik.
  * Beban & HPP ditulis minus supaya alurnya terbaca: Pendapatan − HPP = Laba kotor − Beban = Laba usaha.
+ * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — periode di toolbar kiri, muat ulang & unduh di kanan.
  */
 export default function RahazaPnLModule({ token }) {
   const [data, setData] = useState(null);
@@ -73,35 +75,36 @@ export default function RahazaPnLModule({ token }) {
   const periodLabel = `${formatDateID(period.from)} – ${formatDateID(period.to)}`;
 
   return (
-    <div className="space-y-4" data-testid="pnl-page">
-      <PageHeader
-        title="Laba Rugi"
-        subtitle="Pendapatan − HPP − beban = laba bersih, dari buku besar."
-        actions={
-          <>
-            <PeriodPicker value={period} onChange={setPeriod} testId="pnl-period" />
-            <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="pnl-refresh"><RefreshCw className="w-4 h-4" /></Button>
-            <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="pnl-export"><Download className="w-4 h-4" />Unduh CSV</Button>
-          </>
-        }
-      />
-
-      {error && <GlassCard className="p-3 text-sm text-[hsl(var(--destructive))]" data-testid="pnl-error">{error}</GlassCard>}
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Pendapatan" value={fmt(t.revenue)} testId="pnl-kpi-revenue" />
-        <StatTile label="HPP" value={fmt(t.cogs)} testId="pnl-kpi-cogs" />
-        <StatTile label="Laba kotor" value={fmt(t.gross_profit)} accent={Number(t.gross_profit) < 0 ? 'danger' : 'default'} testId="pnl-kpi-gross" />
-        <StatTile label={Number(t.net_income) >= 0 ? 'Laba bersih' : 'Rugi bersih'} value={fmt(t.net_income)} accent={Number(t.net_income) < 0 ? 'danger' : 'default'} testId="pnl-kpi-net" />
-      </div>
-
+    <PageLayout
+      testId="pnl-page"
+      title="Laba Rugi"
+      subtitle="Pendapatan − HPP − beban = laba bersih, dari buku besar."
+      filters={<PeriodPicker value={period} onChange={setPeriod} testId="pnl-period" />}
+      tools={<>
+        <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="pnl-refresh"><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="pnl-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+      </>}
+      summary={<>
+        {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="pnl-error">{error}</p>}
+        {data && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatTile label="Pendapatan" value={fmt(t.revenue)} testId="pnl-kpi-revenue" />
+            <StatTile label="HPP" value={fmt(t.cogs)} testId="pnl-kpi-cogs" />
+            <StatTile label="Laba kotor" value={fmt(t.gross_profit)} accent={Number(t.gross_profit) < 0 ? 'danger' : 'default'} testId="pnl-kpi-gross" />
+            <StatTile label={Number(t.net_income) >= 0 ? 'Laba bersih' : 'Rugi bersih'} value={fmt(t.net_income)} accent={Number(t.net_income) < 0 ? 'danger' : 'default'} testId="pnl-kpi-net" />
+          </div>
+        )}
+      </>}
+    >
       {loading ? (
         <Skeleton className="h-80 rounded-[var(--radius-lg)]" />
       ) : !data ? (
-        <EmptyState icon={FileBarChart} title="Belum ada laporan" description="Laba rugi muncul setelah ada jurnal di periode ini." />
+        <GlassCard className="p-0">
+          <EmptyState icon={FileBarChart} title="Belum ada laporan" description="Laba rugi muncul setelah ada jurnal di periode ini." />
+        </GlassCard>
       ) : (
         <StatementTable testId="pnl" columns={[{ key: 'amount', label: periodLabel }]} rows={rows} />
       )}
-    </div>
+    </PageLayout>
   );
 }

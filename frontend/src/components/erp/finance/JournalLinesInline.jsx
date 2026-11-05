@@ -7,7 +7,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { formatDateID, formatNumber } from '@/lib/format';
-import { journalSourceLabel } from '@/lib/financeLabels';
+import { humanMemo, journalSourceLabel } from '@/lib/financeLabels';
 import { StatusBadge } from '../moduleAtoms';
 
 export default function JournalLinesInline({ jeId, token, testId = 'je-inline' }) {
@@ -34,7 +34,7 @@ export default function JournalLinesInline({ jeId, token, testId = 'je-inline' }
     <div className="space-y-2" data-testid={testId}>
       <p className="text-sm text-muted-foreground">
         <span className="text-foreground font-medium">{je.je_number}</span> · {formatDateID(je.date)} · {journalSourceLabel(je.source_module)}
-        {je.memo ? ` · ${je.memo}` : ''} <StatusBadge status={je.status} className="ml-1" />
+        {je.memo ? ` · ${humanMemo(je.memo)}` : ''} <StatusBadge status={je.status} className="ml-1" />
       </p>
       <table className="w-full">
         <thead><tr><th className="text-left">Akun</th><th className="text-left">Keterangan</th><th className="text-right">Debit</th><th className="text-right">Kredit</th></tr></thead>

@@ -5,19 +5,23 @@
  * CRUD master data kategori expense yang bisa dikelola Admin/Finance.
  * Backend: /api/hr/expenses/master-categories + /seed-default
  * Roles: superadmin, admin, owner, finance
+ *
+ * 2026-11-05 (PANDUAN_UI G1/G5/G10): cetakan PageLayout — tanpa pembungkus `p-4` sendiri (pita kosong di bawah
+ * tab hub), satu kartu tabel (dulu dua Card shadcn: kartu penyaring + kartu tabel), tampilan kosong EmptyState.
  */
 import React, { useState, useEffect, useCallback } from 'react';
 import { FINANCE_ROLES as ADMIN_ROLES } from '../../lib/financeRoles'; // FIN-02
 import {
-  Plus, Pencil, Trash2, RefreshCw, Tag, CheckCircle2,
-  XCircle, Search, Database, AlertCircle, Loader2
+  Plus, Pencil, Trash2, RefreshCw, Tag,
+  Search, Database, AlertCircle, Loader2
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import { EmptyState, StatusBadge } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
@@ -105,22 +109,22 @@ function CategoryFormDialog({ open, onClose, category, onSaved }) {
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{category ? 'Edit Kategori' : 'Tambah Kategori Baru'}</DialogTitle>
+          <DialogTitle>{category ? 'Ubah kategori' : 'Kategori baru'}</DialogTitle>
           <DialogDescription>
-            {category ? 'Perbarui data kategori expense.' : 'Tambahkan kategori expense baru ke master data.'}
+            {category ? 'Perbarui data kategori klaim.' : 'Tambahkan kategori klaim biaya baru.'}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           {error && (
-            <div className="flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <div className="flex items-center gap-2 rounded-[var(--radius-sm)] bg-destructive/10 px-3 py-2 text-sm text-destructive">
               <AlertCircle size={14} />
               <span>{error}</span>
             </div>
           )}
 
           <div className="space-y-1.5">
-            <Label htmlFor="cat-name">Nama Kategori <span className="text-destructive">*</span></Label>
+            <Label htmlFor="cat-name">Nama kategori <span className="text-destructive">*</span></Label>
             <Input
               id="cat-name"
               data-testid="category-name-input"
@@ -131,7 +135,7 @@ function CategoryFormDialog({ open, onClose, category, onSaved }) {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="cat-code">Kode Kategori <span className="text-muted-foreground text-xs">(opsional)</span></Label>
+            <Label htmlFor="cat-code">Kode kategori <span className="text-muted-foreground text-xs">(opsional)</span></Label>
             <Input
               id="cat-code"
               data-testid="category-code-input"
@@ -154,8 +158,8 @@ function CategoryFormDialog({ open, onClose, category, onSaved }) {
 
           <div className="flex items-center justify-between rounded-lg border border-border p-3">
             <div>
-              <p className="text-sm font-medium">Status Aktif</p>
-              <p className="text-xs text-muted-foreground">Nonaktif = tidak muncul di dropdown klaim</p>
+              <p className="text-sm font-medium">Aktif</p>
+              <p className="text-xs text-muted-foreground">Kategori nonaktif tidak muncul di pilihan klaim.</p>
             </div>
             <Switch
               data-testid="category-active-switch"
@@ -175,7 +179,7 @@ function CategoryFormDialog({ open, onClose, category, onSaved }) {
             disabled={saving}
           >
             {saving && <Loader2 size={14} className="mr-2 animate-spin" />}
-            {category ? 'Simpan Perubahan' : 'Tambah Kategori'}
+            {category ? 'Simpan perubahan' : 'Tambah kategori'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -233,7 +237,7 @@ export default function EmployeeExpenseCategoryMasterModule() {
         toast.success(`${data.message}`);
         await fetchCategories();
       } else {
-        toast.error(data.detail || 'Gagal seed kategori');
+        toast.error(data.detail || 'Gagal mengisi kategori bawaan');
       }
     } catch (err) {
       toast.error('Koneksi bermasalah');
@@ -280,191 +284,155 @@ export default function EmployeeExpenseCategoryMasterModule() {
     c.description?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const activeCount = categories.filter(c => c.is_active !== false).length;
+  const seedButton = (variant, testId = 'category-seed-button') => (
+    <Button
+      variant={variant}
+      data-testid={testId}
+      onClick={handleSeedDefault}
+      disabled={seeding}
+    >
+      {seeding ? <Loader2 size={14} className="animate-spin" /> : <Database size={14} />}
+      Isi kategori bawaan
+    </Button>
+  );
+
   return (
-    <div className="space-y-4 p-4">
-      {/* Header */}
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-foreground">Master Kategori Expense</h1>
-          <p className="text-sm text-muted-foreground">
-            Kelola daftar kategori untuk klaim biaya karyawan (EEM).
-          </p>
+    <PageLayout
+      testId="expense-category-master"
+      title="Kategori klaim biaya"
+      subtitle="Daftar kategori untuk klaim biaya karyawan."
+      actions={canEdit && <>
+        {seedButton('outline')}
+        <Button data-testid="category-create-button" onClick={handleOpenCreate}>
+          <Plus size={14} />
+          Tambah kategori
+        </Button>
+      </>}
+      filters={<>
+        <div className="relative w-72 max-w-full">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <GlassInput
+            data-testid="category-search-input"
+            placeholder="Cari nama atau kode kategori…"
+            aria-label="Cari"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="h-9 pl-9"
+          />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canEdit && (
-            <Button
-              variant="outline"
-              size="sm"
-              data-testid="category-seed-button"
-              onClick={handleSeedDefault}
-              disabled={seeding}
-              className="gap-2"
-            >
-              {seeding
-                ? <Loader2 size={14} className="animate-spin" />
-                : <Database size={14} />}
-              Seed Default
-            </Button>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            data-testid="category-refresh-button"
-            onClick={fetchCategories}
-            disabled={loading}
-          >
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          </Button>
-          {canEdit && (
-            <Button
-              size="sm"
-              data-testid="category-create-button"
-              onClick={handleOpenCreate}
-              className="gap-2"
-            >
-              <Plus size={14} />
-              Tambah Kategori
-            </Button>
-          )}
+        <div className="flex items-center gap-2">
+          <Switch
+            id="show-inactive"
+            checked={showInactive}
+            onCheckedChange={setShowInactive}
+            data-testid="category-show-inactive-switch"
+          />
+          <Label htmlFor="show-inactive" className="text-sm cursor-pointer">
+            Tampilkan nonaktif
+          </Label>
         </div>
-      </div>
-
-      {/* Filter bar */}
-      <Card className="shadow-[var(--shadow-card)]">
-        <CardContent className="pt-4 pb-3">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-            <div className="relative flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                data-testid="category-search-input"
-                placeholder="Cari nama atau kode kategori..."
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="pl-9"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch
-                id="show-inactive"
-                checked={showInactive}
-                onCheckedChange={setShowInactive}
-                data-testid="category-show-inactive-switch"
-              />
-              <Label htmlFor="show-inactive" className="text-sm cursor-pointer">
-                Tampilkan nonaktif
-              </Label>
-            </div>
+      </>}
+      tools={
+        <Button
+          variant="outline"
+          size="icon"
+          title="Muat ulang"
+          aria-label="Muat ulang"
+          data-testid="category-refresh-button"
+          onClick={fetchCategories}
+          disabled={loading}
+        >
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+        </Button>
+      }
+      summary={!loading && categories.length > 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="category-summary">
+          {activeCount} aktif dari {categories.length} kategori
+          {search && <> · {filtered.length} cocok dengan pencarian</>}
+        </p>
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center h-32 gap-3 text-muted-foreground">
+            <Loader2 size={20} className="animate-spin" />
+            <span className="text-sm">Memuat data…</span>
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Table */}
-      <Card className="shadow-[var(--shadow-card)]">
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2 text-base">
-            <Tag size={16} className="text-primary" />
-            Daftar kategori <span className="text-sm font-normal text-muted-foreground">({categories.filter(c => c.is_active !== false).length} aktif dari {categories.length})</span>
-          </CardTitle>
-          <CardDescription>
-            {filtered.length} kategori {search ? 'ditemukan' : 'tersedia'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex items-center justify-center py-12 gap-3 text-muted-foreground">
-              <Loader2 size={20} className="animate-spin" />
-              <span className="text-sm">Memuat data...</span>
-            </div>
-          ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-3">
-              <Tag size={40} className="opacity-20" />
-              <p className="text-sm">
-                {search ? 'Tidak ada kategori yang cocok.' : 'Belum ada kategori. Klik "Seed Default" untuk isi data awal.'}
-              </p>
-              {canEdit && !search && (
-                <Button size="sm" onClick={handleSeedDefault} disabled={seeding}>
-                  {seeding ? <Loader2 size={12} className="mr-2 animate-spin" /> : <Database size={12} className="mr-2" />}
-                  Seed Kategori Default
-                </Button>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-[var(--radius-md)] border border-border overflow-hidden">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-muted/30">
-                    <TableHead className="text-xs uppercase tracking-wide w-24">Kode</TableHead>
-                    <TableHead className="text-xs uppercase tracking-wide">Nama Kategori</TableHead>
-                    <TableHead className="text-xs uppercase tracking-wide hidden md:table-cell">Deskripsi</TableHead>
-                    <TableHead className="text-xs uppercase tracking-wide w-24 text-center">Status</TableHead>
-                    {canEdit && (
-                      <TableHead className="text-xs uppercase tracking-wide w-24 text-right">Aksi</TableHead>
-                    )}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filtered.map(cat => (
-                    <TableRow
-                      key={cat.id}
-                      className="hover:bg-[hsl(var(--muted)/0.35)] transition-colors"
-                      data-testid={`category-row-${cat.id}`}
-                    >
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {cat.code || '—'}
-                      </TableCell>
-                      <TableCell className="font-medium text-sm">
-                        {cat.name}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground hidden md:table-cell max-w-xs truncate">
-                        {cat.description || '—'}
-                      </TableCell>
-                      <TableCell className="text-center">
-                        {cat.is_active !== false ? (
-                          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-600 text-xs gap-1">
-                            <CheckCircle2 size={10} />
-                            Aktif
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-muted-foreground/30 bg-muted/40 text-muted-foreground text-xs gap-1">
-                            <XCircle size={10} />
-                            Nonaktif
-                          </Badge>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon={Tag} testId="category-empty"
+            title={search ? 'Tidak ada kategori yang cocok' : 'Belum ada kategori'}
+            description={search ? 'Ubah atau kosongkan pencarian.' : 'Isi kategori bawaan untuk memulai, atau tambahkan kategori sendiri.'}
+            action={canEdit && !search ? seedButton('default', 'category-seed-empty-button') : null} />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-muted/30">
+                <TableHead className="text-xs uppercase tracking-wide w-24">Kode</TableHead>
+                <TableHead className="text-xs uppercase tracking-wide">Nama kategori</TableHead>
+                <TableHead className="text-xs uppercase tracking-wide hidden md:table-cell">Deskripsi</TableHead>
+                <TableHead className="text-xs uppercase tracking-wide w-24">Status</TableHead>
+                {canEdit && (
+                  <TableHead className="text-xs uppercase tracking-wide w-24 text-right">Aksi</TableHead>
+                )}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map(cat => (
+                <TableRow
+                  key={cat.id}
+                  className="hover:bg-[hsl(var(--muted)/0.35)] transition-colors"
+                  data-testid={`category-row-${cat.id}`}
+                >
+                  <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
+                    {cat.code || '—'}
+                  </TableCell>
+                  <TableCell className="font-medium text-sm">
+                    {cat.name}
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground hidden md:table-cell max-w-xs truncate">
+                    {cat.description || '—'}
+                  </TableCell>
+                  <TableCell>
+                    {cat.is_active !== false
+                      ? <StatusBadge status="active" label="Aktif" tone="success" />
+                      : <StatusBadge status="inactive" label="Nonaktif" tone="muted" />}
+                  </TableCell>
+                  {canEdit && (
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          title="Ubah"
+                          aria-label="Ubah"
+                          data-testid={`category-edit-${cat.id}`}
+                          onClick={() => handleOpenEdit(cat)}
+                        >
+                          <Pencil size={13} />
+                        </Button>
+                        {cat.is_active !== false && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            title="Nonaktifkan"
+                            aria-label="Nonaktifkan"
+                            className="text-destructive hover:text-destructive"
+                            data-testid={`category-delete-${cat.id}`}
+                            onClick={() => setDeleteTarget(cat)}
+                          >
+                            <Trash2 size={13} />
+                          </Button>
                         )}
-                      </TableCell>
-                      {canEdit && (
-                        <TableCell className="text-right">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              data-testid={`category-edit-${cat.id}`}
-                              onClick={() => handleOpenEdit(cat)}
-                            >
-                              <Pencil size={13} />
-                            </Button>
-                            {cat.is_active !== false && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 text-destructive hover:text-destructive"
-                                data-testid={`category-delete-${cat.id}`}
-                                onClick={() => setDeleteTarget(cat)}
-                              >
-                                <Trash2 size={13} />
-                              </Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      )}
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
 
       {/* Form Dialog */}
       <CategoryFormDialog
@@ -478,9 +446,9 @@ export default function EmployeeExpenseCategoryMasterModule() {
       <AlertDialog open={!!deleteTarget} onOpenChange={v => !v && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Nonaktifkan Kategori?</AlertDialogTitle>
+            <AlertDialogTitle>Nonaktifkan kategori?</AlertDialogTitle>
             <AlertDialogDescription>
-              Kategori <strong>{deleteTarget?.name}</strong> akan dinonaktifkan dan tidak akan muncul di dropdown klaim baru.
+              Kategori <strong>{deleteTarget?.name}</strong> akan dinonaktifkan dan tidak akan muncul di pilihan klaim baru.
               Data klaim yang sudah ada tidak terpengaruh. Kategori dapat diaktifkan kembali kapan saja.
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -496,6 +464,6 @@ export default function EmployeeExpenseCategoryMasterModule() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </PageLayout>
   );
 }

@@ -1,27 +1,33 @@
 import React, { useState, useEffect } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Plus, Pencil, Trash2, Check, X, AlertCircle } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Plus, Pencil, Trash2, ListTree } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
+import { StatusBadge, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import { toast } from 'sonner';
 
 const BACKEND_URL = import.meta.env.REACT_APP_BACKEND_URL || process.env.REACT_APP_BACKEND_URL;
 
+/**
+ * Akun klaim biaya karyawan (Pengaturan Keuangan › Pemetaan akun otomatis; juga menu "GL Mapping").
+ * 2026-11-05 (PANDUAN_UI G1/G5/G11): cetakan PageLayout, satu jenis kartu (GlassCard), label Indonesia
+ * (dulu "GL Mapping Configuration", "Active/Inactive", judul 30 px buatan sendiri).
+ */
 export default function EmployeeExpenseGLMappingModule() {
   const [mappings, setMappings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDialog, setShowDialog] = useState(false);
   const [editingMapping, setEditingMapping] = useState(null);
   const [coaAccounts, setCoaAccounts] = useState([]);
-  
+
   const [formData, setFormData] = useState({
     category: '',
     gl_account_code: '',
@@ -46,7 +52,7 @@ export default function EmployeeExpenseGLMappingModule() {
       }
     } catch (err) {
       console.error('Fetch mappings error:', err);
-      toast.error('Gagal memuat data GL mapping');
+      toast.error('Gagal memuat pemetaan akun klaim');
     } finally {
       setLoading(false);
     }
@@ -89,16 +95,16 @@ export default function EmployeeExpenseGLMappingModule() {
 
   const handleSave = async () => {
     if (!formData.category || !formData.gl_account_code || !formData.gl_account_name) {
-      toast.error('Semua field wajib diisi');
+      toast.error('Semua isian wajib diisi');
       return;
     }
 
     try {
       const token = localStorage.getItem('erp_token');
-      const url = editingMapping 
+      const url = editingMapping
         ? `${BACKEND_URL}/api/hr/expenses/gl-mappings/${editingMapping.id}`
         : `${BACKEND_URL}/api/hr/expenses/gl-mappings`;
-      
+
       const method = editingMapping ? 'PUT' : 'POST';
 
       const res = await fetch(url, {
@@ -113,11 +119,11 @@ export default function EmployeeExpenseGLMappingModule() {
       const data = await res.json();
 
       if (res.ok) {
-        toast.success(editingMapping ? 'Mapping berhasil diupdate' : 'Mapping berhasil dibuat');
+        toast.success(editingMapping ? 'Pemetaan akun diperbarui' : 'Pemetaan akun dibuat');
         setShowDialog(false);
         fetchMappings();
       } else {
-        toast.error(data.detail || 'Gagal menyimpan mapping');
+        toast.error(data.detail || 'Gagal menyimpan pemetaan akun');
       }
     } catch (err) {
       console.error('Save mapping error:', err);
@@ -126,7 +132,7 @@ export default function EmployeeExpenseGLMappingModule() {
   };
 
   const handleDelete = async (mapping) => {
-    if (!(await confirmDialog(`Hapus mapping ${mapping.category}?`))) return;
+    if (!(await confirmDialog({ title: `Hapus pemetaan ${mapping.category}?`, confirmLabel: 'Hapus', danger: true }))) return;
 
     try {
       const token = localStorage.getItem('erp_token');
@@ -136,11 +142,11 @@ export default function EmployeeExpenseGLMappingModule() {
       });
 
       if (res.ok) {
-        toast.success('Mapping berhasil dihapus');
+        toast.success('Pemetaan akun dihapus');
         fetchMappings();
       } else {
         const data = await res.json();
-        toast.error(data.detail || 'Gagal menghapus mapping');
+        toast.error(data.detail || 'Gagal menghapus pemetaan akun');
       }
     } catch (err) {
       console.error('Delete mapping error:', err);
@@ -159,136 +165,97 @@ export default function EmployeeExpenseGLMappingModule() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-muted-foreground">Memuat data...</div>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6" data-testid="gl-mapping-admin-page">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">GL Mapping Configuration</h1>
-          <p className="text-muted-foreground mt-1">
-            Konfigurasi mapping kategori expense ke GL account code
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button onClick={handleCreate} data-testid="create-mapping-btn">
-            <Plus className="h-4 w-4 mr-2" />
-            Tambah Mapping
-          </Button>
-        </div>
-      </div>
-
-      {/* Info Alert */}
-      <Alert>
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>
-          Mapping ini digunakan untuk split posting GL saat settlement. Jika kategori tidak ada mapping, 
-          sistem akan menggunakan default account <strong>6-3400 (Biaya Perjalanan Dinas)</strong>.
-        </AlertDescription>
-      </Alert>
-
-      {/* Mappings Table */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Daftar GL Mapping</CardTitle>
-          <CardDescription>
-            Total {mappings.length} mapping terdaftar
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
+    <PageLayout
+      testId="gl-mapping-admin-page"
+      title="Akun klaim biaya karyawan"
+      subtitle="Kategori klaim karyawan dan akun beban yang dipakai jurnal saat penyelesaian."
+      actions={
+        <Button onClick={handleCreate} data-testid="create-mapping-btn">
+          <Plus className="h-4 w-4" />
+          Pemetaan baru
+        </Button>
+      }
+      summary={!loading && (
+        <p className="text-sm text-muted-foreground">
+          {mappings.length} pemetaan · kategori tanpa pemetaan memakai akun <b className="text-foreground">6-3400 Biaya Perjalanan Dinas</b>.
+        </p>
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <Skeleton className="h-40 m-4" />
+        ) : mappings.length === 0 ? (
+          <EmptyState icon={ListTree} title="Belum ada pemetaan akun klaim"
+            description="Tambahkan pemetaan supaya tiap kategori klaim masuk ke akun bebannya sendiri." />
+        ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Kategori Expense</TableHead>
-                <TableHead>GL Account Code</TableHead>
-                <TableHead>Nama Account</TableHead>
+                <TableHead>Kategori klaim</TableHead>
+                <TableHead>Kode akun</TableHead>
+                <TableHead>Nama akun</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Aksi</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {mappings.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                    Belum ada mapping. Klik "Tambah Mapping" untuk membuat mapping baru.
+              {mappings.map((mapping) => (
+                <TableRow key={mapping.id} data-testid={`mapping-row-${mapping.id}`}>
+                  <TableCell className="font-medium">{mapping.category}</TableCell>
+                  <TableCell className="whitespace-nowrap">{mapping.gl_account_code}</TableCell>
+                  <TableCell className="text-muted-foreground">{mapping.gl_account_name}</TableCell>
+                  <TableCell>
+                    <StatusBadge tone={mapping.is_active ? 'success' : 'muted'} label={mapping.is_active ? 'Aktif' : 'Nonaktif'} />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleEdit(mapping)}
+                        title="Ubah" aria-label="Ubah"
+                        data-testid={`edit-mapping-${mapping.id}`}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => handleDelete(mapping)}
+                        title="Hapus" aria-label="Hapus"
+                        className="text-destructive"
+                        data-testid={`delete-mapping-${mapping.id}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
-              ) : (
-                mappings.map((mapping) => (
-                  <TableRow key={mapping.id} data-testid={`mapping-row-${mapping.id}`}>
-                    <TableCell className="font-medium">{mapping.category}</TableCell>
-                    <TableCell>
-                      <code className="text-sm bg-muted px-2 py-1 rounded">
-                        {mapping.gl_account_code}
-                      </code>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{mapping.gl_account_name}</TableCell>
-                    <TableCell>
-                      {mapping.is_active ? (
-                        <Badge variant="default" className="bg-green-600">
-                          <Check className="h-3 w-3 mr-1" />
-                          Active
-                        </Badge>
-                      ) : (
-                        <Badge variant="secondary">
-                          <X className="h-3 w-3 mr-1" />
-                          Inactive
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleEdit(mapping)}
-                          data-testid={`edit-mapping-${mapping.id}`}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="sm"
-                          onClick={() => handleDelete(mapping)}
-                          data-testid={`delete-mapping-${mapping.id}`}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
+              ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
+        )}
+      </GlassCard>
 
-      {/* Create/Edit Dialog */}
+      {/* Formulir isian pendek */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>
-              {editingMapping ? 'Edit GL Mapping' : 'Tambah GL Mapping Baru'}
+              {editingMapping ? 'Ubah pemetaan akun' : 'Pemetaan akun baru'}
             </DialogTitle>
             <DialogDescription>
-              Mapping kategori expense ke GL account untuk posting otomatis
+              Kategori klaim karyawan dan akun beban untuk jurnal otomatis.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label htmlFor="category">Kategori Expense</Label>
+              <Label htmlFor="category">Kategori klaim</Label>
               <Input
                 id="category"
-                placeholder="e.g., Transportasi, Konsumsi, Akomodasi"
+                placeholder="mis. Transportasi, Konsumsi, Akomodasi"
                 value={formData.category}
                 onChange={(e) => setFormData(prev => ({ ...prev, category: e.target.value }))}
                 data-testid="mapping-category-input"
@@ -296,32 +263,32 @@ export default function EmployeeExpenseGLMappingModule() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="gl_account">GL Account</Label>
+              <Label htmlFor="gl_account">Akun beban</Label>
               <SmartNativeSelect
                 id="gl_account"
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                className="w-full h-9"
                 value={formData.gl_account_code}
                 onChange={(e) => handleAccountSelect(e.target.value)}
                 data-testid="mapping-account-select"
               >
-                <option value="">-- Pilih GL Account --</option>
+                <option value="">Pilih akun</option>
                 {coaAccounts
                   .filter(a => a.code.startsWith('6-') || a.code.startsWith('5-'))
                   .map(acc => (
                     <option key={acc.code} value={acc.code}>
-                      {acc.code} - {acc.name}
+                      {acc.code} — {acc.name}
                     </option>
                   ))}
               </SmartNativeSelect>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="gl_name">Nama Account</Label>
+              <Label htmlFor="gl_name">Nama akun</Label>
               <Input
                 id="gl_name"
                 value={formData.gl_account_name}
                 onChange={(e) => setFormData(prev => ({ ...prev, gl_account_name: e.target.value }))}
-                placeholder="Nama GL account"
+                placeholder="Nama akun beban"
                 data-testid="mapping-account-name-input"
               />
             </div>
@@ -333,7 +300,7 @@ export default function EmployeeExpenseGLMappingModule() {
                 onCheckedChange={(checked) => setFormData(prev => ({ ...prev, is_active: checked }))}
                 data-testid="mapping-active-switch"
               />
-              <Label htmlFor="is_active">Active</Label>
+              <Label htmlFor="is_active">Aktif</Label>
             </div>
           </div>
 
@@ -342,11 +309,11 @@ export default function EmployeeExpenseGLMappingModule() {
               Batal
             </Button>
             <Button onClick={handleSave} data-testid="save-mapping-btn">
-              {editingMapping ? 'Update' : 'Simpan'}
+              Simpan
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </PageLayout>
   );
 }

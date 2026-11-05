@@ -1,84 +1,87 @@
 /**
- * ARLifecycleModule — AR 360° Dashboard
+ * ARLifecycleModule — Umur piutang (Piutang Reseller › Umur piutang)
  * Phase 30 — Order-to-Cash (OTC) Completion
  *
- * Three views:
- *  A) Dashboard — system KPIs + bucket totals + top debtors
- *  B) Aging Matrix — per-customer aging table (drillable)
- *  C) Customer Statement — detail view with running balance for one customer
+ * Isi:
+ *  A) Ringkasan — angka utama + sebaran umur piutang
+ *  B) Piutang terbesar / Per pelanggan (penyaring) — tabel per pelanggan
+ *  C) Rekening koran pelanggan — dibuka DI HALAMAN di atas tabel (DetailPanel)
+ *
+ * 2026-11-05 (PANDUAN_UI G1/G4/G13): cetakan PageLayout. Tab Radix di dalam tab hub → pil penyaring;
+ * rekening koran pelanggan dulu MENGGANTI seluruh layar (tombol "Kembali") → kini panel di atas tabel;
+ * daftar piutang terbesar dulu deret kartu → tabel. Warna hanya token (G8).
+ * 2026-11-05: kartu angka = StatTile (`sub`); periode rekening koran = PeriodPicker dengan "Semua waktu"
+ * (bawaan, sama dengan perilaku lama); memo server berbahasa Inggris → humanMemo (lib/financeLabels).
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Scale, RefreshCw, Search, ChevronRight, ArrowLeft, FileText, DollarSign,
-  Calendar, Clock, AlertTriangle, CheckCircle2, TrendingUp,
-  TrendingDown, Users, Phone, Building2, Banknote, Receipt, FileSpreadsheet,
-  BarChart3, Filter, Printer, ExternalLink,} from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+  RefreshCw, Search, FileSpreadsheet, Phone, Printer, Receipt, TrendingUp, Users,
+} from 'lucide-react';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import FilterChips from '@/components/ui/filter-chips';
 import { toast } from 'sonner';
-import { motion, AnimatePresence } from 'framer-motion';
-import { PageHeader, EmptyState } from './moduleAtoms';
+import { EmptyState, StatTile, StatusBadge } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { Skeleton } from '@/components/ui/skeleton';
-import { formatRupiah, formatPercent } from '@/lib/format';
+import { formatDateID, formatRupiah, formatPercent } from '@/lib/format';
+import { humanMemo } from '@/lib/financeLabels';
+import PeriodPicker, { ALL_TIME, PERIOD_PRESETS, periodFromPreset } from './finance/PeriodPicker';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 const fmtRp = (v) => (v === null || v === undefined || v === '') ? '—' : formatRupiah(v);
 function fmtNum(v) { return Number(v || 0).toLocaleString('id-ID'); }
-function fmtDate(v) {
-  if (!v) return '—';
-  try {
-    const d = new Date(v);
-    if (isNaN(d.getTime())) return v;
-    return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-  } catch { return v; }
-}
 function fmtPct(v) {
   if (v === null || v === undefined) return '—';
   return formatPercent(v, 1);   // 2026-11-04: koma desimal id-ID (dulu "3.2%")
 }
 
-const BUCKET_LABELS = {
-  current: { label: 'Belum jatuh tempo', color: 'text-green-600 dark:text-green-300 bg-green-100 dark:bg-green-500/15 border-green-400 dark:border-green-400/30' },
-  '1_30':  { label: '1-30 hari',      color: 'text-blue-600 dark:text-blue-300 bg-blue-100 dark:bg-blue-500/15 border-blue-400 dark:border-blue-400/30' },
-  '31_60': { label: '31-60 hari',     color: 'text-amber-600 dark:text-amber-300 bg-amber-100 dark:bg-amber-500/15 border-amber-400 dark:border-amber-400/30' },
-  '61_90': { label: '61-90 hari',     color: 'text-orange-600 dark:text-orange-300 bg-orange-100 dark:bg-orange-500/15 border-orange-400 dark:border-orange-400/30' },
-  '90_plus': { label: '> 90 hari',    color: 'text-red-600 dark:text-red-300 bg-red-100 dark:bg-red-500/15 border-red-400 dark:border-red-400/30' },
+// PANDUAN_UI G8: abu = belum jatuh tempo, kuning = perlu perhatian, merah = masalah. Dulu 5 warna palet.
+const BUCKET_META = {
+  current:   { label: 'Belum jatuh tempo', text: 'text-foreground',                    bar: 'bg-foreground/30' },
+  '1_30':    { label: '1-30 hari',         text: 'text-[hsl(var(--warning))]',         bar: 'bg-[hsl(var(--warning)/0.6)]' },
+  '31_60':   { label: '31-60 hari',        text: 'text-[hsl(var(--warning))]',         bar: 'bg-[hsl(var(--warning))]' },
+  '61_90':   { label: '61-90 hari',        text: 'text-[hsl(var(--destructive))]',     bar: 'bg-[hsl(var(--destructive)/0.7)]' },
+  '90_plus': { label: '> 90 hari',         text: 'text-[hsl(var(--destructive))]',     bar: 'bg-[hsl(var(--destructive))]' },
 };
+const BUCKET_KEYS = Object.keys(BUCKET_META);
 
-function BucketBadge({ bucket }) {
-  const m = BUCKET_LABELS[bucket] || BUCKET_LABELS.current;
+/** Sebaran per kelompok umur — angka + bilah persen (tanpa kartu per kelompok). */
+function BucketSpread({ values = {}, counts, total }) {
   return (
-    <span className={`inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full border ${m.color}`}>
-      {m.label}
-    </span>
-  );
-}
-
-// ─── KPI ─────────────────────────────────────────────────────────────────
-// PANDUAN_UI G5 (2026-11-04): kartu angka netral (StatTile) — warna hanya untuk "lewat jatuh tempo"
-// bila nilainya bukan nol; dulu tiap kartu warna sendiri (merah/biru/ungu/hijau) tanpa makna.
-function KPICell({ label, value, sub, tone }) {
-  const isZero = /^(Rp\s?)?0$|^—$/.test(String(value ?? '').trim());
-  return (
-    <div className="rounded-[var(--radius-md)] border px-4 py-3 bg-[var(--card-surface)] border-[var(--glass-border)]">
-      <p className="text-[10px] uppercase tracking-wider text-foreground/50 font-semibold">{label}</p>
-      <p className={`text-xl font-bold tracking-tight mt-1 tabular-nums ${tone === 'red' && !isZero ? 'text-[hsl(var(--destructive))]' : isZero ? 'text-muted-foreground' : 'text-foreground'}`}>{value}</p>
-      {sub && <p className="text-[11px] text-muted-foreground mt-0.5">{sub}</p>}
+    <div className="grid grid-cols-2 md:grid-cols-5 gap-x-6 gap-y-4">
+      {BUCKET_KEYS.map((key) => {
+        const m = BUCKET_META[key];
+        const val = Number(values[key] || 0);
+        const pct = total > 0 ? (val / total) * 100 : 0;
+        return (
+          <div key={key}>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
+            <div className={`text-lg font-bold tabular-nums whitespace-nowrap mt-1 ${val ? m.text : 'text-muted-foreground'}`}>{fmtRp(val)}</div>
+            <div className="flex items-center justify-between mt-1">
+              <span className="text-[10px] text-muted-foreground">{counts ? `${counts[key] || 0} faktur` : ''}</span>
+              <span className="text-[10px] font-semibold text-foreground/70 tabular-nums">{pct.toFixed(0)}%</span>
+            </div>
+            <div className="h-1 rounded-full bg-foreground/10 mt-1.5 overflow-hidden">
+              <div className={`h-full transition-[width] duration-500 ${m.bar}`} style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-// ─── Customer Statement View ────────────────────────────────────────────
-function CustomerStatementView({ customerId, headers, onBack }) {
+// ─── Rekening koran pelanggan (DetailPanel) ─────────────────────────────
+function CustomerStatementPanel({ customerId, headers, onClose }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
+  // Bawaan "Semua waktu" (from/to kosong = semua transaksi, sama dengan perilaku lama).
+  const [period, setPeriod] = useState(() => periodFromPreset('all'));
+  const dateFrom = period.from;
+  const dateTo = period.to;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,12 +92,12 @@ function CustomerStatementView({ customerId, headers, onBack }) {
       const r = await fetch(`${API}/api/rahaza/ar-360/customer/${customerId}/statement?${params}`, { headers });
       if (!r.ok) {
         const e = await r.json().catch(() => ({}));
-        toast.error(e.detail || 'Gagal memuat statement');
+        toast.error(e.detail || 'Gagal memuat rekening koran');
         return;
       }
       setData(await r.json());
     } catch (e) {
-      toast.error('Network error: ' + e.message);
+      toast.error('Gagal terhubung ke server: ' + e.message);
     } finally {
       setLoading(false);
     }
@@ -102,198 +105,237 @@ function CustomerStatementView({ customerId, headers, onBack }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (loading || !data) {
-    return (
-      <div className="space-y-4 p-2" data-testid="ar360-statement-skeleton">
-        <Skeleton className="h-20 rounded-xl" />
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-xl" />)}
+  const cust = data?.customer || {};
+  const txs = data?.transactions || [];
+  const aging = data?.aging_snapshot || {};
+  const totalAging = data?.aging_total || 0;
+  const info = [cust.code, cust.address, cust.phone || cust.contact_phone, cust.payment_terms && `Termin ${cust.payment_terms}`].filter(Boolean);
+
+  return (
+    <DetailPanel
+      testId="ar360-statement-panel"
+      title={data ? `Rekening koran ${cust.name || ''}` : 'Rekening koran pelanggan'}
+      description={data ? (info.length ? (
+        <span className="inline-flex items-center gap-1 flex-wrap">
+          {(cust.phone || cust.contact_phone) && <Phone className="w-3 h-3" />}{info.join(' · ')}
+        </span>
+      ) : null) : 'Memuat…'}
+      onClose={onClose}
+      actions={<>
+        <Button variant="outline" onClick={() => window.print()} data-testid="ar360-print"><Printer className="w-4 h-4" />Cetak</Button>
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
+    >
+      {/* Periode — "Semua waktu" (bawaan) mengirim tanpa date_from/date_to. testId "ar360-date" → kotak tanggal
+          tetap "ar360-date-from"/"ar360-date-to" saat "Pilih tanggal". */}
+      <PeriodPicker value={period} onChange={setPeriod} presets={[ALL_TIME, ...PERIOD_PRESETS]} testId="ar360-date" />
+
+      {loading || !data ? (
+        <div className="space-y-2" data-testid="ar360-statement-skeleton">
+          <Skeleton className="h-6 w-2/3 rounded" />
+          <Skeleton className="h-16 rounded-lg" />
+          <Skeleton className="h-40 rounded-lg" />
         </div>
-        <Skeleton className="h-48 rounded-xl" />
-      </div>
+      ) : (
+        <>
+          <p className="text-sm text-muted-foreground" data-testid="ar360-statement-summary">
+            Ditagih <b className="text-foreground tabular-nums">{fmtRp(data.total_billed)}</b> ({data.total_invoices} faktur)
+            {' · '}dibayar <b className="text-foreground tabular-nums">{fmtRp(data.total_paid)}</b> ({data.total_payments} pembayaran)
+            {' · '}sisa piutang <b className={`tabular-nums ${data.closing_balance > 0 ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>{fmtRp(data.closing_balance)}</b>
+          </p>
+
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Umur faktur belum lunas <span className="font-normal text-muted-foreground tabular-nums">· {fmtRp(totalAging)}</span></p>
+            <BucketSpread values={aging} total={totalAging} />
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Riwayat transaksi ({txs.length})</p>
+            {txs.length === 0 ? (
+              <EmptyState icon={Receipt} title="Belum ada transaksi" description="Faktur dan pembayaran pelanggan ini akan tampil di sini." />
+            ) : (
+              <div className="overflow-x-auto -mx-4">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-muted-foreground border-b border-foreground/10">
+                      <th className="text-left py-2 px-2">Tanggal</th>
+                      <th className="text-left py-2 px-2">Jenis</th>
+                      <th className="text-left py-2 px-2">Referensi</th>
+                      <th className="text-left py-2 px-2">Keterangan</th>
+                      <th className="text-right py-2 px-2">Debit</th>
+                      <th className="text-right py-2 px-2">Kredit</th>
+                      <th className="text-right py-2 px-2">Saldo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {txs.map((t, idx) => {
+                      const isInvoice = t.type === 'invoice';
+                      return (
+                        <tr key={idx} className="border-b border-foreground/5 hover:bg-foreground/[0.03]">
+                          <td className="py-2 px-2 text-foreground/70 whitespace-nowrap">{formatDateID(t.date)}</td>
+                          <td className="py-2 px-2">
+                            <StatusBadge status={t.type} label={isInvoice ? 'Faktur' : 'Pembayaran'} tone={isInvoice ? 'info' : 'success'} />
+                          </td>
+                          <td className="py-2 px-2 whitespace-nowrap">{t.reference}</td>
+                          <td className="py-2 px-2 text-foreground/70">{humanMemo(t.description)}</td>
+                          <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{t.debit > 0 ? fmtRp(t.debit) : '—'}</td>
+                          <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{t.credit > 0 ? fmtRp(t.credit) : '—'}</td>
+                          <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold">{fmtRp(t.balance_after)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-[var(--glass-border)] font-bold">
+                      <td colSpan="4" className="py-2 px-2 text-foreground">Saldo akhir</td>
+                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_billed)}</td>
+                      <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(data.total_paid)}</td>
+                      <td className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${data.closing_balance > 0 ? 'text-[hsl(var(--warning))]' : 'text-foreground'}`}>
+                        {fmtRp(data.closing_balance)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </DetailPanel>
+  );
+}
+
+// ─── Tabel piutang terbesar ──────────────────────────────────────────────
+function TopDebtorsTable({ debtors, search, selectedId, onPickCustomer }) {
+  const filtered = useMemo(() => {
+    if (!search) return debtors;
+    const q = search.toLowerCase();
+    return debtors.filter(d =>
+      (d.customer_name || '').toLowerCase().includes(q) ||
+      (d.customer_code || '').toLowerCase().includes(q)
+    );
+  }, [debtors, search]);
+
+  if (filtered.length === 0) {
+    return (
+      <EmptyState
+        icon={search ? Search : Users}
+        title={search ? 'Tidak ada pelanggan yang cocok' : 'Tidak ada piutang yang belum lunas'}
+        description={search ? 'Coba ubah kata kunci pencarian.' : 'Semua piutang pelanggan sudah lunas.'}
+      />
     );
   }
 
-  const cust = data.customer || {};
-  const txs = data.transactions || [];
-  const aging = data.aging_snapshot || {};
-  const totalAging = data.aging_total || 0;
-
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <GlassCard className="p-4">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={onBack} data-testid="ar360-back" className="text-foreground/70 hover:text-foreground">
-              <ArrowLeft className="w-4 h-4 mr-1" /> Kembali
-            </Button>
-            <div className="border-l border-foreground/10 pl-4">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Building2 className="w-4 h-4 text-violet-600 dark:text-violet-300" />
-                <h3 className="text-lg font-bold text-foreground">{cust.name}</h3>
-                {cust.code && <span className="text-xs font-mono text-violet-600 dark:text-violet-300">{cust.code}</span>}
-              </div>
-              <p className="text-xs text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
-                {cust.address && <span>{cust.address}</span>}
-                {(cust.phone || cust.contact_phone) && (
-                  <span className="flex items-center gap-1"><Phone className="w-3 h-3" /> {cust.phone || cust.contact_phone}</span>
-                )}
-                {cust.payment_terms && <span>Terms: {cust.payment_terms}</span>}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => window.print()}
-              className="border-foreground/10 text-foreground/70 hover:text-foreground"
-              data-testid="ar360-print"
-            >
-              <Printer className="w-3.5 h-3.5 mr-1" /> Print
-            </Button>
-            <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="text-muted-foreground hover:text-foreground">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-          </div>
-        </div>
-      </GlassCard>
-
-      {/* Summary KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPICell label="Total Ditagih" value={fmtRp(data.total_billed)} icon={FileText} tone="blue" sub={`${data.total_invoices} faktur`} />
-        <KPICell label="Total Dibayar" value={fmtRp(data.total_paid)} icon={Banknote} tone="green" sub={`${data.total_payments} pembayaran`} />
-        <KPICell label="Sisa piutang" value={fmtRp(data.closing_balance)} icon={DollarSign} tone={data.closing_balance > 0 ? 'red' : 'green'} />
-        <KPICell label="Faktur belum lunas" value={fmtRp(totalAging)} icon={Clock} tone="amber" />
-      </div>
-
-      {/* Aging Snapshot */}
-      <GlassCard className="p-4">
-        <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <BarChart3 className="w-4 h-4 text-amber-600 dark:text-amber-300" /> Umur piutang
-        </h4>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-          <AgingBucket label="Belum jatuh tempo" value={aging.current} total={totalAging} tone="green" />
-          <AgingBucket label="1-30 hari"  value={aging['1_30']}    total={totalAging} tone="blue" />
-          <AgingBucket label="31-60 hari" value={aging['31_60']}   total={totalAging} tone="amber" />
-          <AgingBucket label="61-90 hari" value={aging['61_90']}   total={totalAging} tone="orange" />
-          <AgingBucket label="> 90 hari"  value={aging['90_plus']} total={totalAging} tone="red" />
-        </div>
-      </GlassCard>
-
-      {/* Date Filter */}
-      <GlassCard className="p-3">
-        <div className="flex items-center gap-3 flex-wrap">
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Filter className="w-3 h-3" /> Periode:
-          </span>
-          <div className="flex items-center gap-1">
-            <Input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              className="bg-foreground/5 border-foreground/10 text-xs w-36 h-8" data-testid="ar360-date-from" />
-            <span className="text-muted-foreground text-xs">→</span>
-            <Input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
-              className="bg-foreground/5 border-foreground/10 text-xs w-36 h-8" data-testid="ar360-date-to" />
-          </div>
-          {(dateFrom || dateTo) && (
-            <Button size="sm" variant="ghost" onClick={() => { setDateFrom(''); setDateTo(''); }} className="text-muted-foreground text-xs h-7">
-              Reset
-            </Button>
-          )}
-        </div>
-      </GlassCard>
-
-      {/* Transactions Table with Running Balance */}
-      <GlassCard className="p-4">
-        <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          <Receipt className="w-4 h-4 text-violet-600 dark:text-violet-300" /> Riwayat Transaksi ({txs.length})
-        </h4>
-        {txs.length === 0 ? (
-          <EmptyState icon={Receipt} title="Belum ada transaksi" description="Transaksi untuk customer ini akan tampil di sini." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-muted-foreground border-b border-foreground/10">
-                  <th className="text-left py-2 px-2">Tanggal</th>
-                  <th className="text-left py-2 px-2">Jenis</th>
-                  <th className="text-left py-2 px-2">Referensi</th>
-                  <th className="text-left py-2 px-2">Deskripsi</th>
-                  <th className="text-right py-2 px-2">Debit</th>
-                  <th className="text-right py-2 px-2">Kredit</th>
-                  <th className="text-right py-2 px-2">Saldo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {txs.map((t, idx) => {
-                  const isInvoice = t.type === 'invoice';
-                  return (
-                    <motion.tr
-                      key={idx}
-                      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-                      transition={{ delay: idx * 0.01 }}
-                      className="border-b border-foreground/5 hover:bg-foreground/[0.03]"
-                    >
-                      <td className="py-2 px-2 text-foreground/70">{fmtDate(t.date)}</td>
-                      <td className="py-2 px-2">
-                        <span className={`text-[10px] px-1.5 py-0.5 rounded ${isInvoice ? 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border border-blue-400 dark:border-blue-400/30' : 'bg-green-100 dark:bg-green-500/15 text-green-600 dark:text-green-300 border border-green-400 dark:border-green-400/30'}`}>
-                          {isInvoice ? 'FAKTUR' : 'BAYAR'}
-                        </span>
-                      </td>
-                      <td className="py-2 px-2 font-mono text-violet-600 dark:text-violet-300">{t.reference}</td>
-                      <td className="py-2 px-2 text-foreground/70">{t.description}</td>
-                      <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300 font-semibold">
-                        {t.debit > 0 ? fmtRp(t.debit) : '—'}
-                      </td>
-                      <td className="py-2 px-2 text-right text-green-600 dark:text-green-300 font-semibold">
-                        {t.credit > 0 ? fmtRp(t.credit) : '—'}
-                      </td>
-                      <td className={`py-2 px-2 text-right font-bold ${t.balance_after > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-green-600 dark:text-green-300'}`}>
-                        {fmtRp(t.balance_after)}
-                      </td>
-                    </motion.tr>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-violet-400/40">
-                  <td colSpan="4" className="py-2 px-2 text-xs text-foreground font-bold">Saldo Akhir</td>
-                  <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300 font-bold">{fmtRp(data.total_billed)}</td>
-                  <td className="py-2 px-2 text-right text-green-600 dark:text-green-300 font-bold">{fmtRp(data.total_paid)}</td>
-                  <td className={`py-2 px-2 text-right text-base font-bold ${data.closing_balance > 0 ? 'text-amber-600 dark:text-amber-300' : 'text-green-600 dark:text-green-300'}`}>
-                    {fmtRp(data.closing_balance)}
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        )}
-      </GlassCard>
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-muted-foreground border-b border-foreground/10">
+            <th className="text-right py-2 px-2 w-10">#</th>
+            <th className="text-left py-2 px-2">Pelanggan</th>
+            <th className="text-right py-2 px-2">Faktur</th>
+            <th className="text-right py-2 px-2">Terlama terlambat</th>
+            <th className="text-right py-2 px-2">Lewat jatuh tempo</th>
+            <th className="text-right py-2 px-2">Sisa piutang</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filtered.map((d, idx) => (
+            <tr key={d.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === d.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+              <td className="py-2 px-2 text-right tabular-nums text-muted-foreground">{idx + 1}</td>
+              <td className="py-2 px-2">
+                <Button variant="link" size="sm" className="h-auto p-0 text-xs font-semibold" onClick={() => onPickCustomer(d)}
+                  data-testid={`ar360-debtor-${d.customer_id}`} title="Buka rekening koran pelanggan">
+                  {d.customer_name}
+                </Button>
+                {d.customer_code && <span className="ml-2 text-[10px] text-muted-foreground">{d.customer_code}</span>}
+              </td>
+              <td className="py-2 px-2 text-right tabular-nums">{d.invoice_count}</td>
+              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+                {d.oldest_days_overdue > 0 ? <span className="text-[hsl(var(--warning))]">{d.oldest_days_overdue} hari</span> : <span className="text-muted-foreground">—</span>}
+              </td>
+              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+                {d.overdue_amount > 0 ? <span className="text-[hsl(var(--destructive))]">{fmtRp(d.overdue_amount)}</span> : <span className="text-muted-foreground">—</span>}
+              </td>
+              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap font-semibold text-foreground">{fmtRp(d.outstanding)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
 
-function AgingBucket({ label, value = 0, total = 0, tone }) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
-  const toneMap = {
-    green:  'text-green-600 dark:text-green-300 bg-green-100 dark:bg-green-500/10 border-green-300 dark:border-green-400/20',
-    blue:   'text-blue-600 dark:text-blue-300 bg-blue-100 dark:bg-blue-500/10 border-blue-300 dark:border-blue-400/20',
-    amber:  'text-amber-600 dark:text-amber-300 bg-amber-100 dark:bg-amber-500/10 border-amber-300 dark:border-amber-400/20',
-    orange: 'text-orange-600 dark:text-orange-300 bg-orange-100 dark:bg-orange-500/10 border-orange-300 dark:border-orange-400/20',
-    red:    'text-red-600 dark:text-red-300 bg-red-100 dark:bg-red-500/10 border-red-300 dark:border-red-400/20',
-  };
-  const klass = toneMap[tone] || toneMap.blue;
+// ─── Tabel umur per pelanggan ────────────────────────────────────────────
+function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
+  if (rows.length === 0) {
+    return (
+      <EmptyState icon={FileSpreadsheet} title="Belum ada piutang" description="Umur piutang muncul setelah ada faktur penjualan." />
+    );
+  }
+  const cell = (r, key) => (r[key] > 0
+    ? <span className={key === 'current' ? 'text-foreground' : BUCKET_META[key].text}>{fmtRp(r[key])}</span>
+    : <span className="text-foreground/20">—</span>);
   return (
-    <div className={`p-3 rounded-lg border ${klass}`}>
-      <div className="text-[10px] uppercase tracking-wider">{label}</div>
-      <div className="text-base font-bold mt-1">{fmtRp(value)}</div>
-      <div className="text-[10px] text-muted-foreground mt-0.5">{pct}%</div>
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="text-muted-foreground border-b border-foreground/10">
+            <th className="text-left py-2 px-2">Pelanggan</th>
+            {BUCKET_KEYS.map((k) => <th key={k} className="text-right py-2 px-2 whitespace-nowrap">{BUCKET_META[k].label}</th>)}
+            <th className="text-right py-2 px-2 border-l border-foreground/10">Total</th>
+            <th className="text-right py-2 px-2">Aksi</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.customer_id} className={`border-b border-foreground/5 hover:bg-foreground/[0.03] ${selectedId === r.customer_id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}`}>
+              <td className="py-2 px-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-foreground font-semibold truncate max-w-[200px]" title={r.customer_name}>{r.customer_name}</span>
+                  {r.customer_code && <span className="text-[10px] text-muted-foreground">{r.customer_code}</span>}
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-0.5">
+                  {r.count} faktur · terlama {r.oldest_days_overdue} hari
+                </div>
+              </td>
+              {BUCKET_KEYS.map((k) => (
+                <td key={k} className={`py-2 px-2 text-right tabular-nums whitespace-nowrap ${k === '90_plus' ? 'font-bold' : ''}`}>{cell(r, k)}</td>
+              ))}
+              <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap border-l border-foreground/10">
+                <span className="text-foreground font-bold">{fmtRp(r.total)}</span>
+              </td>
+              <td className="py-2 px-2 text-right whitespace-nowrap">
+                <Button variant="link" size="sm" className="h-auto p-0 text-xs"
+                  data-testid={`ar360-matrix-statement-${r.customer_id}`}
+                  onClick={() => onPickCustomer(r)}>
+                  {selectedId === r.customer_id ? 'Tutup rekening koran' : 'Rekening koran'}
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="border-t-2 border-[var(--glass-border)] font-bold">
+            <td className="py-2 px-2 text-foreground">Total ({totals.count || 0} faktur)</td>
+            {BUCKET_KEYS.map((k) => (
+              <td key={k} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(totals[k])}</td>
+            ))}
+            <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-base text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</td>
+            <td></td>
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }
 
-// ─── Dashboard / Aging Matrix View ──────────────────────────────────────
-function DashboardView({ headers, onPickCustomer }) {
+// ─── Main Component ────────────────────────────────────────────────────────
+export default function ARLifecycleModule({ token }) {
+  const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
   const [dashboard, setDashboard] = useState(null);
   const [matrix, setMatrix] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -332,252 +374,64 @@ function DashboardView({ headers, onPickCustomer }) {
   const buckets = dashboard?.buckets || {};
   const bucketCounts = dashboard?.bucket_counts || {};
   const totalBucket = Object.values(buckets).reduce((s, v) => s + (Number(v) || 0), 0);
+  const pick = (d) => setSelectedCustomerId((cur) => (cur === d.customer_id ? null : d.customer_id));
 
-  return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Umur Piutang"
-        subtitle="Umur piutang per pelanggan, rekening koran pelanggan, dan pelanggan dengan piutang terbesar."
-        icon={Scale}
-        actions={
-          <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="text-muted-foreground hover:text-foreground" data-testid="ar360-refresh">
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-        }
-      />
-
-      {/* Top KPI Strip — 2026-11-04: tombol jalankan M-07 (tandai lewat jatuh tempo) pindah ke Adm. Sistem */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPICell label="Sisa piutang" value={fmtRp(k.total_outstanding)} sub={`${fmtNum(k.count_open_invoices)} faktur · ${fmtNum(k.total_unique_debtors)} pelanggan`} />
-        <KPICell label="Lewat jatuh tempo" value={fmtRp(k.total_overdue_amount)} tone="red" sub={`${k.count_overdue_invoices || 0} faktur · ${fmtPct(k.overdue_pct_of_outstanding)} dari sisa`} />
-        <KPICell label="Rata-rata terlambat" value={`${k.avg_days_overdue || 0} hari`} sub="ditimbang nilai faktur yang terlambat" />
-        <KPICell label="Rata-rata hari tertagih" value={k.dso_estimate_days ? `${fmtNum(k.dso_estimate_days)} hari` : '—'} sub={`Diterima 30 hari: ${fmtRp(k.cash_collected_30d)}`} />
+  const filters = (
+    <>
+      <FilterChips value={tab} onChange={setTab} testId="ar360-tab" ariaLabel="Tampilan" hideWhenEmpty={false}
+        options={[
+          { key: 'overview', label: 'Piutang terbesar', icon: TrendingUp, count: (dashboard?.top_debtors || []).length },
+          { key: 'matrix', label: 'Per pelanggan', icon: FileSpreadsheet, count: (matrix?.rows || []).length },
+        ]} />
+      <div className="relative w-72 max-w-full">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+        <GlassInput className="pl-9 h-9" placeholder="Cari nama / kode pelanggan…"
+          value={search} onChange={e => setSearch(e.target.value)} data-testid="ar360-search" />
       </div>
+    </>
+  );
 
-      {/* Bucket Overview */}
+  return (
+    <PageLayout
+      testId="ar360-page"
+      title="Umur Piutang"
+      subtitle="Umur piutang per pelanggan, rekening koran pelanggan, dan pelanggan dengan piutang terbesar."
+      filters={filters}
+      tools={
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="ar360-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      }
+      summary={<>
+        {/* 2026-11-04: tombol jalankan M-07 (tandai lewat jatuh tempo) pindah ke Adm. Sistem */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatTile label="Sisa piutang" value={fmtRp(k.total_outstanding)} accent={k.total_outstanding ? 'default' : 'muted'}
+            sub={`${fmtNum(k.count_open_invoices)} faktur · ${fmtNum(k.total_unique_debtors)} pelanggan`} />
+          <StatTile label="Lewat jatuh tempo" value={fmtRp(k.total_overdue_amount)} accent={k.total_overdue_amount > 0 ? 'danger' : 'muted'}
+            sub={`${k.count_overdue_invoices || 0} faktur · ${fmtPct(k.overdue_pct_of_outstanding)} dari sisa`} />
+          <StatTile label="Rata-rata terlambat" value={`${fmtNum(k.avg_days_overdue || 0)} hari`} sub="ditimbang nilai faktur yang terlambat" />
+          <StatTile label="Rata-rata hari tertagih" value={k.dso_estimate_days ? `${fmtNum(k.dso_estimate_days)} hari` : '—'}
+            accent={k.dso_estimate_days ? 'default' : 'muted'} sub={`Diterima 30 hari: ${fmtRp(k.cash_collected_30d)}`} />
+        </div>
+        <GlassCard className="p-4 space-y-3">
+          <p className="text-sm font-semibold text-foreground">Sebaran umur piutang</p>
+          <BucketSpread values={buckets} counts={bucketCounts} total={totalBucket} />
+        </GlassCard>
+      </>}
+      detail={selectedCustomerId && (
+        <CustomerStatementPanel key={selectedCustomerId} customerId={selectedCustomerId} headers={headers}
+          onClose={() => setSelectedCustomerId(null)} />
+      )}
+    >
       <GlassCard className="p-4">
-        <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
-          Sebaran umur piutang
-        </h4>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-x-6 gap-y-4">
-          {Object.entries(BUCKET_LABELS).map(([key, m]) => {
-            const val = buckets[key] || 0;
-            const cnt = bucketCounts[key] || 0;
-            const pct = totalBucket > 0 ? (val / totalBucket) * 100 : 0;
-            return (
-              <div key={key}>
-                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{m.label}</div>
-                <div className={`text-lg font-bold tabular-nums mt-1 ${val ? 'text-foreground' : 'text-muted-foreground'}`}>{fmtRp(val)}</div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-[10px] text-muted-foreground">{cnt} faktur</span>
-                  <span className="text-[10px] font-semibold text-foreground/70">{pct.toFixed(0)}%</span>
-                </div>
-                <div className="h-1 rounded-full bg-foreground/10 mt-1.5 overflow-hidden">
-                  <motion.div
-                    className={`h-full ${m.color.split(' ')[1]}`}
-                    initial={{ width: 0 }}
-                    animate={{ width: `${pct}%` }}
-                    transition={{ duration: 0.6 }}
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        {loading && !dashboard && !matrix ? (
+          <div className="space-y-2">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-9 rounded-lg" />)}</div>
+        ) : tab === 'overview' ? (
+          <TopDebtorsTable debtors={dashboard?.top_debtors || []} search={search} selectedId={selectedCustomerId} onPickCustomer={pick} />
+        ) : (
+          <AgingMatrixTable rows={matrixRows} totals={matrix?.totals || {}} selectedId={selectedCustomerId} onPickCustomer={pick} />
+        )}
       </GlassCard>
-
-      {/* Tabs */}
-      <GlassCard className="p-4 space-y-4">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="bg-foreground/5 h-auto p-1">
-              <TabsTrigger value="overview" data-testid="ar360-tab-overview">
-                <TrendingUp className="w-3 h-3 mr-1" /> Piutang terbesar
-              </TabsTrigger>
-              <TabsTrigger value="matrix" data-testid="ar360-tab-matrix">
-                <FileSpreadsheet className="w-3 h-3 mr-1" /> Per pelanggan
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-          <div className="flex items-center bg-foreground/5 border border-foreground/10 rounded-md px-3 min-w-[240px]">
-            <Search className="w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Cari nama / kode pelanggan..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="bg-transparent border-0 focus-visible:ring-0 text-sm"
-              data-testid="ar360-search"
-            />
-          </div>
-        </div>
-
-        <AnimatePresence mode="wait">
-          <motion.div key={tab} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }}>
-            {tab === 'overview' && (
-              <TopDebtorsView debtors={dashboard?.top_debtors || []} search={search} onPickCustomer={onPickCustomer} />
-            )}
-            {tab === 'matrix' && (
-              <AgingMatrixView rows={matrixRows} totals={matrix?.totals || {}} onPickCustomer={onPickCustomer} />
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </GlassCard>
-    </div>
+    </PageLayout>
   );
 }
-
-function TopDebtorsView({ debtors, search, onPickCustomer }) {
-  const filtered = useMemo(() => {
-    if (!search) return debtors;
-    const q = search.toLowerCase();
-    return debtors.filter(d =>
-      (d.customer_name || '').toLowerCase().includes(q) ||
-      (d.customer_code || '').toLowerCase().includes(q)
-    );
-  }, [debtors, search]);
-
-  if (filtered.length === 0) {
-    return (
-      <EmptyState
-        icon={search ? Search : Users}
-        title={search ? 'Tidak ada customer yang cocok' : 'Tidak ada debtor yang outstanding 🎉'}
-        description={search ? 'Coba ubah kata kunci pencarian.' : 'Semua piutang sudah lunas!'}
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-2">
-      {filtered.map((d, idx) => (
-        <motion.button
-          key={d.customer_id}
-          data-testid={`ar360-debtor-${d.customer_id}`}
-          initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.02 }}
-          onClick={() => onPickCustomer(d)}
-          className="w-full text-left p-3 rounded-lg bg-foreground/[0.03] border border-foreground/[0.08] hover:bg-foreground/[0.06] hover:border-violet-400 dark:border-violet-400/30 transition group"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-500/15 flex items-center justify-center text-violet-600 dark:text-violet-300 font-bold text-sm flex-shrink-0">
-                {idx + 1}
-              </div>
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm font-semibold text-foreground truncate">{d.customer_name}</span>
-                  {d.customer_code && <span className="text-[10px] font-mono text-violet-600 dark:text-violet-300">{d.customer_code}</span>}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5 flex items-center gap-3 flex-wrap">
-                  <span>{d.invoice_count} faktur</span>
-                  {d.oldest_days_overdue > 0 && (
-                    <span className="text-amber-600 dark:text-amber-300">Terlama: terlambat {d.oldest_days_overdue} hari</span>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="text-right flex-shrink-0">
-              <div className="text-base font-bold text-red-600 dark:text-red-300">{fmtRp(d.outstanding)}</div>
-              {d.overdue_amount > 0 && (
-                <div className="text-[10px] text-amber-600 dark:text-amber-300">Lewat jatuh tempo: {fmtRp(d.overdue_amount)}</div>
-              )}
-            </div>
-            <ChevronRight className="w-4 h-4 text-foreground/15 group-hover:text-violet-600 dark:text-violet-400 transition flex-shrink-0" />
-          </div>
-        </motion.button>
-      ))}
-    </div>
-  );
-}
-
-function AgingMatrixView({ rows, totals, onPickCustomer }) {
-  if (rows.length === 0) {
-    return (
-      <EmptyState icon={FileSpreadsheet} title="Belum ada piutang" description="Umur piutang muncul setelah ada faktur penjualan." />
-    );
-  }
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="text-muted-foreground border-b border-foreground/10">
-            <th className="text-left py-2 px-2">Pelanggan</th>
-            <th className="text-right py-2 px-2">Belum jatuh tempo</th>
-            <th className="text-right py-2 px-2">1-30 hari</th>
-            <th className="text-right py-2 px-2">31-60 hari</th>
-            <th className="text-right py-2 px-2">61-90 hari</th>
-            <th className="text-right py-2 px-2">&gt; 90 hari</th>
-            <th className="text-right py-2 px-2 border-l border-foreground/10">Total</th>
-            <th className="text-center py-2 px-2">Aksi</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(r => (
-            <motion.tr
-              key={r.customer_id}
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              className="border-b border-foreground/5 hover:bg-foreground/[0.03]"
-            >
-              <td className="py-2 px-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-foreground font-semibold truncate max-w-[200px]" title={r.customer_name}>{r.customer_name}</span>
-                  {r.customer_code && <span className="text-[10px] font-mono text-violet-600 dark:text-violet-300">{r.customer_code}</span>}
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-0.5">
-                  {r.count} inv · oldest {r.oldest_days_overdue}d
-                </div>
-              </td>
-              <td className="py-2 px-2 text-right">{r.current > 0 ? <span className="text-green-600 dark:text-green-300">{fmtRp(r.current)}</span> : <span className="text-foreground/15">—</span>}</td>
-              <td className="py-2 px-2 text-right">{r['1_30'] > 0 ? <span className="text-blue-600 dark:text-blue-300">{fmtRp(r['1_30'])}</span> : <span className="text-foreground/15">—</span>}</td>
-              <td className="py-2 px-2 text-right">{r['31_60'] > 0 ? <span className="text-amber-600 dark:text-amber-300">{fmtRp(r['31_60'])}</span> : <span className="text-foreground/15">—</span>}</td>
-              <td className="py-2 px-2 text-right">{r['61_90'] > 0 ? <span className="text-orange-600 dark:text-orange-300">{fmtRp(r['61_90'])}</span> : <span className="text-foreground/15">—</span>}</td>
-              <td className="py-2 px-2 text-right">{r['90_plus'] > 0 ? <span className="text-red-600 dark:text-red-300 font-bold">{fmtRp(r['90_plus'])}</span> : <span className="text-foreground/15">—</span>}</td>
-              <td className="py-2 px-2 text-right border-l border-foreground/10">
-                <span className="text-foreground font-bold">{fmtRp(r.total)}</span>
-              </td>
-              <td className="py-2 px-2 text-center">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="border-violet-400 dark:border-violet-400/30 text-violet-600 dark:text-violet-300 hover:bg-violet-100 dark:bg-violet-500/10 text-[10px] h-7 px-2"
-                  data-testid={`ar360-matrix-statement-${r.customer_id}`}
-                  onClick={() => onPickCustomer(r)}
-                >
-                  <ExternalLink className="w-3 h-3 mr-1" /> Statement
-                </Button>
-              </td>
-            </motion.tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-violet-400/40 font-bold">
-            <td className="py-2 px-2 text-foreground">TOTAL ({totals.count || 0} faktur)</td>
-            <td className="py-2 px-2 text-right text-green-600 dark:text-green-300">{fmtRp(totals.current)}</td>
-            <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300">{fmtRp(totals['1_30'])}</td>
-            <td className="py-2 px-2 text-right text-amber-600 dark:text-amber-300">{fmtRp(totals['31_60'])}</td>
-            <td className="py-2 px-2 text-right text-orange-600 dark:text-orange-300">{fmtRp(totals['61_90'])}</td>
-            <td className="py-2 px-2 text-right text-red-600 dark:text-red-300">{fmtRp(totals['90_plus'])}</td>
-            <td className="py-2 px-2 text-right text-base text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</td>
-            <td></td>
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  );
-}
-
-// ─── Main Component ────────────────────────────────────────────────────────
-export default function ARLifecycleModule({ token }) {
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState(null);
-
-  if (selectedCustomerId) {
-    return (
-      <CustomerStatementView
-        customerId={selectedCustomerId}
-        headers={headers}
-        onBack={() => setSelectedCustomerId(null)}
-      />
-    );
-  }
-  return <DashboardView headers={headers} onPickCustomer={(d) => setSelectedCustomerId(d.customer_id)} />;
-}
-

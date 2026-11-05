@@ -258,7 +258,8 @@ def test_05_fe_labels_wac():
     ds = open(os.path.join(fe, "sales", "DirectSalesModule.jsx"), encoding="utf-8").read()
     assert "['wac', 'fifo_batch', 'mixed'].includes(r.cogs_basis)" in ds
     fv = open(os.path.join(fe, "RahazaFGValuationModule.jsx"), encoding="utf-8").read()
-    assert "Nilai WAC" in fv and "Nilai Lapisan FIFO" not in fv
+    # 2026-11-04 (PANDUAN_UI G11): "WAC" ditulis dalam bahasa staf — "harga rata-rata"; tetap bukan lapisan FIFO
+    assert "harga rata-rata" in fv and "Nilai Lapisan FIFO" not in fv
 
 
 def test_06_integration_tests_expect_wac():

@@ -1,16 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Download, Upload, CheckCircle2, AlertTriangle, FileSpreadsheet, ClipboardList } from 'lucide-react';
+import { Download, Upload, CheckCircle2, AlertTriangle, ClipboardList } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { PageHeader, StatTile } from '../moduleAtoms';
+import { StatTile } from '../moduleAtoms';
+import PageLayout from '../layout/PageLayout';
 import { fmt, authHeaders, downloadXlsx } from './reportShared';
 
-const tdN = 'py-1.5 px-2 text-right font-mono text-xs';
+const tdN = 'text-right tabular-nums';
 const CAT_LABEL = {
   model_tanpa_sku: 'model tanpa SKU', model_dihentikan: 'model dihentikan (semua SKU nonaktif)', kelompok_tanpa_varian: 'kelompok tanpa varian', satuan_tak_valid: 'satuan tak valid',
   kode_tak_dikenal: 'kode tak dikenal', qty_kosong: 'qty kosong', warna_tak_dikenal: 'warna tak dikenal', model_tak_dikenal: 'model tak dikenal', baris_tanpa_model: 'baris tanpa model',
 };
+// kategori baru dari server yang belum berlabel tetap tampil sebagai kata biasa, bukan kode
+const catLabel = (k) => CAT_LABEL[k] || String(k || '').replace(/_/g, ' ');
 
 async function postXlsx(url, token, file, fallbackName) {
   const fd = new FormData();
@@ -26,15 +29,23 @@ async function postXlsx(url, token, file, fallbackName) {
 
 function ResultCard({ result }) {
   return (
-    <GlassCard className="p-4 text-xs text-emerald-300 space-y-1" data-testid="fill-result">
-      <div>Selesai ({result.scope === 'bom' ? 'hanya BOM' : 'semua sheet'}): BOM: {result.bom_lines_appended || 0} baris aksesoris terpasang (mengganti {result.bom_lines_replaced || 0} baris lama) di {result.boms_touched || 0} BOM · {result.boms_unchanged || 0} BOM sudah sama · {result.bom_groups || 0} kelompok / {result.bom_models || 0} model · {result.bom_base_created || 0} BOM dasar baru</div>
-      <div>HPP: {result.models_hpp_applied} model dihitung · <span className="text-amber-300" data-testid="fill-result-hpp-unvalidated">{result.hpp_unvalidated || 0} model HPP belum tervalidasi</span> (material harga 0 / kemasan tanpa isi) · {result.hpp_validated || 0} tervalidasi{result.variants_created ? <> · <span data-testid="fill-result-variants">{result.variants_created} varian/SKU baru dibuat (VARIAN_BARU)</span></> : null}</div>
+    <GlassCard className="p-4 text-xs space-y-1" data-testid="fill-result">
+      <p className="font-semibold text-sm text-[hsl(var(--success))]">Selesai ({result.scope === 'bom' ? 'hanya BOM' : 'semua sheet'})</p>
+      <div>BOM: {result.bom_lines_appended || 0} baris aksesoris terpasang (mengganti {result.bom_lines_replaced || 0} baris lama) di {result.boms_touched || 0} BOM · {result.boms_unchanged || 0} BOM sudah sama · {result.bom_groups || 0} kelompok / {result.bom_models || 0} model · {result.bom_base_created || 0} BOM dasar baru</div>
+      <div>HPP: {result.models_hpp_applied} model dihitung · <span className="text-[hsl(var(--warning))]" data-testid="fill-result-hpp-unvalidated">{result.hpp_unvalidated || 0} model HPP belum tervalidasi</span> (material harga 0 / kemasan tanpa isi) · {result.hpp_validated || 0} tervalidasi{result.variants_created ? <> · <span data-testid="fill-result-variants">{result.variants_created} varian/SKU baru dibuat (sheet VARIAN_BARU)</span></> : null}</div>
       {result.scope !== 'bom' && <div data-testid="fill-result-extra">{result.materials_updated} material · {result.accounts_updated} rekening · {result.stores_updated} toko · {result.sku_prices_updated || 0} harga SKU · <span data-testid="fill-result-deactivated">{result.sku_deactivated || 0} SKU dinonaktifkan (sudah tidak dijual)</span> · {result.opening_stock_rows || 0} stok awal · {result.salaries_updated || 0} gaji · {result.models_weight_updated || 0} berat model</div>}
-      {(result.bom_conflicts || []).length > 0 && <div className="text-amber-300">Konflik qty (kelompok belakangan menimpa): {result.bom_conflicts.join(' | ')}</div>}
+      {(result.bom_conflicts || []).length > 0 && <div className="text-[hsl(var(--warning))]">Konflik qty (kelompok belakangan menimpa): {result.bom_conflicts.join(' | ')}</div>}
     </GlassCard>
   );
 }
 
+const StepLabel = ({ n }) => <p className="text-xs text-muted-foreground font-semibold">Langkah {n}</p>;
+
+/**
+ * Impor go-live (menu Pengaturan Keuangan › Impor go-live) — harga, satuan, rekening, dan BOM dari satu berkas Excel.
+ * 2026-11-05 (PANDUAN_UI G1/G3/G11): cetakan PageLayout; satu tombol utama (Terapkan); penjelasan panjang dipendekkan
+ * dan istilah program ("yang_perlu_diisi", "{dasar}") diganti kalimat biasa; warna hanya token.
+ */
 export default function RahazaMasterFillModule({ token }) {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -63,7 +74,7 @@ export default function RahazaMasterFillModule({ token }) {
       const j = await r.json();
       if (!r.ok) { toast.error(typeof j.detail === 'string' ? j.detail : j.detail?.message || 'Gagal'); return; }
       setResult(j);
-      toast.success(`Diterapkan (${scope === 'bom' ? 'hanya BOM' : 'semua sheet'}): ${j.bom_lines_appended || 0} baris aksesoris di ${j.boms_touched || 0} BOM · HPP ${j.models_hpp_applied} model (${j.hpp_unvalidated || 0} belum tervalidasi). Unduh Laporan Sisa untuk kekurangan.`);
+      toast.success(`Diterapkan (${scope === 'bom' ? 'hanya BOM' : 'semua sheet'}): ${j.bom_lines_appended || 0} baris aksesoris di ${j.boms_touched || 0} BOM · HPP ${j.models_hpp_applied} model (${j.hpp_unvalidated || 0} belum tervalidasi). Unduh laporan sisa untuk kekurangannya.`);
     } finally { setBusy(false); }
   };
   const dl = () => downloadXlsx('/api/rahaza/master/fill-template', token, 'TEMPLATE_HARGA_SATUAN_REKENING_BOM.xlsx').catch((e) => toast.error(e.message));
@@ -79,31 +90,33 @@ export default function RahazaMasterFillModule({ token }) {
   const cats = Object.entries(preview?.bom_issue_counts || {});
 
   return (
-    <div className="space-y-5" data-testid="fill-page">
-      <PageHeader icon={FileSpreadsheet} eyebrow="Master · Pengisian Massal" title="Impor Harga · Satuan · Rekening · BOM"
-        subtitle="Sesi go-live: unduh berkas FOKUS (hanya BOM · Varian Baru · Material yang masih kosong; semua baris sudah terisi, klien mengisi sel kuning saja) → unggah → pratinjau → Terapkan. BOM aksesoris per (model, varian) yang ada di berkas diganti utuh; model lain tidak disentuh. Varian yang disarankan sistem (sel biru) berasal dari nama bahan pembeda kelompok, bukan tebakan importir." />
-      <div className="grid md:grid-cols-4 gap-4">
-        <GlassCard className="p-5 space-y-3"><div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 1</div><h3 className="font-semibold text-sm">Unduh berkas isian</h3>
-          <Button onClick={dlFokus} className="w-full" data-testid="fill-download-fokus"><Download className="w-3.5 h-3.5 mr-1.5" />{file ? 'Berkas FOKUS — sisa dari berkas ini' : 'Berkas FOKUS (yang perlu diisi saja)'}</Button>
-          <p className="text-[11px] text-muted-foreground">Hanya yang masih perlu diisi: sheet VARIAN_BARU, BOM_AKSESORIS, MATERIAL. Semua baris sudah terisi — klien cukup mengisi sel <span className="rounded px-1 bg-[#FFF2CC] text-black">kuning</span>; sel <span className="rounded px-1 bg-[#DDEBF7] text-black">biru</span> = diisi otomatis (mis. varian dari nama bahan pembeda), cukup diperiksa. Kelompok yang seluruhnya sudah otomatis dipisah ke sheet BOM_OTOMATIS (ikut diterapkan saat diunggah balik). Kolom "yang_perlu_diisi" menyebut persis kekurangan tiap baris.</p>
-          <Button size="sm" onClick={dlHarga} variant="outline" className="w-full text-xs" data-testid="fill-download-harga-review"><Download className="w-3.5 h-3.5 mr-1.5" />Review harga aksesoris & kain (HPP)</Button>
-          <Button size="sm" onClick={dlGap} variant="outline" className="w-full text-xs" data-testid="fill-download-gap"><Download className="w-3.5 h-3.5 mr-1.5" />{file ? 'Berkas lengkap — SISA dari berkas ini' : 'Berkas lengkap (semua sheet, 1 berkas)'}</Button>
-          <Button size="sm" onClick={dl} variant="outline" className="w-full text-xs" data-testid="fill-download"><Download className="w-3.5 h-3.5 mr-1.5" />Template lengkap (semua material)</Button></GlassCard>
-        <GlassCard className="p-5 space-y-3"><div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 2</div><h3 className="font-semibold text-sm">Unggah berkas terisi</h3>
+    <PageLayout
+      testId="fill-page"
+      title="Impor harga, satuan, rekening, dan BOM"
+      subtitle="Sesi go-live: unduh berkas isian, isi sel kuning, unggah untuk pratinjau, lalu terapkan."
+    >
+      <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-4">
+        <GlassCard className="p-4 space-y-3"><StepLabel n={1} /><h3 className="font-semibold text-sm">Unduh berkas isian</h3>
+          <Button variant="outline" onClick={dlFokus} className="w-full" data-testid="fill-download-fokus"><Download className="w-4 h-4" />{file ? 'Berkas fokus — sisa dari berkas ini' : 'Berkas fokus (yang perlu diisi saja)'}</Button>
+          <p className="text-[11px] text-muted-foreground">Hanya yang masih perlu diisi: sheet VARIAN_BARU, BOM_AKSESORIS, dan MATERIAL. Isi sel <span className="rounded px-1 bg-[#FFF2CC] text-black">kuning</span>; sel <span className="rounded px-1 bg-[#DDEBF7] text-black">biru</span> diisi otomatis (mis. varian dari nama bahan pembeda), cukup diperiksa. Kolom "Yang perlu diisi" menyebut persis kekurangan tiap baris.</p>
+          <Button size="sm" onClick={dlHarga} variant="outline" className="w-full" data-testid="fill-download-harga-review"><Download className="w-4 h-4" />Periksa harga aksesoris & kain (HPP)</Button>
+          <Button size="sm" onClick={dlGap} variant="outline" className="w-full" data-testid="fill-download-gap"><Download className="w-4 h-4" />{file ? 'Berkas lengkap — sisa dari berkas ini' : 'Berkas lengkap (semua sheet)'}</Button>
+          <Button size="sm" onClick={dl} variant="outline" className="w-full" data-testid="fill-download"><Download className="w-4 h-4" />Template lengkap (semua material)</Button></GlassCard>
+        <GlassCard className="p-4 space-y-3"><StepLabel n={2} /><h3 className="font-semibold text-sm">Unggah berkas terisi</h3>
           <input ref={inputRef} type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} className="block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/20 file:px-3 file:py-1.5 file:text-xs file:text-primary" data-testid="fill-file" />
-          <p className="text-xs text-muted-foreground">Pratinjau muncul otomatis: baris siap / dilewati per kategori, varian tujuan, satuan dasar hasil konversi.</p></GlassCard>
-        <GlassCard className="p-5 space-y-3"><div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 3</div><h3 className="font-semibold text-sm">Terapkan</h3>
+          <p className="text-xs text-muted-foreground">Pratinjau muncul otomatis: baris siap dan yang dilewati per kategori, varian tujuan, dan satuan dasar hasil konversi. BOM aksesoris per model & varian di berkas diganti utuh; model lain tidak disentuh.</p></GlassCard>
+        <GlassCard className="p-4 space-y-3"><StepLabel n={3} /><h3 className="font-semibold text-sm">Terapkan</h3>
           <Button onClick={() => doApply('bom')} disabled={!preview || busy || !(t.bom_lines > 0)} className="w-full" data-testid="fill-apply">
-            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />Terapkan (hanya BOM)</Button>
-          <Button size="sm" onClick={() => doApply('all')} variant="outline" disabled={!preview?.ok || busy || !nApply} className="w-full text-xs" data-testid="fill-apply-all">
-            <Upload className="w-3.5 h-3.5 mr-1.5" />Terapkan semua sheet</Button></GlassCard>
-        <GlassCard className="p-5 space-y-3"><div className="text-[10px] uppercase text-muted-foreground font-semibold">Langkah 4</div><h3 className="font-semibold text-sm">Laporan Sisa</h3>
-          <Button onClick={dlLaporan} variant="outline" className="w-full" data-testid="fill-download-laporan"><ClipboardList className="w-3.5 h-3.5 mr-1.5" />Unduh LAPORAN_SISA_DA.xlsx</Button>
-          <p className="text-[11px] text-muted-foreground">Kekurangan yang tidak diimpor: model tanpa SKU (+ sheet VARIAN_BARU), kelompok tanpa varian, satuan/kode tak valid, warna tak dikenal, material harga 0, HARGA_JUAL_SKU, berat/toko/rekening/gaji, HPP belum tervalidasi. {file ? 'Memakai berkas yang sedang diunggah.' : 'Tanpa berkas: hanya dari kondisi DB.'}</p></GlassCard>
+            <CheckCircle2 className="w-4 h-4" />Terapkan (hanya BOM)</Button>
+          <Button size="sm" onClick={() => doApply('all')} variant="outline" disabled={!preview?.ok || busy || !nApply} className="w-full" data-testid="fill-apply-all">
+            <Upload className="w-4 h-4" />Terapkan semua sheet</Button></GlassCard>
+        <GlassCard className="p-4 space-y-3"><StepLabel n={4} /><h3 className="font-semibold text-sm">Laporan sisa</h3>
+          <Button onClick={dlLaporan} variant="outline" className="w-full" data-testid="fill-download-laporan"><ClipboardList className="w-4 h-4" />Unduh laporan sisa</Button>
+          <p className="text-[11px] text-muted-foreground">Kekurangan yang tidak diimpor: model tanpa SKU, kelompok tanpa varian, satuan/kode tak valid, warna tak dikenal, material harga 0, harga jual SKU, berat/toko/rekening/gaji, HPP belum tervalidasi. {file ? 'Memakai berkas yang sedang diunggah.' : 'Tanpa berkas: hanya dari data yang sudah ada di sistem.'}</p></GlassCard>
       </div>
       {preview && (
         <div className="space-y-3" data-testid="fill-preview">
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <StatTile label="Baris BOM siap" value={`${t.bom_lines || 0} (${t.bom_groups || 0} kelompok · ${t.bom_models || 0} model)`} testId="fill-kpi-bom" />
             <StatTile label="BOM dilewati" value={`${t.bom_skipped || 0} catatan · ${t.bom_models_in_file || 0} model di berkas`} accent={t.bom_skipped ? 'warning' : 'success'} testId="fill-kpi-bom-skipped" />
             <StatTile label="Material berubah" value={t.materials} testId="fill-kpi-mat" />
@@ -111,34 +124,48 @@ export default function RahazaMasterFillModule({ token }) {
             <StatTile label="Harga SKU · Nonaktif · Stok awal · Gaji" value={`${t.sku_prices || 0} · ${t.sku_deactivate || 0} · ${t.stock_rows || 0} · ${t.salaries || 0}`} testId="fill-kpi-extra" />
             <StatTile label={preview.ok ? (bomWarn.length ? `Siap · ${bomWarn.length} dilewati` : 'Siap') : `${preview.errors.length} masalah sheet lain`} value={preview.ok ? '✓' : '!'} accent={preview.ok ? (bomWarn.length ? 'warning' : 'success') : 'danger'} testId="fill-kpi-status" />
           </div>
-          {cats.length > 0 && <GlassCard className="p-3 text-xs flex flex-wrap gap-2" data-testid="fill-issue-cats">{cats.map(([k, n]) => <span key={k} className="rounded-full border border-amber-500/30 px-2.5 py-1" data-testid={`fill-issue-cat-${k}`}>{CAT_LABEL[k] || k}: <b>{n}</b></span>)}</GlassCard>}
-          {preview.errors.length > 0 && <GlassCard className="p-4 border border-rose-500/30 text-xs" data-testid="fill-errors"><div className="inline-flex items-center gap-2 text-rose-300 font-semibold mb-2"><AlertTriangle className="w-4 h-4" />Masalah di sheet selain BOM (tidak menghalangi "Terapkan hanya BOM")</div><ul className="list-disc pl-5 space-y-1 max-h-[30vh] overflow-auto">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul></GlassCard>}
-          {bomWarn.length > 0 && <GlassCard className="p-4 border border-amber-500/30 text-xs" data-testid="fill-warnings"><div className="inline-flex items-center gap-2 text-amber-500 font-semibold mb-2"><AlertTriangle className="w-4 h-4" />{bomWarn.length} catatan dilewati — masuk Laporan Sisa, tidak menghalangi penerapan sisanya</div><ul className="list-disc pl-5 space-y-1 max-h-[30vh] overflow-auto">{bomWarn.map((e, i) => <li key={i}>{e}</li>)}</ul></GlassCard>}
+          {cats.length > 0 && (
+            <div className="flex flex-wrap gap-2 text-xs" data-testid="fill-issue-cats">
+              {cats.map(([k, n]) => <span key={k} className="rounded-full border border-[hsl(var(--warning)/0.3)] px-2.5 py-1" data-testid={`fill-issue-cat-${k}`}>{catLabel(k)}: <b>{n}</b></span>)}
+            </div>
+          )}
+          {preview.errors.length > 0 && (
+            <div className="bg-[hsl(var(--destructive)/0.08)] border border-[hsl(var(--destructive)/0.3)] rounded-[var(--radius-md)] px-4 py-3 text-xs" data-testid="fill-errors">
+              <p className="inline-flex items-center gap-2 text-[hsl(var(--destructive))] font-semibold mb-2"><AlertTriangle className="w-4 h-4" />Masalah di sheet selain BOM (tidak menghalangi "Terapkan hanya BOM")</p>
+              <ul className="list-disc pl-5 space-y-1 max-h-[30vh] overflow-auto">{preview.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>
+            </div>
+          )}
+          {bomWarn.length > 0 && (
+            <div className="bg-[hsl(var(--warning)/0.08)] border border-[hsl(var(--warning)/0.3)] rounded-[var(--radius-md)] px-4 py-3 text-xs" data-testid="fill-warnings">
+              <p className="inline-flex items-center gap-2 text-[hsl(var(--warning))] font-semibold mb-2"><AlertTriangle className="w-4 h-4" />{bomWarn.length} catatan dilewati — masuk laporan sisa, tidak menghalangi penerapan sisanya</p>
+              <ul className="list-disc pl-5 space-y-1 max-h-[30vh] overflow-auto">{bomWarn.map((e, i) => <li key={i}>{e}</li>)}</ul>
+            </div>
+          )}
           {preview.materials.length > 0 && (
-            <GlassCard className="p-0 overflow-hidden"><div className="overflow-auto max-h-[40vh]"><table className="w-full text-sm" data-testid="fill-mat-table">
-              <thead className="sticky top-0 bg-[var(--card-surface)] text-[10px] uppercase text-muted-foreground"><tr className="border-b border-[var(--glass-border)]"><th className="py-2 px-2 text-left">Kode</th><th className="py-2 px-2 text-left">Nama</th><th className="py-2 px-2 text-left">Beli</th><th className="py-2 px-2 text-right">Isi</th><th className="py-2 px-2 text-right">Harga beli</th><th className="py-2 px-2 text-right">→ per {'{dasar}'}</th><th className="py-2 px-2 text-right">Sebelumnya</th></tr></thead>
-              <tbody>{preview.materials.map((m) => <tr key={m.code} className="border-b border-[var(--glass-border)]" data-testid={`fill-mat-${m.code}`}><td className="py-1.5 px-2 font-mono text-xs">{m.code}</td><td className="py-1.5 px-2 text-xs">{m.name}</td><td className="py-1.5 px-2 text-xs">{m.buy_unit}</td><td className={tdN}>{m.pack_size} {m.base_unit}</td><td className={tdN}>{m.buy_price ? fmt(m.buy_price) : ''}</td><td className={`${tdN} text-emerald-300`}>{m.unit_cost != null ? `${fmt(m.unit_cost)}/${m.base_unit}` : ''}</td><td className={`${tdN} text-muted-foreground`}>{fmt(m.unit_cost_before)}</td></tr>)}</tbody>
+            <GlassCard className="p-0 overflow-hidden"><div className="overflow-auto max-h-[40vh]"><table className="w-full" data-testid="fill-mat-table">
+              <thead className="sticky top-0 bg-[var(--card-surface)]"><tr><th className="text-left">Kode</th><th className="text-left">Nama</th><th className="text-left">Beli</th><th className="text-right">Isi</th><th className="text-right">Harga beli</th><th className="text-right">Per satuan dasar</th><th className="text-right">Sebelumnya</th></tr></thead>
+              <tbody>{preview.materials.map((m) => <tr key={m.code} data-testid={`fill-mat-${m.code}`}><td className="whitespace-nowrap">{m.code}</td><td>{m.name}</td><td>{m.buy_unit}</td><td className={tdN}>{m.pack_size} {m.base_unit}</td><td className={tdN}>{m.buy_price ? fmt(m.buy_price) : ''}</td><td className={`${tdN} text-[hsl(var(--success))]`}>{m.unit_cost != null ? `${fmt(m.unit_cost)}/${m.base_unit}` : ''}</td><td className={`${tdN} text-muted-foreground`}>{fmt(m.unit_cost_before)}</td></tr>)}</tbody>
             </table></div></GlassCard>
           )}
           {(preview.bom_lines || []).length > 0 && (
-            <GlassCard className="p-0 overflow-hidden" data-testid="fill-bom-table"><div className="overflow-auto max-h-[40vh]"><table className="w-full text-sm">
-              <thead className="sticky top-0 bg-[var(--card-surface)] text-[10px] uppercase text-muted-foreground"><tr className="border-b border-[var(--glass-border)]"><th className="py-2 px-2 text-left">Baris</th><th className="py-2 px-2 text-left">Model</th><th className="py-2 px-2 text-left">Varian tujuan</th><th className="py-2 px-2 text-left">Material</th><th className="py-2 px-2 text-right">Qty/pcs</th><th className="py-2 px-2 text-right">= satuan dasar</th><th className="py-2 px-2 text-left">Catatan</th></tr></thead>
-              <tbody>{preview.bom_lines.map((b, i) => <tr key={i} className="border-b border-[var(--glass-border)]" data-testid={`fill-bom-row-${b.row}`}><td className="py-1.5 px-2 font-mono text-xs text-muted-foreground">{b.row}</td><td className="py-1.5 px-2 text-xs"><span className="font-mono">{b.model_code}</span> {b.model_name}</td><td className="py-1.5 px-2 text-xs">{b.target} <span className="text-muted-foreground">({b.target_skus} SKU)</span></td><td className="py-1.5 px-2 text-xs"><span className="font-mono">{b.code}</span> {b.name}</td><td className={tdN}>{b.qty} {b.unit}</td><td className={tdN}>{b.qty_base} {b.unit_base}</td><td className="py-1.5 px-2 text-[11px] text-muted-foreground">{b.note}</td></tr>)}</tbody>
+            <GlassCard className="p-0 overflow-hidden" data-testid="fill-bom-table"><div className="overflow-auto max-h-[40vh]"><table className="w-full">
+              <thead className="sticky top-0 bg-[var(--card-surface)]"><tr><th className="text-left">Baris</th><th className="text-left">Model</th><th className="text-left">Varian tujuan</th><th className="text-left">Material</th><th className="text-right">Qty/pcs</th><th className="text-right">Dalam satuan dasar</th><th className="text-left">Catatan</th></tr></thead>
+              <tbody>{preview.bom_lines.map((b, i) => <tr key={i} data-testid={`fill-bom-row-${b.row}`}><td className="tabular-nums text-muted-foreground">{b.row}</td><td><span className="whitespace-nowrap">{b.model_code}</span> {b.model_name}</td><td>{b.target} <span className="text-muted-foreground">({b.target_skus} SKU)</span></td><td><span className="whitespace-nowrap">{b.code}</span> {b.name}</td><td className={tdN}>{b.qty} {b.unit}</td><td className={tdN}>{b.qty_base} {b.unit_base}</td><td className="text-[11px] text-muted-foreground">{b.note}</td></tr>)}</tbody>
             </table></div></GlassCard>
           )}
           {(preview.models || []).length > 0 && (
-            <GlassCard className="p-4 text-xs space-y-1" data-testid="fill-models">{preview.models.map((m) => <div key={m.model_code}>Model <span className="font-mono">{m.model_code}</span> → berat {m.weight_gram} gram</div>)}</GlassCard>
+            <GlassCard className="p-4 text-xs space-y-1" data-testid="fill-models">{preview.models.map((m) => <div key={m.model_code}>Model {m.model_code} → berat {m.weight_gram} gram</div>)}</GlassCard>
           )}
           {(preview.accounts.length > 0 || preview.stores.length > 0 || (preview.sku_deactivate || []).length > 0) && (
             <GlassCard className="p-4 text-xs space-y-1" data-testid="fill-acc-store">
-              {preview.accounts.map((a) => <div key={a.gl_account_code}><span className="font-mono">{a.gl_account_code}</span> → no. rek {a.account_number || '-'} a.n. {a.holder_name || '-'}</div>)}
-              {preview.stores.map((s) => <div key={s.account_code}>Toko <span className="font-mono">{s.account_code}</span> → pencairan ke <span className="font-mono">{s.coa_cash_code}</span></div>)}
-              {(preview.sku_deactivate || []).length > 0 && <div className="text-amber-300" data-testid="fill-deactivate-list">SKU akan dinonaktifkan ("{preview.sku_deactivate[0].teks}"): {preview.sku_deactivate.map((d) => d.sku).join(', ')}</div>}
+              {preview.accounts.map((a) => <div key={a.gl_account_code}>Akun {a.gl_account_code} → no. rek {a.account_number || '-'} a.n. {a.holder_name || '-'}</div>)}
+              {preview.stores.map((s) => <div key={s.account_code}>Toko {s.account_code} → pencairan ke akun {s.coa_cash_code}</div>)}
+              {(preview.sku_deactivate || []).length > 0 && <div className="text-[hsl(var(--warning))]" data-testid="fill-deactivate-list">SKU akan dinonaktifkan ("{preview.sku_deactivate[0].teks}"): {preview.sku_deactivate.map((d) => d.sku).join(', ')}</div>}
             </GlassCard>
           )}
         </div>
       )}
       {result && <ResultCard result={result} />}
-    </div>
+    </PageLayout>
   );
 }

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { RefreshCw, Save, Eye, AlertCircle, CheckCircle2, Sparkles, Landmark } from 'lucide-react';
+import { RefreshCw, Save, Eye, AlertCircle, CheckCircle2, Landmark } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader } from './moduleAtoms';
+import { Skeleton } from '@/components/ui/skeleton';
+import PageLayout from './layout/PageLayout';
 
 // 2026-11-02 (K35) — penomoran akun pendapatan per toko (entity `store_revenue`).
 const STORE_REV_FORMATS = [
@@ -13,6 +14,16 @@ const STORE_REV_FORMATS = [
   { value: '{parent}-{store_code}', label: '4-1110-SHP-09 — sub-akun ber-kode toko' },
 ];
 const STORE_REV_PLATFORMS = [['shopee', 'Shopee'], ['tiktok', 'TikTok'], ['tokopedia', 'Tokopedia']];
+// Label layar per jenis pihak (label server memakai istilah Inggris: "Supplier … (AP)", "Channel … (AR)").
+const ENTITY_LABEL = {
+  cmt_vendor: { label: 'Vendor CMT — hutang', who: 'vendor CMT' },
+  supplier: { label: 'Pemasok bahan/aksesori — hutang', who: 'pemasok' },
+  customer: { label: 'Pelanggan — piutang', who: 'pelanggan' },
+  channel: { label: 'Toko online — piutang', who: 'toko online' },
+  maklon_client: { label: 'Klien maklon — piutang', who: 'klien maklon' },
+  bank: { label: 'Bank / rekening kas', who: 'rekening kas/bank' },
+  store_revenue: { label: 'Toko online — akun pendapatan per toko' },
+};
 
 function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
   const [preview, setPreview] = useState(null);
@@ -30,27 +41,26 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
       <div className="flex items-center gap-2">
         <Landmark className="w-4 h-4 text-primary" />
         <div>
-          <div className="font-semibold text-sm text-foreground">{cfg.label || 'Akun Pendapatan per Toko'}</div>
+          <div className="font-semibold text-sm text-foreground">{ENTITY_LABEL.store_revenue.label}</div>
           <div className="text-xs text-muted-foreground">
-            Dipakai saat toko marketplace BARU dibuat. Toko lama tidak diubah. Simpan kode ke: <code>coa_revenue_code</code>
+            Dipakai saat toko marketplace baru dibuat. Toko lama tidak diubah.
           </div>
         </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
         <div>
-          <label className="text-xs text-muted-foreground mb-1 block">Format Nomor Akun</label>
+          <label className="text-xs text-muted-foreground mb-1 block">Format nomor akun</label>
           <SmartNativeSelect value={fmt} onChange={(e) => onChange('code_format', e.target.value)}
-            className="w-full h-9 rounded-lg border border-[var(--glass-border)] bg-background px-3 text-sm"
-            data-testid="coa-auto-store-format">
+            searchable={false} className="w-full h-9" data-testid="coa-auto-store-format">
             {STORE_REV_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
           </SmartNativeSelect>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" onClick={runPreview} data-testid="coa-auto-store-preview">
-            <Eye className="w-3.5 h-3.5 mr-1.5" /> Nomor berikutnya (Shopee)
+            <Eye className="w-4 h-4" /> Nomor berikutnya (Shopee)
           </Button>
           {preview && (
-            <span className="text-xs font-mono" data-testid="coa-auto-store-preview-result">
+            <span className="text-xs tabular-nums" data-testid="coa-auto-store-preview-result">
               {preview.ok ? preview.next_code : (preview.error || preview.detail || 'gagal')}
             </span>
           )}
@@ -62,9 +72,8 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
             <label className="text-xs text-muted-foreground mb-1 block">Kelompok {label}</label>
             <SmartNativeSelect value={groups[p] || ''}
               onChange={(e) => onChange('parent_by_platform', { ...groups, [p]: e.target.value })}
-              className="w-full h-9 rounded-lg border border-[var(--glass-border)] bg-background px-3 text-sm"
-              data-testid={`coa-auto-store-group-${p}`}>
-              <option value="">— bawaan —</option>
+              className="w-full h-9" data-testid={`coa-auto-store-group-${p}`}>
+              <option value="">Bawaan</option>
               {revenueGroups.map((a) => <option key={a.code} value={a.code}>{a.code} — {a.name}</option>)}
             </SmartNativeSelect>
           </div>
@@ -75,10 +84,10 @@ function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
 }
 
 /**
- * Phase 5 — Auto-Create COA Subledger (settings + backfill).
- * Finance dapat: aktif/matikan auto-akun per jenis entitas, pilih akun parent (kontrol),
- * dan menjalankan backfill untuk entitas lama. Akun subledger dibuat di bawah parent
- * sehingga GL menampilkan saldo per-entitas (mis. hutang per Vendor CMT).
+ * Akun per pemasok/pelanggan/toko (Pengaturan Keuangan › Pemetaan akun otomatis).
+ * Phase 5 — Auto-Create COA Subledger: Finance dapat menyalakan/mematikan akun otomatis per jenis pihak dan
+ * memilih akun induk (kontrol). Akun turunan dibuat di bawah induk sehingga buku besar menampilkan saldo per pihak.
+ * 2026-11-05 (PANDUAN_UI G1/G11): cetakan PageLayout; nama koleksi & kolom basis data tidak lagi ditampilkan.
  */
 export default function RahazaCoaAutoModule({ token }) {
   const [settings, setSettings] = useState(null);
@@ -98,7 +107,7 @@ export default function RahazaCoaAutoModule({ token }) {
         fetch('/api/rahaza/coa-auto/settings', { headers }),
         fetch('/api/rahaza/coa/accounts?active_only=true', { headers }),
       ]);
-      if (!sRes.ok) throw new Error('Gagal memuat settings');
+      if (!sRes.ok) throw new Error('Gagal memuat pengaturan');
       const s = await sRes.json();
       const a = aRes.ok ? await aRes.json() : [];
       setSettings(s);
@@ -150,39 +159,44 @@ export default function RahazaCoaAutoModule({ token }) {
     .filter((a) => !a.is_group) // parent kontrol biasanya postable; tetap tampilkan semua non-group + group
     .concat(accounts.filter((a) => a.is_group));
 
-  if (loading) {
-    return <div className="p-6 text-sm text-muted-foreground" data-testid="coa-auto-loading">Memuat pengaturan auto-COA…</div>;
-  }
-
   return (
-    <div className="space-y-4" data-testid="coa-auto-module">
-      <PageHeader
-        icon={Sparkles}
-        title="Auto Akun Subledger (COA)"
-        subtitle="Otomatis buat akun COA per-entitas (Vendor CMT, Supplier, Pelanggan, Channel Online, Bank/Kas) di bawah akun kontrol. GL jadi bisa menampilkan saldo per-entitas (hutang/piutang/kas)."
-        actions={
-          <>
-            <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="coa-auto-refresh">
-              <RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={save} disabled={saving} data-testid="coa-auto-save">
-              <Save className="w-3.5 h-3.5 mr-1.5" /> {saving ? 'Menyimpan…' : 'Simpan Pengaturan'}
-            </Button>
-          </>
-        }
-      />
-
-      {error && (
-        <div className="flex items-center gap-2 text-sm text-red-500 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2" data-testid="coa-auto-error">
-          <AlertCircle className="w-4 h-4" /> {error}
-        </div>
+    <PageLayout
+      testId="coa-auto-module"
+      title="Akun per pemasok, pelanggan, dan toko"
+      subtitle="Akun turunan dibuat otomatis di bawah akun kontrol, sehingga buku besar menampilkan saldo per pihak."
+      actions={
+        <Button onClick={save} disabled={saving || loading || !settings} data-testid="coa-auto-save">
+          <Save className="w-4 h-4" /> {saving ? 'Menyimpan…' : 'Simpan pengaturan'}
+        </Button>
+      }
+      tools={
+        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchData} data-testid="coa-auto-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      }
+      summary={<>
+        {error && (
+          <div className="flex items-center gap-2 text-sm text-[hsl(var(--destructive))]" role="alert" data-testid="coa-auto-error">
+            <AlertCircle className="w-4 h-4" /> {error}
+          </div>
+        )}
+        {info && (
+          <div className="flex items-center gap-2 text-sm text-[hsl(var(--success))]" data-testid="coa-auto-info">
+            <CheckCircle2 className="w-4 h-4" /> {info}
+          </div>
+        )}
+      </>}
+      footer={!loading && settings && (
+        <p className="text-xs text-muted-foreground">
+          Akun turunan dibuat di bawah akun induk (mis. 2-1100 Hutang Usaha untuk vendor CMT/pemasok, 1-1301 Piutang untuk
+          pelanggan, 1-220 untuk toko online, 1-1200 untuk bank/kas). Saat faktur pembelian/penjualan dicatat, jurnal memakai
+          akun per pihak; bila fitur nonaktif atau akunnya belum ada, jurnal memakai akun induk. Aman dijalankan berulang.
+        </p>
       )}
-      {info && (
-        <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2" data-testid="coa-auto-info">
-          <CheckCircle2 className="w-4 h-4" /> {info}
-        </div>
-      )}
-
-      {settings && Object.entries(settings.entity_types).map(([key, cfg]) => {
+    >
+      {loading ? (
+        <Skeleton className="h-40" data-testid="coa-auto-loading" />
+      ) : settings && Object.entries(settings.entity_types).map(([key, cfg]) => {
         if (key === 'store_revenue') {
           return (
             <StoreRevenueCard key={key} cfg={cfg} accounts={accounts} headers={headers}
@@ -195,9 +209,9 @@ export default function RahazaCoaAutoModule({ token }) {
               <div className="flex items-center gap-2">
                 <Landmark className="w-4 h-4 text-primary" />
                 <div>
-                  <div className="font-semibold text-sm text-foreground">{cfg.label || key}</div>
+                  <div className="font-semibold text-sm text-foreground">{ENTITY_LABEL[key]?.label || cfg.label || key.replace(/_/g, ' ')}</div>
                   <div className="text-xs text-muted-foreground">
-                    Koleksi: <code>{cfg.collection}</code> · Simpan kode ke: <code>{cfg.target_field}</code>
+                    Akun baru dibuat di bawah akun induk saat {ENTITY_LABEL[key]?.who || 'data'} baru ditambahkan.
                   </div>
                 </div>
               </div>
@@ -209,7 +223,7 @@ export default function RahazaCoaAutoModule({ token }) {
                   className="w-4 h-4 accent-[var(--primary)]"
                   data-testid={`coa-auto-enabled-${key}`}
                 />
-                <span className={cfg.enabled ? 'text-emerald-600 font-medium' : 'text-muted-foreground'}>
+                <span className={cfg.enabled ? 'text-[hsl(var(--success))] font-medium' : 'text-muted-foreground'}>
                   {cfg.enabled ? 'Aktif' : 'Nonaktif'}
                 </span>
               </label>
@@ -217,14 +231,14 @@ export default function RahazaCoaAutoModule({ token }) {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Akun Parent (Kontrol)</label>
+                <label className="text-xs text-muted-foreground mb-1 block">Akun induk (kontrol)</label>
                 <SmartNativeSelect
                   value={cfg.parent_code || ''}
                   onChange={(e) => patchEntity(key, 'parent_code', e.target.value)}
-                  className="w-full h-9 rounded-lg border border-[var(--glass-border)] bg-background px-3 text-sm"
+                  className="w-full h-9"
                   data-testid={`coa-auto-parent-${key}`}
                 >
-                  <option value="">— pilih akun —</option>
+                  <option value="">Pilih akun</option>
                   {accountOptions.map((a) => (
                     <option key={a.code} value={a.code}>{a.code} — {a.name}</option>
                   ))}
@@ -236,13 +250,6 @@ export default function RahazaCoaAutoModule({ token }) {
           </GlassCard>
         );
       })}
-
-      <p className="text-xs text-muted-foreground px-1">
-        Catatan: akun subledger dibuat di bawah akun parent/kontrol (mis. <code>2-1100</code> Hutang Usaha untuk Vendor CMT/Supplier,
-        <code>1-1301</code> Piutang untuk Pelanggan, <code>1-220</code> untuk Channel Online, <code>1-1200</code> untuk Bank/Kas).
-        Saat mem-posting invoice (AP/AR), jurnal otomatis memakai akun per-entitas tersebut; jika fitur nonaktif atau
-        akun belum ada, jurnal jatuh ke akun kontrol. Idempotent &amp; aman dijalankan berulang.
-      </p>
-    </div>
+    </PageLayout>
   );
 }

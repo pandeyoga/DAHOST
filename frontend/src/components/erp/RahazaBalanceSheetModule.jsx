@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Download, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
+import { StatTile, EmptyState } from './moduleAtoms';
+import PageLayout from './layout/PageLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { todayWIB } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
@@ -14,6 +15,7 @@ const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigit
  * Neraca per tanggal (menu Laporan › Neraca).
  * 2026-11-04 (PANDUAN_UI G7): dua tabel laporan berdampingan (Aset | Liabilitas + Ekuitas) — dulu tiga
  * kartu dengan tabel tanpa judul kolom dan angka berhuruf mesin ketik berwarna-warni.
+ * 2026-11-05 (PANDUAN_UI G1/G6): cetakan PageLayout — satu pilihan "Per tanggal" di toolbar kiri.
  */
 export default function RahazaBalanceSheetModule({ token }) {
   const [data, setData] = useState(null);
@@ -55,40 +57,43 @@ export default function RahazaBalanceSheetModule({ token }) {
   const col = [{ key: 'amount', label: `Per ${formatDateID(asOf)}` }];
 
   return (
-    <div className="space-y-4" data-testid="bs-page">
-      <PageHeader
-        title="Neraca"
-        subtitle="Posisi aset, liabilitas, dan ekuitas pada satu tanggal."
-        actions={
-          <>
-            <span className="text-xs text-muted-foreground">Per tanggal</span>
-            <GlassInput type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-9 w-40" data-testid="bs-as-of" />
-            <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="bs-refresh"><RefreshCw className="w-4 h-4" /></Button>
-            <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="bs-export"><Download className="w-4 h-4" />Unduh CSV</Button>
-          </>
-        }
-      />
-
-      {error && <GlassCard className="p-3 text-sm text-[hsl(var(--destructive))]" data-testid="bs-error">{error}</GlassCard>}
-      {data && (
-        <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="bs-balanced">
-          {data.balanced
-            ? <><CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Seimbang: aset = liabilitas + ekuitas</>
-            : <><AlertTriangle className="w-4 h-4" /> Tidak seimbang, selisih {fmt(t.diff)} — periksa jurnal tanpa akun neraca</>}
-        </p>
-      )}
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatTile label="Total aset" value={fmt(t.assets)} testId="bs-kpi-assets" />
-        <StatTile label="Total liabilitas" value={fmt(t.liabilities)} testId="bs-kpi-liab" />
-        <StatTile label="Total ekuitas" value={fmt(t.equity)} testId="bs-kpi-equity" />
-        <StatTile label={Number(t.current_earnings) >= 0 ? 'Laba tahun berjalan' : 'Rugi tahun berjalan'} value={fmt(t.current_earnings)} accent={Number(t.current_earnings) < 0 ? 'danger' : 'default'} testId="bs-kpi-earnings" />
-      </div>
-
+    <PageLayout
+      testId="bs-page"
+      title="Neraca"
+      subtitle="Posisi aset, liabilitas, dan ekuitas pada satu tanggal."
+      filters={<>
+        <span className="text-sm text-muted-foreground">Per tanggal</span>
+        <GlassInput type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-9 w-40" aria-label="Per tanggal" data-testid="bs-as-of" />
+      </>}
+      tools={<>
+        <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="bs-refresh"><RefreshCw className="w-4 h-4" /></Button>
+        <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="bs-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+      </>}
+      summary={<>
+        {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="bs-error">{error}</p>}
+        {data && (
+          <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="bs-balanced">
+            {data.balanced
+              ? <><CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Seimbang: aset = liabilitas + ekuitas</>
+              : <><AlertTriangle className="w-4 h-4" /> Tidak seimbang, selisih {fmt(t.diff)} — periksa jurnal tanpa akun neraca</>}
+          </p>
+        )}
+        {data && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <StatTile label="Total aset" value={fmt(t.assets)} testId="bs-kpi-assets" />
+            <StatTile label="Total liabilitas" value={fmt(t.liabilities)} testId="bs-kpi-liab" />
+            <StatTile label="Total ekuitas" value={fmt(t.equity)} testId="bs-kpi-equity" />
+            <StatTile label={Number(t.current_earnings) >= 0 ? 'Laba tahun berjalan' : 'Rugi tahun berjalan'} value={fmt(t.current_earnings)} accent={Number(t.current_earnings) < 0 ? 'danger' : 'default'} testId="bs-kpi-earnings" />
+          </div>
+        )}
+      </>}
+    >
       {loading ? (
         <Skeleton className="h-80 rounded-[var(--radius-lg)]" />
       ) : !data ? (
-        <EmptyState icon={FileBarChart} title="Belum ada neraca" description="Neraca muncul setelah ada jurnal atau saldo awal." />
+        <GlassCard className="p-0">
+          <EmptyState icon={FileBarChart} title="Belum ada neraca" description="Neraca muncul setelah ada jurnal atau saldo awal." />
+        </GlassCard>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
           <StatementTable testId="bs-assets" defaultOpen columns={col}
@@ -98,6 +103,6 @@ export default function RahazaBalanceSheetModule({ token }) {
               { kind: 'total', label: 'Total liabilitas + ekuitas', values: { amount: t.liab_plus_equity } }]} />
         </div>
       )}
-    </div>
+    </PageLayout>
   );
 }

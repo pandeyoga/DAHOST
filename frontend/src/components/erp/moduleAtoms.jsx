@@ -54,7 +54,7 @@ export function PageHeader({ title, subtitle, actions, className, testId }) {
  * Phase 12.4 — Drill-down: bila `onClick` prop diberikan, tile jadi button
  * dengan hover/focus states supaya user bisa klik untuk navigasi detail.
  */
-export function StatTile({ label, value, accent = 'default', className, testId, suffix, onClick, hint }) {
+export function StatTile({ label, value, accent = 'default', className, testId, suffix, onClick, hint, sub, subTone }) {
   const colors = {
     default: 'text-foreground',
     primary: 'text-[hsl(var(--primary))]',
@@ -85,10 +85,37 @@ export function StatTile({ label, value, accent = 'default', className, testId, 
       <p className={cn('text-xl font-bold tracking-tight mt-1 tabular-nums', colors[accent] || colors.default)}>
         {value}{suffix && <span className="text-sm text-foreground/50 ml-1">{suffix}</span>}
       </p>
+      {/* 2026-11-04: baris keterangan kecil di bawah angka (mis. "Rp 2 jt lewat jatuh tempo") — tanpa kartu buatan */}
+      {sub && <p className={cn('text-xs mt-1 line-clamp-2', subTone ? colors[subTone] : 'text-muted-foreground')}>{sub}</p>}
       {isClickable && hint && (
         <p className="text-[10px] text-foreground/40 mt-1 truncate">{hint} →</p>
       )}
     </Tag>
+  );
+}
+
+/**
+ * Notice \u2014 SATU bentuk kotak pemberitahuan (peringatan / galat / berhasil / info) \u2014 2026-11-04.
+ * Pengganti <div className="\u2026 bg-amber-\u2026 border-amber-\u2026"> buatan sendiri di tiap layar (KARTU-BUATAN).
+ *   <Notice tone="warning" icon={AlertTriangle} title="3 tagihan belum dijurnal">Perbaiki di \u2026</Notice>
+ */
+const NOTICE_TONE = {
+  warning: 'border-[hsl(var(--warning)/0.35)] bg-[hsl(var(--warning)/0.08)] text-[hsl(var(--warning))]',
+  danger: 'border-[hsl(var(--destructive)/0.35)] bg-[hsl(var(--destructive)/0.08)] text-[hsl(var(--destructive))]',
+  success: 'border-[hsl(var(--success)/0.35)] bg-[hsl(var(--success)/0.08)] text-[hsl(var(--success))]',
+  info: 'border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground',
+};
+export function Notice({ tone = 'warning', icon: Icon, title, children, action, className, testId }) {
+  return (
+    <div role={tone === 'danger' ? 'alert' : 'status'} data-testid={testId}
+      className={cn('rounded-[var(--radius-md)] border px-4 py-3 text-sm flex items-start gap-2', NOTICE_TONE[tone] || NOTICE_TONE.info, className)}>
+      {Icon && <Icon className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />}
+      <div className="min-w-0 flex-1">
+        {title && <p className="font-medium">{title}</p>}
+        {children && <div className={cn(title && 'mt-0.5', 'text-foreground/80')}>{children}</div>}
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
+    </div>
   );
 }
 

@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { toast } from 'sonner';
-import { Plus, RefreshCw, CreditCard } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { AlertTriangle, Plus, RefreshCw, CreditCard } from 'lucide-react';
+import { GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { PageHeader } from './moduleAtoms';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import PageLayout from './layout/PageLayout';
+import { Notice } from './moduleAtoms';
 import { DataTable } from './DataTableV2';
 import { formatRupiah, formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
@@ -75,28 +77,29 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
     return [...set].sort().map(c => ({ value: c, label: humanize(c) }));
   }, [rows]);
 
+  // 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — periode di toolbar kiri, muat ulang di kanan, tombol utama
+  // di kepala (di hub: baris tab). Dulu periode + muat ulang + tombol baru menumpuk di kepala halaman.
   return (
-    <div className="space-y-5" data-testid="rahaza-expenses-page">
-      <PageHeader
-        title="Pengeluaran"
-        subtitle="Biaya operasional: pilih akun beban dan rekening yang membayar; jurnal terbentuk otomatis."
-        actions={
-          <>
-            <PeriodPicker value={period} onChange={setPeriod} testId="exp-period" />
-            <Button size="icon" variant="outline" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-3.5 h-3.5" /></Button>
-            <Button onClick={() => setCreating(true)} data-testid="exp-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Pengeluaran baru</Button>
-          </>
-        }
-      />
-      {/* PANDUAN_UI G5 (2026-11-04): total sebagai satu baris netral — dulu kartu selebar halaman dengan "Rp 0" merah */}
-      <p className="text-sm text-muted-foreground" data-testid="exp-total">
-        {formatDateID(period.from)} – {formatDateID(period.to)} · {rows.length} pengeluaran · total <b className="text-foreground tabular-nums">{fmt(total)}</b>
-      </p>
-      {rows.length >= EXP_LIMIT && (
-        <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="exp-truncated">
-          Ditampilkan {EXP_LIMIT.toLocaleString('id-ID')} pengeluaran terbaru saja — persempit periode supaya semua terlihat.
+    <PageLayout
+      testId="rahaza-expenses-page"
+      title="Pengeluaran"
+      subtitle="Biaya operasional: pilih akun beban dan rekening yang membayar; jurnal terbentuk otomatis."
+      actions={<Button onClick={() => setCreating(true)} data-testid="exp-add"><Plus className="w-4 h-4" />Pengeluaran baru</Button>}
+      filters={<PeriodPicker value={period} onChange={setPeriod} testId="exp-period" />}
+      tools={<Button size="icon" variant="outline" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      summary={<>
+        {/* PANDUAN_UI G5 (2026-11-04): total sebagai satu baris netral — dulu kartu selebar halaman dengan "Rp 0" merah */}
+        <p className="text-sm text-muted-foreground" data-testid="exp-total">
+          {formatDateID(period.from)} – {formatDateID(period.to)} · {rows.length} pengeluaran · total <b className="text-foreground tabular-nums">{fmt(total)}</b>
         </p>
-      )}
+        {rows.length >= EXP_LIMIT && (
+          <Notice tone="warning" icon={AlertTriangle} testId="exp-truncated" className="text-xs">
+            Ditampilkan {EXP_LIMIT.toLocaleString('id-ID')} pengeluaran terbaru saja — persempit periode supaya semua terlihat.
+          </Notice>
+        )}
+      </>}
+    >
+      {/* 2026-11-05 (galeri: SEL-TERLIPAT): sel tanggal/jumlah berisi teks langsung (tanpa <span>) dan tidak dipatah */}
       <DataTable
         tableId="expenses"
         loading={loading}
@@ -108,17 +111,17 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
             options: centers.map(c => ({ value: c.id, label: `${c.code} · ${c.name}` })) },
         ]}
         columns={[
-          { key: 'date', label: 'Tanggal', sortable: true,
-            render: (r, v) => <span className="text-xs whitespace-nowrap">{formatDateID(v)}</span> },
+          { key: 'date', label: 'Tanggal', sortable: true, className: 'whitespace-nowrap',
+            render: (r, v) => formatDateID(v) },
           { key: 'category', label: 'Kategori', sortable: true,
-            render: (r, v) => <span className="text-xs">{humanize(v)}</span> },
+            render: (r, v) => humanize(v) },
           { key: 'description', label: 'Deskripsi', sortable: true },
           { key: 'gl_debit_code', label: 'Akun beban',
             render: (r) => <span className="text-[11px] text-foreground/70">{r.gl_debit_code ? `${r.gl_debit_code} · ${coaName[r.gl_debit_code] || ''}` : 'bawaan (Beban Umum)'}</span> },
           { key: 'cost_center_code', label: 'Pusat biaya',
             render: (r) => <span className="text-[11px] text-foreground/60">{r.cost_center_code || '—'} {r.cost_center_name && `· ${r.cost_center_name}`}</span> },
-          { key: 'amount', label: 'Jumlah', align: 'right', sortable: true,
-            render: (r) => <span className="tabular-nums text-foreground">{fmt(r.amount)}</span> },
+          { key: 'amount', label: 'Jumlah', align: 'right', sortable: true, className: 'whitespace-nowrap tabular-nums',
+            render: (r) => fmt(r.amount) },
         ]}
         emptyTitle="Belum ada pengeluaran di periode ini"
         emptyDescription='Tekan "Pengeluaran baru" untuk mencatat biaya operasional.'
@@ -127,7 +130,7 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
       />
       {creating && <ExpEditor centers={centers} accounts={accounts} accountsLoaded={accountsLoaded}
                               expenseAccounts={expenseAccounts} onClose={() => setCreating(false)} onSave={create} saving={savingExp} />}
-    </div>
+    </PageLayout>
   );
 }
 
@@ -137,10 +140,11 @@ function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, onClose
   // Rekening pembayar juga wajib: bila kosong, jurnal dulu jatuh diam-diam ke rekening bawaan profil.
   const missing = !s.gl_debit_code ? 'Pilih akun beban.' : !s.account_id ? 'Pilih rekening yang membayar.'
     : !(Number(s.amount) > 0) ? 'Isi jumlah.' : '';
+  // 2026-11-05 (PANDUAN_UI G9/G13): formulir isian pendek tetap popup, kini Dialog aplikasi (dulu lapisan buatan sendiri + <h2>)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <GlassCard className="p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
-        <h2 className="text-xl font-bold text-foreground mb-4">Tambah Pengeluaran</h2>
+    <Dialog open onOpenChange={v => !v && onClose()}>
+      <DialogContent className="max-w-md" data-testid="exp-dialog">
+        <DialogHeader><DialogTitle>Pengeluaran baru</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div><label className="text-xs text-muted-foreground" htmlFor="exp-date">Tanggal</label><GlassInput id="exp-date" type="date" value={s.date} onChange={e => upd('date', e.target.value)} /></div>
           <div><label className="text-xs text-muted-foreground">Akun beban</label>
@@ -153,11 +157,11 @@ function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, onClose
           <div><label className="text-xs text-muted-foreground" htmlFor="exp-amount">Jumlah</label><MoneyInput glass id="exp-amount" value={s.amount} onChange={e => upd('amount', Number(e.target.value))} data-testid="exp-amount" /></div>
           <div><label className="text-xs text-muted-foreground">Bayar dari rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={s.account_id} onChange={v => upd('account_id', v)} testId="exp-cash-account" /></div>
           <div><label className="text-xs text-muted-foreground" htmlFor="exp-category">Kategori (untuk penyaring daftar)</label><GlassInput id="exp-category" value={s.category} onChange={e => upd('category', e.target.value)} placeholder="operasional | sewa | listrik | ..." /></div>
-          <div><label className="text-xs text-muted-foreground">Cost Center (opsional)</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
+          <div><label className="text-xs text-muted-foreground">Pusat biaya (opsional)</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
+          {missing && <p className="text-[11px] text-muted-foreground" data-testid="exp-missing">{missing}</p>}
         </div>
-        {missing && <p className="text-[11px] text-muted-foreground mt-3" data-testid="exp-missing">{missing}</p>}
-        <div className="flex gap-2 mt-6 justify-end"><Button variant="outline" onClick={onClose} >Batal</Button><Button onClick={() => onSave(s)} disabled={saving || !!missing} data-testid="exp-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button></div>
-      </GlassCard>
-    </div>
+        <DialogFooter><Button variant="outline" onClick={onClose}>Batal</Button><Button onClick={() => onSave(s)} disabled={saving || !!missing} data-testid="exp-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

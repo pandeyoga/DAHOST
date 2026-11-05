@@ -72,7 +72,7 @@ export default function StatementTable({ columns, rows, labelHeader = 'Akun', de
                     </tr>
                     {isOpen && kids.map((k, j) => (
                       <tr key={`${r.id}-${k.code || j}`} data-testid={testId && k.code ? `${testId}-${r.id}-row-${k.code}` : undefined}>
-                        <td className="pl-10 text-foreground/80">
+                        <td className="!pl-10 text-foreground/80">
                           {k.code && <span className="text-xs text-muted-foreground mr-2">{k.code}</span>}{k.label}
                           {k.note && <span className="ml-2 text-xs text-muted-foreground">{k.note}</span>}
                         </td>
@@ -80,7 +80,7 @@ export default function StatementTable({ columns, rows, labelHeader = 'Akun', de
                       </tr>
                     ))}
                     {isOpen && !kids.length && (
-                      <tr><td colSpan={colSpan} className="pl-10 text-xs text-muted-foreground">Tidak ada saldo di periode ini.</td></tr>
+                      <tr><td colSpan={colSpan} className="!pl-10 text-xs text-muted-foreground">Tidak ada saldo di periode ini.</td></tr>
                     )}
                   </Fragment>
                 );

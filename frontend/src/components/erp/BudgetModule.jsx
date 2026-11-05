@@ -1,61 +1,77 @@
-import { useState, useEffect, useCallback } from 'react';
+import { Fragment, useState, useEffect, useCallback, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { PageHeader } from './moduleAtoms';
+import { StatusBadge, EmptyState } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Plus, Edit2, Trash2, CheckCircle, Lock, Unlock, Upload,
-  BarChart2, TrendingUp, TrendingDown, Minus, RefreshCw,
-  ChevronDown, ChevronRight, FileText, Download, Eye, AlertTriangle
+  Plus, Trash2, CheckCircle, Lock, Unlock, Upload,
+  BarChart2, RefreshCw, FileText, Eye, ListTree
 } from 'lucide-react';
-import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import Modal from './Modal';
-import PaginationBar from './PaginationBar';
+import PaginationLite from '@/components/ui/pagination-lite';
 import { toast } from 'sonner';
 import { formatRupiah, formatPercent } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { thisYearWIB } from '@/lib/waktu';
 
 const STATUS_MAP = {
-  draft:    { label: 'Draf',     color: 'bg-secondary text-muted-foreground' },
-  approved: { label: 'Disetujui', color: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' },
-  locked:   { label: 'Terkunci', color: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' },
+  draft:    { label: 'Draf',      tone: 'muted' },
+  approved: { label: 'Disetujui', tone: 'info' },
+  locked:   { label: 'Terkunci',  tone: 'success' },
 };
+const PERIOD_TYPE_LABEL = { monthly: 'Bulanan', quarterly: 'Kuartalan', annual: 'Tahunan' };
 
 // 2026-11-02: status variance dari backend — pendapatan (above/below_target) vs biaya (under/over)
 const BUDGET_STATUS_LABEL = {
   over: 'Melebihi anggaran', under: 'Di bawah anggaran', on_target: 'Sesuai anggaran',
-  above_target: 'Di Atas Target', below_target: 'Di Bawah Target',
+  above_target: 'Di atas target', below_target: 'Di bawah target',
 };
+const varianceTone = (s) => ((s === 'over' || s === 'below_target') ? 'danger' : (s === 'under' || s === 'above_target') ? 'success' : 'muted');
+const signClass = (n) => (Number(n) < 0 ? 'text-[hsl(var(--destructive))]' : Number(n) > 0 ? 'text-[hsl(var(--success))]' : 'text-muted-foreground');
 
 const MONTHS = [
   '01','02','03','04','05','06','07','08','09','10','11','12'
 ];
+const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+const periodLabel = (code) => { const [y, m] = String(code || '').split('-'); return BULAN[Number(m) - 1] ? `${BULAN[Number(m) - 1]} ${y}` : (code || '—'); };
+const fmtRp = formatRupiah;
 
+/**
+ * Anggaran (menu Akuntansi › Anggaran).
+ * 2026-11-05 (PANDUAN_UI G1/G13): cetakan PageLayout. Rincian satu anggaran dan "Anggaran vs realisasi" dibuka
+ * DI HALAMAN di atas daftar (dulu layar daftar diganti layar rincian, lalu layar ketiga untuk realisasi).
+ */
 export default function BudgetModule({ token }) {
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-  const [view, setView] = useState('list'); // 'list' | 'detail' | 'variance'
+  const [panelView, setPanelView] = useState('items'); // 'items' | 'variance'
   const [budgets, setBudgets] = useState([]);
   const [selected, setSelected] = useState(null);
   const [items, setItems] = useState([]);
   const [variance, setVariance] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [varLoading, setVarLoading] = useState(false);
   const [pagination, setPagination] = useState(null);
   const [page, setPage] = useState(1);
   const [filterYear, setFilterYear] = useState(thisYearWIB());
   const [filterStatus, setFilterStatus] = useState('');
+  const importRef = useRef(null);
 
   // Modals
   const [modalBudget, setModalBudget] = useState(false);
   const [modalItem, setModalItem] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [importOpen, setImportOpen] = useState(false);
   const [costCenters, setCostCenters] = useState([]);
   const [coa, setCoa] = useState([]);
 
   // Forms
   const [budgetForm, setBudgetForm] = useState({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
   const [itemForm, setItemForm] = useState({ account_id: '', month: '', amount_budgeted: '', notes: '' });
+
+  const thisYear = Number(thisYearWIB());
+  const yearOptions = [];
+  for (let y = Math.min(2023, thisYear - 3); y <= thisYear + 1; y++) yearOptions.push(y);
 
   const fetchBudgets = useCallback(async (p = 1) => {
     setLoading(true);
@@ -86,26 +102,30 @@ export default function BudgetModule({ token }) {
     if (coaRes.ok) setCoa(await coaRes.json());
   };
 
-  const openDetail = async (budget) => {
-    setSelected(budget);
-    setView('detail');
-    await fetchItems(budget.id);
-    await fetchMeta();
-  };
-
   const fetchItems = async (bid) => {
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}/items`, { headers });
     if (r.ok) setItems(await r.json());
   };
 
+  const openDetail = async (budget) => {
+    setSelected(budget);
+    setPanelView('items');
+    setVariance(null);
+    setItems([]);
+    await fetchItems(budget.id);
+    await fetchMeta();
+  };
+  const closeDetail = () => { setSelected(null); setVariance(null); setPanelView('items'); };
+  const toggleDetail = (b) => (selected?.id === b.id ? closeDetail() : openDetail(b));
+
   const fetchVariance = async (bid) => {
-    setLoading(true);
+    setVarLoading(true);
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}/variance`, { headers });
     if (r.ok) {
       setVariance(await r.json());
-      setView('variance');
+      setPanelView('variance');
     }
-    setLoading(false);
+    setVarLoading(false);
   };
 
   const createBudget = async () => {
@@ -119,15 +139,15 @@ export default function BudgetModule({ token }) {
       setBudgetForm({ name: '', year: thisYearWIB(), period_type: 'monthly', cost_center_id: '', department: '', notes: '' });
     } else {
       const e = await r.json();
-      toast.error(e.detail || 'Gagal membuat budget');
+      toast.error(e.detail || 'Gagal membuat anggaran');
     }
   };
 
   const deleteBudget = async (bid) => {
-    if (!(await confirmDialog('Hapus budget ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus anggaran ini?', confirmLabel: 'Hapus', danger: true }))) return;
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}`, { method: 'DELETE', headers });
-    if (r.ok) { toast.success('Anggaran dihapus'); fetchBudgets(page); }
-    else { const e = await r.json(); toast.error(e.detail || 'Gagal hapus'); }
+    if (r.ok) { toast.success('Anggaran dihapus'); if (selected?.id === bid) closeDetail(); fetchBudgets(page); }
+    else { const e = await r.json(); toast.error(e.detail || 'Gagal menghapus'); }
   };
 
   const changeStatus = async (bid, action) => {
@@ -152,7 +172,7 @@ export default function BudgetModule({ token }) {
       }),
     });
     if (r.ok) {
-      toast.success('Item berhasil ditambahkan');
+      toast.success('Item anggaran ditambahkan');
       setModalItem(false);
       setItemForm({ account_id: '', month: '', amount_budgeted: '', notes: '' });
       await fetchItems(selected.id);
@@ -182,10 +202,9 @@ export default function BudgetModule({ token }) {
     });
     if (r.ok) {
       const res = await r.json();
-      toast.success(`Import berhasil: ${res.imported} item. Dilewati: ${res.skipped?.length || 0}`);
+      toast.success(`Impor berhasil: ${res.imported} item, ${res.skipped?.length || 0} dilewati`);
       await fetchItems(selected.id);
-    } else { const err = await r.json(); toast.error(err.detail || 'Gagal import'); }
-    setImportOpen(false);
+    } else { const err = await r.json(); toast.error(err.detail || 'Gagal mengimpor'); }
     e.target.value = '';
   };
 
@@ -197,250 +216,204 @@ export default function BudgetModule({ token }) {
     return acc;
   }, {});
 
-  const fmtRp = formatRupiah;
-
-  if (view === 'variance' && variance) {
-    const { budget: vb, rows: vrows, summary } = variance;
-    return (
-      <div className="space-y-5" data-testid="budget-variance-page">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => { setView('detail'); }}>&larr; Kembali ke Detail</Button>
-          <h2 className="text-lg font-semibold">Anggaran vs realisasi — {vb?.name}</h2>
-        </div>
-        {/* Summary cards */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          {[
-            { label: 'Total anggaran', value: fmtRp(summary.total_budgeted), icon: <BarChart2 className="w-4 h-4" />, color: 'text-blue-500' },
-            { label: 'Total realisasi', value: fmtRp(summary.total_actual), icon: <TrendingUp className="w-4 h-4" />, color: 'text-emerald-500' },
-            { label: 'Selisih', value: fmtRp(summary.total_variance), icon: summary.total_variance >= 0 ? <TrendingDown className="w-4 h-4" /> : <TrendingUp className="w-4 h-4" />, color: summary.total_variance >= 0 ? 'text-emerald-500' : 'text-red-700 dark:text-red-500' },
-            { label: '% selisih', value: formatPercent(summary.total_variance_pct, 1), icon: <Minus className="w-4 h-4" />, color: 'text-muted-foreground' },
-          ].map(c => (
-            <GlassCard key={c.label} className="p-4">
-              <div className={`flex items-center gap-1.5 text-xs text-muted-foreground mb-1 ${c.color}`}>{c.icon} {c.label}</div>
-              <div className="text-sm font-semibold text-foreground">{c.value}</div>
-            </GlassCard>
-          ))}
-        </div>
-        {/* Variance table */}
-        <GlassCard className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--glass-bg)] text-xs uppercase text-muted-foreground">
-              <tr>{['Bulan','Akun','Anggaran','Realisasi','Selisih','%','Status'].map(h => <th key={h} className="px-3 py-2.5 text-left whitespace-nowrap">{h}</th>)}</tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {vrows.length === 0 && <tr><td colSpan={7} className="text-center py-6 text-muted-foreground">Tidak ada data</td></tr>}
-              {vrows.map((r, i) => (
-                <tr key={i} className="hover:bg-[var(--glass-bg)]">
-                  <td className="px-3 py-2">{r.month}</td>
-                  <td className="px-3 py-2">{r.account_code} <span className="text-muted-foreground">{r.account_name}</span></td>
-                  <td className="px-3 py-2 text-right">{fmtRp(r.amount_budgeted)}</td>
-                  <td className="px-3 py-2 text-right">{fmtRp(r.amount_actual)}</td>
-                  <td className={`px-3 py-2 text-right font-medium ${r.variance < 0 ? 'text-red-700 dark:text-red-500' : 'text-emerald-500'}`}>{fmtRp(r.variance)}</td>
-                  <td className={`px-3 py-2 text-right ${r.variance < 0 ? 'text-red-700 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{r.variance_pct}%</td>
-                  <td className="px-3 py-2">
-                    {/* 2026-11-02 (audit No.53): baris pendapatan memakai label target (di atas = baik) */}
-                    <span className={`px-1.5 py-0.5 rounded-full text-xs ${
-                      (r.status === 'over' || r.status === 'below_target') ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
-                      (r.status === 'under' || r.status === 'above_target') ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300' :
-                      'bg-secondary text-muted-foreground'
-                    }`}>{BUDGET_STATUS_LABEL[r.status] || 'On Target'}</span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </GlassCard>
-      </div>
-    );
-  }
-
-  if (view === 'detail' && selected) {
+  // ── RINCIAN SATU ANGGARAN (di halaman, di atas daftar)
+  let detail = null;
+  if (selected) {
     const st = STATUS_MAP[selected.status] || STATUS_MAP.draft;
-    return (
-      <div className="space-y-5" data-testid="budget-detail-page">
-        <div className="flex items-center justify-between flex-wrap gap-3">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => setView('list')}>&larr; Daftar Budget</Button>
-            <div>
-              <h2 className="text-lg font-semibold">{selected.name}</h2>
-              <span className={`px-2 py-0.5 rounded-full text-xs ${st.color}`}>{st.label}</span>
-            </div>
-          </div>
-          <div className="flex gap-2 flex-wrap">
-            {selected.status === 'draft' && <Button size="sm" onClick={() => changeStatus(selected.id, 'approve')} className="bg-blue-600 hover:bg-blue-700 text-foreground"><CheckCircle className="w-3.5 h-3.5 mr-1" />Setujui</Button>}
-            {selected.status === 'approved' && <Button size="sm" onClick={() => changeStatus(selected.id, 'lock')} className="bg-green-600 hover:bg-green-700 text-foreground"><Lock className="w-3.5 h-3.5 mr-1" />Kunci</Button>}
-            {(selected.status === 'approved' || selected.status === 'locked') && <Button size="sm" variant="outline" onClick={() => changeStatus(selected.id, 'reopen')}><Unlock className="w-3.5 h-3.5 mr-1" />Buka lagi</Button>}
-            {selected.status !== 'locked' && <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}><Upload className="w-3.5 h-3.5 mr-1" />Impor Excel</Button>}
-            {selected.status !== 'locked' && <Button size="sm" onClick={() => setModalItem(true)}><Plus className="w-3.5 h-3.5 mr-1" />Tambah Item</Button>}
-            <Button size="sm" variant="outline" onClick={() => fetchVariance(selected.id)} disabled={loading}><BarChart2 className="w-3.5 h-3.5 mr-1" />Anggaran vs realisasi</Button>
-          </div>
-        </div>
-
-        {/* Budget header info */}
-        <GlassCard className="p-4">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-            <div><span className="text-muted-foreground">Tahun:</span> <strong>{selected.year}</strong></div>
-            <div><span className="text-muted-foreground">Tipe:</span> {selected.period_type}</div>
-            <div><span className="text-muted-foreground">Departemen:</span> {selected.department || '-'}</div>
-            <div><span className="text-muted-foreground">Total anggaran:</span> <strong className="text-foreground">{fmtRp(selected.total_budgeted)}</strong></div>
-          </div>
-        </GlassCard>
-
-        {/* Items grouped by month */}
-        {Object.keys(itemsByMonth).sort().map(month => (
-          <GlassCard key={month}>
-            <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
-              <h3 className="font-medium text-sm">{month}</h3>
-              <span className="text-xs text-muted-foreground">{fmtRp(itemsByMonth[month].reduce((s, i) => s + Number(i.amount_budgeted || 0), 0))}</span>
-            </div>
-            <table className="w-full text-sm">
-              <thead className="text-xs text-muted-foreground uppercase">
-                <tr><th className="px-3 py-2 text-left">Akun</th><th className="px-3 py-2 text-right">Anggaran</th><th className="px-3 py-2 text-left">Catatan</th><th className="px-3 py-2 w-10"></th></tr>
+    const editable = selected.status !== 'locked';
+    const showVar = panelView === 'variance' && variance;
+    detail = (
+      <DetailPanel
+        testId="budget-detail-page"
+        title={showVar ? `Anggaran vs realisasi — ${selected.name}` : selected.name}
+        description={<>
+          <StatusBadge tone={st.tone} label={st.label} className="mr-2 align-middle" />
+          Tahun {selected.year} · {PERIOD_TYPE_LABEL[selected.period_type] || selected.period_type} · departemen {selected.department || '—'} · total anggaran <b className="text-foreground tabular-nums">{fmtRp(selected.total_budgeted)}</b>
+        </>}
+        onClose={closeDetail}
+        actions={showVar ? (
+          <Button variant="outline" onClick={() => setPanelView('items')} data-testid="budget-back-items"><ListTree className="w-4 h-4" />Rincian anggaran</Button>
+        ) : (
+          <>
+            {selected.status === 'draft' && <Button variant="outline" onClick={() => changeStatus(selected.id, 'approve')}><CheckCircle className="w-4 h-4" />Setujui</Button>}
+            {selected.status === 'approved' && <Button variant="outline" onClick={() => changeStatus(selected.id, 'lock')}><Lock className="w-4 h-4" />Kunci</Button>}
+            {(selected.status === 'approved' || selected.status === 'locked') && <Button variant="outline" onClick={() => changeStatus(selected.id, 'reopen')}><Unlock className="w-4 h-4" />Buka lagi</Button>}
+            {editable && <Button variant="outline" onClick={() => importRef.current?.click()}><Upload className="w-4 h-4" />Impor Excel</Button>}
+            {editable && <Button variant="outline" onClick={() => setModalItem(true)}><Plus className="w-4 h-4" />Tambah item</Button>}
+            <Button variant="outline" onClick={() => fetchVariance(selected.id)} disabled={varLoading}><BarChart2 className="w-4 h-4" />Anggaran vs realisasi</Button>
+          </>
+        )}
+      >
+        <input ref={importRef} type="file" accept=".xlsx,.xls" className="hidden" id="import-budget" onChange={handleImport} />
+        {showVar ? (
+          <VarianceView variance={variance} />
+        ) : items.length === 0 ? (
+          <EmptyState icon={FileText} title="Belum ada item anggaran" description="Tambah item satu per satu atau impor dari Excel." />
+        ) : (
+          <div className="overflow-x-auto -mx-4">
+            <table className="w-full" data-testid="budget-items-table">
+              <thead>
+                <tr><th className="text-left">Akun</th><th className="text-right">Anggaran</th><th className="text-left">Catatan</th><th className="w-10" /></tr>
               </thead>
-              <tbody className="divide-y divide-border">
-                {itemsByMonth[month].map(it => (
-                  <tr key={it.id} className="hover:bg-[var(--glass-bg)]">
-                    <td className="px-3 py-2">{it.account_code} <span className="text-muted-foreground">{it.account_name}</span></td>
-                    <td className="px-3 py-2 text-right font-medium">{fmtRp(it.amount_budgeted)}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{it.notes || '-'}</td>
-                    <td className="px-3 py-2">
-                      {selected.status !== 'locked' && (
-                        <button onClick={() => deleteItem(it.id)} className="text-red-700 dark:text-red-400 hover:text-red-600 p-1 rounded"><Trash2 className="w-3.5 h-3.5" /></button>
-                      )}
-                    </td>
-                  </tr>
+              <tbody>
+                {Object.keys(itemsByMonth).sort().map(month => (
+                  <Fragment key={month}>
+                    <tr className="bg-foreground/[0.03]">
+                      <td className="font-semibold whitespace-nowrap">{periodLabel(month)}</td>
+                      <td className="text-right tabular-nums font-semibold">{fmtRp(itemsByMonth[month].reduce((s, i) => s + Number(i.amount_budgeted || 0), 0))}</td>
+                      <td colSpan={2} />
+                    </tr>
+                    {itemsByMonth[month].map(it => (
+                      <tr key={it.id}>
+                        <td className="pl-6">{it.account_code} <span className="text-muted-foreground">{it.account_name}</span></td>
+                        <td className="text-right tabular-nums">{fmtRp(it.amount_budgeted)}</td>
+                        <td className="text-muted-foreground">{it.notes || '—'}</td>
+                        <td className="text-right">
+                          {editable && (
+                            <Button variant="ghost" size="icon-sm" onClick={() => deleteItem(it.id)} title="Hapus item" aria-label="Hapus item" className="text-[hsl(var(--destructive))]">
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
-          </GlassCard>
-        ))}
-        {items.length === 0 && <div className="text-center py-10 text-muted-foreground">Belum ada item. Tambah manual atau import Excel.</div>}
-
-        {/* Import file input hidden */}
-        {importOpen && <input type="file" accept=".xlsx,.xls" className="hidden" id="import-budget" onChange={handleImport} />}
-        {importOpen && document.getElementById('import-budget') && (() => { document.getElementById('import-budget').click(); setImportOpen(false); return null; })()}
-
-        {/* Add Item Modal */}
-        {modalItem && (
-          <Modal title="Tambah Item Budget" onClose={() => setModalItem(false)} size="sm">
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Akun (COA) *</label>
-                <SmartNativeSelect value={itemForm.account_id} onChange={e => setItemForm(f => ({...f, account_id: e.target.value}))}
-                  className="w-full border border-border rounded-md px-2.5 py-1.5 text-sm bg-[var(--card-surface)]">
-                  <option value="">-- Pilih Akun --</option>
-                  {coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
-                </SmartNativeSelect>
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Bulan (YYYY-MM) *</label>
-                <select value={itemForm.month} onChange={e => setItemForm(f => ({...f, month: e.target.value}))}
-                  className="w-full border border-border rounded-md px-2.5 py-1.5 text-sm bg-[var(--card-surface)]">
-                  <option value="">-- Pilih Bulan --</option>
-                  {/* 2026-11-02 (audit No.53): nilai bulan dulu memakai tahun form "Budget baru" (tahun berjalan) → item tersimpan ke tahun yang salah */}
-                  {MONTHS.map(m => <option key={m} value={`${selected.year}-${m}`}>{selected.year}-{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Jumlah Budget (Rp) *</label>
-                <MoneyInput glass placeholder="0" value={itemForm.amount_budgeted} onChange={e => setItemForm(f => ({...f, amount_budgeted: e.target.value}))} />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Catatan</label>
-                <GlassInput placeholder="Opsional" value={itemForm.notes} onChange={e => setItemForm(f => ({...f, notes: e.target.value}))} />
-              </div>
-              <div className="flex gap-2 pt-1">
-                <Button onClick={addItem} className="flex-1">Simpan</Button>
-                <Button variant="outline" onClick={() => setModalItem(false)} className="flex-1">Batal</Button>
-              </div>
-            </div>
-          </Modal>
+          </div>
         )}
-      </div>
+      </DetailPanel>
     );
   }
 
-  // ── LIST VIEW
+  // ── DAFTAR ANGGARAN
   return (
-    <div className="space-y-5" data-testid="budget-list-page">
-      {/* Header */}
-      <PageHeader title="Anggaran" subtitle="Anggaran per tahun, departemen, dan pusat biaya, dibandingkan dengan realisasinya." actions={<Button onClick={() => { setModalBudget(true); fetchMeta(); }} data-testid="btn-new-budget">
-          <Plus className="w-4 h-4 mr-1.5" /> Anggaran baru
-        </Button>} />
-
-      {/* Filters */}
-      <div>
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Tahun:</span>
-            <SmartNativeSelect value={filterYear} onChange={e => setFilterYear(+e.target.value)}
-              className="border border-border rounded px-2 py-1 text-sm bg-[var(--card-surface)]">
-              {[2023,2024,2025,2026,2027].map(y => <option key={y} value={y}>{y}</option>)}
-            </SmartNativeSelect>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Status:</span>
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-              className="border border-border rounded px-2 py-1 text-sm bg-[var(--card-surface)]">
-              <option value="">Semua</option>
-              <option value="draft">Draf</option>
-              <option value="approved">Disetujui</option>
-              <option value="locked">Terkunci</option>
-            </select>
-          </div>
-          <Button size="sm" variant="ghost" onClick={() => fetchBudgets(1)} disabled={loading}>
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-        </div>
-      </div>
-
-      {/* Table */}
-      <GlassCard className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-[var(--glass-bg)] text-xs uppercase text-muted-foreground">
-            <tr>
-              {['Nama anggaran','Tahun','Tipe','Departemen','Total anggaran','Status','Aksi'].map(h => (
-                <th key={h} className="px-3 py-3 text-left whitespace-nowrap">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {loading && <tr><td colSpan={7} className="text-center py-8"><RefreshCw className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></td></tr>}
-            {!loading && budgets.length === 0 && <tr><td colSpan={7} className="text-center py-8 text-muted-foreground">Belum ada budget. Buat yang pertama!</td></tr>}
-            {!loading && budgets.map(b => {
-              const st = STATUS_MAP[b.status] || STATUS_MAP.draft;
-              return (
-                <tr key={b.id} className="hover:bg-[var(--glass-bg)]">
-                  <td className="px-3 py-2.5 font-medium">{b.name}</td>
-                  <td className="px-3 py-2.5">{b.year}</td>
-                  <td className="px-3 py-2.5 capitalize">{b.period_type}</td>
-                  <td className="px-3 py-2.5 text-muted-foreground">{b.department || '-'}</td>
-                  <td className="px-3 py-2.5 font-medium text-emerald-600 dark:text-emerald-400">{fmtRp(b.total_budgeted)}</td>
-                  <td className="px-3 py-2.5"><span className={`px-2 py-0.5 rounded-full text-xs ${st.color}`}>{st.label}</span></td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex gap-1.5">
-                      <button onClick={() => openDetail(b)} className="p-1 rounded hover:bg-primary/10" title="Detail"><Eye className="w-3.5 h-3.5 text-primary" /></button>
-                      {b.status === 'draft' && <button onClick={() => deleteBudget(b.id)} className="p-1 rounded hover:bg-red-100" title="Hapus"><Trash2 className="w-3.5 h-3.5 text-red-700 dark:text-red-400" /></button>}
-                    </div>
-                  </td>
+    <PageLayout
+      testId="budget-list-page"
+      title="Anggaran"
+      subtitle="Anggaran per tahun, departemen, dan pusat biaya, dibandingkan dengan realisasinya."
+      actions={
+        <Button onClick={() => { setModalBudget(true); fetchMeta(); }} data-testid="btn-new-budget">
+          <Plus className="w-4 h-4" /> Anggaran baru
+        </Button>
+      }
+      filters={<>
+        <SmartNativeSelect value={String(filterYear)} onChange={e => setFilterYear(+e.target.value)} searchable={false}
+          className="h-9 w-28" aria-label="Tahun" data-testid="budget-filter-year">
+          {yearOptions.map(y => <option key={y} value={String(y)}>{y}</option>)}
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
+          className="h-9 w-40" aria-label="Status" data-testid="budget-filter-status">
+          <option value="">Semua status</option>
+          <option value="draft">Draf</option>
+          <option value="approved">Disetujui</option>
+          <option value="locked">Terkunci</option>
+        </SmartNativeSelect>
+      </>}
+      tools={
+        <Button size="icon" variant="outline" onClick={() => fetchBudgets(1)} disabled={loading} title="Muat ulang" aria-label="Muat ulang" data-testid="budget-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      }
+      detail={detail}
+      footer={pagination && pagination.total_pages > 1 && (
+        <PaginationLite page={pagination.page || page} totalPages={pagination.total_pages} total={pagination.total}
+          pageSize={pagination.limit || 20} onPageChange={setPage} />
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <Skeleton className="h-40 m-4" />
+        ) : budgets.length === 0 ? (
+          <EmptyState icon={BarChart2} title={`Belum ada anggaran ${filterYear}`}
+            description="Buat anggaran pertama lewat tombol Anggaran baru." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full" data-testid="budget-table">
+              <thead>
+                <tr>
+                  <th className="text-left">Nama anggaran</th>
+                  <th className="text-left">Tahun</th>
+                  <th className="text-left">Tipe</th>
+                  <th className="text-left">Departemen</th>
+                  <th className="text-right">Total anggaran</th>
+                  <th className="text-left">Status</th>
+                  <th className="text-right">Aksi</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        {pagination && pagination.total_pages > 1 && (
-          <div className="px-4 py-3 border-t border-border">
-            <PaginationBar pagination={pagination} onPageChange={setPage} />
+              </thead>
+              <tbody>
+                {budgets.map(b => {
+                  const st = STATUS_MAP[b.status] || STATUS_MAP.draft;
+                  const open = selected?.id === b.id;
+                  return (
+                    <tr key={b.id} className={open ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                      <td className="font-medium">
+                        <Button variant="link" size="sm" className="h-auto p-0 text-foreground" onClick={() => toggleDetail(b)}>{b.name}</Button>
+                      </td>
+                      <td className="whitespace-nowrap">{b.year}</td>
+                      <td>{PERIOD_TYPE_LABEL[b.period_type] || b.period_type}</td>
+                      <td className="text-muted-foreground">{b.department || '—'}</td>
+                      <td className="text-right tabular-nums font-medium">{fmtRp(b.total_budgeted)}</td>
+                      <td><StatusBadge tone={st.tone} label={st.label} /></td>
+                      <td className="text-right">
+                        <div className="flex gap-1 justify-end">
+                          <Button variant="ghost" size="icon-sm" onClick={() => toggleDetail(b)} title={open ? 'Tutup rincian' : 'Rincian'} aria-label={open ? 'Tutup rincian' : 'Rincian'}><Eye className="w-4 h-4" /></Button>
+                          {b.status === 'draft' && (
+                            <Button variant="ghost" size="icon-sm" onClick={() => deleteBudget(b.id)} title="Hapus" aria-label="Hapus" className="text-[hsl(var(--destructive))]"><Trash2 className="w-4 h-4" /></Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </GlassCard>
 
-      {/* Create Budget Modal */}
-      {modalBudget && (
-        <Modal title="Buat Budget Baru" onClose={() => setModalBudget(false)} size="sm">
+      {/* Tambah item — dialog isian pendek */}
+      {modalItem && selected && (
+        <Modal title="Tambah item anggaran" onClose={() => setModalItem(false)} size="sm">
           <div className="space-y-3">
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Nama Budget *</label>
+              <label className="block text-xs text-muted-foreground mb-1">Akun *</label>
+              <SmartNativeSelect value={itemForm.account_id} onChange={e => setItemForm(f => ({...f, account_id: e.target.value}))} className="h-9 w-full">
+                <option value="">Pilih akun</option>
+                {coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+              </SmartNativeSelect>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Bulan *</label>
+              <SmartNativeSelect value={itemForm.month} onChange={e => setItemForm(f => ({...f, month: e.target.value}))} className="h-9 w-full">
+                <option value="">Pilih bulan</option>
+                {/* 2026-11-02 (audit No.53): nilai bulan dulu memakai tahun form "Budget baru" (tahun berjalan) → item tersimpan ke tahun yang salah */}
+                {MONTHS.map(m => <option key={m} value={`${selected.year}-${m}`}>{periodLabel(`${selected.year}-${m}`)}</option>)}
+              </SmartNativeSelect>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Jumlah anggaran (Rp) *</label>
+              <MoneyInput glass placeholder="0" value={itemForm.amount_budgeted} onChange={e => setItemForm(f => ({...f, amount_budgeted: e.target.value}))} />
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Catatan</label>
+              <GlassInput placeholder="Opsional" value={itemForm.notes} onChange={e => setItemForm(f => ({...f, notes: e.target.value}))} />
+            </div>
+            <div className="flex gap-2 pt-1 justify-end">
+              <Button variant="outline" onClick={() => setModalItem(false)}>Batal</Button>
+              <Button onClick={addItem}>Simpan</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Anggaran baru — dialog isian pendek */}
+      {modalBudget && (
+        <Modal title="Anggaran baru" onClose={() => setModalBudget(false)} size="sm">
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs text-muted-foreground mb-1">Nama anggaran *</label>
               <GlassInput placeholder="mis. Anggaran Operasional 2026" value={budgetForm.name} onChange={e => setBudgetForm(f => ({...f, name: e.target.value}))} data-testid="budget-name" />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -449,13 +422,12 @@ export default function BudgetModule({ token }) {
                 <GlassInput type="number" value={budgetForm.year} onChange={e => setBudgetForm(f => ({...f, year: +e.target.value}))} />
               </div>
               <div>
-                <label className="block text-xs text-muted-foreground mb-1">Tipe Periode</label>
-                <select value={budgetForm.period_type} onChange={e => setBudgetForm(f => ({...f, period_type: e.target.value}))}
-                  className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-[var(--card-surface)]">
+                <label className="block text-xs text-muted-foreground mb-1">Tipe periode</label>
+                <SmartNativeSelect value={budgetForm.period_type} onChange={e => setBudgetForm(f => ({...f, period_type: e.target.value}))} searchable={false} className="h-9 w-full">
                   <option value="monthly">Bulanan</option>
                   <option value="quarterly">Kuartalan</option>
                   <option value="annual">Tahunan</option>
-                </select>
+                </SmartNativeSelect>
               </div>
             </div>
             <div>
@@ -463,10 +435,9 @@ export default function BudgetModule({ token }) {
               <GlassInput placeholder="mis. Produksi, Keuangan" value={budgetForm.department} onChange={e => setBudgetForm(f => ({...f, department: e.target.value}))} />
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground mb-1">Pusat Biaya</label>
-              <SmartNativeSelect value={budgetForm.cost_center_id} onChange={e => setBudgetForm(f => ({...f, cost_center_id: e.target.value}))}
-                className="w-full border border-border rounded px-2.5 py-1.5 text-sm bg-[var(--card-surface)]">
-                <option value="">-- Pilih (opsional) --</option>
+              <label className="block text-xs text-muted-foreground mb-1">Pusat biaya</label>
+              <SmartNativeSelect value={budgetForm.cost_center_id} onChange={e => setBudgetForm(f => ({...f, cost_center_id: e.target.value}))} className="h-9 w-full">
+                <option value="">Pilih (opsional)</option>
                 {costCenters.map(c => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
               </SmartNativeSelect>
             </div>
@@ -474,12 +445,62 @@ export default function BudgetModule({ token }) {
               <label className="block text-xs text-muted-foreground mb-1">Catatan</label>
               <GlassInput placeholder="Opsional" value={budgetForm.notes} onChange={e => setBudgetForm(f => ({...f, notes: e.target.value}))} />
             </div>
-            <div className="flex gap-2 pt-1">
-              <Button onClick={createBudget} className="flex-1" data-testid="btn-submit-budget">Simpan anggaran</Button>
-              <Button variant="outline" onClick={() => setModalBudget(false)} className="flex-1">Batal</Button>
+            <div className="flex gap-2 pt-1 justify-end">
+              <Button variant="outline" onClick={() => setModalBudget(false)}>Batal</Button>
+              <Button onClick={createBudget} data-testid="btn-submit-budget">Simpan anggaran</Button>
             </div>
           </div>
         </Modal>
+      )}
+    </PageLayout>
+  );
+}
+
+/** Anggaran vs realisasi — isi panel rincian (dulu layar terpisah). */
+function VarianceView({ variance }) {
+  const { rows: vrows = [], summary = {} } = variance || {};
+  return (
+    <div className="space-y-3" data-testid="budget-variance-page">
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+        {[
+          { label: 'Total anggaran', value: fmtRp(summary.total_budgeted) },
+          { label: 'Total realisasi', value: fmtRp(summary.total_actual) },
+          { label: 'Selisih', value: fmtRp(summary.total_variance), cls: signClass(summary.total_variance) },
+          { label: '% selisih', value: formatPercent(summary.total_variance_pct, 1) },
+        ].map(c => (
+          <div key={c.label}>
+            <dt className="text-xs text-muted-foreground">{c.label}</dt>
+            <dd className={`font-semibold tabular-nums ${c.cls || 'text-foreground'}`}>{c.value}</dd>
+          </div>
+        ))}
+      </dl>
+      {vrows.length === 0 ? (
+        <EmptyState icon={BarChart2} title="Belum ada realisasi untuk dibandingkan" description="Realisasi muncul setelah ada jurnal pada akun yang dianggarkan." />
+      ) : (
+        <div className="overflow-x-auto -mx-4">
+          <table className="w-full" data-testid="budget-variance-table">
+            <thead>
+              <tr>
+                <th className="text-left">Bulan</th><th className="text-left">Akun</th><th className="text-right">Anggaran</th>
+                <th className="text-right">Realisasi</th><th className="text-right">Selisih</th><th className="text-right">%</th><th className="text-left">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {vrows.map((r, i) => (
+                <tr key={i}>
+                  <td className="whitespace-nowrap">{periodLabel(r.month)}</td>
+                  <td>{r.account_code} <span className="text-muted-foreground">{r.account_name}</span></td>
+                  <td className="text-right tabular-nums">{fmtRp(r.amount_budgeted)}</td>
+                  <td className="text-right tabular-nums">{fmtRp(r.amount_actual)}</td>
+                  <td className={`text-right tabular-nums font-medium ${signClass(r.variance)}`}>{fmtRp(r.variance)}</td>
+                  <td className={`text-right tabular-nums ${signClass(r.variance)}`}>{formatPercent(r.variance_pct, 1)}</td>
+                  {/* 2026-11-02 (audit No.53): baris pendapatan memakai label target (di atas = baik) */}
+                  <td><StatusBadge tone={varianceTone(r.status)} label={BUDGET_STATUS_LABEL[r.status] || 'Sesuai anggaran'} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

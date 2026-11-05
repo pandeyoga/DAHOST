@@ -1,10 +1,18 @@
 /**
  * PayoutBankLinks — Finance menautkan rekening pencairan default tiap toko.
  * Daftar rekening = master Kas & Bank + COA kas/bank/e-wallet aktif (semua bank, bukan cuma yang ber-flag).
+ *
+ * 2026-11-05 (PANDUAN_UI G5/G6): daftar toko = tabel (dulu grid kartu per toko); pilihan rekening memakai
+ * SmartNativeSelect (bisa dicari) — dulu <select> bawaan browser. Kepala & penjelasan ada di cetakan
+ * PageLayout milik layar (StorePayoutLinksModule).
  */
 import { useEffect, useState } from 'react';
-import { Landmark, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Store, Loader2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { EmptyState } from '../moduleAtoms';
+import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -26,11 +34,11 @@ export const bankLabel = (b) => `${b.code} · ${b.name}${b.account_number ? ` ($
 
 export function BankSelect({ banks, value, onChange, testId, emptyLabel = '— pilih rekening —', className = '' }) {
   return (
-    <select data-testid={testId} value={value || ''} onChange={(e) => onChange(e.target.value)}
-      className={`w-full h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm ${className}`}>
+    <SmartNativeSelect data-testid={testId} value={value || ''} onChange={(e) => onChange(e.target.value)}
+      className={cn('h-9 w-full', className)} aria-label="Rekening bank">
       <option value="">{emptyLabel}</option>
       {banks.map((b) => <option key={b.code} value={b.code}>{bankLabel(b)}</option>)}
-    </select>
+    </SmartNativeSelect>
   );
 }
 
@@ -59,39 +67,47 @@ export function PayoutBankLinks({ accounts, banks, onChanged }) {
   };
 
   return (
-    <GlassCard className="p-4 space-y-3" data-testid="payout-bank-links">
-      <div>
-        <h3 className="font-medium text-sm flex items-center gap-2">
-          <Landmark className="w-4 h-4" /> Tautan Rekening Bank per Toko
-          <span className="text-xs text-foreground/50 font-normal">— {banks.length} rekening terbaca dari Kas & Bank / COA</span>
-        </h3>
-        <p className="text-xs text-foreground/60 mt-0.5">
-          Satu-satunya tempat mengatur rekening tujuan penarikan saldo platform per toko. Penarikan yang
-          belum dijurnal memakai rekening tautan TERBARU saat dijurnal (kecuali rekening dipilih khusus di form).
-        </p>
-      </div>
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-2">
-        {active.map((a) => (
-          <div key={a.id} className="rounded-lg bg-foreground/5 p-3 text-xs space-y-1.5" data-testid={`payout-bank-${a.account_code}`}>
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium truncate" title={a.account_name}>{a.account_name}</span>
-              <span className="uppercase text-[10px] text-foreground/50 flex items-center gap-1">
-                {busy === a.id ? <Loader2 className="w-3 h-3 animate-spin" />
-                  : a.coa_cash_code && cashIsConfirmed(a) ? <CheckCircle2 className="w-3 h-3 text-emerald-600" /> : null}
-                {a.platform}
-              </span>
-            </div>
-            {a.coa_cash_code && !cashIsConfirmed(a) && (
-              <div className="flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-300"
-                data-testid={`payout-bank-default-${a.account_code}`}>
-                <AlertTriangle className="w-3 h-3" /> rekening bawaan {a.coa_cash_code} — belum diatur
-              </div>
-            )}
-            <BankSelect banks={banks} value={a.coa_cash_code} onChange={(v) => save(a, v)}
-              testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="h-8 text-xs" />
-          </div>
-        ))}
-      </div>
+    <GlassCard className="p-0 overflow-hidden" data-testid="payout-bank-links">
+      {active.length === 0 ? (
+        <EmptyState icon={Store} title="Belum ada toko aktif"
+          description="Toko marketplace yang aktif akan muncul di sini untuk ditautkan ke rekening bank." />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Toko</TableHead>
+              <TableHead>Platform</TableHead>
+              <TableHead>Rekening tujuan penarikan</TableHead>
+              <TableHead>Keterangan</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {active.map((a) => (
+              <TableRow key={a.id} data-testid={`payout-bank-${a.account_code}`}>
+                <TableCell className="font-medium">{a.account_name}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground capitalize">{a.platform}</TableCell>
+                <TableCell>
+                  <BankSelect banks={banks} value={a.coa_cash_code} onChange={(v) => save(a, v)}
+                    testId={`payout-bank-select-${a.account_code}`} emptyLabel="— belum ditautkan —" className="w-80 max-w-full" />
+                </TableCell>
+                <TableCell className="text-xs">
+                  {busy === a.id ? (
+                    <span className="inline-flex items-center gap-1 text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> menyimpan…</span>
+                  ) : !a.coa_cash_code ? (
+                    <span className="text-muted-foreground">Belum ditautkan</span>
+                  ) : cashIsConfirmed(a) ? (
+                    <span className="inline-flex items-center gap-1 text-[hsl(var(--success))]"><CheckCircle2 className="w-3.5 h-3.5" /> Sudah diatur</span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[hsl(var(--warning))]" data-testid={`payout-bank-default-${a.account_code}`}>
+                      <AlertTriangle className="w-3.5 h-3.5" /> Rekening bawaan {a.coa_cash_code} — belum diatur
+                    </span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
     </GlassCard>
   );
 }

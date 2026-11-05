@@ -352,16 +352,16 @@ export function DataTable({
         {/* Density toggle */}
         <div className="hidden md:flex items-center rounded-lg border border-[var(--glass-border)] overflow-hidden">
           {[
-            { k: 'compact',  icon: Rows4, label: 'Compact' },
-            { k: 'default',  icon: Rows3, label: 'Default' },
-            { k: 'spacious', icon: Rows2, label: 'Spacious' },
+            { k: 'compact',  icon: Rows4, label: 'Rapat' },
+            { k: 'default',  icon: Rows3, label: 'Normal' },
+            { k: 'spacious', icon: Rows2, label: 'Lega' },
           ].map(({ k, icon: Icon, label }) => (
             <button
               key={k}
               onClick={() => setDensity(k)}
               className={cn('h-9 w-9 flex items-center justify-center border-l first:border-l-0 border-[var(--glass-border)] transition-colors',
                 density === k ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'text-foreground/50 hover:text-foreground hover:bg-[var(--glass-bg-hover)]')}
-              title={`Density: ${label}`}
+              title={`Kerapatan baris: ${label}`}
               aria-label={`Density ${label}`}
               data-testid={`dtv2-${tableId}-density-${k}`}
             >
