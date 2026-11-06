@@ -19,6 +19,13 @@ koleksi baru per-fitur.
   key "overtime"  (K24) aturan CADANGAN bila tarif lembur Profil Gaji = 0:
                   1/173 × upah tetap, jam ke-1 × 1,5, jam berikutnya × 2 (pengali bisa diatur).
   key "kasbon"    (K25) batas kasbon: % gaji pokok & maks cicilan. Bawaan 0 = TANPA batas.
+2026-11-06 (Tahap 2) — masih di koleksi & layar yang SAMA:
+  key "work_calendar" hari kerja per minggu (bawaan 6) — SATU aturan hari kerja (core.workdays).
+  key "pph21"         PPh21 metode TER: PTKP, tarif progresif, tabel TER A/B/C, tambahan tanpa NPWP
+                      (bawaan = rahaza_payroll_tax.default_pph21_config, sumber hukum dicatat di sana).
+  key "overtime"      ditambah tingkatan hari istirahat/libur (PP 35/2021).
+  key "attendance_bonus" aturan hangus per jenis (alpa, izin tanpa surat, terlambat hari/menit) kini
+                      DITERAPKAN mesin hitung ke tunjangan bonus kehadiran.
 Layar: tab "Pengaturan Payroll" di hub Penggajian (RahazaPayrollSettingsModule.jsx).
 """
 from __future__ import annotations
@@ -30,8 +37,11 @@ from fastapi import APIRouter, HTTPException, Request
 
 from auth import log_activity, serialize_doc
 from database import get_db
-from routes.rahaza_payroll_shared import _require_hr
-from routes.rahaza_payroll_tax import BPJS_JKK_RATES, default_bpjs_config, merge_bpjs_config
+from core.roles import FINANCE_ROLES
+from core.workdays import DEFAULT_WORK_DAYS_PER_WEEK, WORK_CALENDAR_KEY
+from routes.rahaza_payroll_shared import PAYROLL_HR_ROLES, _require_hr
+from routes.rahaza_payroll_tax import (BPJS_JKK_RATES, default_bpjs_config, default_pph21_config,
+                                       merge_bpjs_config, merge_pph21_config)
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-payroll-settings"])
 
@@ -40,6 +50,7 @@ ATT_BONUS_KEY = "attendance_bonus"
 BPJS_KEY = "bpjs"
 OVERTIME_KEY = "overtime"
 KASBON_KEY = "kasbon"
+PPH21_KEY = "pph21"
 
 # Saklar jurnal iuran perusahaan: "sampai owner menyalakan" → hanya owner/superadmin yang boleh mengubah.
 SWITCH_ROLES = ("owner", "superadmin")
@@ -59,6 +70,12 @@ DEFAULT_OVERTIME = {
     "divisor": 173,
     "first_hour_multiplier": 1.5,
     "next_hours_multiplier": 2.0,
+    # 2026-11-06 (Tahap 2): hari istirahat mingguan / libur resmi — PP 35/2021 Pasal 31.
+    "rest_day_first_hours_6d": 7,
+    "rest_day_first_hours_5d": 8,
+    "rest_day_first_multiplier": 2.0,
+    "rest_day_next_hour_multiplier": 3.0,
+    "rest_day_after_multiplier": 4.0,
     "note": ("Tarif lembur per Profil Gaji tetap dipakai bila > 0. Bila 0: 1/173 × upah tetap "
              "(gaji pokok bulanan + tunjangan tetap), jam ke-1 × 1,5, jam berikutnya × 2. "
              "Hanya untuk skema bulanan; skema lain tanpa tarif profil diberi peringatan di run gaji. "
@@ -94,6 +111,40 @@ async def get_kasbon_settings(db) -> dict:
     doc = await db.rahaza_payroll_settings.find_one({"key": KASBON_KEY}, {"_id": 0}) or {}
     return {**DEFAULT_KASBON, **doc}
 
+
+async def get_attendance_bonus_settings(db) -> dict:
+    doc = await db.rahaza_payroll_settings.find_one({"key": ATT_BONUS_KEY}, {"_id": 0}) or {}
+    out = {**DEFAULT_ATT_BONUS, **doc}
+    if "forfeit_if_alpa" not in doc and "require_full_attendance" in doc:
+        out["forfeit_if_alpa"] = bool(doc["require_full_attendance"])
+    return out
+
+
+async def get_pph21_settings(db) -> dict:
+    doc = await db.rahaza_payroll_settings.find_one({"key": PPH21_KEY}, {"_id": 0}) or {}
+    out = {"key": PPH21_KEY, **merge_pph21_config(doc)}
+    for k in ("updated_at", "updated_by", "updated_by_name"):
+        if k in doc:
+            out[k] = doc[k]
+    return out
+
+
+async def get_work_calendar_settings(db) -> dict:
+    doc = await db.rahaza_payroll_settings.find_one({"key": WORK_CALENDAR_KEY}, {"_id": 0}) or {}
+    return {**DEFAULT_WORK_CALENDAR, **doc}
+
+
+async def _require_hr_or_finance(request: Request):
+    """PPh21: diubah HR ATAU Keuangan (keputusan owner Tahap 2). Gerbang konfigurasi payroll lain tetap
+    PAYROLL_HR_ROLES."""
+    from auth import require_auth
+    user = await require_auth(request)
+    role = (user.get("role") or "").lower()
+    perms = user.get("_permissions") or []
+    if role in PAYROLL_HR_ROLES or role in FINANCE_ROLES or "*" in perms or "payroll.manage" in perms:
+        return user
+    raise HTTPException(403, "Forbidden: pengaturan PPh21 hanya untuk HR atau Keuangan.")
+
 VALID_LATE_MODES = ("per_minute", "tiered", "per_occurrence")
 
 DEFAULT_LATE = {
@@ -107,16 +158,31 @@ DEFAULT_LATE = {
              "memotong keterlambatan sama sekali."),
 }
 
+# 2026-11-06 (Tahap 2): aturan hangus kini DITERAPKAN (dulu tersimpan tetapi diabaikan — 18 slip membayar
+# bonus dengan 0 hari hadir). Bawaan `enabled` = True; tunjangan yang dianggap bonus kehadiran =
+# `allowance_ids` (kosong → template tunjangan bernama "...kehadiran...").
 DEFAULT_ATT_BONUS = {
     "key": ATT_BONUS_KEY,
-    "enabled": False,
+    "enabled": True,
     "amount": 0,
-    "require_full_attendance": True,   # tidak boleh alfa
-    "forfeit_if_late": True,           # hangus bila pernah terlambat
+    "allowance_ids": [],
+    "forfeit_if_alpa": True,           # hangus bila alpa > max_alpa_days
+    "max_alpa_days": 0,
+    "require_full_attendance": True,   # nama lama forfeit_if_alpa (tetap dibaca)
+    "forfeit_if_izin_no_note": True,   # izin/sakit tanpa surat / tanpa pengajuan disetujui
+    "max_izin_no_note_days": 0,
+    "forfeit_if_late": True,           # hangus bila hari terlambat > max_late_days_allowed
     "max_late_days_allowed": 0,
+    "late_minutes_limit": 0,           # 0 = aturan menit tidak dipakai
     "min_days_present": 0,
     "note": ("Bonus kehadiran diberikan lewat template tunjangan; aturan di sini "
              "menentukan kapan bonus itu HANGUS."),
+}
+
+DEFAULT_WORK_CALENDAR = {
+    "key": WORK_CALENDAR_KEY,
+    "work_days_per_week": DEFAULT_WORK_DAYS_PER_WEEK,
+    "note": "Hari kerja per minggu (6 = Senin–Sabtu). Hari libur dari Kalender Produksi.",
 }
 
 
@@ -192,7 +258,7 @@ async def set_late_penalty(request: Request):
 @router.get("/payroll-settings/attendance-bonus")
 async def get_attendance_bonus(request: Request):
     await _require_hr(request)
-    return serialize_doc(await _get(get_db(), ATT_BONUS_KEY, DEFAULT_ATT_BONUS))
+    return serialize_doc(await get_attendance_bonus_settings(get_db()))
 
 
 @router.put("/payroll-settings/attendance-bonus")
@@ -204,18 +270,31 @@ async def set_attendance_bonus(request: Request):
         amount = float(body.get("amount") or 0)
         max_late = int(body.get("max_late_days_allowed") or 0)
         min_days = int(body.get("min_days_present") or 0)
+        max_alpa = float(body.get("max_alpa_days") or 0)
+        max_izin = int(body.get("max_izin_no_note_days") or 0)
+        late_min = int(body.get("late_minutes_limit") or 0)
     except (TypeError, ValueError):
-        raise HTTPException(400, "amount/max_late_days_allowed/min_days_present harus angka.")
-    if amount < 0 or max_late < 0 or min_days < 0:
+        raise HTTPException(400, "Batas hari/menit dan nominal harus angka.")
+    if min(amount, max_late, min_days, max_alpa, max_izin, late_min) < 0:
         raise HTTPException(400, "Nilai tidak boleh negatif.")
+    ids = body.get("allowance_ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(400, "allowance_ids harus daftar.")
+    forfeit_alpa = bool(body.get("forfeit_if_alpa", body.get("require_full_attendance", True)))
 
     doc = {
         "key": ATT_BONUS_KEY,
-        "enabled": bool(body.get("enabled")),
+        "enabled": bool(body.get("enabled", True)),
         "amount": amount,
-        "require_full_attendance": bool(body.get("require_full_attendance", True)),
+        "allowance_ids": [str(x) for x in ids if x],
+        "forfeit_if_alpa": forfeit_alpa,
+        "require_full_attendance": forfeit_alpa,
+        "max_alpa_days": max_alpa,
+        "forfeit_if_izin_no_note": bool(body.get("forfeit_if_izin_no_note", True)),
+        "max_izin_no_note_days": max_izin,
         "forfeit_if_late": bool(body.get("forfeit_if_late", True)),
         "max_late_days_allowed": max_late,
+        "late_minutes_limit": late_min,
         "min_days_present": min_days,
         "updated_at": _now(),
         "updated_by": user["id"],
@@ -306,6 +385,12 @@ async def set_overtime(request: Request):
         "divisor": _num(body, "divisor", lo=1, hi=400, default=173),
         "first_hour_multiplier": _num(body, "first_hour_multiplier", lo=1, hi=10, default=1.5),
         "next_hours_multiplier": _num(body, "next_hours_multiplier", lo=1, hi=10, default=2.0),
+        # 2026-11-06 (Tahap 2): hari istirahat/libur resmi (PP 35/2021)
+        "rest_day_first_hours_6d": _num(body, "rest_day_first_hours_6d", lo=1, hi=12, default=7),
+        "rest_day_first_hours_5d": _num(body, "rest_day_first_hours_5d", lo=1, hi=12, default=8),
+        "rest_day_first_multiplier": _num(body, "rest_day_first_multiplier", lo=1, hi=10, default=2.0),
+        "rest_day_next_hour_multiplier": _num(body, "rest_day_next_hour_multiplier", lo=1, hi=10, default=3.0),
+        "rest_day_after_multiplier": _num(body, "rest_day_after_multiplier", lo=1, hi=10, default=4.0),
         **_audit(user),
     }
     await db.rahaza_payroll_settings.update_one({"key": OVERTIME_KEY}, {"$set": doc}, upsert=True)
@@ -336,6 +421,59 @@ async def set_kasbon(request: Request):
     return serialize_doc({"ok": True, "settings": await get_kasbon_settings(db)})
 
 
+# ─── KALENDER KERJA (Tahap 2, 2026-11-06) ─────────────────────────────────────
+@router.get("/payroll-settings/work-calendar")
+async def get_work_calendar_endpoint(request: Request):
+    await _require_hr(request)
+    return serialize_doc(await get_work_calendar_settings(get_db()))
+
+
+@router.put("/payroll-settings/work-calendar")
+async def set_work_calendar(request: Request):
+    """Hari kerja per minggu (1–7, bawaan 6). Dipakai SEMUA hitungan hari kerja (core.workdays)."""
+    user = await _require_hr(request)
+    db = get_db()
+    body = await request.json()
+    n = int(_num(body, "work_days_per_week", lo=1, hi=7, default=DEFAULT_WORK_DAYS_PER_WEEK))
+    doc = {"key": WORK_CALENDAR_KEY, "work_days_per_week": n, **_audit(user)}
+    await db.rahaza_payroll_settings.update_one({"key": WORK_CALENDAR_KEY}, {"$set": doc}, upsert=True)
+    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.payroll_settings",
+                       f"{WORK_CALENDAR_KEY} {n} hari/minggu")
+    return serialize_doc({"ok": True, "settings": await get_work_calendar_settings(db)})
+
+
+# ─── PPh21 (Tahap 2, 2026-11-06) ──────────────────────────────────────────────
+@router.get("/payroll-settings/pph21")
+async def get_pph21(request: Request):
+    await _require_hr_or_finance(request)
+    return serialize_doc(await get_pph21_settings(get_db()))
+
+
+@router.put("/payroll-settings/pph21")
+async def set_pph21(request: Request):
+    """PTKP, tarif progresif, tabel TER A/B/C, kategori TER per PTKP, biaya jabatan, tambahan tanpa NPWP.
+    Bagian yang tidak dikirim = nilai sekarang. `reset: true` = kembali ke bawaan peraturan."""
+    user = await _require_hr_or_finance(request)
+    db = get_db()
+    body = await request.json()
+    keys = set(default_pph21_config())
+    if body.get("reset"):
+        base = default_pph21_config()
+    else:
+        cur = await get_pph21_settings(db)
+        base = {k: v for k, v in cur.items() if k in keys}
+        base.update({k: v for k, v in body.items() if k in keys})
+    try:
+        cfg = merge_pph21_config(base, strict=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    doc = {"key": PPH21_KEY, **cfg, **_audit(user)}
+    await db.rahaza_payroll_settings.update_one({"key": PPH21_KEY}, {"$set": doc}, upsert=True)
+    await log_activity(user["id"], user.get("name", ""), "update", "rahaza.payroll_settings",
+                       f"{PPH21_KEY} {'aktif' if cfg['enabled'] else 'mati'}")
+    return serialize_doc({"ok": True, "settings": await get_pph21_settings(db)})
+
+
 @router.get("/payroll-settings")
 async def list_settings(request: Request, key: Optional[str] = None):
     """Semua pengaturan payroll (untuk panel HR — tab "Pengaturan Payroll")."""
@@ -343,10 +481,12 @@ async def list_settings(request: Request, key: Optional[str] = None):
     db = get_db()
     loaders = {
         LATE_KEY: lambda: _get(db, LATE_KEY, DEFAULT_LATE),
-        ATT_BONUS_KEY: lambda: _get(db, ATT_BONUS_KEY, DEFAULT_ATT_BONUS),
+        ATT_BONUS_KEY: lambda: get_attendance_bonus_settings(db),
         BPJS_KEY: lambda: get_bpjs_settings(db),
         OVERTIME_KEY: lambda: get_overtime_settings(db),
         KASBON_KEY: lambda: get_kasbon_settings(db),
+        WORK_CALENDAR_KEY: lambda: get_work_calendar_settings(db),
+        PPH21_KEY: lambda: get_pph21_settings(db),
     }
     if key:
         if key not in loaders:

@@ -233,7 +233,17 @@ async def create_client(payload: MaklonClient, user: dict = Depends(require_auth
     doc['updated_at'] = now
     doc['created_by'] = user.get('name', 'System')
     await db.dewi_maklon_clients.insert_one(doc)
-    return {'message': 'Klien maklon berhasil dibuat', 'id': doc['id']}
+    # 2026-11-06 (Tahap 2, keputusan owner): klien baru OTOMATIS mendapat sub-ledger piutang
+    # 1-1305-<KODE> dan akun pendapatan 4-1500-<KODE> (pola akun toko). Idempoten & tidak
+    # menggagalkan pembuatan klien; startup (finance_sync) menyusulkan yang tertinggal.
+    accounts = {}
+    try:
+        from core.maklon_ledger import ensure_client_accounts
+        accounts = await ensure_client_accounts(db, doc, user)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger(__name__).error('[maklon] akun klien %s gagal dibuat: %s', doc.get('code'), e)
+    return {'message': 'Klien maklon berhasil dibuat', 'id': doc['id'],
+            'ar_account_code': accounts.get('maklon_client'), 'revenue_account_code': accounts.get('maklon_revenue')}
 
 
 @router.put('/clients/{client_id}')

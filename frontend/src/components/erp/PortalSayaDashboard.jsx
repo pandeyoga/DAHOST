@@ -130,7 +130,7 @@ export default function PortalSayaDashboard({ user, headers, onNavigate }) {
           value={att.hadir ?? '-'}
           sub={`I:${att.izin ?? 0} · S:${att.sakit ?? 0} · α:${att.alfa ?? 0}`}
           color="indigo"
-          onClick={() => onNavigate?.('self-dashboard')}
+          onClick={() => onNavigate?.('portal-absen')}
         />
         <StatCard
           icon={BookOpen}

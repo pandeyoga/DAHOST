@@ -16,9 +16,9 @@ export default function HRPayrollHub(props) {
     <HubTabs
       hubId="hr-payroll-hub"
       title="Penggajian"
-      subtitle="Satu pintu payroll: Dashboard, Profil Gaji, Tunjangan, Penyesuaian, Proses Gaji, Pengaturan."
+      subtitle="Satu pintu payroll: dasbor, profil gaji, tunjangan, penyesuaian, proses gaji, pengaturan."
       tabs={[
-        { key: 'dashboard', label: 'Dashboard', Component: PayrollDashboardModule },
+        { key: 'dashboard', label: 'Dasbor', Component: PayrollDashboardModule },
         { key: 'profiles', label: 'Profil Gaji', Component: RahazaPayrollProfilesModule },
         { key: 'allowances', label: 'Tunjangan', Component: RahazaPayrollAllowancesModule },
         { key: 'adjustments', label: 'Penyesuaian', Component: RahazaSalaryAdjustmentModule },

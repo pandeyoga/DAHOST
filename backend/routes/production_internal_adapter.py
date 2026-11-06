@@ -410,9 +410,15 @@ async def insert_wip_mirror(db, job, job_item, qty, ctx, user, progress_id=None)
 # ═══════════════ FIN-1/E10: HPP per job + hook job Completed ═════════════════
 
 async def compute_hpp_job(db, job_id: str) -> dict:
-    """HPP aktual ter-anchor job_id:
-    material = MI (job_id, issued) × unit_cost; labor = Σ qty_done × rate_per_pcs
-    (wip mirror job); overhead AD-2 = overhead_rate × Σproduced."""
+    """HPP aktual ter-anchor job_id.
+
+    2026-11-06 (Tahap 2, keputusan owner): HPP = bahan + upah CMT.
+      * bahan = MI job + MI Kirim Material CMT (surat jalan job ini), keluar − diretur (K10),
+        harga saat keluar; harga yang belum ada dilaporkan di `gaps` (bukan bawaan diam-diam);
+      * upah CMT = Σ qty jadi × tarif jahit SPK;
+      * upah internal (wip mirror × tarif) & overhead = INFORMASI, tidak masuk total
+        (payroll sudah membukukannya sebagai beban bulanan)."""
+    from routes.rahaza_hpp import job_cmt_wage, job_mi_filter, mi_material_cost
     job = await db.production_jobs.find_one({'id': job_id}, {'_id': 0})
     if not job:
         raise HTTPException(404, 'Job tidak ditemukan')
@@ -430,31 +436,13 @@ async def compute_hpp_job(db, job_id: str) -> dict:
     qty_ordered = sum(int(j.get('ordered_qty') or 0) for j in job_items)
     qty_produced = sum(int(j.get('produced_qty') or 0) for j in job_items)
 
-    # 1) Material dari MI job (status issued)
-    mi_rows = await db.rahaza_material_issues.find({'job_id': job_id, 'status': 'issued'}, {'_id': 0}).to_list(500)
-    material_cost = 0.0
-    material_breakdown = []
-    mat_ids = list({i.get('material_id') for mi in mi_rows for i in (mi.get('items') or []) if i.get('material_id')})
-    mat_map = {}
-    if mat_ids:
-        async for d in db.rahaza_materials.find({'id': {'$in': mat_ids}}, {'_id': 0}):
-            mat_map[d['id']] = d
-    for mi in mi_rows:
-        for item in (mi.get('items') or []):
-            mat = mat_map.get(item.get('material_id')) or {}
-            unit_cost = float(mat.get('unit_cost') or 0)
-            if unit_cost <= 0:
-                # FASE 12 / BUG-B2: dulu `mat.get('type') in ('yarn','fabric')` ⇒ material
-                # `kain`/`benang`/`interlining` tanpa unit_cost memakai default AKSESORIS.
-                unit_cost = default_yarn if material_fields.is_kglike_material(mat) else default_acc
-            qty = float(item.get('qty_issued') or item.get('qty_required') or 0)
-            amount = qty * unit_cost
-            material_cost += amount
-            material_breakdown.append({
-                'material_id': item.get('material_id'), 'material_name': mat.get('name'),
-                'type': mat.get('type'), 'qty': qty, 'unit': mat.get('unit'),
-                'unit_cost': unit_cost, 'amount': round(amount),
-            })
+    # 1) Material dari MI job + MI Kirim Material CMT (status issued), dikurangi retur
+    mi_rows = await db.rahaza_material_issues.find(
+        job_mi_filter(job_id, job.get('vendor_shipment_id')), {'_id': 0}).to_list(500)
+    mat_res = await mi_material_cost(db, mi_rows, default_yarn, default_acc)
+    material_cost = mat_res['material_cost']
+    material_breakdown = mat_res['breakdown']
+    cmt = await job_cmt_wage(db, job_id)
 
     # 2) Labor dari wip mirror job
     wip = await db.rahaza_wip_events.find({'job_id': job_id, 'event_type': 'complete'}, {'_id': 0}).to_list(1000)
@@ -473,9 +461,9 @@ async def compute_hpp_job(db, job_id: str) -> dict:
             'qty': qty, 'rate': rate, 'amount': round(amount),
         })
 
-    # 3) Overhead AD-2: rate × Σproduced
-    overhead_cost = qty_produced * overhead_rate
-    total_cost = material_cost + labor_cost + overhead_cost
+    # 3) Overhead AD-2: rate × Σproduced — informasi saja (Tahap 2)
+    overhead_info = qty_produced * overhead_rate
+    total_cost = material_cost + cmt['cmt_cost']
     hpp_unit = total_cost / qty_produced if qty_produced > 0 else 0
 
     return {
@@ -484,11 +472,18 @@ async def compute_hpp_job(db, job_id: str) -> dict:
         'production_po_id': job.get('po_id'), 'po_number': job.get('po_number'),
         'business_type': job.get('business_type', 'internal'),
         'qty': qty_ordered, 'qty_completed': qty_produced,
-        'material_cost': round(material_cost), 'labor_cost': round(labor_cost),
-        'overhead_cost': round(overhead_cost), 'total_cost': round(total_cost),
+        'material_cost': round(material_cost),
+        'material_cost_estimated': round(mat_res['estimated_cost']),
+        # `labor_cost` (nama lama, dibaca jurnal HPP cadangan) kini = upah CMT yang masuk HPP
+        'cmt_cost': round(cmt['cmt_cost']), 'labor_cost': round(cmt['cmt_cost']),
+        'internal_labor_cost': round(labor_cost), 'internal_labor_in_hpp': False,
+        'overhead_cost': 0, 'overhead_info': round(overhead_info), 'overhead_in_hpp': False,
+        'total_cost': round(total_cost),
         'total_hpp': round(total_cost), 'hpp_unit': round(hpp_unit),
         'material_breakdown': material_breakdown, 'labor_breakdown': labor_breakdown,
+        'cmt_breakdown': cmt['breakdown'],
         'overhead_rate_per_pcs': overhead_rate,
+        'gaps': mat_res['gaps'] + cmt['gaps'],
         'computed_at': now().isoformat(),
     }
 

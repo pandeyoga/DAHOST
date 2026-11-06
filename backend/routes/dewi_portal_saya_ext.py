@@ -327,22 +327,31 @@ async def get_my_leave_balance(request: Request):
     leave_types = await db.rahaza_leave_types.find({}, {"_id": 0}).to_list(50)
     type_map = {lt["id"]: lt for lt in leave_types}
 
-    # Get leave balances for this employee
+    # Get leave balances for this employee — tahun berjalan (WIB), sama dengan layar saldo cuti.
+    from utils.waktu import wib_year
+    year = wib_year()
     balances = await db.rahaza_leave_balances.find(
-        {"employee_id": emp_id}, {"_id": 0}
+        {"employee_id": emp_id, "year": year}, {"_id": 0}
     ).to_list(50)
 
     # Enrich with leave type info
+    # Tahap 1 (2026-11-06): dokumen saldo menyimpan `allocated`/`used`; kartu Portal Saya membaca
+    # `remaining`/`quota` yang tidak pernah dikirim ⇒ kartu saldo selalu kosong. Kirim keduanya.
     enriched = []
     for b in balances:
         lt = type_map.get(b.get("leave_type_id"), {})
+        allocated = float(b.get("allocated", 0) or 0)
+        used = float(b.get("used", 0) or 0)
         enriched.append({
             **b,
+            "quota": allocated,
+            "used": used,
+            "remaining": allocated - used,
             "leave_type_name": lt.get("name", b.get("leave_type_id", "")),
             "leave_type_color": lt.get("color", "#6366f1"),
         })
 
-    return {"balances": serialize(enriched), "employee_id": emp_id}
+    return {"balances": serialize(enriched), "employee_id": emp_id, "year": year}
 
 
 @router.get("/me/payslips")

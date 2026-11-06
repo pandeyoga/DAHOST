@@ -136,8 +136,10 @@ async def _recompute_costing_doc(db, body: dict, base: dict = None) -> dict:
         'bom_lines': bom,
         'total_material_cost': material,
         'labor_cost': labor,
-        'overhead_cost': overhead,
-        'total_cost': round(material + labor + overhead, 2),
+        # 2026-11-06 (Tahap 2, keputusan owner): overhead pabrik tidak masuk HPP — angkanya disimpan
+        # sebagai informasi saja, total = bahan + upah jahit sampel.
+        'overhead_cost': overhead, 'overhead_in_hpp': False,
+        'total_cost': round(material + labor, 2),
         'uom_warnings': w1 + w2 + w3,
     }
 

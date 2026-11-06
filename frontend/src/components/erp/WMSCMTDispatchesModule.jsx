@@ -35,6 +35,7 @@ import { toast } from 'sonner';
 import { EmptyState } from './EmptyState';
 import OnwardCTA from './OnwardCTA';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -550,8 +551,16 @@ function ReceiptSection({ token, onNavigate }) {
   const [receiptCode, setReceiptCode] = useState('');
 
   const [detail, setDetail] = useState(null); // full receipt {..., lines}
-  const [lineForm, setLineForm] = useState({ sku_code: '', product_name: '', color: '', size: '', qty_expected: '' });
+  // 2026-11-06 (Tahap 2): baris manual Terima FG = barang jadi DIPILIH dari master (bukan ketikan).
+  const [lineForm, setLineForm] = useState({ fg_material_id: '', qty_expected: '' });
   const [showAddLine, setShowAddLine] = useState(false);
+  const [fgList, setFgList] = useState([]);
+  useEffect(() => {
+    if (!showAddLine || fgList.length) return;
+    api('GET', '/api/rahaza/materials?type=fg', token)
+      .then((d) => setFgList((Array.isArray(d) ? d : (d?.items || [])).filter((m) => m.active !== false)))
+      .catch(() => setFgList([]));
+  }, [showAddLine, fgList.length, token]);
 
   const [rejectFor, setRejectFor] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
@@ -615,18 +624,15 @@ function ReceiptSection({ token, onNavigate }) {
   };
 
   const addLine = async () => {
-    if (!lineForm.product_name.trim() && !lineForm.sku_code.trim()) { toast.error('Nama produk atau kode SKU wajib'); return; }
+    if (!lineForm.fg_material_id) { toast.error('Pilih barang jadi dari master dulu'); return; }
     setSaving(true);
     try {
       await api('POST', `/api/prod/cmt-receipts/${detail.id}/lines`, token, {
-        sku_code: lineForm.sku_code.trim(),
-        product_name: lineForm.product_name.trim(),
-        color: lineForm.color.trim(),
-        size: lineForm.size.trim(),
+        fg_material_id: lineForm.fg_material_id,
         qty_expected: Number(lineForm.qty_expected) || 0,
       });
       setShowAddLine(false);
-      setLineForm({ sku_code: '', product_name: '', color: '', size: '', qty_expected: '' });
+      setLineForm({ fg_material_id: '', qty_expected: '' });
       await reloadDetail();
       load();
     } catch (e) {
@@ -875,10 +881,15 @@ function ReceiptSection({ token, onNavigate }) {
 
               {showAddLine && isDraft && (
                 <div className="grid grid-cols-12 gap-2 items-end border border-border rounded-lg p-3 mb-2" data-testid="add-receiptline-form">
-                  <div className="col-span-3"><Label className="text-xs">SKU</Label><Input value={lineForm.sku_code} onChange={(e) => setLineForm({ ...lineForm, sku_code: e.target.value })} data-testid="input-line-sku" /></div>
-                  <div className="col-span-4"><Label className="text-xs">Nama Produk</Label><Input value={lineForm.product_name} onChange={(e) => setLineForm({ ...lineForm, product_name: e.target.value })} data-testid="input-line-product" /></div>
-                  <div className="col-span-2"><Label className="text-xs">Warna</Label><Input value={lineForm.color} onChange={(e) => setLineForm({ ...lineForm, color: e.target.value })} data-testid="input-line-color" /></div>
-                  <div className="col-span-1"><Label className="text-xs">Size</Label><Input value={lineForm.size} onChange={(e) => setLineForm({ ...lineForm, size: e.target.value })} data-testid="input-line-size" /></div>
+                  <div className="col-span-10">
+                    <Label className="text-xs">Barang jadi (master)</Label>
+                    <SmartNativeSelect value={lineForm.fg_material_id} data-testid="input-line-fg"
+                      onChange={(e) => setLineForm({ ...lineForm, fg_material_id: e.target.value })}
+                      className="w-full h-10 rounded-md border border-border bg-background px-2 text-sm">
+                      <option value="">— pilih barang dari master produk jadi —</option>
+                      {fgList.map((m) => <option key={m.id} value={m.id}>{m.code || m.sku} · {m.name}</option>)}
+                    </SmartNativeSelect>
+                  </div>
                   <div className="col-span-2"><Label className="text-xs">Qty Kirim</Label><Input type="number" min="0" value={lineForm.qty_expected} onChange={(e) => setLineForm({ ...lineForm, qty_expected: e.target.value })} data-testid="input-line-qty-expected" /></div>
                   <div className="col-span-12 flex justify-end">
                     <Button size="sm" onClick={addLine} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white" data-testid="add-receiptline-btn">

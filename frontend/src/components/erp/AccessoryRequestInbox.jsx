@@ -8,6 +8,7 @@ import {
   AlertTriangle, Search, Eye, Trash2, FileText
 } from 'lucide-react';
 import { toast } from '../ui/sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
 import { EmptyState } from './EmptyState';
@@ -74,30 +75,70 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
   useEffect(() => { fetchRequests(); }, [filterStatus, filterType, urgentOnly]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchStats(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2026-11-06 (Tahap 1): aksi dianggap berhasil HANYA bila server menjawab ok. Dulu `res.ok`
+  // tidak diperiksa, jadi pesan "berhasil" muncul walau server menolak (stok kurang, tidak
+  // berhak, status sudah berubah). Bila ditolak: pesan server ditampilkan, baris tidak diubah.
+  const sendAction = async (path, method, body) => {
+    const res = await fetch(`${API}/api/dewi/accessory-requests/${path}`, {
+      method, headers: h, ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const d = data?.detail;
+      const err = new Error(typeof d === 'string' ? d : (d?.message || `Server menolak permintaan ini (kode ${res.status}).`));
+      err.detail = d;   // 2026-11-06 (Tahap 2): mis. {code:'over_issue', lines} → minta alasan kelebihan
+      throw err;
+    }
+    return data;
+  };
+
+  // 2026-11-06 (Tahap 2): baris permintaan tanpa master (sampel R&D diketik bebas) dipilihkan
+  // master aksesorisnya saat diserahkan, karena penyerahan kini memotong stok + menjurnal.
+  const [accItems, setAccItems] = useState([]);
+  const openDeliver = async (r) => {
+    setActionModal({ id: r.id, type: 'deliver', notes: '', items: r.items || [], links: {}, reason: '', overIssue: null,
+                     poNumber: r.po_number || '' });
+    if ((r.items || []).some(it => !it.material_id) && accItems.length === 0) {
+      try {
+        const res = await fetch(`${API}/api/acc/items`, { headers: h });
+        if (res.ok) setAccItems(await res.json());
+      } catch { /* daftar master opsional — server tetap menolak baris tanpa master */ }
+    }
+  };
+
   const handleAllocate = async () => {
     if (!actionModal) return;
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${actionModal.id}/allocate`, {
-        method: 'POST', headers: h, body: JSON.stringify({ notes: actionModal.notes || '' }),
-      });
+      await sendAction(`${actionModal.id}/allocate`, 'POST', { notes: actionModal.notes || '' });
       toast.success('Request dialokasikan');
       setActionModal(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal mengalokasikan'); }
+    } catch (e) { toast.error(e.message || 'Gagal mengalokasikan'); }
   };
 
   const handleDeliver = async () => {
     if (!actionModal) return;
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${actionModal.id}/deliver`, {
-        method: 'POST', headers: h, body: JSON.stringify({ notes: actionModal.notes || '' }),
+      const res = await sendAction(`${actionModal.id}/deliver`, 'POST', {
+        notes: actionModal.notes || '',
+        item_links: Object.entries(actionModal.links || {}).filter(([, v]) => v)
+          .map(([index, material_id]) => ({ index: Number(index), material_id })),
+        over_issue_reason: (actionModal.reason || '').trim(),
       });
-      toast.success('Request ditandai sudah diterima');
+      const n = (res.issued_items || []).length;
+      toast.success(n ? `Diserahkan · ${n} aksesoris keluar dari stok dan dijurnal` : 'Request ditandai sudah diterima');
       setActionModal(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal update status'); }
+    } catch (e) {
+      if (e.detail?.code === 'over_issue') {
+        setActionModal(p => ({ ...p, overIssue: e.detail }));
+        toast.error('Melebihi kebutuhan PO — isi alasan kelebihan lalu tandai kirim lagi.');
+        return;
+      }
+      toast.error(e.message || 'Gagal update status');
+    }
   };
 
   const handleReject = async () => {
@@ -107,24 +148,22 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
       return;
     }
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${actionModal.id}/reject`, {
-        method: 'POST', headers: h, body: JSON.stringify({ reason: actionModal.notes }),
-      });
+      await sendAction(`${actionModal.id}/reject`, 'POST', { reason: actionModal.notes });
       toast.success('Request ditolak');
       setActionModal(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal reject'); }
+    } catch (e) { toast.error(e.message || 'Gagal menolak'); }
   };
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${delId}`, { method: 'DELETE', headers: h });
+      await sendAction(delId, 'DELETE');
       toast.success('Request dihapus');
       setDelId(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal menghapus'); }
+    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
   };
 
   const filtered = useMemo(() => requests.filter(r => {
@@ -150,12 +189,12 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
         <div>
           <h1 className="text-xl font-bold text-foreground flex items-center gap-2">
             <Inbox className="w-5 h-5 text-[hsl(var(--warning))] " /> {isRndMonitor ? 'Pantau Request Sample (RnD)' : 'Inbox Request Aksesoris'}
-            <span className="px-2 py-0.5 rounded-md bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  text-[11px] font-medium border border-[hsl(var(--success)/0.35)] ">SSOT</span>
           </h1>
+          {/* 2026-11-06 (Tahap 2): tanpa istilah program (nama koleksi / "SSOT") di layar */}
           <p className="text-sm text-foreground/50 mt-0.5">
             {isRndMonitor
               ? 'Pantau status permintaan sample RnD (read-only). Alokasi & pengiriman dilakukan oleh Gudang/Portal Aksesoris.'
-              : <>Semua permintaan aksesoris (RnD sample, internal issuance, vendor add/replace) — backed by <span className="tabular-nums text-[hsl(var(--warning)/0.8)]">dewi_accessory_requests</span></>}
+              : 'Semua permintaan aksesoris: sampel R&D, pemakaian divisi, tambahan dan pengganti untuk vendor. Saat ditandai kirim, stok dipotong dan dijurnal.'}
           </p>
         </div>
       </div>
@@ -318,7 +357,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                       ) : r.request_type === 'vendor_additional' || r.request_type === 'vendor_replacement' ? (
                         <>
                           <div className="font-medium text-foreground text-sm tabular-nums">{r.po_number || '—'}</div>
-                          <div className="text-xs text-foreground/40 truncate max-w-[180px]">Vendor: {r.vendor_id || '—'}</div>
+                          <div className="text-xs text-foreground/40 truncate max-w-[180px]">Vendor: {r.vendor_name || '—'}</div>
                         </>
                       ) : (
                         <>
@@ -364,7 +403,7 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                         )}
                         {r.status === 'allocated' && (
                           <Button variant="ghost" size="sm"
-                            onClick={() => setActionModal({ id: r.id, type: 'deliver', notes: '' })}
+                            onClick={() => openDeliver(r)}
                             className="h-7 px-2 text-xs text-[hsl(var(--success))] hover:bg-[hsl(var(--success)/0.15)] "
                             data-testid={`acc-req-deliver-${r.id}`}>
                             <Truck className="w-3.5 h-3.5 mr-1" /> Tandai Kirim
@@ -424,23 +463,24 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                 </>
               ) : detail.request_type === 'vendor_additional' || detail.request_type === 'vendor_replacement' ? (
                 <>
+                  {/* 2026-11-06 (Tahap 2): nama vendor & nomor surat jalan — dulu ID mentah */}
                   <div>
-                    <div className="text-xs text-foreground/50">Vendor ID</div>
-                    <div className="tabular-nums text-xs">{detail.vendor_id || '—'}</div>
+                    <div className="text-xs text-foreground/50">Vendor</div>
+                    <div className="text-xs">{detail.vendor_name || '—'}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-foreground/50">PO Number</div>
+                    <div className="text-xs text-foreground/50">Nomor PO</div>
                     <div className="tabular-nums text-xs">{detail.po_number || '—'}</div>
                   </div>
                   {detail.original_shipment_id && (
                     <div>
-                      <div className="text-xs text-foreground/50">Original Shipment</div>
-                      <div className="tabular-nums text-xs">{detail.original_shipment_id}</div>
+                      <div className="text-xs text-foreground/50">Surat jalan asal</div>
+                      <div className="tabular-nums text-xs">{detail.original_shipment_number || '—'}</div>
                     </div>
                   )}
                   {detail.child_shipment_number && (
                     <div>
-                      <div className="text-xs text-foreground/50">Child Shipment</div>
+                      <div className="text-xs text-foreground/50">Surat jalan susulan</div>
                       <div className="tabular-nums text-xs text-[hsl(var(--success))] ">{detail.child_shipment_number}</div>
                     </div>
                   )}
@@ -452,8 +492,8 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
                     <div className="font-medium">{detail.style_code} — {detail.style_name}</div>
                   </div>
                   <div>
-                    <div className="text-xs text-foreground/50">Sample Request ID</div>
-                    <div className="tabular-nums text-xs">{detail.sample_request_id || '—'}</div>
+                    <div className="text-xs text-foreground/50">Kode sampel</div>
+                    <div className="tabular-nums text-xs">{detail.sample_code || '—'}</div>
                   </div>
                 </>
               )}
@@ -524,6 +564,43 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
             actionModal.type === 'deliver' ? 'Tandai Sudah Diterima' :
             'Tolak Request'
           }>
+          {actionModal.type === 'deliver' && (
+            <div className="space-y-2 mb-3" data-testid="acc-req-deliver-lines">
+              <p className="text-sm text-foreground/60">
+                Stok aksesoris berikut dipotong dan dijurnal saat ditandai kirim.
+              </p>
+              {(actionModal.items || []).map((it, idx) => (
+                <div key={idx} className="text-sm">
+                  <div className="flex justify-between gap-2">
+                    <span>{it.material_name || it.material_code || '—'}</span>
+                    <span className="tabular-nums">{it.qty} {it.unit}</span>
+                  </div>
+                  {!it.material_id && (
+                    <SmartNativeSelect value={actionModal.links?.[idx] || ''}
+                      onChange={e => setActionModal(p => ({ ...p, links: { ...(p.links || {}), [idx]: e.target.value } }))}
+                      className="w-full border border-input bg-background rounded-md px-2 py-1.5 text-xs mt-1"
+                      data-testid={`acc-req-link-${idx}`}>
+                      <option value="">Pilih aksesoris di master (wajib, barang ini belum tertaut)...</option>
+                      {accItems.map(a => <option key={a.id} value={a.id}>{a.code} · {a.name} (stok {a.stock_qty} {a.unit})</option>)}
+                    </SmartNativeSelect>
+                  )}
+                </div>
+              ))}
+              {actionModal.overIssue && (
+                <div className="space-y-1" data-testid="acc-req-over-issue">
+                  <p className="text-xs text-[hsl(var(--warning))]">
+                    Melebihi kebutuhan PO {actionModal.overIssue.po_number || actionModal.poNumber}:{' '}
+                    {(actionModal.overIssue.lines || []).map(l => `${l.code || l.name} kebutuhan ${l.need}, sudah keluar ${l.issued}, diminta ${l.qty}`).join('; ')}.
+                  </p>
+                  <Label>Alasan kelebihan *</Label>
+                  <Input value={actionModal.reason || ''}
+                    onChange={e => setActionModal(p => ({ ...p, reason: e.target.value }))}
+                    placeholder="Mis. pengganti kancing cacat dari vendor"
+                    data-testid="acc-req-over-issue-reason" />
+                </div>
+              )}
+            </div>
+          )}
           <p className="text-sm text-foreground/60 mb-3">
             {actionModal.type === 'reject'
               ? 'Tuliskan alasan penolakan:'

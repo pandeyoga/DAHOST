@@ -140,11 +140,17 @@ async def _recompute_run_totals(db, run_id: str) -> dict:
 # RBAC
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Peran yang boleh membuka & mengelola penggajian (aturan gaji, tunjangan, run, slip semua karyawan).
+# Keputusan owner 6 Nov 2026: tetap seperti semula — HR Manager & Staf HR TIDAK ditambahkan
+# (gaji semua karyawan bersifat rahasia). Tahap 1 hanya memakai gerbang ini di endpoint yang dulu terbuka.
+PAYROLL_HR_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+
+
 async def _require_hr(request: Request):
-    """Authorization: only HR/Manager/Admin/Owner roles can access payroll runs."""
+    """Authorization: hanya peran PAYROLL_HR_ROLES (atau izin hr.manage / payroll.manage) yang boleh mengelola payroll."""
     user = await require_auth(request)
     role = (user.get("role") or "").lower()
-    if role in ("superadmin", "admin", "owner", "hr", "manager"):
+    if role in PAYROLL_HR_ROLES:
         return user
     perms = user.get("_permissions") or []
     if "*" in perms or "hr.manage" in perms or "payroll.manage" in perms:
@@ -193,44 +199,338 @@ async def _get_applicable_allowances(db, employee: dict) -> list:
     return applicable
 
 
+def lwop_days_in_period(leaves: list, period_from: date, period_to: date, holiday_set: set,
+                        off_weekdays=None) -> float:
+    """Hari cuti tanpa gaji yang jatuh DI DALAM periode (Tahap 1, 2026-11-06).
+
+    2026-11-06 (Tahap 2): hari kerja = SATU aturan `core.workdays` (bawaan 6 hari/minggu, bukan lagi
+    Senin–Jumat). Mesin hitung slip TIDAK lagi memakai fungsi ini — potongan cuti tanpa gaji kini satu
+    aturan dengan alpa (`rahaza_payroll_rules.classify_days`); fungsi dipertahankan untuk laporan/uji.
+    Cuti setengah hari bernilai 0,5 per hari kerja; cuti lintas periode hanya dihitung bagian periode ini.
+    """
+    from core.workdays import DEFAULT_WORK_DAYS_PER_WEEK, off_weekdays_for, working_days_between
+    off = off_weekdays if off_weekdays is not None else off_weekdays_for(DEFAULT_WORK_DAYS_PER_WEEK)
+    total = 0.0
+    for lv in leaves or []:
+        try:
+            start = max(period_from, _to_date(str(lv.get("from_date"))[:10]))
+            end = min(period_to, _to_date(str(lv.get("to_date") or lv.get("from_date"))[:10]))
+        except (TypeError, ValueError):
+            log.warning("[payroll] cuti tanpa gaji %s: tanggal tidak valid — dilewati", lv.get("id"))
+            continue
+        weight = 0.5 if lv.get("is_half_day") else 1.0
+        if start <= end:
+            total += weight * len(working_days_between(start, end, off, holiday_set))
+    return total
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KASBON: SATU CICILAN PER BULAN HANYA UNTUK SATU RUN (Tahap 1, 2026-11-06)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def kasbon_claimed_by_other_runs(db, employee_id: str, period_ym: str, kasbon_ids: list) -> dict:
+    """{kasbon_id: nomor run} untuk kasbon yang potongan bulan `period_ym`-nya SUDAH ada di slip run
+    lain yang belum dibatalkan (draft maupun final).
+
+    Dulu dua run draft di bulan yang sama (mis. dua run mingguan) sama-sama memotong kasbon yang sama:
+    karyawan menerima gaji kurang dua kali, sementara modul kasbon hanya mencatat satu potongan
+    (dedupe periode saat finalisasi) ⇒ selisih tertinggal di Hutang Gaji. Bulan = `period_from[:7]`,
+    sama dengan kunci dedupe kasbon (FIN-16)."""
+    if not kasbon_ids:
+        return {}
+    slips = await db.rahaza_payslips.find({
+        "employee_id": employee_id,
+        "period_from": {"$gte": f"{period_ym}-01", "$lte": f"{period_ym}-31"},
+        "deductions": {"$elemMatch": {"type": "kasbon", "kasbon_id": {"$in": list(kasbon_ids)}}},
+    }, {"_id": 0, "run_id": 1, "deductions": 1}).to_list(100)
+    run_ids = list({s.get("run_id") for s in slips if s.get("run_id")})
+    if not run_ids:
+        return {}
+    live = {r["id"]: r for r in await db.rahaza_payroll_runs.find(
+        {"id": {"$in": run_ids}, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "id": 1, "run_number": 1}).to_list(len(run_ids))}
+    out: dict = {}
+    for s in slips:
+        run = live.get(s.get("run_id"))
+        if not run:
+            continue
+        for d in s.get("deductions") or []:
+            if (d.get("type") or "").lower() == "kasbon" and d.get("kasbon_id") in kasbon_ids:
+                out.setdefault(d["kasbon_id"], run.get("run_number") or run["id"])
+    return out
+
+
+async def kasbon_deducted_elsewhere(db, run: dict, payslips: list) -> list:
+    """Potongan kasbon di slip `run` yang untuk bulan yang sama SUDAH tercatat dari run lain (atau
+    potong gaji manual Keuangan). Dipakai finalisasi sebagai pengaman run draft lama yang dibuat
+    sebelum aturan satu-cicilan-satu-run: run itu harus dihapus lalu dibuat ulang."""
+    period_ym = (run.get("period_from") or "")[:7]
+    ids = list({d.get("kasbon_id") for s in payslips for d in (s.get("deductions") or [])
+                if (d.get("type") or "").lower() == "kasbon" and d.get("kasbon_id")})
+    if not ids:
+        return []
+    docs = await db.dewi_kasbon_requests.find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "request_number": 1, "repayments": 1}).to_list(len(ids))
+    out = []
+    for k in docs:
+        for r in k.get("repayments") or []:
+            if (r.get("period") == period_ym and r.get("method") == "payroll_deduction"
+                    and r.get("run_id") != run.get("id")):
+                out.append({"kasbon_id": k["id"], "request_number": k.get("request_number") or k["id"],
+                            "run_number": r.get("run_number") or "potong gaji manual"})
+                break
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAYSLIP COMPUTATION — SATU-SATUNYA SSOT (FASE 15)
 # ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — mesin hitung disusun ulang mengikuti keputusan owner 6 Nov 2026
+# (aturan murni di `rahaza_payroll_rules`, pajak di `rahaza_payroll_tax`):
+#   · hari kerja = core.workdays (6 hari/minggu bawaan, libur Kalender Produksi)
+#   · gaji bulanan/mingguan PRORATA masa kerja (join_date … tanggal keluar) & per versi tarif (kenaikan gaji
+#     berlaku mulai tanggal tertentu), pembagi = hari kerja aktif periode
+#   · potongan tidak masuk SATU aturan: alpa + izin/sakit/cuti tidak dibayar / tanpa pengajuan disetujui
+#     (menggantikan LWOP terpisah); hari tanpa catatan absen TIDAK dipotong, hanya diperingatkan
+#   · lembur hanya pengajuan disetujui / ditandai HR, pengali per hari dari Pengaturan Payroll
+#   · bonus kehadiran hangus menurut Pengaturan Payroll
+#   · BPJS & PPh21 (TER + perhitungan setahun Desember) untuk SEMUA skema, kumulatif per bulan pajak
+#   · koreksi absensi pada periode yang sudah final → baris penyesuaian di run berikutnya
+
+SYSTEM_WAGE_DEDUCTIONS = ("late", "absence", "absence_correction", "lwop")   # mengurangi upah (bukan titipan)
+CORRECTION_LOOKBACK_DAYS = 93
+
+
+def _round(v) -> int:
+    return int(round(float(v or 0)))
+
+
+async def _tax_history(db, emp_id: str, year: str, run_id: str | None) -> list:
+    """Slip karyawan di tahun pajak `year` dari run LAIN yang tidak dibatalkan (draft maupun final)."""
+    slips = await db.rahaza_payslips.find(
+        {"employee_id": emp_id, "period_to": {"$gte": f"{year}-01-01", "$lte": f"{year}-12-31"}},
+        {"_id": 0, "run_id": 1, "period_to": 1, "gross_pay": 1, "deductions": 1, "bpjs_employer": 1,
+         "tax": 1, "pay_scheme": 1}).to_list(400)
+    slips = [s for s in slips if s.get("run_id") and s.get("run_id") != run_id]
+    if not slips:
+        return []
+    ids = list({s["run_id"] for s in slips})
+    live = {r["id"] for r in await db.rahaza_payroll_runs.find(
+        {"id": {"$in": ids}, "status": {"$ne": "cancelled"}}, {"_id": 0, "id": 1}).to_list(len(ids))}
+    return [s for s in slips if s["run_id"] in live]
+
+
+def _slip_tax_figures(s: dict) -> dict:
+    """Angka pajak satu slip lama/baru (slip sebelum Tahap 2 tidak punya `tax`)."""
+    tax = s.get("tax") or {}
+    by = {}
+    for d in s.get("deductions") or []:
+        t = (d.get("type") or "").lower()
+        by[t] = by.get(t, 0.0) + float(d.get("amount") or 0)
+    er = s.get("bpjs_employer") or {}
+    taxable = tax.get("taxable_gross")
+    if taxable is None:
+        taxable = max(0.0, float(s.get("gross_pay") or 0) - sum(by.get(t, 0.0) for t in SYSTEM_WAGE_DEDUCTIONS))
+    return {"tax_month": tax.get("tax_month") or str(s.get("period_to") or "")[:7],
+            "taxable": float(taxable), "bpjs_base": float(tax.get("bpjs_base") or 0),
+            "pph21": by.get("pph21", 0.0), "kes": by.get("bpjs_kesehatan", 0.0), "jht": by.get("bpjs_jht", 0.0),
+            "jp": by.get("bpjs_jp", 0.0),
+            "er": {k: float(er.get(k) or 0) for k in ("kes", "jht", "jp", "jkk", "jkm")}}
+
+
+def _bpjs_zero() -> dict:
+    return {"kes_emp": 0, "kes_comp": 0, "jht_emp": 0, "jht_comp": 0, "jp_emp": 0, "jp_comp": 0,
+            "jkk_comp": 0, "jkm_comp": 0}
+
+
+async def _employee_period_context(db, emp_id: str, pf: date, pt: date, emp: dict, cal: dict) -> dict:
+    """Absensi, cuti, lembur, dan hari kerja satu karyawan untuk satu periode (dipakai slip & koreksi)."""
+    from core.workdays import holiday_set, working_days_between
+    from routes import rahaza_payroll_rules as rules
+    from utils.attendance_policy import attendance_counts
+    pfi, pti = pf.isoformat(), pt.isoformat()
+    holidays = await holiday_set(db, pf, pt)
+    period_wd = working_days_between(pf, pt, cal["off_weekdays"], holidays)
+    join, end = rules.employment_window(emp)
+    employed_wd = [d for d in period_wd if rules.employed_on(d, join, end)]
+    events = await db.rahaza_attendance_events.find(
+        {"employee_id": emp_id, "date": _date_range_filter(pfi, pti)}, {"_id": 0}).to_list(1000)
+    leaves = await db.rahaza_leave_requests.find(
+        {"employee_id": emp_id, "status": "approved", "from_date": {"$lte": pti}, "to_date": {"$gte": pfi}},
+        {"_id": 0}).to_list(200)
+    lt_ids = list({lv.get("leave_type_id") for lv in leaves if lv.get("leave_type_id")})
+    leave_types = {lt["id"]: lt for lt in await db.rahaza_leave_types.find(
+        {"id": {"$in": lt_ids}}, {"_id": 0}).to_list(200)} if lt_ids else {}
+    try:
+        ot_requests = await db.rahaza_overtime_requests.find(
+            {"employee_id": emp_id, "status": "approved", "date": _date_range_filter(pfi, pti)},
+            {"_id": 0}).to_list(500)
+    except Exception as e:  # noqa: BLE001
+        ot_requests = []
+        log.warning(f"Overtime request aggregation failed for {emp_id}: {e}")
+    classified = rules.classify_days(employed_wd, events, leaves, leave_types, counts=attendance_counts)
+    return {"holidays": holidays, "period_wd": period_wd, "employed_wd": employed_wd, "join": join, "end": end,
+            "events": events, "leaves": leaves, "leave_types": leave_types, "ot_requests": ot_requests,
+            "classified": classified}
+
+
+async def _attendance_corrections(db, profile: dict, emp: dict, pf: date, run_id: str | None, cal: dict,
+                                  ot_cfg: dict) -> tuple[list, list, list]:
+    """Koreksi absensi pada periode yang SUDAH final (absensi terkunci) → (baris pendapatan, baris potongan,
+    jejak koreksi). Selisih dihitung dari jejak per tanggal (`attendance_snapshot`) slip final vs absensi
+    sekarang, dengan tarif harian / upah sejam slip asal. Slip lama tanpa jejak dilewati (konservatif)."""
+    from routes import rahaza_payroll_rules as rules
+    from utils.attendance_policy import attendance_counts
+    emp_id = profile["employee_id"]
+    since = (pf - timedelta(days=CORRECTION_LOOKBACK_DAYS)).isoformat()
+    prior = await db.rahaza_payslips.find(
+        {"employee_id": emp_id, "period_to": {"$lt": pf.isoformat(), "$gte": since},
+         "attendance_snapshot": {"$exists": True}}, {"_id": 0}).to_list(20)
+    prior = [s for s in prior if s.get("run_id") and s.get("run_id") != run_id]
+    if not prior:
+        return [], [], []
+    finals = {r["id"]: r for r in await db.rahaza_payroll_runs.find(
+        {"id": {"$in": list({s["run_id"] for s in prior})}, "status": "finalized"},
+        {"_id": 0, "id": 1, "run_number": 1}).to_list(20)}
+    earn, ded, trail = [], [], []
+    for s in sorted(prior, key=lambda x: str(x.get("period_from"))):
+        run = finals.get(s.get("run_id"))
+        if not run:
+            continue
+        # Sudah diklaim slip run lain yang belum dibatalkan (mis. run draft lain) → jangan dobel.
+        claims = await db.rahaza_payslips.find(
+            {"employee_id": emp_id, "run_id": {"$ne": run_id},
+             "corrections": {"$elemMatch": {"source_slip_id": s.get("id")}}}, {"_id": 0, "run_id": 1}).to_list(20)
+        if claims and await db.rahaza_payroll_runs.count_documents(
+                {"id": {"$in": [c.get("run_id") for c in claims]}, "status": "draft"}):
+            continue
+        spf, spt = _to_date(str(s["period_from"])[:10]), _to_date(str(s["period_to"])[:10])
+        ctx = await _employee_period_context(db, emp_id, spf, spt, emp, cal)
+        # Penyatuan absen ↔ payroll (6 Nov 2026): koreksi absen yang disetujui HR untuk tanggal TERKUNCI
+        # tidak mengubah absensi (paket absen menyimpannya di `rahaza_attendance_corrections` dengan
+        # payroll_adjustment.status='pending'). Terapkan isian koreksinya di atas absensi saat menghitung
+        # selisih, lalu tandai 'applied' ketika run ini final (lihat `apply_correction_trail`).
+        corr_ids = await _overlay_pending_corrections(db, emp_id, spf, spt, ctx, rules, attendance_counts)
+        ot_days = rules.overtime_days(ctx["events"], ctx["ot_requests"], ctx["classified"],
+                                      off_weekdays=cal["off_weekdays"], holidays=ctx["holidays"], cfg=ot_cfg,
+                                      work_days_per_week=cal["work_days_per_week"], counts=attendance_counts)
+        if s.get("pay_scheme") != "monthly":
+            ctx["classified"] = {k: {**v, "weight": 0.0} for k, v in ctx["classified"].items()}
+        new_snap = rules.snapshot_of(ctx["classified"], ot_days)
+        old_snap = (s["attendance_snapshot_current"] if s.get("attendance_snapshot_current") is not None
+                    else s.get("attendance_snapshot")) or {}
+        if s.get("pay_scheme") != "monthly":
+            old_snap = {k: {**v, "ded": 0.0} for k, v in old_snap.items()}
+        delta = rules.snapshot_delta(old_snap, new_snap)
+        if not delta:
+            continue
+        n_period = int((s.get("work_days") or {}).get("period") or len(ctx["period_wd"]) or 0)
+        hourly = float(s.get("overtime_base_hourly") or 0)
+        amount = 0.0
+        for iso, dlt in delta.items():
+            if dlt["ded"] and n_period:
+                amount -= dlt["ded"] * rules.rate_on(profile, _to_date(iso)) / n_period
+            if dlt["ot"] and hourly:
+                amount += dlt["ot"] * hourly
+        amount = _round(amount)
+        if not amount:
+            continue
+        days = ", ".join(sorted(_to_date(i).strftime("%d/%m") for i in delta))
+        label = f"Koreksi absen {run.get('run_number') or ''} ({days})".replace("  ", " ")
+        if amount > 0:
+            earn.append({"type": "attendance_correction", "label": label, "qty": 1, "unit": "koreksi",
+                         "rate": amount, "amount": amount, "source_run_number": run.get("run_number")})
+        else:
+            ded.append({"type": "absence_correction", "label": label, "amount": -amount,
+                        "source_run_number": run.get("run_number")})
+        trail.append({"source_slip_id": s.get("id"), "source_run_id": run["id"],
+                      "source_run_number": run.get("run_number"), "delta": delta, "amount": amount,
+                      "new_snapshot": new_snap, "prev_snapshot": old_snap,
+                      "attendance_correction_ids": corr_ids})
+    return earn, ded, trail
+
+
+async def _overlay_pending_corrections(db, emp_id: str, spf: date, spt: date, ctx: dict, rules, counts) -> list:
+    """Isian koreksi absen untuk tanggal terkunci ditimpakan ke absensi periode slip asal.
+
+    SEMUA koreksi disetujui (pending maupun sudah dibayar) ikut ditimpakan — itulah absensi yang benar;
+    jejak `attendance_snapshot_current` slip asal yang mencegah pembayaran dobel. Yang dikembalikan hanya
+    id koreksi yang belum dibayar (ditandai 'applied' saat run final)."""
+    pend = await db.rahaza_attendance_corrections.find(
+        {"employee_id": emp_id, "status": "approved", "apply_mode": "penyesuaian_payroll",
+         "date": {"$gte": spf.isoformat(), "$lte": spt.isoformat()}},
+        {"_id": 0}).to_list(200)
+    pend.sort(key=lambda c: str(c.get("decided_at") or c.get("created_at") or ""))
+    if not pend:
+        return []
+    from routes.rahaza_attendance_corrections import requested_to_patch
+    by_day = {str(e.get("date"))[:10]: e for e in ctx["events"]}
+    for c in pend:
+        day = str(c.get("date"))[:10]
+        patch = requested_to_patch(day, c.get("requested") or {})
+        ev = dict(by_day.get(day) or {"employee_id": emp_id, "date": day})
+        ev.update(patch)
+        # aturan paket absen: jam masuk pada hari alpa/kosong menjadikan statusnya hadir
+        if "status" not in patch and patch.get("clock_in") and (ev.get("status") or "") in ("", "alpa", "alfa"):
+            ev["status"] = "hadir"
+        by_day[day] = ev
+    ctx["events"] = list(by_day.values())
+    ctx["classified"] = rules.classify_days(ctx["employed_wd"], ctx["events"], ctx["leaves"], ctx["leave_types"],
+                                            counts=counts)
+    return [c["id"] for c in pend if c.get("id") and ((c.get("payroll_adjustment") or {}).get("status") or "pending") == "pending"]
+
 
 async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
-                                        period_to: str, emp: dict) -> dict:
+                                        period_to: str, emp: dict, *, run_id: str | None = None) -> dict:
     """Hitung slip payroll untuk 1 pegawai. SATU-SATUNYA mesin hitung.
 
     Komponen (mengikuti sheet "Data THP" milik user):
-      PENDAPATAN  gaji pokok / borongan pcs / jam · lembur · tunjangan
-                  (fixed · % bruto · per HARI HADIR · per JAM BERSIH)
-      POTONGAN    keterlambatan · LWOP · kasbon/pinjaman · BPJS · PPh21
+      PENDAPATAN  gaji pokok (prorata) / borongan pcs / jam · lembur · tunjangan · koreksi absen
+      POTONGAN    keterlambatan · tidak masuk (alpa/cuti tak dibayar) · BPJS · PPh21 · kasbon/pinjaman
+    `run_id` = run yang sedang dibuat/dihitung ulang (dikecualikan dari riwayat pajak & koreksi).
     """
+    from core.workdays import get_work_calendar
+    from routes import rahaza_payroll_rules as rules
+    from routes.rahaza_payroll_settings import (get_attendance_bonus_settings, get_bpjs_settings,
+                                                get_overtime_settings, get_pph21_settings)
+    from routes.rahaza_payroll_tax import (compute_bpjs, has_tax_id, pph21_annual, pph21_ter_month,
+                                           resolve_bpjs_programs, _pct)
+    from utils.attendance_policy import attendance_counts
+
     scheme = profile["pay_scheme"]
-    base_rate = float(profile.get("base_rate") or 0)
-    ot_rate = float(profile.get("overtime_rate") or 0)
     emp_id = profile["employee_id"]
+    pf, pt = _to_date(period_from[:10]), _to_date(period_to[:10])
+    base_rate = rules.rate_on(profile, pt)            # tarif berlaku di akhir periode (label & cadangan)
+    ot_rate = rules.rate_on(profile, pt, "overtime_rate")
+    warnings: list = []
 
     earnings: list = []
-    source_refs: dict = {"wip_event_count": 0, "attendance_event_count": 0,
-                         "process_breakdown": {}}
+    source_refs: dict = {"wip_event_count": 0, "attendance_event_count": 0, "process_breakdown": {}}
 
-    # ─── ABSENSI ──────────────────────────────────────────────────────────────
-    att_rows = await db.rahaza_attendance_events.find({
-        "employee_id": emp_id,
-        "date": _date_range_filter(period_from, period_to),
-    }, {"_id": 0}).to_list(500)
-    source_refs["attendance_event_count"] = len(att_rows)
+    # ─── KALENDER & ABSENSI ───────────────────────────────────────────────────
+    cal = await get_work_calendar(db)
+    ctx = await _employee_period_context(db, emp_id, pf, pt, emp, cal)
+    period_wd, employed_wd, classified = ctx["period_wd"], ctx["employed_wd"], ctx["classified"]
+    n_period, n_emp = len(period_wd), len(employed_wd)
+    fixed_scheme = scheme in ("monthly", "weekly")
+    emp_factor = (n_emp / n_period) if (fixed_scheme and n_period) else 1.0
+    source_refs["attendance_event_count"] = len(ctx["events"])
+    # Tahap 1 (keputusan owner): selfie DITOLAK HR bukan kehadiran — tidak dihitung hadir, jam kerja,
+    # lembur, maupun terlambat. Selfie yang masih menunggu review tetap dihitung (SSOT attendance_policy).
+    att_rows = [r for r in ctx["events"] if attendance_counts(r)]
+    if len(att_rows) != len(ctx["events"]):
+        source_refs["attendance_rejected_count"] = len(ctx["events"]) - len(att_rows)
+    source_refs["overtime_request_count"] = len(ctx["ot_requests"])
+    day_sum = rules.summarize_days(classified, until=today_wib())
 
     total_hours = sum(float(r.get("hours_worked") or 0) for r in att_rows)
-    # FASE 15: jam BERSIH (sudah dikurangi istirahat & izin keluar). Pakai
-    # `net_hours_worked` bila ada; kalau tidak, jatuh ke jam kotor (record lama).
+    # FASE 15: jam BERSIH (sudah dikurangi istirahat & izin keluar).
     total_net_hours = sum(
         float(r.get("net_hours_worked") if r.get("net_hours_worked") is not None
               else (r.get("hours_worked") or 0))
         for r in att_rows
     )
-    days_hadir = sum(1 for r in att_rows if r.get("status") == "hadir")
+    days_hadir = sum(1 for r in att_rows if rules.norm_status(r.get("status")) == "hadir")
     total_late_minutes = sum(int(r.get("late_minutes") or 0) for r in att_rows)
     days_late = sum(1 for r in att_rows if int(r.get("late_minutes") or 0) > 0)
     total_break_minutes = sum(int(r.get("break_minutes") or 0) for r in att_rows)
@@ -239,53 +539,30 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "late_minutes": total_late_minutes, "days_late": days_late,
         "break_minutes": total_break_minutes, "permit_minutes": total_permit_minutes,
     })
-
-    # ─── LEMBUR: absensi + pengajuan DISETUJUI, satu sumber per HARI ──────────
-    # 2026-11-02 (K24): dulu `overtime_hours` absensi dan jam pengajuan disetujui DIJUMLAH berdua,
-    # sehingga satu lembur bisa terbayar dua kali bila keduanya terisi. Sekarang pengajuan disetujui
-    # adalah sumber resmi untuk tanggalnya; jam lembur absensi pada tanggal yang SAMA dilewati
-    # (dicatat di source_refs). Absensi tanpa pengajuan pada hari itu tetap dihitung.
-    ot_entries: list = []
-    try:
-        ot_approved = await db.rahaza_overtime_requests.find({
-            "employee_id": emp_id,
-            "status": "approved",
-            "date": _date_range_filter(period_from, period_to),
-        }, {"_id": 0}).to_list(500)
-        source_refs["overtime_request_count"] = len(ot_approved)
-    except Exception as e:  # noqa: BLE001
-        ot_approved = []
-        log.warning(f"Overtime request aggregation failed for {emp_id}: {e}")
-    req_dates = {str(o.get("date") or "")[:10] for o in ot_approved}
-    att_ot_skipped = 0.0
-    for r in att_rows:
-        h = float(r.get("overtime_hours") or 0)
-        if h <= 0:
-            continue
-        if str(r.get("date") or "")[:10] in req_dates:
-            att_ot_skipped += h
-            continue
-        ot_entries.append({"date": str(r.get("date") or "")[:10], "source": "absensi", "hours": h,
-                           "multiplier": None})
-    for ot in ot_approved:
-        hours = float(ot.get("hours") or 0)
-        if hours <= 0:
-            continue
-        ot_entries.append({"date": str(ot.get("date") or "")[:10], "source": "pengajuan", "hours": hours,
-                           "multiplier": float(ot.get("rate_multiplier") or 1.5)})
-    if att_ot_skipped:
-        source_refs["overtime_attendance_hours_skipped"] = round(att_ot_skipped, 2)
-    # Jam ternormalisasi setara 1,5× (rumus lama, dipakai bila tarif Profil Gaji > 0).
-    total_ot = sum(e["hours"] * (e["multiplier"] / 1.5 if e["multiplier"] else 1) for e in ot_entries)
+    if fixed_scheme and n_period == 0:
+        warnings.append({"type": "no_work_days", "message": "Periode ini tidak punya hari kerja di kalender kerja — "
+                                                           "gaji tetap dibayar penuh tanpa prorata."})
+    if fixed_scheme and n_period and n_emp == 0:
+        warnings.append({"type": "not_employed", "message": "Tanggal masuk/keluar karyawan berada di luar periode ini — "
+                                                           "tidak ada hari kerja yang dibayar."})
+    if fixed_scheme and day_sum["tanpa_catatan"]:
+        warnings.append({"type": "attendance_missing",
+                         "message": f"{day_sum['tanpa_catatan']} hari kerja tanpa catatan absen — tidak dipotong "
+                                    "otomatis. Periksa absensinya sebelum finalisasi."})
 
     # ─── PENDAPATAN per skema ─────────────────────────────────────────────────
+    def _segments(days):
+        segs: list = []
+        for d in days:
+            r = rules.rate_on(profile, d)
+            if segs and segs[-1]["rate"] == r:
+                segs[-1]["days"].append(d)
+            else:
+                segs.append({"rate": r, "days": [d]})
+        return segs
+
     if scheme == "pcs":
-        # Dua penulis event WIP dengan nama field berbeda (temuan FASE 15):
-        #   routes/rahaza_production.py       → operator_id · event_type='output' · qty
-        #   routes/production_internal_adapter.py → operator_id+employee_id ·
-        #                                        event_type='complete' · qty_done · rate_per_pcs
-        # Versi lama di shared.py HANYA mencocokkan employee_id+'complete' ⇒ output
-        # dari lantai produksi TIDAK TERBAYAR. Sekarang keduanya diterima.
+        # Dua penulis event WIP dengan nama field berbeda (temuan FASE 15) — keduanya diterima.
         wip_rows = await db.rahaza_wip_events.find({
             "$or": [{"operator_id": emp_id}, {"employee_id": emp_id}],
             "event_type": {"$in": ["output", "complete"]},
@@ -324,83 +601,102 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
                 "qty": info["qty"], "rate": rate, "amount": amount}
 
     elif scheme == "hourly":
-        amount = round(total_net_hours * base_rate)
+        # Tarif per tanggal: kenaikan tarif di tengah periode berlaku mulai tanggal efektifnya.
+        amount = 0.0
+        for r in att_rows:
+            h = float(r.get("net_hours_worked") if r.get("net_hours_worked") is not None else (r.get("hours_worked") or 0))
+            dd = rules._d(r.get("date")) or pt
+            amount += h * rules.rate_on(profile, dd)
         earnings.append({
             "type": "hourly", "label": "Borongan jam",
             "qty": round(total_net_hours, 2), "unit": "jam",
-            "rate": base_rate, "amount": amount,
+            "rate": base_rate, "amount": round(amount),
         })
 
     elif scheme == "weekly":
         try:
-            days = (_to_date(period_to) - _to_date(period_from)).days + 1
-            weeks = max(1, round(days / 7))
+            weeks = max(1, round(((pt - pf).days + 1) / 7))
         except Exception:  # noqa: BLE001
             weeks = 1
-        earnings.append({
-            "type": "weekly", "label": "Gaji mingguan", "qty": weeks,
-            "unit": "minggu", "rate": base_rate, "amount": round(weeks * base_rate),
-        })
+        if n_period:
+            amount = weeks * sum(rules.rate_on(profile, d) for d in employed_wd) / n_period
+        else:
+            amount = weeks * base_rate
+        label = "Gaji mingguan" + (f" — {n_emp}/{n_period} hari kerja" if n_period and n_emp != n_period else "")
+        earnings.append({"type": "weekly", "label": label, "qty": weeks, "unit": "minggu",
+                         "rate": base_rate, "amount": round(amount),
+                         "work_days": n_emp, "work_days_period": n_period})
 
     elif scheme == "monthly":
-        earnings.append({
-            "type": "monthly", "label": "Gaji pokok (bulanan)", "qty": 1,
-            "unit": "bulan", "rate": base_rate, "amount": round(base_rate),
-        })
+        segs = _segments(employed_wd) if n_period else []
+        if not n_period:
+            earnings.append({"type": "monthly", "label": "Gaji pokok (bulanan)", "qty": 1,
+                             "unit": "bulan", "rate": base_rate, "amount": round(base_rate)})
+        elif len(segs) == 1 and n_emp == n_period:
+            earnings.append({"type": "monthly", "label": "Gaji pokok (bulanan)", "qty": 1,
+                             "unit": "bulan", "rate": segs[0]["rate"], "amount": round(segs[0]["rate"])})
+        else:
+            # Prorata: tarif × hari kerja dibayar ÷ hari kerja periode, satu baris per versi tarif.
+            for sg in segs:
+                n = len(sg["days"])
+                lbl = f"Gaji pokok (bulanan) — {n}/{n_period} hari kerja"
+                if len(segs) > 1:
+                    lbl += f" mulai {sg['days'][0].strftime('%d/%m')}"
+                earnings.append({"type": "monthly", "label": lbl, "qty": round(n / n_period, 4), "unit": "bulan",
+                                 "rate": sg["rate"], "amount": round(sg["rate"] * n / n_period),
+                                 "work_days": n, "work_days_period": n_period, "prorated": True})
 
+    # ─── KOREKSI ABSEN periode final sebelumnya ───────────────────────────────
+    ot_cfg = await get_overtime_settings(db)
+    corr_earn, corr_ded, corr_trail = await _attendance_corrections(db, profile, emp, pf, run_id, cal, ot_cfg)
+    base_earnings_total = sum(e["amount"] for e in earnings)
+    earnings.extend(corr_earn)
     earnings_total = sum(e["amount"] for e in earnings)
     applicable_allowances = await _get_applicable_allowances(db, emp)
 
-    # ─── NILAI LEMBUR (K24, 2026-11-02) ───────────────────────────────────────
-    # 1) Tarif Profil Gaji (`overtime_rate`) > 0 → rumus lama: jam ternormalisasi × tarif.
-    # 2) Tarif 0 → aturan cadangan `rahaza_payroll_settings.overtime`: 1/173 × upah tetap (gaji pokok
-    #    bulanan + tunjangan TETAP bernominal tetap), per hari jam ke-1 × 1,5 dan berikutnya × 2;
-    #    pengajuan berpengali selain 1,5 (hari libur 2×/3×) memakai pengali pengajuan itu apa adanya.
-    #    Hanya skema bulanan (upah tetap per bulan terdefinisi).
-    # 3) Selain itu lembur tidak dibayar dan slip diberi `overtime_warning` (tampil di layar run gaji).
+    # ─── LEMBUR per hari (Tahap 2) ────────────────────────────────────────────
+    ot_days = rules.overtime_days(ctx["events"], ctx["ot_requests"], classified,
+                                  off_weekdays=cal["off_weekdays"], holidays=ctx["holidays"], cfg=ot_cfg,
+                                  work_days_per_week=cal["work_days_per_week"], counts=attendance_counts)
+    paid_factor = round(sum(o["factor"] for o in ot_days), 4)
+    paid_hours = round(sum(o["paid_hours"] for o in ot_days), 2)
+    unpaid_hours = round(sum(o["hours"] - o["paid_hours"] for o in ot_days if o["basis"] == "tanpa pengajuan"), 2)
+    fixed_allow_full = sum(float(al.get("amount") or 0) for al in applicable_allowances
+                           if al.get("is_fixed_wage") and (al.get("calc_type") or "fixed") == "fixed")
+    upah_tetap_contract = base_rate + fixed_allow_full
     overtime_amount = 0
     overtime_basis = "none"
     overtime_base_hourly = 0.0
     overtime_warning = None
-    ot_hours_raw = sum(e["hours"] for e in ot_entries)
-    if total_ot > 0 and ot_rate > 0:
-        overtime_amount = round(total_ot * ot_rate)
-        overtime_basis = "profile"
-    elif ot_hours_raw > 0:
-        try:
-            from routes.rahaza_payroll_settings import get_overtime_settings
-            from routes.rahaza_payroll_tax import overtime_tier_factor
-            ot_cfg = await get_overtime_settings(db)
-        except Exception as e:  # noqa: BLE001
-            ot_cfg = {"basis": "manual"}
-            log.warning(f"Overtime settings unavailable for {emp_id}: {e}")
-        upah_tetap_ot = earnings_total + sum(
-            float(al.get("amount") or 0) for al in applicable_allowances
-            if al.get("is_fixed_wage") and (al.get("calc_type") or "fixed") == "fixed")
-        if ot_cfg.get("basis") == "upah_tetap_div_173" and scheme == "monthly" and upah_tetap_ot > 0:
-            m1 = float(ot_cfg.get("first_hour_multiplier") or 1.5)
-            m2 = float(ot_cfg.get("next_hours_multiplier") or 2.0)
-            overtime_base_hourly = upah_tetap_ot / float(ot_cfg.get("divisor") or 173)
-            factor = 0.0
-            for e in ot_entries:
-                mult = e["multiplier"]
-                if mult is None or abs(mult - 1.5) < 1e-9:
-                    e["factor"] = round(overtime_tier_factor(e["hours"], m1, m2), 4)
-                else:
-                    e["factor"] = round(e["hours"] * mult, 4)
-                factor += e["factor"]
-            overtime_amount = round(overtime_base_hourly * factor)
+    if paid_factor > 0:
+        first_mult = float(ot_cfg.get("first_hour_multiplier") or 1.5)
+        if ot_rate > 0:
+            # Tarif Profil Gaji = Rp per jam lembur pertama hari kerja → upah sejam = tarif ÷ pengali jam ke-1.
+            overtime_base_hourly, overtime_basis = ot_rate / first_mult, "profile"
+        elif scheme == "hourly" and base_rate > 0:
+            overtime_base_hourly, overtime_basis = base_rate, "upah_sejam"
+        elif ot_cfg.get("basis") == "upah_tetap_div_173" and scheme == "monthly" and upah_tetap_contract > 0:
+            overtime_base_hourly = upah_tetap_contract / float(ot_cfg.get("divisor") or 173)
             overtime_basis = "upah_tetap_div_173"
-            source_refs["overtime_factor"] = round(factor, 4)
         else:
-            overtime_warning = (f"Ada {ot_hours_raw:g} jam lembur tetapi tarif lembur Profil Gaji = 0 dan aturan "
+            overtime_warning = (f"Ada {paid_hours:g} jam lembur disetujui tetapi tarif lembur Profil Gaji = 0 dan aturan "
                                 "cadangan tidak berlaku (bukan skema bulanan / basis 'manual') — lembur TIDAK dibayar. "
                                 "Isi tarif lembur di Profil Gaji atau Pengaturan Payroll.")
+        overtime_amount = round(overtime_base_hourly * paid_factor)
+        source_refs["overtime_factor"] = paid_factor
+    if overtime_warning:
+        warnings.append({"type": "overtime_rate_zero", "message": overtime_warning})
+    if unpaid_hours > 0:
+        source_refs["overtime_unapproved_hours"] = unpaid_hours
+        warnings.append({"type": "overtime_unapproved",
+                         "message": f"{unpaid_hours:g} jam lembur tanpa pengajuan disetujui — tidak dibayar sampai HR "
+                                    "menandainya dibayar di absensi."})
 
     # ─── TUNJANGAN ────────────────────────────────────────────────────────────
+    bonus_cfg = await get_attendance_bonus_settings(db)
     allowance_items: list = []
     allowance_total = 0.0
-    fixed_wage_allowance = 0.0   # dasar iuran BPJS (upah tetap)
+    fixed_wage_allowance = 0.0   # dasar iuran BPJS skema non-bulanan (upah tetap periode ini)
     base_for_pct = earnings_total + overtime_amount
 
     for al in applicable_allowances:
@@ -415,9 +711,8 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         elif calc_type == "per_hour_worked":
             amount = amt_cfg * total_net_hours
         elif calc_type == "fixed":
-            amount = amt_cfg
+            amount = amt_cfg * emp_factor   # prorata masa kerja (skema bulanan/mingguan)
         else:
-            # Jangan diam-diam salah: hitung sebagai fixed TAPI beri tanda jelas.
             amount = amt_cfg
             warning = (f"calc_type '{calc_type}' tidak dikenal — dihitung sebagai "
                        f"'fixed'. Perbaiki template tunjangan.")
@@ -430,12 +725,19 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
             "calc_type": calc_type,
             "rate": amt_cfg,
             "qty": (days_hadir if calc_type == "per_day_attendance"
-                    else round(total_net_hours, 2) if calc_type == "per_hour_worked" else 1),
+                    else round(total_net_hours, 2) if calc_type == "per_hour_worked"
+                    else round(emp_factor, 4) if calc_type == "fixed" and emp_factor != 1 else 1),
             "amount": round(amount),
             "is_fixed_wage": bool(al.get("is_fixed_wage")),
         }
         if warning:
             item["warning"] = warning
+        if rules.is_attendance_bonus(al, bonus_cfg):
+            reasons = rules.bonus_forfeit_reasons(bonus_cfg, day_sum, days_present=days_hadir,
+                                                  days_late=days_late, late_minutes=total_late_minutes)
+            if reasons:
+                item.update(amount=0, forfeited=True, forfeit_reasons=reasons,
+                            label=f"{item['label']} — hangus: {', '.join(reasons)}")
         allowance_items.append(item)
         allowance_total += item["amount"]
         if item["is_fixed_wage"]:
@@ -447,9 +749,7 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
     deductions: list = []
     deductions_total = 0.0
 
-    # (1) KETERLAMBATAN — aturan disimpan di `rahaza_payroll_settings` supaya HR
-    #     bisa mengubahnya tanpa deploy. Tanpa aturan → TIDAK memotong apa pun
-    #     (lebih baik tidak memotong daripada memotong dengan angka karangan).
+    # (1) KETERLAMBATAN — aturan di `rahaza_payroll_settings`; tanpa aturan → TIDAK memotong.
     late_rule = await db.rahaza_payroll_settings.find_one(
         {"key": "late_penalty"}, {"_id": 0}) or {}
     if total_late_minutes > 0 and late_rule.get("enabled"):
@@ -475,110 +775,125 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
             })
             deductions_total += round(amount)
 
-    # (2) CUTI TANPA GAJI (LWOP)
-    try:
-        lwop_type_ids = set()
-        async for lt in db.rahaza_leave_types.find({"unpaid": True, "active": True},
-                                                   {"_id": 0, "id": 1}):
-            lwop_type_ids.add(lt["id"])
-        if lwop_type_ids and scheme == "monthly" and base_rate > 0:
-            lwop_leaves = await db.rahaza_leave_requests.find({
-                "employee_id": emp_id,
-                "status": "approved",
-                "leave_type_id": {"$in": list(lwop_type_ids)},
-                "from_date": {"$lte": period_to},
-                "to_date": {"$gte": period_from},
-            }, {"_id": 0}).to_list(100)
-            lwop_days = sum(
-                float(lv.get("duration_working_days") or lv.get("duration_days") or 0)
-                for lv in lwop_leaves)
-            if lwop_days > 0:
-                try:
-                    pf, pt = _to_date(period_from[:10]), _to_date(period_to[:10])
-                    hol = await db.rahaza_production_calendar.find(
-                        {"date": {"$gte": period_from[:10], "$lte": period_to[:10]},
-                         "type": "holiday"}, {"_id": 0, "date": 1}).to_list(50)
-                    holiday_set = {h["date"] for h in hol}
-                    working_days = 0
-                    cur = pf
-                    while cur <= pt:
-                        if cur.weekday() < 5 and cur.isoformat() not in holiday_set:
-                            working_days += 1
-                        cur += timedelta(days=1)
-                    working_days = working_days or 22
-                except Exception:  # noqa: BLE001
-                    # F13 — DULU diam-diam memakai 22 hari. Ini PEMBAGI potongan
-                    # gaji tanpa upah (LWOP): kalau hari kerja sebenarnya 20 dan
-                    # kita memakai 22, potongan karyawan salah hitung setiap
-                    # periode dan tidak ada jejak kenapa. Tetap non-blocking
-                    # (payroll harus tetap bisa dihitung), tapi bersuara.
-                    log.exception(
-                        "[payroll] hari kerja periode %s..%s tidak bisa dihitung — "
-                        "potongan LWOP memakai pembagi cadangan 22 hari; angka "
-                        "potongan perlu diverifikasi manual", period_from, period_to)
-                    working_days = 22
-                daily_rate = round(base_rate / working_days)
-                lwop_amount = round(daily_rate * lwop_days)
-                deductions.append({
-                    "type": "lwop",
-                    "label": f"Potongan cuti tanpa gaji ({lwop_days:.1f} hari)",
-                    "days": lwop_days, "daily_rate": daily_rate, "amount": lwop_amount,
-                })
-                deductions_total += lwop_amount
-                source_refs["lwop_days"] = lwop_days
-                source_refs["lwop_amount"] = lwop_amount
-    except Exception as e:  # noqa: BLE001
-        log.warning(f"LWOP deduction calculation failed for {emp_id}: {e}")
+    # (2) TIDAK MASUK — satu aturan (menggantikan LWOP terpisah): alpa + izin/sakit/cuti tidak dibayar /
+    #     tanpa pengajuan disetujui. Gaji pokok ÷ hari kerja periode × hari potongan (setengah hari 0,5).
+    if scheme == "monthly" and n_period and day_sum["potong_hari"] > 0:
+        ded_days = [(iso, r) for iso, r in sorted(classified.items()) if r["weight"] > 0]
+        amount = _round(sum(r["weight"] * rules.rate_on(profile, _to_date(iso)) / n_period for iso, r in ded_days))
+        parts = []
+        if day_sum["alpa"]:
+            parts.append(f"alpa {day_sum['alpa']:g}")
+        if day_sum["tidak_dibayar"]:
+            parts.append(f"izin/sakit/cuti tidak dibayar {day_sum['tidak_dibayar']:g}")
+        if amount > 0:
+            deductions.append({
+                "type": "absence",
+                "label": f"Potongan tidak masuk ({day_sum['potong_hari']:g} hari: {', '.join(parts)})",
+                "days": day_sum["potong_hari"], "alpa_days": day_sum["alpa"],
+                "unpaid_leave_days": day_sum["tidak_dibayar"], "divisor": n_period,
+                "daily_rate": round(base_rate / n_period), "dates": [iso for iso, _ in ded_days],
+                "amount": amount,
+            })
+            deductions_total += amount
+            source_refs["absence_days"] = day_sum["potong_hari"]
+            source_refs["absence_amount"] = amount
+    for c in corr_ded:
+        deductions.append(c)
+        deductions_total += c["amount"]
 
-    # (3) BPJS + PPh21  (dihitung SEBELUM kasbon: potongan wajib didahulukan)
-    #     Dasar iuran BPJS = UPAH TETAP (gaji pokok + tunjangan tetap), sesuai
-    #     PP 84/2013 & praktik di sheet THP user: 1% × (pokok + tunj. jabatan).
-    #     PPh21 tetap memakai bruto (seluruh penghasilan) sesuai UU PPh.
-    #     2026-11-02 (K22/K23): kepesertaan PER PROGRAM (resolve_bpjs_programs) dan tarif/plafon/kelas
-    #     risiko JKK dari `rahaza_payroll_settings.bpjs`. Iuran PERUSAHAAN ikut dihitung & disimpan di
-    #     slip (`bpjs_employer`) — bukan potongan; dijurnal saat finalisasi bila saklar owner menyala.
-    bpjs_pph = {"deductions": [], "total_deductions": 0.0}
+    # (3) BPJS + PPh21 — SEMUA skema (Tahap 2), dihitung kumulatif per BULAN PAJAK (bulan period_to):
+    #     iuran/pajak bulan itu dikurangi yang sudah dipotong slip run lain di bulan yang sama
+    #     (run mingguan tidak memotong iuran bulanan 4×). Dihitung SEBELUM kasbon.
+    #     Dasar iuran BPJS skema bulanan = UPAH TETAP kontrak (gaji pokok + tunjangan tetap, tidak dipotong
+    #     absen/prorata); skema lain = upah periode (borongan/jam/mingguan + tunjangan tetap) kumulatif.
     bpjs_employer = {"kes": 0, "jht": 0, "jp": 0, "jkk": 0, "jkm": 0, "kes_total": 0, "tk_total": 0, "total": 0}
     bpjs_programs = {"kes": False, "jht": False, "jp": False, "jkk_jkm": False}
+    tax_info: dict = {"tax_month": period_to[:7]}
     try:
-        from routes.rahaza_payroll_tax import compute_full_tax_and_bpjs, resolve_bpjs_programs
         bpjs_programs = resolve_bpjs_programs(emp)
         apply_bpjs = any(bpjs_programs.values())
-        apply_pph21 = bool(emp.get("npwp_number"))
-        if scheme in ("monthly", "bulanan") and (apply_bpjs or apply_pph21):
-            from routes.rahaza_payroll_settings import get_bpjs_settings
-            bpjs_cfg = await get_bpjs_settings(db)
-            gross_after = gross - float(source_refs.get("lwop_amount") or 0)
-            upah_tetap = earnings_total + fixed_wage_allowance
-            bpjs_pph = compute_full_tax_and_bpjs(
-                monthly_gross=max(0.0, gross_after),
-                ptkp_code=emp.get("tax_ptkp") or "TK/0",
-                apply_bpjs=apply_bpjs,
-                apply_pph21=apply_pph21,
-                include_ketenagakerjaan=bool(bpjs_programs["jht"] or bpjs_programs["jp"] or bpjs_programs["jkk_jkm"]),
-                jkk_risk_tier=bpjs_cfg.get("jkk_risk_tier") or "very_low",
-                bpjs_base=max(0.0, upah_tetap) or None,
-                programs=bpjs_programs,
-                bpjs_cfg=bpjs_cfg,
-            )
-            deductions = deductions + list(bpjs_pph.get("deductions") or [])
-            deductions_total += float(bpjs_pph.get("total_deductions") or 0)
-            source_refs["bpjs_base_upah_tetap"] = round(upah_tetap)
-            b = bpjs_pph.get("bpjs") or {}
-            if apply_bpjs:
-                bpjs_employer = {
-                    "kes": b.get("kes_comp", 0), "jht": b.get("jht_comp", 0), "jp": b.get("jp_comp", 0),
-                    "jkk": b.get("jkk_comp", 0), "jkm": b.get("jkm_comp", 0),
-                    "kes_total": b.get("kes_company", 0), "tk_total": b.get("tk_company", 0),
-                    "total": b.get("total_company", 0), "jkk_risk_tier": b.get("jkk_risk_tier"),
-                }
+        bpjs_cfg = await get_bpjs_settings(db)
+        pph_cfg = await get_pph21_settings(db)
+        hist = await _tax_history(db, emp_id, period_to[:4], run_id)
+        figs = [_slip_tax_figures(s) for s in hist]
+        month_prior = [f for f in figs if f["tax_month"] == tax_info["tax_month"]]
+        pm = {k: sum(f[k] for f in month_prior) for k in ("taxable", "bpjs_base", "pph21", "kes", "jht", "jp")}
+        pm_er = {k: sum(f["er"][k] for f in month_prior) for k in ("kes", "jht", "jp", "jkk", "jkm")}
+
+        if scheme == "monthly":
+            last_day = employed_wd[-1] if employed_wd else pt
+            this_base = rules.rate_on(profile, last_day) + fixed_allow_full
+            month_base = this_base
+        else:
+            this_base = base_earnings_total + fixed_wage_allowance
+            month_base = pm["bpjs_base"] + this_base
+        tax_info.update(bpjs_base=round(this_base), bpjs_month_base=round(month_base))
+        mb = compute_bpjs(month_base, programs=bpjs_programs, cfg=bpjs_cfg) if apply_bpjs else _bpjs_zero()
+        cur = {"kes_emp": max(0, mb["kes_emp"] - _round(pm["kes"])),
+               "jht_emp": max(0, mb["jht_emp"] - _round(pm["jht"])),
+               "jp_emp": max(0, mb["jp_emp"] - _round(pm["jp"])),
+               "kes_comp": max(0, mb["kes_comp"] - _round(pm_er["kes"])),
+               "jht_comp": max(0, mb["jht_comp"] - _round(pm_er["jht"])),
+               "jp_comp": max(0, mb["jp_comp"] - _round(pm_er["jp"])),
+               "jkk_comp": max(0, mb["jkk_comp"] - _round(pm_er["jkk"])),
+               "jkm_comp": max(0, mb["jkm_comp"] - _round(pm_er["jkm"]))}
+        rates = bpjs_cfg.get("rates") or {}
+        for key, typ, lbl, rk in (("kes_emp", "bpjs_kesehatan", "BPJS Kesehatan", "kes_emp"),
+                                  ("jht_emp", "bpjs_jht", "BPJS Ketenagakerjaan JHT", "jht_emp"),
+                                  ("jp_emp", "bpjs_jp", "BPJS Ketenagakerjaan JP", "jp_emp")):
+            if cur[key] > 0:
+                deductions.append({"label": f"{lbl} ({_pct(rates.get(rk, 0))})", "amount": cur[key], "type": typ})
+                deductions_total += cur[key]
+        source_refs["bpjs_base_upah_tetap"] = round(this_base)
+        if apply_bpjs:
+            kes_t = cur["kes_comp"]
+            tk_t = cur["jht_comp"] + cur["jp_comp"] + cur["jkk_comp"] + cur["jkm_comp"]
+            bpjs_employer = {"kes": cur["kes_comp"], "jht": cur["jht_comp"], "jp": cur["jp_comp"],
+                             "jkk": cur["jkk_comp"], "jkm": cur["jkm_comp"], "kes_total": kes_t, "tk_total": tk_t,
+                             "total": kes_t + tk_t, "jkk_risk_tier": bpjs_cfg.get("jkk_risk_tier")}
+
+        # PPh21 — bruto = upah (bruto − potongan terlambat/tidak masuk) + premi JKK/JKM/Kes perusahaan.
+        if pph_cfg.get("enabled"):
+            wage_cut = sum(float(d["amount"]) for d in deductions if d.get("type") in SYSTEM_WAGE_DEDUCTIONS)
+            premiums = (cur["jkk_comp"] + cur["jkm_comp"] + cur["kes_comp"]) if pph_cfg.get("employer_premiums_taxable") else 0
+            taxable = max(0.0, gross - wage_cut) + premiums
+            ptkp = (emp.get("tax_ptkp") or "TK/0").upper()
+            no_id = not has_tax_id(emp)
+            month_gross = pm["taxable"] + taxable
+            ter = pph21_ter_month(month_gross, ptkp, pph_cfg, no_tax_id=no_id)
+            pph = max(0, ter["tax"] - _round(pm["pph21"]))
+            detail = {**ter, "prior_withheld_month": _round(pm["pph21"]), "ptkp_code": ptkp,
+                      "has_tax_id": not no_id}
+            label = f"PPh21 TER {ter['category']} ({_pct(ter['rate'])})"
+            end = ctx["end"]
+            last_month = pt.month == 12 or bool(end and end.year == pt.year and end.month == pt.month and end <= pt)
+            if scheme == "monthly" and pph_cfg.get("december_true_up") and last_month:
+                months = {f["tax_month"] for f in figs} | {tax_info["tax_month"]}
+                ann = pph21_annual(sum(f["taxable"] for f in figs) + taxable,
+                                   sum(f["jht"] + f["jp"] for f in figs) + cur["jht_emp"] + cur["jp_emp"],
+                                   ptkp, len(months), pph_cfg, no_tax_id=no_id)
+                withheld = _round(sum(f["pph21"] for f in figs))
+                due = ann["tax_year"] - withheld
+                detail = {**detail, **ann, "method": "annual", "prior_withheld_year": withheld}
+                label = "PPh21 perhitungan setahun" + (" (Desember)" if pt.month == 12 else " (bulan terakhir bekerja)")
+                pph = max(0, due)
+                if due < 0:
+                    detail["overpaid"] = -due
+                    warnings.append({"type": "pph21_overpaid",
+                                     "message": f"PPh21 setahun lebih potong Rp {-due:,.0f} — kembalikan ke karyawan lewat "
+                                                "penyesuaian pendapatan.".replace(",", ".")})
+            if pph > 0:
+                deductions.append({"label": f"{label} — {ptkp}", "amount": pph, "type": "pph21"})
+                deductions_total += pph
+            tax_info.update(taxable_gross=round(taxable), pph21=detail)
+        else:
+            tax_info.update(taxable_gross=round(max(0.0, gross)), pph21={"method": "off"})
     except Exception as e:  # noqa: BLE001
         log.warning(f"PPh21/BPJS calculation failed for {emp_id}: {e}")
+        warnings.append({"type": "tax_error", "message": f"BPJS/PPh21 gagal dihitung: {e}"})
 
     # (4) KASBON / PINJAMAN — dibatasi sisa gaji yang tersedia (THP tidak boleh negatif).
-    #     Iter 120: dulu memotong SELURUH saldo kasbon walau gaji periode lebih kecil ⇒ net_pay minus,
-    #     JE payroll tak seimbang, dan saldo kasbon dianggap lunas dengan uang yang tidak ada.
-    #     Sisa yang belum terpotong tetap outstanding dan dipotong lagi di periode berikutnya.
+    #     Iter 120: dulu memotong SELURUH saldo kasbon walau gaji periode lebih kecil ⇒ net_pay minus.
     try:
         period_ym = period_from[:7]
         active_ks = await db.dewi_kasbon_requests.find({
@@ -587,11 +902,19 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
             "deduction_start_period": {"$lte": period_ym},
         }, {"_id": 0, "documents": 0}).sort("disbursed_at", 1).to_list(20)
         available = max(round(gross - deductions_total), 0)
+        # Tahap 1: cicilan bulan ini yang sudah diklaim slip run lain (draft/final) tidak dipotong lagi.
+        claimed = await kasbon_claimed_by_other_runs(
+            db, emp_id, period_ym, [ks.get("id") for ks in active_ks if ks.get("id")])
+        if claimed:
+            source_refs["kasbon_skipped_other_run"] = [
+                {"kasbon_id": k, "run_number": rn} for k, rn in claimed.items()]
         for ks in active_ks:
             if available <= 0:
                 break
             outstanding = float(ks.get("outstanding_balance", 0))
             if outstanding <= 0:
+                continue
+            if ks.get("id") in claimed:
                 continue
             # FIN-16: potongan payroll yang SUDAH dicatat Keuangan untuk periode ini tidak dipotong lagi
             if any(r.get("period") == period_ym and r.get("method") == "payroll_deduction"
@@ -618,6 +941,10 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         log.warning(f"Kasbon deduction failed for {emp_id}: {e}")
 
     net_pay = gross - deductions_total
+    if net_pay < 0:
+        warnings.append({"type": "negative_net",
+                         "message": f"Gaji bersih minus Rp {-net_pay:,.0f} — potongan melebihi bruto. Run tidak bisa "
+                                    "difinalisasi sebelum diperbaiki.".replace(",", ".")})
 
     return {
         "id": _uid(),
@@ -631,13 +958,14 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "period_to": period_to,
         "earnings": earnings,
         "earnings_total": earnings_total,
-        "overtime_hours": round(total_ot, 2),
-        "overtime_rate": ot_rate if overtime_basis != "upah_tetap_div_173" else round(overtime_base_hourly, 2),
+        "overtime_hours": paid_hours,
+        "overtime_rate": round(overtime_base_hourly * float(ot_cfg.get("first_hour_multiplier") or 1.5), 2)
+        if overtime_basis == "profile" else round(overtime_base_hourly, 2),
         "overtime_amount": overtime_amount,
-        # 2026-11-02 (K24): asal tarif lembur + rincian per hari + peringatan tarif 0
+        # 2026-11-02 (K24) + 2026-11-06 (Tahap 2): asal tarif lembur + rincian per hari
         "overtime_basis": overtime_basis,
         "overtime_base_hourly": round(overtime_base_hourly, 2),
-        "overtime_entries": ot_entries,
+        "overtime_entries": ot_days,
         "overtime_warning": overtime_warning,
         # 2026-11-02 (K22/K23): kepesertaan BPJS yang dipakai + iuran perusahaan (informasi & jurnal)
         "bpjs_programs": bpjs_programs,
@@ -651,6 +979,17 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "late_minutes": total_late_minutes,
         "break_minutes": total_break_minutes,
         "permit_minutes": total_permit_minutes,
+        # 2026-11-06 (Tahap 2): dasar hitung yang terlihat di slip + jejak untuk koreksi sesudah kunci
+        "work_days": {"period": n_period, "employed": n_emp, "per_week": cal["work_days_per_week"],
+                      "join_date": ctx["join"].isoformat() if ctx["join"] else None,
+                      "end_date": ctx["end"].isoformat() if ctx["end"] else None},
+        "attendance_summary": day_sum,
+        "attendance_snapshot": rules.snapshot_of(classified if scheme == "monthly"
+                                                 else {k: {**v, "weight": 0.0} for k, v in classified.items()},
+                                                 ot_days),
+        "corrections": corr_trail,
+        "tax": tax_info,
+        "warnings": warnings,
         "gross_pay": gross,
         "deductions": deductions,
         "deductions_total": deductions_total,
@@ -658,6 +997,101 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "source_refs": source_refs,
         "notes": "",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RUN: PERINGATAN, HITUNG ULANG, PEMISAHAN TUGAS, KUNCI (Tahap 2, 2026-11-06)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def run_warnings(payslips: list) -> list:
+    """Peringatan run dari slip (ditampilkan di layar Proses Gaji)."""
+    return [{"type": w.get("type"), "employee_id": s.get("employee_id"), "employee_name": s.get("employee_name") or "",
+             "message": w.get("message")}
+            for s in payslips for w in (s.get("warnings") or [])]
+
+
+def negative_net_slips(payslips: list) -> list:
+    return [{"employee_id": s.get("employee_id"), "employee_name": s.get("employee_name") or s.get("employee_code") or "",
+             "net_pay": float(s.get("net_pay") or 0)}
+            for s in payslips if float(s.get("net_pay") or 0) < 0]
+
+
+def _adj_key(d: dict) -> tuple:
+    return ((d.get("type") or "").lower(), d.get("kasbon_id") or "", "" if d.get("kasbon_id") else (d.get("label") or ""))
+
+
+def carry_manual_adjustments(old: dict, new: dict) -> dict:
+    """Hitung ulang run draft: penyesuaian manual HR (pendapatan ±, potongan tambahan, pengurangan baris
+    potongan sistem) DIPERTAHANKAN di atas hasil hitung baru."""
+    addition = round(float(old.get("manual_addition") or 0))
+    deduction = round(float(old.get("manual_deduction") or 0))
+    reduced = {_adj_key(d): float(d.get("amount") or 0) for d in (old.get("deductions") or []) if d.get("adjusted")}
+    lines = []
+    for d in new.get("deductions") or []:
+        d = dict(d)
+        k = _adj_key(d)
+        if k in reduced and not str(d.get("type") or "").lower().startswith(("bpjs", "pph21")):
+            orig = float(d.get("amount") or 0)
+            d["original_amount"] = orig
+            d["amount"] = round(min(reduced[k], orig))
+            d["adjusted"] = abs(d["amount"] - orig) > 0.01
+        lines.append(d)
+    gross_base = float(new.get("gross_pay") or 0)
+    out = {**new, "deductions": lines, "id": old.get("id") or new.get("id")}
+    for k in ("run_id", "run_number", "created_at", "adjustments_log", "adjustment_notes"):
+        if k in old:
+            out[k] = old[k]
+    if addition or deduction or any(d.get("adjusted") for d in lines):
+        out.update(manual_addition=addition, manual_deduction=deduction, gross_before_adjustment=gross_base,
+                   gross_pay=round(gross_base + addition))
+    ded_total, _net = _payslip_totals(out, deductions=lines, manual_deduction=deduction)
+    out["deductions_total"] = ded_total
+    out["net_pay"] = float(out["gross_pay"]) - ded_total
+    return out
+
+
+SOD_OVERRIDE_ROLES = ("superadmin", "admin", "owner")
+
+
+def check_segregation(run: dict, user: dict, action: str, reason: str | None) -> dict | None:
+    """K25 (Tahap 2): finalisasi & pembayaran gaji oleh orang LAIN dari pembuat run. Admin/owner boleh
+    mengecualikan dengan alasan (dicatat). Return catatan pengecualian atau None; melempar 403 bila ditolak."""
+    creator = run.get("created_by")
+    if not creator or creator != user.get("id"):
+        return None
+    role = (user.get("role") or "").lower()
+    what = "memfinalisasi" if action == "finalize" else "membayar"
+    if role in SOD_OVERRIDE_ROLES and (reason or "").strip():
+        return {"action": action, "by": user.get("id"), "by_name": user.get("name", ""), "role": role,
+                "reason": reason.strip(), "at": _now()}
+    if role in SOD_OVERRIDE_ROLES:
+        raise HTTPException(403, (f"Pemisahan tugas: Anda membuat run ini, jadi tidak boleh {what}nya sendiri. "
+                                  "Sebagai admin/owner Anda boleh mengecualikan dengan mengisi alasan."))
+    raise HTTPException(403, (f"Pemisahan tugas: run ini dibuat oleh Anda — {what} harus dilakukan pengguna lain "
+                              "(HR/manajer lain, atau admin/owner dengan alasan)."))
+
+
+async def apply_correction_trail(db, payslips: list, *, revert: bool = False) -> int:
+    """Run final: tandai koreksi absen yang dibawa slipnya sebagai sudah dibayar (jejak slip asal diperbarui).
+    `revert=True` (run dibatalkan): kembalikan jejak supaya koreksi dibawa lagi oleh run berikutnya."""
+    n = 0
+    for s in payslips or []:
+        for c in s.get("corrections") or []:
+            snap = c.get("prev_snapshot") if revert else c.get("new_snapshot")
+            if c.get("source_slip_id") and snap is not None:
+                await db.rahaza_payslips.update_one({"id": c["source_slip_id"]},
+                                                    {"$set": {"attendance_snapshot_current": snap}})
+                n += 1
+            # koreksi absen (paket absen) yang ikut dibayar run ini → applied; run dibatalkan → pending lagi
+            for cid in c.get("attendance_correction_ids") or []:
+                adj = ({"status": "pending", "run_id": None, "applied_at": None} if revert else
+                       {"status": "applied", "run_id": s.get("run_id"), "applied_at": datetime.now(timezone.utc)})
+                await db.rahaza_attendance_corrections.update_one({"id": cid}, {"$set": {"payroll_adjustment": adj}})
+    return n
+
+
+# Kunci absensi — paket absen memanggil `is_attendance_locked(db, employee_id, date)` dari modul ini.
+from routes.rahaza_payroll_rules import attendance_lock, is_attendance_locked  # noqa: E402,F401
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

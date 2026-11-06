@@ -83,9 +83,12 @@ async def selfie_clock_in(request: Request):
     # ── KEBIJAKAN WAJIB (FASE 16) ─────────────────────────────────────────
     # Keputusan user 2026-07-26: selfie + lokasi WAJIB. Penegakan ada di SSOT
     # `utils/attendance_policy.py` — jangan menyalin aturannya ke sini.
-    from utils.attendance_policy import enforce_attendance_policy, save_selfie
+    from utils.attendance_policy import (enforce_attendance_policy, gps_fix_from_body,
+                                         leave_status_for_clock_in, save_selfie)
+    # Tahap 2: hari cuti sehari penuh → ditolak; setengah hari → status cutinya tetap.
+    day_status = leave_status_for_clock_in(existing)
     pol = await enforce_attendance_policy(db, photo_b64=photo_b64, lat=lat,
-                                          lng=lng, action="masuk")
+                                          lng=lng, action="masuk", fix=gps_fix_from_body(body))
     geo = pol["geo"]
 
     # ── Verifikasi wajah AI DIMATIKAN (No.59a) — foto tidak dikirim ke LLM ─
@@ -109,7 +112,8 @@ async def selfie_clock_in(request: Request):
         "attendance_method": "selfie_geo_ai",
         "geo_status": geo.get("status"),
         "geo_distance_m": geo.get("distance_m"),
-        "clock_in_geo": {"lat": lat, "lng": lng, "status": geo.get("status"), "distance_m": geo.get("distance_m")},
+        "clock_in_geo": {"lat": lat, "lng": lng, "status": geo.get("status"), "distance_m": geo.get("distance_m"),
+                         "accuracy_m": geo.get("accuracy_m"), "age_s": geo.get("age_s")},
         "face_match_score": face.get("confidence", 0),
         "face_match_status": face.get("status", "disabled"),
         "face_match_reason": face.get("reason", ""),
@@ -117,7 +121,7 @@ async def selfie_clock_in(request: Request):
         "approval_status": approval_status,
         "approval_reason": SELFIE_REVIEW_REASON,
         "approval_by": None, "approval_by_name": None, "approval_notes": None, "approval_at": None,
-        "status": "hadir",
+        "status": day_status,
         "source": "selfie_geo_ai",
         "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
     }
@@ -162,21 +166,21 @@ async def selfie_clock_out(request: Request):
     emp = await resolve_employee_for(db, user, body.get("employee_id"))
     emp_id = emp["id"]
 
-    today = _today_iso()
-    existing = await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": today})
-    if not existing or not existing.get("clock_in"):
-        raise HTTPException(400, "Belum clock-in hari ini.")
-    if existing.get("clock_out"):
-        raise HTTPException(400, "Sudah clock-out hari ini.")
+    # Tahap 2 (2026-11-06): absen pulang lewat tengah malam menutup record KEMARIN bila shift-nya
+    # melewati tengah malam / masih dalam jendela sesudah jam pulang (dulu: "Belum clock-in hari ini").
+    from core.attendance_rules import find_clock_out_record
+    existing, why = await find_clock_out_record(db, emp)
+    if not existing:
+        raise HTTPException(400, why)
 
     lat = body.get("lat")
     lng = body.get("lng")
     photo_b64 = body.get("photo_base64", "")
 
     # ── KEBIJAKAN WAJIB (FASE 16) — dulu clock-out MEMBUANG photo_base64 ──
-    from utils.attendance_policy import enforce_attendance_policy, save_selfie
+    from utils.attendance_policy import enforce_attendance_policy, gps_fix_from_body, save_selfie
     pol = await enforce_attendance_policy(db, photo_b64=photo_b64, lat=lat,
-                                          lng=lng, action="pulang")
+                                          lng=lng, action="pulang", fix=gps_fix_from_body(body))
     geo = pol["geo"]
 
     # ── Sesi istirahat/izin yang masih terbuka harus ditutup dulu ─────────
@@ -218,7 +222,8 @@ async def selfie_clock_out(request: Request):
 
     await db.rahaza_attendance_events.update_one({"id": existing["id"]}, {"$set": {
         "clock_out": now,
-        "clock_out_geo": {"lat": lat, "lng": lng, "status": geo.get("status"), "distance_m": geo.get("distance_m")},
+        "clock_out_geo": {"lat": lat, "lng": lng, "status": geo.get("status"), "distance_m": geo.get("distance_m"),
+                          "accuracy_m": geo.get("accuracy_m"), "age_s": geo.get("age_s")},
         "photo_selfie_out_url": selfie_out_url,
         "hours_worked": max(0.0, hours),
         **totals,

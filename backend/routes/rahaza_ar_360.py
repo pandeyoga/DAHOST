@@ -107,6 +107,21 @@ async def _fetch_open_invoices(db) -> List[Dict[str, Any]]:
     ).to_list(length=10000)
 
 
+async def _scheduled_by_customer(db) -> Dict[str, Dict[str, Any]]:
+    """2026-11-06 (Tahap 2): piutang maklon TERJADWAL (PO dikonfirmasi, barang belum dikirim) —
+    'belum jatuh tempo', TIDAK masuk umur piutang/saldo buku besar (belum ada pendapatan).
+    → {customer_id: {customer_name, scheduled, count}}"""
+    out: Dict[str, Dict[str, Any]] = {}
+    async for inv in db.rahaza_ar_invoices.find(
+            {'schedule_mode': 'v2', 'status': {'$ne': 'cancelled'}, 'scheduled_remaining': {'$gt': 0}},
+            {'_id': 0, 'customer_id': 1, 'customer_name': 1, 'scheduled_remaining': 1}):
+        cid = inv.get('customer_id') or 'unknown'
+        b = out.setdefault(cid, {'customer_name': inv.get('customer_name') or '—', 'scheduled': 0.0, 'count': 0})
+        b['scheduled'] = round(b['scheduled'] + float(inv.get('scheduled_remaining') or 0), 2)
+        b['count'] += 1
+    return out
+
+
 def _classify_invoice(inv: Dict[str, Any]) -> Dict[str, Any]:
     """Add days_overdue + bucket + balance fields to invoice dict."""
     today = _today()
@@ -216,10 +231,14 @@ async def ar_360_dashboard(request: Request, top_n: int = Query(10, le=50)):
     cash_collected_30 = float(await sum_payments(db.rahaza_ar_payments, last_30) or 0) \
         + float(await sum_direct_sale_receipts(db, last_30) or 0)
     dso_estimate = round((total_outstanding / cash_collected_30) * 30, 1) if cash_collected_30 > 0 else None
+    sched = await _scheduled_by_customer(db)
 
     return {
         'as_of': datetime.now(timezone.utc).isoformat(),
         'kpis': {
+            # 2026-11-06 (Tahap 2): piutang maklon terjadwal (belum jatuh tempo, di luar saldo piutang)
+            'scheduled_amount': round(sum(v['scheduled'] for v in sched.values()), 2),
+            'scheduled_count': sum(v['count'] for v in sched.values()),
             'total_outstanding': round(total_outstanding, 2),
             'total_overdue_amount': round(total_overdue_amount, 2),
             'count_open_invoices': len([inv for inv in classified if inv['computed_balance'] > 0]),
@@ -277,6 +296,14 @@ async def ar_360_aging_matrix(request: Request,
         matrix[cid]['count'] += 1
         if inv['days_overdue'] > matrix[cid]['oldest_days_overdue']:
             matrix[cid]['oldest_days_overdue'] = inv['days_overdue']
+    # 2026-11-06 (Tahap 2): kolom "terjadwal" (belum jatuh tempo) untuk piutang maklon terjadwal
+    for cid, s in (await _scheduled_by_customer(db)).items():
+        if customer_id and cid != customer_id:
+            continue
+        row = matrix.setdefault(cid, {'customer_id': cid, 'customer_name': s['customer_name'], 'current': 0.0,
+                                      '1_30': 0.0, '31_60': 0.0, '61_90': 0.0, '90_plus': 0.0, 'total': 0.0,
+                                      'count': 0, 'oldest_days_overdue': 0})
+        row['scheduled'] = s['scheduled']
 
     # Enrich missing customer names
     cids_to_resolve = [cid for cid, info in matrix.items() if info['customer_name'] == '—' and cid != 'unknown']
@@ -292,10 +319,11 @@ async def ar_360_aging_matrix(request: Request,
 
     rows = list(matrix.values())
     if not with_zero:
-        rows = [r for r in rows if r['total'] > 0.01]
+        rows = [r for r in rows if r['total'] > 0.01 or r.get('scheduled', 0) > 0.01]
     rows.sort(key=lambda r: r['total'], reverse=True)
     # Round
     for r in rows:
+        r.setdefault('scheduled', 0.0)
         for k in ('current', '1_30', '31_60', '61_90', '90_plus', 'total'):
             r[k] = round(r[k], 2)
 
@@ -308,6 +336,7 @@ async def ar_360_aging_matrix(request: Request,
         '90_plus': sum(r['90_plus'] for r in rows),
         'total': sum(r['total'] for r in rows),
         'count': sum(r['count'] for r in rows),
+        'scheduled': round(sum(r.get('scheduled', 0) for r in rows), 2),
     }
     for k in ('current', '1_30', '31_60', '61_90', '90_plus', 'total'):
         totals[k] = round(totals[k], 2)

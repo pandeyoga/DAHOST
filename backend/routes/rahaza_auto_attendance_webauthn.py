@@ -362,11 +362,13 @@ async def webauthn_clock_in(request: Request):
     # FASE 16 — jalur biometrik TETAP wajib berada di area kantor (selfie
     # digantikan oleh sidik jari/Face ID perangkat). Dulu jalur ini menulis
     # `geo_status: "not_verified"` + `auto_approved` ⇒ celah absen dari rumah.
-    from utils.attendance_policy import enforce_attendance_policy
+    from utils.attendance_policy import (enforce_attendance_policy, gps_fix_from_body,
+                                         leave_status_for_clock_in)
     from utils.employee_identity import compute_late_minutes
+    day_status = leave_status_for_clock_in(existing)   # Tahap 2: hari cuti tidak ditimpa 'hadir'
     _pol = await enforce_attendance_policy(
         db, photo_b64=None, lat=body.get("lat"), lng=body.get("lng"),
-        action="masuk", selfie_required=False)
+        action="masuk", selfie_required=False, fix=gps_fix_from_body(body))
     _geo = _pol["geo"]
     late = await compute_late_minutes(db, _emp, now, (existing or {}).get("shift_id"))
     doc_fields = {
@@ -378,7 +380,7 @@ async def webauthn_clock_in(request: Request):
         "face_match_score": 1.0,
         "face_match_status": "biometric_verified",
         "approval_status": "auto_approved",
-        "status": "hadir", "source": "webauthn",
+        "status": day_status, "source": "webauthn",
         "webauthn_credential_id": cred_doc["id"],
         "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
     }
@@ -410,12 +412,11 @@ async def webauthn_clock_out(request: Request):
     _emp = await resolve_employee_for(db, user, body.get("employee_id"))
     emp_id = _emp["id"]
 
-    today = _today_iso()
-    existing = await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": today})
-    if not existing or not existing.get("clock_in"):
-        raise HTTPException(400, "Belum clock-in hari ini.")
-    if existing.get("clock_out"):
-        raise HTTPException(400, "Sudah clock-out hari ini.")
+    # Tahap 2 (2026-11-06): absen pulang lewat tengah malam menutup record kemarin (lihat core.attendance_rules).
+    from core.attendance_rules import find_clock_out_record
+    existing, why = await find_clock_out_record(db, _emp)
+    if not existing:
+        raise HTTPException(400, why)
 
     # Simplified: re-use same WebAuthn verify flow (same as clock-in but just clock-out action)
     ch = await db.rahaza_webauthn_challenges.find_one({
@@ -481,10 +482,10 @@ async def webauthn_clock_out(request: Request):
     # dihitung ulang (dulu clock-out biometrik mengabaikan ketiganya).
     from routes.rahaza_attendance_sessions import (is_permit_pending, is_session_out,
                                                    recompute_session_totals)
-    from utils.attendance_policy import enforce_attendance_policy
+    from utils.attendance_policy import enforce_attendance_policy, gps_fix_from_body
     _pol = await enforce_attendance_policy(
         db, photo_b64=None, lat=body.get("lat"), lng=body.get("lng"),
-        action="pulang", selfie_required=False)
+        action="pulang", selfie_required=False, fix=gps_fix_from_body(body))
     _geo = _pol["geo"]
     for s in (existing.get("sessions") or []):
         if is_session_out(s):

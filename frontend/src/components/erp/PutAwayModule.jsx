@@ -88,6 +88,10 @@ export default function PutAwayModule({ token, onNavigate }) {
   }, [loc.positions, rack, selected]);
 
   const selectedBin = useMemo(() => loc.positions.find((p) => p.id === binId) || null, [loc.positions, binId]);
+  // 2026-11-06 (Tahap 2): stok belum dirak dihitung PER ZONA; bin hanya boleh diisi dari zona bin itu.
+  const zonesOfSelected = selected?.zones || [];
+  const binZoneLeft = selectedBin
+    ? (zonesOfSelected.find((z) => z.zone_id === selectedBin.zone_id)?.unshelved || 0) : null;
 
   // 2026-11-02 (Paket 3a): komponen scanner bersama + aturan kode yang sama dengan
   // backend (`sameScanCode`: tanpa beda huruf, prefix/suffix scanner dibuang).
@@ -230,6 +234,16 @@ export default function PutAwayModule({ token, onNavigate }) {
                 <p className="text-sm font-medium text-foreground">{selected.name}</p>
                 <p className="text-xs text-muted-foreground tabular-nums">{selected.code}</p>
                 <p className="text-xs text-[hsl(var(--warning))] mt-1">Belum dirak: {fmtNum(selected.unshelved)} {selected.unit}</p>
+                {zonesOfSelected.length > 0 && (
+                  <p className="text-xs text-muted-foreground mt-1" data-testid="putaway-zones">
+                    Ada di: {zonesOfSelected.map((z) => `${z.zone_label || 'lokasi lain'} ${fmtNum(z.unshelved)}`).join(' · ')}
+                  </p>
+                )}
+                {selectedBin && binZoneLeft <= 0 && (
+                  <p className="text-xs text-[hsl(var(--destructive))] mt-1" data-testid="putaway-zone-mismatch">
+                    Bin ini tidak berada di zona tempat stok barang ini disimpan — pilih bin di zona di atas.
+                  </p>
+                )}
               </div>
 
               {/* Scan bin */}

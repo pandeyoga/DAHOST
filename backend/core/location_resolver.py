@@ -50,12 +50,14 @@ QUARANTINE_RAHAZA_CODES = {"ZNA-KARANTINA"}
 # Peran storage yang punya zona tujuan kanonik (dipakai rekonsiliasi lokasi).
 STORAGE_ROLES = ("bahan", "aksesoris", "fg", "sample")
 # Peran non-storage yang SAH memegang baris stok (WIP produksi / karantina).
-EXEMPT_ROLES = ("cutting", "sewing", "qc", "packing", "karantina")
+# 2026-11-06 (Tahap 2): + "transit" = lokasi Dalam Perjalanan SJ internal (core.stock_transfer) —
+# sah memegang stok dan TIDAK boleh dipindah otomatis oleh rekonsiliasi lokasi.
+EXEMPT_ROLES = ("cutting", "sewing", "qc", "packing", "karantina", "transit")
 # Kode legacy seed bawaan per peran — fallback bila lokasi tidak punya `storage_role`.
 LEGACY_ROLE_CODES = {"bahan": "ZNA-KAIN", "aksesoris": "ZNA-AKSESORIS", "fg": "ZNA-FG",
                      "sample": "ZNA-SAMPLE", "karantina": "ZNA-KARANTINA",
                      "cutting": "ZNA-CUTTING", "sewing": "ZNA-SEWING", "qc": "ZNA-QC",
-                     "packing": "ZNA-PACKING"}
+                     "packing": "ZNA-PACKING", "transit": "ZNA-TRANSIT"}
 # Nama peran yang ditulis owner di template 01_LOKASI (kolom `peran`) → peran internal.
 ROLE_ALIASES = {"kain": "bahan", "material": "bahan", "barang_jadi": "fg", "aksesoris": "aksesoris",
                 "acc": "aksesoris", "sampel": "sample", "quarantine": "karantina", "jahit": "sewing",

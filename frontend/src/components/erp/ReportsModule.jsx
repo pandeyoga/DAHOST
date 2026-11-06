@@ -169,6 +169,7 @@ export default function ReportsModule({ token }) {
         const headers = colDefs.map(c => c.label);
         const rows = data.map(row => colDefs.map(c => {
           const val = row[c.key];
+          if (c.nullable && val == null) return 'belum ada data';
           if (c.format === 'date') return fmtDate(val);
           if (c.format === 'currency') return Number(val || 0);
           if (c.format === 'number') return Number(val || 0);
@@ -225,6 +226,7 @@ export default function ReportsModule({ token }) {
     const headers = colDefs.map(c => c.label);
     const rows = data.map(row => colDefs.map(c => {
       const val = row[c.key];
+      if (c.nullable && val == null) return 'belum ada data';
       if (c.format === 'date') return fmtDate(val);
       if (c.format === 'currency') return Number(val || 0);
       return String(val ?? '').replace(/,/g, ';');
@@ -361,16 +363,18 @@ export default function ReportsModule({ token }) {
           { key: 'total_orders', label: 'TOTAL ORDER', format: 'number' },
           { key: 'total_qty', label: 'TOTAL QTY', format: 'number' },
           { key: 'total_revenue', label: 'PENDAPATAN', format: 'currency' },
-          { key: 'total_hpp', label: 'HPP', format: 'currency' },
-          { key: 'margin', label: 'MARGIN', format: 'currency' },
-          { key: 'margin_pct', label: 'MARGIN %', format: 'number' },
+          // Tahap 1: HPP & margin order maklon belum ada sumbernya (null) → "–", bukan Rp 0
+          { key: 'total_hpp', label: 'HPP', format: 'currency', nullable: true },
+          { key: 'margin', label: 'MARGIN', format: 'currency', nullable: true },
+          { key: 'margin_pct', label: 'MARGIN %', format: 'number', nullable: true },
           { key: 'on_time_rate', label: 'ON TIME %', format: 'number' },
         ];
       default: return [];
     }
   };
 
-  const renderValue = (val, format) => {
+  const renderValue = (val, format, nullable) => {
+    if (nullable && val == null) return '–';
     if (format === 'date') return fmtDate(val);
     if (format === 'currency') return fmt(val);
     if (format === 'number') return fmtNum(val);
@@ -612,7 +616,7 @@ export default function ReportsModule({ token }) {
                             {row[c.key] || '-'}
                           </span>
                         ) : (
-                          renderValue(row[c.key], c.format)
+                          renderValue(row[c.key], c.format, c.nullable)
                         )}
                       </td>
                     ))}

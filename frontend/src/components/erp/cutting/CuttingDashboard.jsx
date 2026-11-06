@@ -9,7 +9,7 @@ import {
   Trash2, PlayCircle, FileStack, AlertCircle,
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
-import { cuttingApi, StatusPill, fmtNum, fmtDateTime } from './cuttingApi';
+import { cuttingApi, StatusPill, fmtNum, fmtPerUnit, fmtDateTime } from './cuttingApi';
 
 function KPI({ label, value, sub, icon: Icon, tone = 'primary', testid }) {
   const tones = {
@@ -93,14 +93,14 @@ export default function CuttingDashboard({ token, onNavigate }) {
              sub="Menunggu input progres" testid="cutting-kpi-running" />
         <KPI label="Potongan Dihasilkan" value={`${fmtNum(d?.produced_qty)} pcs`} icon={PackageCheck} tone="emerald"
              sub={`dari rencana ${fmtNum(d?.planned_output_qty)} pcs`} testid="cutting-kpi-produced" />
-        <KPI label="Rata-rata Yield" value={fmtNum(d?.avg_yield, 2)} icon={TrendingUp} tone="sky"
+        <KPI label="Rata-rata Yield" value={fmtPerUnit(d?.by_unit, 'yield')} icon={TrendingUp} tone="sky"
              sub="pcs potongan per satuan kain" testid="cutting-kpi-yield" />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
-        <KPI label="Kain Terpakai" value={fmtNum(d?.consumed_input_qty, 2)} icon={Layers}
-             sub="akumulasi seluruh order (satuan kain)" testid="cutting-kpi-consumed" />
-        <KPI label="Sisa / Waste" value={fmtNum(d?.waste_qty, 2)} icon={Trash2} tone="rose"
+        <KPI label="Kain Terpakai" value={fmtPerUnit(d?.by_unit, 'consumed')} icon={Layers}
+             sub="per satuan kain, tanpa order batal" testid="cutting-kpi-consumed" />
+        <KPI label="Limbah" value={fmtPerUnit(d?.by_unit, 'waste')} icon={Trash2} tone="rose"
              sub="tercatat saat input progres" testid="cutting-kpi-waste" />
         <KPI label="Master Potongan" value={fmtNum(d?.output_material_count)} icon={Scissors} tone="emerald"
              sub="item material hasil cutting" testid="cutting-kpi-panels" />

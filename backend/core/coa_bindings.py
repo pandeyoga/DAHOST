@@ -308,6 +308,9 @@ PROFILE_ROLE_TABLES = [
     # 2026-11-02 (K9): Sesi Opname — lawan selisih (5-1950) / barang rusak (6-4300), satu jurnal per sesi
     {"module": "core.opname_engine", "attr": "CONTRA_ROLES", "shape": "event_kind_role",
      "label": "Sesi Opname: lawan selisih hitung (5-1950) / baris rusak (6-4300); persediaan per jenis"},
+    # 2026-11-06 (Tahap 2): pemakaian aksesoris — akun debit per divisi pemohon / jenis PO / sampel R&D
+    {"module": "core.accessory_issue", "attr": "PROFILE_ROLES", "shape": "event_kind_role",
+     "label": "Pengeluaran aksesoris: akun beban per divisi pemohon, PO maklon / internal, sampel R&D"},
 ]
 
 

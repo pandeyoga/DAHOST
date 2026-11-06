@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useReducer, useMemo } from 'react';
-import { Plus, RefreshCw, Download, Eye, Lock, Calendar, DollarSign, AlertTriangle, CheckCircle, ShieldAlert, Copy, FileText, FilesIcon, BookOpen, ExternalLink, AlertCircle, X, CreditCard } from 'lucide-react';
+import { Plus, RefreshCw, Download, Eye, Lock, Calendar, DollarSign, AlertTriangle, CheckCircle, ShieldAlert, Copy, FileText, FilesIcon, BookOpen, ExternalLink, AlertCircle, X, CreditCard, RotateCcw } from 'lucide-react';
 import OnwardCTA from './OnwardCTA';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -113,6 +113,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     bank_account_code: '',
     payment_method: 'bank_transfer',
     notes: '',
+    override_reason: '',
   });
   const [paying, setPaying] = useState(false);
   // 2026-11-02 (K22): dialog Bayar BPJS/PPh21 — rekening + tanggal (dulu window.prompt kode akun & tanggal hari ini).
@@ -159,15 +160,36 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
     setTick(t => t + 1);
   }, [headers]);
 
-  const finalizeRun = async (id) => {
-    if (!window.confirm('Finalisasi penggajian? Setelah difinalisasi, potongan tidak bisa diubah lagi.')) return;
-    const r = await fetch(`/api/rahaza/payroll-runs/${id}/finalize`, { method: 'POST', headers });
-    if (r.ok) { toast.success('Run difinalisasi & jurnal GL dibuat'); refresh(); if (viewing?.run?.id === id) openRun(id); }
-    else {
-      // 2026-11-02 (P5 butir 3): jurnal gagal → run tetap draft; tampilkan penyebabnya apa adanya.
-      setError(await errDetail(r, `Gagal finalisasi penggajian (HTTP ${r.status})`));
-      refresh();
-    }
+  // 2026-11-06 (Tahap 2): konfirmasi finalisasi lewat dialog aplikasi (dulu window.confirm) + alasan
+  // pengecualian pemisahan tugas (K25: pembuat run tidak memfinalisasi/membayar sendiri; admin/owner boleh
+  // dengan alasan). Gaji bersih minus ditolak backend dengan daftar nama karyawan.
+  const [finalizeDialog, setFinalizeDialog] = useState(null);
+  const [overrideReason, setOverrideReason] = useState('');
+  const finalizeRun = (id) => { setOverrideReason(''); setFinalizeDialog(runs.find(x => x.id === id) || { id }); };
+  const submitFinalize = async () => {
+    if (!finalizeDialog) return;
+    const id = finalizeDialog.id;
+    setPaying(true);
+    try {
+      const r = await fetch(`/api/rahaza/payroll-runs/${id}/finalize`, {
+        method: 'POST', headers, body: JSON.stringify({ override_reason: overrideReason.trim() || undefined }),
+      });
+      if (r.ok) {
+        toast.success('Run difinalisasi & jurnal GL dibuat'); setFinalizeDialog(null); refresh();
+        if (viewing?.run?.id === id) openRun(id);
+      } else {
+        // 2026-11-02 (P5 butir 3): jurnal gagal → run tetap draft; tampilkan penyebabnya apa adanya.
+        const msg = await errDetail(r, `Gagal finalisasi penggajian (HTTP ${r.status})`);
+        toast.error(msg); setError(msg); refresh();
+      }
+    } finally { setPaying(false); }
+  };
+
+  // 2026-11-06 (Tahap 2): hitung ulang run draf — absensi/profil/pengaturan terkini, penyesuaian manual tetap.
+  const recalcRun = async (id) => {
+    const r = await fetch(`/api/rahaza/payroll-runs/${id}/recalculate`, { method: 'POST', headers });
+    if (r.ok) { toast.success('Run dihitung ulang. Penyesuaian manual dipertahankan.'); refresh(); if (viewing?.run?.id === id) openRun(id); }
+    else toast.error(await errDetail(r, `Gagal menghitung ulang (HTTP ${r.status})`));
   };
 
   const retryPost = async (id) => {
@@ -423,6 +445,10 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
                       </button>
                       {r.status === 'draft' && (
                         <>
+                          <Button variant="ghost" size="icon-sm" onClick={() => recalcRun(r.id)} className="mr-1"
+                            title="Hitung ulang (penyesuaian manual tetap)" aria-label="Hitung ulang" data-testid={`pr-recalc-${r.run_number}`}>
+                            <RotateCcw className="w-3 h-3" />
+                          </Button>
                           <button onClick={() => finalizeRun(r.id)} className="text-xs text-emerald-600 dark:text-emerald-300 hover:underline mr-2" data-testid={`pr-finalize-${r.run_number}`} title="Finalisasi"><Lock className="w-3 h-3 inline" /></button>
                           <button onClick={() => delRun(r.id)} className="text-xs text-red-600 dark:text-red-300 hover:underline" title="Hapus"><RefreshCw className="w-3 h-3 inline" /></button>
                         </>
@@ -514,6 +540,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
           onRefresh={() => { openRun(viewing.run.id); refresh(); }}
           onDownloadExcel={downloadRunExcel}
           onVoidObligation={voidObligation}
+          onRecalc={recalcRun}
         />
       )}
 
@@ -575,6 +602,12 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
               <GlassInput className="mt-1 h-9 text-sm" placeholder="Keterangan pembayaran..."
                 value={payForm.notes}
                 onChange={e => setPayForm(f => ({ ...f, notes: e.target.value }))} />
+            </div>
+            <div>
+              <Label className="text-xs">Alasan pengecualian (hanya bila Anda sendiri yang membuat run ini)</Label>
+              <GlassInput className="mt-1 h-9 text-sm" placeholder="Khusus admin/owner"
+                value={payForm.override_reason || ''} data-testid="pay-override-reason"
+                onChange={e => setPayForm(f => ({ ...f, override_reason: e.target.value }))} />
             </div>
           </div>
           <DialogFooter>
@@ -671,6 +704,28 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
                   title="Hanya owner/superadmin (satu langkah)" data-testid="cancel-run-owner">Batalkan Sekarang (owner)</Button>
               </>
             )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Finalisasi — 2026-11-06 (Tahap 2): dialog aplikasi + alasan pengecualian pemisahan tugas ── */}
+      <Dialog open={!!finalizeDialog} onOpenChange={o => !o && !paying && setFinalizeDialog(null)}>
+        <DialogContent className="max-w-md" data-testid="finalize-dialog">
+          <DialogHeader>
+            <DialogTitle>Finalisasi {finalizeDialog?.run_number || 'run gaji'}</DialogTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Jurnal gaji dibuat dan absensi periode ini dikunci. Sesudahnya slip tidak bisa diubah; koreksi absen masuk
+              run berikutnya. Finalisasi harus oleh pengguna lain dari pembuat run.
+            </p>
+          </DialogHeader>
+          <div>
+            <Label className="text-xs">Alasan pengecualian (hanya admin/owner yang membuat run ini sendiri)</Label>
+            <GlassInput className="mt-1 h-9 text-sm" value={overrideReason} onChange={e => setOverrideReason(e.target.value)}
+              placeholder="Kosongkan bila Anda bukan pembuat run" data-testid="finalize-override-reason" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFinalizeDialog(null)} disabled={paying}>Batal</Button>
+            <Button onClick={submitFinalize} disabled={paying} data-testid="finalize-confirm">{paying ? 'Memproses…' : 'Finalisasi'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -786,7 +841,7 @@ function CreateRunModal({ onClose, onCreate, token, initial }) {
   );
 }
 
-function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVoidObligation }) {
+function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVoidObligation, onRecalc }) {
   const run = data.run;
   const payslips = data.payslips || [];
   const locked = run.status !== 'draft';
@@ -859,6 +914,12 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
           </div>
           {/* PDF & Excel download actions */}
           <div className="flex items-center gap-2 shrink-0">
+            {run.status === 'draft' && onRecalc && (
+              <Button variant="outline" size="sm" onClick={() => onRecalc(run.id)} data-testid="pr-detail-recalc"
+                title="Hitung ulang dari absensi, profil gaji, dan pengaturan terkini; penyesuaian manual tetap">
+                <RotateCcw className="w-3.5 h-3.5 mr-1" /> Hitung ulang
+              </Button>
+            )}
             <button
               onClick={() => onDownloadExcel(run.id, run.run_number)}
               className="h-8 px-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5 text-xs font-semibold"
@@ -894,8 +955,8 @@ function RunDetailModal({ data, token, onClose, onRefresh, onDownloadExcel, onVo
         {/* 2026-11-02 (K24): peringatan lembur bertarif 0 */}
         {(run.warnings || []).length > 0 && (
           <div className="mb-4 rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs space-y-1" data-testid="run-warnings">
-            <div className="font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> {run.warnings.length} karyawan punya jam lembur tetapi tarif lembur 0</div>
-            {run.warnings.map(w => <div key={w.employee_id}><strong>{w.employee_name}</strong> — {w.message}</div>)}
+            <div className="font-semibold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> {run.warnings.length} peringatan — periksa sebelum finalisasi</div>
+            {run.warnings.map((w, i) => <div key={`${w.employee_id}-${w.type}-${i}`}><strong>{w.employee_name}</strong> — {w.message}</div>)}
           </div>
         )}
 

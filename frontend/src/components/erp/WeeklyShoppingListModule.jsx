@@ -332,6 +332,11 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-xs text-[hsl(var(--destructive))] whitespace-nowrap">
                           {num(r.shortage)}
+                          {Number(r.incoming_po_qty || 0) > 0 && (
+                            <span className="block text-[10px] text-muted-foreground" data-testid={`shopping-incoming-${r.code}`}>
+                              sisa PO {num(r.incoming_po_qty)} {r.base_uom}
+                            </span>
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right whitespace-nowrap" data-testid={`shopping-qty-${r.code}`}>
                           <span className="tabular-nums text-xs font-semibold text-foreground">
@@ -404,8 +409,10 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
               <span>
                 {summary.unvalued_note} Qty beli dibulatkan KE ATAS ke satuan beli, dan dinaikkan
                 ke MOQ supplier bila ada — alasannya tertulis di baris masing-masing.
+                {/* 2026-11-06 (Tahap 2): PR/PO terbuka dibaca tanpa batas minggu; sisa PO mengurangi kekurangan */}
+                {' '}Sisa PO yang masih terbuka (dari minggu mana pun) mengurangi kekurangan.
                 {summary.already_requested_count > 0
-                  && ` ${summary.already_requested_count} barang sudah punya PR/PO minggu ini dan tidak dihitung lagi (anti dobel belanja).`}
+                  && ` ${summary.already_requested_count} barang sudah tertutup PO terbuka atau punya PR terbuka dan tidak dihitung lagi (anti dobel belanja).`}
               </span>
             </div>
           )}

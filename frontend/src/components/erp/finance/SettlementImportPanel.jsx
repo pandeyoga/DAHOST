@@ -9,6 +9,7 @@ import { FileSpreadsheet, X, AlertTriangle, BookmarkCheck, Wand2 } from 'lucide-
 import { GlassCard } from '@/components/ui/glass';
 import { Badge } from '@/components/ui/badge';
 import { formatRupiah as rp } from '@/lib/format';
+import { Notice } from '@/components/erp/moduleAtoms';
 
 export const FIELD_LABELS = {
   gross_sales: 'Omzet bruto', refunds: 'Refund / retur', seller_discount: 'Diskon penjual',
@@ -78,6 +79,20 @@ export function SettlementImportPanel({ result, onClose, onMappingChange }) {
           : 'Arahkan tiap kolom angka ke field tujuan. Saat pencairan disimpan, pemetaan ini diingat untuk toko & format laporan yang sama.'}
         {' '}Tidak ada yang tersimpan sebelum Anda menekan Simpan.
       </p>
+
+      {/* 2026-11-06 (Tahap 2) — berkas yang kolomnya belum dikenali tetap sampai di sini,
+          dengan peringatan; catatan menyebut sheet yang dibaca & baris yang dilewati. */}
+      {(result.warnings || []).length > 0 ? (
+        <Notice tone="warning" icon={AlertTriangle} title="Kolom uang belum dikenali"
+          testId="fin-settlement-import-warnings">
+          {result.warnings.join(' ')}
+        </Notice>
+      ) : null}
+      {(result.notes || []).length > 0 ? (
+        <ul className="text-xs text-muted-foreground list-disc pl-4 space-y-0.5" data-testid="fin-settlement-import-notes">
+          {result.notes.map((n) => <li key={n}>{n}</li>)}
+        </ul>
+      ) : null}
 
       <div className="overflow-x-auto">
         <table className="w-full text-xs" data-testid="fin-settlement-import-mapping">

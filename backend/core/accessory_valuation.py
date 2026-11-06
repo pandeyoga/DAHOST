@@ -73,6 +73,27 @@ def resolve_unit_cost(mat: dict | None) -> float:
     return _f(mat.get("unit_cost") if mat.get("unit_cost") not in (None, "") else mat.get("hpp"))
 
 
+PO_PRICE_STATUSES = ("approved", "partially_received", "fully_received")
+
+
+async def default_receipt_cost(db, mat: dict) -> dict:
+    """2026-11-06 (Tahap 2, aturan owner "hanya Finance yang menetapkan harga"): harga penerimaan
+    manual untuk pengguna NON-Finance = harga PO terakhir material ini (per satuan dasar), atau HPP
+    master bila belum pernah dibeli lewat PO. Return {unit_cost, source: po|master, po_number}."""
+    mid = (mat or {}).get("id")
+    if mid:
+        rows = await db.rahaza_purchase_orders.find(
+            {"status": {"$in": list(PO_PRICE_STATUSES)}, "items": {"$elemMatch": {"material_id": mid}}},
+            {"_id": 0, "po_number": 1, "items": 1, "created_at": 1},
+        ).sort("created_at", -1).limit(1).to_list(1)
+        for po in rows:
+            for it in po.get("items") or []:
+                if it.get("material_id") == mid and _f(it.get("unit_cost")) > 0:
+                    return {"unit_cost": round(_f(it.get("unit_cost")), 4), "source": "po",
+                            "po_number": po.get("po_number", "")}
+    return {"unit_cost": round(resolve_unit_cost(mat), 4), "source": "master", "po_number": ""}
+
+
 def moving_average(qty_before: float, cost_before: float, qty_in: float, cost_in: float) -> float:
     """HPP rata-rata bergerak setelah penerimaan. Lihat aturan aman di docstring modul."""
     qty_before, cost_before = _f(qty_before), _f(cost_before)
@@ -108,45 +129,74 @@ async def _record_history(db, *, material_id: str, old_cost: float, new_cost: fl
 
 async def apply_receipt_cost(db, material_id: str, qty_in: float, cost_in: float, *,
                              qty_before: float | None = None, actor: dict | None = None,
-                             notes: str = "") -> dict:
+                             notes: str = "", update_last_purchase: bool = True) -> dict:
     """Terapkan HPP rata-rata bergerak ke master saat penerimaan aksesoris.
 
     Return {old_unit_cost, new_unit_cost, changed, method, qty_before}.
     Bila `cost_in <= 0` → tidak ada perubahan (HPP lama dipertahankan).
+    `update_last_purchase=False` (2026-11-06): barang masuk yang BUKAN pembelian (mis. Retur Material
+    dari produksi pada HPP saat keluar) — rata-rata tetap diperbarui, "harga beli terakhir" tidak.
     """
     mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
     old_cost = resolve_unit_cost(mat)
     if qty_before is None:
-        qty_before = await stock_service.get_onhand(material_id, db=db)
+        # 2026-11-06 (Tahap 1): qty yang ada di nilai persediaan — tanpa barang reject karantina
+        # yang belum bernilai (definisi K11 yang sama dengan GR & Set HPP), bukan on-hand mentah.
+        from core import quarantine
+        qty_before = await quarantine.valued_onhand(db, material_id)
     new_cost = moving_average(qty_before, old_cost, qty_in, cost_in)
+    # 2026-11-06 (Tahap 2, paket gudang): stok MINUS → jurnal koreksi, sama seperti FG
+    # (`fg_cost_layers.wac_after_receipt`). Tanpa ini qty yang keluar saat minus tetap bernilai
+    # HPP lama sehingga Σ stok × HPP baru ≠ saldo persediaan di buku besar.
+    adjustment = negative_stock_adjustment(qty_before, old_cost, cost_in)
     changed = abs(new_cost - old_cost) > 1e-6
     if changed:
-        await db.rahaza_materials.update_one(
-            {"id": material_id},
-            {"$set": {
-                "unit_cost": new_cost,
-                "cost_method": COST_METHOD,
-                "last_receipt_unit_cost": round(_f(cost_in), 4),
-                "cost_updated_at": _now(),
-                "updated_at": _now(),
-            }},
-        )
+        upd = {"unit_cost": new_cost, "cost_method": COST_METHOD,
+               "cost_updated_at": _now(), "updated_at": _now()}
+        if update_last_purchase:
+            upd["last_receipt_unit_cost"] = round(_f(cost_in), 4)
+        await db.rahaza_materials.update_one({"id": material_id}, {"$set": upd})
         await _record_history(db, material_id=material_id, old_cost=old_cost, new_cost=new_cost,
                               qty_before=qty_before, qty_in=qty_in, cost_in=cost_in,
                               source="receive", actor=actor, notes=notes)
-    elif _f(cost_in) > 0:
+    elif _f(cost_in) > 0 and update_last_purchase:
         # harga masuk sama dengan HPP lama → tetap catat harga beli terakhir (jejak audit)
         await db.rahaza_materials.update_one(
             {"id": material_id},
             {"$set": {"last_receipt_unit_cost": round(_f(cost_in), 4), "cost_method": COST_METHOD}},
         )
+    adjustment_je = None
+    if abs(adjustment) >= 0.01:
+        try:
+            from routes.rahaza_posting import post_material_wac_adjustment
+            adjustment_je = await post_material_wac_adjustment(
+                db, material=mat or {"id": material_id}, amount=adjustment,
+                source_ref=f"mat_wac_adj:{material_id}:{_uid()}",
+                detail={"qty_before": qty_before, "cost_in": cost_in, "old_unit_cost": old_cost,
+                        "notes": notes}, user=actor or {})
+        except Exception as e:  # noqa: BLE001 — HPP sudah diperbarui; kegagalan jurnal dikembalikan
+            _log.exception("jurnal selisih HPP stok minus gagal (material=%s)", material_id)
+            adjustment_je = {"ok": False, "error": str(e)}
     return {
         "old_unit_cost": round(old_cost, 4),
         "new_unit_cost": round(new_cost, 4),
         "changed": changed,
         "method": COST_METHOD,
         "qty_before": round(_f(qty_before), 4),
+        "adjustment_value": adjustment,
+        "adjustment_je": adjustment_je,
     }
+
+
+def negative_stock_adjustment(qty_before: float, cost_before: float, cost_in: float) -> float:
+    """Nilai koreksi persediaan saat barang masuk ke stok MINUS (fungsi murni, 2026-11-06 Tahap 2).
+
+    = qty_lama × (harga_masuk − HPP_lama), hanya bila qty_lama < 0 dan harga masuk > 0 (rumus
+    yang sama dengan FG). Positif ⇒ persediaan didebit; negatif ⇒ dikredit."""
+    qb, cb, ci = _f(qty_before), _f(cost_before), _f(cost_in)
+    if qb >= 0 or ci <= 0:
+        return 0.0
+    return round(qb * (ci - cb), 2)
 
 
 REVALUATION_COLL = "rahaza_inventory_revaluations"
@@ -260,6 +310,9 @@ async def summary(db, *, include_zero_stock: bool = True) -> dict:
     unvalued_items = 0
     unvalued_qty = 0.0
     by_cat: dict[str, dict] = {}
+    # 2026-11-06 (Tahap 2): kelompok & kolom kategori memakai NAMA kategori (dulu ID master mentah)
+    from core.accessory_stock import category_map, category_view
+    cats = await category_map(db)
 
     for m in mats:
         qty = _f(onhand.get(m["id"], 0))
@@ -275,7 +328,7 @@ async def summary(db, *, include_zero_stock: bool = True) -> dict:
             unvalued_qty += qty
         total_value += value
         total_qty += qty
-        cat = m.get("category") or "Umum"
+        cat = category_view(m, cats)[0] or "Umum"
         slot = by_cat.setdefault(cat, {"category": cat, "items": 0, "qty": 0.0, "value": 0.0,
                                        "unvalued_items": 0})
         slot["items"] += 1

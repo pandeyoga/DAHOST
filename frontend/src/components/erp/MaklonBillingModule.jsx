@@ -1,543 +1,399 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Banknote, RefreshCw, FileText, Eye, CreditCard, X, AlertCircle } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { MoneyInput } from '@/components/ui/money-input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
+/**
+ * Piutang klien maklon (menu Maklon › Piutang klien) — 2026-11-06, Tahap 2 (keputusan owner).
+ *
+ * Tidak ada lagi langkah "Terbitkan faktur". Begitu PO maklon dikonfirmasi lahir piutang TERJADWAL
+ * (qty pesan × harga jasa); pendapatan dicatat otomatis setiap barang dikirim ke klien; pembayaran klien
+ * dicatat terhadap piutang PO (sebelum barang dikirim = uang muka, otomatis dipakai saat pendapatan
+ * dicatat). Faktur hanya DOKUMEN CETAK — per kiriman atau per PO, berapa pun jumlahnya.
+ *
+ * Sumber data: /api/dewi/maklon/receivables (satu dokumen piutang per PO di rahaza_ar_invoices).
+ * PANDUAN_UI: PageLayout · rincian PO di halaman (DetailPanel) · isi kiriman di bawah barisnya (RowDetail) ·
+ * popup hanya untuk formulir pembayaran.
+ */
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, Banknote, CreditCard, FileText, RefreshCw, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import SalesTaxFields from './SalesTaxFields';
-import { useTaxProfile } from '../../lib/taxProfile';
-import { motion } from 'framer-motion';
-import { PageHeader, EmptyState, Notice } from './moduleAtoms';
-import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { fetchMaklonOrders, posToLegacyOrders } from '@/lib/maklonOrderAdapter';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import FilterChips from '@/components/ui/filter-chips';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { MoneyInput } from '@/components/ui/money-input';
+import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import OnwardCTA from './OnwardCTA';
-import { formatRupiah } from '@/lib/format';
+import PageLayout, { DetailPanel, RowDetail, RowToggle } from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import Modal from './Modal';
+import { formatDateID, formatRupiah } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
-import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
-
-const STATUS_CONFIG = {
-  draft:        { label: 'Draf',         color: 'bg-muted text-foreground border-border dark:bg-slate-500/15 dark:text-foreground/70 dark:border-slate-400/30' },
-  issued:       { label: 'Diterbitkan',  color: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]   ' },
-  partial_paid: { label: 'Dibayar sebagian', color: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]   ' },
-  paid:         { label: 'Lunas',        color: 'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]   ' },
-  overdue:      { label: 'Lewat jatuh tempo', color: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]   ' },
-  cancelled:    { label: 'Dibatalkan',   color: 'bg-muted text-muted-foreground border-border dark:bg-slate-500/15 dark:text-muted-foreground dark:border-slate-400/30' },
-};
-
-function StatusBadge({ status }) {
-  const c = STATUS_CONFIG[status] || STATUS_CONFIG.draft;
-  return <span className={`inline-flex text-[10px] font-semibold px-2 py-0.5 rounded-full border ${c.color}`}>{c.label}</span>;
-}
 
 const fmt = formatRupiah;
-const AGING_LABELS = { current: 'Belum jatuh tempo', '1_30': '1-30 hari', '31_60': '31-60 hari', '61_90': '61-90 hari', over_90: '> 90 hari' };
+const STATUS = {
+  scheduled:    { label: 'Terjadwal',          tone: 'info' },
+  issued:       { label: 'Belum dibayar',      tone: 'warning' },
+  partial_paid: { label: 'Dibayar sebagian',   tone: 'warning' },
+  overdue:      { label: 'Lewat jatuh tempo',  tone: 'danger' },
+  paid:         { label: 'Lunas',              tone: 'success' },
+  cancelled:    { label: 'Dibatalkan',         tone: 'muted' },
+  draft:        { label: 'Draf',               tone: 'muted' },
+};
+const ArStatus = ({ status }) => {
+  const s = STATUS[status] || { label: status || '—', tone: 'default' };
+  return <StatusBadge status={s.label} tone={s.tone} />;
+};
 
-export default function MaklonBillingModule({ token, onNavigate }) {
+async function apiJson(path, headers, opts = {}) {
+  const r = await fetch(path, { headers, ...opts });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.detail || `Permintaan gagal (HTTP ${r.status})`);
+  return d;
+}
+
+async function openPdf(path, headers, filename) {
+  const r = await fetch(path, { headers: { Authorization: headers.Authorization } });
+  if (!r.ok) { toast.error('Faktur gagal dibuat'); return; }
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export default function MaklonBillingModule({ token }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  const [data, setData] = useState({ items: [], counts: {}, summary: {} });
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState('');
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState(null);
+  const [error, setError] = useState('');
 
-  const [invoices, setInvoices] = useState([]);
-  const [eligibleOrders, setEligibleOrders] = useState([]);
-  const [summary, setSummary] = useState({});
-  const [aging, setAging] = useState({ buckets: {}, rows: [] });
-  const [loading, setLoading] = useState(false);
-  const [tab, setTab] = useState('invoices');
-  const [generateDialog, setGenerateDialog] = useState(false);
-  const [viewDialog, setViewDialog] = useState(null);
-  const [payDialog, setPayDialog] = useState(null);
-
-  const fetchAll = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
     try {
-      const [inv, elig, sum, ag] = await Promise.all([
-        fetch('/api/dewi/maklon/invoices', { headers }),
-        fetch('/api/dewi/maklon/invoices/eligible', { headers }),
-        fetch('/api/dewi/maklon/reports/billing-summary', { headers }),
-        fetch('/api/dewi/maklon/reports/aging', { headers }),
-      ]);
-      if (inv.ok) setInvoices(await inv.json());
-      // SATU SUMBER: daftar PO yang bisa ditagih + pratinjau qty/nilai dihitung server
-      // (rumus yang sama dengan dokumen yang terbit) — bukan ditebak di browser.
-      if (elig.ok) setEligibleOrders(await elig.json());
-      if (sum.ok) setSummary(await sum.json());
-      if (ag.ok) setAging(await ag.json());
-    } catch (e) { toast.error('Gagal memuat data billing'); }
+      setData(await apiJson('/api/dewi/maklon/receivables', headers));
+    } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }, [headers]);
+  useEffect(() => { load(); }, [load]);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  const rows = useMemo(() => {
+    const s = search.trim().toLowerCase();
+    return (data.items || []).filter((r) => {
+      if (status === 'terjadwal' && r.status !== 'scheduled') return false;
+      if (status === 'belum_lunas' && !(r.amount_due > 0.005)) return false;
+      if (status === 'lunas' && r.status !== 'paid') return false;
+      if (!s) return true;
+      return [r.po_number, r.client_name, r.invoice_number].some((v) => (v || '').toLowerCase().includes(s));
+    });
+  }, [data.items, status, search]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+  const c = data.counts || {};
+  const sm = data.summary || {};
 
-  const cancelInvoice = async (inv) => {
-    if (!(await confirmDialog({ title: `Batalkan faktur ${inv.invoice_number}?`, body: 'Faktur yang dibatalkan tidak bisa ditagih lagi.', confirmLabel: 'Batalkan faktur', danger: true }))) return;
-    const r = await fetch(`/api/dewi/maklon/invoices/${inv.id}/cancel`, { method: 'POST', headers });
-    if (r.ok) { toast.success('Invoice dibatalkan'); fetchAll(); }
-    else toast.error((await r.json()).detail || 'Gagal');
-  };
-
-  const printInvoicePdf = async (inv) => {
-    try {
-      const res = await fetch(`/api/dewi/maklon/invoices/${inv.id}/pdf`, { headers: { Authorization: headers.Authorization } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = `Invoice_${inv.invoice_number || inv.id}.pdf`;
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('PDF invoice berhasil diunduh');
-    } catch (e) { toast.error('Gagal mengunduh PDF invoice'); }
-  };
-
-  const stats = [
-    { label: 'Total Invoice',   value: summary.total_invoices || 0,          color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
-    { label: 'Total Tagihan',   value: fmt(summary.total_billed),             color: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.1)]  border-[hsl(var(--primary)/0.2)]' },
-    { label: 'Sudah Dibayar',   value: fmt(summary.total_paid),               color: 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.1)]  border-[hsl(var(--success)/0.35)] ' },
-    { label: 'Sisa tagihan',    value: fmt(summary.total_outstanding),        color: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.1)]  border-[hsl(var(--warning)/0.2)]' },
-    { label: 'Lewat jatuh tempo', value: `${summary.overdue_count || 0} (${fmt(summary.overdue_amount)})`, color: 'text-[hsl(var(--destructive))]  bg-[hsl(var(--destructive)/0.1)]  border-[hsl(var(--destructive)/0.35)] ' },
-  ];
-
-  const { page, setPage, totalPages, total, paged } = useClientPagination(invoices, 10);
   return (
-    <div className="space-y-4" data-testid="maklon-billing">
-      <PageHeader
-        title="Invoice & Billing Maklon"
-        subtitle="Generate invoice dari order, kelola payment, laporan aging"
-        icon={Banknote}
-        actions={
-          <div className="flex gap-2">
-            <Button size="icon" variant="outline" onClick={fetchAll} title="Muat ulang" aria-label="Muat ulang" data-testid="billing-refresh-btn">
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </Button>
-            <Button size="sm" onClick={() => setGenerateDialog(true)} className="gap-1.5" data-testid="billing-generate-btn">
-              <FileText className="w-3.5 h-3.5" /> Terbitkan faktur
-            </Button>
+    <PageLayout
+      testId="maklon-billing"
+      title="Piutang klien maklon"
+      subtitle="Per PO: terjadwal saat dikonfirmasi, tertagih saat barang dikirim, lalu dibayar klien."
+      filters={(data.items || []).length > 0 && <>
+        <div className="relative w-72 max-w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <GlassInput className="pl-9 h-9" placeholder="Cari PO / klien / nomor piutang…" value={search}
+            onChange={(e) => setSearch(e.target.value)} data-testid="mkl-ar-search" />
+        </div>
+        <FilterChips value={status} onChange={setStatus} testId="mkl-ar-status" ariaLabel="Status piutang"
+          options={[{ key: '', label: 'Semua', count: (data.items || []).length },
+            { key: 'terjadwal', label: 'Terjadwal', count: c.terjadwal || 0 },
+            { key: 'belum_lunas', label: 'Belum lunas', count: c.belum_lunas || 0 },
+            { key: 'lunas', label: 'Lunas', count: c.lunas || 0 }]} />
+      </>}
+      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="billing-refresh-btn">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={<>
+        {error && <Notice tone="danger" icon={AlertCircle}>{error}</Notice>}
+        {(data.items || []).length > 0 && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="mkl-ar-summary">
+            <StatTile label="Terjadwal (belum jatuh tempo)" value={fmt(sm.scheduled_remaining)} sub="barang belum dikirim" />
+            <StatTile label="Tertagih belum dibayar" value={fmt(sm.amount_due)} accent={sm.amount_due > 0 ? 'warning' : 'muted'} />
+            <StatTile label="Uang muka belum terpakai" value={fmt(sm.advance_balance)} sub="dipakai otomatis saat barang dikirim" />
+            <StatTile label="Lewat jatuh tempo" value={fmt(sm.overdue)} accent={sm.overdue > 0 ? 'danger' : 'muted'} />
           </div>
-        }
-      />
-
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        {stats.map((s, i) => (
-          <motion.div key={s.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 * i }}>
-            <GlassCard className={`p-4 border ${s.color.split(' ')[2]}`}>
-              <div className="text-xs text-foreground/50">{s.label}</div>
-              <div className={`text-lg font-bold mt-1 ${s.color.split(' ')[0]}`}>{s.value}</div>
-            </GlassCard>
-          </motion.div>
-        ))}
-      </div>
-
-      {/* RC-FLOW-UX: onward — Maklon Invoice → Piutang (AR) / PO 360 (Alur 10) */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Langkah Berikutnya"
-        actions={[
-          { module: 'fin-ar-invoices', label: 'Piutang / AR Invoice', icon: Banknote, primary: true, hint: 'Kelola tagihan & pembayaran di Keuangan' },
-          { module: 'maklon-po-360', label: 'Lihat PO 360°', icon: FileText, hint: 'Status menyeluruh PO maklon' },
-        ]}
-      />
-
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="mb-4">
-          <TabsTrigger value="invoices">Faktur</TabsTrigger>
-          <TabsTrigger value="aging">Umur piutang</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="invoices">
-          <GlassCard className="p-5">
-            {loading ? (
-              <div className="text-center py-6 text-foreground/40 text-sm">Memuat...</div>
-            ) : invoices.length === 0 ? (
-              <EmptyState icon={FileText} title="Belum ada faktur"
-                description="Terbitkan faktur dari PO yang sudah dikirim lewat tombol Terbitkan faktur." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm" data-testid="invoices-table">
-                  <thead><tr className="border-b border-foreground/5 text-xs text-foreground/50">
-                    <th className="pb-2 text-left">No. faktur</th>
-                    <th className="pb-2 text-left">Klien</th>
-                    <th className="pb-2 text-left">Order</th>
-                    <th className="pb-2 text-left">Terbit</th>
-                    <th className="pb-2 text-left">Jatuh tempo</th>
-                    <th className="pb-2 text-right">Total</th>
-                    <th className="pb-2 text-right">Dibayar</th>
-                    <th className="pb-2 text-right">Sisa</th>
-                    <th className="pb-2 text-left">Status</th>
-                    <th className="pb-2 text-center">Aksi</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-white/5">
-                    {paged.map(i => (
-                      <tr key={i.id} className="hover:bg-foreground/[0.03]">
-                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/80">{i.invoice_number}</td>
-                        <td className="py-2.5 pr-3 text-foreground">{i.client_name}</td>
-                        <td className="py-2.5 pr-3 tabular-nums text-xs text-foreground/60">{i.order_code}</td>
-                        <td className="py-2.5 pr-3 text-xs text-foreground/60">{i.issue_date}</td>
-                        <td className="py-2.5 pr-3 text-xs text-foreground/60">{i.due_date}</td>
-                        <td className="py-2.5 pr-3 text-right">{fmt(i.total_amount)}</td>
-                        <td className="py-2.5 pr-3 text-right text-[hsl(var(--success))] ">{fmt(i.paid_amount)}</td>
-                        <td className="py-2.5 pr-3 text-right text-[hsl(var(--warning))] font-semibold">{fmt(i.balance_amount)}</td>
-                        <td className="py-2.5 pr-3"><StatusBadge status={i.status} /></td>
-                        <td className="py-2.5">
-                          <div className="flex gap-1 justify-center">
-                            <Button size="icon-sm" variant="ghost" onClick={() => setViewDialog(i)} title="Detail" aria-label="Detail"><Eye className="w-3.5 h-3.5" /></Button>
-                            <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--primary))]" onClick={() => printInvoicePdf(i)} title="Cetak PDF faktur" aria-label="Cetak PDF faktur" data-testid={`maklon-invoice-print-${i.id}`}><FileText className="w-3.5 h-3.5" /></Button>
-                            {['issued','partial_paid','overdue'].includes(i.status) && (
-                              <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--success))]" onClick={() => setPayDialog(i)} title="Bayar" aria-label="Bayar"><CreditCard className="w-3.5 h-3.5" /></Button>
-                            )}
-                            {i.status !== 'cancelled' && i.paid_amount === 0 && (
-                              <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--destructive))]" onClick={() => cancelInvoice(i)} title="Batalkan faktur" aria-label="Batalkan faktur"><X className="w-3.5 h-3.5" /></Button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-              </div>
-            )}
-          </GlassCard>
-        </TabsContent>
-
-        <TabsContent value="aging">
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-            {['current','1_30','31_60','61_90','over_90'].map(k => {
-              const labels = AGING_LABELS;
-              const colors = {current:'text-[hsl(var(--success))] ',1_30:'text-[hsl(var(--warning))] ',31_60:'text-[hsl(var(--warning))]',61_90:'text-[hsl(var(--destructive))] ',over_90:'text-[hsl(var(--destructive))] '};
-              return (
-                <GlassCard key={k} className="p-4">
-                  <div className="text-xs text-foreground/50">{labels[k]}</div>
-                  <div className={`text-lg font-bold mt-1 ${colors[k]}`}>{fmt(aging.buckets?.[k])}</div>
-                </GlassCard>
-              );
-            })}
-          </div>
-          <GlassCard className="p-5">
-            <h3 className="text-sm font-semibold text-foreground/80 mb-3">Faktur belum lunas</h3>
-            {(aging.rows || []).length === 0 ? (
-              <EmptyState icon={Banknote} title="Semua faktur sudah lunas"
-                description="Faktur yang belum dibayar penuh akan muncul di sini." />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="border-b border-foreground/5 text-xs text-foreground/50">
-                    <th className="pb-2 text-left">Faktur</th><th className="pb-2 text-left">Klien</th>
-                    <th className="pb-2 text-left">Jatuh tempo</th><th className="pb-2 text-right">Sisa</th>
-                    <th className="pb-2 text-center">Lewat (hari)</th><th className="pb-2 text-left">Kelompok umur</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-white/5">
-                    {(aging.rows || []).map((r, i) => (
-                      <tr key={i}>
-                        <td className="py-2 tabular-nums text-xs text-foreground/80">{r.invoice_number}</td>
-                        <td className="py-2">{r.client_name}</td>
-                        <td className="py-2 text-xs text-foreground/60">{r.due_date}</td>
-                        <td className="py-2 text-right font-semibold">{fmt(r.balance_amount)}</td>
-                        <td className="py-2 text-center text-xs">{r.days_overdue > 0 ? `${r.days_overdue} hari` : '-'}</td>
-                        <td className="py-2 text-xs"><span className={`font-semibold ${r.bucket === 'current' ? 'text-[hsl(var(--success))] ' : 'text-[hsl(var(--destructive))] '}`}>{AGING_LABELS[r.bucket] || r.bucket}</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </GlassCard>
-        </TabsContent>
-      </Tabs>
-
-      {generateDialog && (
-        <GenerateDialog orders={eligibleOrders} headers={headers}
-          onClose={() => setGenerateDialog(false)}
-          onSuccess={() => { setGenerateDialog(false); fetchAll(); }}
-        />
+        )}
+      </>}
+      detail={selected && (
+        <ReceivableDetail key={selected} arId={selected} headers={headers} token={token}
+          onClose={() => setSelected(null)} onChanged={load} />
       )}
-      {viewDialog && <ViewInvoiceDialog invoice={viewDialog} headers={headers} onClose={() => setViewDialog(null)} />}
-      {payDialog && (
-        <PaymentDialog invoice={payDialog} headers={headers}
-          onClose={() => setPayDialog(null)}
-          onSuccess={() => { setPayDialog(null); fetchAll(); }}
-        />
+      footer={rows.length > pageSize && (
+        <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}
-    </div>
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {loading && !(data.items || []).length ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-11 rounded-lg" />)}</div>
+        ) : rows.length === 0 ? (
+          <EmptyState icon={Banknote} title="Belum ada piutang klien"
+            description="Piutang muncul begitu PO maklon dikonfirmasi (menu PO Maklon)." />
+        ) : (
+          <Table data-testid="mkl-ar-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>PO</TableHead>
+                <TableHead>Klien</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="text-right">Nilai PO</TableHead>
+                <TableHead className="text-right">Tertagih</TableHead>
+                <TableHead className="text-right">Dibayar</TableHead>
+                <TableHead className="text-right">Sisa tertagih</TableHead>
+                <TableHead>Jatuh tempo</TableHead>
+                <TableHead className="text-right">Aksi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {paged.map((r) => (
+                <TableRow key={r.id} data-testid={`mkl-ar-row-${r.po_number}`}
+                  className={selected === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell className="whitespace-nowrap">
+                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => setSelected(r.id)}>
+                      {r.po_number || '—'}
+                    </Button>
+                    <div className="text-[11px] text-muted-foreground">{r.invoice_number}{r.mode === 'lama' ? ' · faktur lama' : ''}</div>
+                  </TableCell>
+                  <TableCell>{r.client_name}</TableCell>
+                  <TableCell><ArStatus status={r.status} />{r.post_error && <div className="text-[11px] text-[hsl(var(--destructive))] mt-1">Jurnal tertunda</div>}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.scheduled_total)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.billed_total)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(r.paid_total)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">
+                    {r.amount_due > 0.005 ? <span className="text-[hsl(var(--warning))] font-semibold">{fmt(r.amount_due)}</span> : fmt(0)}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap">{r.due_date ? formatDateID(r.due_date) : '—'}</TableCell>
+                  <TableCell className="text-right">
+                    <Button variant="outline" size="sm" onClick={() => setSelected(r.id)} data-testid={`mkl-ar-open-${r.po_number}`}>Rincian</Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+    </PageLayout>
   );
 }
 
-function GenerateDialog({ orders, headers, onClose, onSuccess }) {
-  const [orderId, setOrderId] = useState('');
-  // 2026-11-03: PPN mengikuti saklar Status Pajak (dulu "PPN % opsional", kosong = 11% dari config)
-  const { profile: taxProfile } = useTaxProfile();
-  const [taxF, setTaxF] = useState({ kena_ppn: true, faktur_number: '', faktur_date: '' });
-  const [terms, setTerms] = useState('');
-  const [notes, setNotes] = useState('');
-  const [saving, setSaving] = useState(false);
-  // SESI #27 — nomor invoice maklon mengikuti kebijakan Otomatis/Manual milik owner
-  // (ditegakkan sejak sesi #18, tetapi kolomnya belum pernah ada di layar ini).
-  const numPolicy = useDocNumberPolicy('dewi_maklon_invoices.invoice_number',
-                                       localStorage.getItem('erp_token'));
-  const [invNumber, setInvNumber] = useState('');
-  const selected = orders.find(o => o.id === orderId);
+function ReceivableDetail({ arId, headers, token, onClose, onChanged }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState('');
+  const [openShip, setOpenShip] = useState(null);
+  const [paying, setPaying] = useState(false);
+  const load = useCallback(async () => {
+    try { setD(await apiJson(`/api/dewi/maklon/receivables/${arId}`, headers)); }
+    catch (e) { setErr(e.message); }
+  }, [arId, headers]);
+  useEffect(() => { load(); }, [load]);
+  const refresh = () => { load(); onChanged(); };
+  const v2 = d?.mode === 'terjadwal';
+  const canPay = v2 && d && d.status !== 'cancelled' && d.outstanding_total > 0.005;
 
-  const gen = async () => {
-    if (!orderId) { toast.error('Pilih PO'); return; }
-    setSaving(true);
-    const payload = { order_id: orderId };
-    payload.kena_ppn = !!taxProfile.pkp && taxF.kena_ppn !== false;
-    if (payload.kena_ppn) Object.assign(payload, { faktur_number: taxF.faktur_number, faktur_date: taxF.faktur_date });
-    if (terms) payload.payment_terms = terms;
-    if (notes) payload.notes = notes;
-    if (selected?.source !== 'engine_ar') Object.assign(payload, docNumberPayload(numPolicy, 'invoice_number', invNumber));
-    const r = await fetch('/api/dewi/maklon/invoices/generate', { method: 'POST', headers, body: JSON.stringify(payload) });
-    setSaving(false);
-    if (r.ok) {
-      const inv = await r.json();
-      toast.success(`Invoice ${inv.invoice_number} dibuat`);
-      onSuccess();
-    } else {
-      toast.error((await r.json()).detail || 'Gagal');
-    }
-  };
+  const printPo = () => openPdf(`/api/dewi/maklon/receivables/${arId}/invoice.pdf`, headers, `Faktur_${d.invoice_number}.pdf`);
+  const printShip = (g) => openPdf(
+    `/api/dewi/maklon/receivables/${arId}/invoice.pdf?shipment_id=${encodeURIComponent(g.shipment_id)}&dispatch_seq=${g.dispatch_seq}`,
+    headers, `Faktur_${d.invoice_number}_${g.seq_no}.pdf`);
 
   return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg" data-testid="generate-invoice-dialog">
-        <DialogHeader><DialogTitle>Terbitkan faktur</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          {orders.length === 0 ? (
-            <Notice tone="warning" icon={AlertCircle}>
-              Tidak ada order yang bisa difakturkan. Order harus sudah dikonfirmasi dan belum punya faktur.
-            </Notice>
+    <DetailPanel testId="mkl-ar-detail" onClose={onClose}
+      title={d ? `${d.po_number} · ${d.client_name}` : 'Memuat…'}
+      description={d && (v2
+        ? `Piutang ${d.invoice_number}. Nilai PO ${fmt(d.scheduled_total)} · tertagih ${fmt(d.billed_total)} · dibayar ${fmt(d.paid_total)} · sisa PO ${fmt(d.outstanding_total)}.`
+        : `Faktur lama ${d.invoice_number} — dikelola dengan alur lama (Keuangan › Faktur Penjualan).`)}
+      actions={d && <>
+        <Button variant="outline" onClick={printPo} data-testid="mkl-ar-print-po"><FileText className="w-4 h-4" />Cetak faktur PO</Button>
+        {canPay && <Button onClick={() => setPaying(true)} data-testid="mkl-ar-pay"><CreditCard className="w-4 h-4" />Catat pembayaran</Button>}
+      </>}>
+      {err && <Notice tone="danger" icon={AlertCircle}>{err}</Notice>}
+      {!d ? <Skeleton className="h-24 rounded-lg" /> : <>
+        {d.post_error && <Notice tone="warning" icon={AlertCircle} title="Jurnal belum tercatat">{d.post_error}</Notice>}
+        {(d.held || []).length > 0 && (
+          <Notice tone="warning" icon={AlertCircle} title="Kelebihan kirim belum ditagih">
+            {d.held.map((h) => `${h.qty} pcs`).join(', ')} dikirim melebihi pesanan tanpa alasan — isi alasan lewat koreksi kiriman supaya bisa ditagih.
+          </Notice>
+        )}
+        {d.advance_balance > 0.005 && (
+          <p className="text-sm text-muted-foreground">Uang muka klien <b className="text-foreground tabular-nums">{fmt(d.advance_balance)}</b> belum terpakai — otomatis menutup piutang saat barang berikutnya dikirim.</p>
+        )}
+
+        <p className="text-sm font-semibold text-foreground">Per ukuran</p>
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>Barang</TableHead><TableHead className="text-right">Dipesan</TableHead>
+            <TableHead className="text-right">Dikirim</TableHead><TableHead className="text-right">Tertagih</TableHead>
+            <TableHead className="text-right">Harga jasa</TableHead><TableHead className="text-right">Nilai terjadwal</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {(d.lines || []).map((ln) => (
+              <TableRow key={ln.line_id || ln.item_id}>
+                <TableCell>{ln.sku || ln.description} {ln.size ? <span className="text-muted-foreground">· {ln.size}</span> : null}</TableCell>
+                <TableCell className="text-right tabular-nums">{ln.qty_ordered ?? ln.qty}</TableCell>
+                <TableCell className="text-right tabular-nums">{ln.qty_dispatched ?? '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{ln.qty_billed ?? '—'}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(ln.unit_price)}</TableCell>
+                <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(ln.subtotal)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+
+        {v2 && <>
+          <p className="text-sm font-semibold text-foreground">Kiriman yang sudah ditagih</p>
+          {(d.dispatches || []).length === 0 ? (
+            <EmptyState icon={FileText} title="Belum ada kiriman ke klien"
+              description="Pendapatan dicatat otomatis saat barang dikirim lewat Kirim ke Buyer." />
           ) : (
-            <>
-              <div className="space-y-1">
-                <Label>Order *</Label>
-                <Select value={orderId} onValueChange={setOrderId}>
-                  <SelectTrigger data-testid="gen-order-select"><SelectValue placeholder="Pilih PO..." /></SelectTrigger>
-                  <SelectContent>
-                    {orders.map(o => (
-                      <SelectItem key={o.id} value={o.id} disabled={!o.billable}>
-                        {o.po_number} — {o.client_name} · terkirim {o.total_received}/{o.total_ordered} pcs · Rp {Number(o.subtotal || 0).toLocaleString('id-ID')}
-                        {!o.billable ? ' (belum ada kiriman)' : ''}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selected?.source === 'engine_ar' && (
-                  <p className="text-xs text-muted-foreground" data-testid="gen-engine-ar-note">
-                    Menerbitkan AR otomatis <b>{selected.ar_invoice_number}</b>: {selected.line_count} baris,
-                    qty = yang diterima klien × harga jasa (selling price). Nomor mengikuti AR — tidak dibuat nomor baru.
-                  </p>
-                )}
-              </div>
-              <SalesTaxFields profile={taxProfile} value={taxF} onChange={setTaxF} compact testIdPrefix="maklon-gen-tax" />
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label>Termin pembayaran</Label>
-                  <Select value={terms} onValueChange={setTerms}>
-                    <SelectTrigger><SelectValue placeholder="Bawaan pengaturan" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="net_7">Net 7</SelectItem>
-                      <SelectItem value="net_14">Net 14</SelectItem>
-                      <SelectItem value="net_30">Net 30</SelectItem>
-                      <SelectItem value="net_60">Net 60</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="space-y-1"><Label>Catatan</Label><Textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} /></div>
-              {selected?.source !== 'engine_ar' && (
-                <DocNumberField
-                  policy={numPolicy} value={invNumber} onChange={setInvNumber}
-                  testId="maklon-inv-docnum" label="Nomor Invoice" />
-              )}
-            </>
+            <Table data-testid="mkl-ar-dispatches">
+              <TableHeader><TableRow>
+                <TableHead className="w-10" /><TableHead>Surat jalan</TableHead><TableHead>Tanggal</TableHead>
+                <TableHead className="text-right">Nilai</TableHead><TableHead className="text-right">Dibayar</TableHead>
+                <TableHead className="text-right">Sisa</TableHead><TableHead className="text-right">Faktur</TableHead>
+              </TableRow></TableHeader>
+              <TableBody>
+                {d.dispatches.map((g) => {
+                  const key = `${g.shipment_id}:${g.dispatch_seq}`;
+                  const open = openShip === key;
+                  return (
+                    <Fragment key={key}>
+                      <TableRow>
+                        <TableCell><RowToggle open={open} onClick={() => setOpenShip(open ? null : key)} /></TableCell>
+                        <TableCell className="whitespace-nowrap">{g.shipment_number || '—'} · kirim ke-{g.dispatch_seq}</TableCell>
+                        <TableCell className="whitespace-nowrap">{g.date ? formatDateID(g.date) : '—'}</TableCell>
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.total)}</TableCell>
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.paid)}</TableCell>
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(g.balance)}</TableCell>
+                        <TableCell className="text-right">
+                          <Button variant="outline" size="sm" onClick={() => printShip(g)} data-testid={`mkl-ar-print-${g.seq_no}`}>
+                            <FileText className="w-3.5 h-3.5" />Cetak
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                      {open && (
+                        <RowDetail colSpan={7}>
+                          <div className="text-sm space-y-1">
+                            {g.lines.map((ln) => (
+                              <div key={ln.po_item_id} className="flex justify-between gap-3">
+                                <span>{ln.sku} {ln.size ? `· ${ln.size}` : ''} — {ln.qty} pcs × {fmt(ln.unit_price)}</span>
+                                <span className="tabular-nums">{fmt(ln.amount)}</span>
+                              </div>
+                            ))}
+                            <div className="text-xs text-muted-foreground">
+                              Jurnal: {g.journals.map((j) => `${j.je_number}${j.reverse ? ' (koreksi)' : ''}`).join(', ')}
+                            </div>
+                          </div>
+                        </RowDetail>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </TableBody>
+            </Table>
           )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={gen} disabled={saving || orders.length === 0} data-testid="gen-save-btn">{saving ? 'Menerbitkan...' : 'Terbitkan'}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </>}
+
+        <p className="text-sm font-semibold text-foreground">Pembayaran klien</p>
+        {(d.payments || []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">Klien belum membayar untuk PO ini.</p>
+        ) : (
+          <Table data-testid="mkl-ar-payments">
+            <TableHeader><TableRow>
+              <TableHead>Tanggal</TableHead><TableHead>Rekening</TableHead><TableHead className="text-right">Jumlah</TableHead>
+              <TableHead className="text-right">Menutup piutang</TableHead><TableHead className="text-right">Uang muka</TableHead>
+              <TableHead>Jurnal</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {d.payments.map((p) => (
+                <TableRow key={p.id} className={p.status === 'voided' ? 'opacity-50' : ''}>
+                  <TableCell className="whitespace-nowrap">{p.date ? formatDateID(p.date) : '—'}{p.status === 'voided' ? ' · dibatalkan' : ''}</TableCell>
+                  <TableCell>{p.account_name || '—'}{p.reference_no ? ` · ${p.reference_no}` : ''}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.amount)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.ar_portion)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmt(p.advance_portion)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{p.je_number || '—'}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </>}
+      {paying && d && (
+        <PaymentForm receivable={d} headers={headers} token={token}
+          onClose={() => setPaying(false)} onDone={() => { setPaying(false); refresh(); }} />
+      )}
+    </DetailPanel>
   );
 }
 
-function PaymentDialog({ invoice, headers, onClose, onSuccess }) {
-  const [amount, setAmount] = useState(invoice.balance_amount || 0);
-  const [method, setMethod] = useState('transfer');
-  const [ref, setRef] = useState('');
+function PaymentForm({ receivable, headers, token, onClose, onDone }) {
+  // rekening kas/bank AKTIF (SSOT yang sama dengan pemilih rekening Keuangan/SDM)
+  const [accounts, setAccounts] = useState([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    fetch('/api/rahaza/payment-cash-accounts', { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : [])).then((d) => setAccounts(Array.isArray(d) ? d : []))
+      .catch(() => setAccounts([])).finally(() => setLoaded(true));
+  }, [token]);
+  const limit = Number(receivable.outstanding_total || 0);
+  const due = Number(receivable.amount_due || 0);
+  const [amount, setAmount] = useState(due > 0 ? due : limit);
+  const [account, setAccount] = useState('');
   const [date, setDate] = useState(todayWIB);
+  const [ref, setRef] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
-  const [cashAccounts, setCashAccounts] = useState([]);
-  const [cashAccountId, setCashAccountId] = useState('');
-  useEffect(() => {
-    fetch('/api/rahaza/cash-accounts', { headers })
-      .then(r => (r.ok ? r.json() : []))
-      .then(d => setCashAccounts(Array.isArray(d) ? d : []))
-      .catch(() => {});
-  }, [headers]);
-
+  const n = Number(amount || 0);
+  const problem = !account ? 'Pilih rekening penerima.'
+    : !(n > 0) ? 'Jumlah harus lebih dari 0.'
+      : n > limit + 0.5 ? `Jumlah melebihi sisa PO (${fmt(limit)}).` : '';
+  const toAdvance = Math.max(0, n - due);
   const save = async () => {
-    if (!amount || Number(amount) <= 0) { toast.error('Jumlah pembayaran wajib'); return; }
     setSaving(true);
-    const r = await fetch('/api/dewi/maklon/payments', { method: 'POST', headers, body: JSON.stringify({
-      invoice_id: invoice.id, amount: Number(amount), method, reference_no: ref, payment_date: date, notes,
-      cash_account_id: cashAccountId || null,
-    })});
-    setSaving(false);
-    if (r.ok) {
-      const d = await r.json();
-      if (d.gl_error) toast.warning(`Pembayaran dicatat, jurnal GL gagal: ${d.gl_error}`);
-      else toast.success(`Pembayaran dicatat${d.gl_je_number ? ` · Jurnal ${d.gl_je_number}` : ''}`);
-      onSuccess();
-    }
-    else toast.error((await r.json()).detail || 'Gagal');
-  };
-
-  return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-lg" data-testid="payment-dialog">
-        <DialogHeader><DialogTitle>Catat Pembayaran — {invoice.invoice_number}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2">
-          <div className="bg-foreground/5 rounded p-3 text-sm grid grid-cols-2 gap-2">
-            <div>Total: <span className="font-semibold">{fmt(invoice.total_amount)}</span></div>
-            <div>Dibayar: <span className="font-semibold text-[hsl(var(--success))] ">{fmt(invoice.paid_amount)}</span></div>
-            <div className="col-span-2 text-[hsl(var(--warning))] ">Sisa: <span className="font-semibold">{fmt(invoice.balance_amount)}</span></div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1"><Label>Jumlah *</Label><MoneyInput value={amount} onChange={e => setAmount(e.target.value)} data-testid="pay-amount-input" /></div>
-            <div className="space-y-1">
-              <Label>Metode</Label>
-              <Select value={method} onValueChange={setMethod}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="transfer">Transfer</SelectItem>
-                  <SelectItem value="cash">Cash</SelectItem>
-                  <SelectItem value="check">Cek</SelectItem>
-                  <SelectItem value="giro">Giro</SelectItem>
-                  <SelectItem value="other">Lainnya</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1"><Label>Tgl Bayar</Label><Input type="date" value={date} onChange={e => setDate(e.target.value)} /></div>
-            <div className="space-y-1"><Label>No. Referensi</Label><Input value={ref} onChange={e => setRef(e.target.value)} placeholder="TF-001" /></div>
-            <div className="space-y-1 col-span-2">
-              <Label>Rekening Kas/Bank Penerima</Label>
-              <Select value={cashAccountId} onValueChange={setCashAccountId}>
-                <SelectTrigger data-testid="pay-cash-account-select"><SelectValue placeholder="Default profil (Bank BCA) — pilih untuk mutasi kas" /></SelectTrigger>
-                <SelectContent>
-                  {cashAccounts.map(a => (
-                    <SelectItem key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 col-span-2"><Label>Catatan</Label><Textarea rows={2} value={notes} onChange={e => setNotes(e.target.value)} /></div>
-          </div>
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={save} disabled={saving} data-testid="pay-save-btn">{saving ? 'Menyimpan...' : 'Catat'}</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ViewInvoiceDialog({ invoice, headers, onClose }) {
-  const [detail, setDetail] = useState(invoice);
-  const [downloading, setDownloading] = useState(false);
-  useEffect(() => {
-    fetch(`/api/dewi/maklon/invoices/${invoice.id}`, { headers })
-      .then(r => r.ok && r.json())
-      .then(d => d && setDetail(d))
-      .catch(() => {});
-  }, [invoice.id, headers]);
-
-  const downloadPdf = async () => {
-    setDownloading(true);
     try {
-      const res = await fetch(`/api/dewi/maklon/invoices/${invoice.id}/pdf`, {
-        headers: { Authorization: headers.Authorization },
+      const out = await apiJson(`/api/dewi/maklon/receivables/${receivable.id}/payments`, headers, {
+        method: 'POST',
+        body: JSON.stringify({ amount: n, cash_account_id: account, payment_date: date, reference_no: ref, notes }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Invoice_${detail.invoice_number || invoice.id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success('PDF invoice berhasil diunduh');
-    } catch (e) {
-      toast.error('Gagal mengunduh PDF invoice');
-    } finally {
-      setDownloading(false);
-    }
+      toast.success(`Pembayaran tercatat${out.gl_je_number ? ` · ${out.gl_je_number}` : ''}`);
+      onDone();
+    } catch (e) { toast.error(e.message); }
+    finally { setSaving(false); }
   };
-
   return (
-    <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Detail faktur — {detail.invoice_number}</DialogTitle></DialogHeader>
-        <div className="space-y-3 py-2 text-sm">
-          <div className="grid grid-cols-2 gap-3">
-            <div><span className="text-foreground/50">Klien:</span> <span className="font-semibold">{detail.client_name}</span></div>
-            <div><span className="text-foreground/50">Order:</span> <span className="tabular-nums text-xs">{detail.order_code}</span></div>
-            <div><span className="text-foreground/50">Tgl Terbit:</span> {detail.issue_date}</div>
-            <div><span className="text-foreground/50">Jatuh Tempo:</span> {detail.due_date}</div>
-            <div><span className="text-foreground/50">Termin:</span> {detail.payment_terms}</div>
-            <div><span className="text-foreground/50">PPN:</span> {detail.tax_pct}%</div>
-          </div>
-
-          <GlassCard className="p-4">
-            <div className="text-xs font-semibold text-foreground/60 mb-2">Rincian baris</div>
-            <table className="w-full text-xs">
-              <thead><tr className="text-foreground/50"><th className="text-left pb-1">Deskripsi</th><th className="text-right pb-1">Qty</th><th className="text-right pb-1">Harga</th><th className="text-right pb-1">Subtotal</th></tr></thead>
-              <tbody>{(detail.lines || []).map((l, i) => (
-                <tr key={i}><td className="py-1">{l.description}</td><td className="text-right">{l.qty} {l.unit}</td><td className="text-right">{fmt(l.unit_price)}</td><td className="text-right font-semibold">{fmt(l.line_total)}</td></tr>
-              ))}</tbody>
-            </table>
-          </GlassCard>
-
-          <div className="border-t border-foreground/10 pt-3 space-y-1 text-right">
-            <div>Subtotal: <span className="font-semibold">{fmt(detail.subtotal)}</span></div>
-            {detail.discount_amount > 0 && <div>Diskon: <span className="text-[hsl(var(--destructive))] ">- {fmt(detail.discount_amount)}</span></div>}
-            <div>PPN ({detail.tax_pct}%): <span>{fmt(detail.tax_amount)}</span></div>
-            <div className="text-base font-bold">Total: {fmt(detail.total_amount)}</div>
-            <div className="text-[hsl(var(--success))] ">Dibayar: {fmt(detail.paid_amount)}</div>
-            <div className="text-[hsl(var(--warning))] font-semibold">Saldo: {fmt(detail.balance_amount)}</div>
-            <div>Status: <StatusBadge status={detail.status} /></div>
-          </div>
-
-          {detail.payments && detail.payments.length > 0 && (
-            <div className="pt-3 border-t border-foreground/10">
-              <div className="text-xs font-semibold text-foreground/60 mb-2">Riwayat Pembayaran</div>
-              <div className="space-y-1 text-xs">
-                {detail.payments.map(p => (
-                  <div key={p.id} className="flex justify-between bg-foreground/5 rounded px-2 py-1">
-                    <span>{p.payment_date} · {p.method}{p.reference_no ? ` · ${p.reference_no}` : ''}</span>
-                    <span className="font-semibold text-[hsl(var(--success))] ">{fmt(p.amount)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Tutup</Button>
-          <Button onClick={downloadPdf} disabled={downloading} data-testid="maklon-invoice-print-pdf" className="gap-2">
-            <FileText className="w-4 h-4" />
-            {downloading ? 'Menyiapkan…' : 'Cetak PDF faktur'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <Modal onClose={onClose} title="Catat pembayaran klien" size="sm" description={`${receivable.po_number} · ${receivable.client_name}`}>
+      <p className="text-xs text-muted-foreground mb-3">
+        Tertagih belum dibayar {fmt(due)} · sisa PO {fmt(limit)}. Kelebihan di atas tagihan dicatat sebagai uang muka.
+      </p>
+      <div className="space-y-3">
+        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-amount">Jumlah diterima</label>
+          <MoneyInput glass id="mkl-pay-amount" value={amount} onChange={(e) => setAmount(e.target.value)} data-testid="mkl-pay-amount" /></div>
+        <div><label className="text-xs text-muted-foreground">Masuk ke rekening</label>
+          <SmartNativeSelect value={account} onChange={(e) => setAccount(e.target.value)} className="h-9 w-full" aria-label="Rekening" data-testid="mkl-pay-account">
+            <option value="">{loaded ? '— Pilih rekening —' : 'Memuat rekening…'}</option>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
+          </SmartNativeSelect></div>
+        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-date">Tanggal</label>
+          <GlassInput id="mkl-pay-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-ref">No. referensi</label>
+          <GlassInput id="mkl-pay-ref" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="mis. nomor transfer" /></div>
+        <div><label className="text-xs text-muted-foreground" htmlFor="mkl-pay-notes">Catatan</label>
+          <GlassInput id="mkl-pay-notes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="opsional" /></div>
+      </div>
+      {n > 0 && !problem && toAdvance > 0.5 && (
+        <p className="text-xs text-muted-foreground mt-3">{fmt(Math.min(n, due))} menutup piutang · {fmt(toAdvance)} menjadi uang muka.</p>
+      )}
+      {problem && account && <Notice tone="danger" icon={AlertCircle} className="mt-3">{problem}</Notice>}
+      <div className="flex gap-2 mt-4 justify-end">
+        <Button variant="outline" onClick={onClose}>Batal</Button>
+        <Button onClick={save} disabled={!!problem || saving} data-testid="mkl-pay-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
+      </div>
+    </Modal>
   );
 }

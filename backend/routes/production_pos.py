@@ -18,7 +18,6 @@ from core.helpers import new_id, now, parse_date
 from core.pagination import LEGACY_DEFAULT_CAP, _paginate_params, _paginated_envelope, _sort_params
 from core.enrichment import enrich_with_product_photos
 from utils.variant_ssot import build_variant_sku
-from utils.waktu import now_wib
 
 router = APIRouter(prefix="/api", tags=["production-pos"])
 
@@ -70,6 +69,45 @@ CLOSE_SHORT_ALLOWED_FROM = [
     'In Production', 'Production Complete', 'Variance Review',
     'Return Review', 'Ready to Close', 'Completed',
 ]
+
+
+def missing_harga_jasa(items: list) -> list:
+    """Baris PO maklon tanpa harga jasa ke klien (2026-11-06 Tahap 2: harga jasa WAJIB, tidak ada
+    cadangan upah CMT). Murni → daftar label baris."""
+    out = []
+    for it in items or []:
+        if int(it.get('qty', 0) or 0) <= 0:
+            continue
+        try:
+            price = float(it.get('selling_price_snapshot', 0) or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        if price <= 0:
+            label = ' '.join(x for x in (it.get('sku') or it.get('product_name') or 'baris',
+                                         it.get('size') or '') if x).strip()
+            out.append(label)
+    return out
+
+
+def harga_jasa_message(missing: list) -> str:
+    return ("Harga jasa ke klien belum diisi untuk: " + ', '.join(missing[:8])
+            + (f" (+{len(missing) - 8} lagi)" if len(missing) > 8 else '')
+            + ". Isi harga jasa di setiap baris PO — PO maklon tidak bisa dikonfirmasi tanpa harga jasa.")
+
+
+def accessory_qty(v) -> float:
+    """Qty kebutuhan aksesoris PO — DESIMAL dipertahankan (benang dalam meter, pita dalam
+    yard). Tahap 1 (6 Nov 2026): dulu `int()` sehingga 2,5 m benang tersimpan 2 setiap
+    kali PO diubah. Kosong = 0; teks bukan angka atau negatif ditolak dengan pesan jelas."""
+    if v in (None, ''):
+        return 0.0
+    try:
+        q = float(str(v).replace(',', '.')) if isinstance(v, str) else float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Qty aksesoris '{v}' bukan angka.")
+    if q < 0:
+        raise HTTPException(400, 'Qty aksesoris tidak boleh negatif.')
+    return round(q, 4)
 
 
 async def _resolve_rahaza_variant(db, item: dict):
@@ -276,6 +314,11 @@ async def create_po_internal(db, body: dict, user: dict, *,
         vendor_name = vendor_doc.get('garment_name', '') if vendor_doc else ''
     po_id = new_id()
     initial_status = 'Confirmed' if body.get('status') == 'Confirmed' else 'Draft'
+    # 2026-11-06 (Tahap 2): PO maklon yang langsung Dikonfirmasi wajib berharga jasa di setiap baris.
+    if business_type == 'maklon' and initial_status == 'Confirmed':
+        _miss = missing_harga_jasa(body.get('items') or [])
+        if _miss:
+            raise HTTPException(400, harga_jasa_message(_miss))
     # Resolve buyer name from buyer_id if provided (buyers ATAU dewi_maklon_clients)
     customer_name = body.get('customer_name', '')
     buyer_id = body.get('buyer_id')
@@ -304,6 +347,8 @@ async def create_po_internal(db, body: dict, user: dict, *,
         'business_type': business_type,
         'created_by': user['name'], 'created_at': now(), 'updated_at': now()
     }
+    if initial_status == 'Confirmed':
+        po.update({'confirmed_at': now(), 'confirmed_by': user.get('name', '')})
     await db.production_pos.insert_one(po)
     inserted_items = []
     for idx, item in enumerate(items_data):
@@ -375,7 +420,7 @@ async def create_po_internal(db, body: dict, user: dict, *,
     return result
 
 # ═══════════════════════════════════════════════════════════════════════════
-# ACC-1 — KEBUTUHAN AKSESORIS PER PO (BOM explode → cek stok → request internal)
+# ACC-1 — KEBUTUHAN AKSESORIS PER PO (BOM explode → cek stok → ajukan pembelian)
 #
 # Konteks (memory/PRODUKSI_E9_AKSESORIS.md §ACC-1): explode BOM → `po_accessories`
 # sudah ada, TAPI hasilnya berhenti sebagai teks: tidak dibandingkan dengan stok
@@ -383,15 +428,15 @@ async def create_po_internal(db, body: dict, user: dict, *,
 # harus mengetik ulang kebutuhan di modul Aksesoris (kerja dobel + rawan salah).
 #
 # Dua endpoint di bawah menutup rantai itu:
-#   GET  .../accessory-requirements                → kebutuhan + on-hand + kekurangan
-#   POST .../accessory-requirements/create-request  → jadikan permintaan internal
-#                                                     (SSOT `dewi_accessory_requests`,
-#                                                      request_type='internal_issuance')
+#   GET  .../accessory-requirements                → kebutuhan + sudah keluar + tersedia + kurang
+#   POST .../accessory-requirements/create-request  → kekurangan aksesoris MILIK DA menjadi
+#                                                     Permintaan Pengadaan (pembelian), bukan
+#                                                     pengeluaran stok.
+# 2026-11-06 (Tahap 2): dulu tombol ini membuat permintaan PENGELUARAN (divisi Produksi) untuk
+# barang yang justru kurang — saat diserahkan, stok yang ada (bahkan aksesoris yang mestinya
+# disediakan klien maklon) ikut dipotong dan PO-nya tidak tercatat, sehingga Kirim Material CMT
+# mengeluarkannya lagi. Perhitungan kini satu tempat: `core.accessory_procurement`.
 # ═══════════════════════════════════════════════════════════════════════════
-async def _po_accessory_rows(db, po_id: str):
-    return await db.po_accessories.find({'po_id': po_id}, {'_id': 0}).sort('created_at', 1).to_list(None)
-
-
 @router.get("/production-pos/{po_id}/accessory-requirements")
 async def po_accessory_requirements(po_id: str, request: Request):
     """Kebutuhan aksesoris PO + posisi stok + kekurangan (read-only)."""
@@ -401,187 +446,56 @@ async def po_accessory_requirements(po_id: str, request: Request):
     po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
     if not po:
         raise HTTPException(404, 'PO tidak ditemukan')
-
-    rows = await _po_accessory_rows(db, po_id)
-    ids = [r.get('accessory_id') for r in rows if r.get('accessory_id')]
-
-    from core import stock_service
-    onhand = await stock_service.onhand_map(ids, db=db) if ids else {}
-    avail = await stock_service.available_map(ids, db=db) if ids else {}
-
-    masters = {}
-    if ids:
-        async for m in db.rahaza_materials.find(
-                {'id': {'$in': ids}},
-                {'_id': 0, 'id': 1, 'code': 1, 'name': 1, 'unit': 1, 'unit_cost': 1, 'hpp': 1}):
-            masters[m['id']] = m
-
-    out = []
-    total_shortage_value = 0.0
-    shortage_lines = unlinked_lines = 0
-    for r in rows:
-        mid = r.get('accessory_id')
-        master = masters.get(mid) or {}
-        need = float(r.get('qty_needed') or 0)
-        # Pakai `available` (on-hand − reserved) supaya stok yang sudah dialokasikan
-        # ke PO lain / karantina TIDAK dihitung sebagai tersedia.
-        have = float(avail.get(mid, 0)) if mid else 0.0
-        on_hand = float(onhand.get(mid, 0)) if mid else 0.0
-        shortage = round(max(need - have, 0.0), 3)
-        unit_cost = float(master.get('unit_cost') or master.get('hpp') or 0)
-        if not mid:
-            unlinked_lines += 1
-        if shortage > 0:
-            shortage_lines += 1
-            total_shortage_value += shortage * unit_cost
-        out.append({
-            **r,
-            'material_id': mid,
-            'material_code': master.get('code') or r.get('accessory_code') or '',
-            'material_name': master.get('name') or r.get('accessory_name') or '',
-            'linked': bool(mid),
-            'on_hand': on_hand,
-            'available': have,
-            'shortage': shortage,
-            'unit_cost': unit_cost,
-            'shortage_value': round(shortage * unit_cost, 2),
-            'status': 'unlinked' if not mid else ('shortage' if shortage > 0 else 'ok'),
-        })
-
-    # request internal yang sudah dibuat untuk PO ini (agar UI tidak dobel bikin)
-    existing = await db.dewi_accessory_requests.find(
-        {'po_id': po_id, 'request_type': 'internal_issuance'},
-        {'_id': 0, 'id': 1, 'request_code': 1, 'status': 1, 'created_at': 1}
-    ).sort('created_at', -1).to_list(20)
-
+    from core import accessory_procurement as ap
+    req = await ap.po_requirements(db, po)
+    existing = [{'id': r['id'], 'request_code': r.get('request_number', ''),
+                 'status': r.get('status_label') or r.get('status', ''), 'created_at': r.get('created_at')}
+                for r in await ap.po_shortage_prs(db, po_id)]
     return {
         'po_id': po_id,
         'po_number': po.get('po_number', ''),
         'business_type': po.get('business_type', ''),
-        'requirements': serialize_doc(out),
-        'summary': {
-            'total_lines': len(out),
-            'shortage_lines': shortage_lines,
-            'unlinked_lines': unlinked_lines,
-            'total_shortage_value': round(total_shortage_value, 2),
-            'ready': shortage_lines == 0 and unlinked_lines == 0,
-        },
+        'requirements': serialize_doc(req['rows']),
+        'summary': req['summary'],
         'existing_requests': serialize_doc(existing),
     }
 
 
 @router.post("/production-pos/{po_id}/accessory-requirements/create-request")
 async def po_accessory_create_request(po_id: str, request: Request):
-    """Buat permintaan aksesoris internal dari kebutuhan PO.
+    """Ajukan PEMBELIAN untuk kekurangan aksesoris milik DA pada PO ini.
 
-    Body: {only_shortage?: bool=true, divisi?: str, needed_by?: str,
-           urgent?: bool, notes?: str, force?: bool=false}
-    Default hanya mengambil baris yang KURANG stok (tidak membanjiri gudang dengan
-    permintaan barang yang sudah tersedia). `force=false` menolak bila masih ada
-    permintaan aktif untuk PO ini (hindari dobel).
+    Body: {needed_by?: str, urgent?: bool, notes?: str, force?: bool=false}
+    Membuat SATU Permintaan Pengadaan (langsung diajukan ke persetujuan, tertaut ke PO) lewat
+    fungsi Portal Pengadaan. Tidak memotong stok: stok yang ada dikeluarkan saat Kirim Material
+    CMT. `force=false` menolak bila masih ada Permintaan Pengadaan kekurangan aktif untuk PO ini.
     """
     user = await require_auth(request)
     deny_klien(user)
     if not check_role(user, PROD_ADMIN_ROLES):
-        raise HTTPException(403, 'Hanya admin/supervisor produksi yang boleh membuat permintaan aksesoris')
+        raise HTTPException(403, 'Hanya admin/supervisor produksi yang boleh mengajukan pembelian aksesoris')
     db = get_db()
     po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
     if not po:
         raise HTTPException(404, 'PO tidak ditemukan')
     body = await request.json() if await request.body() else {}
-    only_shortage = body.get('only_shortage', True)
-    force = bool(body.get('force'))
-
-    if not force:
-        dup = await db.dewi_accessory_requests.find_one(
-            {'po_id': po_id, 'request_type': 'internal_issuance',
-             'status': {'$in': ['draft', 'submitted', 'allocated']}},
-            {'_id': 0, 'request_code': 1, 'status': 1})
-        if dup:
-            raise HTTPException(400, f"Permintaan aksesoris untuk PO ini sudah ada: "
-                                     f"{dup.get('request_code')} (status {dup.get('status')}). "
-                                     f"Selesaikan/batalkan dulu, atau kirim force=true.")
-
-    rows = await _po_accessory_rows(db, po_id)
-    if not rows:
-        raise HTTPException(400, 'PO ini belum punya kebutuhan aksesoris. '
-                                 'Pastikan BOM aktif berisi aksesoris, lalu simpan ulang PO.')
-
-    ids = [r.get('accessory_id') for r in rows if r.get('accessory_id')]
-    from core import stock_service
-    avail = await stock_service.available_map(ids, db=db) if ids else {}
-
-    items, skipped_ok, skipped_unlinked = [], 0, 0
-    for r in rows:
-        mid = r.get('accessory_id')
-        need = float(r.get('qty_needed') or 0)
-        if need <= 0:
-            continue
-        if not mid:
-            # Tanpa material_id, permintaan tidak bisa dipenuhi dari stok mana pun.
-            skipped_unlinked += 1
-            continue
-        have = float(avail.get(mid, 0))
-        qty = round(max(need - have, 0.0), 3) if only_shortage else need
-        if qty <= 0:
-            skipped_ok += 1
-            continue
-        items.append({
-            'material_id': mid,
-            'material_code': r.get('accessory_code', ''),
-            'material_name': r.get('accessory_name', ''),
-            'qty': qty,
-            'unit': r.get('unit', 'pcs'),
-            'notes': f"Kebutuhan PO {po.get('po_number', '')}"
-                     + (f" · butuh {need}, tersedia {have}" if only_shortage else ''),
-        })
-
-    if not items:
-        detail = 'Semua kebutuhan aksesoris sudah tercukupi stok — tidak ada yang perlu diminta.'
-        if skipped_unlinked:
-            detail += (f" Catatan: {skipped_unlinked} baris belum tertaut ke master material "
-                       f"sehingga dilewati — perbaiki BOM-nya dulu.")
-        raise HTTPException(400, detail)
-
-    from utils.counters import gen_prefixed_number
-    today = now_wib().strftime('%y%m%d')
-    code = await gen_prefixed_number(db, 'dewi_accessory_requests', 'request_code',
-                                     f'INT-REQ-{today}-', 3)
-    doc = {
-        'id': new_id(),
-        'request_code': code,
-        'request_type': 'internal_issuance',
-        'sample_request_id': '', 'style_id': '', 'style_code': '', 'style_name': '',
-        'divisi': body.get('divisi') or 'Produksi',
-        'purpose': body.get('notes') or f"Kebutuhan aksesoris PO {po.get('po_number', '')}",
-        'admin_notes': '',
-        'vendor_id': '', 'original_shipment_id': None,
-        'po_id': po_id, 'po_number': po.get('po_number', ''),
-        'total_requested_qty': round(sum(i['qty'] for i in items), 3),
-        'items': items,
-        'urgent': bool(body.get('urgent', False)),
-        'needed_by_date': body.get('needed_by', '') or (po.get('deadline').isoformat()[:10]
-                                                        if isinstance(po.get('deadline'), datetime) else ''),
-        'notes': body.get('notes', ''),
-        'status': 'submitted',       # langsung masuk Inbox Approval Aksesoris
-        'requester_id': user['id'],
-        'requester_name': user.get('name', ''),
-        'allocated_by': None, 'allocated_at': None,
-        'delivered_by': None, 'delivered_at': None,
-        'rejection_reason': None,
-        'source': 'po_bom_explode',  # jejak: dibuat otomatis dari kebutuhan PO (ACC-1)
-        'created_at': now(), 'updated_at': now(),
-    }
-    await db.dewi_accessory_requests.insert_one(doc)
-    await log_activity(user['id'], user['name'], 'Create', 'Accessory Request',
-                       f"{code} dari kebutuhan PO {po.get('po_number', '')} ({len(items)} item)")
+    from core import accessory_procurement as ap
+    try:
+        res = await ap.create_po_shortage_pr(db, po, user, body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    doc = res['request']
+    number = doc.get('request_number', '')
+    await log_activity(user['id'], user['name'], 'Create', 'Procurement Request',
+                       f"{number} kekurangan aksesoris PO {po.get('po_number', '')} ({res['lines']} item)")
     return JSONResponse({
         'ok': True,
-        'request': serialize_doc(doc),
-        'lines_requested': len(items),
-        'lines_skipped_sufficient': skipped_ok,
-        'lines_skipped_unlinked': skipped_unlinked,
-        'message': f"Permintaan {code} dibuat ({len(items)} item) dan masuk Inbox Approval Aksesoris.",
+        'request': serialize_doc({k: v for k, v in doc.items() if k != '_id'}),
+        'lines_requested': res['lines'],
+        'lines_skipped_unlinked': res['lines_skipped_unlinked'],
+        'lines_skipped_client': res['lines_skipped_client'],
+        'message': (f"Permintaan Pengadaan {number} dibuat untuk {res['lines']} aksesoris yang kurang dan "
+                    "sudah diajukan ke persetujuan. Barang masuk stok lewat PO dan Penerimaan Barang."),
     }, status_code=201)
 
 
@@ -594,22 +508,61 @@ async def close_po(po_id: str, request: Request):
     body = await request.json()
     po = await db.production_pos.find_one({'id': po_id})
     if not po: raise HTTPException(404, 'PO not found')
-    if po.get('status') == 'Closed':
-        raise HTTPException(400, 'PO sudah Closed')
+    if po.get('status') in ('Closed', 'Closed Short'):
+        raise HTTPException(400, f"PO sudah ditutup ({po.get('status')}).")
     if po.get('status') not in PO_CLOSABLE_STATUSES:
         raise HTTPException(400,
             f"PO berstatus '{po.get('status')}' belum bisa ditutup. "
-            f"Close manual hanya sah dari: {PO_CLOSABLE_STATUSES}")
-    await db.production_pos.update_one({'id': po_id}, {'$set': {
-        'status': 'Closed', 'close_reason': body.get('close_reason'),
-        'close_notes': body.get('close_notes', ''), 'closed_by': user['name'],
-        'closed_at': now(), 'updated_at': now()
-    }})
-    if po.get('business_type') == 'maklon':
-        from routes.production_maklon_bridge import try_sync_maklon_finance
-        await try_sync_maklon_finance(db, po_id, user)
-    await log_activity(user['id'], user['name'], 'Close PO', 'Production PO', f"Closed PO: {po.get('po_number')}")
-    return {'success': True}
+            f"Tutup manual hanya sah setelah produksi selesai ({', '.join(PO_CLOSABLE_STATUSES)}).")
+    # 2026-11-06 (Tahap 2, keputusan owner): DUA tombol tutup memakai SATU pemeriksaan qty per
+    # baris/ukuran. Ada kekurangan ⇒ wajib alasan tutup kurang dan PO menjadi 'Closed Short'
+    # (jadwal piutang ikut menyusut); tidak ada kekurangan ⇒ 'Closed'.
+    return await _close_po_checked(db, po, body, user, short_endpoint=False)
+
+
+CLOSE_SHORT_REASON_LABELS = {
+    'deadline_expired': 'Batas waktu terlewati', 'buyer_material_shortage': 'Bahan dari klien kurang',
+    'cmt_quality_reject_final': 'Reject kualitas CMT (final)', 'mutual_agreement': 'Kesepakatan bersama',
+}
+
+
+def short_lines_text(lines: list) -> str:
+    return ', '.join(f"{(ln.get('size') or ln.get('sku') or 'item')} kurang {ln['short']}"
+                     for ln in lines if ln.get('short'))
+
+
+async def _close_po_checked(db, po: dict, body: dict, user: dict, *, short_endpoint: bool):
+    from routes.production_maklon_bridge import compute_po_fulfillment
+    po_id = po['id']
+    f = await compute_po_fulfillment(db, po_id)
+    qty_short = int(f['qty_short'])
+    reason = (body.get('closed_reason') or body.get('close_reason') or '').strip()
+    notes = (body.get('notes') or body.get('close_notes') or '').strip()
+    if qty_short <= 0:
+        if short_endpoint:
+            raise HTTPException(400,
+                'Tidak ada kekurangan qty — setiap ukuran sudah terpenuhi. '
+                'Gunakan penutupan normal (Tutup PO), bukan tutup kurang.')
+        await db.production_pos.update_one({'id': po_id}, {'$set': {
+            'status': 'Closed', 'close_reason': reason or 'full_fulfillment',
+            'close_notes': notes, 'closed_by': user['name'],
+            'closed_at': now(), 'updated_at': now()
+        }})
+        if po.get('business_type') == 'maklon':
+            from routes.production_maklon_bridge import try_sync_maklon_finance
+            await try_sync_maklon_finance(db, po_id, user)
+        from core import po_wip  # 2026-11-06 (Tahap 2, paket HPP): sisa WIP PO → selisih produksi
+        wip_close = await po_wip.on_po_closed(db, po, user)
+        await log_activity(user['id'], user['name'], 'Close PO', 'Production PO', f"Closed PO: {po.get('po_number')}")
+        return {'success': True, 'status': 'Closed', 'qty_short': 0, 'lines': f.get('lines', []),
+                'wip_variance': serialize_doc(wip_close)}
+    if reason not in CLOSE_SHORT_REASONS:
+        raise HTTPException(400,
+            f"PO masih kurang {qty_short} pcs ({short_lines_text(f.get('lines') or [])}). "
+            "Pilih alasan tutup kurang: " + ', '.join(CLOSE_SHORT_REASON_LABELS[r] for r in sorted(CLOSE_SHORT_REASONS)) + '.')
+    post_completion = po.get('status') == 'Completed'
+    return await _apply_close_short(db, po, f, reason, notes, user, post_completion)
+
 
 @router.post("/production-pos/{po_id}/close-short")
 async def close_po_short(po_id: str, request: Request):
@@ -627,7 +580,7 @@ async def close_po_short(po_id: str, request: Request):
     reason = (body.get('closed_reason') or '').strip()
     if reason not in CLOSE_SHORT_REASONS:
         raise HTTPException(400,
-            f"closed_reason tidak valid: '{reason}'. Pilihan: {sorted(CLOSE_SHORT_REASONS)}")
+            "Pilih alasan tutup kurang: " + ', '.join(CLOSE_SHORT_REASON_LABELS[r] for r in sorted(CLOSE_SHORT_REASONS)) + '.')
     po = await db.production_pos.find_one({'id': po_id})
     if not po:
         raise HTTPException(404, 'PO not found')
@@ -637,24 +590,22 @@ async def close_po_short(po_id: str, request: Request):
         raise HTTPException(400,
             f"Close-short tidak sah dari status '{po.get('status')}'. "
             f"Hanya dari: {CLOSE_SHORT_ALLOWED_FROM}")
-    post_completion = po.get('status') == 'Completed'
+    return await _close_po_checked(db, po, body, user, short_endpoint=True)
 
-    from routes.production_maklon_bridge import compute_po_fulfillment, finalize_ar_on_short_close
-    f = await compute_po_fulfillment(db, po_id)
+
+async def _apply_close_short(db, po: dict, f: dict, reason: str, notes: str, user: dict, post_completion: bool):
+    from routes.production_maklon_bridge import finalize_ar_on_short_close
+    po_id = po['id']
     qty_short = int(f['qty_short'])
-    if qty_short <= 0:
-        raise HTTPException(400,
-            'Tidak ada kekurangan qty (qty_short=0) — PO sudah terpenuhi penuh. '
-            'Gunakan penutupan normal / auto-complete, bukan close-short.')
-
     await db.production_pos.update_one({'id': po_id}, {'$set': {
         'status': 'Closed Short',
         'closed_reason': reason,
-        'close_notes': body.get('notes', ''),
+        'close_notes': notes,
         'closed_by': user['name'],
         'closed_at': now(),
         'qty_short': qty_short,
         'qty_short_pct': f['qty_short_pct'],
+        'short_lines_at_close': f.get('short_lines') or [],
         'qty_received_at_close': f['total_received'],
         'qty_produced_at_close': f.get('total_produced', 0),
         'qty_ordered_at_close': f['total_ordered'],
@@ -668,6 +619,8 @@ async def close_po_short(po_id: str, request: Request):
         from routes.production_maklon_bridge import try_sync_maklon_finance
         await try_sync_maklon_finance(db, po_id, user)
     finance = await finalize_ar_on_short_close(db, po, user, f)
+    from core import po_wip  # 2026-11-06 (Tahap 2, paket HPP): sisa WIP PO → selisih produksi
+    wip_close = await po_wip.on_po_closed(db, po, user)
     # GAP G — selisih yang masih terbuka harus terlihat saat PO ditutup supaya
     # keputusan tanggungan (CMT / DA) tidak terlewat.
     open_shorts = None
@@ -699,9 +652,11 @@ async def close_po_short(po_id: str, request: Request):
         'basis': f.get('basis'),
         'qty_short': qty_short,
         'qty_short_pct': f['qty_short_pct'],
+        'lines': f.get('lines') or [],
         'post_completion_adjustment': bool(post_completion),
         'open_shorts': open_shorts,
         'finance': finance,
+        'wip_variance': serialize_doc(wip_close),
     }
 
 @router.put("/production-pos/{po_id}")
@@ -727,12 +682,22 @@ async def update_po(po_id: str, request: Request):
     db = get_db()
     existing = await db.production_pos.find_one({'id': po_id})
     if not existing: raise HTTPException(404, 'PO not found')
-    if existing.get('status') == 'Closed' and (user.get('role') or '').lower() != 'superadmin':
-        raise HTTPException(403, 'PO ini sudah Closed.')
+    # 2026-11-06 (Tahap 2): PO yang sudah ditutup TERKUNCI untuk semua peran (dulu superadmin
+    # boleh mengubah PO Closed, dan PO 'Closed Short'/'Completed' bebas diubah siapa pun).
+    from core.po_lock import assert_po_open
+    await assert_po_open(db, po_id, 'perubahan PO')
     body = await request.json()
     body.pop('_id', None); body.pop('id', None)
+    # 2026-11-06 (Tahap 2): status & jejak siklus hidup HANYA berubah lewat endpoint statusnya.
+    # Dulu formulir ubah mengirim `status` lama/'Draft' ⇒ PO Dikonfirmasi kembali menjadi Draf.
+    for _k in ('status', 'confirmed_at', 'confirmed_by', 'closed_at', 'closed_by', 'closed_reason',
+               'close_reason', 'qty_short', 'over_qty_events', 'created_at', 'created_by'):
+        body.pop(_k, None)
     if 'business_type' in body and body['business_type'] not in ('internal', 'maklon'):
         raise HTTPException(400, "business_type harus 'internal' atau 'maklon'")
+    if 'business_type' in body and body['business_type'] != existing.get('business_type') \
+            and existing.get('status', 'Draft') != 'Draft':
+        raise HTTPException(400, 'Jenis PO (maklon/internal) tidak bisa diubah setelah PO dikonfirmasi.')
 
     # Separate items / accessories payloads (optional)
     items_payload = body.pop('items', None)
@@ -754,6 +719,16 @@ async def update_po(po_id: str, request: Request):
         dup = await db.production_pos.find_one({'po_number': new_po_number, 'id': {'$ne': po_id}})
         if dup: raise HTTPException(400, f'Nomor PO "{new_po_number}" sudah digunakan')
 
+    # 2026-11-06 (Tahap 2): PO maklon yang sudah dikonfirmasi tetap wajib berharga jasa per baris
+    # (diperiksa SEBELUM apa pun ditulis).
+    _is_maklon_po = (body.get('business_type') or existing.get('business_type')) == 'maklon'
+    if _is_maklon_po and items_payload is not None and existing.get('status', 'Draft') != 'Draft':
+        _old_by_id = {i['id']: i for i in await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(2000)}
+        _probe = [{**(_old_by_id.get(r.get('id')) or {}), **r} for r in items_payload]
+        _miss = missing_harga_jasa(_probe)
+        if _miss:
+            raise HTTPException(400, harga_jasa_message(_miss))
+
     await db.production_pos.update_one({'id': po_id}, {'$set': {**body, 'updated_at': now()}})
 
     # ─── Items delta update (with guardrails) ─────────────────────────
@@ -767,7 +742,13 @@ async def update_po(po_id: str, request: Request):
             bsis = await db.buyer_shipment_items.find({'po_item_id': item_id}).to_list(None)
             sent_to_vendor = sum(int(v.get('qty_sent', 0) or 0) for v in vsis)
             shipped_to_buyer = sum(int(b.get('qty_shipped', 0) or 0) for b in bsis)
-            return sent_to_vendor, shipped_to_buyer, (len(vsis) > 0 or len(bsis) > 0)
+            # 2026-11-06 (Tahap 2): job produksi / penerimaan CMT / permak juga rujukan — dulu baris
+            # ber-job bisa dihapus dan job-nya menjadi yatim (tanpa item PO).
+            other_refs = bool(
+                await db.production_job_items.find_one({'po_item_id': item_id}, {'_id': 1})
+                or await db.cmt_receipt_lines.find_one({'po_item_id': item_id}, {'_id': 1})
+                or await db.dewi_cmt_permak.find_one({'po_item_id': item_id}, {'_id': 1}))
+            return sent_to_vendor, shipped_to_buyer, (len(vsis) > 0 or len(bsis) > 0 or other_refs)
 
         # 1) upsert / insert from payload
         _is_internal_po = (body.get('business_type') or existing.get('business_type', 'internal')) == 'internal'
@@ -823,9 +804,15 @@ async def update_po(po_id: str, request: Request):
                     'buyer_ref_code': raw.get('buyer_ref_code', old.get('buyer_ref_code', '')),
                     'size': size_new, 'color': color_new, 'color_code': (rv or {}).get('color_code') or raw.get('color_code', old.get('color_code', '')), 'sku': sku_new,
                     'qty': qty_new,
+                    'qty_ordered': qty_new,
                     'serial_number': raw.get('serial_number', old.get('serial_number', '')),
-                    'selling_price_snapshot': float(raw.get('selling_price_snapshot', 0) or (product or {}).get('selling_price', 0) or 0),
-                    'cmt_price_snapshot': float(raw.get('cmt_price_snapshot', 0) or (product or {}).get('cmt_price', 0) or 0),
+                    # 2026-11-06 (Tahap 2): kolom harga yang TIDAK dikirim tetap nilai lama (dulu jadi 0).
+                    'selling_price_snapshot': (float(raw.get('selling_price_snapshot') or 0)
+                                               if 'selling_price_snapshot' in raw
+                                               else float(old.get('selling_price_snapshot') or 0)),
+                    'cmt_price_snapshot': (float(raw.get('cmt_price_snapshot') or 0)
+                                           if 'cmt_price_snapshot' in raw
+                                           else float(old.get('cmt_price_snapshot') or 0)),
                     'updated_at': now(),
                 }})
             else:
@@ -856,7 +843,7 @@ async def update_po(po_id: str, request: Request):
                 continue
             _, _, has_refs = await _shipped_qty_for_item(existing_id)
             if has_refs:
-                raise HTTPException(400, f"Item '{old.get('product_name','')}' tidak dapat dihapus karena sudah memiliki shipment/returns. Kurangi qty atau biarkan.")
+                raise HTTPException(400, f"Item '{old.get('product_name','')}' {old.get('size','')} tidak dapat dihapus karena sudah punya job produksi, kiriman, penerimaan, atau permak. Kurangi qty atau biarkan.")
             await db.po_items.delete_one({'id': existing_id})
 
         # Also propagate new po_number to vendor/buyer shipment items (denormalized)
@@ -879,7 +866,7 @@ async def update_po(po_id: str, request: Request):
                 'accessory_id': raw.get('accessory_id'),
                 'accessory_name': raw.get('accessory_name', ''),
                 'accessory_code': raw.get('accessory_code', ''),
-                'qty_needed': int(raw.get('qty_needed', 0) or 0),
+                'qty_needed': accessory_qty(raw.get('qty_needed')),
                 'unit': raw.get('unit', 'pcs'),
                 'notes': raw.get('notes', ''),
             }
@@ -909,6 +896,11 @@ async def update_po(po_id: str, request: Request):
             await explode_maklon_bom_for_po(db, po_id, user=user)
         except Exception:
             import logging; logging.getLogger(__name__).exception('BOM maklon re-explode gagal utk PO %s', po_id)
+    # 2026-11-06 (Tahap 2): ubah PO maklon yang sudah dikonfirmasi ⇒ jadwal piutang klien & hutang
+    # CMT ikut disegarkan (dulu baris jadwal membeku sejak konfirmasi).
+    if _is_maklon_po and existing.get('status', 'Draft') != 'Draft':
+        from routes.production_maklon_bridge import try_sync_maklon_finance
+        await try_sync_maklon_finance(db, po_id, user)
     await log_activity(user['id'], user['name'], 'Update', 'Production PO', f"Updated PO: {existing.get('po_number')}")
     return serialize_doc(await db.production_pos.find_one({'id': po_id}, {'_id': 0}))
 
@@ -920,6 +912,15 @@ async def delete_po(po_id: str, request: Request):
     db = get_db()
     doc = await db.production_pos.find_one({'id': po_id})
     if not doc: raise HTTPException(404, 'Not found')
+    # 2026-11-06 (Tahap 2): membatalkan PO maklon yang sudah dikonfirmasi — sebelum ada jurnal,
+    # jadwal piutang & hutang CMT di-VOID (dokumen tetap sebagai jejak); sudah ada pendapatan /
+    # pembayaran / tagihan CMT ⇒ ditolak (pakai tutup kurang).
+    if doc.get('business_type') == 'maklon' and doc.get('status', 'Draft') != 'Draft':
+        from core import maklon_ledger
+        try:
+            await maklon_ledger.void_schedules(db, po_id, user, reason=f"PO {doc.get('po_number')} dihapus")
+        except ValueError as e:
+            raise HTTPException(409, str(e))
     await cascade_delete_po(po_id)
     await log_activity(user['id'], user['name'], 'Delete', 'Production PO', f"Cascade deleted PO: {doc.get('po_number')}")
     return {'success': True}
@@ -1013,6 +1014,10 @@ async def update_po_item(item_id: str, request: Request):
     db = get_db()
     body = await request.json()
     body.pop('_id', None); body.pop('id', None)
+    # 2026-11-06 (Tahap 2): baris PO yang sudah ditutup ikut terkunci
+    _cur = await db.po_items.find_one({'id': item_id}, {'_id': 0, 'po_id': 1})
+    from core.po_lock import assert_po_open
+    await assert_po_open(db, (_cur or {}).get('po_id'), 'perubahan baris PO')
     await db.po_items.update_one({'id': item_id}, {'$set': {**body, 'updated_at': now()}})
     return serialize_doc(await db.po_items.find_one({'id': item_id}, {'_id': 0}))
 
@@ -1049,8 +1054,12 @@ async def quick_complete_po(po_id: str, request: Request):
 
     po = await db.production_pos.find_one({'id': po_id})
     if not po: raise HTTPException(404, 'PO tidak ditemukan')
-    if po.get('status') in ('Completed', 'Closed'):
+    if po.get('status') in ('Completed', 'Closed', 'Closed Short'):
         raise HTTPException(400, f"PO sudah berstatus '{po['status']}'. Quick Complete tidak dapat dijalankan.")
+    # 2026-11-06 (Tahap 2): dulu PO Draf DILOMPATKAN ke 'Distributed' — konfirmasi (cek harga jasa,
+    # jadwal piutang & hutang CMT) terlewati. Sekarang PO harus dikonfirmasi lebih dulu.
+    if (po.get('status') or 'Draft') == 'Draft':
+        raise HTTPException(400, 'PO masih Draf — konfirmasi PO dulu sebelum menjalankan Quick Complete.')
 
     po_items = await db.po_items.find({'po_id': po_id}).to_list(None)
     if not po_items:
@@ -1102,8 +1111,6 @@ async def quick_complete_po(po_id: str, request: Request):
                 'shipment_type': 'NORMAL', 'parent_shipment_id': None,
                 'created_at': now()
             })
-        if po.get('status') == 'Draft':
-            await db.production_pos.update_one({'id': po_id}, {'$set': {'status': 'Distributed', 'updated_at': now()}})
         steps.append({'step': 1, 'name': 'Vendor Shipment', 'status': 'created',
                       'id': shipment_id, 'number': shipment_number})
 
@@ -1325,10 +1332,22 @@ async def transition_po_status(po_id: str, request: Request):
             f"Transisi valid dari '{current_status}': {allowed_next if allowed_next else 'tidak ada (status final)'}")
     update_data = {'status': new_status, 'updated_at': now()}
     if body.get('notes'): update_data['status_notes'] = body['notes']
+    if new_status == 'Confirmed':
+        # 2026-11-06 (Tahap 2): konfirmasi PO maklon menolak baris tanpa harga jasa ke klien —
+        # konfirmasi melahirkan jadwal piutang klien (qty × harga jasa) dan hutang CMT.
+        _items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(2000)
+        if not _items or not any(int(i.get('qty', 0) or 0) > 0 for i in _items):
+            raise HTTPException(400, 'PO belum punya baris dengan qty — tambahkan item sebelum konfirmasi.')
+        if po.get('business_type') == 'maklon':
+            _miss = missing_harga_jasa(_items)
+            if _miss:
+                raise HTTPException(400, harga_jasa_message(_miss))
+        update_data.update({'confirmed_at': now(), 'confirmed_by': user.get('name', '')})
     if new_status == 'Closed':
-        update_data['closed_by'] = user['name']
-        update_data['closed_at'] = now()
-        update_data['close_reason'] = body.get('close_reason', '')
+        # 2026-11-06 (Tahap 2): jalur tutup KETIGA (Ready to Close → Closed) memakai pemeriksaan
+        # qty per baris yang sama dengan tombol Tutup PO / Tutup kurang.
+        await _close_po_checked(db, po, body, user, short_endpoint=False)
+        return serialize_doc(await db.production_pos.find_one({'id': po_id}, {'_id': 0}))
     await db.production_pos.update_one({'id': po_id}, {'$set': update_data})
     # ── Fase 2 Maklon: resync mirror finance saat status PO maklon berubah ──
     if po.get('business_type') == 'maklon':
@@ -1357,6 +1376,11 @@ async def po_fulfillment(po_id: str, request: Request):
     f['business_type'] = po.get('business_type')
     f['can_close_short'] = (po.get('status') in CLOSE_SHORT_ALLOWED_FROM) and f['qty_short'] > 0
     f['close_short_reasons'] = sorted(CLOSE_SHORT_REASONS)
+    # 2026-11-06 (Tahap 2): label alasan untuk layar + status kunci PO tertutup
+    f['close_short_reason_labels'] = CLOSE_SHORT_REASON_LABELS
+    f['can_close'] = po.get('status') in PO_CLOSABLE_STATUSES
+    from core.maklon_ledger import CLOSED_PO_STATUSES
+    f['locked'] = po.get('status') in CLOSED_PO_STATUSES
     # ── GAP A/G: selisih kirim (CMT→DA) & selisih terima (DA→buyer) yang MASIH terbuka ──
     try:
         from core import short_shipment as shortmod
@@ -1528,6 +1552,8 @@ async def add_po_accessory(request: Request):
     body = await request.json()
     po_id = body.get('po_id')
     if not po_id: raise HTTPException(400, 'po_id required')
+    from core.po_lock import assert_po_open
+    await assert_po_open(db, po_id, 'penambahan aksesoris PO')  # 2026-11-06 (Tahap 2)
     items = body.get('items', [])
     inserted = []
     for item in items:
@@ -1536,7 +1562,7 @@ async def add_po_accessory(request: Request):
             'accessory_id': item.get('accessory_id'),
             'accessory_name': item.get('accessory_name', ''),
             'accessory_code': item.get('accessory_code', ''),
-            'qty_needed': int(item.get('qty_needed', 0) or 0),
+            'qty_needed': accessory_qty(item.get('qty_needed')),
             'unit': item.get('unit', 'pcs'),
             'notes': item.get('notes', ''),
             'created_at': now()
@@ -1553,5 +1579,8 @@ async def remove_po_accessory(acc_id: str, request: Request):
     deny_klien(user)
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
+    _acc = await db.po_accessories.find_one({'id': acc_id}, {'_id': 0, 'po_id': 1})
+    from core.po_lock import assert_po_open
+    await assert_po_open(db, (_acc or {}).get('po_id'), 'perubahan aksesoris PO')  # 2026-11-06 (Tahap 2)
     await db.po_accessories.delete_one({'id': acc_id})
     return {'success': True}

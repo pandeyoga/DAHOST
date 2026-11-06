@@ -48,7 +48,10 @@ def _calculate_hpp(body: dict, bom_material_cost=None, cost_lines_total=None) ->
     cmt_cost       = _num(body.get('cmt_cost_per_pcs'), 0)
     cutting_cost   = _num(body.get('cutting_cost_per_pcs'), 0)
     packaging_cost = _num(body.get('packaging_cost_per_pcs'), 0)
-    overhead_pct   = _num(body.get('overhead_pct'), 10)
+    # 2026-11-06 (Tahap 2, keputusan owner): overhead pabrik & upah internal (cutting) TIDAK masuk
+    # HPP — bawaan overhead kini 0 (dulu 10%). Bila diisi, angkanya hanya ditampilkan sebagai
+    # informasi "tidak masuk HPP".
+    overhead_pct   = _num(body.get('overhead_pct'), 0)
     margin_pct     = _num(body.get('margin_pct'), 30)
 
     if cost_lines_total is not None:
@@ -73,10 +76,13 @@ def _calculate_hpp(body: dict, bom_material_cost=None, cost_lines_total=None) ->
         material_cost = fabric_cost + acc_total
         material_source = 'manual'
 
-    direct_cost   = material_cost + cmt_cost + cutting_cost + packaging_cost
-    overhead_val  = direct_cost * overhead_pct / 100
-    hpp_total     = direct_cost + overhead_val
-    selling_price = hpp_total / (1 - margin_pct / 100) if margin_pct < 100 else hpp_total
+    # HPP = bahan (termasuk kemasan milik DA) + upah CMT. Cutting (upah internal) & overhead di luar HPP.
+    direct_cost   = material_cost + cmt_cost + packaging_cost
+    overhead_val  = (direct_cost + cutting_cost) * overhead_pct / 100
+    hpp_total     = direct_cost
+    # satu rumus margin (atas harga jual) — `core.margin`
+    from core.margin import price_for_margin
+    selling_price = price_for_margin(hpp_total, margin_pct)
 
     return {
         'fabric_cost':            round(fabric_cost, 2),
@@ -88,11 +94,29 @@ def _calculate_hpp(body: dict, bom_material_cost=None, cost_lines_total=None) ->
         'packaging_cost':         round(packaging_cost, 2),
         'direct_cost':            round(direct_cost, 2),
         'overhead_value':         round(overhead_val, 2),
+        # informasi saja — tidak masuk HPP (Tahap 2)
+        'excluded_from_hpp':      {'cutting_cost': round(cutting_cost, 2),
+                                   'overhead_value': round(overhead_val, 2)},
+        'hpp_rule':               'bahan_cmt_2026_11_06',
         'hpp_total':              round(hpp_total, 2),
         'selling_price_proposal': round(selling_price, 2),
         'margin_pct':             margin_pct,
         'overhead_pct':           overhead_pct,
     }
+
+
+def rnd_hpp_owner_rule(doc: dict) -> float:
+    """HPP satu dokumen R&D menurut aturan owner 6 Nov 2026 (bahan + kemasan + upah CMT).
+
+    Dokumen LAMA menyimpan `hpp_total` yang masih memuat cutting & overhead; angka tersimpan itu
+    tidak diubah (riwayat), tetapi pemakai di luar R&D (promosi ke master) membaca fungsi ini."""
+    d = doc or {}
+    if d.get('hpp_rule') == 'bahan_cmt_2026_11_06':
+        return round(_num(d.get('hpp_total'), 0), 2)
+    if d.get('material_cost') is not None or d.get('cmt_cost') is not None:
+        return round(_num(d.get('material_cost'), 0) + _num(d.get('cmt_cost'), 0)
+                     + _num(d.get('packaging_cost'), 0), 2)
+    return round(_num(d.get('hpp_total') or d.get('hpp_per_pcs') or d.get('hpp'), 0), 2)
 
 
 async def _material_cost_from_bom(db, bom_items: list) -> tuple:
@@ -185,12 +209,16 @@ async def _cost_one_line(db, line: dict, cache: dict = None) -> dict:
     factor, base_unit, uom_status, uom_note = bom_uom.line_factor(master, unit or None)
     qty_base = round(qty * factor, 6)
 
-    unit_cost = _num(line.get('unit_cost') or line.get('unit_price'), 0)
-    source = 'bom_line' if unit_cost > 0 else None
+    # 2026-11-06 (Tahap 2): harga MASTER menang untuk baris yang tertaut master. Dulu harga yang
+    # diketik di baris BOM mengalahkan harga master (harga beli rata-rata). Harga ketik hanya
+    # dipakai untuk baris yang BELUM tertaut master, dan sumbernya dilabeli begitu.
+    typed = _num(line.get('unit_cost') or line.get('unit_price'), 0)
+    unit_cost = 0.0 if master else typed
+    source = 'bom_line_unlinked' if unit_cost > 0 else None
     cost_unit = unit or base_unit          # satuan yang dipakai harga baris
     qty_for_cost = qty if unit_cost > 0 else qty_base
 
-    if unit_cost <= 0 and master and _num(master.get('unit_cost'), 0) > 0:
+    if master and _num(master.get('unit_cost'), 0) > 0:
         unit_cost = _num(master.get('unit_cost'), 0)
         source = 'rahaza_materials.unit_cost'
         cost_unit = base_unit
@@ -245,7 +273,18 @@ async def _cost_one_line(db, line: dict, cache: dict = None) -> dict:
         'unit_cost': round(unit_cost, 2),
         'line_cost': round(line_cost, 2),
         'cost_source': source or 'unresolved',
+        'cost_source_label': _COST_SOURCE_LABEL.get(source or 'unresolved',
+                                                    'harga bahan R&D' if source else 'harga belum ada'),
+        # harga ketik pada baris yang tertaut master diabaikan (master menang) — dilaporkan, bukan diam
+        'typed_price_ignored': bool(master) and typed > 0 and abs(typed - unit_cost) > 0.005,
     }
+
+
+_COST_SOURCE_LABEL = {
+    'rahaza_materials.unit_cost': 'harga master (rata-rata beli)',
+    'bom_line_unlinked': 'harga ketik — bahan belum tertaut master',
+    'unresolved': 'harga belum ada',
+}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -541,60 +580,18 @@ async def _latest_bom_for_style(db, style_id: str) -> list:
     return (tp or {}).get('bom_items', []) or []
 
 
+RND_HPP_SCOPE_NOTE = ('HPP R&D disimpan di dokumen R&D saja. HPP produk ditetapkan lewat '
+                      'HPP per Potong › Terapkan; HPP R&D ikut ke master hanya saat style dipromosikan.')
+
+
 async def _propagate_hpp(db, style_id: str, hpp_total: float, selling_price=None) -> dict:
-    """Propagasi HPP RnD → Production Model → FG → Katalog Marketing (auto-refresh).
+    """DIHENTIKAN 2026-11-06 (Tahap 2): kalkulator R&D tidak lagi menulis model/FG/katalog.
 
-    KEPUTUSAN #2 (4.a): saat HPP RnD dihitung/di-update, HPP pada item katalog yang
-    tertaut (via model_id / fg_material_id) ikut ter-refresh otomatis. `hpp` katalog =
-    HPP dari RnD (bukan input marketing).
-    """
-    if not style_id:
-        return {'models': 0, 'fg': 0, 'catalog_items': 0}
-    now = now_utc()
-    hpp_total = round(_num(hpp_total, 0), 2)
-
-    # 1) Production models turunan style ini
-    model_ids = [m['id'] async for m in db.rahaza_models.find({'rnd_style_id': style_id}, {'id': 1})]
-    if model_ids:
-        await db.rahaza_models.update_many(
-            {'id': {'$in': model_ids}},
-            # `hpp_rnd` = nilai ASAL R&D (SSOT sumber), `hpp` = nilai EFEKTIF yang
-            # dibaca 34 pintu lama. Tanpa `hpp_rnd`, produk manual dengan
-            # `hpp == base_hpp` akan salah dilaporkan bersumber 'rnd' (F5).
-            {'$set': {'hpp': hpp_total, 'hpp_rnd': hpp_total,
-                      'hpp_source': 'rnd', 'hpp_updated_at': now}},
-        )
-
-    # 2) FG (rahaza_materials type='fg') tertaut ke style / model → set hpp
-    fg_filter = {'$or': [{'rnd_style_id': style_id}]}
-    if model_ids:
-        fg_filter['$or'].append({'model_id': {'$in': model_ids}})
-    fg_ids = [f['id'] async for f in db.rahaza_materials.find(fg_filter, {'id': 1})]
-    if fg_ids:
-        await db.rahaza_materials.update_many(
-            {'id': {'$in': fg_ids}},
-            {'$set': {'hpp': hpp_total, 'hpp_source': 'rnd', 'hpp_updated_at': now}},
-        )
-
-    # 3) Katalog marketing tertaut (model_id ATAU fg_material_id)
-    cat_or = []
-    if model_ids:
-        cat_or.append({'model_id': {'$in': model_ids}})
-    if fg_ids:
-        cat_or.append({'fg_material_id': {'$in': fg_ids}})
-    cat_modified = 0
-    if cat_or:
-        res = await db.marketing_catalog_items.update_many(
-            {'$or': cat_or},
-            {'$set': {
-                'hpp': hpp_total,
-                'hpp_source': 'rnd',
-                'hpp_updated_at': now,
-                'updated_at': now,
-            }},
-        )
-        cat_modified = res.modified_count
-    return {'models': len(model_ids), 'fg': len(fg_ids), 'catalog_items': cat_modified}
+    Dulu setiap simpan — bahkan draf — menimpa HPP model, SEMUA FG, dan item katalog dengan satu
+    angka R&D (penulis terakhir menang), sehingga HPP per warna hasil "Terapkan HPP per Potong"
+    hilang. Sekarang satu-satunya penulis HPP standar adalah `core.product_costing.apply_model_cost`;
+    HPP R&D dibawa ke master hanya sekali, saat promosi style (`dewi_rnd_styles`)."""
+    return {'models': 0, 'fg': 0, 'catalog_items': 0, 'note': RND_HPP_SCOPE_NOTE}
 
 
 @router.get('/hpp-calculator')
@@ -709,7 +706,7 @@ async def create_hpp(body: dict, user: dict = Depends(require_auth)):
         'cmt_cost_ref':           body.get('cmt_cost_ref', ''),
         'cutting_cost_per_pcs':   body.get('cutting_cost_per_pcs', 0),
         'packaging_cost_per_pcs': body.get('packaging_cost_per_pcs', 0),
-        'overhead_pct':           body.get('overhead_pct', 10),
+        'overhead_pct':           body.get('overhead_pct', 0),   # Tahap 2: bawaan 0, tidak masuk HPP
         'margin_pct':             body.get('margin_pct', 30),
         # `use_bom` TETAP DISIMPAN (kompatibilitas mundur — proposal §D)
         'use_bom':                use_bom,

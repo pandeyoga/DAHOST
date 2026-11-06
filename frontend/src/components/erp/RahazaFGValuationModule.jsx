@@ -55,7 +55,7 @@ export default function RahazaFGValuationModule({ token }) {
       title="Nilai Persediaan Barang Jadi"
       subtitle="Stok barang jadi × harga rata-rata, dibandingkan saldo buku besar."
       filters={<>
-        <span className="text-sm text-muted-foreground">Saldo buku besar per</span>
+        <span className="text-sm text-muted-foreground">Stok dan saldo buku besar per</span>
         <GlassInput type="date" value={asOf} onChange={e => setAsOf(e.target.value)} className="h-9 w-40" aria-label="Saldo buku besar per tanggal" data-testid="fgval-asof" />
         {data && <StatusBadge tone={status.tone} label={status.label} testId="fgval-status" />}
       </>}
@@ -71,6 +71,11 @@ export default function RahazaFGValuationModule({ token }) {
             <StatTile label="Selisih" value={`Rp ${fmt(t.difference)}`} accent={Math.abs(t.difference || 0) < 1 ? 'success' : 'danger'} testId="fgval-kpi-diff" />
             <StatTile label="Belum dijurnal" value={`Rp ${fmt(t.unposted_value)} · ${t.unposted_layers || 0} lapisan`} accent={t.unposted_layers ? 'danger' : 'default'} testId="fgval-kpi-unposted" />
           </div>
+        )}
+        {data?.stock_basis === 'ledger_as_of' && (
+          <p className="text-sm text-muted-foreground" data-testid="fgval-asof-note">
+            Tanggal lampau: stok dihitung mundur dari mutasi stok sesudah tanggal itu, harga rata-rata memakai nilai yang berlaku pada tanggal itu.
+          </p>
         )}
         {t.unposted_layers > 0 && (
           <p className="flex items-start gap-2 text-sm text-[hsl(var(--warning))]" data-testid="fgval-unposted-hint">

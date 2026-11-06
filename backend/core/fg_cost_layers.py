@@ -29,8 +29,9 @@ lapisan; sekarang memakai rumus WAC YANG SAMA (tidak ditulis ulang di sini):
 ATURAN JUJUR (sama dengan bahan)
 --------------------------------
 1. Biaya masuk Rp 0 (BOM/jahit belum ada) **tidak mengubah WAC** — biaya tidak
-   diketahui bukan berarti gratis; stoknya dilaporkan "tanpa biaya" di Laporan
-   Nilai Persediaan FG.
+   diketahui bukan berarti gratis. 2026-11-06 (Tahap 2): pcs itu dinilai WAC berjalan
+   DENGAN jurnal koreksi (1-1404 lawan 5-1950); bila WAC masih 0, stoknya "tanpa biaya"
+   sampai biaya pertama datang, lalu nilainya diakui dengan jurnal koreksi yang sama.
 2. **Stok minus / nol (Stok Boleh Minus ON)**: qty lama ≤ 0 ⇒ biaya masuk menjadi
    WAC baru. Bila qty lama < 0, barang yang keluar saat minus sudah dinilai WAC
    lama; selisihnya `qty_lama × (biaya_masuk − WAC_lama)` dibukukan ke 5-1950
@@ -77,8 +78,22 @@ def _r(v, nd: int = 2) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 # MENGHITUNG BIAYA SATU BATCH
 # ══════════════════════════════════════════════════════════════════════════════
+def permak_to_absorb(rows: list | None) -> list:
+    """Sisa ongkos tiap dokumen permak yang belum dibebankan ke lapisan mana pun (murni).
+
+    sisa = total_cost (atau cost_per_pcs × qty) − permak_absorbed_cost. Bila ongkos permak
+    dinaikkan setelah diserap, hanya selisihnya yang ikut batch berikutnya."""
+    out = []
+    for r in rows or []:
+        total = _f(r.get("total_cost")) or _f(r.get("cost_per_pcs")) * _f(r.get("qty"))
+        left = round(total - _f(r.get("permak_absorbed_cost")), 2)
+        if r.get("id") and left > 0:
+            out.append({"id": r["id"], "amount": left})
+    return out
+
+
 async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
-    """Biaya per pcs satu batch = bahan (BOM) + upah jahit (SPK) + permak + internal.
+    """Biaya per pcs satu batch = bahan (BOM) + upah jahit (SPK) + permak (Tahap 2: tanpa upah internal).
 
     Semua komponen menyebut ASALNYA. Komponen yang belum ada tidak ditebak.
     """
@@ -122,35 +137,32 @@ async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
     else:
         out["gaps"].append("biaya jahit/pcs SPK ini belum diisi — isi di layar Biaya Jahit SPK")
 
-    # ── permak: ongkos perbaikan item ini, dibagi qty batch ─────────────────
+    # ── permak: ongkos perbaikan item ini yang BELUM masuk batch mana pun ────
+    # Tahap 1 (6 Nov 2026): dulu SEMUA permak item SPK dibagi qty batch INI pada setiap
+    # penerimaan (permak Rp20.000 → terima 45 pcs lalu 5 pcs = Rp40.000 terbebankan).
+    # Sekarang hanya sisa yang belum diserap (`permak_absorbed_cost`); `push_layer`
+    # menandai dokumen permak begitu lapisannya tercatat, jadi tiap rupiah dibebankan sekali.
+    out["permak_absorb"] = []
     pid = (po_item or {}).get("id")
     if pid and qty > 0:
         rows = await db.dewi_cmt_permak.find(
-            {"po_item_id": pid}, {"_id": 0, "total_cost": 1, "cost_per_pcs": 1, "qty": 1}
+            {"po_item_id": pid}, {"_id": 0, "id": 1, "total_cost": 1, "cost_per_pcs": 1, "qty": 1,
+                                  "permak_absorbed_cost": 1}
         ).to_list(500)
-        total = sum(_f(r.get("total_cost")) or _f(r.get("cost_per_pcs")) * _f(r.get("qty")) for r in rows)
+        absorb = permak_to_absorb(rows)
+        total = sum(a["amount"] for a in absorb)
         if total > 0:
             out["permak_cost"] = _r(total / qty)
-            out["permak_source"] = f"permak ({len(rows)} dokumen, dibagi {qty} pcs batch)"
+            out["permak_source"] = f"permak ({len(absorb)} dokumen, dibagi {qty} pcs batch)"
+            out["permak_absorb"] = absorb
 
-    # ── upah internal (cutting dll) + overhead: dari kalkulator model ────────
-    if model_id:
-        try:
-            model = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0})
-            if model:
-                st = await pc.get_settings(db)
-                ov = await pc.get_override(db, model_id)
-                lab = await pc.resolve_internal_labor(db, model, override=ov, settings=st)
-                if _f(lab.get("rate")) > 0:
-                    out["internal_labor_cost"] = _r(lab["rate"])
-                    out["internal_labor_source"] = lab.get("source") or "none"
-                if st.get("include_overhead_in_product_hpp"):
-                    out["overhead_cost"] = _r(st.get("overhead_rate_per_pcs"))
-        except Exception:  # noqa: BLE001
-            logger.exception("resolve_internal_labor gagal (model=%s)", model_id)
+    # ── upah internal (cutting dll) + overhead: TIDAK masuk HPP ──────────────
+    # 2026-11-06 (Tahap 2, keputusan owner): dulu upah internal & overhead kalkulator ikut
+    # lapisan FG (Cr WIP), padahal payroll sudah membukukannya ke 6-2100 → terhitung dua kali.
+    # Keduanya tetap beban bulanan; kuncinya dipertahankan (0) supaya pembaca lama tetap jalan.
+    out["internal_labor_source"] = "tidak masuk HPP"
 
-    out["unit_cost"] = _r(out["material_cost"] + out["sewing_cost"] + out["permak_cost"]
-                          + out["internal_labor_cost"] + out["overhead_cost"])
+    out["unit_cost"] = _r(out["material_cost"] + out["sewing_cost"] + out["permak_cost"])
     return out
 
 
@@ -232,7 +244,15 @@ def wac_after_receipt(qty_before, wac_before, comps_before, qty_in, cost_in,
     5-1950 Selisih Persediaan. Hanya ≠ 0 bila qty lama < 0 (Stok Boleh Minus ON):
     pcs yang keluar saat minus sudah dinilai WAC lama, padahal biaya nyatanya =
     biaya masuk ini ⇒ selisih = qty_lama × (biaya_masuk − WAC_lama). Dengan begitu
-    Σ stok × WAC baru = saldo GL 1-1404 setelah jurnal penerimaan + jurnal ini."""
+    Σ stok × WAC baru = saldo GL 1-1404 setelah jurnal penerimaan + jurnal ini.
+
+    2026-11-06 (Tahap 2) — SATU aturan stok tanpa biaya: setiap kali WAC mengubah nilai stok yang
+    belum pernah dijurnal, selisihnya DIJURNAL (1-1404 lawan 5-1950), jadi Σ stok × WAC = GL:
+      * barang masuk Rp 0 ke stok yang sudah ber-WAC (`zero_cost_at_wac`) → WAC tetap, pcs itu
+        dinilai WAC berjalan: selisih = qty masuk × WAC;
+      * stok tanpa biaya (WAC 0) lalu biaya pertama datang (`reset_unvalued`) → WAC = biaya masuk,
+        pcs yang menunggu biaya diakui: selisih = qty lama × biaya masuk (jurnal koreksi).
+    Stok tanpa biaya yang WAC-nya masih 0 tetap `keep_zero_cost` (tanpa jurnal; keluar = uncosted)."""
     from core.accessory_valuation import moving_average
     qb, wb, qi, ci = _f(qty_before), _f(wac_before), _f(qty_in), _f(cost_in)
     cb = _fit(comps_before or {"material": wb}, wb) if wb > 0 else _zero_comps()
@@ -241,11 +261,15 @@ def wac_after_receipt(qty_before, wac_before, comps_before, qty_in, cost_in,
     adj = 0.0
     if ci <= 0:
         rule, comps, new = "keep_zero_cost", cb, round(wb, 4)
+        if wb > 0 and qi > 0:
+            rule, adj = "zero_cost_at_wac", round(qi * wb, 2)
     elif qb <= 0 or wb <= 0:
         rule = "reset_negative" if qb < 0 else ("reset_empty" if qb == 0 else "reset_unvalued")
         comps = cin
         if qb < 0:
             adj = round(qb * (ci - wb), 2)
+        elif rule == "reset_unvalued":
+            adj = round(qb * ci, 2)
     else:
         rule = "weighted"
         comps = _fit({k: (qb * cb[k] + qi * cin[k]) / (qb + qi) for k in COMP_KEYS}, new)
@@ -464,8 +488,9 @@ async def push_layer(db, *, material_id: str, qty: int, po_item: dict | None = N
         "qty_remaining": qty,
         "unit_cost": _r(unit_cost),
         "total_cost": _r(_f(unit_cost) * qty),
-        "breakdown": {k: v for k, v in (breakdown or {}).items() if k != "gaps"},
+        "breakdown": {k: v for k, v in (breakdown or {}).items() if k not in ("gaps", "permak_absorb")},
         "gaps": (breakdown or {}).get("gaps") or [],
+        "permak_absorbed": list((breakdown or {}).get("permak_absorb") or []),
         "batch": {
             "po_id": (po_item or {}).get("po_id") or (ref or {}).get("po_id") or "",
             "po_number": (po_item or {}).get("po_number") or (ref or {}).get("po_number") or "",
@@ -479,6 +504,11 @@ async def push_layer(db, *, material_id: str, qty: int, po_item: dict | None = N
     }
     await db[LAYERS].insert_one(doc)
     doc.pop("_id", None)
+    # ongkos permak yang ikut lapisan ini ditandai SUDAH diserap (sekali saja)
+    for a in doc["permak_absorbed"]:
+        await db.dewi_cmt_permak.update_one({"id": a["id"]}, {
+            "$inc": {"permak_absorbed_cost": _r(a["amount"])},
+            "$addToSet": {"permak_absorbed_layer_ids": doc["id"]}})
     qty_before = await valued_onhand(db, material_id) - qty
     res = wac_after_receipt(qty_before, state["unit_cost"], state["components"], qty,
                             _f(unit_cost), components if components is not None else breakdown)
@@ -487,6 +517,13 @@ async def push_layer(db, *, material_id: str, qty: int, po_item: dict | None = N
                           source="return" if "return" in str(doc["batch"]["source"]) else "receive")
     await db[LAYERS].update_one({"id": doc["id"]}, {"$set": {
         "wac_after": res["unit_cost"], "wac_rule": res["rule"]}})
+    # 2026-11-06 (Tahap 2): pcs tanpa biaya yang sudah dinilai lewat jurnal koreksi WAC ditandai,
+    # supaya Laporan Nilai Persediaan FG tidak lagi menghitungnya "tanpa biaya".
+    if (res.get("adjustment_je") or {}).get("ok") and res["rule"] in ("zero_cost_at_wac", "reset_unvalued"):
+        q = ({"id": doc["id"]} if res["rule"] == "zero_cost_at_wac" else
+             {"material_id": material_id, "unit_cost": {"$lte": 0}, "qty_remaining": {"$gt": 0}})
+        await db[LAYERS].update_many(q, {"$set": {"wac_valued": True,
+                                                  "wac_valued_je_id": res["adjustment_je"].get("je_id")}})
     doc["wac"] = {k: res[k] for k in ("unit_cost", "components", "rule", "qty_before",
                                       "wac_before", "adjustment_fg")}
     doc["wac"]["adjustment_je_id"] = (res.get("adjustment_je") or {}).get("je_id")

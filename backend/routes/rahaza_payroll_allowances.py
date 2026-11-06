@@ -13,7 +13,7 @@ from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_payroll_shared import (
     _uid, _now, VALID_SCHEMES, VALID_PERIOD_TYPES, VALID_RUN_STATUS,
     VALID_ALLOWANCE_CALC_TYPES,
-    _get_applicable_allowances
+    _get_applicable_allowances, _require_hr,
 )
 from routes.rahaza_posting import post_payroll_run
 from utils.saga import SagaExecutor
@@ -32,7 +32,8 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-payroll-allowances"])
 
 @router.get("/payroll-allowances")
 async def list_allowances(request: Request):
-    await require_auth(request)
+    # 2026-11-06 (Tahap 2): daftar template tunjangan (nominal per karyawan) hanya untuk peran payroll.
+    await _require_hr(request)
     db = get_db()
     docs = await db.da_payroll_allowances.find({}, {"_id": 0}).sort("created_at", 1).to_list(500)
     return {"ok": True, "allowances": [serialize_doc(d) for d in docs]}
@@ -40,7 +41,9 @@ async def list_allowances(request: Request):
 
 @router.post("/payroll-allowances")
 async def create_allowance(request: Request):
-    user = await require_auth(request)
+    # Tahap 1 (2026-11-06): template tunjangan = konfigurasi payroll → hanya HR & manajemen.
+    # Dulu cukup login, sehingga peran internal mana pun bisa menambah tunjangan.
+    user = await _require_hr(request)
     db = get_db()
     body = await request.json()
 
@@ -83,7 +86,7 @@ async def create_allowance(request: Request):
 
 @router.put("/payroll-allowances/{allowance_id}")
 async def update_allowance(allowance_id: str, request: Request):
-    await require_auth(request)
+    await _require_hr(request)  # Tahap 1: hanya HR & manajemen
     db = get_db()
     body = await request.json()
     allowed_keys = ["name", "amount", "calc_type", "applicable_to", "department",
@@ -107,7 +110,7 @@ async def update_allowance(allowance_id: str, request: Request):
 
 @router.delete("/payroll-allowances/{allowance_id}", dependencies=only(*HR_ROLES))  # T-01 2.3
 async def delete_allowance(allowance_id: str, request: Request):
-    await require_auth(request)
+    await _require_hr(request)  # Tahap 1: gerbang yang sama dengan tambah/ubah
     db = get_db()
     res = await db.da_payroll_allowances.delete_one({"allowance_id": allowance_id})
     if res.deleted_count == 0:

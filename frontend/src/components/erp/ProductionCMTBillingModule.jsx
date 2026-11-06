@@ -1,127 +1,70 @@
 /**
- * ProductionCMTBillingModule — pintu "Invoice" Portal Produksi / Maklon.
+ * ProductionCMTBillingModule — "Tagihan vendor CMT" (Portal Produksi / Maklon).
  *
- * FASE IA-1 (2026-07-26). Latar belakang (docs/PROPOSAL_IA_PRODUKSI.md §2):
- *   Alur uang keluar ke vendor CMT sudah jalan di backend
- *   (Terima FG dari CMT → AP matang di `dewi_cmt_payments` → posting jurnal
- *   `cmt_ap_invoice`), TAPI belum pernah ada layar yang menampilkannya.
+ * Alur uang keluar ke vendor CMT: Terima FG dari CMT (lolos QC) → tagihan matang di `dewi_cmt_payments`
+ * → jurnal `cmt_ap_invoice` (Dr biaya CMT / Cr hutang vendor) → dibayar dari rekening kas/bank.
  *
- * Modul ini: daftar tagihan + KPI + detail rincian + aksi "Posting ke Jurnal".
- *   - baca   : GET /api/production/cmt-billing[/summary|/{id}]
- *   - posting: POST /api/dewi/maklon/finance/cmt-payments/{id}/post-ap  (endpoint LAMA,
- *              idempotent — sengaja tidak dibuat handler duplikat)
- *   - scope  : Portal Produksi → internal, Portal Maklon → maklon (data terpisah).
+ * 2026-11-06 (Tahap 2, keputusan owner):
+ *   • Hutang CMT TERJADWAL sejak PO maklon dikonfirmasi (qty × upah CMT per vendor) — tampilan
+ *     "Jadwal hutang per PO".
+ *   • Tagihan hanya bisa dibayar sampai nilai lolos QC − sudah dibayar: "bisa dibayar Rp X dari Rp Y".
+ *   • Bagian selisih yang ditandai (lebih tagih) DITAHAN sampai Keuangan memutuskan: potong dari tagihan
+ *     atau bayar penuh (`/resolve-variance`).
+ *   • PANDUAN_UI: PageLayout · detail tagihan dibuka di halaman (DetailPanel), bukan popup.
+ *
+ *   - baca    : GET /api/production/cmt-billing[/summary|/vendors|/schedules|/{id}]
+ *   - posting : POST /api/dewi/maklon/finance/cmt-payments/{id}/post-ap
+ *   - bayar   : POST /api/dewi/maklon/finance/cmt-payments/{id}/pay
+ *   - selisih : POST /api/dewi/maklon/finance/cmt-payments/{id}/resolve-variance
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  RefreshCw, Search, Receipt, Banknote, AlertTriangle, CheckCircle2,
-  FileText, Eye, X, Landmark, Clock,
-} from 'lucide-react';
+import { RefreshCw, Search, Receipt, AlertTriangle, CheckCircle2, Landmark, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
 import { apiGet, apiPost } from '../../lib/api';
-import { BizBadge } from './engine/BusinessTypeBadge';
 import StaffEntryBadge from './engine/StaffEntryBadge';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { EmptyState, Notice, StatTile } from './moduleAtoms';
+import PageLayout, { DetailPanel } from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
+import { formatDateID } from '@/lib/format';
 
 const fmtRp = (v) => `Rp ${Number(v || 0).toLocaleString('id-ID')}`;
 const fmtNum = (v) => Number(v || 0).toLocaleString('id-ID');
-const fmtDate = (d) => {
-  if (!d) return '-';
-  try { return new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }); }
-  catch { return String(d); }
+const fmtDate = (d) => (d ? formatDateID(d) : '—');
+const STATUS = {
+  draft: ['Draf', 'muted'], submitted: ['Diajukan', 'info'], approved: ['Disetujui', 'info'],
+  posted: ['Terjurnal', 'info'], partial_paid: ['Dibayar sebagian', 'warning'], paid: ['Lunas', 'success'],
+  cancelled: ['Dibatalkan', 'muted'], terjadwal: ['Terjadwal', 'info'], berjalan: ['Berjalan', 'warning'],
+  lunas: ['Lunas', 'success'],
 };
-
-const STATUS_STYLE = {
-  draft:     'bg-muted text-muted-foreground border-border',
-  submitted: 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)]',
-  approved:  'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.35)]',
-  paid:      'bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))] border-[hsl(var(--success)/0.35)]',
-  cancelled: 'bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.35)]',
+const StatusPill = ({ status }) => {
+  const [label, tone] = STATUS[(status || '').toLowerCase()] || [status || 'Draf', 'default'];
+  return <StatusBadge status={label} tone={tone} />;
 };
-
-function StatusPill({ status }) {
-  const key = (status || '').toLowerCase();
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${STATUS_STYLE[key] || STATUS_STYLE.draft}`}>
-      {status || 'draft'}
-    </span>
-  );
-}
-
-// PANDUAN_UI G5 (2026-11-05): kartu angka = StatTile netral; warna hanya pada angkanya.
-// `icon` tetap diterima supaya pemanggil tidak berubah.
-function Kpi({ label, value, sub, tone = 'default', testId }) {
-  return <StatTile testId={testId} label={label} value={value} accent={tone} sub={sub} />;
-}
+const FIN_ROLES = ['superadmin', 'admin', 'owner', 'accounting', 'staff_keuangan', 'manager_keuangan'];
 
 export default function ProductionCMTBillingModule({ portalId, userRole }) {
   const businessType = portalId === 'maklon' ? 'maklon' : portalId === 'production' ? 'internal' : null;
+  const [view, setView] = useState('bills');           // bills | schedules
   const [rows, setRows] = useState([]);
+  const [schedules, setSchedules] = useState({ items: [], totals: {} });
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
-  // F13 — filter per VENDOR. Backend sudah bisa memfilter `?partner_id=` dan
-  // meresolusinya lewat SSOT `core.cmt_vendor_master` (jadi tagihan gaya lama
-  // maupun gaya bridge ikut terbawa), tapi layar ini belum punya jalan
-  // memakainya — kemampuan yang tidak bisa dijangkau sama dengan tidak ada.
-  // Pilihannya diambil dari endpoint khusus supaya daftarnya tetap LENGKAP walau
-  // tabelnya sedang tersaring.
   const [partnerId, setPartnerId] = useState('');
   const [vendorOpts, setVendorOpts] = useState([]);
   const [detail, setDetail] = useState(null);
-  const [detailLoading, setDetailLoading] = useState(false);
   const [posting, setPosting] = useState('');
-  const [payOpen, setPayOpen] = useState(false);
-  const [cashAccounts, setCashAccounts] = useState([]);
-  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: todayWIB(), reference_no: '' });
-  const [disbursements, setDisbursements] = useState([]);
-  useEffect(() => {
-    apiGet('/rahaza/cash-accounts').then(d => setCashAccounts(Array.isArray(d) ? d : [])).catch(() => {});
-  }, []);
-  useEffect(() => {
-    if (!detail?.bill?.id) { setDisbursements([]); return; }
-    apiGet(`/dewi/maklon/finance/cmt-payments/${detail.bill.id}/disbursements`).then(d => setDisbursements(Array.isArray(d) ? d : [])).catch(() => {});
-  }, [detail?.bill?.id, detail?.bill?.paid_amount]);
-  const payCmt = async () => {
-    if (!payForm.cash_account_id) { toast.error('Pilih rekening kas/bank'); return; }
-    setPosting(detail.bill.id);
-    try {
-      const r = await apiPost(`/dewi/maklon/finance/cmt-payments/${detail.bill.id}/pay`, {
-        cash_account_id: payForm.cash_account_id, amount: payForm.amount ? Number(payForm.amount) : null,
-        payment_date: payForm.payment_date, reference_no: payForm.reference_no,
-      });
-      if (r?.post_error) toast.warning(`Pembayaran dicatat, jurnal gagal: ${r.post_error}`);
-      else toast.success(`Pembayaran dicatat · Jurnal ${r?.gl_je_number || '-'} · status ${r?.payment_status}`);
-      setPayOpen(false); setPayForm(f => ({ ...f, amount: '', reference_no: '' }));
-      await load(); await openDetail(detail.bill.id);
-    } catch (e) { toast.error(`Bayar gagal: ${e?.message || e}`); } finally { setPosting(''); }
-  };
-  const voidDisbursement = async (did) => {
-    if (!(await confirmDialog({
-      title: 'Batalkan pembayaran ini?',
-      body: 'Jurnal pembayaran ikut dibatalkan.',
-      confirmLabel: 'Batalkan pembayaran',
-      cancelLabel: 'Kembali',
-      danger: true,
-    }))) return;
-    try {
-      await apiPost(`/dewi/maklon/finance/cmt-payments/${detail.bill.id}/disbursements/${did}/void`, {});
-      toast.success('Pembayaran dibatalkan, jurnal di-void');
-      await load(); await openDetail(detail.bill.id);
-    } catch (e) { toast.error(`Void gagal: ${e?.message || e}`); }
-  };
-
-  const canPost = ['superadmin', 'admin', 'owner', 'accounting', 'staff_keuangan', 'manager_keuangan']
-    .includes((userRole || '').toLowerCase());
+  const canPost = FIN_ROLES.includes((userRole || '').toLowerCase());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,440 +75,372 @@ export default function ProductionCMTBillingModule({ portalId, userRole }) {
       if (status) qs.append('status', status);
       if (search.trim()) qs.append('search', search.trim());
       if (partnerId) qs.append('partner_id', partnerId);
-      const [list, sum] = await Promise.all([
+      const sq = new URLSearchParams();
+      if (partnerId) sq.append('partner_id', partnerId);
+      const [list, sum, sch] = await Promise.all([
         apiGet(`/production/cmt-billing?${qs}`),
         apiGet(`/production/cmt-billing/summary?${qs}`),
+        businessType === 'internal' ? Promise.resolve({ items: [], totals: {} }) : apiGet(`/production/cmt-billing/schedules?${sq}`),
       ]);
       setRows(Array.isArray(list?.items) ? list.items : []);
       setSummary(sum);
+      setSchedules(sch || { items: [], totals: {} });
     } catch (e) {
       setError(e?.message || 'Gagal memuat tagihan CMT');
-      setRows([]);
-      setSummary(null);
+      setRows([]); setSummary(null);
     } finally {
       setLoading(false);
     }
   }, [businessType, status, search, partnerId]);
 
-  // Pilihan vendor DILEPAS dari filter vendor itu sendiri: kalau daftar pilihan
-  // ikut menyusut saat satu vendor dipilih, pengguna harus mereset filter dulu
-  // hanya untuk berpindah vendor.
   const loadVendors = useCallback(async () => {
     try {
       const qs = new URLSearchParams();
       if (businessType) qs.append('business_type', businessType);
       const res = await apiGet(`/production/cmt-billing/vendors?${qs}`);
       setVendorOpts(Array.isArray(res?.vendors) ? res.vendors : []);
-    } catch {
-      setVendorOpts([]);   // filter vendor sekadar tidak tersedia — layar tetap jalan
-    }
+    } catch { setVendorOpts([]); }
   }, [businessType]);
 
   useEffect(() => { load(); }, [businessType, status, partnerId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadVendors(); }, [loadVendors]);
 
-  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 10);
-
-  const openDetail = async (id) => {
-    setDetailLoading(true);
-    setDetail({ loading: true });
-    try {
-      const d = await apiGet(`/production/cmt-billing/${id}`);
-      setDetail(d);
-    } catch (e) {
-      toast.error(`Gagal memuat detail: ${e?.message || e}`);
-      setDetail(null);
-    } finally {
-      setDetailLoading(false);
-    }
-  };
+  const openDetail = useCallback(async (id) => {
+    setDetail({ loading: true, id });
+    try { setDetail(await apiGet(`/production/cmt-billing/${id}`)); }
+    catch (e) { toast.error(`Gagal memuat detail: ${e?.message || e}`); setDetail(null); }
+  }, []);
 
   const postToGl = async (id) => {
     setPosting(id);
     try {
       const r = await apiPost(`/dewi/maklon/finance/cmt-payments/${id}/post-ap`, {});
-      toast.success(r?.already_posted
-        ? `Sudah pernah diposting (${r?.je_number || '-'})`
-        : `Berhasil posting jurnal ${r?.je_number || ''}`);
+      toast.success(r?.already_posted ? `Sudah pernah dijurnal (${r?.je_number || '-'})` : `Jurnal ${r?.je_number || ''} tercatat`);
       await load();
       if (detail?.bill?.id === id) await openDetail(id);
-    } catch (e) {
-      toast.error(`Posting gagal: ${e?.message || e}`);
-    } finally {
-      setPosting('');
-    }
+    } catch (e) { toast.error(`Jurnal gagal: ${e?.message || e}`); }
+    finally { setPosting(''); }
   };
 
-  const scopeLabel = businessType === 'maklon' ? 'Produksi Maklon (CMT)' : 'Produksi Internal';
-  const totalOutstanding = useMemo(() => summary?.outstanding_amount || 0, [summary]);
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(rows, 25);
+  const totals = useMemo(() => rows.reduce((t, r) => ({
+    payable: t.payable + Number(r.payable_amount || 0),
+    blocked: t.blocked + Number(r.blocked_amount || 0),
+  }), { payable: 0, blocked: 0 }), [rows]);
+  const resetFilters = () => { setPartnerId(''); setStatus(''); setSearch(''); };
+  const filtered = partnerId || status || search.trim();
 
   return (
-    <div className="space-y-4" data-testid="prod-cmt-billing">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
-            <Receipt className="w-6 h-6 text-[hsl(var(--primary))]" /> Invoice — Tagihan CMT
-            {businessType && <BizBadge type={businessType} />}
-          </h1>
-          <p className="text-muted-foreground text-sm mt-0.5">
-            Tagihan jasa jahit dari vendor CMT (AP). Terbit otomatis setelah <strong>Terima FG dari CMT</strong> disetujui.
-            {businessType && <span className="ml-1 font-medium text-foreground/80">Menampilkan data <strong>{scopeLabel}</strong>.</span>}
-          </p>
-        </div>
-        <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh" >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} /></Button>
-      </div>
-
-      {error && (
-        <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="cmt-billing-error">
-          <p className="text-xs">{error}</p>
-        </Notice>
-      )}
-
-      {/* KPI */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <Kpi testId="cmt-kpi-total" icon={FileText} label="Total Tagihan" value={fmtNum(summary?.total_bills)} sub={`${fmtNum(summary?.total_pcs)} pcs`} />
-        <Kpi testId="cmt-kpi-nilai" icon={Banknote} label="Nilai Tagihan" value={fmtRp(summary?.total_amount)} tone="primary" />
-        <Kpi testId="cmt-kpi-outstanding" icon={Clock} label="Belum Dibayar" value={fmtRp(totalOutstanding)} tone="warning" sub={`${fmtNum(summary?.approved)} disetujui · ${fmtNum(summary?.draft)} draf`} />
-        <Kpi testId="cmt-kpi-paid" icon={CheckCircle2} label="Sudah Dibayar" value={fmtRp(summary?.paid_amount)} tone="success" sub={`${fmtNum(summary?.paid)} tagihan`} />
-        <Kpi testId="cmt-kpi-notposted" icon={Landmark} label="Belum dijurnal" value={fmtNum(summary?.not_posted)} tone={summary?.not_posted ? 'danger' : 'success'} sub="perlu jurnal utang" />
-      </div>
-
-      {/* Filter */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative">
+    <PageLayout
+      testId="prod-cmt-billing"
+      title="Tagihan vendor CMT"
+      subtitle="Hutang jasa jahit: terjadwal sejak PO dikonfirmasi, matang saat barang lolos QC, lalu dibayar."
+      filters={<>
+        {businessType !== 'internal' && (
+          <FilterChips value={view} onChange={setView} testId="cmt-billing-view" ariaLabel="Tampilan" hideWhenEmpty={false}
+            options={[{ key: 'bills', label: 'Tagihan', count: rows.length },
+              { key: 'schedules', label: 'Jadwal hutang per PO', count: (schedules.items || []).length }]} />
+        )}
+        <div className="relative w-72 max-w-full">
           <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') load(); }}
-            placeholder="Cari kode tagihan / vendor / PO…"
-            className="pl-8 h-9 w-72"
-            data-testid="cmt-billing-search"
-          />
+          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') load(); }} placeholder="Cari kode tagihan / vendor / PO…"
+            className="pl-8 h-9" data-testid="cmt-billing-search" />
         </div>
-        <SmartNativeSelect
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className="h-9 w-44 border border-border rounded-lg px-2 text-sm"
-          data-testid="cmt-billing-status-filter"
-        >
-          <option value="">Semua Status</option>
-          <option value="draft">Draft</option>
-          <option value="approved">Approved</option>
-          <option value="paid">Paid</option>
-          <option value="cancelled">Cancelled</option>
+        <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)} className="h-9 w-44" data-testid="cmt-billing-status-filter" aria-label="Status">
+          <option value="">Semua status</option>
+          <option value="draft">Draf</option>
+          <option value="posted">Terjurnal</option>
+          <option value="partial_paid">Dibayar sebagian</option>
+          <option value="paid">Lunas</option>
+          <option value="cancelled">Dibatalkan</option>
         </SmartNativeSelect>
-        {/* Filter per vendor — angka "belum dibayar" ikut ditulis di pilihannya,
-            karena pertanyaan finance sebelum membayar selalu "vendor ini berapa
-            sisanya". Nilainya datang dari backend (SSOT), bukan dihitung ulang
-            di browser. */}
         {vendorOpts.length > 0 && (
-          <SmartNativeSelect
-            value={partnerId}
-            onChange={(e) => setPartnerId(e.target.value)}
-            className="h-9 w-[23rem] border border-border rounded-lg px-2 text-sm"
-            data-testid="cmt-billing-vendor-filter"
-          >
-            <option value="">Semua Vendor CMT ({vendorOpts.length})</option>
-            {vendorOpts.map(v => (
+          <SmartNativeSelect value={partnerId} onChange={(e) => setPartnerId(e.target.value)} className="h-9 w-80 max-w-full"
+            data-testid="cmt-billing-vendor-filter" aria-label="Vendor CMT">
+            <option value="">Semua vendor CMT ({vendorOpts.length})</option>
+            {vendorOpts.map((v) => (
               <option key={v.vendor_id || v.vendor_name} value={v.vendor_id}>
-                {v.vendor_name}{v.vendor_code ? ` (${v.vendor_code})` : ''}
-                {' — '}{v.bills} tagihan
-                {v.outstanding > 0 ? ` · sisa ${fmtRp(v.outstanding)}` : ' · lunas'}
+                {v.vendor_name}{v.vendor_code ? ` (${v.vendor_code})` : ''} — {v.bills} tagihan{v.outstanding > 0 ? ` · sisa ${fmtRp(v.outstanding)}` : ' · lunas'}
               </option>
             ))}
           </SmartNativeSelect>
         )}
-        <Button variant="ghost" className="text-xs" onClick={load} data-testid="cmt-billing-apply">Terapkan</Button>
-        {(partnerId || status || search.trim()) && (
-          <Button variant="outline" className="text-xs"
-            onClick={() => { setPartnerId(''); setStatus(''); setSearch(''); }}
-            data-testid="cmt-billing-reset">
-            <X className="mr-1 h-3.5 w-3.5" /> Reset filter
-          </Button>
+        {filtered && (
+          <Button variant="outline" onClick={resetFilters} data-testid="cmt-billing-reset"><X className="h-3.5 w-3.5" />Reset filter</Button>
         )}
-        <span className="ml-auto text-xs text-muted-foreground">
-          {rows.length} tagihan
-          {partnerId && vendorOpts.length > 0 && (
-            <span className="ml-1 font-medium text-foreground" data-testid="cmt-billing-vendor-active">
-              · {(vendorOpts.find(v => v.vendor_id === partnerId) || {}).vendor_name || ''}
-            </span>
-          )}
-        </span>
-      </div>
-
-      {/* Tabel */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40 border-b border-border">
-              <tr>
-                {['Kode', 'Vendor CMT', 'Sumber', 'Periode', 'Pcs', 'Nilai', 'Selisih Belum Selesai', 'Status', 'Jurnal GL', 'Aksi'].map(h => (
-                  <th key={h} className="text-left px-3 py-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border/50">
-              {loading ? (
-                <tr><td colSpan={10} className="text-center py-8 text-muted-foreground">
-                  <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" /> Memuat tagihan…
-                </td></tr>
-              ) : paged.length === 0 ? (
-                <tr><td colSpan={10} data-testid="cmt-billing-empty">
-                  {(partnerId || status || search.trim()) ? (
-                    <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
-                      description="Ubah atau hapus penyaring untuk melihat tagihan lain."
-                      action={
-                        <Button variant="outline" size="sm"
-                          onClick={() => { setPartnerId(''); setStatus(''); setSearch(''); }}
-                          data-testid="cmt-billing-empty-reset">
-                          <X className="mr-1 h-3.5 w-3.5" /> Tampilkan semua tagihan
-                        </Button>
-                      } />
-                  ) : (
-                    <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
-                      description={<>Tagihan terbit otomatis setelah <strong>Terima FG dari CMT</strong> disetujui.</>} />
-                  )}
-                </td></tr>
-              ) : paged.map((r) => (
-                <tr key={r.id} className="hover:bg-muted/40" data-testid={`cmt-billing-row-${r.payment_code}`}>
-                  <td className="px-3 py-2.5 tabular-nums text-xs font-semibold text-[hsl(var(--primary))]">{r.payment_code || r.id?.slice(0, 8)}</td>
-                  <td className="px-3 py-2.5">
-                    <span className="block">{r.cmt_name || '-'}</span>
-                    {/* keputusan owner 3a — tagihan ini berdiri di atas angka yang
-                        diketik STAF DA, bukan diisi vendor. Harus terlihat di layar
-                        invoice supaya selisih tagihan bisa ditelusuri sumbernya. */}
-                    <StaffEntryBadge
-                      source={r.progress_entry_source}
-                      by={r.staff_entered_by}
-                      qty={r.staff_entered_progress_qty}
-                      compact
-                      testId={`cmt-billing-entry-badge-${r.payment_code}`}
-                    />
-                    {r.declaration_entered_by_staff && r.progress_entry_source !== 'staff'
-                      && r.progress_entry_source !== 'mixed' && (
-                      <StaffEntryBadge
-                        source="staff"
-                        by={r.declaration_entered_by}
-                        compact
-                        testId={`cmt-billing-decl-badge-${r.payment_code}`}
-                      />
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-muted-foreground">
-                    {r.po_number || (r.source_receipt_code ? `Receipt ${r.source_receipt_code}` : (r.job_ids?.length ? `${r.job_ids.length} job CMT` : '-'))}
-                  </td>
-                  <td className="px-3 py-2.5 text-xs">{fmtDate(r.period_from)} – {fmtDate(r.period_to)}</td>
-                  <td className="px-3 py-2.5 tabular-nums">{fmtNum(r.total_pcs)}</td>
-                  <td className="px-3 py-2.5 tabular-nums font-semibold">{fmtRp(r.amount)}</td>
-                  {/* 2026-11-02 (K17 butir 6): tagihan TIDAK diubah otomatis saat koreksi QC /
-                      selisih — angkanya ditandai untuk Keuangan dan ditampilkan di sini. */}
-                  <td className="px-3 py-2.5 text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
-                    {Number(r.variance_unresolved_qty || 0) > 0 ? (
-                      <span className="inline-flex flex-col text-[hsl(var(--warning))]">
-                        <span className="font-semibold tabular-nums">{fmtNum(r.variance_unresolved_qty)} pcs</span>
-                        {Number(r.overbilled_pcs || 0) > 0 && <span>lebih tagih {fmtNum(r.overbilled_pcs)} pcs ({fmtRp(r.overbilled_amount)})</span>}
-                        {Number(r.open_short_qty || 0) > 0 && <span>belum sampai {fmtNum(r.open_short_qty)} pcs</span>}
-                      </span>
-                    ) : r.variance_flagged ? (
-                      <span className="inline-flex items-center gap-1 text-[hsl(var(--warning))]" title={(r.variance_reasons || []).join('; ') || r.variance_reason || ''}>
-                        <AlertTriangle className="w-3.5 h-3.5" /> ditandai
-                      </span>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-3 py-2.5"><StatusPill status={r.status} /></td>
-                  <td className="px-3 py-2.5 text-xs">
-                    {r.gl_posted
-                      ? <span className="inline-flex items-center gap-1 text-[hsl(var(--success))] font-medium"><CheckCircle2 className="w-3.5 h-3.5" />{r.gl_je_number || 'posted'}</span>
-                      : <span className="text-[hsl(var(--warning))]">Belum posting</span>}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <div className="flex items-center gap-1">
-                      <Button size="icon-sm" variant="ghost" title="Lihat detail" aria-label="Lihat detail" onClick={() => openDetail(r.id)} data-testid={`cmt-billing-detail-${r.payment_code}`}>
-                        <Eye className="w-3.5 h-3.5" />
-                      </Button>
-                      {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={posting === r.id}
-                          onClick={() => postToGl(r.id)}
-                          data-testid={`cmt-billing-post-${r.payment_code}`}
-                        >
-                          {posting === r.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Landmark className="w-3.5 h-3.5 mr-1" />}
-                          Posting
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      </>}
+      tools={<Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={load} data-testid="cmt-billing-refresh">
+        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+      </Button>}
+      summary={<>
+        {error && <Notice tone="danger" icon={AlertTriangle} title="Gagal memuat data" testId="cmt-billing-error">{error}</Notice>}
+        {(summary?.total_bills > 0) && (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatTile testId="cmt-kpi-nilai" label="Nilai tagihan (lolos QC)" value={fmtRp(summary?.total_amount)} sub={`${fmtNum(summary?.total_bills)} tagihan · ${fmtNum(summary?.total_pcs)} pcs`} />
+            <StatTile testId="cmt-kpi-outstanding" label="Belum dibayar" value={fmtRp(summary?.outstanding_amount)} accent="warning" sub={`dibayar ${fmtRp(summary?.paid_amount)}`} />
+            <StatTile testId="cmt-kpi-payable" label="Bisa dibayar sekarang" value={fmtRp(totals.payable)} sub="nilai lolos QC − dibayar − tertahan" />
+            <StatTile testId="cmt-kpi-blocked" label="Tertahan (selisih)" value={fmtRp(totals.blocked)} accent={totals.blocked > 0 ? 'danger' : 'muted'} sub="menunggu keputusan Keuangan" />
+          </div>
+        )}
+      </>}
+      detail={detail && (
+        <BillDetail detail={detail} canPost={canPost} posting={posting} onClose={() => setDetail(null)}
+          onPost={postToGl} onChanged={async () => { await load(); await openDetail(detail.bill?.id || detail.id); }} />
+      )}
+      footer={view === 'bills' && rows.length > pageSize && (
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
-      </div>
-
-      {/* Detail drawer */}
-      {detail && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setDetail(null)}>
-          <div
-            className="bg-card border border-border rounded-2xl w-full max-w-3xl max-h-[85vh] overflow-y-auto shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-            data-testid="cmt-billing-detail-dialog"
-          >
-            <div className="flex items-center justify-between px-5 py-3 border-b border-border sticky top-0 bg-card">
-              <h3 className="font-bold text-foreground">Detail Tagihan CMT</h3>
-              <Button size="icon-sm" variant="ghost" title="Tutup" aria-label="Tutup" onClick={() => setDetail(null)} data-testid="cmt-billing-detail-close">
-                <X className="w-4 h-4" />
-              </Button>
-            </div>
-
-            {detailLoading || detail.loading ? (
-              <div className="p-8 text-center text-muted-foreground">
-                <RefreshCw className="w-5 h-5 animate-spin mx-auto mb-2" /> Memuat…
-              </div>
+      )}
+    >
+      <GlassCard className="p-0 overflow-hidden">
+        {view === 'schedules' ? (
+          <ScheduleTable items={schedules.items || []} loading={loading} />
+        ) : loading && !rows.length ? (
+          <div className="p-4 text-sm text-muted-foreground"><RefreshCw className="w-4 h-4 animate-spin inline mr-2" />Memuat tagihan…</div>
+        ) : paged.length === 0 ? (
+          <div data-testid="cmt-billing-empty">
+            {filtered ? (
+              <EmptyState icon={Receipt} title="Tidak ada tagihan yang cocok dengan filter"
+                description="Ubah atau hapus penyaring untuk melihat tagihan lain."
+                action={<Button variant="outline" size="sm" onClick={resetFilters} data-testid="cmt-billing-empty-reset">Tampilkan semua tagihan</Button>} />
             ) : (
-              <div className="p-5 space-y-4">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                  <div><p className="text-xs text-muted-foreground">Kode</p><p className="font-semibold tabular-nums">{detail.bill?.payment_code}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Vendor CMT</p><p className="font-semibold">{detail.bill?.cmt_name || '-'}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Status</p><StatusPill status={detail.bill?.status} /></div>
-                  <div><p className="text-xs text-muted-foreground">Nilai</p><p className="font-semibold">{fmtRp(detail.bill?.amount)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Pcs</p><p className="font-semibold">{fmtNum(detail.bill?.total_pcs)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Ditolak</p><p className="font-semibold">{fmtNum(detail.bill?.total_rejected)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Penalti</p><p className="font-semibold">{fmtRp(detail.bill?.penalty)}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Domain</p><p className="font-semibold capitalize">{detail.bill?.business_type}</p></div>
-                  <div><p className="text-xs text-muted-foreground">Selisih belum selesai</p><p className="font-semibold">{fmtNum(detail.bill?.variance_unresolved_qty || 0)} pcs</p></div>
-                </div>
-
-                {detail.bill?.variance_flagged && (
-                  <Notice tone="warning" icon={AlertTriangle} testId="cmt-bill-variance-alert"
-                    title={detail.bill?.zero_rate_pcs > 0 ? 'Tagihan perlu diperiksa' : 'Ada selisih qty pada penerimaan'}>
-                    {Array.isArray(detail.bill?.variance_reasons) && detail.bill.variance_reasons.length > 0 ? (
-                      <ul className="text-xs list-disc pl-4">
-                        {detail.bill.variance_reasons.map((r, i) => <li key={i}>{r}</li>)}
-                      </ul>
-                    ) : (detail.bill?.variance_reason && <p className="text-xs">{detail.bill.variance_reason}</p>)}
-                  </Notice>
-                )}
-
-                {Array.isArray(detail.bill?.breakdown) && detail.bill.breakdown.length > 0 && (
-                  <div>
-                    <p className="text-sm font-semibold mb-1.5">Rincian</p>
-                    <div className="border border-border rounded-lg overflow-hidden">
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/40"><tr>
-                          {['Produk / SKU', 'Qty', 'Tarif', 'Subtotal'].map(h => <th key={h} className="text-left px-3 py-2 font-semibold text-muted-foreground">{h}</th>)}
-                        </tr></thead>
-                        <tbody className="divide-y divide-border/50">
-                          {detail.bill.breakdown.map((b, i) => (
-                            <tr key={i}>
-                              <td className="px-3 py-2">{b.product_name || b.sku || b.description || '-'}</td>
-                              <td className="px-3 py-2 tabular-nums">{fmtNum(b.qty ?? b.qty_actual)}</td>
-                              <td className="px-3 py-2 tabular-nums">{fmtRp(b.rate ?? b.cmt_rate_per_pcs)}</td>
-                              <td className="px-3 py-2 tabular-nums font-medium">{fmtRp(b.subtotal ?? b.amount)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
-
-                <div>
-                  <p className="text-sm font-semibold mb-1.5">Jurnal GL</p>
-                  {detail.journal ? (
-                    <div className="border border-border rounded-lg overflow-hidden">
-                      <div className="px-3 py-2 bg-muted/40 text-xs flex items-center gap-3">
-                        <span className="tabular-nums font-semibold">{detail.journal.je_number}</span>
-                        <span className="text-muted-foreground">{fmtDate(detail.journal.je_date)}</span>
-                        <span className="ml-auto uppercase text-[10px] px-1.5 py-0.5 rounded bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]">{detail.journal.status}</span>
-                      </div>
-                      <table className="w-full text-xs">
-                        <thead className="bg-muted/20"><tr>
-                          {['Akun', 'Keterangan', 'Debit', 'Kredit'].map(h => <th key={h} className="text-left px-3 py-2 font-semibold text-muted-foreground">{h}</th>)}
-                        </tr></thead>
-                        <tbody className="divide-y divide-border/50">
-                          {(detail.journal.lines || []).map((l, i) => (
-                            <tr key={i}>
-                              <td className="px-3 py-2 tabular-nums">{l.account_code}</td>
-                              <td className="px-3 py-2">{l.description}</td>
-                              <td className="px-3 py-2 tabular-nums">{l.debit ? fmtRp(l.debit) : '-'}</td>
-                              <td className="px-3 py-2 tabular-nums">{l.credit ? fmtRp(l.credit) : '-'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-between gap-3 rounded-lg border border-dashed border-border px-3 py-3">
-                      <p className="text-xs text-muted-foreground">
-                        Belum ada jurnal AP untuk tagihan ini.
-                        {detail.bill?.post_error && <span className="block text-[hsl(var(--destructive))] mt-1">Error terakhir: {detail.bill.post_error}</span>}
-                      </p>
-                      {canPost && (detail.bill?.status || '').toLowerCase() !== 'cancelled' && (
-                        <Button size="sm" onClick={() => postToGl(detail.bill.id)} disabled={posting === detail.bill?.id} data-testid="cmt-billing-detail-post">
-                          {posting === detail.bill?.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin mr-1" /> : <Landmark className="w-3.5 h-3.5 mr-1" />}
-                          Posting ke Jurnal
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {canPost && (detail.bill?.status || '').toLowerCase() !== 'cancelled' && (
-                  <div className="rounded-lg border border-border p-3 space-y-2" data-testid="cmt-pay-panel">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-semibold">Pembayaran ke Vendor</p>
-                      <span className="text-xs text-muted-foreground">Dibayar {fmtNum(detail.bill?.paid_amount || 0)} · Sisa {fmtNum(detail.bill?.outstanding_amount ?? 0)}</span>
-                    </div>
-                    {disbursements.length > 0 && (
-                      <ul className="text-xs space-y-1">
-                        {disbursements.map(d => (
-                          <li key={d.id} className="flex items-center justify-between gap-2" data-testid={`cmt-disb-${d.id}`}>
-                            <span>{d.payment_date} · {d.cash_account_name} · {fmtNum(d.amount)} {d.gl_je_number ? `· ${d.gl_je_number}` : ''}</span>
-                            <Button size="sm" variant="outline" className="text-[hsl(var(--destructive))]" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    {(detail.bill?.outstanding_amount ?? 1) > 0 && !payOpen && (
-                      <Button size="sm" onClick={() => setPayOpen(true)} data-testid="cmt-pay-open">Bayar Vendor</Button>
-                    )}
-                    {payOpen && (
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="col-span-2">
-                          <SmartNativeSelect value={payForm.cash_account_id} onChange={e => setPayForm(f => ({ ...f, cash_account_id: e.target.value }))} data-testid="cmt-pay-cash-account">
-                            <option value="">— Rekening kas/bank —</option>
-                            {cashAccounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
-                          </SmartNativeSelect>
-                        </div>
-                        <MoneyInput placeholder="Jumlah (kosong = sisa)" value={payForm.amount} onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))} data-testid="cmt-pay-amount" />
-                        <Input type="date" value={payForm.payment_date} onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))} data-testid="cmt-pay-date" />
-                        <Input placeholder="No. referensi" value={payForm.reference_no} onChange={e => setPayForm(f => ({ ...f, reference_no: e.target.value }))} data-testid="cmt-pay-ref" />
-                        <div className="flex gap-2 justify-end">
-                          <Button size="sm" variant="outline" onClick={() => setPayOpen(false)}>Batal</Button>
-                          <Button size="sm" onClick={payCmt} disabled={posting === detail.bill?.id} data-testid="cmt-pay-submit">Catat Bayar</Button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {detail.bill?.notes && (
-                  <div>
-                    <p className="text-sm font-semibold mb-1">Catatan</p>
-                    <p className="text-xs text-muted-foreground">{detail.bill.notes}</p>
-                  </div>
-                )}
-              </div>
+              <EmptyState icon={Receipt} title="Belum ada tagihan CMT"
+                description="Tagihan terbit otomatis setelah Terima FG dari CMT selesai QC." />
             )}
           </div>
+        ) : (
+          <Table>
+            <TableHeader><TableRow>
+              <TableHead>Kode</TableHead><TableHead>Vendor CMT</TableHead><TableHead>PO</TableHead>
+              <TableHead className="text-right">Pcs</TableHead><TableHead className="text-right">Nilai</TableHead>
+              <TableHead className="text-right">Bisa dibayar</TableHead><TableHead>Selisih</TableHead>
+              <TableHead>Status</TableHead><TableHead>Jurnal</TableHead><TableHead className="text-right">Aksi</TableHead>
+            </TableRow></TableHeader>
+            <TableBody>
+              {paged.map((r) => (
+                <TableRow key={r.id} data-testid={`cmt-billing-row-${r.payment_code}`}
+                  className={detail?.bill?.id === r.id ? 'bg-[hsl(var(--primary)/0.06)]' : ''}>
+                  <TableCell className="whitespace-nowrap">
+                    <Button variant="link" size="sm" className="h-auto p-0 font-semibold" onClick={() => openDetail(r.id)}
+                      data-testid={`cmt-billing-detail-${r.payment_code}`}>{r.payment_code || r.id?.slice(0, 8)}</Button>
+                  </TableCell>
+                  <TableCell>
+                    <span className="block">{r.cmt_name || '—'}</span>
+                    <StaffEntryBadge source={r.progress_entry_source} by={r.staff_entered_by} qty={r.staff_entered_progress_qty}
+                      compact testId={`cmt-billing-entry-badge-${r.payment_code}`} />
+                  </TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{r.po_number || r.source_receipt_code || '—'}</TableCell>
+                  <TableCell className="text-right tabular-nums">{fmtNum(r.total_pcs)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.amount)}</TableCell>
+                  <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(r.payable_amount)}</TableCell>
+                  <TableCell className="text-xs" data-testid={`cmt-billing-variance-${r.payment_code}`}>
+                    {Number(r.blocked_amount || 0) > 0 ? (
+                      <span className="text-[hsl(var(--destructive))]">tertahan {fmtRp(r.blocked_amount)}</span>
+                    ) : Number(r.variance_unresolved_qty || 0) > 0 ? (
+                      <span className="text-[hsl(var(--warning))]">{fmtNum(r.variance_unresolved_qty)} pcs belum selesai</span>
+                    ) : r.variance_flagged && !r.variance_resolution ? (
+                      <span className="text-[hsl(var(--warning))]">ditandai</span>
+                    ) : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
+                  <TableCell><StatusPill status={r.status} /></TableCell>
+                  <TableCell className="text-xs">
+                    {r.gl_posted ? <span className="text-[hsl(var(--success))]">{r.gl_je_number || 'terjurnal'}</span>
+                      : <span className="text-[hsl(var(--warning))]">Belum dijurnal</span>}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {!r.gl_posted && (r.status || '').toLowerCase() !== 'cancelled' && canPost ? (
+                      <Button size="sm" variant="outline" disabled={posting === r.id} onClick={() => postToGl(r.id)} data-testid={`cmt-billing-post-${r.payment_code}`}>
+                        <Landmark className="w-3.5 h-3.5" />Jurnalkan
+                      </Button>
+                    ) : (
+                      <Button size="sm" variant="outline" onClick={() => openDetail(r.id)}>Rincian</Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </GlassCard>
+    </PageLayout>
+  );
+}
+
+function ScheduleTable({ items, loading }) {
+  if (loading && !items.length) return <div className="p-4 text-sm text-muted-foreground">Memuat jadwal…</div>;
+  if (!items.length) {
+    return <EmptyState icon={Receipt} title="Belum ada jadwal hutang CMT"
+      description="Jadwal lahir saat PO maklon dikonfirmasi: qty × upah CMT per vendor." />;
+  }
+  return (
+    <Table data-testid="cmt-ap-schedules">
+      <TableHeader><TableRow>
+        <TableHead>PO</TableHead><TableHead>Vendor CMT</TableHead><TableHead className="text-right">Jadwal (qty × upah)</TableHead>
+        <TableHead className="text-right">Lolos QC</TableHead><TableHead className="text-right">Dibayar</TableHead>
+        <TableHead className="text-right">Tertahan</TableHead><TableHead>Bisa dibayar</TableHead><TableHead>Status</TableHead>
+      </TableRow></TableHeader>
+      <TableBody>
+        {items.map((s) => (
+          <TableRow key={s.id}>
+            <TableCell className="font-medium whitespace-nowrap">{s.po_number}</TableCell>
+            <TableCell>{s.vendor_name || 'Vendor belum ditentukan'}</TableCell>
+            <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.scheduled_amount)} <span className="text-xs text-muted-foreground">· {fmtNum(s.scheduled_qty)} pcs</span></TableCell>
+            <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.matured_amount)}</TableCell>
+            <TableCell className="text-right tabular-nums whitespace-nowrap">{fmtRp(s.paid_amount)}</TableCell>
+            <TableCell className="text-right tabular-nums whitespace-nowrap">
+              {Number(s.blocked_amount || 0) > 0 ? <span className="text-[hsl(var(--destructive))]">{fmtRp(s.blocked_amount)}</span> : fmtRp(0)}
+            </TableCell>
+            <TableCell className="whitespace-nowrap text-sm" data-testid={`cmt-ap-payable-${s.po_number}`}>
+              Bisa dibayar <b className="tabular-nums">{fmtRp(s.payable_amount)}</b> dari <span className="tabular-nums">{fmtRp(Math.max(Number(s.scheduled_amount || 0), Number(s.matured_amount || 0)))}</span>
+            </TableCell>
+            <TableCell><StatusPill status={s.status} /></TableCell>
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+function BillDetail({ detail, canPost, posting, onClose, onPost, onChanged }) {
+  const bill = detail.bill || {};
+  const [cashAccounts, setCashAccounts] = useState([]);
+  const [disbursements, setDisbursements] = useState([]);
+  const [payForm, setPayForm] = useState({ cash_account_id: '', amount: '', payment_date: todayWIB(), reference_no: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { apiGet('/rahaza/cash-accounts').then((d) => setCashAccounts(Array.isArray(d) ? d : [])).catch(() => {}); }, []);
+  useEffect(() => {
+    if (!bill.id) { setDisbursements([]); return; }
+    apiGet(`/dewi/maklon/finance/cmt-payments/${bill.id}/disbursements`).then((d) => setDisbursements(Array.isArray(d) ? d : [])).catch(() => {});
+  }, [bill.id, bill.paid_amount]);
+  if (detail.loading) {
+    return <DetailPanel title="Memuat…" onClose={onClose} testId="cmt-billing-detail-dialog"><p className="text-sm text-muted-foreground">Memuat…</p></DetailPanel>;
+  }
+  const payable = Number(bill.payable_amount || 0);
+  const blocked = Number(bill.blocked_amount || 0);
+  const sched = detail.schedule;
+
+  const pay = async () => {
+    if (!payForm.cash_account_id) { toast.error('Pilih rekening kas/bank'); return; }
+    setBusy(true);
+    try {
+      const r = await apiPost(`/dewi/maklon/finance/cmt-payments/${bill.id}/pay`, {
+        cash_account_id: payForm.cash_account_id, amount: payForm.amount ? Number(payForm.amount) : null,
+        payment_date: payForm.payment_date, reference_no: payForm.reference_no,
+      });
+      if (r?.post_error) toast.warning(`Pembayaran dicatat, jurnal gagal: ${r.post_error}`);
+      else toast.success(`Pembayaran dicatat · ${r?.gl_je_number || '-'}`);
+      setPayForm((f) => ({ ...f, amount: '', reference_no: '' }));
+      await onChanged();
+    } catch (e) { toast.error(e?.message || 'Pembayaran gagal'); }
+    finally { setBusy(false); }
+  };
+  const resolve = async (decision) => {
+    const notes = await confirmDialog({
+      title: decision === 'potong' ? `Potong ${fmtRp(bill.overbilled_amount)} dari tagihan?` : 'Bayar tagihan ini penuh?',
+      body: decision === 'potong'
+        ? 'Nilai lebih tagih dikurangi dari tagihan dengan jurnal penyesuaian (jurnal lama tidak diubah).'
+        : 'Selisih diterima — bagian yang tertahan boleh dibayar.',
+      confirmLabel: decision === 'potong' ? 'Potong tagihan' : 'Bayar penuh',
+      input: { label: 'Catatan keputusan', placeholder: 'mis. reject final, vendor setuju dipotong', minLength: 3 },
+    });
+    if (!notes) return;
+    setBusy(true);
+    try {
+      await apiPost(`/dewi/maklon/finance/cmt-payments/${bill.id}/resolve-variance`, { decision, notes });
+      toast.success('Selisih tagihan diselesaikan');
+      await onChanged();
+    } catch (e) { toast.error(e?.message || 'Gagal'); }
+    finally { setBusy(false); }
+  };
+  const voidDisbursement = async (did) => {
+    if (!(await confirmDialog({ title: 'Batalkan pembayaran ini?', body: 'Jurnal pembayaran ikut dibatalkan.',
+      confirmLabel: 'Batalkan pembayaran', cancelLabel: 'Kembali', danger: true }))) return;
+    try {
+      await apiPost(`/dewi/maklon/finance/cmt-payments/${bill.id}/disbursements/${did}/void`, {});
+      toast.success('Pembayaran dibatalkan, jurnal di-void');
+      await onChanged();
+    } catch (e) { toast.error(`Batal gagal: ${e?.message || e}`); }
+  };
+
+  return (
+    <DetailPanel testId="cmt-billing-detail-dialog" closeTestId="cmt-billing-detail-close" onClose={onClose}
+      title={`${bill.payment_code || 'Tagihan'} · ${bill.cmt_name || '—'}`}
+      description={`PO ${bill.po_number || '—'} · ${fmtNum(bill.total_pcs)} pcs lolos QC · ditolak ${fmtNum(bill.total_rejected)} · nilai ${fmtRp(bill.amount)}`}
+      actions={!bill.gl_posted && canPost && (bill.status || '').toLowerCase() !== 'cancelled' && (
+        <Button variant="outline" onClick={() => onPost(bill.id)} disabled={posting === bill.id} data-testid="cmt-billing-detail-post">
+          <Landmark className="w-4 h-4" />Jurnalkan
+        </Button>
+      )}>
+      <p className="text-sm" data-testid="cmt-bill-payable">
+        Bisa dibayar <b className="tabular-nums">{fmtRp(payable)}</b> dari <span className="tabular-nums">{fmtRp(bill.amount)}</span>
+        {' '}(dibayar {fmtRp(bill.paid_amount)}{blocked > 0 ? `, tertahan ${fmtRp(blocked)}` : ''})
+        {sched && <span className="text-muted-foreground"> · jadwal hutang PO ini ke vendor: {fmtRp(sched.scheduled_amount)}, bisa dibayar {fmtRp(sched.payable_amount)}</span>}
+      </p>
+      {bill.variance_flagged && (
+        <Notice tone={blocked > 0 ? 'danger' : 'warning'} icon={AlertTriangle} testId="cmt-bill-variance-alert"
+          title={bill.variance_resolution ? 'Selisih sudah diputuskan Keuangan' : blocked > 0 ? `Rp ${fmtNum(blocked)} tertahan — selisih perlu diputuskan Keuangan` : 'Ada selisih qty pada penerimaan'}
+          action={canPost && !bill.variance_resolution && Number(bill.overbilled_amount || 0) > 0 && (
+            <span className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => resolve('potong')} data-testid="cmt-resolve-potong">Potong dari tagihan</Button>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => resolve('bayar')} data-testid="cmt-resolve-bayar">Bayar penuh</Button>
+            </span>
+          )}>
+          {(bill.variance_reasons || []).length > 0
+            ? <ul className="text-xs list-disc pl-4">{bill.variance_reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
+            : bill.variance_reason}
+          {bill.variance_resolution && (
+            <p className="text-xs mt-1">Keputusan: {bill.variance_resolution.decision === 'potong' ? 'dipotong' : 'dibayar penuh'} · {bill.variance_resolution.notes} · {bill.variance_resolution.by}</p>
+          )}
+        </Notice>
+      )}
+      {(bill.breakdown || []).length > 0 && (
+        <Table>
+          <TableHeader><TableRow><TableHead>Barang</TableHead><TableHead className="text-right">Diterima</TableHead>
+            <TableHead className="text-right">Ditagih</TableHead><TableHead className="text-right">Upah</TableHead><TableHead className="text-right">Nilai</TableHead></TableRow></TableHeader>
+          <TableBody>
+            {bill.breakdown.map((b, i) => (
+              <TableRow key={i}>
+                <TableCell>{b.product_name || b.sku_code || b.sku || '—'}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtNum(b.qty_actual)}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtNum(b.qty_billed ?? b.qty_actual)}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtRp(b.cmt_rate_per_pcs)}</TableCell>
+                <TableCell className="text-right tabular-nums">{fmtRp(b.line_amount)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      {detail.journal && (
+        <p className="text-xs text-muted-foreground">
+          Jurnal {detail.journal.je_number} · {fmtDate(detail.journal.date)} · {(detail.journal.lines || []).map((l) => `${l.account_code} ${l.debit ? 'D' : 'K'} ${fmtNum(l.debit || l.credit)}`).join(' · ')}
+        </p>
+      )}
+      {!bill.gl_posted && bill.post_error && <Notice tone="danger" icon={AlertTriangle}>Jurnal belum tercatat: {bill.post_error}</Notice>}
+      {disbursements.length > 0 && (
+        <div className="space-y-1" data-testid="cmt-disbursements">
+          {disbursements.map((d) => (
+            <div key={d.id} className="flex items-center justify-between gap-2 text-sm" data-testid={`cmt-disb-${d.id}`}>
+              <span>{fmtDate(d.payment_date)} · {d.cash_account_name} · <span className="tabular-nums">{fmtRp(d.amount)}</span>{d.gl_je_number ? ` · ${d.gl_je_number}` : ''}</span>
+              {canPost && <Button size="sm" variant="outline" onClick={() => voidDisbursement(d.id)} data-testid={`cmt-disb-void-${d.id}`}>Batalkan</Button>}
+            </div>
+          ))}
         </div>
       )}
-    </div>
+      {canPost && (bill.status || '').toLowerCase() !== 'cancelled' && payable > 0 && (
+        <div className="flex flex-wrap items-end gap-2" data-testid="cmt-pay-panel">
+          <SmartNativeSelect value={payForm.cash_account_id} onChange={(e) => setPayForm((f) => ({ ...f, cash_account_id: e.target.value }))}
+            className="h-9 w-64" aria-label="Rekening" data-testid="cmt-pay-cash-account">
+            <option value="">— Rekening kas/bank —</option>
+            {cashAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}{a.gl_account_code ? ` · ${a.gl_account_code}` : ''}</option>)}
+          </SmartNativeSelect>
+          <MoneyInput glass placeholder={`maks. ${fmtNum(payable)}`} value={payForm.amount} onChange={(e) => setPayForm((f) => ({ ...f, amount: e.target.value }))}
+            className="h-9 w-40" data-testid="cmt-pay-amount" />
+          <GlassInput type="date" value={payForm.payment_date} onChange={(e) => setPayForm((f) => ({ ...f, payment_date: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-date" />
+          <GlassInput placeholder="No. referensi" value={payForm.reference_no} onChange={(e) => setPayForm((f) => ({ ...f, reference_no: e.target.value }))} className="h-9 w-40" data-testid="cmt-pay-ref" />
+          <Button onClick={pay} disabled={busy} data-testid="cmt-pay-submit"><CheckCircle2 className="w-4 h-4" />Bayar vendor</Button>
+        </div>
+      )}
+      {bill.notes && <p className="text-xs text-muted-foreground">{bill.notes}</p>}
+    </DetailPanel>
   );
 }

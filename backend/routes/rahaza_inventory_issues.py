@@ -229,6 +229,8 @@ async def approve_mi(mid: str, request: Request):
                                   "shortages": e.shortages})
     except mie.BomMissing as e:
         raise HTTPException(400, str(e))
+    except mie.AlreadyProcessing as e:   # 2026-11-06 (Tahap 1): klik ganda / dua penyetuju
+        raise HTTPException(409, str(e))
     await log_activity(user["id"], user.get("name", ""), "approve+issue", "rahaza.mi", mi["mi_number"])
     return serialize_doc(out)
 

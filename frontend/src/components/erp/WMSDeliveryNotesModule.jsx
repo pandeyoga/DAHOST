@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -100,6 +101,29 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
   const [jobs, setJobs] = useState([]);
   const [selectedJobId, setSelectedJobId] = useState('');
   const [bomLoading, setBomLoading] = useState(false);
+  // 2026-11-06 (Tahap 2): SJ internal = transfer antar lokasi — lokasi asal/tujuan + barang dari master.
+  const [fromLoc, setFromLoc] = useState('');
+  const [toLoc, setToLoc] = useState('');
+  const [storageLocs, setStorageLocs] = useState([]);
+  const [materials, setMaterials] = useState([]);
+  const isInternal = sjType === 'SJ-INTERNAL';
+
+  useEffect(() => {
+    if (!createDialog || !isInternal || storageLocs.length) return;
+    (async () => {
+      try {
+        const [a, b] = await Promise.all([
+          fetch(`${API}/api/rahaza/storage-locations`, { headers }),
+          fetch(`${API}/api/rahaza/materials`, { headers }),
+        ]);
+        if (a.ok) setStorageLocs(await a.json());
+        if (b.ok) {
+          const m = await b.json();
+          setMaterials(Array.isArray(m) ? m : (m.items || []));
+        }
+      } catch { /* daftar pilihan tetap kosong; simpan ditolak backend dengan pesan jelas */ }
+    })();
+  }, [createDialog, isInternal, storageLocs.length, headers]);
 
   const loadJobs = useCallback(async () => {
     try {
@@ -196,7 +220,8 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
       shipper_name: fd.get('shipper_name') || '',
       vehicle_no: fd.get('vehicle_no') || '',
       notes: fd.get('notes') || '',
-      lines: editingLines.filter(l => l.description),
+      lines: editingLines.filter(l => l.description || l.material_id),
+      ...(isInternal ? { from_location_id: fromLoc, to_location_id: toLoc } : {}),
     };
     try {
       const r = await fetch(`${API}/api/wms/delivery-notes`, { method: 'POST', headers, body: JSON.stringify(data) });
@@ -212,6 +237,8 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
       setSjType('');
       setEditingLines([{ line_no: 1, description: '', qty: 0, unit: 'pcs', remarks: '' }]);
       setSelectedJobId('');
+      setFromLoc('');
+      setToLoc('');
       load();
     } catch (err) {
       toast.error(err?.message || 'Gagal membuat surat jalan');
@@ -221,11 +248,12 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
   const handleIssue = async (id) => {
     try {
       const r = await fetch(`${API}/api/wms/delivery-notes/${id}/issue`, { method: 'POST', headers, body: JSON.stringify({}) });
-      if (!r.ok) throw new Error();
-      toast.success('Surat jalan berhasil di-issue');
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.detail || 'Gagal menerbitkan surat jalan');
+      toast.success(d?.message || 'Surat jalan diterbitkan');
       load();
-    } catch {
-      toast.error('Gagal issue surat jalan');
+    } catch (err) {
+      toast.error(err?.message || 'Gagal menerbitkan surat jalan', { duration: 9000 });
     }
   };
 
@@ -234,11 +262,12 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
       const r = await fetch(`${API}/api/wms/delivery-notes/${id}/receive`, {
         method: 'POST', headers, body: JSON.stringify({ received_by: '' }),
       });
-      if (!r.ok) throw new Error();
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d?.detail || 'Gagal konfirmasi terima surat jalan');
       toast.success('Surat jalan dikonfirmasi diterima');
       load();
-    } catch {
-      toast.error('Gagal konfirmasi terima surat jalan');
+    } catch (err) {
+      toast.error(err?.message || 'Gagal konfirmasi terima surat jalan', { duration: 9000 });
     }
   };
 
@@ -305,6 +334,15 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
   const updateLine = (idx, field, value) => {
     const updated = [...editingLines];
     updated[idx][field] = value;
+    setEditingLines(updated);
+  };
+
+  // SJ internal: barang dipilih dari master → kode, uraian, satuan ikut master.
+  const pickMaterial = (idx, mid) => {
+    const m = materials.find((x) => x.id === mid);
+    const updated = [...editingLines];
+    updated[idx] = { ...updated[idx], material_id: mid, material_code: m?.code || '',
+      description: m?.name || updated[idx].description, unit: m?.unit || updated[idx].unit };
     setEditingLines(updated);
   };
 
@@ -809,6 +847,33 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                 testId="sj-number"
               />
 
+              {isInternal && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4" data-testid="sj-internal-locations">
+                  <div>
+                    <Label>Dari lokasi *</Label>
+                    <SmartNativeSelect value={fromLoc} onChange={(e) => setFromLoc(e.target.value)}
+                      className="w-full h-10 rounded-md border border-foreground/10 bg-foreground/5 px-2 text-sm"
+                      data-testid="input-sj-from-location">
+                      <option value="">— pilih lokasi asal —</option>
+                      {storageLocs.map((l) => <option key={l.id} value={l.id}>{l.code}{l.name ? ` · ${l.name}` : ''}</option>)}
+                    </SmartNativeSelect>
+                  </div>
+                  <div>
+                    <Label>Ke lokasi *</Label>
+                    <SmartNativeSelect value={toLoc} onChange={(e) => setToLoc(e.target.value)}
+                      className="w-full h-10 rounded-md border border-foreground/10 bg-foreground/5 px-2 text-sm"
+                      data-testid="input-sj-to-location">
+                      <option value="">— pilih lokasi tujuan —</option>
+                      {storageLocs.filter((l) => l.id !== fromLoc).map((l) => <option key={l.id} value={l.id}>{l.code}{l.name ? ` · ${l.name}` : ''}</option>)}
+                    </SmartNativeSelect>
+                  </div>
+                  <p className="sm:col-span-2 text-xs text-muted-foreground">
+                    Saat diterbitkan, stok keluar dari lokasi asal dan tercatat dalam perjalanan. Stok masuk ke lokasi
+                    tujuan saat surat jalan dikonfirmasi diterima. Barang setiap baris wajib dipilih dari master.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <Label>Alamat Penerima *</Label>
                 <Textarea name="recipient_address" required className="bg-foreground/5 border-foreground/10" data-testid="input-recipient-address" />
@@ -892,13 +957,22 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                   {editingLines.map((line, idx) => (
                     <div key={idx} className="flex gap-2 items-start bg-foreground/5 p-3 rounded-lg border border-foreground/10">
                       <div className="flex-1 grid grid-cols-4 gap-2">
-                        <Input
-                          placeholder="Deskripsi"
-                          value={line.description}
-                          onChange={(e) => updateLine(idx, 'description', e.target.value)}
-                          className="col-span-2 bg-foreground/5 border-foreground/10"
-                          data-testid={`line-desc-${idx}`}
-                        />
+                        {isInternal ? (
+                          <SmartNativeSelect value={line.material_id || ''} onChange={(e) => pickMaterial(idx, e.target.value)}
+                            className="col-span-2 w-full h-10 rounded-md border border-foreground/10 bg-foreground/5 px-2 text-sm"
+                            data-testid={`line-material-${idx}`}>
+                            <option value="">— pilih barang dari master —</option>
+                            {materials.map((m) => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+                          </SmartNativeSelect>
+                        ) : (
+                          <Input
+                            placeholder="Deskripsi"
+                            value={line.description}
+                            onChange={(e) => updateLine(idx, 'description', e.target.value)}
+                            className="col-span-2 bg-foreground/5 border-foreground/10"
+                            data-testid={`line-desc-${idx}`}
+                          />
+                        )}
                         <Input
                           type="number"
                           placeholder="Qty"
@@ -978,6 +1052,24 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                 <span className="text-muted-foreground/60 dark:text-zinc-500">Alamat:</span>
                 <p className="text-foreground font-medium">{viewDialog.recipient_address}</p>
               </div>
+              {(viewDialog.from_location_name || viewDialog.to_location_name) && (
+                <div className="grid grid-cols-2 gap-4" data-testid="view-sj-locations">
+                  <div>
+                    <span className="text-muted-foreground">Dari lokasi:</span>
+                    <p className="text-foreground font-medium">{viewDialog.from_location_name || '-'}</p>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Ke lokasi:</span>
+                    <p className="text-foreground font-medium">{viewDialog.to_location_name || '-'}</p>
+                  </div>
+                  <p className="col-span-2 text-xs text-muted-foreground">
+                    {viewDialog.stock_in_at ? 'Stok sudah masuk lokasi tujuan.'
+                      : viewDialog.stock_out_at ? 'Stok sudah keluar dari lokasi asal — dalam perjalanan.'
+                        : viewDialog.stock_legacy ? 'Surat jalan lama: stok tidak dipindah sistem (dokumen saja).'
+                          : 'Stok belum bergerak (masih draf).'}
+                  </p>
+                </div>
+              )}
 
               <div className="border-t border-foreground/10 pt-4">
                 <h3 className="font-medium mb-3 text-muted-foreground/60 dark:text-zinc-400">Items</h3>

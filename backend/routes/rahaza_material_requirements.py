@@ -22,7 +22,9 @@ Endpoint (prefix /api/rahaza):
         lines_resolved: [ {model_id, model_code, size_id, size_code, qty_pcs, bom_id, version, material_count} ],
         lines_without_bom: [ {model_id, model_code, size_id, size_code, qty_pcs, reason} ],
         aggregated: [ {material_id, code, name, category, category_name, material_type, is_kglike,
-                       unit, total_required, onhand, reserved, available, shortfall} ],
+                       unit, total_required, issued, remaining_required, onhand, reserved,
+                       available, shortfall} ],
+        (Tahap 2: `issued`/`remaining_required` hanya untuk sumber PO; `shortfall` = sisa − tersedia)
         totals: { grand_qty_pcs, total_material_lines, total_yarn_kg, total_shortfall_lines },
         warnings: [str]
       }
@@ -87,6 +89,33 @@ async def _stock_for_material(db, material_id: str):
     reserved = sum(read_reserved(s) for s in rows)
     available = max(0.0, onhand - reserved)
     return round(onhand, 4), round(reserved, 4), round(available, 4)
+
+
+async def issued_for_po(db, po_id: str) -> dict:
+    """{material_id: qty} yang SUDAH keluar untuk PO ini (2026-11-06, Tahap 2).
+
+    = Σ Pengeluaran Material berstatus `issued` milik PO (qty keluar − retur baik), + kain yang
+    terpakai order Cutting yang ditautkan ke baris PO ini. Satuan = satuan dasar material
+    (sama dengan kebutuhan BOM setelah `bom_uom.ensure_uom`)."""
+    out: dict = {}
+    if not po_id:
+        return out
+    async for mi in db.rahaza_material_issues.find(
+            {"$or": [{"production_po_id": po_id}, {"po_id": po_id}], "status": "issued"},
+            {"_id": 0, "items": 1}):
+        for it in mi.get("items") or []:
+            mid = it.get("material_id")
+            if not mid:
+                continue
+            net = float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0)
+            out[mid] = out.get(mid, 0.0) + net
+    async for co in db.cutting_orders.find(
+            {"po_id": po_id, "status": {"$ne": "cancelled"}},
+            {"_id": 0, "input_material_id": 1, "consumed_input_qty": 1}):
+        mid = co.get("input_material_id")
+        if mid:
+            out[mid] = out.get(mid, 0.0) + float(co.get("consumed_input_qty") or 0)
+    return {k: round(max(0.0, v), 4) for k, v in out.items()}
 
 
 async def _get_costing_settings(db):
@@ -250,14 +279,21 @@ async def aggregate_material_requirements(request: Request):
     total_shortfall_lines = 0
     grand_total_cost = 0.0
     settings = await _get_costing_settings(db) if include_cost else None
+    # 2026-11-06 (Tahap 2): laporan per PO mengurangi yang SUDAH dikeluarkan untuk PO itu —
+    # kekurangan dihitung dari sisa kebutuhan, bukan kebutuhan penuh (dulu material yang sudah
+    # keluar tetap tampil "kurang" dan memicu belanja ulang).
+    issued_map = await issued_for_po(db, po_id) if source == "po" else {}
     for rec in agg.values():
         kglike = rec["is_kglike"]
         total_required = _round(rec["_raw_total"], kglike, rounding)
+        issued = round(issued_map.get(rec.get("material_id"), 0.0), 4) if source == "po" else None
+        remaining_required = (round(max(0.0, total_required - issued), 4)
+                              if issued is not None else total_required)
         onhand = reserved = available = None
         shortfall = None
         if include_stock and rec.get("material_id"):
             onhand, reserved, available = await _stock_for_material(db, rec["material_id"])
-            shortfall = round(max(0.0, total_required - available), 4)
+            shortfall = round(max(0.0, remaining_required - available), 4)
             if shortfall > 0:
                 total_shortfall_lines += 1
         unit_cost = subtotal_cost = None
@@ -276,6 +312,8 @@ async def aggregate_material_requirements(request: Request):
             "is_kglike": kglike,
             "unit": rec["unit"],
             "total_required": total_required,
+            "issued": issued,
+            "remaining_required": remaining_required,
             "onhand": onhand,
             "reserved": reserved,
             "available": available,

@@ -13,6 +13,7 @@ Modul ini menggantikan 4 helper terduplikasi (`_get_accessory_location_id`, `_st
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -23,6 +24,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 ACC_LOC_CODE = "ZNA-AKSESORIS"
+_ID_LIKE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def category_view(mat: dict, cats: dict | None = None) -> tuple:
+    """(nama kategori untuk layar, id kategori master) — 2026-11-06 (Tahap 2).
+
+    Sinkronisasi master (`core.master_sync`) menyimpan `category` = ID kategori master, sehingga
+    kolom Kategori menampilkan UUID. Nama diambil dari `category_name` / master; teks bebas lama
+    tetap tampil apa adanya; ID tanpa padanan tidak pernah ditampilkan."""
+    cats = cats or {}
+    raw = str((mat or {}).get("category") or "").strip()
+    cid = (mat or {}).get("category_id") or (raw if raw in cats else "")
+    name = ((mat or {}).get("category_name") or (cats.get(cid) or {}).get("name") or "").strip()
+    if not name and raw and raw != cid and not _ID_LIKE.match(raw):
+        name = raw
+    return name, cid or ""
+
+
+async def category_map(db) -> dict:
+    """{id: {id, code, name}} master kategori material (untuk `category_view`)."""
+    return {c["id"]: c async for c in db.rahaza_material_categories.find(
+        {}, {"_id": 0, "id": 1, "code": 1, "name": 1})}
 
 
 def _now():
@@ -86,17 +109,24 @@ async def all_accessory_stock(db) -> dict:
 
 
 async def stock_rows(db, material_id: str) -> list[dict]:
-    """Baris stok fisik 1 material (lintas lokasi), qty dibaca lintas-skema A/B/C.
+    """Baris stok fisik 1 material (lintas lokasi) yang BOLEH DIPAKAI, qty dibaca lintas-skema A/B/C.
 
     `flat=False` menandai baris warisan Skema-B (lokasi BERSARANG, tanpa field
     `location_id` di level atas) — baris itu hanya bisa dipotong lewat
     `stock_service.issue_row` (by row id), bukan `issue(material_id, location_id)`.
+
+    2026-11-06 (Tahap 1): baris KARANTINA dilewati (penanda lokasi/baris terblokir yang sama
+    dengan stok jual & WAC barang jadi: `core.catalog_stock`). Dulu pengeluaran aksesoris bisa
+    memotong barang reject di lokasi karantina — stoknya diblokir lewat `reserved`, tetapi
+    pemotongan hanya memeriksa qty. Barang karantina keluar lewat dokumen karantina sendiri.
     """
+    from core.catalog_stock import blocked_location_ids, row_is_sellable
     rows = await stock_service.list_rows(material_id, db=db)
+    blocked = await blocked_location_ids(db) if rows else set()
     out = []
     for r in rows or []:
         qty = float(read_qty(r) or 0)
-        if qty <= 0:
+        if qty <= 0 or not row_is_sellable(r, blocked):
             continue
         flat_loc = r.get("location_id")
         nested = r.get("location") if isinstance(r.get("location"), dict) else {}
@@ -104,6 +134,11 @@ async def stock_rows(db, material_id: str) -> list[dict]:
         out.append({"stock_id": r.get("id"), "location_id": loc,
                     "qty": qty, "flat": bool(flat_loc)})
     return out
+
+
+async def usable_qty(db, material_id: str) -> float:
+    """Stok aksesoris yang bisa dikeluarkan = on-hand tanpa baris karantina (lihat `stock_rows`)."""
+    return round(sum(r["qty"] for r in await stock_rows(db, material_id)), 4)
 
 
 async def issue_across_locations(db, material_id: str, qty: float, *,

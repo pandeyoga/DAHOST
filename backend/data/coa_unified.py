@@ -78,6 +78,9 @@ DA_UNIFIED_ACCOUNTS = [
     # 2026-11-02 (owner No.19a): akun baru selisih opname/penyesuaian/lepas karantina — dulu jatuh
     # ke 6-2400 ATK. Di kelompok HPP sebelah 5-1900 PPV; induk 5-0000 karena 5-1000 tetap postable.
     ("5-1950", "Selisih Persediaan", "COGS", False, "5-0000", None, None),
+    # 2026-11-06 (Tahap 2, paket HPP): sisa WIP per PO produksi saat PO ditutup (bahan aktual vs BOM
+    # standar yang dikredit lapisan FG) — profil `production_po_wip_variance`.
+    ("5-1960", "Selisih Produksi (Standar vs Aktual)", "COGS", False, "5-0000", None, None),
     ("5-2100", "Biaya Vendor CMT – Cutting", "COGS", False, "5-0000", None, None),
     ("5-2200", "Biaya Vendor CMT – Jahit", "COGS", False, "5-0000", None, None),
     ("5-3110", "Listrik – Unit Usaha Lain", "COGS", False, "5-3000", None, None),

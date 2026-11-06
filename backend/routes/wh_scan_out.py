@@ -7,6 +7,9 @@ Lapisan HTTP tipis di atas `core/scan_out.py` (semua aturan & angka ada di sana)
   GET  /api/wh/scan-out/today?location_id=   lembar hari ini + baris + daftar merah + lembar lain yang terbuka
   POST /api/wh/scan-out/scan                 {location_id, code, client_scan_id, multiplier?, kind?, account_id?}
   POST /api/wh/scan-out/lines/{id}/void      {reason?} — salah scan sebelum Tutup Hari
+  GET  /api/wh/scan-out/retry-queue          ?location_id=&sheet_id= antrean scan gagal di server (Tahap 2)
+  POST /api/wh/scan-out/lines/{id}/retry     kirim ulang baris gagal (id sama → tidak dobel)
+  POST /api/wh/scan-out/lines/{id}/discard   {reason?} batalkan baris gagal (langkah yang terjadi dibalik)
   POST /api/wh/scan-out/sheets/{id}/close    Tutup Hari (SPV) → satu jurnal HPP per lembar
   GET  /api/wh/scan-out/sheets               ?date=&location_id=&status=
   GET  /api/wh/scan-out/report               ?date=&location_id=  laporan harian
@@ -109,12 +112,19 @@ async def today(request: Request, location_id: Optional[str] = None):
         r["net"] += so.line_sign(ln) * int(ln.get("qty") or 0)
     # lembar TANGGAL LALU yang belum tertutup (biasanya jurnalnya gagal) — perlu tindakan SPV
     others = [s for s in await so.sheets_still_open(db) if (s.get("date") or "") < day]
+    # 2026-11-06 (Tahap 2): antrean kirim ulang DI SERVER — baris gagal lokasi ini (lintas tanggal),
+    # milik petugas yang login; SPV melihat semua petugas.
+    retry = []
+    if location_id:
+        retry = await so.retry_queue(db, location_id=location_id,
+                                     operator_id=None if _can_supervise(user) else str(user.get("id") or ""))
     return serialize_doc({
         "date": day, "location_id": location_id, "sheets": sheets, "open_sheet": open_sheet,
         "totals": totals, "open_totals": open_totals,
         "per_sku": sorted(per_sku.values(), key=lambda r: -r["net"]),
         "lines": [so.public_line(ln) for ln in lines[:500]], "rejects": rejects,
         "other_open_sheets": others,
+        "retry_queue": retry,
         "can_supervise": _can_supervise(user),
         "can_scan": check_role(user, so.SCAN_ROLES, "warehouse.manage"),
         "me": {"id": str(user.get("id") or ""), "name": user.get("name")},
@@ -154,6 +164,46 @@ async def void(line_id: str, request: Request):
     ln = out.get("line") or {}
     await log_activity(user["id"], user.get("name", ""), "void", "wh.scan_out",
                        f"{ln.get('sheet_number')} {ln.get('sku')} ×{ln.get('qty')} ({ln.get('kind')})")
+    return serialize_doc(out)
+
+
+@router.get("/retry-queue")
+async def retry_queue(request: Request, location_id: Optional[str] = None, sheet_id: Optional[str] = None):
+    """2026-11-06 (Tahap 2): antrean scan gagal yang tersimpan di server (per lembar / petugas)."""
+    user = await require_auth(request)
+    rows = await so.retry_queue(get_db(), location_id=location_id or None, sheet_id=sheet_id or None,
+                                operator_id=None if _can_supervise(user) else str(user.get("id") or ""))
+    return serialize_doc(rows)
+
+
+@router.post("/lines/{line_id}/retry")
+async def retry(line_id: str, request: Request):
+    """Kirim ulang satu baris dari antrean server (id baris yang sama → tidak dobel)."""
+    user = await _require(request, so.SCAN_ROLES, "warehouse.manage", "hanya peran gudang/packing")
+    try:
+        out = await so.retry_line(get_db(), line_id, user=user, may_retry_others=_can_supervise(user))
+    except so.ScanOutError as e:
+        raise _err(e)
+    return serialize_doc(out)
+
+
+@router.post("/lines/{line_id}/discard")
+async def discard(line_id: str, request: Request):
+    """Batalkan baris yang gagal diproses (langkah yang sempat terjadi dibalik)."""
+    user = await _require(request, so.SCAN_ROLES, "warehouse.manage", "hanya peran gudang/packing")
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — badan kosong boleh
+        body = {}
+    try:
+        out = await so.discard_failed_line(get_db(), line_id, user=user, reason=(body or {}).get("reason") or "",
+                                           may_void_others=_can_supervise(user))
+    except so.ScanOutError as e:
+        raise _err(e)
+    ln = out.get("line") or {}
+    await log_activity(user["id"], user.get("name", ""), "discard", "wh.scan_out",
+                       f"{ln.get('sheet_number')} {ln.get('sku')} ×{ln.get('qty')} (scan gagal dibatalkan)")
     return serialize_doc(out)
 
 

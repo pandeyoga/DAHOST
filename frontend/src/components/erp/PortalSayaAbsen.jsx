@@ -1,214 +1,258 @@
 /**
- * PortalSayaAbsen — ABSEN DI DALAM PORTAL SAYA (tanpa pindah halaman / login ulang).
+ * PortalSayaAbsen — SATU layar absen di Portal Saya (menu "Absen Saya").
  *
- * ════════════════════════════════════════════════════════════════════════════
- * KENAPA MODUL INI ADA (temuan 2026-07-26, dilaporkan user)
- * ════════════════════════════════════════════════════════════════════════════
- * 1. Tombol "Absen Sekarang" di Portal Saya dulu memanggil
- *    `window.location.href = '/absen'` ⇒ KELUAR dari SPA, halaman penuh dimuat
- *    ulang dengan tampilan berbeda, dan terasa seperti "disuruh login lagi".
- * 2. Halaman `/absen` menampilkan KARYAWAN YANG SALAH (login Siti Rahayu DA-002
- *    tapi tampil "Budi Operator OP-001") karena backend jatuh ke "karyawan
- *    pertama di DB". Akar itu sudah ditutup di `utils/employee_identity.py`.
- * 3. Hanya ada clock-in & clock-out — TIDAK ADA tombol Istirahat (keluar/masuk)
- *    dan Izin (keluar/masuk), padahal keduanya harus tercatat di HR.
+ * Tahap 2 (2026-11-06):
+ * · Cetakan PageLayout; tombol absen PALING ATAS (layar HP 390 px), jam server yang akan dicatat tampil.
+ * · Lokasi GPS dibaca BARU saat tombol ditekan (maximumAge: 0) — dulu dibaca sekali saat halaman dibuka lalu
+ *   dipakai ulang (buka halaman di kantor pagi, absen pulang dari rumah). Posisi basi / kurang akurat / di luar
+ *   radius → pesan + tombol "Coba lagi". Server memeriksa ulang (utils/attendance_policy.check_gps_fix).
+ * · Selfie HANYA dari kamera (getUserMedia, kamera depan). Tidak ada unggah dari galeri.
+ * · Shift lewat tengah malam: record kemarin yang masih terbuka ditutup lewat tombol "Absen pulang".
+ * · Riwayat 30 hari + "Ajukan koreksi absen" (diputus HR; tanggal yang sudah digaji jadi penyesuaian gaji).
+ * · Menu "Kehadiran" lama digabung ke sini (satu menu absen).
  *
- * ════════════════════════════════════════════════════════════════════════════
- * FASE 16 — KEPUTUSAN USER 2026-07-26
- * ════════════════════════════════════════════════════════════════════════════
- * · **Selfie + lokasi WAJIB.** UI menuntun: minta izin kamera & lokasi lebih
- *   dulu, tampilkan jarak ke kantor, dan tombol absen dikunci + diberi alasan
- *   yang jelas bila syarat belum terpenuhi (bukan gagal diam-diam di server).
- * · **Izin keluar WAJIB disetujui atasan/HR.** Karyawan MENGAJUKAN; status
- *   "menunggu persetujuan" terlihat, bisa dibatalkan; sesi baru berjalan
- *   setelah disetujui. Istirahat tetap langsung.
- *
- * Modul ini memakai token SPA yang sama (prop `token`) sehingga tidak ada login
- * kedua, dan memanggil endpoint yang identitasnya ditentukan server (tanpa
- * mengirim `employee_id` ⇒ mustahil "titip absen").
+ * Identitas ditentukan server dari token (employee_id tidak dikirim ⇒ tidak bisa "titip absen").
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 import {
-  Clock, LogIn, LogOut, Coffee, DoorOpen, MapPin, Camera, Loader2,
-  RefreshCw, AlertCircle, CheckCircle2, Timer, CalendarClock, ShieldCheck,
-  Hourglass, XCircle, Upload, RotateCcw,
+  LogIn, LogOut, Coffee, DoorOpen, MapPin, Camera, Loader2, RefreshCw, AlertCircle,
+  CheckCircle2, Timer, Hourglass, XCircle, RotateCcw, CalendarClock, PencilLine,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const TZ = 'Asia/Jakarta';
 
-const fmtTime = (v) => {
+const fmtTime = (v, seconds = false) => {
   if (!v) return '--:--';
   try {
     return new Date(v).toLocaleTimeString('id-ID', {
-      hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta',
+      hour: '2-digit', minute: '2-digit', ...(seconds ? { second: '2-digit' } : {}), timeZone: TZ,
     });
   } catch { return '--:--'; }
 };
-
+const fmtDay = (iso) => {
+  try {
+    return new Date(`${iso}T00:00:00+07:00`).toLocaleDateString('id-ID', {
+      weekday: 'short', day: '2-digit', month: 'short', timeZone: TZ,
+    });
+  } catch { return iso; }
+};
 const fmtDur = (mins) => {
   const m = Math.max(0, Math.round(Number(mins) || 0));
-  if (m < 60) return `${m} mnt`;
-  return `${Math.floor(m / 60)} j ${m % 60} mnt`;
+  return m < 60 ? `${m} mnt` : `${Math.floor(m / 60)} j ${m % 60} mnt`;
 };
-
 const fmtMeter = (m) => (m == null ? '-' : (m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`));
+const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
+const daysAgoIso = (n) => new Date(Date.now() - n * 86400000).toLocaleDateString('en-CA', { timeZone: TZ });
 
-/** Haversine ringkas — hanya untuk PRATINJAU jarak di layar.
- *  Keputusan diterima/ditolaknya absen tetap 100% di server. */
+/** Jarak hanya untuk PRATINJAU di layar — keputusan tetap di server. */
 const distanceM = (a, b) => {
   if (!a || !b || a.lat == null || b.lat == null) return null;
   const R = 6371000, rad = (d) => (d * Math.PI) / 180;
   const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
-  const s = Math.sin(dLat / 2) ** 2
-    + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(s));
 };
 
-const APPROVAL_LABEL = {
-  pending: { text: 'Menunggu persetujuan', cls: 'bg-amber-100 text-amber-800 border-amber-300' },
-  approved: { text: 'Disetujui', cls: 'bg-emerald-100 text-emerald-800 border-emerald-300' },
-  rejected: { text: 'Ditolak', cls: 'bg-red-100 text-red-800 border-red-300' },
-  cancelled: { text: 'Dibatalkan', cls: 'bg-slate-100 text-slate-700 border-slate-300' },
-  not_required: { text: 'Tercatat', cls: 'bg-blue-100 text-blue-800 border-blue-300' },
-};
+const STATUS_LABEL = { hadir: 'Hadir', izin: 'Izin', sakit: 'Sakit', cuti: 'Cuti', alpa: 'Alpa', alfa: 'Alpa', libur: 'Libur' };
+const STATUS_TONE = { hadir: 'success', alpa: 'danger', alfa: 'danger', libur: 'muted' };
+const CORR_LABEL = { pending: 'Koreksi menunggu HR', approved: 'Koreksi disetujui', rejected: 'Koreksi ditolak' };
+const CORR_TONE = { pending: 'warning', approved: 'success', rejected: 'danger' };
 
-export default function PortalSayaAbsen({ token }) {
-  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
+/** Posisi GPS BARU (tidak memakai cache browser). */
+const readFix = () => new Promise((resolve, reject) => {
+  if (!navigator.geolocation) {
+    reject(new Error('Perangkat/browser ini tidak mendukung lokasi GPS.'));
+    return;
+  }
+  navigator.geolocation.getCurrentPosition(
+    (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy, gps_at: p.timestamp }),
+    (err) => reject(new Error(err.code === 1
+      ? 'Izin lokasi ditolak. Aktifkan izin lokasi untuk situs ini, lalu tekan Coba lagi.'
+      : 'Lokasi belum terbaca. Pastikan GPS menyala, lalu tekan Coba lagi.')),
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+  );
+});
+
+export default function PortalSayaAbsen({ token, headers: headersProp }) {
+  const headers = useMemo(() => headersProp || { Authorization: `Bearer ${token}` }, [headersProp, token]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [status, setStatus] = useState(null);
   const [office, setOffice] = useState(null);
-  const [geo, setGeo] = useState(null);           // { lat, lng, accuracy }
-  const [geoError, setGeoError] = useState('');
+  const [geo, setGeo] = useState(null);
+  const [geoMsg, setGeoMsg] = useState('');
+  const [actionError, setActionError] = useState(null);   // { text, retry }
+  const [clockOffset, setClockOffset] = useState(0);
+  const [tick, setTick] = useState(Date.now());
+  const [history, setHistory] = useState([]);
+  const [corrections, setCorrections] = useState([]);
   const [izinOpen, setIzinOpen] = useState(false);
   const [izinReason, setIzinReason] = useState('');
   const [camOpen, setCamOpen] = useState(false);
-  const [camAction, setCamAction] = useState('in');   // 'in' | 'out'
+  const [camAction, setCamAction] = useState('in');
   const [camError, setCamError] = useState('');
-  const [shot, setShot] = useState('');               // base64 hasil jepret
+  const [shot, setShot] = useState('');
+  const [fix, setFix] = useState(null);
+  const [corrOpen, setCorrOpen] = useState(null);         // tanggal yang dikoreksi
+  const [corrForm, setCorrForm] = useState({ clock_in: '', clock_out: '', reason: '' });
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const fileRef = useRef(null);
 
-  // ── Muat status + kebijakan kantor ─────────────────────────────────────
   const load = useCallback(async () => {
     try {
-      const [s, o] = await Promise.all([
+      const [s, o, h, c] = await Promise.all([
         axios.get(`${API}/api/rahaza/attendance/my-status`, { headers }),
-        axios.get(`${API}/api/rahaza/attendance/office-location`, { headers })
-          .catch(() => ({ data: null })),
+        axios.get(`${API}/api/rahaza/attendance/office-location`, { headers }).catch(() => ({ data: null })),
+        axios.get(`${API}/api/rahaza/self/attendance`, { headers, params: { from: daysAgoIso(30), to: todayIso() } })
+          .catch(() => ({ data: { records: [] } })),
+        axios.get(`${API}/api/rahaza/attendance/corrections/my`, { headers }).catch(() => ({ data: { items: [] } })),
       ]);
       setStatus(s.data || {});
       setOffice(o.data || null);
+      setHistory(h.data?.records || []);
+      setCorrections(c.data?.items || []);
+      if (s.data?.server_time) setClockOffset(new Date(s.data.server_time).getTime() - Date.now());
     } catch (e) {
       toast.error(e.response?.data?.detail || 'Gagal memuat status kehadiran');
     } finally { setLoading(false); }
   }, [headers]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { const t = setInterval(() => setTick(Date.now()), 1000); return () => clearInterval(t); }, []);
 
-  // ── Lokasi: diminta sejak awal supaya karyawan tahu statusnya ──────────
-  const askLocation = useCallback(() => {
-    if (!navigator.geolocation) {
-      setGeoError('Perangkat/browser ini tidak mendukung lokasi GPS.');
-      return;
-    }
-    setGeoError('');
-    navigator.geolocation.getCurrentPosition(
-      (p) => setGeo({ lat: p.coords.latitude, lng: p.coords.longitude, accuracy: p.coords.accuracy }),
-      (err) => setGeoError(
-        err.code === 1
-          ? 'Izin lokasi ditolak. Aktifkan izin lokasi untuk situs ini lalu tekan "Coba lagi".'
-          : `Lokasi belum terbaca (${err.message}).`),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 },
-    );
+  // Pratinjau lokasi untuk baris status (tombol absen tetap membaca lokasi baru saat ditekan).
+  const previewLocation = useCallback(async () => {
+    setGeoMsg('');
+    try { setGeo(await readFix()); } catch (e) { setGeoMsg(e.message); }
   }, []);
-
-  useEffect(() => { askLocation(); }, [askLocation]);
+  useEffect(() => { previewLocation(); }, [previewLocation]);
 
   const stopCam = useCallback(() => {
     try { streamRef.current?.getTracks?.().forEach((t) => t.stop()); } catch { /* noop */ }
     streamRef.current = null;
   }, []);
-
   useEffect(() => () => stopCam(), [stopCam]);
 
-  const openCam = async (action) => {
-    setCamAction(action);
-    setShot('');
+  const startCam = useCallback(async () => {
     setCamError('');
-    setCamOpen(true);
+    stopCam();
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error('tidak didukung');
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
       streamRef.current = s;
-      // video di-render setelah dialog terbuka → beri satu tick
       setTimeout(() => { if (videoRef.current) videoRef.current.srcObject = s; }, 120);
     } catch {
-      setCamError('Kamera tidak bisa diakses. Izinkan kamera di browser, atau unggah foto dari galeri.');
+      setCamError('Kamera tidak bisa dibuka. Izinkan akses kamera untuk situs ini di pengaturan browser, '
+        + 'tutup aplikasi lain yang memakai kamera, lalu tekan Coba lagi. Foto dari galeri tidak diterima.');
     }
-  };
+  }, [stopCam]);
+
+  const closeCam = () => { stopCam(); setCamOpen(false); setShot(''); setCamError(''); };
 
   const capture = () => {
     const v = videoRef.current;
-    if (!v || !v.videoWidth) {
-      setCamError('Kamera belum siap. Tunggu sebentar lalu coba lagi.');
-      return;
-    }
+    if (!v || !v.videoWidth) { setCamError('Kamera belum siap. Tunggu sebentar lalu coba lagi.'); return; }
     const c = document.createElement('canvas');
     c.width = 640;
     c.height = Math.round((v.videoHeight / v.videoWidth) * 640) || 480;
     c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
-    setShot((c.toDataURL('image/jpeg', 0.8).split(',')[1]) || '');
+    setShot(c.toDataURL('image/jpeg', 0.8).split(',')[1] || '');
     setCamError('');
   };
 
-  /** Jalur cadangan: unggah foto (dipakai bila kamera tidak tersedia, dan
-   *  dipakai QA otomatis yang tidak bisa memakai getUserMedia). */
-  const onPickFile = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (!/^image\//.test(f.type)) { setCamError('File harus berupa gambar.'); return; }
-    const rd = new FileReader();
-    rd.onload = () => { setShot(String(rd.result).split(',')[1] || ''); setCamError(''); };
-    rd.readAsDataURL(f);
+  const emp = status?.employee || {};
+  const today = status?.today || null;
+  const openPrev = status?.open_previous || null;
+  const active = status?.active_session || null;
+  const sessions = today?.sessions || [];
+  const pendingPermit = status?.pending_permit
+    || sessions.find((s) => s.kind === 'izin' && (s.approval_status || 'pending') === 'pending');
+  const hasIn = Boolean(today?.clock_in);
+  const hasOut = Boolean(today?.clock_out);
+  const fullDayLeave = Boolean(today?.leave_request_id && !today?.half_day);
+  const late = Number(today?.late_minutes ?? status?.late_minutes ?? 0);
+  const requireGeo = office?.require_geofence !== false;
+  const requireSelfie = office?.require_selfie !== false;
+  const officeSet = Boolean(office?.configured);
+  const radius = Number(office?.geofence_radius_m || 300);
+  const maxAcc = Number(office?.gps_max_accuracy_m || 100);
+  const dist = officeSet && geo ? distanceM(geo, { lat: office.lat, lng: office.lng }) : null;
+  const serverNow = new Date(tick + clockOffset);
+  const clockMode = openPrev ? 'out-prev' : (!hasIn ? 'in' : (!hasOut ? 'out' : 'done'));
+
+  /** Baca lokasi BARU dan periksa (pratinjau) sebelum kamera dibuka / absen dikirim. */
+  const checkLocation = async () => {
+    if (!requireGeo) return null;
+    if (!officeSet) throw new Error('Lokasi kantor belum diatur Admin HR (menu Absensi › Absen otomatis).');
+    const f = await readFix();
+    setGeo(f);
+    if (f.accuracy > maxAcc) {
+      throw new Error(`Lokasi GPS kurang akurat (±${Math.round(f.accuracy)} m, batas ${maxAcc} m). `
+        + 'Pindah ke dekat jendela atau tempat terbuka, lalu tekan Coba lagi.');
+    }
+    const d = distanceM(f, { lat: office.lat, lng: office.lng });
+    if (d != null && d > radius) {
+      throw new Error(`Anda ${fmtMeter(d)} dari ${office?.name || 'kantor'} (batas ${fmtMeter(radius)}). `
+        + 'Absen hanya bisa di area kantor. Bila Anda sudah di kantor, tekan Coba lagi.');
+    }
+    return f;
   };
 
-  const closeCam = () => { stopCam(); setCamOpen(false); setShot(''); setCamError(''); };
-
-  // ── Aksi ───────────────────────────────────────────────────────────────
-  const doClock = async (action) => {
-    if (!shot) { setCamError('Ambil selfie dulu — foto wajib untuk absen.'); return; }
-    setBusy(action);
+  const send = async (action, photo, f0) => {
+    setBusy('send');
     try {
+      // Lokasi dibaca ulang bila pembacaan saat tombol ditekan sudah lebih dari 30 detik (mis. lama memotret).
+      const f = requireGeo && (!f0 || Date.now() - f0.gps_at > 30000) ? await checkLocation() : f0;
       const url = action === 'in'
         ? `${API}/api/rahaza/attendance/selfie/clock-in`
         : `${API}/api/rahaza/attendance/selfie/clock-out`;
-      // employee_id TIDAK dikirim → server memakai identitas token (anti titip absen)
-      // 2026-11-02 (No.59a): verifikasi wajah AI dimatikan — `do_face_check` tidak dikirim;
-      // absen selfie masuk antrean review HR (pesan dari server: "menunggu review HR").
       const r = await axios.post(url, {
-        lat: geo?.lat ?? null, lng: geo?.lng ?? null,
-        photo_base64: shot,
+        lat: f?.lat ?? null, lng: f?.lng ?? null, accuracy: f?.accuracy ?? null,
+        gps_at: f?.gps_at ?? null, gps_sent_at: Date.now(), photo_base64: photo,
       }, { headers });
       toast.success(r.data?.message || (action === 'in' ? 'Absen masuk tercatat' : 'Absen pulang tercatat'));
+      setActionError(null);
       closeCam();
       load();
     } catch (e) {
-      const msg = e.response?.data?.detail || 'Gagal mencatat absen';
-      setCamError(msg);
-      toast.error(msg);
+      const msg = e.response?.data?.detail || e.message || 'Gagal mencatat absen';
+      setActionError({ text: msg, retry: () => startClock(action) });
+      closeCam();
     } finally { setBusy(''); }
+  };
+
+  const startClock = async (action) => {
+    setActionError(null);
+    setBusy('gps');
+    let f = null;
+    try {
+      f = await checkLocation();
+    } catch (e) {
+      setActionError({ text: e.message, retry: () => startClock(action) });
+      setBusy('');
+      return;
+    }
+    setBusy('');
+    setFix(f);
+    setCamAction(action);
+    if (!requireSelfie) { send(action, '', f); return; }
+    setShot('');
+    setCamOpen(true);
+    startCam();
   };
 
   const startSession = async (kind, reason = '') => {
@@ -220,9 +264,7 @@ export default function PortalSayaAbsen({ token }) {
       toast.success(r.data?.message || (kind === 'izin' ? 'Pengajuan izin terkirim' : 'Istirahat dimulai'));
       setIzinOpen(false); setIzinReason('');
       load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || 'Gagal memulai sesi');
-    } finally { setBusy(''); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal memulai sesi'); } finally { setBusy(''); }
   };
 
   const endSession = async () => {
@@ -233,9 +275,7 @@ export default function PortalSayaAbsen({ token }) {
       }, { headers });
       toast.success(`Kembali kerja — tercatat ${fmtDur(r.data?.minutes)}`);
       load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || 'Gagal menutup sesi');
-    } finally { setBusy(''); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal menutup sesi'); } finally { setBusy(''); }
   };
 
   const cancelPermit = async (id) => {
@@ -244,426 +284,361 @@ export default function PortalSayaAbsen({ token }) {
       await axios.post(`${API}/api/rahaza/attendance/permits/${id}/cancel`, {}, { headers });
       toast.success('Pengajuan izin dibatalkan');
       load();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || 'Gagal membatalkan pengajuan');
-    } finally { setBusy(''); }
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal membatalkan pengajuan'); } finally { setBusy(''); }
   };
+
+  const openCorrection = (rec) => {
+    setCorrOpen(rec.date);
+    setCorrForm({ clock_in: rec.clock_in ? fmtTime(rec.clock_in).replace('.', ':') : '',
+                  clock_out: rec.clock_out ? fmtTime(rec.clock_out).replace('.', ':') : '', reason: '' });
+  };
+
+  const submitCorrection = async () => {
+    setBusy('corr');
+    try {
+      await axios.post(`${API}/api/rahaza/attendance/corrections`, { date: corrOpen, ...corrForm }, { headers });
+      toast.success('Pengajuan koreksi terkirim ke HR');
+      setCorrOpen(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || 'Gagal mengirim koreksi'); } finally { setBusy(''); }
+  };
+
+  const corrByDate = useMemo(() => {
+    const m = {};
+    corrections.forEach((c) => { if (!m[c.date] || c.status === 'pending') m[c.date] = c; });
+    return m;
+  }, [corrections]);
 
   // ── Render ─────────────────────────────────────────────────────────────
   if (loading) {
     return (
-      <div className="space-y-4 p-6" data-testid="portal-absen-loading">
-        <Skeleton className="h-28 w-full" />
+      <div className="space-y-4" data-testid="portal-absen-loading">
         <Skeleton className="h-40 w-full" />
+        <Skeleton className="h-24 w-full" />
       </div>
     );
   }
 
-  // Akun belum ditautkan ke data karyawan → jelaskan, jangan tampilkan orang lain.
   if (status && status.linked === false) {
     return (
-      <div className="p-6" data-testid="portal-absen-unlinked">
-        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/30">
-          <CardContent className="pt-5 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-amber-900 dark:text-amber-200">
-                Akun belum ditautkan ke data karyawan
-              </p>
-              <p className="text-sm text-amber-800 dark:text-amber-300 mt-1">
-                {status.message || 'Minta Admin HR menautkan akun Anda lewat menu Data Karyawan → Tautkan Akun.'}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      <PageLayout title="Absen saya" subtitle="Absen masuk dan pulang dengan selfie di area kantor."
+        testId="portal-absen-unlinked">
+        <Notice tone="warning" icon={AlertCircle} title="Akun belum ditautkan ke data karyawan">
+          {status.message || 'Minta Admin HR menautkan akun Anda lewat menu Data Karyawan › Tautkan akun.'}
+        </Notice>
+      </PageLayout>
     );
   }
 
-  const emp = status?.employee || {};
-  const today = status?.today || null;
-  const active = status?.active_session || null;
-  const sessions = today?.sessions || [];
-  const pendingPermit = status?.pending_permit
-    || sessions.find((s) => s.kind === 'izin' && (s.approval_status || 'pending') === 'pending');
-  const hasIn = Boolean(today?.clock_in);
-  const hasOut = Boolean(today?.clock_out);
-  const late = Number(today?.late_minutes ?? status?.late_minutes ?? 0);
-
-  const requireGeo = office?.require_geofence !== false;
-  const officeSet = Boolean(office?.configured);
-  const dist = officeSet && geo ? distanceM(geo, { lat: office.lat, lng: office.lng }) : null;
-  const inRange = dist == null ? null : dist <= Number(office?.geofence_radius_m || 300);
-
-  // Alasan tombol absen dikunci — DITAMPILKAN, bukan disembunyikan.
-  let blockReason = '';
-  if (requireGeo && !officeSet) {
-    blockReason = 'Lokasi kantor belum diatur Admin HR (menu Absensi → Konfigurasi).';
-  } else if (requireGeo && !geo) {
-    blockReason = geoError || 'Menunggu izin lokasi GPS…';
-  } else if (requireGeo && inRange === false) {
-    blockReason = `Anda ${fmtMeter(dist)} dari ${office?.name || 'kantor'} (batas ${fmtMeter(office?.geofence_radius_m)}). Absen hanya bisa di area kantor.`;
-  }
-  const canClock = !blockReason;
+  const locLine = !requireGeo ? 'Lokasi tidak diwajibkan'
+    : !officeSet ? 'Lokasi kantor belum diatur'
+      : !geo ? (geoMsg || 'Membaca lokasi…')
+        : dist <= radius ? `Di area kantor (${fmtMeter(dist)}, akurasi ±${Math.round(geo.accuracy)} m)`
+          : `Di luar area kantor (${fmtMeter(dist)} dari ${office?.name || 'kantor'})`;
+  const locTone = !geo || !officeSet ? 'text-muted-foreground'
+    : dist <= radius ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]';
+  const mainLabel = {
+    in: 'Absen masuk', out: 'Absen pulang', 'out-prev': `Absen pulang shift ${fmtDay(openPrev?.date)}`,
+    done: 'Absen hari ini selesai',
+  }[clockMode];
+  const MainIcon = clockMode === 'in' ? LogIn : (clockMode === 'done' ? CheckCircle2 : LogOut);
+  const outBlocked = Boolean(active) || Boolean(pendingPermit);
 
   return (
-    <div className="space-y-5 p-6" data-testid="portal-absen-page">
-      {/* Identitas — dulu bisa salah orang, sekarang dijamin dari token */}
-      <Card>
-        <CardContent className="pt-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="text-xl font-bold flex items-center gap-2">
-                <Clock className="w-5 h-5 text-primary" /> Absen Saya
-              </h1>
-              <p className="text-sm text-muted-foreground mt-0.5" data-testid="absen-identity">
-                {emp.name || '-'} · {emp.employee_code || '-'}
-                {emp.job_title ? ` · ${emp.job_title}` : ''}
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="gap-1">
-                <CalendarClock className="w-3 h-3" />
-                {new Date().toLocaleDateString('id-ID', {
-                  weekday: 'long', day: '2-digit', month: 'long', year: 'numeric',
-                })}
-              </Badge>
-              <Button variant="outline" size="sm" onClick={load} data-testid="absen-refresh">
-                <RefreshCw className="w-4 h-4" />
-              </Button>
-            </div>
+    <PageLayout
+      title="Absen saya"
+      subtitle={`${emp.name || '-'} · ${emp.employee_code || '-'}${emp.job_title ? ` · ${emp.job_title}` : ''}`}
+      tools={(
+        <Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="absen-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
+      )}
+      testId="portal-absen-page"
+    >
+      {/* Tombol absen PALING ATAS + jam server */}
+      <GlassCard className="p-4 space-y-3" data-testid="absen-action-card">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <CalendarClock className="w-3.5 h-3.5" />
+              {serverNow.toLocaleDateString('id-ID', { weekday: 'long', day: '2-digit', month: 'long', timeZone: TZ })}
+            </p>
+            <p className="text-3xl font-bold tabular-nums leading-tight" data-testid="absen-server-time"
+              title="Jam server — jam inilah yang dicatat saat tombol ditekan">
+              {fmtTime(serverNow, true)} <span className="text-sm font-medium text-muted-foreground">WIB</span>
+            </p>
+            <p className="text-xs text-muted-foreground">Jam server yang akan dicatat</p>
           </div>
-        </CardContent>
-      </Card>
+          {today?.status && (
+            <StatusBadge status={today.status} label={STATUS_LABEL[today.status] || today.status}
+              tone={STATUS_TONE[today.status] || 'info'} />
+          )}
+        </div>
 
-      {/* Kesiapan absen — selfie & lokasi WAJIB */}
-      <Card data-testid="absen-readiness">
-        <CardContent className="pt-5">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-            <span className="flex items-center gap-1.5 font-medium">
-              <ShieldCheck className="w-4 h-4 text-primary" /> Syarat absen:
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Camera className="w-4 h-4" />
-              Selfie {office?.require_selfie === false ? 'opsional' : <b>wajib</b>}
-            </span>
-            <span className="flex items-center gap-1.5" data-testid="absen-geo-status">
-              <MapPin className={`w-4 h-4 ${inRange === true ? 'text-emerald-600' : inRange === false ? 'text-red-600' : 'text-muted-foreground'}`} />
-              {!requireGeo && 'Lokasi tidak diwajibkan'}
-              {requireGeo && !officeSet && 'Lokasi kantor belum diatur'}
-              {requireGeo && officeSet && !geo && (geoError ? 'Lokasi belum diizinkan' : 'Membaca lokasi…')}
-              {requireGeo && officeSet && geo && (
-                inRange
-                  ? <span className="text-emerald-700">Di area kantor ({fmtMeter(dist)})</span>
-                  : <span className="text-red-700">Di luar area kantor ({fmtMeter(dist)})</span>
-              )}
-            </span>
-            {requireGeo && !geo && (
-              <Button size="sm" variant="outline" onClick={askLocation} data-testid="absen-retry-geo">
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Coba lagi
+        <Button size="lg" className="w-full"
+          variant={clockMode === 'in' ? 'default' : (clockMode === 'done' ? 'outline' : 'destructive')}
+          onClick={() => startClock(clockMode === 'in' ? 'in' : 'out')}
+          disabled={clockMode === 'done' || Boolean(busy) || (clockMode === 'in' && fullDayLeave)
+            || (clockMode !== 'in' && outBlocked)}
+          data-testid={clockMode === 'in' ? 'absen-btn-clock-in' : 'absen-btn-clock-out'}>
+          {busy === 'gps' || busy === 'send' ? <Loader2 className="w-5 h-5 animate-spin" /> : <MainIcon className="w-5 h-5" />}
+          {busy === 'gps' ? 'Membaca lokasi…' : mainLabel}
+        </Button>
+
+        <div className="flex items-center justify-between gap-2 text-sm" data-testid="absen-geo-status">
+          <span className={`flex items-center gap-1.5 min-w-0 ${locTone}`}>
+            <MapPin className="w-4 h-4 shrink-0" /> <span className="truncate">{locLine}</span>
+          </span>
+          {requireGeo && officeSet && (!geo || dist > radius) && (
+            <Button size="sm" variant="outline" onClick={previewLocation} data-testid="absen-retry-geo">
+              <RotateCcw className="w-3.5 h-3.5" /> Coba lagi
+            </Button>
+          )}
+        </div>
+
+        {actionError && (
+          <Notice tone="danger" icon={AlertCircle} testId="absen-block-reason"
+            action={actionError.retry && (
+              <Button size="sm" variant="outline" onClick={actionError.retry} data-testid="absen-retry-action">
+                <RotateCcw className="w-3.5 h-3.5" /> Coba lagi
               </Button>
+            )}>
+            {actionError.text}
+          </Notice>
+        )}
+        {clockMode === 'in' && fullDayLeave && (
+          <Notice tone="warning" icon={AlertCircle}>
+            Hari ini Anda tercatat {STATUS_LABEL[today.status] || today.status} yang sudah disetujui.
+            Bila Anda tetap masuk kerja, minta HR membatalkan pengajuan itu dulu.
+          </Notice>
+        )}
+        {clockMode !== 'in' && clockMode !== 'done' && outBlocked && (
+          <p className="text-xs text-muted-foreground">Tutup sesi istirahat/izin dulu sebelum absen pulang.</p>
+        )}
+
+        {hasIn && !hasOut && (
+          <div className="grid grid-cols-2 gap-2">
+            {active ? (
+              <Button className="col-span-2" onClick={endSession} disabled={busy === 'end'} data-testid="absen-session-end">
+                {busy === 'end' ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
+                Kembali kerja
+              </Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => startSession('istirahat')}
+                  disabled={Boolean(pendingPermit) || Boolean(busy)} data-testid="absen-btn-break-start">
+                  {busy === 'start-istirahat' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Coffee className="w-4 h-4" />}
+                  Istirahat
+                </Button>
+                <Button variant="outline" onClick={() => setIzinOpen(true)}
+                  disabled={Boolean(pendingPermit) || Boolean(busy)} data-testid="absen-btn-permit-start">
+                  <DoorOpen className="w-4 h-4" /> Izin keluar
+                </Button>
+              </>
             )}
           </div>
-          {blockReason && (
-            <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
-              data-testid="absen-block-reason">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {blockReason}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+        )}
+      </GlassCard>
 
       {/* Status hari ini */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Status Hari Ini</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="rounded-lg border bg-card p-3">
-              <p className="text-xs text-muted-foreground">Masuk</p>
-              <p className="text-lg font-semibold" data-testid="absen-clock-in-time">{fmtTime(today?.clock_in)}</p>
-            </div>
-            <div className="rounded-lg border bg-card p-3">
-              <p className="text-xs text-muted-foreground">Pulang</p>
-              <p className="text-lg font-semibold" data-testid="absen-clock-out-time">{fmtTime(today?.clock_out)}</p>
-            </div>
-            <div className="rounded-lg border bg-card p-3">
-              <p className="text-xs text-muted-foreground">Istirahat</p>
-              <p className="text-lg font-semibold" data-testid="absen-break-total">
-                {fmtDur(status?.break_minutes)}
-              </p>
-            </div>
-            <div className="rounded-lg border bg-card p-3">
-              <p className="text-xs text-muted-foreground">Izin Keluar (disetujui)</p>
-              <p className="text-lg font-semibold" data-testid="absen-permit-total">
-                {fmtDur(status?.permit_minutes)}
-              </p>
-            </div>
-          </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2" data-testid="absen-today-status">
+        <StatTile label="Masuk" value={fmtTime(today?.clock_in)} testId="absen-clock-in-time"
+          sub={late > 0 ? `Terlambat ${fmtDur(late)}` : (hasIn ? 'Tepat waktu' : undefined)}
+          subTone={late > 0 ? 'warning' : 'success'} />
+        <StatTile label="Pulang" value={fmtTime(today?.clock_out)} testId="absen-clock-out-time" />
+        <StatTile label="Istirahat" value={fmtDur(status?.break_minutes)} testId="absen-break-total" />
+        <StatTile label="Izin keluar" value={fmtDur(status?.permit_minutes)} testId="absen-permit-total" />
+      </div>
 
-          {late > 0 && (
-            <div className="mt-3 flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400"
-              data-testid="absen-late-warning">
-              <AlertCircle className="w-4 h-4" />
-              Terlambat {fmtDur(late)}
-              {today?.shift_start ? ` (jam masuk shift ${today.shift_start})` : ''}
-            </div>
-          )}
-          {hasIn && !hasOut && late === 0 && (
-            <div className="mt-3 flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400">
-              <CheckCircle2 className="w-4 h-4" /> Tepat waktu
-            </div>
-          )}
-          {today?.photo_selfie_url && (
-            <div className="mt-3 flex items-center gap-3">
-              <img src={`${API}${today.photo_selfie_url}`} alt="Bukti selfie absen masuk"
-                className="w-16 h-16 rounded-lg object-cover border" data-testid="absen-selfie-proof" />
-              <span className="text-xs text-muted-foreground">Bukti selfie absen masuk tersimpan.</span>
-            </div>
-          )}
-          {/* 2026-11-02 (No.59a): absen selfie diverifikasi HR, bukan AI wajah */}
-          {today?.approval_status === 'pending' && (
-            <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs bg-amber-100 text-amber-800 border-amber-300"
-              data-testid="absen-hr-review-pending">
-              <AlertCircle className="w-3.5 h-3.5" />
-              {today?.approval_reason ? `Status: ${today.approval_reason}` : 'Status: menunggu review HR'}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Pengajuan izin menunggu keputusan */}
+      {today?.approval_status === 'pending' && (
+        <Notice tone="info" icon={Hourglass} testId="absen-hr-review-pending">
+          Selfie absen hari ini menunggu pemeriksaan HR. Tetap dihitung hadir sampai HR memutuskan.
+        </Notice>
+      )}
       {pendingPermit && (
-        <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/30" data-testid="absen-pending-permit">
-          <CardContent className="pt-5 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <Hourglass className="w-5 h-5 text-amber-600 mt-0.5" />
-              <div>
-                <p className="font-semibold text-amber-900 dark:text-amber-200">
-                  Izin menunggu persetujuan atasan/HR
-                </p>
-                <p className="text-sm text-amber-800 dark:text-amber-300">
-                  &quot;{pendingPermit.reason}&quot; · diajukan {fmtTime(pendingPermit.requested_at)}
-                  {' '}· Anda belum dianggap keluar sampai disetujui.
-                </p>
-              </div>
-            </div>
-            <Button variant="outline" onClick={() => cancelPermit(pendingPermit.id)}
+        <Notice tone="warning" icon={Hourglass} title="Izin keluar menunggu persetujuan atasan/HR"
+          testId="absen-pending-permit"
+          action={(
+            <Button size="sm" variant="outline" onClick={() => cancelPermit(pendingPermit.id)}
               disabled={busy === 'cancel'} data-testid="absen-permit-cancel-pending">
-              {busy === 'cancel' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                : <XCircle className="w-4 h-4 mr-1.5" />}
-              Batalkan Pengajuan
+              <XCircle className="w-4 h-4" /> Batalkan
             </Button>
-          </CardContent>
-        </Card>
+          )}>
+          &quot;{pendingPermit.reason}&quot; · diajukan {fmtTime(pendingPermit.requested_at)}. Anda belum dianggap keluar.
+        </Notice>
       )}
-
-      {/* Sesi keluar yang masih terbuka */}
       {active && (
-        <Card className="border-blue-300 bg-blue-50 dark:bg-blue-950/30" data-testid="absen-active-session">
-          <CardContent className="pt-5 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <Timer className="w-5 h-5 text-blue-600 mt-0.5" />
-              <div>
-                <p className="font-semibold text-blue-900 dark:text-blue-200">
-                  {active.kind === 'izin' ? 'Sedang IZIN keluar (disetujui)' : 'Sedang ISTIRAHAT'}
-                </p>
-                <p className="text-sm text-blue-800 dark:text-blue-300">
-                  Keluar {fmtTime(active.out_at)}
-                  {active.reason ? ` · "${active.reason}"` : ''}
-                  {active.approved_by_name ? ` · disetujui ${active.approved_by_name}` : ''}
-                </p>
-              </div>
-            </div>
-            <Button onClick={endSession} disabled={busy === 'end'} data-testid="absen-session-end">
-              {busy === 'end' ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                : <LogIn className="w-4 h-4 mr-1.5" />}
-              Kembali Kerja
-            </Button>
-          </CardContent>
-        </Card>
+        <Notice tone="info" icon={Timer} testId="absen-active-session"
+          title={active.kind === 'izin' ? 'Sedang izin keluar (disetujui)' : 'Sedang istirahat'}>
+          Keluar {fmtTime(active.out_at)}{active.reason ? ` · "${active.reason}"` : ''}
+        </Notice>
       )}
 
-      {/* Tombol aksi */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Aksi Absen</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <Button
-              size="lg" className="h-16 flex-col gap-1"
-              onClick={() => openCam('in')}
-              disabled={hasIn || !canClock || Boolean(busy)}
-              data-testid="absen-btn-clock-in"
-            >
-              <LogIn className="w-5 h-5" />
-              <span className="text-sm">Absen Masuk</span>
-            </Button>
-
-            <Button
-              size="lg" variant="secondary" className="h-16 flex-col gap-1"
-              onClick={() => startSession('istirahat')}
-              disabled={!hasIn || hasOut || Boolean(active) || Boolean(pendingPermit) || Boolean(busy)}
-              data-testid="absen-btn-break-start"
-            >
-              {busy === 'start-istirahat' ? <Loader2 className="w-5 h-5 animate-spin" />
-                : <Coffee className="w-5 h-5" />}
-              <span className="text-sm">Istirahat Keluar</span>
-            </Button>
-
-            <Button
-              size="lg" variant="secondary" className="h-16 flex-col gap-1"
-              onClick={() => setIzinOpen(true)}
-              disabled={!hasIn || hasOut || Boolean(active) || Boolean(pendingPermit) || Boolean(busy)}
-              data-testid="absen-btn-permit-start"
-            >
-              <DoorOpen className="w-5 h-5" />
-              <span className="text-sm">Ajukan Izin Keluar</span>
-            </Button>
-
-            <Button
-              size="lg" variant="destructive" className="h-16 flex-col gap-1"
-              onClick={() => openCam('out')}
-              disabled={!hasIn || hasOut || Boolean(active) || Boolean(pendingPermit) || !canClock || Boolean(busy)}
-              data-testid="absen-btn-clock-out"
-            >
-              <LogOut className="w-5 h-5" />
-              <span className="text-sm">Absen Pulang</span>
-            </Button>
-          </div>
-
-          <p className="text-xs text-muted-foreground mt-3 flex items-center gap-1.5">
-            <MapPin className="w-3.5 h-3.5" />
-            Selfie & lokasi dikirim sebagai bukti. Izin keluar baru berjalan setelah disetujui;
-            tutup sesi istirahat/izin sebelum absen pulang.
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* Riwayat sesi hari ini */}
-      {sessions.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Riwayat Keluar-Masuk Hari Ini</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="divide-y" data-testid="absen-session-history">
-              {sessions.map((s) => {
-                const st = APPROVAL_LABEL[s.approval_status || (s.kind === 'izin' ? 'approved' : 'not_required')]
-                  || APPROVAL_LABEL.not_required;
+      {/* Riwayat 30 hari + koreksi */}
+      <GlassCard className="p-4 space-y-3" data-testid="absen-history">
+        <div>
+          <p className="text-base font-semibold">Riwayat 30 hari</p>
+          <p className="text-xs text-muted-foreground">Jam salah atau lupa absen? Tekan Ajukan koreksi pada tanggalnya.</p>
+        </div>
+        {history.length === 0 ? (
+          <EmptyState icon={CalendarClock} title="Belum ada catatan absen"
+            description="Catatan muncul setelah Anda absen masuk." className="py-6" />
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Tanggal</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Masuk</TableHead>
+                <TableHead>Pulang</TableHead>
+                <TableHead className="text-right">Koreksi</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {history.map((r) => {
+                const c = corrByDate[r.date];
                 return (
-                  <div key={s.id} className="py-2 flex flex-wrap items-center justify-between gap-2 text-sm">
-                    <div className="flex items-center gap-2">
-                      {s.kind === 'izin'
-                        ? <DoorOpen className="w-4 h-4 text-amber-600" />
-                        : <Coffee className="w-4 h-4 text-blue-600" />}
-                      <span className="font-medium capitalize">{s.kind}</span>
-                      {s.reason && <span className="text-muted-foreground italic">&quot;{s.reason}&quot;</span>}
-                      <span className={`text-[11px] px-1.5 py-0.5 rounded border ${st.cls}`}>{st.text}</span>
-                    </div>
-                    <div className="text-muted-foreground">
-                      {s.out_at ? fmtTime(s.out_at) : '—'} → {s.in_at ? fmtTime(s.in_at) : (s.out_at ? 'belum kembali' : '—')}
-                      {s.minutes != null && s.minutes > 0 && ` · ${fmtDur(s.minutes)}`}
-                      {s.decision_notes && ` · ${s.decision_notes}`}
-                    </div>
-                  </div>
+                  <TableRow key={r.id || r.date} data-testid={`absen-history-${r.date}`}>
+                    <TableCell className="whitespace-nowrap">{fmtDay(r.date)}</TableCell>
+                    <TableCell>
+                      <StatusBadge status={r.status} label={`${STATUS_LABEL[r.status] || r.status || '-'}${r.half_day ? ' ½' : ''}`}
+                        tone={STATUS_TONE[r.status] || 'info'} />
+                    </TableCell>
+                    <TableCell className="tabular-nums">{fmtTime(r.clock_in)}</TableCell>
+                    <TableCell className="tabular-nums">{fmtTime(r.clock_out)}</TableCell>
+                    <TableCell className="text-right">
+                      {c && (
+                        <StatusBadge status={c.status} label={CORR_LABEL[c.status] || c.status} tone={CORR_TONE[c.status]} />
+                      )}
+                      {(!c || c.status === 'rejected') && (
+                        <Button size="sm" variant="link" onClick={() => openCorrection(r)} data-testid={`absen-correct-${r.date}`}>
+                          <PencilLine className="w-3.5 h-3.5" /> Ajukan koreksi
+                        </Button>
+                      )}
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
+            </TableBody>
+          </Table>
+        )}
+        <Button size="sm" variant="outline" onClick={() => openCorrection({ date: daysAgoIso(1) })}
+          data-testid="absen-correct-other">
+          <PencilLine className="w-3.5 h-3.5" /> Ajukan koreksi absen tanggal lain
+        </Button>
+      </GlassCard>
 
-      {/* Dialog alasan izin — WAJIB (server menolak izin tanpa alasan) */}
+      {/* Dialog alasan izin keluar */}
       <Dialog open={izinOpen} onOpenChange={(v) => { setIzinOpen(v); if (!v) setIzinReason(''); }}>
         <DialogContent data-testid="absen-permit-dialog">
           <DialogHeader>
-            <DialogTitle>Ajukan Izin Keluar</DialogTitle>
+            <DialogTitle>Ajukan izin keluar</DialogTitle>
             <DialogDescription>
-              Alasan wajib diisi. Pengajuan dikirim ke atasan/HR — Anda baru dianggap keluar
-              setelah <b>disetujui</b>, dan durasinya TIDAK dihitung sebagai jam kerja.
+              Alasan wajib. Anda baru dianggap keluar setelah disetujui atasan/HR, dan durasinya tidak dihitung jam kerja.
             </DialogDescription>
           </DialogHeader>
           <div>
             <Label htmlFor="izin-reason">Alasan</Label>
-            <Textarea
-              id="izin-reason" rows={3} className="mt-1"
-              placeholder="Contoh: ke klinik, urusan keluarga…"
-              value={izinReason}
-              onChange={(e) => setIzinReason(e.target.value)}
-              data-testid="absen-permit-reason"
-            />
+            <Textarea id="izin-reason" rows={3} className="mt-1" placeholder="Contoh: ke klinik, urusan keluarga"
+              value={izinReason} onChange={(e) => setIzinReason(e.target.value)} data-testid="absen-permit-reason" />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIzinOpen(false)}
-              data-testid="absen-permit-cancel">Batal</Button>
-            <Button
-              onClick={() => startSession('izin', izinReason.trim())}
-              disabled={!izinReason.trim() || busy === 'start-izin'}
-              data-testid="absen-permit-confirm"
-            >
-              {busy === 'start-izin' && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
-              Kirim Pengajuan
+            <Button variant="outline" onClick={() => setIzinOpen(false)} data-testid="absen-permit-cancel">Batal</Button>
+            <Button onClick={() => startSession('izin', izinReason.trim())}
+              disabled={!izinReason.trim() || busy === 'start-izin'} data-testid="absen-permit-confirm">
+              {busy === 'start-izin' && <Loader2 className="w-4 h-4 animate-spin" />} Kirim pengajuan
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Dialog kamera selfie */}
-      <Dialog open={camOpen} onOpenChange={(v) => { if (!v) closeCam(); else setCamOpen(true); }}>
+      {/* Dialog kamera — kamera depan saja, tanpa unggah dari galeri */}
+      <Dialog open={camOpen} onOpenChange={(v) => { if (!v) closeCam(); }}>
         <DialogContent data-testid="absen-camera-dialog">
           <DialogHeader>
-            <DialogTitle>{camAction === 'in' ? 'Absen Masuk' : 'Absen Pulang'} — Selfie Wajib</DialogTitle>
-            <DialogDescription>
-              Ambil selfie sebagai bukti kehadiran. Foto disimpan dan bisa diperiksa HR.
-            </DialogDescription>
+            <DialogTitle>{camAction === 'in' ? 'Absen masuk' : 'Absen pulang'} — selfie</DialogTitle>
+            <DialogDescription>Foto langsung dari kamera depan sebagai bukti kehadiran; diperiksa HR.</DialogDescription>
           </DialogHeader>
-
-          <div className="rounded-lg overflow-hidden bg-muted aspect-video flex items-center justify-center">
+          <div className="rounded-[var(--radius-md)] overflow-hidden bg-muted aspect-[3/4] sm:aspect-video flex items-center justify-center">
             {shot
-              ? <img src={`data:image/jpeg;base64,${shot}`} alt="Pratinjau selfie"
-                className="w-full h-full object-cover" data-testid="absen-selfie-preview" />
-              : <video ref={videoRef} autoPlay playsInline muted
-                className="w-full h-full object-cover" data-testid="absen-camera-video" />}
+              ? <img src={`data:image/jpeg;base64,${shot}`} alt="Pratinjau selfie" className="w-full h-full object-cover"
+                data-testid="absen-selfie-preview" />
+              : <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"
+                data-testid="absen-camera-video" />}
           </div>
-
           {camError && (
-            <p className="text-sm text-red-600 flex items-start gap-1.5" data-testid="absen-camera-error">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {camError}
-            </p>
+            <Notice tone="danger" icon={Camera} testId="absen-camera-error"
+              action={(
+                <Button size="sm" variant="outline" onClick={startCam} data-testid="absen-camera-retry">
+                  <RotateCcw className="w-3.5 h-3.5" /> Coba lagi
+                </Button>
+              )}>
+              {camError}
+            </Notice>
           )}
-
-          <div className="flex flex-wrap gap-2">
+          <DialogFooter className="gap-2">
             {!shot ? (
-              <Button variant="secondary" onClick={capture} data-testid="absen-camera-capture">
-                <Camera className="w-4 h-4 mr-1.5" /> Ambil Foto
+              <Button variant="outline" onClick={capture} disabled={Boolean(camError)} data-testid="absen-camera-capture">
+                <Camera className="w-4 h-4" /> Ambil foto
               </Button>
             ) : (
-              <Button variant="secondary" onClick={() => setShot('')} data-testid="absen-camera-retake">
-                <RotateCcw className="w-4 h-4 mr-1.5" /> Ulangi Foto
+              <Button variant="outline" onClick={() => setShot('')} data-testid="absen-camera-retake">
+                <RotateCcw className="w-4 h-4" /> Ulangi
               </Button>
             )}
-            <Button variant="outline" onClick={() => fileRef.current?.click()}
-              data-testid="absen-camera-upload-btn">
-              <Upload className="w-4 h-4 mr-1.5" /> Unggah Foto
-            </Button>
-            <input ref={fileRef} type="file" accept="image/*" className="hidden"
-              onChange={onPickFile} data-testid="absen-camera-file" />
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={closeCam} data-testid="absen-camera-cancel">Batal</Button>
-            <Button onClick={() => doClock(camAction)} disabled={!shot || Boolean(busy)}
-              data-testid="absen-camera-confirm">
-              {busy ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
-              {camAction === 'in' ? 'Kirim Absen Masuk' : 'Kirim Absen Pulang'}
+            <Button onClick={() => send(camAction, shot, fix)} disabled={!shot || Boolean(busy)} data-testid="absen-camera-confirm">
+              {busy === 'send' ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+              {camAction === 'in' ? 'Kirim absen masuk' : 'Kirim absen pulang'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+
+      {/* Dialog koreksi absen (formulir pendek) */}
+      <Dialog open={Boolean(corrOpen)} onOpenChange={(v) => { if (!v) setCorrOpen(null); }}>
+        <DialogContent data-testid="absen-correction-dialog">
+          <DialogHeader>
+            <DialogTitle>Ajukan koreksi absen</DialogTitle>
+            <DialogDescription>
+              Isi jam yang benar. HR memeriksa dulu; bila tanggal itu sudah digaji, selisihnya dibayar di gaji berikutnya.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label htmlFor="corr-date">Tanggal</Label>
+              <GlassInput id="corr-date" type="date" className="mt-1" value={corrOpen || ''} max={todayIso()}
+                onChange={(e) => setCorrOpen(e.target.value)} data-testid="absen-correction-date" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="corr-in">Jam masuk</Label>
+                <GlassInput id="corr-in" type="time" className="mt-1" value={corrForm.clock_in}
+                  onChange={(e) => setCorrForm((f) => ({ ...f, clock_in: e.target.value }))} data-testid="absen-correction-in" />
+              </div>
+              <div>
+                <Label htmlFor="corr-out">Jam pulang</Label>
+                <GlassInput id="corr-out" type="time" className="mt-1" value={corrForm.clock_out}
+                  onChange={(e) => setCorrForm((f) => ({ ...f, clock_out: e.target.value }))} data-testid="absen-correction-out" />
+              </div>
+            </div>
+            <div>
+              <Label htmlFor="corr-reason">Alasan</Label>
+              <Textarea id="corr-reason" rows={2} className="mt-1" placeholder="Contoh: lupa absen pulang, HP mati"
+                value={corrForm.reason} onChange={(e) => setCorrForm((f) => ({ ...f, reason: e.target.value }))}
+                data-testid="absen-correction-reason" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCorrOpen(null)}>Batal</Button>
+            <Button onClick={submitCorrection}
+              disabled={busy === 'corr' || !corrForm.reason.trim() || !(corrForm.clock_in || corrForm.clock_out)}
+              data-testid="absen-correction-submit">
+              {busy === 'corr' && <Loader2 className="w-4 h-4 animate-spin" />} Kirim ke HR
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </PageLayout>
   );
 }

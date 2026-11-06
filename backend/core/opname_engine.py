@@ -65,6 +65,15 @@ CNT = "wh_opname3_counts"
 LEGACY_ACC = "wh_opname_sessions2"
 POS = "wh_positions"
 SCAN_OUT = "wh_scan_out_sheets"          # milik paket scan keluar (K15) — hanya DIBACA
+SCAN_OUT_LINES = "wh_scan_out_lines"     # 2026-11-06 (Tahap 2): baris gagal juga menahan approve
+SCAN_CLAIM_STALE_SECONDS = 30            # = core.scan_out.CLAIM_STALE_SECONDS (modulnya tidak diimpor)
+
+
+def _claim_stale(at) -> bool:
+    """Klaim proses baris scan yang sudah putus (baris `pending` yang tidak sedang diproses)."""
+    if isinstance(at, datetime) and at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return not isinstance(at, datetime) or at < datetime.now(timezone.utc) - timedelta(seconds=SCAN_CLAIM_STALE_SECONDS)
 ENGINE = "k9"
 
 LEVEL_LOKASI, LEVEL_RAK = "lokasi", "rak"
@@ -318,10 +327,13 @@ def build_je_lines(valued: list, inv_code_of: dict, contra: dict, memo: str) -> 
 
 
 def blocking_sheets(sheets: Iterable[dict], location_ids: Iterable[str], count_date: str) -> list:
-    """Lembar scan keluar (K15) yang MENAHAN approve: open, lokasi sesi, `date` ≤ tanggal hitung."""
+    """Lembar scan keluar (K15) yang MENAHAN approve: belum `closed`, lokasi sesi, `date` ≤ tanggal hitung.
+
+    2026-11-06 (Tahap 2): kontrak paket scan keluar = `status != 'closed'` (termasuk `closing` yang
+    sedang ditutup); dulu hanya `open` yang dibaca sehingga lembar `closing` lolos."""
     locs = set(location_ids or [])
     return [s for s in (sheets or [])
-            if s.get("status") == "open" and s.get("location_id") in locs
+            if s.get("status") != "closed" and s.get("location_id") in locs
             and str(s.get("date") or "") <= str(count_date or "")]
 
 
@@ -810,15 +822,26 @@ async def _write_positions(db, user: dict, sess: dict, changes: dict, meta: dict
 async def check_scan_out_sheets(db, sess: dict, count_date: str):
     """KONTRAK K15: tolak approve selama lembar scan keluar lokasi ini masih terbuka."""
     loc_ids = sess.get("location_ids") or [sess.get("location_id")]
-    sheets = await db[SCAN_OUT].find({"location_id": {"$in": loc_ids}, "status": "open"},
+    sheets = await db[SCAN_OUT].find({"location_id": {"$in": loc_ids}, "status": {"$ne": "closed"}},
                                      {"_id": 0}).to_list(200)
     block = blocking_sheets(sheets, loc_ids, count_date)
     if block:
-        names = ", ".join(sorted(str(s.get("sheet_no") or s.get("code") or s.get("date") or s.get("id"))
-                                 for s in block))
+        names = ", ".join(sorted(str(s.get("number") or s.get("sheet_no") or s.get("code") or s.get("date")
+                                     or s.get("id")) for s in block))
         raise HTTPException(409, f"Approve opname {sess.get('session_no')} ditahan: lembar scan keluar lokasi "
                                  f"{sess.get('location_code')} masih TERBUKA ({names}; tanggal ≤ tanggal hitung "
                                  f"{count_date}). Tutup lembar itu dulu supaya jurnal HPP mendahului jurnal selisih.")
+    # 2026-11-06 (Tahap 2): baris scan GAGAL (antrean kirim ulang) juga menahan — stoknya belum pasti
+    # terpotong, jadi hitungan fisik bisa dobel dengan kiriman ulang sesudah opname.
+    failed = [ln for ln in await db[SCAN_OUT_LINES].find(
+        {"location_id": {"$in": loc_ids}, "status": {"$in": ["failed", "pending"]}}, {"_id": 0}).to_list(200)
+        if str(ln.get("date") or "") <= str(count_date or "")
+        and (ln.get("status") == "failed" or _claim_stale(ln.get("claim_at")))]
+    if failed:
+        skus = ", ".join(sorted({str(ln.get("sku") or ln.get("code") or "-") for ln in failed})[:5])
+        raise HTTPException(409, f"Approve opname {sess.get('session_no')} ditahan: {len(failed)} scan keluar di lokasi "
+                                 f"{sess.get('location_code')} gagal diproses ({skus}). Kirim ulang atau batalkan "
+                                 "di layar Scan Keluar Penjualan dulu.")
 
 
 async def _post_session_je(db, user: dict, sess: dict, valued: list, je_date: str) -> dict:
@@ -903,18 +926,51 @@ async def approve(db, user: dict, sess: dict) -> dict:
         {"$set": {"status": "approving", "approving_at": _now(), "approving_by": user.get("id", "")}})
     if not claim:
         raise HTTPException(409, "Sesi sedang/sudah diproses pengguna lain")
+    try:
+        return await _apply_approval(db, user, sess, ev, level, rows, meta, sc, plans, place_changes,
+                                     findings, count_date)
+    except BaseException:
+        # 2026-11-06 (Tahap 1): klaim dilepas bila gagal — sesi bisa disetujui ulang. Aman diulang:
+        # baris yang sudah diterapkan tercatat di `applied_keys`, jurnal idempoten `opname:{id}`.
+        await db[SESS].update_one({"id": sess["id"], "status": "approving"},
+                                  {"$set": {"status": "submitted", "approving_at": None}})
+        raise
+
+
+async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows: dict, meta: dict,
+                          sc: dict, plans: list, place_changes: dict, findings: list, count_date: str) -> dict:
     actor = {"id": user.get("id", ""), "email": user.get("email", ""), "name": user.get("name", "")}
     ref = {"source": "opname", "type": "opname", "session_id": sess["id"], "session_no": sess.get("session_no")}
     from core.negative_stock import stock_meta
     writes, valued = [], []
+    for x in ev["lines"]:
+        if level == LEVEL_LOKASI and x["variance_qty"] and x.get("variance_value"):
+            valued.append({"kind": x["kind"], "value": x["variance_value"], "reason": x.get("reason") or "",
+                           "material_code": x.get("material_code")})
+    # ── 2026-11-06 (Tahap 1): JURNAL DULU, STOK KEMUDIAN ─────────────────────
+    # Dulu stok ditimpa lebih dulu, lalu jurnal diposting; bila jurnal gagal (periode tertutup, akun
+    # belum dipetakan) sesi tetap 'approved' dengan stok sudah berubah dan tanpa jalan posting ulang
+    # ⇒ stok ≠ buku besar. Sekarang jurnal gagal = approve ditolak, stok TIDAK berubah, sesi kembali
+    # 'submitted' (bisa disetujui ulang setelah penyebabnya dibereskan).
+    je = await _post_session_je(db, user, sess, valued, count_date) if level == LEVEL_LOKASI else \
+        {"ok": True, "skipped": "hitung rak hanya memperbaiki penempatan"}
+    if not je.get("ok"):
+        raise HTTPException(400, f"Approve ditolak: jurnal selisih opname gagal — {je.get('error')}. "
+                                 "Stok belum diubah; bereskan penyebabnya lalu setujui ulang.")
     for x, cur, target in plans:
         mat = meta.get(x["material_id"]) or {"id": x["material_id"]}
         m_meta = stock_meta(mat, sc["location"])
         if x["kind"] == "fg":
             m_meta.update({"inventory_category": "fg_internal", "ownership": "cv_da"})
+        row_qty = {r.get("location_id"): _r(r.get("qty")) for r in rows.get(x["material_id"], [])}
         for loc_id, q in plan_stock_writes(rows.get(x["material_id"], []), target, sess["location_id"]):
-            await stock_service.adjust(x["material_id"], loc_id, q, meta=m_meta, ref=ref, actor=actor, db=db)
-            writes.append({"material_id": x["material_id"], "location_id": loc_id, "qty": q})
+            # 2026-11-06 (Tahap 1): tulis SELISIH (hasil rencana − qty yang dibaca saat approve) secara
+            # atomik, bukan qty absolut — mutasi transaksi lain di sela baca & tulis tidak terhapus.
+            delta = _r(q - row_qty.get(loc_id, 0.0))
+            if delta:
+                await stock_service.adjust_by(x["material_id"], loc_id, delta, meta=m_meta, ref=ref,
+                                              actor=actor, db=db)
+            writes.append({"material_id": x["material_id"], "location_id": loc_id, "qty": q, "delta": delta})
         await db.rahaza_material_movements.insert_one({
             # type 'opname' (bukan 'adjust'): jurnalnya SATU per sesi; tombol "post ulang" per mutasi
             # (`/material-movements/{id}/post-to-gl`) menolak tipe ini → tidak bisa terjurnal dobel.
@@ -928,13 +984,7 @@ async def approve(db, user: dict, sess: dict) -> dict:
             "created_by": user.get("id", ""), "created_by_name": user.get("name", ""),
             "created_at": _now(), "timestamp": _now()})
         await db[SESS].update_one({"id": sess["id"]}, {"$addToSet": {"applied_keys": x["key"]}})
-    for x in ev["lines"]:
-        if level == LEVEL_LOKASI and x["variance_qty"] and x.get("variance_value"):
-            valued.append({"kind": x["kind"], "value": x["variance_value"], "reason": x.get("reason") or "",
-                           "material_code": x.get("material_code")})
     n_pos = await _write_positions(db, user, sess, place_changes, meta)
-    je = await _post_session_je(db, user, sess, valued, count_date) if level == LEVEL_LOKASI else \
-        {"ok": True, "skipped": "hitung rak hanya memperbaiki penempatan"}
     if je.get("je_id"):
         await db.rahaza_material_movements.update_many(
             {"ref_type": "opname", "ref_id": sess["id"]},

@@ -287,6 +287,7 @@ async def margin_from_orders(db, account_id: str, period: str) -> Dict[str, Any]
 
     units_total = units_cov = 0
     lines_total = lines_cov = 0
+    lines_frozen = 0
     rev_cov = rev_all = hpp_total = 0.0
     for o in live:
         for it in (o.get('items') or []):
@@ -299,7 +300,13 @@ async def margin_from_orders(db, account_id: str, period: str) -> Dict[str, Any]
             units_total += qty
             lines_total += 1
             rev_all += rev
-            hpp_unit = hpp_map.get(it.get('catalog_item_id') or '', 0.0)
+            # 2026-11-06 (Tahap 2): marjin bulan lalu memakai HPP yang DIBEKUKAN di baris pesanan
+            # (`hpp_snapshot`, ditulis saat pesanan masuk/ditautkan) — dulu HPP katalog HARI INI.
+            # HPP katalog kini hanya cadangan untuk baris tanpa snapshot.
+            frozen = _num(it.get('hpp_snapshot'))
+            hpp_unit = frozen if frozen > 0 else hpp_map.get(it.get('catalog_item_id') or '', 0.0)
+            if frozen > 0:
+                lines_frozen += 1
             if hpp_unit > 0:
                 units_cov += qty
                 lines_cov += 1
@@ -324,6 +331,7 @@ async def margin_from_orders(db, account_id: str, period: str) -> Dict[str, Any]
         'units_uncovered': units_total - units_cov,
         'lines_total': lines_total,
         'lines_covered': lines_cov,
+        'lines_hpp_frozen': lines_frozen,
         'orders_scanned': len(live),
         'buyers_unique': len(buyers),
         'trustworthy': coverage >= 80.0,

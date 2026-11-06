@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { EmptyState, Notice } from '../moduleAtoms';
 import Modal from './Modal';
-import { apiGet, apiPost } from '../../../lib/api';
+import { apiGet } from '../../../lib/api';
+import { postWithOverQtyReason } from '../../../lib/overQty';
 import { todayWIB } from '../../../lib/waktu';
 
 export default function VendorBuyerShipments({ user }) {
@@ -102,7 +103,7 @@ export default function VendorBuyerShipments({ user }) {
 
     setLoading(true);
     try {
-      await apiPost('/buyer-shipments', {
+      await postWithOverQtyReason('/buyer-shipments', {
         shipment_number: shipmentNumber,
         job_id: form.job_id,
         po_id: form.po_id || selectedJob?.po_id,

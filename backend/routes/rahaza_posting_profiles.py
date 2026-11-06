@@ -138,7 +138,7 @@ DEFAULT_PROFILES = [
     },
     {
         "event_type": "inventory_issue",
-        "description": "Material issue ke WO → Dr WIP / Cr Inventory RM",
+        "description": "Material issue ke WO → Dr WIP / Cr Inventory RM (aksesoris: Dr per divisi pemohon / jenis PO)",
         "mapping": {
             "debit_wip": "1-1403",
             "credit_inventory_rm": "1-1401",
@@ -147,6 +147,13 @@ DEFAULT_PROFILES = [
             # 2026-11-02 (K14/P-7): aksesoris milik DA untuk pesanan MAKLON = biaya proyek maklon DA
             # (barang jadi maklon di luar neraca DA → tidak lewat WIP/FG)
             "debit_maklon_material": "5-4100",
+            # 2026-11-06 (Tahap 2, keputusan owner): pemakaian aksesoris non-produksi per divisi pemohon
+            # (tabel divisi → peran: core.accessory_issue.DIVISIONS / PROFILE_ROLES)
+            "debit_accessory_office": "6-2400",      # Kantor / SDM / Gudang → ATK & Supplies
+            "debit_accessory_marketing": "6-1130",   # Marketing → Biaya Pemasaran Lain-lain
+            "debit_accessory_other": "6-2900",       # Lainnya → Beban Umum & Lain-lain
+            # sampel R&D: belum ada akun khusus riset/sampel di bagan akun → Beban Umum (ubah di layar)
+            "debit_accessory_rnd_sample": "6-2900",
         },
     },
     {
@@ -549,6 +556,11 @@ ROLE_LABELS = {
     "inventory_accessory": "Persediaan aksesoris", "inventory_fg": "Persediaan barang jadi",
     "credit_inventory_fg": "Persediaan barang jadi (Cr)",
     "debit_maklon_material": "Aksesoris DA untuk pesanan maklon → biaya proyek maklon (Dr)",
+    # 2026-11-06 (Tahap 2): pemakaian aksesoris per divisi pemohon
+    "debit_accessory_office": "Aksesoris dipakai Kantor / SDM / Gudang → beban ATK & perlengkapan (Dr)",
+    "debit_accessory_marketing": "Aksesoris dipakai Marketing → beban pemasaran (Dr)",
+    "debit_accessory_other": "Aksesoris dipakai divisi lain → beban umum (Dr)",
+    "debit_accessory_rnd_sample": "Aksesoris untuk sampel R&D → beban sampel (Dr)",
     # 2026-11-02 (K41 = a): Keluarkan Stok FG
     "debit_sample": "Sampel / promosi barang jadi → beban promosi (Dr)",
     "debit_internal": "Keperluan internal / SJ internal / lainnya → HPP (Dr)",
@@ -626,6 +638,22 @@ DEFAULT_PROFILES.append({
     },
 })
 EVENT_LABELS["inventory_count_variance"] = "Selisih Sesi Opname (lawan per jenis persediaan)"
+
+# ── 2026-11-06 (Tahap 2, paket HPP): sisa WIP per PO produksi saat PO ditutup (`core.po_wip`) — bahan
+# keluar aktual vs standar BOM yang dikredit lapisan FG. Satu blok di akhir daftar beserta labelnya.
+DEFAULT_PROFILES.append({
+    "event_type": "production_po_wip_variance",
+    "description": "PO produksi ditutup → sisa WIP (aktual − standar) ke Selisih Produksi",
+    "mapping": {
+        "debit_variance": "5-1960",
+        "credit_wip": "1-1403",
+    },
+})
+EVENT_LABELS["production_po_wip_variance"] = "Sisa WIP PO produksi saat ditutup (selisih standar vs aktual)"
+ROLE_LABELS_BY_EVENT[("production_po_wip_variance", "debit_variance")] = (
+    "Selisih produksi standar vs aktual (Dr bila aktual > standar, Cr bila sebaliknya)")
+ROLE_LABELS_BY_EVENT[("production_po_wip_variance", "credit_wip")] = (
+    "Persediaan WIP yang ditutup (Cr bila aktual > standar, Dr bila sebaliknya)")
 
 
 def event_label(event_type: str) -> str:

@@ -7,8 +7,8 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import {
-  Package, Plus, RefreshCw, Search, Edit2, Trash2, AlertTriangle,
-  CheckCircle2, AlertCircle, ChevronRight, ChevronLeft, TrendingDown,
+  Plus, RefreshCw, Search, Edit2, Trash2, AlertTriangle,
+  CheckCircle2, ChevronRight, ChevronLeft, TrendingDown,
   ShoppingBag, Layers, BarChart3, Save, Loader2, X, History,
   ArrowRightLeft, Download, Upload, Tag, Star, Eye, Coins, PackagePlus,
 } from 'lucide-react';
@@ -29,6 +29,7 @@ import { FGProductPickerDialog } from './FGProductPickerDialog';
 import CatalogFromMasterModule from './marketing/CatalogFromMasterModule';
 import CatalogItemsView from './marketing/CatalogItemsView';
 import { formatRupiah } from '@/lib/format';
+import { StatTile } from './moduleAtoms';
 import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -415,23 +416,20 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
         </div>
       </div>
 
-      {/* Stats Bar */}
+      {/* Stats Bar — 2026-11-06 (Tahap 2): dihitung server dari ISI katalog yang boleh
+          Anda lihat, dengan stok jual LIVE; item yang belum tertaut master dihitung terpisah. */}
       {dashboard && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { label: 'Total Item', value: dashboard.summary?.total_items || 0, icon: Package, color: 'text-blue-600 dark:text-blue-400' },
-            { label: 'Tersedia', value: dashboard.summary?.in_stock || 0, icon: CheckCircle2, color: 'text-emerald-600 dark:text-emerald-400' },
-            { label: 'Stok Rendah', value: dashboard.summary?.low_stock || 0, icon: AlertTriangle, color: 'text-amber-700 dark:text-amber-400' },
-            { label: 'Habis', value: dashboard.summary?.out_of_stock || 0, icon: AlertCircle, color: 'text-red-700 dark:text-red-400' },
-          ].map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="rounded-xl border border-foreground/10 bg-foreground/5 p-3 flex items-center gap-3">
-              <Icon className={`w-8 h-8 ${color} shrink-0`} />
-              <div>
-                <div className="text-xl font-bold">{value}</div>
-                <div className="text-xs text-muted-foreground">{label}</div>
-              </div>
-            </div>
-          ))}
+        <div className={`grid grid-cols-2 ${dashboard.summary?.unlinked ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-3`}
+          data-testid="catalog-stock-tiles">
+          <StatTile label="Total item" value={dashboard.summary?.total_items || 0}
+            sub={dashboard.summary?.catalogs ? `di ${dashboard.summary.catalogs} katalog aktif` : undefined} />
+          <StatTile label="Tersedia" value={dashboard.summary?.in_stock || 0} accent="success" />
+          <StatTile label="Stok rendah" value={dashboard.summary?.low_stock || 0} accent="warning" />
+          <StatTile label="Habis" value={dashboard.summary?.out_of_stock || 0} accent="danger" />
+          {dashboard.summary?.unlinked ? (
+            <StatTile label="Belum tertaut master" value={dashboard.summary.unlinked} accent="muted"
+              testId="catalog-stock-unlinked" sub="Stoknya belum bisa dihitung otomatis" />
+          ) : null}
         </div>
       )}
 
@@ -734,6 +732,9 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
                           <span className="text-emerald-600 dark:text-emerald-400">{p.in_stock || 0} ✓</span>
                           <span className="text-amber-700 dark:text-amber-400">{p.low_stock || 0} ⚠</span>
                           <span className="text-red-700 dark:text-red-400">{p.out_of_stock || 0} ✗</span>
+                          {p.unlinked ? (
+                            <span className="text-muted-foreground">{p.unlinked} belum tertaut</span>
+                          ) : null}
                         </div>
                       </div>
                     ))}

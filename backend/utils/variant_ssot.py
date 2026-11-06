@@ -133,10 +133,13 @@ async def ensure_fg_material(db, variant: dict, user: dict = None) -> dict:
                  if v not in (None, "") and not existing.get(k)}
         # Field MILIK MASTER (kategori/berat/HPP): SELALU disegarkan — inilah P2b.
         # Salinan tanpa penyegar = laporan yang berbohong dengan sopan.
-        for k in ("category_id", "category_code", "category_name", "category",
-                  "weight_gram", "hpp", "hpp_source"):
+        for k in ("category_id", "category_code", "category_name", "category", "weight_gram"):
             if k in linkage and existing.get(k) != linkage[k]:
                 patch[k] = linkage[k]
+        # 2026-11-06 (Tahap 2): HPP FG (per warna/ukuran, hasil "Terapkan HPP per Potong") tidak
+        # lagi ditimpa rata-rata model — HPP model hanya mengisi FG yang belum punya angka.
+        if float(existing.get("hpp") or 0) <= 0 and float(linkage.get("hpp") or 0) > 0:
+            patch["hpp"], patch["hpp_source"] = linkage["hpp"], linkage.get("hpp_source")
         # Always ensure the canonical `sku` alias is present for by-sku resolvers.
         if not existing.get("sku"):
             patch["sku"] = sku

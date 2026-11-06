@@ -16,6 +16,7 @@ import ImportExportPanel from './ImportExportPanel';
 import BuyerReceiptVarianceReport from './BuyerReceiptVarianceReport';
 import { BizBadge, BizFilter, matchBiz } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
+import { postWithOverQtyReason } from '../../../lib/overQty';
 import { todayWIB } from '../../../lib/waktu';
 
 export default function BuyerShipmentModule({ userRole, hasPerm = () => false, portalId }) {
@@ -483,7 +484,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       if (continueShip) payload.shipment_id = continueShip.id;
       else if (form.shipment_number.trim()) payload.shipment_number = form.shipment_number.trim();
       try {
-        const data = await apiPost('/buyer-shipments', payload);
+        const data = await postWithOverQtyReason('/buyer-shipments', payload);
         toast.success(continueShip
           ? `Dispatch #${data.dispatch_seq || ''} ditambahkan ke surat jalan ${data.shipment_number || ''}`
           : `Surat jalan konsolidasi ${data.shipment_number || ''} dibuat (${(data.po_ids || []).length} PO)`);
@@ -518,7 +519,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       if (Number(item.qty_shipped) > Number(item.ordered_qty)) {
         toast.warning(
           `${item.sku}: qty kirim (${item.qty_shipped}) melebihi qty PO (${item.ordered_qty}). ` +
-          `Pastikan ada laporan OVERPRODUCTION variance yang mendukung.`
+          `Kelebihan qty wajib disertai alasan — sistem akan memintanya saat disimpan.`
         );
       }
     }
@@ -533,7 +534,7 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
       delete payload.shipment_number;   // nomor surat jalan induk tidak boleh berubah
     }
     try {
-      const data = await apiPost('/buyer-shipments', payload);
+      const data = await postWithOverQtyReason('/buyer-shipments', payload);
       toast.success(continueShip
         ? `Dispatch #${data.dispatch_seq || ''} ditambahkan ke surat jalan ${data.shipment_number || ''}`
         : `Shipment ${data.shipment_number || ''} berhasil dibuat`);

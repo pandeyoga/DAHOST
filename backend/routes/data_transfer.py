@@ -427,6 +427,11 @@ async def _material_uom_fields(db, doc: dict, existing: dict | None):
         if abs(float(onhand or 0)) > 1e-9:
             return {}, [f"satuan dasar '{cur_base}' → '{base}' ditolak: stok masih {onhand:g} {cur_base}. "
                         f"Pakai tombol 'Ubah Satuan Dasar' di form material (rebase)."]
+        # 2026-11-06 (Tahap 2): PO/GR/daftar harga/karantina yang masih terbuka memakai satuan lama
+        from core import procurement_guards
+        docs = await procurement_guards.check_base_unit_change(db, existing, base)
+        if docs:
+            return {}, [procurement_guards.open_documents_message(existing, base, docs)]
 
     pack_unit = _uom.normalize_code(given.get("pack_unit"))
     pack_size = float(given.get("pack_size") or 0)
@@ -462,6 +467,42 @@ async def _material_uom_fields(db, doc: dict, existing: dict | None):
         return _uom.apply_payload(body, cur), []
     except _uom.UomError as e:
         return {}, [str(e)]
+
+
+async def _material_cost_guard(db, doc: dict, existing: dict | None) -> str | None:
+    """2026-11-06 (Tahap 2): impor TIDAK boleh menimpa harga (HPP) barang yang masih berstok.
+
+    Dulu kolom `unit_cost` menimpa master langsung — tanpa jurnal — sehingga nilai stok ≠ buku besar.
+    Harga lewat impor hanya untuk barang baru / barang tanpa stok (harga awal). Koreksi harga barang
+    berstok = Set HPP (revaluasi berjurnal dengan alasan). Return pesan galat atau None."""
+    if not existing or doc.get("unit_cost") in (None, ""):
+        return None
+    from core.accessory_valuation import resolve_unit_cost
+    from core import stock_service
+    new_cost = float(doc.get("unit_cost") or 0)
+    if abs(new_cost - resolve_unit_cost(existing)) <= 1e-6:
+        return None
+    onhand = float(await stock_service.get_onhand(existing.get("id"), db=db) or 0)
+    if abs(onhand) <= 1e-9:
+        return None
+    return (f"harga {existing.get('code') or ''} tidak bisa diubah lewat impor: barang masih berstok {onhand:g}. "
+            "Kosongkan kolom unit_cost untuk baris ini; koreksi harga barang berstok lewat Set HPP "
+            "(revaluasi berjurnal dengan alasan).")
+
+
+async def _record_material_cost(db, doc: dict, existing: dict | None, user: dict) -> None:
+    """Riwayat harga (ber-`material_id`) untuk harga awal yang masuk lewat impor."""
+    if doc.get("unit_cost") in (None, ""):
+        return
+    from core.accessory_valuation import _record_history, resolve_unit_cost
+    old = resolve_unit_cost(existing) if existing else 0.0
+    new = float(doc.get("unit_cost") or 0)
+    mid = (existing or {}).get("id") or doc.get("id")
+    if not mid or abs(new - old) <= 1e-6:
+        return
+    await _record_history(db, material_id=mid, old_cost=old, new_cost=new, qty_before=0, qty_in=0, cost_in=new,
+                          source="opening", actor={"id": user.get("id"), "name": user.get("name", "")},
+                          notes="Harga awal dari impor data (stok masih kosong)")
 
 
 def _parse_upload(filename, content):
@@ -572,6 +613,11 @@ async def import_table(key: str, request: Request, file: UploadFile = File(...),
                     "pack_size": uom_fields.get("pack_size"),
                     "satuan": " · ".join(f"{r['code']}×{r['factor']:g}" for r in uom_fields.get("uoms", [])),
                 })
+            cost_err = await _material_cost_guard(db, doc, existing)
+            if cost_err:
+                info["errors"] = [cost_err]
+                invalid.append(info)
+                continue
         if existing:
             info["action"] = "update"
             would_update += 1
@@ -603,6 +649,8 @@ async def import_table(key: str, request: Request, file: UploadFile = File(...),
             doc["updated_at"] = _now()
             await db[entry["collection"]].update_one({"_id": existing["_id"]}, {"$set": doc})
             updated += 1
+            if entry["collection"] == "rahaza_materials":
+                await _record_material_cost(db, doc, existing, user)
         else:
             for dk, dv in defaults.items():
                 doc.setdefault(dk, dv)
@@ -618,6 +666,8 @@ async def import_table(key: str, request: Request, file: UploadFile = File(...),
             doc["created_by_name"] = user.get("name")
             await db[entry["collection"]].insert_one(doc)
             inserted += 1
+            if entry["collection"] == "rahaza_materials":
+                await _record_material_cost(db, doc, None, user)
 
         # Phase 5/6: auto-create COA subledger on import (idempotent, non-fatal)
         _COA_AUTO_COLLECTIONS = {

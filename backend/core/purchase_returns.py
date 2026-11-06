@@ -133,14 +133,17 @@ def gr_billable_lines(gr: dict) -> list:
       potongan (nota debit / diskon) — hanya bila qty bersih baris itu belum masuk faktur;
     * tiap penerimaan susulan (lepas reject, pengganti tukar barang, musnah ditanggung DA) yang
       belum masuk faktur = baris tersendiri pada harganya sendiri.
+    * 2026-11-06 (Tahap 1): tagihan SEBAGIAN dicatat per baris (`base_billed_qty`/`base_billed_value`,
+      atau `billed_qty`/`billed_value` pada penerimaan susulan) — sisanya tetap bisa ditagih. Penanda
+      `base_ap_invoice_id` / `ap_invoice_id` baru diisi bila baris itu sudah tertagih penuh.
     """
     out = []
     for li in (gr or {}).get("items") or []:
         lid = line_id_of(li)
         v = line_values(li)
         if not base_billed(gr, li):
-            q = _r4(v["net_qty"] - v["deducted_qty"])
-            amt = _r2(v["net_qty"] * v["price"] - v["deducted_value"])
+            q = _r4(v["net_qty"] - v["deducted_qty"] - _f(li.get("base_billed_qty")))
+            amt = _r2(v["net_qty"] * v["price"] - v["deducted_value"] - _f(li.get("base_billed_value")))
             if q > 1e-9 or amt > 0.005:
                 out.append({"key": lid, "gr_item_id": lid, "type": "base", "qty": max(q, 0.0),
                             "price": round(amt / q, 4) if q > 1e-9 else v["price"], "amount": amt,
@@ -148,9 +151,13 @@ def gr_billable_lines(gr: dict) -> list:
         for lr in li.get("late_receipts") or []:
             if not isinstance(lr, dict) or lr.get("ap_invoice_id"):
                 continue
+            q = _r4(_f(lr.get("qty")) - _f(lr.get("billed_qty")))
+            amt = _r2(_f(lr.get("amount")) - _f(lr.get("billed_value")))
+            if q <= 1e-9 and amt <= 0.005:
+                continue
             out.append({"key": f"{lid}:late:{lr.get('id')}", "gr_item_id": lid, "type": "late",
-                        "late_id": lr.get("id"), "qty": _r4(lr.get("qty")), "price": _f(lr.get("unit_price")),
-                        "amount": _r2(lr.get("amount")), "gr_price": _f(lr.get("unit_price")),
+                        "late_id": lr.get("id"), "qty": max(q, 0.0), "price": _f(lr.get("unit_price")),
+                        "amount": amt, "gr_price": _f(lr.get("unit_price")),
                         "source": lr.get("source")})
     return out
 
@@ -220,12 +227,28 @@ def plan_debit_note(claim_amount: float, *, billed: bool, desc: str = "") -> lis
 
 
 def plan_discount_valued(valued_qty: float, gr_price: float, disc_price: float, *, billed: bool,
-                         absorbed: bool, kind: str, desc: str = "") -> list:
+                         absorbed: bool, kind: str, desc: str = "",
+                         inventory_amount: float | None = None) -> list:
     """Diterima dengan diskon, barang bernilai: potongan Q×(H−Hd) → Dr Hutang/GRNI / Cr persediaan
-    (HPP turun) atau Cr PPV bila stok bernilai sudah habis (`absorbed=False`)."""
+    (HPP turun) atau Cr PPV bila stok bernilai sudah habis (`absorbed=False`).
+
+    2026-11-06 (Tahap 2): `inventory_amount` = penurunan nilai stok yang BENAR-BENAR terjadi
+    (`core.purchase_costing.absorb_value_change`) → hanya sebesar itu Cr persediaan, sisanya Cr PPV,
+    sehingga nilai stok = buku besar walau sebagian barang sudah terpakai / HPP mentok di 0."""
     cut = _r2(_f(valued_qty) * (_f(gr_price) - _f(disc_price)))
     if cut <= 0:
         return []
+    if inventory_amount is not None:
+        inv = max(0.0, _r2(inventory_amount))
+        rest = _r2(cut - inv)          # bisa negatif beberapa sen (pembulatan HPP 4 desimal) → Dr PPV
+        out = [_ln("ap" if billed else "grni", debit=cut, desc=desc)]
+        if inv > 0:
+            out.append(_ln("inventory", credit=inv, kind=kind, desc=desc))
+        if rest > 0:
+            out.append(_ln("price_variance", credit=rest, desc=desc))
+        elif rest < 0:
+            out.append(_ln("price_variance", debit=-rest, desc=desc))
+        return out
     cr = _ln("inventory", credit=cut, kind=kind, desc=desc) if absorbed else _ln("price_variance", credit=cut, desc=desc)
     return [_ln("ap" if billed else "grni", debit=cut, desc=desc), cr]
 
@@ -316,6 +339,12 @@ async def receive_late(db, *, gr: dict, line: dict, qty: float, unit_price: floa
             db, mid, _f(qty), _f(unit_price), qty_before=qty_before,
             actor={"id": user.get("id"), "name": user.get("name", "")},
             notes=f"Penerimaan susulan GR {gr.get('receipt_number', '')} · {ref_number}".strip())
+        # 2026-11-06 (Tahap 2, butir 7): stok lama bernilai 0 ikut dinilai harga ini → jurnal koreksi
+        from core import purchase_costing
+        await purchase_costing.post_receipt_wac_gap(
+            db, material_id=mid, cost_result=wac, qty_in=_f(qty), cost_in=_f(unit_price),
+            source_ref=f"late:{mv['id']}", memo=f"Nilai ulang stok lama {mat.get('code') or mid} oleh penerimaan "
+                                                f"susulan GR {gr.get('receipt_number', '')}", user=user)
     entry = await record_late_receipt(
         db, gr_id=gr["id"], line_id=line_id_of(line), qty=qty, unit_price=unit_price, source=source,
         ref_id=ref_id, ref_number=ref_number, je_number=posting.get("je_number"), actor=user)

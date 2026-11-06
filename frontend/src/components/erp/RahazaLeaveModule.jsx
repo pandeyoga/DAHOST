@@ -140,6 +140,10 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
   const [rejectReason, setRejectReason] = useState('');
   const [cancelModal, setCancelModal] = useState(null);
   const [cancelReason, setCancelReason] = useState('');
+  // Tahap 2 (2026-11-06): dialog persetujuan — alasan, lampiran, hari kerja, saldo, dan keputusan dibayar/tidak.
+  const [approveModal, setApproveModal] = useState(null);
+  const [payDecision, setPayDecision] = useState('paid');
+  const [approveNote, setApproveNote] = useState('');
 
   // Request form + working days preview
   const EMPTY_FORM = { employee_id: '', leave_type_id: '', from_date: '', to_date: '',
@@ -199,6 +203,7 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
 
     if (!employee_id || !leave_type_id || !from_date || !to_date)
       return toast.error('Lengkapi semua field wajib');
+    if (!reason?.trim()) return toast.error('Alasan wajib diisi');   // Tahap 2: alasan wajib
 
     // Validate document if required
     if (selectedLT?.requires_document) {
@@ -230,9 +235,28 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
 
   // ── Approve ─────────────────────────────────────────────────────────────────
   const approveLeave = async (id) => {
-    const r = await fetch(`${API}/api/rahaza/leaves/${id}/approve`, { method: 'POST', headers, body: '{}' });
-    if (r.ok) { toast.success('Request disetujui'); load(); }
-    else toast.error('Gagal approve');
+    const r = await fetch(`${API}/api/rahaza/leaves/${id}/approval-preview`, { headers });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { toast.error(d.detail || 'Gagal memuat pengajuan'); return; }
+    setApproveModal(d);
+    setPayDecision(d.suggestion?.decision || 'paid');
+    setApproveNote('');
+  };
+
+  const confirmApprove = async () => {
+    if (!approveModal) return;
+    setSaving(true);
+    try {
+      const body = approveModal.final_step ? { pay_decision: payDecision, notes: approveNote } : { notes: approveNote };
+      const r = await fetch(`${API}/api/rahaza/leaves/${approveModal.leave.id}/approve`, {
+        method: 'POST', headers, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || 'Gagal menyetujui');
+      toast.success(d.status === 'pending_hr_approval' ? 'Disetujui atasan — diteruskan ke HR' : 'Pengajuan disetujui');
+      setApproveModal(null);
+      load();
+    } catch (e) { toast.error(e.message); }
+    finally { setSaving(false); }
   };
 
   // ── Reject ──────────────────────────────────────────────────────────────────
@@ -442,7 +466,8 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
                           </Button>
                         </>
                       )}
-                      {lv.status === 'approved' && new Date(lv.from_date) > new Date() && (
+                      {/* Tahap 2: HR juga boleh membatalkan cuti yang sudah dimulai (absensi dikembalikan) */}
+                      {lv.status === 'approved' && (
                         <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-muted-foreground"
                           onClick={() => { setCancelModal(lv); setCancelReason(''); }}
                           data-testid={`cancel-${lv.id}`}>
@@ -690,6 +715,61 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
           </DialogContent>
         </Dialog>
       )}
+
+      {/* ── DIALOG: SETUJUI (Tahap 2) ── */}
+      <Dialog open={!!approveModal} onOpenChange={v => !v && setApproveModal(null)}>
+        <DialogContent className="max-w-md" data-testid="approve-dialog">
+          <DialogHeader><DialogTitle>Setujui pengajuan</DialogTitle></DialogHeader>
+          {approveModal && (
+            <div className="space-y-3 text-sm">
+              <p>
+                <b>{approveModal.employee?.name}</b> · {approveModal.leave_type_name} ({approveModal.leave_kind})
+                <br />
+                <span className="text-muted-foreground">
+                  {fmt(approveModal.leave?.from_date)} – {fmt(approveModal.leave?.to_date)} · {approveModal.working_days} hari kerja
+                  {approveModal.half_day ? ' (setengah hari)' : ''}
+                </span>
+              </p>
+              <div>
+                <p className="text-xs text-muted-foreground">Alasan</p>
+                <p data-testid="approve-reason">{approveModal.reason || '—'}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Lampiran</p>
+                {approveModal.attachment_url ? (
+                  <a href={`${API}${approveModal.attachment_url}`} target="_blank" rel="noreferrer"
+                    className="text-primary underline" data-testid="approve-attachment">
+                    <Paperclip size={12} className="inline mr-1" />{approveModal.attachment_filename || 'Buka lampiran'}
+                  </a>
+                ) : <p className="text-muted-foreground">Tidak ada lampiran</p>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Sisa saldo jenis ini: {approveModal.balance?.remaining} dari {approveModal.balance?.allocated} hari
+              </p>
+              {approveModal.final_step ? (
+                <div className="space-y-1">
+                  <Label className="text-xs">Keputusan pembayaran</Label>
+                  <div className="flex gap-2">
+                    <Button type="button" size="sm" variant={payDecision === 'paid' ? 'default' : 'outline'}
+                      onClick={() => setPayDecision('paid')} data-testid="pay-decision-paid">Dibayar</Button>
+                    <Button type="button" size="sm" variant={payDecision === 'unpaid' ? 'default' : 'outline'}
+                      onClick={() => setPayDecision('unpaid')} data-testid="pay-decision-unpaid">Tidak dibayar</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Usulan sistem: {approveModal.suggestion?.reason}</p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">Persetujuan tingkat 1 — diteruskan ke HR untuk keputusan akhir.</p>
+              )}
+              <Textarea placeholder="Catatan (opsional)" value={approveNote} rows={2}
+                onChange={e => setApproveNote(e.target.value)} data-testid="approve-note" />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApproveModal(null)}>Batal</Button>
+            <Button onClick={confirmApprove} disabled={saving} data-testid="confirm-approve">Setujui</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── DIALOG: REJECT ── */}
       <Dialog open={!!rejectModal} onOpenChange={v => !v && setRejectModal(null)}>

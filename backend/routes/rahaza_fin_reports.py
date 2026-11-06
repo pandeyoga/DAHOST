@@ -627,11 +627,18 @@ FG_INVENTORY_ACCOUNT = "1-1404"
 @router.get("/fg-inventory-valuation")
 async def fg_inventory_valuation(request: Request, as_of: Optional[str] = Query(None)):
     """Nilai persediaan FG per SKU = stok FG milik DA yang bernilai × WAC (core/fg_cost_layers),
-    dibandingkan dengan saldo GL 1-1404 sampai `as_of` (default hari ini). Stok & WAC =
-    posisi SAAT INI; GL = per tanggal. Selisih dijelaskan: penerimaan bernilai yang belum
+    dibandingkan dengan saldo GL 1-1404 sampai `as_of` (default hari ini). 2026-11-06 (Tahap 2):
+    stok & WAC kini JUGA per tanggal itu (dimundurkan dari buku besar stok & riwayat WAC);
+    dulu stok hari ini dibandingkan GL tanggal lampau. Selisih dijelaskan: penerimaan bernilai yang belum
     berjurnal (WIP→FG belum diposting) dan stok tanpa biaya (WAC 0 / penerimaan Rp 0)."""
     await require_auth(request)
     db = get_db()
+    if as_of:
+        from datetime import date as _date
+        try:
+            _date.fromisoformat(as_of)
+        except ValueError:
+            raise HTTPException(400, "Tanggal tidak valid — gunakan format TTTT-BB-HH.")
     return await compute_fg_valuation(db, as_of or today_wib().isoformat())
 
 
@@ -666,7 +673,10 @@ def fg_valuation_row(*, qty: float, wac: float, layers: list, wac_initialized: b
     open_rows = [ly for ly in layers if float(ly.get("qty_remaining") or 0) > 0]
     layer_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows)
     trail_value = sum(float(ly.get("qty_remaining") or 0) * float(ly.get("unit_cost") or 0) for ly in open_rows)
-    zero_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows if float(ly.get("unit_cost") or 0) <= 0)
+    # 2026-11-06 (Tahap 2): lapisan Rp 0 yang sudah dinilai lewat jurnal koreksi WAC (`wac_valued`)
+    # bukan lagi stok tanpa biaya.
+    zero_qty = sum(float(ly.get("qty_remaining") or 0) for ly in open_rows
+                   if float(ly.get("unit_cost") or 0) <= 0 and not ly.get("wac_valued"))
     unposted = [ly for ly in layers if not ly.get("gl_je_id") and float(ly.get("total_cost") or 0) > 0]
     if qty > 0 and wac <= 0:
         uncosted = qty
@@ -682,6 +692,52 @@ def fg_valuation_row(*, qty: float, wac: float, layers: list, wac_initialized: b
             "unposted_layers": len(unposted),
             "unposted_value": round(sum(float(ly.get("total_cost") or 0) for ly in unposted), 2),
             "uncosted_qty": round(uncosted, 2), "layers_open": len(open_rows)}
+
+
+# 2026-11-06 (Tahap 2): operasi buku besar stok yang MENGUBAH qty (reserve/release tidak).
+LEDGER_QTY_OPS = ("add", "issue", "issue_row", "adjust")
+
+
+def _dt_key(v):
+    from utils.waktu import as_aware_utc
+    from datetime import datetime as _dt
+    if isinstance(v, _dt):
+        return as_aware_utc(v).isoformat()
+    return str(v or "")
+
+
+def wac_at_date(history_after: list) -> float:
+    """WAC pada akhir suatu tanggal (fungsi murni). `history_after` = riwayat WAC SESUDAH tanggal
+    itu: entri pertamanya menyimpan `old_unit_cost` = WAC yang berlaku sampai saat itu."""
+    rows = sorted(history_after or [], key=lambda h: _dt_key(h.get("created_at")))
+    return round(float((rows[0] if rows else {}).get("old_unit_cost") or 0), 4)
+
+
+async def fg_position_as_of(db, ids: list, as_of_date: str, valued_keys: set) -> dict:
+    """Mutasi stok FG & riwayat WAC SESUDAH akhir hari `as_of_date` (WIB).
+
+    stok per tanggal = stok kini − Σ delta sesudahnya (baris bernilai saja untuk nilai);
+    WAC per tanggal = `wac_at_date` (FG tanpa riwayat sesudahnya: WAC kini)."""
+    from datetime import date as _date
+    from utils.waktu import wib_day_bounds_utc
+    _start, cutoff = wib_day_bounds_utc(_date.fromisoformat(as_of_date))
+    qty_after: dict = {}
+    phys_after: dict = {}
+    async for e in db.rahaza_stock_ledger.find(
+            {"material_id": {"$in": ids}, "created_at": {"$gte": cutoff}, "op": {"$in": list(LEDGER_QTY_OPS)}},
+            {"_id": 0, "material_id": 1, "location_id": 1, "delta": 1}):
+        mid, d = e.get("material_id"), float(e.get("delta") or 0)
+        phys_after[mid] = phys_after.get(mid, 0.0) + d
+        if (mid, e.get("location_id")) in valued_keys:
+            qty_after[mid] = qty_after.get(mid, 0.0) + d
+    hist: dict = {}
+    from core.accessory_valuation import COST_HISTORY  # satu nama koleksi dengan penulisnya
+    async for h in db[COST_HISTORY].find(
+            {"material_id": {"$in": ids}, "created_at": {"$gte": cutoff}},
+            {"_id": 0, "material_id": 1, "old_unit_cost": 1, "created_at": 1}):
+        hist.setdefault(h.get("material_id"), []).append(h)
+    return {"qty_after": qty_after, "phys_after": phys_after,
+            "wac_at": {mid: wac_at_date(rows) for mid, rows in hist.items()}, "cutoff": cutoff}
 
 
 async def compute_fg_valuation(db, as_of_date: str) -> dict:
@@ -703,11 +759,26 @@ async def compute_fg_valuation(db, as_of_date: str) -> dict:
     blocked = await blocked_location_ids(db)
     qty_by: dict = {}
     phys_by: dict = {}
+    valued_keys: set = set()
     async for s in db.rahaza_material_stock.find({"material_id": {"$in": ids}}, {"_id": 0}):
         mid = s.get("material_id")
         phys_by[mid] = phys_by.get(mid, 0.0) + read_qty(s)
         if fcl.is_valued_row(s, blocked):
             qty_by[mid] = qty_by.get(mid, 0.0) + read_qty(s)
+            valued_keys.add((mid, s.get("location_id")))
+
+    # 2026-11-06 (Tahap 2): laporan "per tanggal" dulu membandingkan stok HARI INI dengan GL per
+    # tanggal itu. Untuk tanggal lampau stok & WAC kini DIMUNDURKAN dari buku besar stok
+    # (`rahaza_stock_ledger`) dan riwayat WAC (`rahaza_material_cost_history`).
+    historical = as_of_date < today_wib().isoformat()
+    wac_at: dict = {}
+    if historical:
+        back = await fg_position_as_of(db, ids, as_of_date, valued_keys)
+        for mid, dq in back["qty_after"].items():
+            qty_by[mid] = qty_by.get(mid, 0.0) - dq
+        for mid, dq in back["phys_after"].items():
+            phys_by[mid] = phys_by.get(mid, 0.0) - dq
+        wac_at = back["wac_at"]
 
     rows = []
     for mid in ids:
@@ -717,6 +788,8 @@ async def compute_fg_valuation(db, as_of_date: str) -> dict:
         # FG yang belum pernah dinilai WAC: pratinjau WAC awal (rumus migrasi), tanpa menulis
         wac = (float(info.get(fcl.WAC_FIELD) or 0) if initialized
                else fcl.initial_wac_from_layers(ly)["unit_cost"])
+        if mid in wac_at:
+            wac = wac_at[mid]
         qty = float(qty_by.get(mid, 0.0))
         r = fg_valuation_row(qty=qty, wac=wac, layers=ly, wac_initialized=initialized)
         if not (r["stock_qty"] or r["layer_qty"] or r["unposted_value"]):
@@ -739,6 +812,7 @@ async def compute_fg_valuation(db, as_of_date: str) -> dict:
     status = fg_valuation_status(difference=difference, unexplained=explained, uncosted_qty=uncosted_qty)
     return {
         "as_of": as_of_date, "gl_account": FG_INVENTORY_ACCOUNT, "basis": "wac",
+        "stock_basis": "ledger_as_of" if historical else "current",
         "rows": rows,
         "totals": {"stock_qty": round(sum(r["stock_qty"] for r in rows), 2),
                    "layer_qty": round(sum(r["layer_qty"] for r in rows), 2),
@@ -753,6 +827,8 @@ async def compute_fg_valuation(db, as_of_date: str) -> dict:
             "Nilai = Σ stok FG milik DA yang bernilai (semua lokasi kecuali karantina/terblokir) × WAC "
             "(rata-rata bergerak, keputusan owner No.26a). Kolom lama 'layer_value'/'avg_unit_cost' kini berisi angka WAC.",
             "Saldo GL = Dr − Cr akun 1-1404 sampai tanggal as_of.",
+            "Tanggal lampau: stok = stok kini dikurangi mutasi buku besar stok sesudah tanggal itu; "
+            "WAC = WAC yang berlaku pada tanggal itu (riwayat WAC). Jejak lapisan tetap posisi kini.",
             "unposted_value = penerimaan bernilai yang belum punya JE WIP→FG (jalankan Backfill WIP→FG).",
             "uncosted_qty = stok tanpa biaya (WAC 0, atau penerimaan Rp 0 yang masih ada di jejak lapisan).",
             "layer_qty = sisa jejak lapisan batch (analitik, bukan dasar nilai); qty_diff = stok − jejak.",

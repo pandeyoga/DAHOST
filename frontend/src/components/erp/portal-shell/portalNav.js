@@ -661,8 +661,9 @@ export const PORTAL_NAV = {
         items: [
           { id: 'portal-dashboard',  label: 'Dashboard',    icon: LayoutDashboard },
           { id: 'portal-profile',    label: 'Profil',       icon: UserCircle },
+          // Tahap 2 (2026-11-06): satu menu absen — "Kehadiran" (self-dashboard) digabung ke Absen Saya
+          // (riwayat 30 hari + koreksi absen ada di sana); id lama tetap diarahkan ke sini.
           { id: 'portal-absen',      label: 'Absen Saya',   icon: Clock },
-          { id: 'self-dashboard',    label: 'Kehadiran',    icon: Clock },
           { id: 'portal-cuti',       label: 'Cuti & Lembur', icon: Calendar },
           { id: 'portal-notifikasi', label: 'Notifikasi',   icon: Bell },
         ],
@@ -741,7 +742,7 @@ export const PORTAL_NAV = {
       {
         label: 'KEUANGAN & ANALITIK',
         items: [
-          { id: 'maklon-billing',  label: 'Invoice Klien', icon: Banknote },
+          { id: 'maklon-billing',  label: 'Piutang klien', icon: Banknote },
           // 2026-11-02 (K16): tagihan vendor CMT PO maklon — layar yang SAMA dengan Produksi/
           // Keuangan (ProductionCMTBillingModule, scope maklon dari portal), bukan duplikat.
           { id: 'prod-cmt-billing', label: 'Tagihan Vendor CMT', icon: Banknote },

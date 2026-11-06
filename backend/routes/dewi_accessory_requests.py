@@ -23,7 +23,7 @@ from typing import Optional
 import uuid
 import re
 from core.authz import only  # T-01 2.3
-from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from core.roles import MGMT_ROLES, WAREHOUSE_ROLES  # T-01 2.3
 from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/accessory-requests", tags=["RnD-Accessory-Requests"])
@@ -50,6 +50,34 @@ def serialize(doc):
 
 VALID_STATUSES = {'draft', 'submitted', 'allocated', 'delivered', 'rejected', 'cancelled'}
 
+# 2026-11-06 (Tahap 1) — status hanya berpindah lewat endpoint transisi (/submit, /allocate,
+# /deliver, /reject). Dulu POST & PUT menerima status apa pun, sehingga `PUT status=delivered`
+# menandai permintaan "terkirim" TANPA stok keluar. Saat dibuat, status boleh draf atau langsung
+# diajukan (Request Internal & sampel R&D mengirim 'submitted').
+CREATE_STATUSES = ('draft', 'submitted')
+# Field alur kerja yang hanya boleh ditulis endpoint transisi — bukan lewat PUT ubah detail.
+# `request_type` ikut dikunci: ia menentukan apakah /deliver memotong stok.
+WORKFLOW_FIELDS = (
+    'status', 'request_type', 'submitted_at',
+    'allocated_by', 'allocated_at', 'allocation_notes',
+    'delivered_by', 'delivered_at', 'delivery_notes',
+    'rejection_reason', 'rejected_by', 'rejected_at',
+    'stock_issued', 'stock_issue_results', 'stock_issued_at',
+    # 2026-11-06 (Tahap 2): jejak pengeluaran (tujuan biaya, kelebihan dari kebutuhan PO, kunci serah)
+    'issue_linked_po', 'cost_target', 'over_issue_reason', 'over_issue_lines', 'delivering',
+    'stock_issue_partial',
+)
+# Satu definisi "menunggu" untuk Inbox Approval DAN kartu "Request Pending" di dashboard:
+# status diajukan, semua jenis permintaan (inbox Portal Aksesoris membuka semua jenis).
+INBOX_PENDING_FILTER = {'status': 'submitted'}
+
+
+def _assert_can_fulfil(user: dict, *keys: str, what: str):
+    """Gerbang alokasi / serah / tolak: tim Portal Aksesoris (termasuk admin gudang) +
+    manajemen. Satu daftar peran untuk ketiga aksi — dulu hanya /reject yang dijaga."""
+    from routes.shared import assert_can_act
+    assert_can_act(user, *keys, portal='accessories', legacy_roles=MGMT_ROLES, what=what)
+
 # P3 TD-009: known request_type discriminators
 VALID_REQUEST_TYPES = {
     'rnd_sample',          # Native — RnD requesting accessories for sample/style production
@@ -64,6 +92,51 @@ def _normalize_request_type(rt: Optional[str]) -> str:
     if not rt or rt in ('sample', 'rnd', 'rnd_sample'):
         return 'rnd_sample'
     return rt if rt in VALID_REQUEST_TYPES else 'rnd_sample'
+
+
+def _norm_item(it: dict) -> dict:
+    """Satu baris item permintaan — SATU bentuk untuk buat (POST) dan ubah (PUT).
+
+    2026-11-06 (Tahap 2): PUT dulu menyusun ulang baris tanpa `material_id`, sehingga permintaan
+    yang diubah kehilangan tautan ke master (lalu gagal diserahkan / dicocokkan per nama)."""
+    return {
+        # ACC-1/ACC-2: `material_id` dibawa agar permintaan bisa dipenuhi dari
+        # stok kanonik (rahaza_material_stock) tanpa cocok-cocokan nama/kode.
+        'material_id': it.get('material_id') or it.get('acc_id') or it.get('accessory_id') or '',
+        'material_code': it.get('material_code', '') or it.get('acc_code', '') or it.get('accessory_code', ''),
+        'material_name': it.get('material_name', '') or it.get('acc_name', '') or it.get('accessory_name', ''),
+        'qty': float(it.get('qty', 0) or it.get('qty_requested', 0) or it.get('requested_qty', 0) or 0),
+        'unit': it.get('unit', 'pcs'),
+        'notes': it.get('notes', ''),
+    }
+
+
+async def _enrich_labels(db, docs: list) -> list:
+    """2026-11-06 (Tahap 2): nama vendor, nomor surat jalan asal & kode sampel untuk layar — dulu
+    layar menampilkan id mentah (UUID) vendor / surat jalan / permintaan sampel."""
+    vids = {d.get('vendor_id') for d in docs if d.get('vendor_id')}
+    sids = {d.get('original_shipment_id') for d in docs if d.get('original_shipment_id')}
+    rids = {d.get('sample_request_id') for d in docs if d.get('sample_request_id')}
+    vendors, ships, samples = {}, {}, {}
+    if vids:
+        from routes.production_rbac import resolve_vendor_doc
+        for vid in vids:
+            v = await resolve_vendor_doc(db, vid)
+            if v:
+                vendors[vid] = v.get('garment_name') or v.get('name') or ''
+    if sids:
+        async for s in db.vendor_shipments.find({'id': {'$in': list(sids)}},
+                                                {'_id': 0, 'id': 1, 'shipment_number': 1}):
+            ships[s['id']] = s.get('shipment_number') or ''
+    if rids:
+        async for s in db.dewi_rnd_sample_requests.find({'id': {'$in': list(rids)}},
+                                                        {'_id': 0, 'id': 1, 'sample_code': 1}):
+            samples[s['id']] = s.get('sample_code') or ''
+    for d in docs:
+        d['vendor_name'] = d.get('vendor_name') or vendors.get(d.get('vendor_id'), '')
+        d['original_shipment_number'] = ships.get(d.get('original_shipment_id'), '')
+        d['sample_code'] = d.get('sample_code') or samples.get(d.get('sample_request_id'), '')
+    return docs
 
 
 # ─── LIST ────────────────────────────────────────────────────────────────────
@@ -106,7 +179,7 @@ async def list_requests(
             {'divisi':         {'$regex': rx, '$options': 'i'}},
         ]
     items = await db.dewi_accessory_requests.find(q).sort('created_at', -1).limit(limit).to_list(length=limit)
-    return [serialize(it) for it in items]
+    return [serialize(it) for it in await _enrich_labels(db, items)]
 
 
 # ─── DETAIL ──────────────────────────────────────────────────────────────────
@@ -116,7 +189,7 @@ async def get_request(request_id: str, user: dict = Depends(require_auth)):
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})
     if not doc:
         raise HTTPException(404, 'Request tidak ditemukan')
-    return serialize(doc)
+    return serialize((await _enrich_labels(db, [doc]))[0])
 
 
 # ─── CREATE ──────────────────────────────────────────────────────────────────
@@ -132,8 +205,19 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
     items = body.get('items') or []
     if not items:
         raise HTTPException(400, 'Minimal 1 item aksesoris harus diisi')
+    status = str(body.get('status') or 'draft').strip().lower()
+    if status not in CREATE_STATUSES:
+        raise HTTPException(400, 'Permintaan baru hanya bisa disimpan sebagai draf atau langsung diajukan. '
+                                 'Menyiapkan, menyerahkan, dan menolak dilakukan dari Inbox Approval.')
 
     rt = _normalize_request_type(body.get('request_type'))
+    # 2026-11-06 (Tahap 2): divisi dari daftar tunggal (menentukan akun beban saat diserahkan)
+    from core.accessory_issue import DIVISION_NAMES, normalize_division
+    divisi_raw = (body.get('divisi') or '').strip()
+    divisi = normalize_division(divisi_raw)
+    if divisi_raw and not divisi:
+        raise HTTPException(400, f"Divisi '{divisi_raw}' tidak dikenal. Pilih salah satu: "
+                                 f"{', '.join(DIVISION_NAMES)}.")
     sample_id = body.get('sample_request_id') or ''
     style_id  = body.get('style_id') or ''
 
@@ -175,7 +259,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
         'style_code': style_code,
         'style_name': style_name,
         # internal_issuance fields
-        'divisi':       body.get('divisi', ''),
+        'divisi':       divisi,
         'purpose':      body.get('purpose', ''),
         'admin_notes':  body.get('admin_notes', ''),
         # vendor_*  fields
@@ -185,22 +269,12 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
         'po_number':              body.get('po_number', ''),
         'total_requested_qty':    body.get('total_requested_qty'),
         # common
-        'items': [
-            {
-                # ACC-1/ACC-2: `material_id` dibawa agar permintaan bisa dipenuhi dari
-                # stok kanonik (rahaza_material_stock) tanpa cocok-cocokan nama/kode.
-                'material_id': it.get('material_id') or it.get('acc_id') or it.get('accessory_id') or '',
-                'material_code': it.get('material_code', '') or it.get('acc_code', '') or it.get('accessory_code', ''),
-                'material_name': it.get('material_name', '') or it.get('acc_name', '') or it.get('accessory_name', ''),
-                'qty': float(it.get('qty', 0) or it.get('qty_requested', 0) or it.get('requested_qty', 0) or 0),
-                'unit': it.get('unit', 'pcs'),
-                'notes': it.get('notes', ''),
-            } for it in items
-        ],
+        'items': [_norm_item(it) for it in items],
         'urgent': bool(body.get('urgent', False)),
         'needed_by_date': body.get('needed_by_date', '') or body.get('needed_by', ''),
         'notes': body.get('notes', '') or body.get('reason', ''),
-        'status': body.get('status', 'draft'),
+        'status': status,
+        'submitted_at': now_utc() if status == 'submitted' else None,
         'requester_id': user['id'],
         'requester_name': user.get('name', ''),
         'allocated_by': None,
@@ -224,18 +298,43 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
         raise HTTPException(404, 'Request tidak ditemukan')
     if doc['status'] in ('delivered', 'rejected', 'cancelled'):
         raise HTTPException(400, f"Tidak bisa edit request dengan status {doc['status']}")
+    if 'status' in body and body.get('status') != doc.get('status'):
+        raise HTTPException(400, 'Status permintaan tidak bisa diubah dari sini. Gunakan tombol Ajukan, '
+                                 'Siapkan, Tandai Kirim, atau Tolak supaya stok dan jejak auditnya tercatat.')
 
-    upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'created_by', 'requester_id', 'request_code')}
+    upd = {k: v for k, v in body.items()
+           if k not in ('id', '_id', 'created_at', 'created_by', 'requester_id', 'request_code')
+           and k not in WORKFLOW_FIELDS}
     if 'items' in upd:
-        upd['items'] = [
-            {
-                'material_code': it.get('material_code', ''),
-                'material_name': it.get('material_name', ''),
-                'qty': float(it.get('qty', 0) or 0),
-                'unit': it.get('unit', 'pcs'),
-                'notes': it.get('notes', ''),
-            } for it in (upd['items'] or [])
-        ]
+        # 2026-11-06 (Tahap 2): baris disusun ulang dengan bentuk yang SAMA seperti saat dibuat, dan
+        # tautan baris lama (material_id + field tautan lain) dipertahankan bila klien tidak
+        # mengirimnya — dicocokkan per kode barang, lalu per posisi bila nama/kodenya sama.
+        old_items = list(doc.get('items') or [])
+        new_items = []
+        for idx, it in enumerate(upd['items'] or []):
+            row = _norm_item(it)
+            prev = None
+            if row['material_code']:
+                prev = next((o for o in old_items if (o.get('material_code') or '') == row['material_code']), None)
+            if prev is None and idx < len(old_items):
+                o = old_items[idx]
+                if ((o.get('material_name') or '') == row['material_name']
+                        or (o.get('material_code') or '') == row['material_code']):
+                    prev = o
+            if prev:
+                extra = {k: v for k, v in prev.items() if k not in row}
+                if not row['material_id']:
+                    row['material_id'] = prev.get('material_id') or ''
+                row = {**extra, **row}
+            new_items.append(row)
+        upd['items'] = new_items
+    if 'divisi' in upd:
+        from core.accessory_issue import DIVISION_NAMES, normalize_division
+        dv = normalize_division(upd['divisi'])
+        if (upd['divisi'] or '').strip() and not dv:
+            raise HTTPException(400, f"Divisi '{upd['divisi']}' tidak dikenal. Pilih salah satu: "
+                                     f"{', '.join(DIVISION_NAMES)}.")
+        upd['divisi'] = dv
     upd['updated_at'] = now_utc()
     await db.dewi_accessory_requests.update_one({'id': request_id}, {'$set': upd})
     return {'ok': True}
@@ -264,6 +363,7 @@ async def submit_request(request_id: str, user: dict = Depends(require_auth)):
 # ─── ALLOCATE (submitted → allocated, by Admin Aksesoris) ────────────────────
 @router.post('/{request_id}/allocate')
 async def allocate_request(request_id: str, body: dict = None, user: dict = Depends(require_auth)):
+    _assert_can_fulfil(user, 'accessories.approve', what='menyiapkan permintaan aksesoris')
     db = get_db()
     body = body or {}
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})
@@ -300,7 +400,16 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
         stok, tidak ada satu pun yang dipotong (tidak ada penyerahan separuh).
       * IDEMPOTEN: dokumen ditandai `stock_issued` sehingga klik ganda tidak memotong
         stok dua kali.
+
+    2026-11-06 (Tahap 2) — SEMUA jenis permintaan memotong stok + berjurnal (dulu sampel R&D dan
+    tambahan/pengganti vendor "terkirim" tanpa stok keluar). Akun beban: PO (maklon/internal) →
+    sampel R&D → divisi pemohon (`core.accessory_issue.resolve_cost_target`). Permintaan ber-PO yang
+    melebihi kebutuhan PO (dihitung bersama Kirim Material CMT) wajib beralasan
+    (`over_issue_reason`). Baris tanpa master (sampel R&D diketik bebas) dipilihkan masternya lewat
+    `item_links: [{index, material_id}]`.
     """
+    _assert_can_fulfil(user, 'accessories.approve', 'wh.accessory.manage',
+                       what='menyerahkan permintaan aksesoris')
     db = get_db()
     body = body or {}
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})
@@ -309,52 +418,116 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
     if doc['status'] != 'allocated':
         raise HTTPException(400, 'Hanya request berstatus allocated yang bisa di-deliver')
 
-    issue_results: list[dict] = []
-    if doc.get('request_type') == 'internal_issuance' and not doc.get('stock_issued'):
-        from core import accessory_issue
+    from core import accessory_issue
 
+    def _err(e):
+        if getattr(e, 'code', ''):
+            return HTTPException(getattr(e, 'status', 400), {'code': e.code, 'message': str(e), **(e.data or {})})
+        return HTTPException(getattr(e, 'status', 400), str(e))
+
+    items = [dict(it) for it in (doc.get('items') or [])]
+    links_changed = False
+    for ln in body.get('item_links') or []:
         try:
-            rows = await accessory_issue.check_availability(db, doc.get('items') or [])
+            idx = int(ln.get('index'))
+        except (TypeError, ValueError):
+            continue
+        mid = (ln.get('material_id') or '').strip()
+        if 0 <= idx < len(items) and mid and not items[idx].get('material_id'):
+            mat = await accessory_issue.resolve_material(db, acc_id=mid)
+            if not mat:
+                raise HTTPException(400, f"Baris {idx + 1}: master aksesoris yang dipilih tidak ditemukan/nonaktif.")
+            items[idx].update(material_id=mat['id'], material_code=items[idx].get('material_code') or mat.get('code', ''))
+            links_changed = True
+
+    issue_results: list[dict] = []
+    over_lines: list = []
+    reason = (body.get('over_issue_reason') or '').strip()
+    target: dict = {}
+    if not doc.get('stock_issued'):
+        try:
+            rows = await accessory_issue.check_availability(db, items)
+            target = await accessory_issue.resolve_cost_target(
+                db, divisi=doc.get('divisi', ''), po_id=doc.get('po_id') or '',
+                request_type=doc.get('request_type') or 'rnd_sample')
+            if not reason and doc.get('request_type') in accessory_issue.VENDOR_REQUEST_TYPES:
+                # tambahan/pengganti vendor: alasan permintaannya sendiri = alasan kelebihan
+                reason = (doc.get('notes') or '').strip()
+            over_lines = await accessory_issue.guard_po_over_issue(db, target, rows, reason)
         except accessory_issue.IssueError as e:
-            raise HTTPException(getattr(e, 'status', 400), str(e))
-        note = (f"Permintaan internal {doc.get('request_code', '')}"
-                f"{' · ' + doc['divisi'] if doc.get('divisi') else ''}")
-        for row in rows:
-            try:
-                res = await accessory_issue.issue_accessory(
-                    db, user, acc_id=row['material']['id'], qty=row['qty'],
-                    notes=note, ref_type='accessory_request', ref_id=request_id,
-                )
-            except accessory_issue.IssueError as e:
-                # Sudah lolos pra-validasi; kalau tetap gagal (mis. balapan), laporkan
-                # apa yang SUDAH terpotong supaya operator bisa menelusuri.
-                raise HTTPException(
-                    400, f"{str(e)} — {len(issue_results)} baris sudah terlanjur dikeluarkan; "
-                         f"periksa kartu stok aksesoris.")
-            issue_results.append({
-                'material_id': res['material_id'], 'material_code': res['material_code'],
-                'material_name': res['material_name'], 'qty': res['qty_issued'],
-                'unit': res['unit'], 'unit_cost': res['unit_cost'], 'value': res['value'],
-                'je_number': (res.get('je') or {}).get('je_number', ''),
-                'je_posted': bool((res.get('je') or {}).get('posted')),
-            })
+            raise _err(e)
+        # kunci serah atomik: klik ganda / dua admin tidak memotong stok dua kali
+        claim = await db.dewi_accessory_requests.update_one(
+            {'id': request_id, 'status': 'allocated', 'stock_issued': {'$ne': True},
+             'delivering': {'$ne': True}},
+            {'$set': {'delivering': True, 'updated_at': now_utc()}})
+        if not claim.matched_count:
+            raise HTTPException(409, 'Permintaan ini sedang/sudah diserahkan pengguna lain — muat ulang daftar.')
+        kind = {'rnd_sample': 'Sampel R&D', 'vendor_additional': 'Tambahan vendor',
+                'vendor_replacement': 'Pengganti vendor'}.get(doc.get('request_type'), 'Permintaan internal')
+        note = (f"{kind} {doc.get('request_code', '')}"
+                f"{' · PO ' + target['po_number'] if target.get('po_number') else ''}"
+                f"{' · ' + target['divisi'] if target.get('divisi') and not target.get('po_id') else ''}")
+        try:
+            for row in rows:
+                try:
+                    res = await accessory_issue.issue_accessory(
+                        db, user, acc_id=row['material']['id'], qty=row['qty'],
+                        notes=note, ref_type='accessory_request', ref_id=request_id,
+                        target=target, over_issue_reason=reason if over_lines else '',
+                    )
+                except accessory_issue.IssueError as e:
+                    # Sudah lolos pra-validasi; kalau tetap gagal (mis. balapan), laporkan
+                    # apa yang SUDAH terpotong supaya operator bisa menelusuri.
+                    raise HTTPException(
+                        400, f"{str(e)} — {len(issue_results)} baris sudah terlanjur dikeluarkan; "
+                             f"periksa kartu stok aksesoris.")
+                issue_results.append({
+                    'material_id': res['material_id'], 'material_code': res['material_code'],
+                    'material_name': res['material_name'], 'qty': res['qty_issued'],
+                    'unit': res['unit'], 'unit_cost': res['unit_cost'], 'value': res['value'],
+                    'movement_id': res.get('movement_id', ''),
+                    'je_number': (res.get('je') or {}).get('je_number', ''),
+                    'je_posted': bool((res.get('je') or {}).get('posted')),
+                    'je_error': '' if (res.get('je') or {}).get('posted') else (res.get('je') or {}).get('error', ''),
+                })
+        except BaseException:
+            if not issue_results:
+                await db.dewi_accessory_requests.update_one({'id': request_id}, {'$set': {'delivering': False}})
+            else:
+                # sebagian sudah terpotong: simpan jejaknya & biarkan terkunci (serah ulang = potong dobel)
+                await db.dewi_accessory_requests.update_one({'id': request_id}, {'$set': {
+                    'stock_issue_results': issue_results, 'stock_issue_partial': True,
+                    'issue_linked_po': True, 'updated_at': now_utc()}})
+            raise
 
     update = {
         'status': 'delivered',
         'delivered_by': user.get('name', ''),
         'delivered_at': now_utc(),
         'delivery_notes': body.get('notes', ''),
+        'delivering': False,
         'updated_at': now_utc(),
     }
+    if links_changed:
+        update['items'] = items
     if issue_results:
         update['stock_issued'] = True
         update['stock_issue_results'] = issue_results
         update['stock_issued_at'] = now_utc()
+        update['cost_target'] = target.get('cost_target', '')
+        # baris kartu stok sudah membawa po_id → tidak dihitung ulang dari dokumen ini
+        update['issue_linked_po'] = True
+        if over_lines:
+            update['over_issue_reason'] = reason
+            update['over_issue_lines'] = over_lines
     await db.dewi_accessory_requests.update_one({'id': request_id}, {'$set': update})
     return {
         'ok': True,
         'stock_issued': bool(issue_results),
         'issued_items': issue_results,
+        'cost_target': target.get('cost_target', ''),
+        'over_issue_lines': over_lines,
         'total_value': round(sum(x['value'] for x in issue_results), 2),
     }
 
@@ -362,11 +535,8 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
 # ─── REJECT ──────────────────────────────────────────────────────────────────
 @router.post('/{request_id}/reject')
 async def reject_request(request_id: str, body: dict = None, user: dict = Depends(require_auth)):
-    from routes.shared import assert_can_act
-    assert_can_act(user, 'accessories.approve', 'accessories.manage', portal='accessories',
-                   legacy_roles=('admin_aksesoris', 'spv_aksesoris', 'admin_gudang',
-                                 'manager', 'owner', 'admin', 'superadmin'),
-                   what='menolak permintaan aksesoris')
+    _assert_can_fulfil(user, 'accessories.approve', 'accessories.manage',
+                       what='menolak permintaan aksesoris')
     db = get_db()
     body = body or {}
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})
@@ -374,6 +544,10 @@ async def reject_request(request_id: str, body: dict = None, user: dict = Depend
         raise HTTPException(404, 'Request tidak ditemukan')
     if doc['status'] in ('delivered', 'cancelled'):
         raise HTTPException(400, f"Tidak bisa reject request dengan status {doc['status']}")
+    if doc.get('stock_issued') or doc.get('stock_issue_partial'):
+        # 2026-11-06 (Tahap 2): stok sudah (sebagian) keluar — menolak tidak mengembalikan stok
+        raise HTTPException(400, 'Stok permintaan ini sudah (sebagian) dikeluarkan, jadi tidak bisa ditolak. '
+                                 'Periksa kartu stok aksesoris.')
     await db.dewi_accessory_requests.update_one(
         {'id': request_id},
         {'$set': {

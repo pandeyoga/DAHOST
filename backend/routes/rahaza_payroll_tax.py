@@ -354,3 +354,213 @@ def compute_full_tax_and_bpjs(
         "pph21": pph21,
         "total_deductions": sum(d["amount"] for d in deductions),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PPh21 METODE TER — 2026-11-06 (Tahap 2, keputusan owner: tarif, PTKP, tabel TER bisa diatur)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Nilai di bawah hanya BAWAAN; yang berlaku dibaca dari `rahaza_payroll_settings` key "pph21"
+# (layar Pengaturan Payroll) lewat merge_pph21_config(). Sumber:
+#   · PTKP           : PMK 101/PMK.010/2016 (masih berlaku menurut UU 7/2021 HPP).
+#   · Tarif Pasal 17 : UU 7/2021 (HPP) — 5% / 15% / 25% / 30% / 35%.
+#   · TER bulanan A/B/C : Lampiran PP 58/2023, tata cara PMK 168/2023 (berlaku 1 Jan 2024).
+#     A = TK/0, TK/1, K/0 · B = TK/2, TK/3, K/1, K/2 · C = K/3.
+#   · Masa pajak Desember (atau bulan terakhir bekerja): PPh21 setahun dengan tarif Pasal 17 dikurangi
+#     PPh21 TER Januari–November (PMK 168/2023).
+#   · Biaya jabatan 5%, maks Rp500.000 per bulan / Rp6.000.000 per tahun.
+#   · Iuran JHT & JP yang dibayar KARYAWAN = pengurang penghasilan bruto. Iuran BPJS Kesehatan karyawan
+#     BUKAN pengurang. Premi JKK, JKM, dan BPJS Kesehatan yang dibayar perusahaan = penghasilan (bruto).
+#   · Sejak 2024 NIK = NPWP (PMK 112/2022) → tambahan 20% bagi yang tidak ber-NPWP bawaan MATI.
+# Tabel ditulis [batas_atas_bruto_bulanan, tarif]; batas_atas None = selebihnya.
+TER_A = [
+    [5_400_000, 0], [5_650_000, 0.0025], [5_950_000, 0.005], [6_300_000, 0.0075], [6_750_000, 0.01],
+    [7_500_000, 0.0125], [8_550_000, 0.015], [9_650_000, 0.0175], [10_050_000, 0.02], [10_350_000, 0.0225],
+    [10_700_000, 0.025], [11_050_000, 0.03], [11_600_000, 0.035], [12_500_000, 0.04], [13_750_000, 0.05],
+    [15_100_000, 0.06], [16_950_000, 0.07], [19_750_000, 0.08], [24_150_000, 0.09], [26_450_000, 0.10],
+    [28_000_000, 0.11], [30_050_000, 0.12], [32_400_000, 0.13], [35_400_000, 0.14], [39_100_000, 0.15],
+    [43_850_000, 0.16], [47_800_000, 0.17], [51_400_000, 0.18], [56_300_000, 0.19], [62_200_000, 0.20],
+    [68_600_000, 0.21], [77_500_000, 0.22], [89_000_000, 0.23], [103_000_000, 0.24], [125_000_000, 0.25],
+    [157_000_000, 0.26], [206_000_000, 0.27], [337_000_000, 0.28], [454_000_000, 0.29], [550_000_000, 0.30],
+    [695_000_000, 0.31], [910_000_000, 0.32], [1_400_000_000, 0.33], [None, 0.34],
+]
+TER_B = [
+    [6_200_000, 0], [6_500_000, 0.0025], [6_850_000, 0.005], [7_300_000, 0.0075], [9_200_000, 0.01],
+    [10_750_000, 0.015], [11_250_000, 0.02], [11_600_000, 0.025], [12_600_000, 0.03], [13_600_000, 0.04],
+    [14_950_000, 0.05], [16_400_000, 0.06], [18_450_000, 0.07], [21_850_000, 0.08], [26_000_000, 0.09],
+    [27_700_000, 0.10], [29_350_000, 0.11], [31_450_000, 0.12], [33_950_000, 0.13], [37_100_000, 0.14],
+    [41_100_000, 0.15], [45_800_000, 0.16], [49_500_000, 0.17], [53_800_000, 0.18], [58_500_000, 0.19],
+    [64_000_000, 0.20], [71_000_000, 0.21], [80_000_000, 0.22], [93_000_000, 0.23], [109_000_000, 0.24],
+    [129_000_000, 0.25], [163_000_000, 0.26], [211_000_000, 0.27], [374_000_000, 0.28], [459_000_000, 0.29],
+    [555_000_000, 0.30], [704_000_000, 0.31], [957_000_000, 0.32], [1_405_000_000, 0.33], [None, 0.34],
+]
+TER_C = [
+    [6_600_000, 0], [6_950_000, 0.0025], [7_350_000, 0.005], [7_800_000, 0.0075], [8_850_000, 0.01],
+    [9_800_000, 0.0125], [10_950_000, 0.015], [11_200_000, 0.0175], [12_050_000, 0.02], [12_950_000, 0.03],
+    [14_150_000, 0.04], [15_550_000, 0.05], [17_050_000, 0.06], [19_500_000, 0.07], [22_700_000, 0.08],
+    [26_600_000, 0.09], [28_100_000, 0.10], [30_100_000, 0.11], [32_600_000, 0.12], [35_400_000, 0.13],
+    [38_900_000, 0.14], [43_000_000, 0.15], [47_400_000, 0.16], [51_200_000, 0.17], [55_800_000, 0.18],
+    [60_400_000, 0.19], [66_700_000, 0.20], [74_500_000, 0.21], [83_200_000, 0.22], [95_600_000, 0.23],
+    [110_000_000, 0.24], [134_000_000, 0.25], [169_000_000, 0.26], [221_000_000, 0.27], [390_000_000, 0.28],
+    [463_000_000, 0.29], [561_000_000, 0.30], [709_000_000, 0.31], [965_000_000, 0.32], [1_419_000_000, 0.33],
+    [None, 0.34],
+]
+TER_CATEGORY_BY_PTKP = {"TK/0": "A", "TK/1": "A", "K/0": "A", "TK/2": "B", "TK/3": "B",
+                        "K/1": "B", "K/2": "B", "K/3": "C"}
+
+
+def default_pph21_config() -> Dict:
+    return {
+        "enabled": True,
+        "method": "ter",                               # TER bulanan + perhitungan setahun di Desember
+        "ptkp": dict(PTKP_ANNUAL),
+        "brackets": [[None if top == float("inf") else top, rate] for top, rate in PPH21_BRACKETS],
+        "ter": {"A": [list(r) for r in TER_A], "B": [list(r) for r in TER_B], "C": [list(r) for r in TER_C]},
+        "ter_category": dict(TER_CATEGORY_BY_PTKP),
+        "biaya_jabatan_rate": BIAYA_JABATAN_RATE,
+        "biaya_jabatan_max_month": BIAYA_JABATAN_MAX_ANNUAL / 12,
+        "employer_premiums_taxable": True,             # JKK + JKM + BPJS Kes perusahaan masuk bruto
+        "december_true_up": True,
+        "no_npwp_surcharge_enabled": False,            # NIK = NPWP sejak 2024
+        "no_npwp_surcharge_rate": 0.20,
+    }
+
+
+def _clean_table(rows, *, field: str) -> list:
+    """[[batas|None, tarif], …] → tervalidasi & urut naik; baris terakhir wajib batas None."""
+    out = []
+    for r in rows or []:
+        if isinstance(r, dict):
+            top, rate = r.get("up_to"), r.get("rate")
+        else:
+            top, rate = (list(r) + [None, None])[:2]
+        top = None if top in (None, "", "inf") else float(top)
+        rate = float(rate or 0)
+        if rate < 0 or rate > 1 or (top is not None and top <= 0):
+            raise ValueError(f"{field}: tarif harus 0–100% dan batas harus > 0.")
+        out.append([top, rate])
+    if not out:
+        raise ValueError(f"{field}: tabel kosong.")
+    tops = [t for t, _ in out[:-1]]
+    if any(t is None for t in tops) or out[-1][0] is not None:
+        raise ValueError(f"{field}: hanya baris terakhir yang tanpa batas atas.")
+    if tops != sorted(tops) or len(set(tops)) != len(tops):
+        raise ValueError(f"{field}: batas atas harus naik.")
+    return out
+
+
+def merge_pph21_config(stored: Optional[Dict], *, strict: bool = False) -> Dict:
+    """Setelan tersimpan digabung bawaan. `strict=True` (dipakai PUT) melempar ValueError bila isian salah;
+    `strict=False` (dipakai mesin hitung) mengabaikan bagian rusak dan memakai bawaan."""
+    cfg = default_pph21_config()
+    s = stored or {}
+    for k in ("enabled", "employer_premiums_taxable", "december_true_up", "no_npwp_surcharge_enabled"):
+        if k in s and s[k] is not None:
+            cfg[k] = bool(s[k])
+    for k, lo, hi in (("biaya_jabatan_rate", 0, 1), ("biaya_jabatan_max_month", 0, 100_000_000),
+                      ("no_npwp_surcharge_rate", 0, 1)):
+        if s.get(k) is not None:
+            try:
+                v = float(s[k])
+                if not lo <= v <= hi:
+                    raise ValueError(f"{k} di luar rentang {lo}–{hi}.")
+                cfg[k] = v
+            except (TypeError, ValueError):
+                if strict:
+                    raise ValueError(f"{k} harus angka {lo}–{hi}.")
+    for code, val in (s.get("ptkp") or {}).items():
+        try:
+            if float(val) < 0:
+                raise ValueError
+            cfg["ptkp"][str(code).upper()] = float(val)
+        except (TypeError, ValueError):
+            if strict:
+                raise ValueError(f"PTKP {code} harus angka ≥ 0.")
+    for code, cat in (s.get("ter_category") or {}).items():
+        if str(cat).upper() in ("A", "B", "C"):
+            cfg["ter_category"][str(code).upper()] = str(cat).upper()
+        elif strict:
+            raise ValueError(f"Kategori TER untuk {code} harus A, B, atau C.")
+    try:
+        if s.get("brackets"):
+            cfg["brackets"] = _clean_table(s["brackets"], field="Tarif progresif")
+        for cat in ("A", "B", "C"):
+            if (s.get("ter") or {}).get(cat):
+                cfg["ter"][cat] = _clean_table(s["ter"][cat], field=f"TER kategori {cat}")
+    except ValueError:
+        if strict:
+            raise
+    return cfg
+
+
+def _digits(v) -> str:
+    return "".join(ch for ch in str(v or "") if ch.isdigit())
+
+
+def valid_tax_id(v) -> bool:
+    """NPWP 15 digit (format lama) atau 16 digit (NIK / NPWP baru) — 2026-11-06 (Tahap 2)."""
+    return len(_digits(v)) in (15, 16)
+
+
+def has_tax_id(emp: Optional[Dict]) -> bool:
+    """Punya identitas pajak: NPWP 15/16 digit, atau NIK 16 digit (NIK = NPWP sejak 2024)."""
+    e = emp or {}
+    return valid_tax_id(e.get("npwp_number")) or len(_digits(e.get("ktp_number"))) == 16
+
+
+def ter_category(ptkp_code: str, cfg: Dict) -> str:
+    return (cfg.get("ter_category") or TER_CATEGORY_BY_PTKP).get(str(ptkp_code or "TK/0").upper(), "A")
+
+
+def ter_rate(monthly_gross: float, category: str, cfg: Dict) -> float:
+    table = (cfg.get("ter") or {}).get(category) or TER_A
+    g = float(monthly_gross or 0)
+    for top, rate in table:
+        if top is None or g <= float(top):
+            return float(rate)
+    return float(table[-1][1])
+
+
+def progressive_tax(pkp: float, cfg: Dict) -> float:
+    """Tarif Pasal 17 atas penghasilan kena pajak setahun (sudah dibulatkan ke bawah ribuan)."""
+    pkp = max(0.0, float(pkp or 0))
+    tax, prev = 0.0, 0.0
+    for top, rate in cfg.get("brackets") or []:
+        upper = float("inf") if top is None else float(top)
+        if pkp <= prev:
+            break
+        tax += (min(pkp, upper) - prev) * float(rate)
+        prev = upper
+    return round(tax)
+
+
+def pph21_ter_month(month_gross: float, ptkp_code: str, cfg: Dict, *, no_tax_id: bool = False) -> Dict:
+    """PPh21 satu masa pajak (bulan) metode TER: tarif efektif × bruto bulan itu."""
+    cat = ter_category(ptkp_code, cfg)
+    rate = ter_rate(month_gross, cat, cfg)
+    tax = round(max(0.0, float(month_gross or 0)) * rate)
+    surcharge = bool(no_tax_id and cfg.get("no_npwp_surcharge_enabled"))
+    if surcharge:
+        tax = round(tax * (1 + float(cfg.get("no_npwp_surcharge_rate") or 0)))
+    return {"method": "ter", "category": cat, "rate": rate, "gross": round(float(month_gross or 0)),
+            "tax": tax, "surcharge": surcharge}
+
+
+def pph21_annual(gross_year: float, jht_jp_year: float, ptkp_code: str, months: int, cfg: Dict,
+                 *, no_tax_id: bool = False) -> Dict:
+    """PPh21 setahun (masa Desember / bulan terakhir bekerja) — tarif Pasal 17."""
+    months = max(1, int(months or 1))
+    gross_year = max(0.0, float(gross_year or 0))
+    bj = min(gross_year * float(cfg.get("biaya_jabatan_rate") or 0),
+             float(cfg.get("biaya_jabatan_max_month") or 0) * months)
+    neto = gross_year - bj - max(0.0, float(jht_jp_year or 0))
+    ptkp = float((cfg.get("ptkp") or PTKP_ANNUAL).get(str(ptkp_code or "TK/0").upper(),
+                                                       (cfg.get("ptkp") or PTKP_ANNUAL).get("TK/0", 0)))
+    pkp = max(0.0, neto - ptkp)
+    pkp = float(int(pkp // 1000) * 1000)                       # dibulatkan ke bawah ribuan
+    tax = progressive_tax(pkp, cfg)
+    surcharge = bool(no_tax_id and cfg.get("no_npwp_surcharge_enabled"))
+    if surcharge:
+        tax = round(tax * (1 + float(cfg.get("no_npwp_surcharge_rate") or 0)))
+    return {"method": "annual", "gross_year": round(gross_year), "biaya_jabatan": round(bj),
+            "jht_jp_year": round(float(jht_jp_year or 0)), "neto": round(neto), "ptkp": round(ptkp),
+            "pkp": round(pkp), "months": months, "tax_year": tax, "surcharge": surcharge}

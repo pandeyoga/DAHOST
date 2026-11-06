@@ -113,8 +113,13 @@ def test_components_weighted_and_sum_to_wac():
 
 
 def test_zero_cost_receipt_does_not_dilute_wac():
+    # 2026-11-06 (Tahap 2): WAC tetap TIDAK diencerkan, tetapi pcs tanpa biaya kini dinilai WAC
+    # berjalan DENGAN jurnal koreksi (10 × 50.000) supaya Σ stok × WAC = GL 1-1404.
     r = fcl.wac_after_receipt(10, 50000, {"material": 50000}, 10, 0)
-    assert r["rule"] == "keep_zero_cost" and r["unit_cost"] == 50000.0 and r["adjustment_fg"] == 0
+    assert r["rule"] == "zero_cost_at_wac" and r["unit_cost"] == 50000.0 and r["adjustment_fg"] == 500000.0
+    # WAC masih 0 → tetap tanpa biaya, tanpa jurnal
+    z = fcl.wac_after_receipt(10, 0, None, 5, 0)
+    assert z["rule"] == "keep_zero_cost" and z["adjustment_fg"] == 0
 
 
 def test_negative_stock_resets_wac_and_books_difference():

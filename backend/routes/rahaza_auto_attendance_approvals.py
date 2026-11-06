@@ -89,6 +89,34 @@ async def list_approval_queue(
     return serialize_doc(rows)
 
 
+async def decide_selfie(db, event_id: str, user: dict, *, approve: bool, notes: str = "") -> dict:
+    """Keputusan HR atas absen selfie — SATU fungsi untuk layar Approval Absen & Kotak Masuk SDM.
+
+    Tahap 2 (2026-11-06): tanggal yang sudah masuk gaji final ditolak (koreksi lewat pengajuan koreksi),
+    perubahan dicatat di jejak absensi, dan penolakan menulis status kontrak 'alpa'. Hari cuti (setengah
+    hari) tetap berstatus cutinya — yang diputus hanya selfie-nya."""
+    from core.attendance_rules import ensure_not_locked, write_attendance_audit
+    ev = await db.rahaza_attendance_events.find_one({"id": event_id}, {"_id": 0})
+    if not ev:
+        raise HTTPException(404, "Record absen tidak ditemukan.")
+    await ensure_not_locked(db, ev.get("employee_id"), ev.get("date"))
+    now = _now()
+    upd = {
+        "approval_status": "approved" if approve else "rejected",
+        "approval_by": user["id"],
+        "approval_by_name": user.get("name", ""),
+        "approval_notes": notes or "",
+        "approval_at": now,
+        "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
+    }
+    if not ev.get("leave_request_id"):
+        upd["status"] = "hadir" if approve else "alpa"
+    await db.rahaza_attendance_events.update_one({"id": event_id}, {"$set": upd})
+    await write_attendance_audit(db, before=ev, after={**ev, **upd}, user=user, source="persetujuan_selfie",
+                                 note=notes or "")
+    return {**ev, **upd}
+
+
 @router.post("/attendance/approvals/{event_id}/approve")
 async def approve_attendance(event_id: str, request: Request):
     """HR menyetujui absen yang pending."""
@@ -97,22 +125,7 @@ async def approve_attendance(event_id: str, request: Request):
         raise HTTPException(403, "Hanya HR/Admin.")
     db = get_db()
     body = await request.json()
-    notes = body.get("notes", "")
-
-    ev = await db.rahaza_attendance_events.find_one({"id": event_id})
-    if not ev:
-        raise HTTPException(404, "Record absen tidak ditemukan.")
-
-    now = _now()
-    await db.rahaza_attendance_events.update_one({"id": event_id}, {"$set": {
-        "approval_status": "approved",
-        "approval_by": user["id"],
-        "approval_by_name": user.get("name", ""),
-        "approval_notes": notes,
-        "approval_at": now,
-        "status": "hadir",
-        "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
-    }})
+    await decide_selfie(db, event_id, user, approve=True, notes=body.get("notes", ""))
     await log_activity(user["id"], user.get("name", ""), "approve-attendance", "attendance", event_id)
     return {"ok": True, "message": "Absen disetujui."}
 
@@ -125,23 +138,6 @@ async def reject_attendance(event_id: str, request: Request):
         raise HTTPException(403, "Hanya HR/Admin.")
     db = get_db()
     body = await request.json()
-    notes = body.get("notes", "")
-
-    ev = await db.rahaza_attendance_events.find_one({"id": event_id})
-    if not ev:
-        raise HTTPException(404, "Record absen tidak ditemukan.")
-
-    now = _now()
-    await db.rahaza_attendance_events.update_one({"id": event_id}, {"$set": {
-        "approval_status": "rejected",
-        "approval_by": user["id"],
-        "approval_by_name": user.get("name", ""),
-        "approval_notes": notes,
-        "approval_at": now,
-        "status": "alfa",
-        "updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": now,
-    }})
+    await decide_selfie(db, event_id, user, approve=False, notes=body.get("notes", ""))
     await log_activity(user["id"], user.get("name", ""), "reject-attendance", "attendance", event_id)
     return {"ok": True, "message": "Absen ditolak."}
-
-

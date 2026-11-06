@@ -36,6 +36,12 @@ import { StatTile } from './moduleAtoms';
 const API = '/api/wh/scan-out';
 const LS_LOC = 'whScanOut.location';
 const LS_STORE = 'whScanOut.store';
+// 2026-11-06 (Tahap 2): scan yang belum sampai server (jaringan putus) disimpan juga di perangkat ini,
+// supaya muat ulang layar tidak menghilangkannya. Scan yang SUDAH sampai server tetapi gagal diproses
+// ada di antrean server (`retry_queue`) — bisa dikirim ulang dari perangkat mana pun.
+const LS_UNSENT = 'whScanOut.unsent';
+const loadUnsent = () => { try { return JSON.parse(localStorage.getItem(LS_UNSENT) || '[]') || []; } catch (_) { return []; } };
+const saveUnsent = (list) => { try { localStorage.setItem(LS_UNSENT, JSON.stringify(list || [])); } catch (_) { /* noop */ } };
 const MULTS = [1, 2, 6, 12];
 const FLAG_LABEL = {
   stok_kurang: 'Stok sistem kurang',
@@ -102,7 +108,7 @@ function ScanTab({ token }) {
   const [data, setData] = useState(null);
   const [last, setLast] = useState(null);            // {tone, text}
   const [inflight, setInflight] = useState(0);
-  const [failed, setFailed] = useState([]);          // scan yang gagal terkirim (bisa dikirim ulang, id sama)
+  const [failed, setFailed] = useState(loadUnsent);  // scan yang gagal terkirim (bisa dikirim ulang, id sama)
   const [busy, setBusy] = useState(false);
   const refreshT = useRef(null);
 
@@ -125,6 +131,7 @@ function ScanTab({ token }) {
     })();
   }, [authH]);
   useEffect(() => { loadToday(); }, [loadToday]);
+  useEffect(() => { saveUnsent(failed); }, [failed]);
 
   const scheduleRefresh = () => {
     clearTimeout(refreshT.current);
@@ -186,6 +193,29 @@ function ScanTab({ token }) {
     const payload = { location_id: loc, code, client_scan_id: newScanId(), multiplier: mult, kind: mode, account_id: store };
     setMult(1);                                       // pengali berlaku untuk SATU scan (karton)
     send(payload);
+  };
+
+  // Antrean server: kirim ulang / batalkan baris yang gagal diproses (id baris sama → tidak dobel).
+  const retryServer = async (ln) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/lines/${ln.id}/retry`, { method: 'POST', headers: jsonH });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { scanFeedback('error'); setLast({ tone: 'red', text: d.detail || 'Kirim ulang gagal', detail: RESEND_HINT }); }
+      else { scanFeedback('ok'); setLast({ tone: 'green', text: `${ln.sku} ×${ln.qty} berhasil diproses ulang.` }); }
+      await loadToday();
+    } finally { setBusy(false); }
+  };
+  const discardServer = async (ln) => {
+    setBusy(true);
+    try {
+      const r = await fetch(`${API}/lines/${ln.id}/discard`, { method: 'POST', headers: jsonH,
+        body: JSON.stringify({ reason: 'scan gagal dibatalkan' }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { scanFeedback('error'); setLast({ tone: 'red', text: d.detail || 'Gagal membatalkan' }); }
+      else { setLast({ tone: 'amber', text: `Scan gagal ${ln.sku} ×${ln.qty} dibatalkan — langkah yang sempat terjadi dibalik.` }); }
+      await loadToday();
+    } finally { setBusy(false); }
   };
 
   const voidLine = async (ln) => {
@@ -304,6 +334,29 @@ function ScanTab({ token }) {
                 <RotateCw className="w-4 h-4" /> Kirim ulang semua ({failed.length})
               </Button>
             )}
+          </Banner>
+        )}
+        {(data?.retry_queue || []).length > 0 && (
+          <Banner tone="amber" testId="scan-out-retry-queue">
+            <div className="font-semibold">{data.retry_queue.length} scan tersimpan di server tetapi gagal diproses.</div>
+            <div className="mb-1">Kirim ulang (tidak dihitung dua kali) atau batalkan bila memang salah scan. Selama masih ada, opname lokasi ini ditahan.</div>
+            <div className="divide-y divide-[hsl(var(--warning)/0.25)]">
+              {data.retry_queue.map((ln) => (
+                <div key={ln.id} className="flex items-center justify-between gap-2 py-1" data-testid="scan-out-retry-line">
+                  <span className="tabular-nums break-all text-foreground">
+                    {ln.kind === 'batal_kirim' ? 'Batal kirim · ' : ''}{ln.sku} ×{ln.qty} · {ln.date}{ln.operator_name ? ` · ${ln.operator_name}` : ''}
+                  </span>
+                  <span className="flex items-center gap-1 shrink-0">
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => retryServer(ln)} data-testid="scan-out-retry">
+                      <RotateCw className="w-4 h-4" /> Kirim ulang
+                    </Button>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => discardServer(ln)} data-testid="scan-out-discard">
+                      <Undo2 className="w-4 h-4" /> Batalkan
+                    </Button>
+                  </span>
+                </div>
+              ))}
+            </div>
           </Banner>
         )}
         <div className="text-[11px] text-muted-foreground">

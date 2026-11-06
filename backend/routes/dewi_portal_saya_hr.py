@@ -5,7 +5,7 @@ Profile, Dashboard, Leave, Overtime, Payslips, Training, Notifications
 from fastapi import APIRouter, Request, HTTPException, UploadFile, File
 from database import get_db
 from auth import require_auth, serialize_doc
-from datetime import datetime, timezone, date, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 import uuid
 import logging
@@ -118,12 +118,16 @@ async def get_dashboard(request: Request):
         lt_map = {lt["id"]: lt for lt in lts}
         for b in bals:
             lt = lt_map.get(b.get("leave_type_id"), {})
+            # Tahap 1 (2026-11-06): jatah tersimpan di `allocated` (bukan `quota`). Dulu dibaca
+            # `quota` = 0 sehingga "Sisa Cuti" di dashboard = 0 − terpakai (minus).
+            allocated = b.get("allocated", 0) or 0
+            used = b.get("used", 0) or 0
             leave_balance.append({
                 "type_name": lt.get("name", "Cuti"),
                 "code": lt.get("code", ""),
-                "quota": b.get("quota", 0),
-                "used": b.get("used", 0),
-                "remaining": b.get("quota", 0) - b.get("used", 0),
+                "quota": allocated,
+                "used": used,
+                "remaining": allocated - used,
             })
 
     # --- Last payslip ---
@@ -150,8 +154,11 @@ async def get_dashboard(request: Request):
         att_rows = await db.rahaza_attendance_events.find(
             {"employee_id": emp_id, "date": {"$gte": month_start, "$lte": today_str}}, {"_id": 0, "status": 1}
         ).to_list(100)
+        from core.attendance_rules import is_absent
         for r in att_rows:
             s = r.get("status", "hadir")
+            if is_absent(s):          # Tahap 2: kontrak payroll memakai 'alpa'; data lama 'alfa' tetap terbaca
+                s = "alfa"
             if s in absensi:
                 absensi[s] += 1
 
@@ -259,50 +266,17 @@ async def my_leave(request: Request, limit: int = 30, status: Optional[str] = No
 
 @router.post("/leave")
 async def create_leave(request: Request):
+    """Tahap 2 (2026-11-06): diteruskan ke SATU jalur pengajuan `rahaza_leave.create_leave_request`.
+    Dulu endpoint ini menulis status 'pending' yang tidak pernah muncul di antrean persetujuan mana pun."""
     user = await require_auth(request)
     db = get_db()
     _, emp = await _get_linked_employee(db, user["id"])
     if not emp:
         raise HTTPException(409, "Akun belum terhubung ke data karyawan.")
     body = await request.json()
-    leave_type_id = body.get("leave_type_id")
-    from_date = body.get("from_date")
-    to_date = body.get("to_date", from_date)
-    reason = body.get("reason", "")
-
-    if not leave_type_id or not from_date:
-        raise HTTPException(400, "leave_type_id dan from_date wajib diisi.")
-
-    lt = await db.rahaza_leave_types.find_one({"id": leave_type_id, "active": True})
-    if not lt:
-        raise HTTPException(404, "Tipe cuti tidak ditemukan.")
-
-    # Calculate days
-    try:
-        d1 = date.fromisoformat(from_date)
-        d2 = date.fromisoformat(to_date)
-        days = (d2 - d1).days + 1
-    except Exception:
-        raise HTTPException(400, "Format tanggal tidak valid (YYYY-MM-DD).")
-
-    doc = {
-        "id": _uid(),
-        "employee_id": emp["id"],
-        "employee_name": emp.get("name"),
-        "leave_type_id": leave_type_id,
-        "leave_type_name": lt.get("name"),
-        "from_date": from_date,
-        "to_date": to_date,
-        "days": days,
-        "reason": reason,
-        "status": "pending",
-        "submitted_by_self": True,
-        "created_at": _now_iso(),
-        "updated_at": _now_iso(),
-    }
-    await db.rahaza_leave_requests.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    from routes.rahaza_leave import create_leave_request
+    return await create_leave_request(db, user, {**body, "employee_id": emp["id"],
+                                                 "to_date": body.get("to_date") or body.get("from_date")})
 
 
 @router.delete("/leave/{leave_id}")
@@ -348,47 +322,17 @@ async def my_overtime(request: Request, limit: int = 30):
 
 @router.post("/overtime")
 async def create_overtime(request: Request):
+    """Tahap 2 (2026-11-06): diteruskan ke SATU jalur pengajuan lembur `rahaza_overtime.create_overtime_request`
+    (karyawan mengisi tanggal, jam, alasan; pengali dari Pengaturan Payroll)."""
     user = await require_auth(request)
     db = get_db()
     _, emp = await _get_linked_employee(db, user["id"])
     if not emp:
         raise HTTPException(409, "Akun belum terhubung ke data karyawan.")
     body = await request.json()
-    ot_date = body.get("date")
-    start_time = body.get("start_time")
-    end_time = body.get("end_time")
-    reason = body.get("reason", "")
-    if not ot_date or not start_time or not end_time:
-        raise HTTPException(400, "date, start_time, dan end_time wajib diisi.")
-
-    # Calculate hours
-    try:
-        fmt = "%H:%M"
-        st = datetime.strptime(start_time, fmt)
-        et = datetime.strptime(end_time, fmt)
-        hours = round((et - st).total_seconds() / 3600, 2)
-        if hours <= 0:
-            raise HTTPException(400, "end_time harus setelah start_time.")
-    except ValueError:
-        raise HTTPException(400, "Format waktu tidak valid (HH:MM).")
-
-    doc = {
-        "id": _uid(),
-        "employee_id": emp["id"],
-        "employee_name": emp.get("name"),
-        "date": ot_date,
-        "start_time": start_time,
-        "end_time": end_time,
-        "hours": hours,
-        "reason": reason,
-        "status": "pending",
-        "submitted_by_self": True,
-        "created_at": _now_iso(),
-        "updated_at": _now_iso(),
-    }
-    await db.rahaza_overtime_requests.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    from routes.rahaza_overtime import create_overtime_request
+    out = await create_overtime_request(db, user, {**body, "employee_id": emp["id"]})
+    return out["overtime"]
 
 
 # ══════════════════════════════════════════════════════════════

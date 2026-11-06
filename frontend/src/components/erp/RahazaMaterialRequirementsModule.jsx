@@ -129,7 +129,9 @@ export default function RahazaMaterialRequirementsModule() {
     if (!result) return;
     const withStock = result.include_stock;
     const withCost = result.include_cost;
+    const byPo = result.source === 'po';
     const head = ['Kode', 'Nama', 'Kategori', 'Tipe', 'Total Kebutuhan', 'Unit'];
+    if (byPo) head.push('Sudah keluar', 'Sisa kebutuhan');
     if (withCost) head.push('Harga Satuan', 'Subtotal');
     if (withStock) head.push('On-hand', 'Tersedia', 'Kekurangan');
     let csv = head.join(',') + '\n';
@@ -142,6 +144,7 @@ export default function RahazaMaterialRequirementsModule() {
         m.total_required,
         m.unit || '',
       ];
+      if (byPo) row.push(m.issued ?? 0, m.remaining_required ?? m.total_required);
       if (withCost) row.push(m.unit_cost ?? '', m.subtotal_cost ?? '');
       if (withStock) row.push(m.onhand ?? '', m.available ?? '', m.shortfall ?? '');
       csv += row.join(',') + '\n';
@@ -360,6 +363,9 @@ export default function RahazaMaterialRequirementsModule() {
                     <TableHead>Kategori</TableHead>
                     <TableHead className="text-right">Total Kebutuhan</TableHead>
                     <TableHead>Unit</TableHead>
+                    {/* 2026-11-06 (Tahap 2): per PO — yang sudah keluar dikurangkan; kekurangan dari sisa kebutuhan */}
+                    {result.source === 'po' && <TableHead className="text-right">Sudah keluar</TableHead>}
+                    {result.source === 'po' && <TableHead className="text-right">Sisa kebutuhan</TableHead>}
                     {result.include_cost && <TableHead className="text-right">Harga Satuan</TableHead>}
                     {result.include_cost && <TableHead className="text-right">Subtotal</TableHead>}
                     {result.include_stock && <TableHead className="text-right">On-hand</TableHead>}
@@ -378,6 +384,12 @@ export default function RahazaMaterialRequirementsModule() {
                       </TableCell>
                       <TableCell className="text-right tabular-nums font-semibold">{fmt(m.total_required)}</TableCell>
                       <TableCell className="text-xs">{m.unit}</TableCell>
+                      {result.source === 'po' && (
+                        <TableCell className="text-right tabular-nums text-xs" data-testid={`mrp-issued-${idx}`}>{fmt(m.issued)}</TableCell>
+                      )}
+                      {result.source === 'po' && (
+                        <TableCell className="text-right tabular-nums text-xs font-semibold" data-testid={`mrp-remaining-${idx}`}>{fmt(m.remaining_required)}</TableCell>
+                      )}
                       {result.include_cost && (
                         <TableCell className="text-right tabular-nums text-xs" data-testid={`mrp-unitcost-${idx}`}>
                           {rp(m.unit_cost)}

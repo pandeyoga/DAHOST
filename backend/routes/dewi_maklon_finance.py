@@ -23,6 +23,8 @@ from database import get_db
 from auth import require_auth, serialize_doc, log_activity
 from routes.rahaza_posting import _create_posted_je, _find_existing_je
 from routes.rahaza_posting_profiles import get_mapping
+from core.authz import only
+from core.roles import FINANCE_ROLES
 import uuid
 import logging
 from utils.waktu import today_wib, wib_date_of
@@ -52,6 +54,9 @@ async def post_maklon_ar_invoice(db, po: dict, user: dict) -> dict:
 
     ar_doc = (await db.rahaza_ar_invoices.find_one({'id': ar_invoice_id}, {'_id': 0})
               or await db.dewi_maklon_invoices.find_one({'id': ar_invoice_id}, {'_id': 0}) or {})
+    if ar_doc.get('schedule_mode') == 'v2':
+        # 2026-11-06 (Tahap 2): piutang terjadwal — pendapatan dibukukan per kiriman, bukan sekaligus
+        return {'ok': False, 'error': 'Piutang PO ini terjadwal: pendapatan dicatat otomatis per kiriman ke klien.'}
     if (ar_doc.get('status') or 'draft') == 'draft':
         return {'ok': False, 'error': 'AR maklon masih draft — generate invoice dulu sebelum posting ke GL.'}
     total = round(float(ar_doc.get('total_amount') if ar_doc.get('total_amount') is not None else po.get('total_value', 0) or 0), 2)
@@ -195,6 +200,91 @@ async def void_maklon_payment(db, payment: dict, user: dict, reason: str = '') -
     if mv:
         await db.rahaza_cash_movements.delete_one({'id': payment['id']})
     return res
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 2026-11-06 (Tahap 2) — JURNAL PIUTANG MAKLON TERJADWAL (dipanggil core.maklon_ledger)
+#   pendapatan per kiriman : Dr Piutang klien / Cr Pendapatan klien (+ Cr PPN)   (balik: sebaliknya)
+#   pembayaran klien       : Dr Kas-Bank / Cr Piutang klien (+ Cr Uang muka 2-1700 utk sisanya)
+#   uang muka dipakai      : Dr Uang muka / Cr Piutang klien                    (balik: sebaliknya)
+# Semua lewat `_create_posted_je` (satu inti jurnal); idempoten per `source_ref`.
+# ──────────────────────────────────────────────────────────────────────────────
+SRC_MAKLON_REVENUE = 'maklon_revenue'
+SRC_MAKLON_PAYMENT = 'maklon_payment'
+SRC_MAKLON_ADVANCE_APPLY = 'maklon_advance_apply'
+SRC_MAKLON_RECLASS = 'maklon_reclass'
+
+
+async def maklon_advance_account(db) -> Optional[str]:
+    """Akun uang muka klien maklon (profil `maklon_advance_payment.credit_advance_customer`)."""
+    return (await get_mapping(db, 'maklon_advance_payment') or {}).get('credit_advance_customer')
+
+
+async def post_maklon_revenue(db, *, ar_code: str, rev_code: str, amount: float, tax: float,
+                              reverse: bool, je_date, memo: str, source_ref: str, user: dict) -> dict:
+    """Pendapatan maklon satu kiriman (atau pembaliknya bila qty kirim turun/dihapus)."""
+    amount, tax = round(float(amount or 0), 2), round(float(tax or 0), 2)
+    if amount <= 0:
+        return {'ok': False, 'error': 'Nilai pendapatan 0 — tidak ada yang dijurnal.'}
+    if not ar_code or not rev_code:
+        return {'ok': False, 'error': 'Akun piutang/pendapatan klien maklon belum ada.'}
+    tax_code = (await get_mapping(db, 'maklon_ar_invoice') or {}).get('credit_tax_output')
+    if tax > 0 and not tax_code:
+        return {'ok': False, 'error': "Akun PPN keluaran ('maklon_ar_invoice.credit_tax_output') belum diisi."}
+    total = round(amount + tax, 2)
+    side = ('credit', 'debit') if reverse else ('debit', 'credit')
+    lines = [{'account_code': ar_code, side[0]: total, side[1]: 0, 'description': memo},
+             {'account_code': rev_code, side[1]: amount, side[0]: 0, 'description': memo}]
+    if tax > 0:
+        lines.append({'account_code': tax_code, side[1]: tax, side[0]: 0, 'description': f'PPN keluaran — {memo}'})
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_REVENUE,
+                                   source_ref=source_ref, lines_raw=lines, user=user)
+
+
+async def post_maklon_client_payment(db, *, cash_code: str, ar_code: str, adv_code: str,
+                                     ar_portion: float, adv_portion: float, je_date, memo: str,
+                                     source_ref: str, user: dict) -> dict:
+    """Satu penerimaan klien: bagian yang menutup piutang + sisanya uang muka."""
+    ar_portion, adv_portion = round(float(ar_portion or 0), 2), round(float(adv_portion or 0), 2)
+    total = round(ar_portion + adv_portion, 2)
+    if total <= 0:
+        return {'ok': False, 'error': 'Jumlah pembayaran 0.'}
+    if not cash_code:
+        return {'ok': False, 'error': 'Akun kas/bank belum diatur.'}
+    if ar_portion > 0 and not ar_code:
+        return {'ok': False, 'error': 'Akun piutang klien maklon belum ada.'}
+    if adv_portion > 0 and not adv_code:
+        return {'ok': False, 'error': "Akun uang muka klien ('maklon_advance_payment.credit_advance_customer') "
+                                      "belum diisi."}
+    lines = [{'account_code': cash_code, 'debit': total, 'credit': 0, 'description': memo}]
+    if ar_portion > 0:
+        lines.append({'account_code': ar_code, 'debit': 0, 'credit': ar_portion, 'description': memo})
+    if adv_portion > 0:
+        lines.append({'account_code': adv_code, 'debit': 0, 'credit': adv_portion,
+                      'description': f'Uang muka — {memo}'})
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_PAYMENT,
+                                   source_ref=source_ref, lines_raw=lines, user=user)
+
+
+async def post_maklon_advance_apply(db, *, ar_code: str, adv_code: str, amount: float, je_date,
+                                    memo: str, source_ref: str, user: dict) -> dict:
+    """Uang muka dipakai menutup piutang (amount > 0) atau dikembalikan jadi uang muka (amount < 0)."""
+    amt = round(float(amount or 0), 2)
+    if abs(amt) < 0.01:
+        return {'ok': False, 'error': 'Nilai 0.'}
+    if not ar_code or not adv_code:
+        return {'ok': False, 'error': 'Akun piutang / uang muka klien maklon belum ada.'}
+    dr, cr = (adv_code, ar_code) if amt > 0 else (ar_code, adv_code)
+    lines = [{'account_code': dr, 'debit': abs(amt), 'credit': 0, 'description': memo},
+             {'account_code': cr, 'debit': 0, 'credit': abs(amt), 'description': memo}]
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_ADVANCE_APPLY,
+                                   source_ref=source_ref, lines_raw=lines, user=user)
+
+
+async def post_maklon_reclass(db, *, lines: list, je_date, memo: str, source_ref: str, user: dict) -> dict:
+    """Jurnal penyesuaian reklasifikasi (migrasi Tahap 2) — jurnal lama TIDAK diubah."""
+    return await _create_posted_je(db, je_date=je_date, memo=memo, source_module=SRC_MAKLON_RECLASS,
+                                   source_ref=source_ref, lines_raw=lines, user=user)
 
 
 async def _cmt_expense_account(db, cmt_payment: dict, mapping: dict) -> tuple:
@@ -375,6 +465,26 @@ async def record_advance_payment(po_id: str, payload: AdvancePaymentIn, user: di
     po = await db.dewi_maklon_pos.find_one({'id': po_id})
     if not po:
         raise HTTPException(404, 'PO tidak ditemukan')
+    # 2026-11-06 (Tahap 2): PO dengan piutang TERJADWAL — DP dicatat sebagai pembayaran ke piutang
+    # PO itu (sisa di atas piutang jatuh = uang muka 2-1700, otomatis dipakai saat barang dikirim).
+    # Dulu DP di sini tidak pernah dipakai menutup piutang (uang muka menggantung selamanya).
+    if po.get('ar_invoice_id'):
+        ar = await db.rahaza_ar_invoices.find_one({'id': po['ar_invoice_id'], 'schedule_mode': 'v2'}, {'_id': 0})
+        if ar:
+            acc = None
+            if payload.bank_account:
+                acc = await db.rahaza_cash_accounts.find_one(
+                    {'$or': [{'id': payload.bank_account}, {'gl_account_code': payload.bank_account}]}, {'_id': 0})
+            if not acc:
+                raise HTTPException(400, 'Pilih rekening kas/bank penerima.')
+            from core import maklon_ledger
+            try:
+                doc = await maklon_ledger.record_client_payment(
+                    db, ar['id'], amount=payload.amount, cash_account_id=acc['id'],
+                    payment_date=payload.payment_date, notes=payload.notes or 'Uang muka klien', user=user)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
+            return serialize_doc(doc)
 
     payment_date = payload.payment_date or today_wib().isoformat()
 
@@ -502,11 +612,22 @@ async def pay_cmt_payment(payment_id: str, payload: CmtPayIn, user: dict = Depen
     total = _cmt_amount(payment)
     paid_before = float(payment.get('paid_amount') or 0)
     outstanding = round(total - paid_before, 2)
-    amount = float(payload.amount) if payload.amount else outstanding
     if outstanding <= 0:
         raise HTTPException(400, 'Tagihan sudah lunas')
-    if amount > outstanding + 0.01:
-        raise HTTPException(400, f'Pembayaran melebihi sisa tagihan (Rp {outstanding:,.0f})')
+    # 2026-11-06 (Tahap 2, keputusan owner): hutang CMT hanya bisa dibayar sampai nilai yang
+    # SUDAH lolos QC dikurangi yang sudah dibayar; bagian selisih yang ditandai (lebih tagih)
+    # ditahan sampai Keuangan menyelesaikannya (`/resolve-variance`).
+    from core.maklon_ledger import cmt_bill_blocked, cmt_bill_payable, fmt_rp
+    blocked = cmt_bill_blocked(payment)
+    payable = cmt_bill_payable(payment)
+    amount = float(payload.amount) if payload.amount else payable
+    if payable <= 0 or amount > payable + 0.01:
+        msg = f"Bisa dibayar {fmt_rp(payable)} dari {fmt_rp(total)}."
+        if blocked > 0:
+            msg += (f" {fmt_rp(blocked)} tertahan karena selisih tagihan "
+                    f"({payment.get('variance_reason') or 'lebih tagih'}) — Keuangan perlu menyelesaikan "
+                    "selisih ini dulu.")
+        raise HTTPException(400, msg)
     if not payment.get('gl_je_id'):
         ap = await post_cmt_ap_invoice(db, payment, user)
         if not ap.get('ok'):
@@ -537,7 +658,78 @@ async def pay_cmt_payment(payment_id: str, payload: CmtPayIn, user: dict = Depen
         'paid_at': _now() if status == 'paid' else None, 'last_payment_date': pay_date, 'updated_at': _now()}})
     await log_activity(user.get('id', ''), user.get('name', ''), 'pay_cmt', 'dewi_cmt_payments',
                        f"Bayar {payment.get('payment_code')} Rp {amount:,.0f} via {acc.get('name')}")
+    await _refresh_ap_schedule_safe(db, payment.get('po_id'), user)
     return serialize_doc({**doc, 'payment_status': status, 'outstanding_amount': round(total - paid_after, 2)})
+
+
+async def _refresh_ap_schedule_safe(db, po_id, user):
+    """Jadwal hutang CMT PO ikut disegarkan setelah tagihan berubah — tidak pernah mematahkan alur."""
+    if not po_id:
+        return
+    try:
+        from core.maklon_ledger import refresh_ap_schedules
+        await refresh_ap_schedules(db, po_id, user)
+    except Exception:  # noqa: BLE001
+        logger.exception('segarkan jadwal hutang CMT PO %s gagal', po_id)
+
+
+class CmtVarianceResolveIn(BaseModel):
+    decision: str = Field(..., description="potong | bayar")
+    notes: str = Field(..., min_length=3)
+
+
+@router.post('/cmt-payments/{payment_id}/resolve-variance', dependencies=only(*FINANCE_ROLES))
+async def resolve_cmt_variance(payment_id: str, payload: CmtVarianceResolveIn, user: dict = Depends(require_auth)):
+    """2026-11-06 (Tahap 2): Keuangan menyelesaikan selisih tagihan CMT yang ditandai.
+
+    `potong` = nilai lebih tagih dipotong dari tagihan (jurnal penyesuaian Dr Hutang vendor /
+    Cr biaya CMT — jurnal lama tidak diubah); `bayar` = selisih diterima, tagihan boleh dibayar penuh."""
+    db = get_db()
+    p = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0})
+    if not p:
+        raise HTTPException(404, 'Tagihan CMT tidak ditemukan')
+    if p.get('variance_resolution'):
+        raise HTTPException(400, 'Selisih tagihan ini sudah diselesaikan.')
+    decision = (payload.decision or '').strip().lower()
+    if decision not in ('potong', 'bayar'):
+        raise HTTPException(400, "Pilihan penyelesaian: 'potong' (kurangi tagihan) atau 'bayar' (bayar penuh).")
+    over = round(float(p.get('overbilled_amount') or 0), 2)
+    upd = {}
+    je = None
+    if decision == 'potong':
+        if over <= 0:
+            raise HTTPException(400, 'Tidak ada nilai lebih tagih yang bisa dipotong — pilih "bayar".')
+        net = _cmt_amount(p)
+        if net - float(p.get('paid_amount') or 0) < over - 0.01:
+            raise HTTPException(400, 'Sisa tagihan lebih kecil dari nilai yang mau dipotong (sudah dibayar).')
+        from routes.rahaza_posting import _account_from_issuance_je
+        exp_code = await _account_from_issuance_je(db, ['cmt_ap_invoice'], f'cmt_ap:{payment_id}', 'debit')
+        ap_code = p.get('gl_ap_account_code') or await _account_from_issuance_je(
+            db, ['cmt_ap_invoice'], f'cmt_ap:{payment_id}', 'credit')
+        if not exp_code or not ap_code:
+            raise HTTPException(400, 'Tagihan ini belum terjurnal — posting tagihan dulu sebelum dipotong.')
+        memo = f"Potong lebih tagih CMT {p.get('payment_code', '')} — {payload.notes.strip()}"
+        je = await _create_posted_je(
+            db, je_date=today_wib(), memo=memo, source_module='cmt_ap_invoice',
+            source_ref=f'cmt_ap_adj:{payment_id}', user=user,
+            lines_raw=[{'account_code': ap_code, 'debit': over, 'credit': 0, 'description': memo},
+                       {'account_code': exp_code, 'debit': 0, 'credit': over, 'description': memo}])
+        if not je.get('ok'):
+            raise HTTPException(400, f"Jurnal penyesuaian gagal: {je.get('error')}")
+        new_net = round(net - over, 2)
+        upd.update({'net_amount': new_net, 'total_amount': new_net, 'adjusted_amount': over,
+                    'outstanding_amount': round(new_net - float(p.get('paid_amount') or 0), 2)})
+    upd.update({
+        'variance_resolution': {'decision': decision, 'notes': payload.notes.strip(), 'amount': over,
+                                'by': user.get('name', ''), 'by_id': user.get('id'), 'at': _now(),
+                                'je_number': (je or {}).get('je_number')},
+        'needs_finance_review': False, 'updated_at': _now()})
+    await db.dewi_cmt_payments.update_one({'id': payment_id}, {'$set': upd})
+    await log_activity(user.get('id', ''), user.get('name', ''), 'resolve_cmt_variance', 'dewi_cmt_payments',
+                       f"Selisih tagihan {p.get('payment_code')} PO {p.get('po_number') or '-'}: {decision} "
+                       f"(Rp {over:,.0f}). {payload.notes.strip()}")
+    await _refresh_ap_schedule_safe(db, p.get('po_id'), user)
+    return serialize_doc(await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0}))
 
 
 @router.post('/cmt-payments/{payment_id}/disbursements/{did}/void')
@@ -561,4 +753,5 @@ async def void_cmt_disbursement(payment_id: str, did: str, user: dict = Depends(
     status = 'paid' if paid >= total - 0.01 else ('partial_paid' if paid > 0 else ('posted' if payment.get('gl_je_id') else 'draft'))
     await db.dewi_cmt_payments.update_one({'id': payment_id}, {'$set': {
         'paid_amount': paid, 'outstanding_amount': round(total - paid, 2), 'status': status, 'paid_at': None, 'updated_at': _now()}})
+    await _refresh_ap_schedule_safe(db, payment.get('po_id'), user)
     return {'ok': True, 'payment_status': status, 'voided_je': v.get('je_number')}

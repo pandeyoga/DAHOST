@@ -5,7 +5,9 @@ Konsep (dikonfirmasi user):
   * `wh_positions` (bin) = PETA PENEMPATAN fisik: bin mana isi material apa & berapa.
   * Put-away MEMINDAHKAN stok on-hand yang "belum dirak" → ke bin (gudang→zona→rak→bin).
     Ini penempatan fisik: TIDAK mengubah total on-hand kanonik.
-  * unshelved(material) = onhand_kanonik(material) − Σ(wh_positions.qty utk material tsb).
+  * unshelved(material, zona) = stok simpan sah di zona itu − Σ isi bin zona itu
+    (2026-11-06, Tahap 2: tanpa karantina/produksi/transit & baris minus; bin wajib satu zona
+    dengan stoknya — lihat `_shelving_index`).
   * 1 bin = 1 material. Bin sudah berisi material lain → ditolak (sarankan bin lain).
 
 Endpoints (prefix /api/wms/putaway):
@@ -59,28 +61,71 @@ class PlaceIn(BaseModel):
     input_uom: str = ""
 
 
-async def _placed_map(db) -> dict:
-    """Σ qty per material yang SUDAH ditempatkan di bin (wh_positions)."""
-    pipe = [
-        {"$match": {"material_id": {"$nin": [None, ""]}}},
-        {"$group": {"_id": "$material_id", "placed": {"$sum": {"$ifNull": ["$qty", 0]}}}},
-    ]
-    out = {}
-    async for r in db.wh_positions.aggregate(pipe):
-        out[r["_id"]] = float(r.get("placed") or 0)
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — "BELUM DIRAK" PER ZONA, HANYA STOK SIMPAN YANG SAH
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dulu belum-dirak = on-hand SEMUA lokasi − Σ isi bin: stok karantina, stok lantai produksi,
+# stok Dalam Perjalanan, dan baris MINUS ikut dihitung (minus bahkan mengurangi angka lokasi
+# lain), dan bin mana pun boleh dipilih walau stoknya ada di zona/gudang lain. Sekarang:
+#   stok_zona  = Σ baris stok qty > 0 di zona itu (zona / bin di zona itu / lokasi lama yang
+#                dipetakan ke zona itu), TANPA lokasi karantina/terblokir/produksi/transit;
+#   belum_dirak(zona) = max(0, stok_zona − Σ isi bin zona itu);
+#   menempatkan ke bin hanya boleh dari stok belum-dirak ZONA BIN TERSEBUT.
+async def _shelving_index(db, material_ids=None) -> dict:
+    """{material_id: {zone_id: {"stock": x, "placed": y}}} untuk stok simpan yang sah."""
+    from core import location_resolver, stock_transfer
+    from core.stock_schema import read_qty
+    blocked = await stock_transfer.blocked_ids(db)
+    exempt = set((await location_resolver.storage_location_index(db)).get("exempt_ids") or set())
+    mig = await location_resolver.rahaza_to_wh_map(db)
+    q: dict = {"qty": {"$gt": 0}}
+    if material_ids is not None:
+        q["material_id"] = {"$in": [m for m in material_ids if m]}
+    rows = await db[stock_service.STOCK].find(q, {"_id": 0}).to_list(20000)
+    loc_ids = list({r.get("location_id") for r in rows if r.get("location_id")})
+    pos_zone = {}
+    if loc_ids:
+        for p in await db.wh_positions.find({"id": {"$in": loc_ids}}, {"_id": 0, "id": 1, "zone_id": 1}).to_list(5000):
+            pos_zone[p["id"]] = p.get("zone_id")
+    out: dict = {}
+    for r in rows:
+        mid, loc = r.get("material_id"), r.get("location_id")
+        qty = float(read_qty(r) or 0)
+        if not mid or not loc or qty <= 0:
+            continue
+        if loc in blocked or loc in exempt or r.get("quarantine") is True or r.get("blocked") is True:
+            continue
+        zone = mig.get(loc) or pos_zone.get(loc) or loc
+        slot = out.setdefault(mid, {}).setdefault(zone, {"stock": 0.0, "placed": 0.0})
+        slot["stock"] += qty
+    pq: dict = {"material_id": {"$nin": [None, ""]}, "qty": {"$gt": 0}}
+    if material_ids is not None:
+        pq["material_id"] = {"$in": [m for m in material_ids if m]}
+    for p in await db.wh_positions.find(pq, {"_id": 0, "material_id": 1, "zone_id": 1, "qty": 1}).to_list(20000):
+        slot = out.setdefault(p["material_id"], {}).setdefault(p.get("zone_id") or "", {"stock": 0.0, "placed": 0.0})
+        slot["placed"] += float(p.get("qty") or 0)
     return out
 
 
+def _unshelved_zones(zmap: dict) -> dict:
+    """{zone_id: belum dirak} (> 0 saja) dari satu entri `_shelving_index` (fungsi murni)."""
+    out = {}
+    for z, v in (zmap or {}).items():
+        left = round(float(v.get("stock") or 0) - float(v.get("placed") or 0), 4)
+        if left > 0.0001:
+            out[z] = left
+    return out
+
+
+async def _zone_labels(db, zone_ids) -> dict:
+    from core import location_resolver
+    disp = await location_resolver.build_display_map(db, [z for z in zone_ids if z])
+    return {z: (d.get("name") or d.get("code") or "") for z, d in disp.items()}
+
+
 async def _unshelved_for(db, material_id: str) -> float:
-    onhand = await stock_service.get_onhand(material_id, db=db)
-    placed_pipe = [
-        {"$match": {"material_id": material_id}},
-        {"$group": {"_id": None, "placed": {"$sum": {"$ifNull": ["$qty", 0]}}}},
-    ]
-    placed = 0.0
-    async for r in db.wh_positions.aggregate(placed_pipe):
-        placed = float(r.get("placed") or 0)
-    return round(onhand - placed, 4)
+    zmap = (await _shelving_index(db, [material_id])).get(material_id) or {}
+    return round(sum(_unshelved_zones(zmap).values()), 4)
 
 
 @router.get("/pending")
@@ -88,14 +133,15 @@ async def list_pending(request: Request, search: Optional[str] = None):
     """Material dengan stok 'belum dirak' (unshelved>0), dikelompokkan 3 kategori bisnis."""
     await require_auth(request)
     db = get_db()
-    onhand = await stock_service.onhand_map(db=db)          # {material_id: qty}
-    placed = await _placed_map(db)                          # {material_id: placed}
-    ids = [mid for mid, q in onhand.items() if (q - placed.get(mid, 0)) > 0.0001]
+    index = await _shelving_index(db)                       # {material_id: {zona: {stock, placed}}}
+    per_mat = {mid: _unshelved_zones(z) for mid, z in index.items()}
+    ids = [mid for mid, zs in per_mat.items() if zs]
     if not ids:
         return {"groups": {"bahan": [], "aksesoris": [], "fg": []},
                 "labels": _CAT_LABEL, "total_items": 0}
     mats = await db.rahaza_materials.find({"id": {"$in": ids}}, {"_id": 0}).to_list(5000)
     mat_by_id = {m["id"]: m for m in mats}
+    labels = await _zone_labels(db, {z for mid in ids for z in per_mat[mid]})
     groups = {"bahan": [], "aksesoris": [], "fg": []}
     total = 0
     for mid in ids:
@@ -107,14 +153,19 @@ async def list_pending(request: Request, search: Optional[str] = None):
             if s not in (m.get("code", "") or "").lower() and s not in (m.get("name", "") or "").lower():
                 continue
         cat = _category_of(m.get("type"))
-        oh = float(onhand.get(mid, 0)); pl = float(placed.get(mid, 0))
+        zinfo = index.get(mid) or {}
+        oh = sum(float(v.get("stock") or 0) for v in zinfo.values())
+        pl = sum(float(v.get("placed") or 0) for v in zinfo.values())
+        zones = [{"zone_id": z, "zone_label": labels.get(z) or "", "unshelved": q}
+                 for z, q in sorted(per_mat[mid].items(), key=lambda kv: -kv[1])]
         groups[cat].append({
             "material_id": mid,
             "code": m.get("code"), "name": m.get("name"),
             "type": m.get("type"), "unit": m.get("unit", "pcs"),
             "category": cat, "category_label": _CAT_LABEL[cat],
             "onhand": round(oh, 4), "placed": round(pl, 4),
-            "unshelved": round(oh - pl, 4),
+            "unshelved": round(sum(per_mat[mid].values()), 4),
+            "zones": zones,
         })
         total += 1
     for cat in groups:
@@ -186,7 +237,7 @@ async def list_placements(material_id: str, request: Request):
     return {
         "material_id": material_id,
         "onhand": round(onhand, 4),
-        "placed": round(onhand - unshelved, 4),
+        "placed": round(sum(float(p.get("qty") or 0) for p in positions), 4),
         "unshelved": round(unshelved, 4),
         "positions": serialize_doc(positions),
     }
@@ -241,11 +292,20 @@ async def place(data: PlaceIn, request: Request):
         uom_trace = {"input_qty": qty, "input_uom": input_uom, "uom_factor": factor,
                      "uom_source": source}
         qty = round(qty * factor, 4)
-    unshelved = await _unshelved_for(db, data.material_id)
-    if unshelved <= 0:
+    # 2026-11-06 (Tahap 2): bin hanya boleh diisi dari stok belum-dirak di ZONA bin itu.
+    zones = _unshelved_zones((await _shelving_index(db, [data.material_id])).get(data.material_id) or {})
+    if not zones:
         raise HTTPException(400, "Tidak ada stok yang belum dirak untuk material ini.")
+    unshelved = zones.get(pos.get("zone_id") or "", 0.0)
+    if unshelved <= 0:
+        labels = await _zone_labels(db, list(zones))
+        where = ", ".join(f"{labels.get(z) or 'lokasi lain'} ({q:g})" for z, q in zones.items())
+        raise HTTPException(400, f"Bin {pos.get('barcode') or pos.get('label') or ''} tidak berada di zona tempat "
+                                 f"stok ini disimpan. Stok belum dirak ada di: {where}. Pilih bin di zona itu, "
+                                 "atau pindahkan stoknya dulu lewat transfer.")
     if qty > unshelved + 0.0001:
-        raise HTTPException(400, f"Qty melebihi stok belum dirak (tersedia {unshelved} {mat.get('unit','pcs')}).")
+        raise HTTPException(400, f"Qty melebihi stok belum dirak di zona bin ini "
+                                 f"(tersedia {unshelved:g} {mat.get('unit','pcs')}).")
 
     new_qty = round(float(pos.get("qty") or 0) + qty, 4)
     await db.wh_positions.update_one(

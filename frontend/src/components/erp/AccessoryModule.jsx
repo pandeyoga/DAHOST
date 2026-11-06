@@ -21,7 +21,9 @@ import { EmptyState } from './EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import UomEditor from './UomEditor';
-import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf } from '@/lib/uom';
+// MATERIAL_UNITS = cermin persis daftar satuan backend (satu sumber, tanpa konversi diam-diam)
+import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf, MATERIAL_UNITS } from '@/lib/uom';
+import { Button } from '@/components/ui/button';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint, baseUnitOf, toBaseQty } from './uom/UomPicker';
 // FASE 8: tab valuasi HPP aksesoris (nilai persediaan + set HPP + scrap bernilai)
@@ -35,8 +37,11 @@ import WMSOpnameScanModule from './WMSOpnameScanModule';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
-const DIVISI = ['Produksi', 'Cutting', 'CMT', 'Gudang', 'Kantor', 'SDM', 'QC', 'Packing', 'Marketing', 'Lainnya'];
-const UNITS  = ['pcs', 'meter', 'roll', 'yard', 'kg', 'set', 'lembar', 'buah'];
+// 2026-11-06 (Tahap 1): pilihan satuan = MATERIAL_UNITS (sama dengan yang diterima backend).
+// Dulu daftar sendiri: "lembar" tersimpan jadi "pcs", "roll" jadi "rol", pak/gross tidak ada.
+// Satuan lama item yang tidak ada di daftar tetap ditampilkan supaya tidak berubah diam-diam.
+const unitOptions = (current) => (current && !MATERIAL_UNITS.includes(current)
+  ? [current, ...MATERIAL_UNITS] : MATERIAL_UNITS);
 const STATUS_COLOR = {
   ok:      'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
   low:     'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10',
@@ -54,6 +59,8 @@ const STATUS_COLOR = {
   Cancelled: 'text-muted-foreground bg-muted dark:bg-slate-500/10',
   Ordered:   'text-violet-600 dark:text-violet-400 bg-violet-100 dark:bg-violet-500/10',
   Received:  'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
+  // 2026-11-06 (Tahap 2): PR aksesoris diteruskan ke Permintaan Pengadaan
+  Forwarded: 'text-[hsl(var(--primary))] bg-[hsl(var(--primary)/0.12)]',
 };
 
 function Badge({ status, label }) {
@@ -76,21 +83,49 @@ async function api(method, path, token, body) {
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(`${API}${path}`, opts);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || `HTTP ${r.status}`);
+  if (!r.ok) {
+    const d = data.detail;
+    throw new Error(typeof d === 'string' ? d : (d?.message || `Server menolak permintaan ini (kode ${r.status}).`));
+  }
   return data;
 }
 
+// 2026-11-06 (Tahap 2): SATU daftar divisi pemohon dari backend (GET /api/acc/divisions), lengkap
+// dengan akun beban yang dipakai jurnal pengeluaran per divisi. Dulu daftar ini disalin di layar.
+function useDivisions(token) {
+  const [divs, setDivs] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    api('GET', '/api/acc/divisions', token)
+      .then(d => { if (alive) setDivs(Array.isArray(d) ? d : []); })
+      .catch(() => { /* daftar kosong → form menolak kirim tanpa divisi */ });
+    return () => { alive = false; };
+  }, [token]);
+  return divs;
+}
+
+function divisionHint(divs, value) {
+  const d = (divs || []).find(x => x.value === value);
+  if (!d) return '';
+  return `Dicatat sebagai: ${d.cost_label}${d.account_code ? ` · akun ${d.account_code}${d.account_name ? ` ${d.account_name}` : ''}` : ''}`;
+}
+
 // ─── TAB 1: MASTER & STOK ────────────────────────────────────────────────────
-function MasterTab({ token, onRefreshDash }) {
+function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const [items, setItems]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
   const [catFilter, setCat]     = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [form, setForm]         = useState({ code:'', name:'', category:'Umum', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false });
+  const [form, setForm]         = useState({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false });
   const [showMove, setShowMove] = useState(null); // {id, name, action:'in'|'out'}
-  const [moveForm, setMoveForm] = useState({ qty:'', notes:'', input_unit:'base', unit_cost:'' });
+  const [moveForm, setMoveForm] = useState({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' });
+  // 2026-11-06 (Tahap 2): divisi pemohon (Keluarkan Stok) + harga penerimaan (hanya Keuangan yang mengubah)
+  const divisions = useDivisions(token);
+  const [recvPrice, setRecvPrice] = useState(null); // {can_set_price, unit_cost, source_label}
+  // 2026-11-06 (Tahap 2): pilihan kategori dari master kategori material (dulu teks bebas → ID tampil)
+  const [catMaster, setCatMaster] = useState([]);
   const [moveResult, setMoveResult] = useState('');
   const [saving, setSaving]     = useState(false);
   const [err, setErr]           = useState('');
@@ -119,11 +154,26 @@ function MasterTab({ token, onRefreshDash }) {
   }, [token, search, catFilter]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api('GET', '/api/rahaza/material-categories', token)
+      .then(d => setCatMaster(Array.isArray(d) ? d : []))
+      .catch(() => { /* kategori opsional — form tetap bisa disimpan tanpa memilih */ });
+  }, [token]);
+  // Harga penerimaan: Keuangan boleh mengetik; selain itu harga PO terakhir / HPP master (Tahap 2)
+  useEffect(() => {
+    setRecvPrice(null);
+    if (showMove?.action !== 'in' || !showMove?.id) return;
+    api('GET', `/api/acc/stock/receive-price/${showMove.id}`, token)
+      .then(setRecvPrice)
+      .catch(() => setRecvPrice({ can_set_price: false, unit_cost: 0, source_label: 'HPP master aksesoris' }));
+  }, [showMove, token]);
 
-  const cats = [...new Set(items.map(i => i.category).filter(Boolean))];
+  // Pilihan filter kategori: nilai = id master (atau teks lama), label = NAMA kategori
+  const cats = [...new Map(items.filter(i => i.category)
+    .map(i => [i.category_id || i.category, i.category])).entries()];
 
-  const openAdd = () => { setEditItem(null); setForm({ code:'', name:'', category:'Umum', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false }); setShowForm(true); };
-  const openEdit = it => { setEditItem(it); setForm({ code: it.code||'', name: it.name||'', category: it.category||'Umum', unit: it.unit||'pcs', description: it.description||'', min_stock: it.min_stock||0, unit_cost: it.unit_cost||0, supplier: it.supplier||'', notes: it.notes||'', uoms: resolveUoms(it), purchase_uom: purchaseUomOf(it), issue_uom: issueUomOf(it), display_uom: displayUomOf(it), pack_unit: it.pack_unit||'pack', pack_size: it.pack_size||1, display_in_packs: it.display_in_packs||false }); setShowForm(true); };
+  const openAdd = () => { setEditItem(null); setForm({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false }); setShowForm(true); };
+  const openEdit = it => { setEditItem(it); setForm({ code: it.code||'', name: it.name||'', category_id: it.category_id||'', sub_category: it.sub_category||'', unit: it.unit||'pcs', description: it.description||'', min_stock: it.min_stock||0, unit_cost: it.unit_cost||0, supplier: it.supplier||'', notes: it.notes||'', uoms: resolveUoms(it), purchase_uom: purchaseUomOf(it), issue_uom: issueUomOf(it), display_uom: displayUomOf(it), pack_unit: it.pack_unit||'pack', pack_size: it.pack_size||1, display_in_packs: it.display_in_packs||false }); setShowForm(true); };
 
   const save = async () => {
     if (!form.name.trim()) return;
@@ -132,7 +182,10 @@ function MasterTab({ token, onRefreshDash }) {
       // Satuan dinormalkan dulu; backend (core/uom) memvalidasi ulang dan
       // menulis cermin pack_unit/pack_size sendiri (INV-UOM-4).
       const payload = { ...form, uoms: sanitizeUoms(form.uoms, form.unit) };
-      if (editItem) await api('PUT', `/api/acc/items/${editItem.id}`, token, payload);
+      // Kategori kosong (item lama berkategori teks) → tidak dikirim supaya tidak berubah
+      if (!payload.category_id) delete payload.category_id;
+      // HPP item lama tidak dikirim: perubahan HPP hanya lewat Set HPP (revaluasi berjurnal, K12)
+      if (editItem) { delete payload.unit_cost; await api('PUT', `/api/acc/items/${editItem.id}`, token, payload); }
       else          await api('POST', '/api/acc/items', token, payload);
       setShowForm(false); load(); onRefreshDash();
     } catch(e) { setErr(e.message); }
@@ -159,16 +212,19 @@ function MasterTab({ token, onRefreshDash }) {
   const doMove = async () => {
     const qty = parseFloat(moveForm.qty);
     if (!qty || qty <= 0) { setErr('Qty harus > 0'); return; }
+    if (showMove.action === 'out' && !moveForm.divisi) { setErr('Pilih divisi pemakai — divisi menentukan akun bebannya.'); return; }
     setSaving(true); setErr(''); setMoveResult('');
     try {
       const isIn = showMove.action === 'in';
       const path = isIn ? '/api/acc/stock/receive' : '/api/acc/stock/issue';
       const unitCode = (moveUnit && moveUnit !== moveBaseUnit) ? moveUnit : 'base';
       const payload = { acc_id: showMove.id, qty, notes: moveForm.notes, input_unit: unitCode };
+      if (!isIn) payload.divisi = moveForm.divisi;
       // FASE 8: harga satuan penerimaan (opsional) → memperbarui HPP master (rata-rata bergerak)
       // BUG-1: kirim `cost_unit` eksplisit supaya backend tahu harga yang diketik user
       // mengacu ke satuan kemasan atau satuan dasar. Backend selalu menyimpan per satuan dasar.
-      if (isIn && moveForm.unit_cost !== '' && Number(moveForm.unit_cost) >= 0) {
+      // 2026-11-06 (Tahap 2): hanya Keuangan yang mengirim harga; lainnya memakai harga dari server.
+      if (isIn && recvPrice?.can_set_price && moveForm.unit_cost !== '' && Number(moveForm.unit_cost) >= 0) {
         payload.unit_cost = Number(moveForm.unit_cost);
         payload.cost_unit = unitCode;
       }
@@ -190,7 +246,7 @@ function MasterTab({ token, onRefreshDash }) {
       }
       parts.push(je.posted ? `jurnal ${je.je_number} di-posting` : `tanpa jurnal (${je.error || 'HPP belum diisi'})`);
       setMoveResult(parts.join(' · '));
-      setShowMove(null); setMoveForm({ qty:'', notes:'', input_unit:'base', unit_cost:'' }); load(); onRefreshDash();
+      setShowMove(null); setMoveForm({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' }); load(); onRefreshDash();
     } catch(e) { setErr(e.message); }
     finally { setSaving(false); }
   };
@@ -230,7 +286,7 @@ function MasterTab({ token, onRefreshDash }) {
         </div>
         <SmartNativeSelect value={catFilter} onChange={e=>setCat(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm" data-testid="acc-cat-filter">
           <option value="">Semua Kategori</option>
-          {cats.map(c=><option key={c} value={c}>{c}</option>)}
+          {cats.map(([v, label])=><option key={v} value={v}>{label}</option>)}
         </SmartNativeSelect>
         <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
         <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-primary text-foreground rounded-lg text-sm font-medium hover:brightness-110" data-testid="add-acc-btn">
@@ -300,7 +356,11 @@ function MasterTab({ token, onRefreshDash }) {
               <tr key={it.id} className="border-b border-border hover:bg-foreground/[0.02]" data-testid={`acc-row-${it.id}`}>
                 <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{it.code}</td>
                 <td className="px-4 py-3 font-medium">{it.name}</td>
-                <td className="px-4 py-3 text-muted-foreground">{it.category}</td>
+                <td className="px-4 py-3 text-muted-foreground">
+                  {/* 2026-11-06 (Tahap 2): nama kategori (dulu ID master mentah) + sub kategori */}
+                  <div>{it.category || '-'}</div>
+                  {it.sub_category && <div className="text-xs">{it.sub_category}</div>}
+                </td>
                 <td className="px-4 py-3 text-right font-medium">
                   {it.display_in_packs ? (
                     <div>
@@ -331,11 +391,11 @@ function MasterTab({ token, onRefreshDash }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1">
-                    <button onClick={()=>{const item=items.find(x=>x.id===it.id); setShowMove({id:it.id,name:it.name,action:'in',unit:item?.unit,pack_unit:item?.pack_unit,pack_size:item?.pack_size,display_in_packs:item?.display_in_packs}); setMoveForm({qty:'',notes:'',input_unit:'base',unit_cost:''}); setErr(''); setMoveResult('');}}
+                    <button onClick={()=>{const item=items.find(x=>x.id===it.id); setShowMove({id:it.id,name:it.name,action:'in',unit:item?.unit,pack_unit:item?.pack_unit,pack_size:item?.pack_size,display_in_packs:item?.display_in_packs}); setMoveForm({qty:'',notes:'',input_unit:'base',unit_cost:'',divisi:''}); setErr(''); setMoveResult('');}}
                       className="p-1 hover:bg-emerald-100 dark:bg-emerald-500/10 rounded" title="Terima Stok" data-testid={`acc-in-${it.id}`}>
                       <PackagePlus className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
                     </button>
-                    <button onClick={()=>{const item=items.find(x=>x.id===it.id); setShowMove({id:it.id,name:it.name,action:'out',unit:item?.unit,pack_unit:item?.pack_unit,pack_size:item?.pack_size,display_in_packs:item?.display_in_packs}); setMoveForm({qty:'',notes:'',input_unit:'base',unit_cost:''}); setErr(''); setMoveResult('');}}
+                    <button onClick={()=>{const item=items.find(x=>x.id===it.id); setShowMove({id:it.id,name:it.name,action:'out',unit:item?.unit,pack_unit:item?.pack_unit,pack_size:item?.pack_size,display_in_packs:item?.display_in_packs}); setMoveForm({qty:'',notes:'',input_unit:'base',unit_cost:'',divisi:''}); setErr(''); setMoveResult('');}}
                       className="p-1 hover:bg-amber-100 dark:bg-amber-500/10 rounded" title="Keluarkan Stok" data-testid={`acc-out-${it.id}`}>
                       <PackageMinus className="w-4 h-4 text-amber-700 dark:text-amber-400" />
                     </button>
@@ -356,10 +416,27 @@ function MasterTab({ token, onRefreshDash }) {
           <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-md p-6" onClick={e=>e.stopPropagation()}>
             <h3 className="text-lg font-bold mb-4">{editItem ? 'Edit Aksesoris' : 'Tambah Aksesoris'}</h3>
             <div className="space-y-3">
+              {/* 2026-11-06 (Tahap 2): kategori dipilih dari master kategori material; rincian bebas
+                  (mis. Trimming) di Sub kategori — dulu teks bebas yang tertimpa ID master. */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Kategori</label>
+                  <SmartNativeSelect value={form.category_id} onChange={e=>setForm({...form,category_id:e.target.value})}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-category-select">
+                    <option value="">{!editItem ? 'Aksesoris (bawaan)'
+                      : (editItem.category && !editItem.category_id ? `${editItem.category} (lama)` : 'Tidak diubah')}</option>
+                    {catMaster.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                  </SmartNativeSelect>
+                </div>
+                <div>
+                  <label className="text-xs text-muted-foreground block mb-1">Sub kategori</label>
+                  <input value={form.sub_category||''} onChange={e=>setForm({...form,sub_category:e.target.value})}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Trimming" data-testid="acc-subcategory-input" />
+                </div>
+              </div>
               {[
                 {label:'Kode', key:'code', placeholder:'ACC-001'},
                 {label:'Nama *', key:'name', placeholder:'Kancing'},
-                {label:'Kategori', key:'category', placeholder:'Trimming'},
                 {label:'Supplier', key:'supplier', placeholder:'CV. Supplier'},
               ].map(f => (
                 <div key={f.key}>
@@ -371,9 +448,9 @@ function MasterTab({ token, onRefreshDash }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Unit</label>
-                  <select value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]">
-                    {UNITS.map(u=><option key={u} value={u}>{u}</option>)}
-                  </select>
+                  <SmartNativeSelect value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-unit-select">
+                    {unitOptions(editItem?.unit).map(u=><option key={u} value={u}>{u}</option>)}
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Stok Minimum</label>
@@ -384,11 +461,28 @@ function MasterTab({ token, onRefreshDash }) {
               {/* FASE G+: harga satuan — dasar nilai selisih opname & jurnal keuangan */}
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Harga Satuan / HPP (Rp)</label>
-                <MoneyInput unstyled value={form.unit_cost}
-                  onChange={e=>setForm({...form,unit_cost:e.target.value})}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  placeholder="0" data-testid="acc-unit-cost-input" />
-                <p className="text-[11px] text-muted-foreground mt-1">Dipakai untuk menilai stok &amp; <strong>jurnal penyesuaian keuangan</strong> saat opname disetujui. Kosong/0 = selisih opname tidak masuk keuangan.</p>
+                {editItem ? (
+                  // 2026-11-06 (Tahap 1, K12): HPP item yang sudah ada hanya diubah lewat Set HPP
+                  // (revaluasi berjurnal + alasan) — bukan ditimpa dari form ini.
+                  <>
+                    <div className="text-sm tabular-nums" data-testid="acc-unit-cost-readonly">{fmtRp(editItem.unit_cost)}</div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      HPP diubah lewat Set HPP di Valuasi HPP supaya perubahan nilai stok tercatat dengan jurnal dan alasannya.
+                      {onOpenValuation && (
+                        <> <Button variant="link" size="sm" className="px-0" onClick={() => { setShowForm(false); onOpenValuation(); }}
+                          data-testid="acc-open-set-hpp">Buka Valuasi HPP</Button></>
+                      )}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <MoneyInput unstyled value={form.unit_cost}
+                      onChange={e=>setForm({...form,unit_cost:e.target.value})}
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
+                      placeholder="0" data-testid="acc-unit-cost-input" />
+                    <p className="text-[11px] text-muted-foreground mt-1">Harga awal. Dipakai untuk menilai stok &amp; <strong>jurnal penyesuaian keuangan</strong> saat opname disetujui. Kosong/0 = selisih opname tidak masuk keuangan.</p>
+                  </>
+                )}
               </div>
               
               {/* Satuan & kemasan berjenjang (maks 3 tingkat) — SSOT lib/uom.js */}
@@ -448,7 +542,32 @@ function MasterTab({ token, onRefreshDash }) {
                 <UomConversionHint opt={moveUomOpt} qty={moveForm.qty} unit={moveUnit}
                   fallbackUnit={showMove.unit} testId="move-uom-hint" className="mt-1" />
               </div>
-              {showMove.action === 'in' && (
+              {showMove.action === 'out' && (
+                <div>
+                  {/* 2026-11-06 (Tahap 2): divisi pemakai menentukan akun beban jurnal pengeluaran */}
+                  <label className="text-xs text-muted-foreground block mb-1">Divisi pemakai *</label>
+                  <SmartNativeSelect value={moveForm.divisi} onChange={e=>setMoveForm({...moveForm,divisi:e.target.value})}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="move-divisi-select">
+                    <option value="">Pilih divisi...</option>
+                    {divisions.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+                  </SmartNativeSelect>
+                  {moveForm.divisi && (
+                    <small className="block text-[11px] text-muted-foreground" data-testid="move-divisi-hint">
+                      {divisionHint(divisions, moveForm.divisi)}
+                    </small>
+                  )}
+                  <small className="block text-[11px] text-muted-foreground">
+                    Aksesoris untuk PO produksi dikeluarkan lewat Kirim Material CMT atau permintaan ber-PO, bukan dari sini.
+                  </small>
+                </div>
+              )}
+              {showMove.action === 'in' && recvPrice && !recvPrice.can_set_price && (
+                <div className="text-xs text-muted-foreground" data-testid="move-price-locked">
+                  Harga penerimaan: <b className="text-foreground">{fmtRp(recvPrice.unit_cost)}</b> per {moveBaseUnit || showMove.unit}
+                  {' '}({recvPrice.source_label}). Hanya Keuangan yang boleh mengubah harga.
+                </div>
+              )}
+              {showMove.action === 'in' && recvPrice?.can_set_price && (
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">
                     Harga satuan beli (Rp) — per{' '}
@@ -459,6 +578,9 @@ function MasterTab({ token, onRefreshDash }) {
                     onChange={e=>setMoveForm({...moveForm,unit_cost:e.target.value})}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
                     placeholder="kosongkan bila harga tidak berubah" data-testid="move-unit-cost-input" />
+                  <small className="block text-[11px] text-muted-foreground">
+                    Acuan: {fmtRp(recvPrice.unit_cost)} per {moveBaseUnit || showMove.unit} ({recvPrice.source_label}).
+                  </small>
                   {moveUnit && moveBaseUnit && moveUnit !== moveBaseUnit && moveForm.unit_cost && (
                     <small className="block text-[11px] text-muted-foreground" data-testid="move-cost-conversion-hint">
                       = {fmtRp(Number(moveForm.unit_cost) / (toBaseQty(moveUomOpt, 1, moveUnit) || 1))} per {moveBaseUnit}
@@ -543,6 +665,7 @@ function RequestInternalTab({ token, items }) {
   const numPolicy = useDocNumberPolicy('dewi_accessory_requests.request_code', token,
                                        { TIPE: 'INT-REQ' });
   const [reqCode, setReqCode] = useState('');
+  const divisions = useDivisions(token);   // 2026-11-06 (Tahap 2): daftar divisi dari backend
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -715,7 +838,7 @@ function RequestInternalTab({ token, items }) {
             <div className="space-y-1 mb-4">
               {(detail.items||[]).map((it,i)=>(
                 <div key={i} className="flex items-center justify-between text-sm bg-foreground/[0.03] rounded-lg px-3 py-2">
-                  <span>{it.acc_name || it.acc_id}</span>
+                  <span>{it.acc_name || it.acc_code || (items.find(a => a.id === it.acc_id) || {}).name || 'Aksesoris tanpa nama'}</span>
                   <span className="font-medium">{it.qty_requested} {it.unit}</span>
                 </div>
               ))}
@@ -735,10 +858,15 @@ function RequestInternalTab({ token, items }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Divisi *</label>
-                  <select value={form.divisi} onChange={e=>setForm({...form,divisi:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="req-divisi">
+                  <SmartNativeSelect value={form.divisi} onChange={e=>setForm({...form,divisi:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="req-divisi">
                     <option value="">Pilih...</option>
-                    {DIVISI.map(d=><option key={d} value={d}>{d}</option>)}
-                  </select>
+                    {divisions.map(d=><option key={d.value} value={d.value}>{d.label}</option>)}
+                  </SmartNativeSelect>
+                  {form.divisi && (
+                    <small className="block text-[11px] text-muted-foreground" data-testid="req-divisi-hint">
+                      {divisionHint(divisions, form.divisi)}
+                    </small>
+                  )}
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Nama Pemohon</label>
@@ -846,6 +974,13 @@ function LegacyLoanRedirect({ onNavigate, onBack }) {
 }
 
 // ─── TAB 5: PURCHASE REQUEST ─────────────────────────────────────────────────
+// 2026-11-06 (Tahap 2): label status berbahasa Indonesia; "(lama)" = alur sebelum lewat Pengadaan
+const PR_STATUS_LABEL = {
+  Draft: 'Draf', Forwarded: 'Diteruskan ke Pengadaan', Submitted: 'Diajukan (lama)',
+  Approved: 'Disetujui (lama)', Rejected: 'Ditolak', Ordered: 'Dipesan (lama)',
+  Received: 'Diterima (lama)', Cancelled: 'Dibatalkan',
+};
+
 function PurchaseRequestTab({ token, items }) {
   const [prs, setPRs]         = useState([]);
   const [loading, setLoading] = useState(true);
@@ -903,9 +1038,15 @@ function PurchaseRequestTab({ token, items }) {
   // (bertahap sesuai nilai, tidak boleh setujui PR sendiri, override admin
   // tercatat), dan tombolnya mengikuti flag `can_approve`/`can_reject` dari
   // server — bukan ditebak dari status di frontend.
+  const [prMsg, setPrMsg] = useState('');
   const act = async (id, action, body = {}) => {
-    setErr('');
-    try { await api('POST', `/api/acc/purchase-requests/${id}/${action}`, token, body); load(); }
+    setErr(''); setPrMsg('');
+    try {
+      const res = await api('POST', `/api/acc/purchase-requests/${id}/${action}`, token, body);
+      if (res?.message) setPrMsg(res.message);
+      else if (action === 'forward' && res?.procurement_pr_number) setPrMsg(`Diteruskan ke Permintaan Pengadaan ${res.procurement_pr_number}.`);
+      load();
+    }
     catch(e) { setErr(e.message); }
   };
 
@@ -917,11 +1058,8 @@ function PurchaseRequestTab({ token, items }) {
     await act(pr.id, 'reject', { reason });
   };
 
-  const updateStatus = async (id, status, notes='') => {
-    setErr('');
-    try { await api('PUT', `/api/acc/purchase-requests/${id}`, token, { status, finance_notes: notes }); load(); }
-    catch(e) { setErr(e.message); }
-  };
+  // 2026-11-06 (Tahap 2): tombol "Order" & "Terima Barang" DIHAPUS — "Terima Barang" dulu menambah
+  // stok tanpa nilai & tanpa jurnal. Pesan & terima lewat Pengadaan (PO → Penerimaan Barang).
 
   const totalEst = lines.reduce((s,l)=>s + (parseFloat(l.qty_requested)||0)*(parseFloat(l.estimated_price)||0), 0);
 
@@ -931,7 +1069,7 @@ function PurchaseRequestTab({ token, items }) {
         <div className="flex items-center gap-2">
           <SmartNativeSelect value={filter} onChange={e=>setFilter(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm">
             <option value="">Semua Status</option>
-            {['Draft','Submitted','Approved','Rejected','Ordered','Received'].map(s=><option key={s} value={s}>{s}</option>)}
+            {['Draft','Forwarded','Submitted','Approved','Rejected','Ordered','Received'].map(s=><option key={s} value={s}>{PR_STATUS_LABEL[s] || s}</option>)}
           </SmartNativeSelect>
           <button onClick={load} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
         </div>
@@ -940,6 +1078,15 @@ function PurchaseRequestTab({ token, items }) {
         </button>
       </div>
 
+      {/* 2026-11-06 (Tahap 2): alur pembelian aksesoris = alur Pengadaan */}
+      <p className="text-xs text-muted-foreground" data-testid="pr-flow-help">
+        PR yang diajukan diteruskan ke Permintaan Pengadaan dan disetujui di sana. Barang masuk stok lewat PO
+        dan Penerimaan Barang, sehingga nilai persediaan dan jurnalnya tercatat.
+      </p>
+
+      {prMsg && (
+        <div className="text-sm text-[hsl(var(--success))] bg-[hsl(var(--success)/0.12)] rounded-lg px-4 py-2" data-testid="pr-msg">{prMsg}</div>
+      )}
       {err && <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-4 py-2">{err}</div>}
 
       <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
@@ -971,7 +1118,15 @@ function PurchaseRequestTab({ token, items }) {
                 </td>
                 <td className="px-4 py-3 text-right font-medium">Rp {fmtNum(pr.total_estimated)}</td>
                 <td className="px-4 py-3 text-center">
-                  <Badge status={pr.status} />
+                  <Badge status={pr.status} label={PR_STATUS_LABEL[pr.status]} />
+                  {pr.procurement && (
+                    <div className="mt-1 text-[10px] text-muted-foreground leading-snug" data-testid={`pr-proc-${pr.id}`}>
+                      <div className="tabular-nums">{pr.procurement.pr_number} · {pr.procurement.pr_status_label}</div>
+                      {pr.procurement.po_number && (
+                        <div className="tabular-nums">PO {pr.procurement.po_number}{pr.procurement.receive_label ? ` · ${pr.procurement.receive_label}` : ''}</div>
+                      )}
+                    </div>
+                  )}
                   {pr.status === 'Submitted' && pr.stage_label && (
                     <div className="mt-1 text-[10px] text-muted-foreground" data-testid={`pr-stage-${pr.id}`}>
                       {pr.stage_label}{pr.total_stages ? ` (${pr.stage_order}/${pr.total_stages})` : ''}
@@ -980,7 +1135,7 @@ function PurchaseRequestTab({ token, items }) {
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex items-center justify-end gap-1">
-                    {pr.status === 'Draft' && pr.can_submit !== false && (
+                    {(pr.status === 'Draft' || pr.status === 'Forwarded') && pr.can_submit && (
                       <button onClick={()=>act(pr.id,'submit')} className="px-2 py-1 bg-sky-600/10 text-sky-600 dark:text-sky-400 rounded text-xs hover:bg-sky-600/20" data-testid={`submit-pr-${pr.id}`}>Ajukan</button>
                     )}
                     {pr.status === 'Submitted' && pr.can_approve && (
@@ -994,11 +1149,12 @@ function PurchaseRequestTab({ token, items }) {
                         {pr.blocked_reason || 'Menunggu approver yang berhak.'}
                       </span>
                     )}
-                    {pr.status === 'Approved' && (
-                      <button onClick={()=>updateStatus(pr.id,'Ordered')} className="px-2 py-1 bg-violet-600/10 text-violet-600 dark:text-violet-400 rounded text-xs hover:bg-violet-600/20" data-testid={`order-pr-${pr.id}`}>Order</button>
-                    )}
-                    {pr.status === 'Ordered' && (
-                      <button onClick={()=>updateStatus(pr.id,'Received')} className="px-2 py-1 bg-emerald-600/10 text-emerald-600 dark:text-emerald-400 rounded text-xs hover:bg-emerald-600/20" data-testid={`receive-pr-${pr.id}`}>Terima Barang</button>
+                    {/* 2026-11-06 (Tahap 2): PR lama yang sudah disetujui/dipesan diteruskan ke Pengadaan
+                        supaya dibuatkan PO dan diterima lewat Penerimaan Barang (bernilai & berjurnal). */}
+                    {(pr.status === 'Approved' || pr.status === 'Ordered') && (
+                      <Button size="sm" variant="outline" onClick={()=>act(pr.id,'forward')} data-testid={`forward-pr-${pr.id}`}>
+                        Teruskan ke Pengadaan
+                      </Button>
                     )}
                   </div>
                 </td>
@@ -1195,7 +1351,8 @@ export default function AccessoryModule({
 
       {/* Tab Content */}
       <div>
-        {tab === 'master'   && <MasterTab token={token} onRefreshDash={() => { loadDash(); loadItems(); }} />}
+        {tab === 'master'   && <MasterTab token={token} onRefreshDash={() => { loadDash(); loadItems(); }}
+          onOpenValuation={TABS.some(t => t.id === 'valuasi') ? () => setTab('valuasi') : null} />}
         {tab === 'internal' && <RequestInternalTab token={token} items={items} />}
         {tab === 'opname'   && <StokOpnameTab token={token} />}
         {/* FASE 10 — tautan lama `?tab=pinjam` tidak boleh buntu: tampilkan penunjuk arah

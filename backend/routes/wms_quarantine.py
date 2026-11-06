@@ -247,7 +247,6 @@ async def release_item(item_id: str, request: Request):
     if item.get("status") != "open":
         raise HTTPException(400, "Item karantina sudah ditutup")
 
-    qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     to_loc = body.get("to_location_id")
     if not to_loc:
         raise HTTPException(400, "to_location_id wajib diisi (lokasi tujuan penyimpanan)")
@@ -255,6 +254,26 @@ async def release_item(item_id: str, request: Request):
         raise HTTPException(404, "Lokasi tujuan tidak ditemukan")
 
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    # 2026-11-06 (Tahap 1): kunci disposisi atomik — sisa & qty bernilai dibaca ULANG setelah kunci
+    token = await _claim_or_409(db, item_id, actor)
+    try:
+        return await _release_locked(db, user, actor, item_id, body, to_loc)
+    finally:
+        await quarantine.release_item_claim(db, item_id, token)
+
+
+async def _claim_or_409(db, item_id: str, actor: dict) -> str:
+    try:
+        return await quarantine.claim_item(db, item_id, actor)
+    except quarantine.ItemBusy as e:
+        raise HTTPException(409, str(e))
+
+
+async def _release_locked(db, user: dict, actor: dict, item_id: str, body: dict, to_loc: str) -> dict:
+    item = await _get_item_or_404(db, item_id)
+    if item.get("status") != "open":
+        raise HTTPException(400, "Item karantina sudah ditutup")
+    qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     valued_before = await _valued_remaining(db, item)
     valued_part, unvalued_part = split_valued(qty, valued_before)
     gr, line = await gr_source_of(db, item) if unvalued_part > 0 else (None, None)
@@ -337,8 +356,20 @@ async def scrap_item(item_id: str, request: Request):
     item = await _get_item_or_404(db, item_id)
     if item.get("status") != "open":
         raise HTTPException(400, "Item karantina sudah ditutup")
-    qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     actor = {"id": user.get("id", ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    # 2026-11-06 (Tahap 1): kunci disposisi atomik — sisa & qty bernilai dibaca ULANG setelah kunci
+    token = await _claim_or_409(db, item_id, actor)
+    try:
+        return await _scrap_locked(db, user, actor, item_id, body)
+    finally:
+        await quarantine.release_item_claim(db, item_id, token)
+
+
+async def _scrap_locked(db, user: dict, actor: dict, item_id: str, body: dict) -> dict:
+    item = await _get_item_or_404(db, item_id)
+    if item.get("status") != "open":
+        raise HTTPException(400, "Item karantina sudah ditutup")
+    qty = float(body.get("qty") or item.get("remaining_qty") or 0)
     valued_before = await _valued_remaining(db, item)
     try:
         res = await quarantine.quarantine_out(db, item=item, action=quarantine.ACTION_SCRAP,

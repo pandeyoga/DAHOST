@@ -19,7 +19,8 @@ import { GlassCard } from '@/components/ui/glass';
 import Modal from '../Modal';
 import { cuttingApi, StatusPill, fmtNum, fmtRp, fmtDateTime } from './cuttingApi';
 import useUomOptions from '../../../hooks/useUomOptions';
-import { UomSelect, UomConversionHint } from '../uom/UomPicker';
+import { UomSelect, UomConversionHint, toBaseQty } from '../uom/UomPicker';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 // FASE H-6 — gulungan WAJIB ditunjuk saat memotong kain yang punya gulungan.
 import { previewAllocation, fmtQty } from '../warehouse/rollLines';
 
@@ -39,6 +40,14 @@ const EMPTY_FORM = {
   output_size: '',
   notes: '',
   roll_ids: [],
+  // 2026-11-06 (Tahap 2): tautan OPSIONAL ke baris PO (ukuran) — BOM per ukuran ikut PO.
+  po_item_id: '',
+};
+
+// 2026-11-06 (Tahap 2): progres = kain diambil, sisa kain yang KEMBALI ke stok, limbah (bersatuan).
+const EMPTY_PROG = {
+  input_consumed: '', output_qty: '', waste_qty: '', waste_uom: '', leftover_qty: '',
+  note: '', roll_id: '', input_uom: '', roll_ids: [],
 };
 
 function Field({ label, children, hint, required }) {
@@ -91,10 +100,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   // (kalau tidak disediakan, ukuran itu mustahil dipilih ⇒ BOM tidak terpakai).
   const [sizes, setSizes] = useState([]);
   const [sizeId, setSizeId] = useState('');
+  const [poLines, setPoLines] = useState([]);
 
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [prog, setProg] = useState({ input_consumed: '', output_qty: '', waste_qty: '', note: '', roll_id: '', input_uom: '', roll_ids: [] });
+  const [prog, setProg] = useState({ ...EMPTY_PROG });
   const [acting, setActing] = useState(false);
   // FASE H-6: gulungan yang masih bersisa untuk kain order ini (dimuat saat detail
   // dibuka). `rollRequired` datang dari server — layar tidak menebak sendiri.
@@ -213,7 +223,9 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     }));
     setVariants([]);
     setSizeId('');
+    setPoLines([]);
     if (!id) return;
+    cuttingApi('GET', `/po-lines?model_id=${id}`, token).then((d) => setPoLines(Array.isArray(d) ? d : [])).catch(() => setPoLines([]));
     try {
       const r = await fetch(`/api/rahaza/models/${id}/variants`, {
         headers: { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` },
@@ -283,6 +295,18 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     setSizeId(sid);
     const s = sizes.find((x) => x.id === sid);
     setForm((f) => ({ ...f, size_id: sid, output_size: s?.code || '' }));
+  };
+
+  // Baris PO dipilih → ukuran (dan varian bila ada) mengikuti baris PO itu.
+  const pickPoLine = (pid) => {
+    const ln = poLines.find((x) => x.id === pid) || null;
+    setForm((f) => ({ ...f, po_item_id: pid }));
+    if (!ln) return;
+    if (ln.rahaza_variant_id && variants.some((v) => v.id === ln.rahaza_variant_id)) {
+      onPickVariant(ln.rahaza_variant_id);
+    } else if (ln.size_id) {
+      pickSize(ln.size_id);
+    }
   };
 
   // SESI #32 — ukuran mana yang SUDAH punya BOM, ditandai LANGSUNG di daftar
@@ -388,6 +412,10 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     if (!form.model_id) return toast.error('Pilih Model/Style dari Master Produk dulu.');
     // 2026-11-02 — No.18(a): backend tidak lagi menebak gudang bila kosong.
     if (!form.location_id) return toast.error('Pilih Gudang Sumber Kain dulu.');
+    // 2026-11-06 (Tahap 2): ukuran WAJIB — tanpa ukuran potongan tidak dipakai BOM mana pun.
+    if (!form.variant_id && !form.size_id && !form.po_item_id) {
+      return toast.error('Pilih ukuran dulu (lewat varian warna·ukuran, ukuran BOM, atau baris PO).');
+    }
     if (!(Number(form.planned_input_qty) > 0)) return toast.error('Rencana pemakaian kain harus > 0.');
     if (!(Number(form.planned_output_qty) > 0)) return toast.error('Target potongan harus > 0.');
     setSaving(true);
@@ -410,7 +438,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
 
   const openDetail = async (id) => {
     setDetailLoading(true);
-    setProg({ input_consumed: '', output_qty: '', waste_qty: '', note: '', roll_id: '', input_uom: '', roll_ids: [] });
+    setProg({ ...EMPTY_PROG });
     setDetailRolls({ items: [], roll_required: false, total_remaining: 0, uom: '' });
     try {
       const d = await cuttingApi('GET', `/orders/${id}`, token);
@@ -428,9 +456,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const loadDetailRolls = useCallback(async (order) => {
     if (!order?.input_material_id) return;
     try {
-      const res = await cuttingApi('GET', `/rolls?material_id=${order.input_material_id}`, token);
+      const locQs = order.location_id ? `&location_id=${encodeURIComponent(order.location_id)}` : '';
+      const res = await cuttingApi('GET', `/rolls?material_id=${order.input_material_id}${locQs}`, token);
       const items = Array.isArray(res) ? res : (res?.items || []);
       setDetailRolls({
+        other_location_count: Number(res?.other_location_count || 0),
         items,
         roll_required: !!res?.roll_required,
         total_remaining: Number(res?.total_remaining || 0),
@@ -477,12 +507,22 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     () => detailRolls.items.filter((r) => (prog.roll_ids || []).includes(r.id)),
     [detailRolls.items, prog.roll_ids],
   );
-  const consumedInOrderUnit = useMemo(() => {
-    const q = Number(prog.input_consumed || 0);
+  // 2026-11-06 (Tahap 2): pratinjau gulungan memakai angka yang SUDAH dikonversi ke satuan order
+  // (dulu angka gram dibandingkan dengan sisa gulungan kg ⇒ tombol Catat terkunci) dan dikurangi
+  // sisa kain yang kembali ke stok (yang benar-benar dipotong dari gulungan = diambil − sisa).
+  const toOrderUnit = useCallback((qty, unit) => {
+    const q = Number(qty || 0);
     if (!q) return 0;
-    // konversi satuan operator ditangani server; pratinjau memakai angka apa adanya
-    return q;
-  }, [prog.input_consumed]);
+    if (!progUomOpt || !unit || unit === orderUnit) return q;
+    const inBase = toBaseQty(progUomOpt, q, unit);
+    const orderBase = toBaseQty(progUomOpt, 1, orderUnit);
+    return inBase != null && orderBase ? Math.round((inBase / orderBase) * 10000) / 10000 : q;
+  }, [progUomOpt, orderUnit]);
+  const consumedInOrderUnit = useMemo(() => {
+    const taken = toOrderUnit(prog.input_consumed, effProgUom);
+    const left = toOrderUnit(prog.leftover_qty, effProgUom);
+    return Math.max(0, Math.round((taken - left) * 10000) / 10000);
+  }, [prog.input_consumed, prog.leftover_qty, effProgUom, toOrderUnit]);
   const allocPreview = useMemo(
     () => previewAllocation(pickedRolls, consumedInOrderUnit),
     [pickedRolls, consumedInOrderUnit],
@@ -497,6 +537,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   const submitProgress = async (e) => {
     e.preventDefault();
     if (!(Number(prog.input_consumed) > 0)) return toast.error('Kain terpakai harus > 0.');
+    if (!(consumedInOrderUnit > 0)) return toast.error('Sisa kain tidak boleh sama dengan atau melebihi kain yang diambil.');
     if (!(Number(prog.output_qty) > 0)) return toast.error('Jumlah potongan jadi harus > 0.');
     if (rollBlocking) {
       return toast.error(
@@ -510,6 +551,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
         input_consumed: Number(prog.input_consumed),
         output_qty: Number(prog.output_qty),
         waste_qty: Number(prog.waste_qty || 0),
+        waste_uom: prog.waste_uom || undefined,
+        leftover_qty: Number(prog.leftover_qty || 0),
         note: prog.note,
         roll_ids: (prog.roll_ids || []).length ? prog.roll_ids : undefined,
         roll_id: prog.roll_id || undefined,
@@ -544,7 +587,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
       } else if (res?.value_warning) {
         toast.warning(res.value_warning, { duration: 12000 });
       }
-      setProg({ input_consumed: '', output_qty: '', waste_qty: '', note: '', roll_id: '', input_uom: '', roll_ids: [] });
+      setProg({ ...EMPTY_PROG });
       await refreshDetail(detail.id);
       await loadMiMissing();
     } catch (e2) {
@@ -943,6 +986,21 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               </Field>
             </div>
 
+            {form.model_id && poLines.length > 0 && (
+              <Field label="Baris PO (opsional)"
+                hint="Tautkan ke baris PO produksi supaya ukuran & BOM per ukuran mengikuti PO, dan kain terpakai mengurangi kebutuhan material PO itu.">
+                <SmartNativeSelect value={form.po_item_id} onChange={(e) => pickPoLine(e.target.value)}
+                  className={inputCls} data-testid="cutting-po-line-select">
+                  <option value="">— tanpa baris PO —</option>
+                  {poLines.map((ln) => (
+                    <option key={ln.id} value={ln.id}>
+                      {ln.po_number} · {ln.size || '-'}{ln.color ? ` · ${ln.color}` : ''} · {ln.qty} pcs
+                    </option>
+                  ))}
+                </SmartNativeSelect>
+              </Field>
+            )}
+
             {form.model_id && (
               <div className="text-[11px] text-muted-foreground -mt-1" data-testid="cutting-style-preview">
                 Potongan akan tercatat sebagai <strong className="text-foreground">
@@ -1182,6 +1240,11 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     {detailRolls.items.length} gulungan bersisa · total {fmtQty(detailRolls.total_remaining)} {detailRolls.uom}
                   </p>
                 )}
+                {detailRolls.other_location_count > 0 && (
+                  <p className="text-[11px] mt-1 text-[hsl(var(--warning))]" data-testid="cutting-roll-other-location">
+                    {detailRolls.other_location_count} gulungan kain ini ada di gudang lain — tidak bisa dipakai untuk order di gudang ini.
+                  </p>
+                )}
                 {(detail.roll_ids || []).some((r) => Number(r.consumed_qty || 0) > 0) && (
                   <p className="text-[11px] text-muted-foreground mt-1">
                     Sudah dipakai:{' '}
@@ -1275,10 +1338,21 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                       onChange={(e) => setProg((p) => ({ ...p, output_qty: e.target.value }))}
                       className={inputCls} data-testid="cutting-progress-output" required />
                   </Field>
-                  <Field label="Waste / Sisa">
-                    <input type="number" step="0.01" min="0" value={prog.waste_qty}
-                      onChange={(e) => setProg((p) => ({ ...p, waste_qty: e.target.value }))}
-                      className={inputCls} data-testid="cutting-progress-waste" />
+                  <Field label={`Sisa kain kembali ke stok (${effProgUom || detail.input_unit})`}
+                    hint="Potongan kain yang masih bisa dipakai — kembali ke stok kain pada harga kain, tidak ikut nilai potongan.">
+                    <input type="number" step="0.0001" min="0" value={prog.leftover_qty}
+                      onChange={(e) => setProg((p) => ({ ...p, leftover_qty: e.target.value }))}
+                      className={inputCls} data-testid="cutting-progress-leftover" />
+                  </Field>
+                  <Field label="Limbah" hint="Kain terbuang (bagian dari kain terpakai) — nilainya ikut biaya potongan.">
+                    <div className="flex gap-2">
+                      <input type="number" step="0.0001" min="0" value={prog.waste_qty}
+                        onChange={(e) => setProg((p) => ({ ...p, waste_qty: e.target.value }))}
+                        className={inputCls} data-testid="cutting-progress-waste" />
+                      <UomSelect opt={progUomOpt} value={prog.waste_uom || effProgUom} fallbackUnit={detail.input_unit}
+                        onChange={(e) => setProg((p) => ({ ...p, waste_uom: e.target.value }))}
+                        testId="cutting-progress-waste-uom" className="w-20 shrink-0" />
+                    </div>
                   </Field>
                   <button type="submit" disabled={acting || rollBlocking || allocPreview.shortage > 0}
                     className="h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium disabled:opacity-60 inline-flex items-center justify-center gap-2"
@@ -1397,7 +1471,8 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                       <th className="px-4 py-2 font-medium">Waktu</th>
                       <th className="px-4 py-2 font-medium text-right">Kain</th>
                       <th className="px-4 py-2 font-medium text-right">Potongan</th>
-                      <th className="px-4 py-2 font-medium text-right">Waste</th>
+                      <th className="px-4 py-2 font-medium text-right">Sisa ke stok</th>
+                      <th className="px-4 py-2 font-medium text-right">Limbah</th>
                       {/* SESI #32 — nilai yang BERPINDAH dari kain ke potongan */}
                       <th className="px-4 py-2 font-medium text-right">Nilai kain keluar</th>
                       <th className="px-4 py-2 font-medium text-right">HPP potongan</th>
@@ -1413,6 +1488,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                         <td className="px-4 py-2 text-xs text-muted-foreground">{fmtDateTime(p.created_at)}</td>
                         <td className="px-4 py-2 text-right tabular-nums text-foreground">{fmtNum(p.input_consumed, 2)}</td>
                         <td className="px-4 py-2 text-right tabular-nums text-foreground">{fmtNum(p.output_qty)}</td>
+                        <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.leftover_qty || 0, 2)}</td>
                         <td className="px-4 py-2 text-right tabular-nums text-muted-foreground">{fmtNum(p.waste_qty, 2)}</td>
                         {/* SESI #32 — nilai kain yang keluar & HPP potongan sebelum→sesudah.
                             Kalau kainnya belum bernilai, alasannya DITULIS (bukan "-"). */}

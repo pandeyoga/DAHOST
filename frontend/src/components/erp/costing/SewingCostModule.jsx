@@ -258,12 +258,18 @@ export default function SewingCostModule({ onNavigate }) {
                         onChange={(e) => setApplySameSku(e.target.checked)} />
                       SKU sama ikut terisi
                     </label>
-                    <Button size="sm" data-testid="sewing-save-btn" onClick={save} disabled={saving}>
+                    <Button size="sm" data-testid="sewing-save-btn" onClick={save} disabled={saving || detail.po.rate_locked}>
                       {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Simpan tarif
                     </Button>
                   </div>
                 </div>
 
+                {/* 2026-11-06 (Tahap 2): tarif dikunci setelah tagihan CMT SPK ini dibuat */}
+                {detail.po.rate_locked && (
+                  <p className="text-sm text-[hsl(var(--warning))] mb-3" data-testid="sewing-rate-locked">
+                    {detail.po.rate_lock?.message || 'Tarif jahit SPK ini terkunci karena tagihan CMT sudah dibuat.'}
+                  </p>
+                )}
                 <div className="overflow-auto">
                   <table className="w-full text-sm" data-testid="sewing-items-table">
                     <thead>
@@ -337,6 +343,7 @@ export default function SewingCostModule({ onNavigate }) {
                             <td className="text-right py-2 px-2">{num(it.qty)}</td>
                             <td className="text-right py-2 px-2">
                               <input data-testid={`sewing-rate-${it.sku}`} type="number" min="0" step="100"
+                                disabled={detail.po.rate_locked}
                                 value={draft[it.po_item_id] ?? ''}
                                 onChange={(e) => setDraft((d) => ({ ...d, [it.po_item_id]: e.target.value }))}
                                 className="w-28 text-right bg-foreground/5 border border-foreground/10 rounded-md px-2 py-1" />

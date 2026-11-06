@@ -287,14 +287,24 @@ export default function AbsenPage() {
     setAuth(data);
   };
 
-  const getGeo = () => new Promise((resolve, reject) => {
+  // Tahap 2 (2026-11-06): lokasi dibaca BARU saat tombol ditekan (maximumAge: 0) dan waktu pembacaannya
+  // dikirim, supaya server menolak posisi basi / kurang akurat (dulu posisi lama bisa dipakai ulang).
+  const getGeo = () => new Promise((resolve) => {
     if (!navigator.geolocation) return resolve(null);
     setGeoLoading(true);
     navigator.geolocation.getCurrentPosition(
-      pos => { setGeoLoading(false); setGeoData({ lat: pos.coords.latitude, lng: pos.coords.longitude }); resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
-      err => { setGeoLoading(false); resolve(null); },
-      { enableHighAccuracy: true, timeout: 8000 }
+      pos => {
+        setGeoLoading(false);
+        const fix = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, gps_at: pos.timestamp };
+        setGeoData(fix);
+        resolve(fix);
+      },
+      () => { setGeoLoading(false); resolve(null); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
+  });
+  const geoBody = (geo) => ({
+    lat: geo?.lat, lng: geo?.lng, accuracy: geo?.accuracy, gps_at: geo?.gps_at, gps_sent_at: Date.now(),
   });
 
   const doSelfieClockIn = async (photoB64) => {
@@ -305,7 +315,7 @@ export default function AbsenPage() {
       const geo = await getGeo();
       const body = {
         employee_id: employee?.id,
-        lat: geo?.lat, lng: geo?.lng,
+        ...geoBody(geo),
         photo_base64: photoB64,
         do_face_check: true,
       };
@@ -334,7 +344,7 @@ export default function AbsenPage() {
       const geo = await getGeo();
       const body = {
         employee_id: employee?.id,
-        lat: geo?.lat, lng: geo?.lng,
+        ...geoBody(geo),
         photo_base64: photoB64,
       };
       const res = await api('/api/rahaza/attendance/selfie/clock-out', {
@@ -368,9 +378,10 @@ export default function AbsenPage() {
       });
       if (optRes.detail) throw new Error(optRes.detail);
       const assertion = await startAuthentication(optRes);
+      const geo = await getGeo();
       const verifyRes = await api('/api/rahaza/attendance/webauthn/clock-in', {
         method: 'POST',
-        body: JSON.stringify({ ...assertion, employee_id: employee?.id })
+        body: JSON.stringify({ ...assertion, employee_id: employee?.id, ...geoBody(geo) })
       });
       if (verifyRes.ok) {
         setMsg({ type: 'success', text: verifyRes.message || 'Clock-in biometrik berhasil!' });
@@ -399,9 +410,10 @@ export default function AbsenPage() {
       });
       if (optRes.detail) throw new Error(optRes.detail);
       const assertion = await startAuthentication(optRes);
+      const geo = await getGeo();
       const verifyRes = await api('/api/rahaza/attendance/webauthn/clock-out', {
         method: 'POST',
-        body: JSON.stringify({ ...assertion, employee_id: employee?.id })
+        body: JSON.stringify({ ...assertion, employee_id: employee?.id, ...geoBody(geo) })
       });
       if (verifyRes.ok) {
         setMsg({ type: 'success', text: `Clock-out biometrik berhasil! ${verifyRes.hours_worked ? `(${verifyRes.hours_worked}j)` : ''}` });

@@ -269,6 +269,12 @@ async def update_material(mid: str, request: Request):
         current = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0})
         if not current:
             raise HTTPException(404, "Material tidak ditemukan.")
+        # 2026-11-06 (Tahap 2): satuan dasar dikunci selama PO/GR/daftar harga/karantina masih terbuka
+        from core import procurement_guards
+        _nb = body.get("base_uom") or body.get("unit") or uom.base_uom_of(current)
+        _docs = await procurement_guards.check_base_unit_change(db, current, _nb)
+        if _docs:
+            raise HTTPException(409, procurement_guards.open_documents_message(current, uom.normalize_code(_nb), _docs))
         try:
             body.update(uom.apply_payload(body, current))
         except uom.UomError as e:
@@ -467,8 +473,17 @@ async def rebase_material_uom(mid: str, request: Request):
         "nilai_persediaan_tetap": round(qty_before * cost_before, 2) == round(after["qty"] * after["unit_cost"], 2),
         "preview": preview,
     }
+    # 2026-11-06 (Tahap 2): stok ikut dikonversi di sini, tetapi PO/GR/daftar harga/karantina yang masih
+    # terbuka TIDAK — angkanya akan terbaca dalam satuan baru. Ganti satuan dasar ditolak selama ada.
+    from core import procurement_guards
+    open_docs = await procurement_guards.check_base_unit_change(db, mat, new_base)
+    result["open_documents"] = open_docs
+    if open_docs:
+        result["blocked_reason"] = procurement_guards.open_documents_message(mat, new_base, open_docs)
     if preview:
         return serialize_doc(result)
+    if open_docs:
+        raise HTTPException(409, result["blocked_reason"])
 
     # ── TULIS ────────────────────────────────────────────────────────────────
     for r in rows:

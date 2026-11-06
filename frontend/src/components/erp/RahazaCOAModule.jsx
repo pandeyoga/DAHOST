@@ -393,7 +393,7 @@ const GROUP_TEXT = {
   flag: 'Penanda akun', sinkron_toko: 'Akun pendapatan toko (diatur otomatis)', seed: 'Akun bawaan sistem',
 };
 const ENTITY_TEXT = { cmt_vendor: 'vendor CMT', supplier: 'pemasok', customer: 'pelanggan', channel: 'toko online',
-  maklon_client: 'klien maklon', bank: 'rekening bank' };
+  maklon_client: 'klien maklon', maklon_revenue: 'pendapatan klien maklon', bank: 'rekening bank' };
 const TECH_TEXT_RX = /\b[a-z][a-z0-9]*_[a-z0-9_]+\b|\b[a-z_]+\.[a-z_.]+\b|\[\(/;
 export function humanBinding(label) {
   let t = String(label || '').trim();

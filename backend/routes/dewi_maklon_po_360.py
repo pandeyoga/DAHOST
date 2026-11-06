@@ -15,7 +15,7 @@ Non-breaking: existing per-module endpoints are unchanged.
 
 from fastapi import APIRouter, HTTPException, Depends
 from routes.production_rbac import deny_external_dep
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, serialize_doc
@@ -90,6 +90,68 @@ async def _po_or_404(db, po_id: str) -> Dict[str, Any]:
     return ssot
 
 
+DA_OWNERSHIP = ('cv_da_stock', 'cv_da', 'da_provided')
+
+
+def _f(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def bom_costs(bom: Optional[Dict[str, Any]]) -> Dict[str, float]:
+    """Total biaya BOM per-PO (murni) — rumus yang sama dengan tab BOM di layar:
+    estimasi = `estimated_cost` atau qty estimasi × `cost_per_unit`; aktual = `actual_cost`
+    atau qty aktual × `cost_per_unit`. Baris dibaca dari `materials` (skema kanonik) dengan
+    cadangan `lines` (bentuk lama). `*_da` = hanya baris milik DA (K14: bahan klien bukan
+    biaya DA)."""
+    out = {'estimated': 0.0, 'actual': 0.0, 'estimated_da': 0.0, 'actual_da': 0.0}
+    for ln in ((bom or {}).get('materials') or (bom or {}).get('lines') or []):
+        cpu = _f(ln.get('cost_per_unit'))
+        qty_est = _f(ln.get('qty_estimated') if ln.get('qty_estimated') is not None else ln.get('qty_total_est'))
+        est = _f(ln.get('estimated_cost')) if ln.get('estimated_cost') is not None else qty_est * cpu
+        act = _f(ln.get('actual_cost')) if ln.get('actual_cost') is not None else _f(ln.get('qty_actual')) * cpu
+        out['estimated'] += est
+        out['actual'] += act
+        if (ln.get('ownership') or 'client_provided') in DA_OWNERSHIP:
+            out['estimated_da'] += est
+            out['actual_da'] += act
+    return {k: round(v, 2) for k, v in out.items()}
+
+
+async def _live_item_quantities(db, po_id: str, items: list) -> Optional[Dict[str, Any]]:
+    """Angka qty per item dari SSOT (`core.dispatch_capacity.po_item_quantities`, K17) bila
+    PO ini ada di `production_pos`; None untuk PO lama murni."""
+    if not await db.production_pos.find_one({'id': po_id}, {'_id': 0, 'id': 1}):
+        return None
+    from core import dispatch_capacity as dcap
+    ids = [i.get('item_id') or i.get('id') for i in (items or []) if i.get('item_id') or i.get('id')]
+    if not ids:
+        ids = [d['id'] async for d in db.po_items.find({'po_id': po_id}, {'_id': 0, 'id': 1})]
+    return {'item_ids': ids, 'qty': await dcap.po_item_quantities(db, ids)}
+
+
+async def _buyer_shipments_as_dispatches(db, po_item_ids: list) -> list:
+    """Surat jalan DA → buyer PO ini dalam bentuk baris riwayat kirim layar 360°."""
+    from core import dispatch_capacity as dcap
+    rows = await dcap.buyer_dispatch_items(db, po_item_ids=po_item_ids)
+    by_ship: Dict[str, list] = {}
+    for it in rows:
+        by_ship.setdefault(it.get('shipment_id'), []).append(
+            {'item_id': it.get('po_item_id'), 'qty_dispatched': dcap.item_dispatched(it)})
+    if not by_ship:
+        return []
+    out = []
+    async for s in db.buyer_shipments.find({'id': {'$in': list(by_ship)}}, {'_id': 0}):
+        out.append({'id': s['id'], 'dispatch_number': s.get('shipment_number', ''),
+                    'status': s.get('ship_status', ''), 'created_at': s.get('created_at'),
+                    'driver_name': s.get('driver_name'), 'vehicle_no': s.get('vehicle_no'),
+                    'items': by_ship[s['id']], 'source': 'buyer_shipment'})
+    out.sort(key=lambda d: _to_iso(d.get('created_at')) or '', reverse=True)
+    return out
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -120,21 +182,33 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     ).sort('created_at', -1).to_list(length=None)
     dispatches = _serialize_list(dispatches_raw)
 
-    # Enrich qty_dispatched per item from non-cancelled dispatches
-    item_dispatch_map: Dict[str, int] = {}
-    for d in dispatches_raw:
-        if d.get('status') == 'cancelled':
-            continue
-        for di in d.get('items', []):
-            iid = di.get('item_id')
-            if iid:
-                item_dispatch_map[iid] = item_dispatch_map.get(iid, 0) + di.get('qty_dispatched', 0)
-    total_dispatched = sum(item_dispatch_map.values())
-
-    for item in po_data.get('items', []):
-        iid = item.get('item_id')
-        item['qty_dispatched'] = item_dispatch_map.get(iid, 0)
-        item['qty_remaining'] = max(0, item.get('qty', 0) - item['qty_dispatched'])
+    # Tahap 1 (6 Nov 2026): qty dikirim/diproduksi dibaca dari SSOT (`po_items` + surat
+    # jalan buyer lewat `core.dispatch_capacity`, K17). Dulu hanya dari koleksi lama
+    # `dewi_maklon_dispatches` dengan kunci `item_id` — PO maklon sekarang selalu 0 terkirim.
+    live = await _live_item_quantities(db, po_id, po_data.get('items', []))
+    if live is not None:
+        dispatches = _serialize_list(await _buyer_shipments_as_dispatches(db, live['item_ids'])) + dispatches
+        for item in po_data.get('items', []):
+            q = live['qty'].get(item.get('item_id') or item.get('id')) or {}
+            item['qty_dispatched'] = int(q.get('dispatched', 0) or 0)
+            item['qty_produced'] = int(q.get('produced_main', 0) or 0)
+            item['qty_remaining'] = max(0, int(item.get('qty', 0) or 0) - item['qty_dispatched'])
+        total_dispatched = sum(int(i.get('qty_dispatched', 0) or 0) for i in po_data.get('items', []))
+    else:
+        # PO lama murni (tanpa production_pos): kiriman lama yang tidak dibatalkan
+        item_dispatch_map: Dict[str, int] = {}
+        for d in dispatches_raw:
+            if d.get('status') == 'cancelled':
+                continue
+            for di in d.get('items', []):
+                iid = di.get('item_id')
+                if iid:
+                    item_dispatch_map[iid] = item_dispatch_map.get(iid, 0) + di.get('qty_dispatched', 0)
+        total_dispatched = sum(item_dispatch_map.values())
+        for item in po_data.get('items', []):
+            iid = item.get('item_id')
+            item['qty_dispatched'] = item_dispatch_map.get(iid, 0)
+            item['qty_remaining'] = max(0, item.get('qty', 0) - item['qty_dispatched'])
 
     # ── Material Receives ───────────────────────────────────────────────────
     receives_raw = await db.dewi_maklon_material_receive.find(
@@ -189,14 +263,11 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     payments = _serialize_list(payments_raw)
 
     # ── HPP Snapshot (computed) ─────────────────────────────────────────────
-    # Sum value from PO + estimate from BOM (if present) + actual material cost
-    bom_estimated_cost = 0.0
-    bom_actual_cost = 0.0
-    if bom_data:
-        # Sum BOM lines
-        for line in (bom_data.get('lines') or []):
-            bom_estimated_cost += float(line.get('estimated_cost', 0) or 0)
-            bom_actual_cost += float(line.get('actual_cost', 0) or 0)
+    # Tahap 1 (6 Nov 2026): BOM per-PO menyimpan barisnya di `materials` (penulis kanonik
+    # `explode_maklon_bom_for_po` & endpoint manual), bukan `lines` — dulu biaya BOM selalu Rp 0.
+    bom_cost = bom_costs(bom_data)
+    bom_estimated_cost = bom_cost['estimated']
+    bom_actual_cost = bom_cost['actual']
 
     material_received_value = 0.0
     for r in receives_raw:
@@ -207,21 +278,35 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     invoiced_amount = sum(float(inv.get('total_amount', 0) or 0) for inv in invoices_raw if inv.get('status') != 'cancelled')
     paid_amount = sum(float(p.get('amount', 0) or 0) for p in payments_raw if p.get('status') != 'cancelled')
     outstanding_amount = max(0, invoiced_amount - paid_amount)
+    # 2026-11-06 (Tahap 2): piutang TERJADWAL (satu dokumen AR per PO) — tertagih = pendapatan yang
+    # sudah dibukukan per kiriman; dibayar termasuk uang muka. Pembayaran dari riwayat piutang.
+    if (ar_invoice or {}).get('schedule_mode') == 'v2':
+        invoiced_amount = float(ar_invoice.get('billed_total') or 0)
+        paid_amount = float(ar_invoice.get('amount_paid') or 0)
+        outstanding_amount = float(ar_invoice.get('amount_due') or 0)
+        payments = _serialize_list(await db.rahaza_ar_payments.find(
+            {'invoice_id': ar_invoice['id'], 'status': {'$ne': 'voided'}}).sort('date', -1).to_list(500))
 
     hpp_snapshot = {
         'po_total_value': total_value,
         'bom_estimated_cost': bom_estimated_cost,
         'bom_actual_cost': bom_actual_cost,
+        # biaya BOM milik DA saja — kain/aksesoris titipan klien bukan biaya DA (K14)
+        'bom_estimated_cost_da': bom_cost['estimated_da'],
+        'bom_actual_cost_da': bom_cost['actual_da'],
         'material_received_value': material_received_value,
         'invoiced_amount': invoiced_amount,
         'paid_amount': paid_amount,
         'outstanding_amount': outstanding_amount,
-        'gross_margin_estimate': total_value - bom_estimated_cost if bom_estimated_cost > 0 else None,
-        'gross_margin_actual': total_value - bom_actual_cost if bom_actual_cost > 0 else None,
+        'gross_margin_estimate': (total_value - bom_cost['estimated_da']
+                                  if bom_cost['estimated_da'] > 0 else None),
+        'gross_margin_actual': (total_value - bom_cost['actual_da']
+                                if bom_cost['actual_da'] > 0 else None),
     }
 
     # ── KPIs for 360° header strip ──────────────────────────────────────────
-    total_qty = int(po_data.get('total_qty', 0) or 0)
+    total_qty = int(po_data.get('total_qty', 0) or 0) or sum(
+        int(it.get('qty', 0) or 0) for it in po_data.get('items', []))
     total_produced = sum(int(it.get('qty_produced', 0) or 0) for it in po_data.get('items', []))
     progress_pct = round((total_produced / total_qty) * 100, 1) if total_qty > 0 else 0.0
     dispatch_pct = round((total_dispatched / total_qty) * 100, 1) if total_qty > 0 else 0.0
@@ -245,12 +330,14 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
         'invoiced_amount': invoiced_amount,
         'paid_amount': paid_amount,
         'outstanding_amount': outstanding_amount,
+        'scheduled_amount': float((ar_invoice or {}).get('scheduled_total') or 0),
+        'advance_balance': float((ar_invoice or {}).get('advance_balance') or 0),
         'deadline': po_data.get('deadline'),
         'sample_pending': sample_pending,
         'sample_approved': sample_approved,
         'qc_pass': qc_pass,
         'qc_fail': qc_fail,
-        'dispatch_count': len([d for d in dispatches_raw if d.get('status') != 'cancelled']),
+        'dispatch_count': len([d for d in dispatches if str(d.get('status') or '').lower() != 'cancelled']),
         'invoice_count': len([i for i in invoices_raw if i.get('status') != 'cancelled']),
     }
 
@@ -313,6 +400,23 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     if po.get('completed_at'):
         _push_event(events, 'po.completed', "PO selesai",
                     po.get('completed_at'), icon='trophy')
+
+    # 2026-11-06 (Tahap 2): kelebihan qty (alasan wajib) di setiap langkah — dari SSOT production_pos
+    ssot = await db.production_pos.find_one({'id': po_id}, {'_id': 0, 'over_qty_events': 1, 'confirmed_at': 1,
+                                                            'confirmed_by': 1, 'closed_at': 1, 'closed_by': 1,
+                                                            'status': 1, 'closed_reason': 1}) or {}
+    for ev in ssot.get('over_qty_events') or []:
+        _push_event(events, 'qty.over',
+                    f"{ev.get('step_label') or ev.get('step')}: {ev.get('label') or ''} {ev.get('qty')} pcs "
+                    f"(batas {ev.get('limit')}, lebih {ev.get('over')}) — alasan: {ev.get('reason')}",
+                    ev.get('at'), actor=ev.get('by'), icon='alert-triangle', reason=ev.get('reason'),
+                    step=ev.get('step'), qty=ev.get('qty'), limit=ev.get('limit'), over=ev.get('over'))
+    if ssot.get('confirmed_at') and not po.get('confirmed_at'):
+        _push_event(events, 'po.confirmed', f"PO {po.get('po_number', '')} dikonfirmasi",
+                    ssot.get('confirmed_at'), actor=ssot.get('confirmed_by'), icon='check-circle')
+    if ssot.get('closed_at'):
+        _push_event(events, 'po.closed', f"PO ditutup ({ssot.get('status')})", ssot.get('closed_at'),
+                    actor=ssot.get('closed_by'), reason=ssot.get('closed_reason'), icon='lock')
 
     # Dispatches
     dispatches = await db.dewi_maklon_dispatches.find({'po_id': po_id}).to_list(length=None)

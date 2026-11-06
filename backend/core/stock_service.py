@@ -23,6 +23,7 @@ API:
   release(material_id, location_id, qty, ...)   -> lepas reservasi
   move(material_id, from_location, to_location, qty, ...) -> transfer antar lokasi
   adjust(material_id, location_id, counted_qty, ...)      -> opname (set absolut)
+  adjust_by(material_id, location_id, delta, ...)         -> opname (selisih atomik, 2026-11-06)
   get_onhand(material_id) / get_available(material_id) / list_rows(material_id)
 """
 from __future__ import annotations
@@ -553,6 +554,37 @@ async def adjust(material_id, location_id, counted_qty, *, meta=None, ref=None,
                delta=_r(counted_qty - qty_before), qty_after=read_qty(row),
                ref=ref, actor=actor, meta=meta,
                extra={"qty_before": qty_before, "counted_qty": counted_qty, **_trace})
+    return row
+
+
+async def adjust_by(material_id, location_id, delta, *, meta=None, ref=None, actor=None, db=None):
+    """Penyesuaian opname sebagai SELISIH atomik (qty += delta), bukan set absolut.
+
+    2026-11-06 (Tahap 1): `adjust()` menimpa qty dengan angka absolut yang dihitung dari bacaan
+    sebelumnya; mutasi yang ditulis transaksi lain di antara baca & tulis ikut terhapus. Opname
+    memakai fungsi ini: delta = hasil hitung − qty sistem yang dibaca saat approve. Baris ledger
+    tetap `op='adjust'` (pembaca laporan & undo memakai `delta`/`qty_before`/`counted_qty`)."""
+    db = _db(db)
+    delta = _r(delta)
+    if delta == 0:
+        return await _row(db, material_id, location_id)
+    key = {"material_id": material_id, "location_id": location_id}
+    set_stage = {
+        "material_id": material_id,
+        "location_id": location_id,
+        "qty": {"$round": [{"$add": [_qty_expr(), delta]}, 4]},
+        "reserved_quantity": _reserved_expr(),
+        "id": {"$ifNull": ["$id", _uid()]},
+        "created_at": {"$ifNull": ["$created_at", _now()]},
+        "updated_at": _now(),
+    }
+    set_stage.update(_meta_set(meta))
+    await db[STOCK].update_one(key, [{"$set": set_stage}, _recompute_stage()], upsert=True)
+    row = await _row(db, material_id, location_id)
+    qty_after = read_qty(row)
+    await _log(db, op="adjust", material_id=material_id, location_id=location_id,
+               delta=delta, qty_after=qty_after, ref=ref, actor=actor, meta=meta,
+               extra={"qty_before": _r(qty_after - delta), "counted_qty": qty_after, "mode": "delta"})
     return row
 
 

@@ -63,7 +63,46 @@ class QuoteRequestIn(BaseModel):
     client_name: Optional[str] = None
     client_id: Optional[str] = None
     additional_notes: Optional[str] = None
-    target_margin_pct: Optional[float] = 25  # default 25%
+    target_margin_pct: Optional[float] = 25  # default 25% (atas harga jual — core.margin)
+    # 2026-11-06 (Tahap 2): siapa yang menyediakan bahan utama. Bawaan maklon = klien
+    # (sama dengan `_maklon_adapter.fabric_provided_by`); bahan klien BUKAN biaya DA.
+    fabric_provided_by: Optional[str] = "client"   # client | cv_da
+
+
+def client_supplies_material(payload) -> bool:
+    return (getattr(payload, "fabric_provided_by", None) or "client").strip().lower() != "cv_da"
+
+
+def apply_owner_cost_rules(result: dict, payload) -> dict:
+    """2026-11-06 (Tahap 2, keputusan owner) — dipasang pada hasil heuristik MAUPUN AI:
+      * bahan yang disediakan klien tidak dihitung sebagai biaya (material = 0);
+      * overhead pabrik tidak masuk HPP (overhead = 0);
+      * harga = HPP ÷ (1 − margin) — margin atas harga jual (`core.margin`), bukan markup HPP."""
+    from core.margin import margin_pct, price_for_margin
+    out = dict(result or {})
+    bd = {k: float(v or 0) for k, v in (out.get("hpp_breakdown") or {}).items()
+          if isinstance(v, (int, float)) or str(v).replace(".", "", 1).isdigit()}
+    excluded = {}
+    if client_supplies_material(payload) and bd.get("material"):
+        excluded["material_client"] = bd["material"]
+        bd["material"] = 0.0
+    if bd.get("overhead"):
+        excluded["overhead"] = bd["overhead"]
+        bd["overhead"] = 0.0
+    hpp = round(sum(bd.values()), 2)
+    target = float(getattr(payload, "target_margin_pct", None) or out.get("margin_pct") or 25)
+    unit_price = price_for_margin(hpp, target) if hpp > 0 else float(out.get("estimated_unit_price") or 0)
+    qty = int(getattr(payload, "quantity", 0) or 0)
+    out.update({
+        "hpp_breakdown": bd, "hpp_per_pcs": hpp, "excluded_from_hpp": excluded,
+        "estimated_unit_price": round(unit_price), "estimated_total": round(unit_price) * qty,
+        "margin_pct": margin_pct(unit_price, hpp, nd=1) if hpp > 0 else target,
+        "margin_amount": round(unit_price - hpp) if hpp > 0 else out.get("margin_amount"),
+        "material_supplied_by": "client" if client_supplies_material(payload) else "cv_da",
+        "cost_rules": ("HPP = bahan milik DA + upah CMT/jahit + finishing. Bahan dari klien dan overhead "
+                       "pabrik tidak dihitung. Margin dihitung atas harga jual."),
+    })
+    return out
 
 
 def _extract_json_block(text: str):
@@ -113,13 +152,17 @@ def _heuristic_quote(payload: QuoteRequestIn) -> dict:
             finishing_addon += 8000
         if "print" in f or "sablon" in f:
             finishing_addon += 5000
-    labor = int(base_material * 0.45)
-    overhead = int(base_material * 0.18)
+    labor = int(base_material * 0.45)          # proksi upah CMT/jahit per pcs
     margin_pct = float(payload.target_margin_pct or 25)
+    # 2026-11-06 (Tahap 2): bahan klien bukan biaya DA; overhead pabrik tidak masuk HPP;
+    # harga = HPP ÷ (1 − margin) (margin atas harga jual, `core.margin`) — dulu HPP × (1 + margin).
+    material = 0 if client_supplies_material(payload) else base_material
+    overhead = 0
 
-    hpp = base_material + labor + overhead + finishing_addon
-    margin = int(hpp * (margin_pct / 100))
-    unit_price = hpp + margin
+    from core import margin as _margin
+    from core.margin import price_for_margin
+    hpp = material + labor + overhead + finishing_addon
+    unit_price = int(round(price_for_margin(hpp, margin_pct)))
     total = unit_price * qty
 
     # Adjust for volume
@@ -129,6 +172,7 @@ def _heuristic_quote(payload: QuoteRequestIn) -> dict:
     elif qty >= 2000:
         unit_price = int(unit_price * 0.96)
         total = unit_price * qty
+    margin = unit_price - hpp
 
     lead_time = max(14, min(60, 14 + qty // 200))
 
@@ -136,12 +180,13 @@ def _heuristic_quote(payload: QuoteRequestIn) -> dict:
         "estimated_unit_price": unit_price,
         "estimated_total": total,
         "hpp_breakdown": {
-            "material": base_material,
+            "material": material,
             "labor": labor,
             "overhead": overhead,
             "finishing": finishing_addon,
         },
-        "margin_pct": margin_pct,
+        "hpp_per_pcs": hpp,
+        "margin_pct": _margin.margin_pct(unit_price, hpp, nd=1) if hpp > 0 else margin_pct,
         "margin_amount": margin,
         "estimated_lead_time_days": lead_time,
         "currency": "IDR",
@@ -190,7 +235,11 @@ async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = N
             '  "risks": string[] (1-4 item),\n'
             '  "recommendations": string[] (3-5 item, actionable)\n'
             "}\n"
-            "Pastikan numerik realistis untuk pasar garment Indonesia 2026."
+            "Pastikan numerik realistis untuk pasar garment Indonesia 2026.\n"
+            "ATURAN BIAYA (wajib): bahan yang disediakan klien TIDAK dihitung sebagai biaya "
+            "(material = 0 bila bahan dari klien); overhead pabrik tidak masuk HPP (overhead = 0); "
+            "labor = upah CMT/jahit per pcs; margin dihitung atas harga jual: "
+            "harga = HPP ÷ (1 − margin)."
         )
         user_msg = (
             f"Product: {payload.product_name}\n"
@@ -199,6 +248,7 @@ async def _generate_ai_quote(payload: QuoteRequestIn, user_id: Optional[str] = N
             f"Target market: {payload.target_market or '-'}\n"
             f"Target unit price (jika ada): {payload.target_unit_price or '-'}\n"
             f"Materials: {payload.materials or '-'}\n"
+            f"Bahan utama disediakan oleh: {'klien' if client_supplies_material(payload) else 'CV. DA'}\n"
             f"Finishing: {payload.finishing or '-'}\n"
             f"Required lead time: {payload.required_lead_time_days or '-'} hari\n"
             f"Target margin: {payload.target_margin_pct or 25}%\n"
@@ -259,6 +309,10 @@ async def generate_quote(request: Request, payload: QuoteRequestIn):
     db = get_db()
 
     result = await _generate_ai_quote(payload, user_id=user.get("id"))
+    if result.get("source") == "ai":
+        # 2026-11-06 (Tahap 2): angka AI dirapikan dengan aturan biaya owner (bahan klien &
+        # overhead bukan biaya, margin atas harga jual) — heuristik sudah mengikutinya.
+        result = apply_owner_cost_rules(result, payload)
     record = {
         "id": str(uuid.uuid4()),
         "request": payload.dict(),

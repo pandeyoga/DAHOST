@@ -184,6 +184,8 @@ function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }
       overtime_rate: Number(state.overtime_rate) || 0,
       pcs_process_rates: (state.pcs_process_rates || []).filter(r => r.process_id),
       notes: state.notes || '',
+      // 2026-11-06 (Tahap 2): tarif baru berlaku mulai tanggal ini (versi tarif); kosong = koreksi tarif sekarang.
+      effective_from: state.effective_from || undefined,
     });
   };
 
@@ -239,7 +241,19 @@ function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }
               <label className="text-xs text-muted-foreground uppercase block mb-1">Tarif Lembur (Rp/jam)</label>
               <MoneyInput glass value={state.overtime_rate || 0} onChange={e => update('overtime_rate', e.target.value)} data-testid="pp-edit-ot-rate" />
             </div>
+            {!isNew && (
+              <div>
+                <label className="text-xs text-muted-foreground uppercase block mb-1">Tarif baru berlaku mulai (opsional)</label>
+                <GlassInput type="date" value={state.effective_from || ''} onChange={e => update('effective_from', e.target.value)} data-testid="pp-edit-effective-from" />
+                <p className="text-[10px] text-muted-foreground mt-1">Kosong = memperbaiki tarif yang berlaku sekarang. Diisi = kenaikan mulai tanggal itu; gaji bulan itu dihitung prorata.</p>
+              </div>
+            )}
           </div>
+          {(state.rate_versions || []).length > 1 && (
+            <p className="text-xs text-muted-foreground" data-testid="pp-edit-versions">
+              Riwayat tarif: {state.rate_versions.map(v => `${v.effective_from ? `mulai ${v.effective_from}` : 'awal'} Rp ${Number(v.base_rate || 0).toLocaleString('id-ID')}`).join(' · ')}
+            </p>
+          )}
 
           {state.pay_scheme === 'pcs' && (
             <div>

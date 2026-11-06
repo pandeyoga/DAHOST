@@ -24,9 +24,17 @@ import FilterChips from '@/components/ui/filter-chips';
 import { Notice, StatTile } from '../moduleAtoms';
 
 const STATUS_OPTIONS = ['Draft', 'Confirmed', 'Distributed', 'In Production', 'Completed', 'Closed'];
-const CLOSE_REASONS = ['Under Production', 'Over Production', 'Price Adjustment', 'Customer Agreement', 'Other'];
-// Label tampilan alasan tutup PO (nilai yang dikirim ke server tetap kode di atas).
+// 2026-11-06 (Tahap 2): tombol Tutup PO memakai pemeriksaan qty PER UKURAN yang sama dengan menu Tutup PO.
+// Kosong = semua ukuran terpenuhi; ada ukuran kurang ⇒ server meminta salah satu alasan tutup kurang.
+const CLOSE_REASONS = ['', 'deadline_expired', 'buyer_material_shortage', 'cmt_quality_reject_final', 'mutual_agreement'];
+// Label tampilan alasan tutup PO (termasuk kode lama untuk PO yang ditutup sebelum Tahap 2).
 const CLOSE_REASON_LABELS = {
+  '': 'Semua ukuran terpenuhi (tanpa kekurangan)',
+  deadline_expired: 'Batas waktu terlewati',
+  buyer_material_shortage: 'Bahan dari klien kurang',
+  cmt_quality_reject_final: 'Reject kualitas CMT (final)',
+  mutual_agreement: 'Kesepakatan bersama',
+  full_fulfillment: 'Semua ukuran terpenuhi',
   'Under Production': 'Produksi kurang dari order',
   'Over Production': 'Produksi lebih dari order',
   'Price Adjustment': 'Penyesuaian harga',
@@ -471,8 +479,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         body: JSON.stringify({ only_shortage: onlyShortage }),
       });
       const d = await res.json();
-      if (!res.ok) throw new Error(d?.detail || 'Gagal membuat permintaan aksesoris');
-      setAccReqMsg({ type: 'success', text: d.message || 'Permintaan aksesoris dibuat & dikirim ke Inbox Approval Aksesoris.' });
+      if (!res.ok) throw new Error(d?.detail || 'Gagal mengajukan pembelian aksesoris');
+      // 2026-11-06 (Tahap 2): kekurangan = PEMBELIAN (Permintaan Pengadaan), bukan pengeluaran stok
+      setAccReqMsg({ type: 'success', text: d.message || 'Permintaan Pengadaan untuk aksesoris yang kurang dibuat & diajukan.' });
       loadAccReq(poId, { keepMessage: true });
     } catch (e) {
       setAccReqMsg({ type: 'error', text: e.message || 'Gagal membuat permintaan aksesoris' });
@@ -826,7 +835,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">{isInternal ? 'Customer / Tujuan FG' : 'Buyer / Customer *'}</label>
+                <label className="block text-sm font-medium text-foreground/90 mb-1">{isInternal ? 'Pelanggan / tujuan barang jadi' : 'Pembeli / pelanggan *'}</label>
                 {isInternal ? (
                   <input data-testid="po-customer-input" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                     value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})}
@@ -846,7 +855,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 {!form.buyer_id && (
                   <input className="w-full border border-border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" 
                     value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})} 
-                    placeholder="Atau ketik nama customer manual" />
+                    placeholder="Atau ketik nama pelanggan" />
                 )}
                 </>)}
               </div>
@@ -872,11 +881,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 <GlassInput type="date" value={form.po_date} onChange={e => setForm({...form, po_date: e.target.value})} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Deadline Produksi</label>
+                <label className="block text-sm font-medium text-foreground/90 mb-1">Tenggat produksi</label>
                 <GlassInput type="date" value={form.deadline} onChange={e => setForm({...form, deadline: e.target.value})} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Deadline Pengiriman</label>
+                <label className="block text-sm font-medium text-foreground/90 mb-1">Tenggat pengiriman</label>
                 <GlassInput type="date" value={form.delivery_deadline} onChange={e => setForm({...form, delivery_deadline: e.target.value})} />
               </div>
             </div>
@@ -956,7 +965,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       </>) : (<>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Produk (Buyer Catalog) *</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Produk (Katalog Buyer) *</label>
                         <SearchableSelect
                           options={catalogItems.map(c => ({ value: c.id, label: c.product_name, sub: c.artikel_code }))}
                           value={item.catalog_item_id}
@@ -1008,7 +1017,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     )}
                     <div className="grid grid-cols-4 gap-2 mt-2">
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Size{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Ukuran{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
                         <input className="w-full border border-border rounded px-2 py-1.5 text-xs disabled:bg-muted disabled:text-muted-foreground" value={item.size} onChange={e => updateItem(idx, 'size', e.target.value)} placeholder="M" disabled={hasShipments || autoLocked} />
                       </div>
                       <div>
@@ -1058,11 +1067,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       {!isInternal && (<>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Selling Price (Rp)</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Harga jasa ke klien (Rp)</label>
                         <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85.000" data-testid={`po-item-${idx}-selling`} />
                       </div>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">CMT Price (Rp)</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Upah CMT (Rp)</label>
                         <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35.000" data-testid={`po-item-${idx}-rate`} />
                       </div>
                       </>)}
@@ -1174,11 +1183,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                         placeholder="Pilih Aksesoris"
                       />
                     </div>
-                    <input type="number" min="1" className="w-24 border border-border rounded px-2 py-1.5 text-xs" 
+                    <input type="number" min="0" step="any" className="w-24 border border-border rounded px-2 py-1.5 text-xs" 
                       value={acc.qty_needed} onChange={e => updateAccessoryItem(idx, 'qty_needed', e.target.value)} placeholder="Qty" />
                     <span className="text-xs text-muted-foreground w-10">{acc.unit || 'pcs'}</span>
                     <input className="w-32 border border-border rounded px-2 py-1.5 text-xs" 
-                      value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Notes" />
+                      value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Catatan" />
                     <button type="button" onClick={() => removeAccessoryItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"><X className="w-4 h-4" /></button>
                   </div>
                 ))}
@@ -1213,11 +1222,12 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         <Modal title={`Tutup PO Manual: ${closeTargetPO.po_number}`} onClose={() => setShowCloseModal(false)}>
           <form onSubmit={handleClosePO} className="space-y-4">
             <Notice tone="warning" icon={AlertTriangle}>
-              Tindakan ini akan mengubah status PO menjadi <strong>Closed</strong>. Pastikan alasan dituliskan dengan benar.
+              Qty diperiksa per ukuran. Semua terpenuhi ⇒ PO <strong>Ditutup</strong>; ada ukuran yang kurang ⇒ pilih alasan dan PO
+              menjadi <strong>Ditutup kurang</strong>. PO yang ditutup terkunci dari kiriman dan perubahan.
             </Notice>
             <div>
-              <label className="block text-sm font-medium text-foreground/90 mb-1">Alasan Penutupan *</label>
-              <SmartNativeSelect className="w-full" value={closeForm.close_reason} onChange={e => setCloseForm({...closeForm, close_reason: e.target.value})}>
+              <label className="block text-sm font-medium text-foreground/90 mb-1">Alasan penutupan</label>
+              <SmartNativeSelect className="w-full" value={closeForm.close_reason} onChange={e => setCloseForm({...closeForm, close_reason: e.target.value, closed_reason: e.target.value})}>
                 {CLOSE_REASONS.map(r => <option key={r} value={r}>{CLOSE_REASON_LABELS[r] || r}</option>)}
               </SmartNativeSelect>
             </div>
@@ -1402,16 +1412,24 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                         disabled={accReqCreating}
                         data-testid="po-acc-create-request-btn"
                       >
-                        {accReqCreating ? 'Membuat...' : `Buat Permintaan (${accReq.summary.shortage_lines} kurang)`}
+                        {accReqCreating ? 'Mengajukan...' : `Ajukan Pembelian (${accReq.summary.shortage_lines} kurang)`}
                       </Button>
                     ) : (
                       <span className="text-xs text-[hsl(var(--success))] font-medium">
-                        Stok mencukupi — tidak perlu permintaan
+                        Stok mencukupi — tidak perlu pembelian
                       </span>
                     )}
                   </div>
                 )}
               </div>
+              {/* 2026-11-06 (Tahap 2): kekurangan diajukan sebagai pembelian, stok yang ada keluar saat kirim */}
+              {accReq?.requirements?.length > 0 && (
+                <p className="text-xs text-muted-foreground" data-testid="po-acc-req-help">
+                  Kekurangan aksesoris milik DA diajukan sebagai Permintaan Pengadaan yang tertaut ke PO ini, lalu
+                  dibeli lewat PO dan diterima di Penerimaan Barang. Stok yang sudah ada dikeluarkan saat Kirim
+                  Material CMT, jadi tidak diminta lagi. Aksesoris yang disediakan klien tidak ikut dibeli.
+                </p>
+              )}
 
               {accReqLoading && <p className="text-xs text-muted-foreground">Memuat kebutuhan aksesoris...</p>}
               {accReq?.error && (
@@ -1452,6 +1470,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Aksesoris</th>
                       <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Sumber</th>
                       <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Dibutuhkan</th>
+                      <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Sudah keluar</th>
                       <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Tersedia</th>
                       <th className="text-right px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Kurang</th>
                       <th className="text-left px-3 py-2 text-xs text-[hsl(var(--success))] font-semibold">Status</th>
@@ -1471,6 +1490,9 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           {(a.qty_needed || 0).toLocaleString('id-ID')} <span className="text-xs font-normal text-muted-foreground">{a.unit}</span>
                         </td>
                         <td className="px-3 py-2 text-right text-foreground/80">
+                          {a.linked ? (a.issued || 0).toLocaleString('id-ID') : <span className="text-muted-foreground">-</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right text-foreground/80">
                           {a.linked ? (a.available || 0).toLocaleString('id-ID') : <span className="text-muted-foreground">-</span>}
                         </td>
                         <td className={`px-3 py-2 text-right font-semibold ${a.shortage > 0 ? 'text-[hsl(var(--destructive))] ' : 'text-[hsl(var(--success))] '}`}>
@@ -1480,6 +1502,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           {a.status === 'ok' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--success)/0.15)] text-[hsl(var(--success))]  border border-[hsl(var(--success)/0.4)]">Cukup</span>}
                           {a.status === 'shortage' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--destructive)/0.15)] text-[hsl(var(--destructive))]  border border-[hsl(var(--destructive)/0.4)]">Kurang</span>}
                           {a.status === 'unlinked' && <span className="px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]  border border-[hsl(var(--warning)/0.4)]">Belum tertaut</span>}
+                          {a.status === 'client' && <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground border border-border">Disediakan klien</span>}
                         </td>
                       </tr>
                     ))}</tbody>
@@ -1489,7 +1512,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
 
               {accReq?.existing_requests?.length > 0 && (
                 <div className="text-xs text-muted-foreground" data-testid="po-acc-existing-requests">
-                  Permintaan aksesoris untuk PO ini:{' '}
+                  Permintaan Pengadaan aksesoris untuk PO ini:{' '}
                   {accReq.existing_requests.map(r => (
                     <span key={r.id} className="inline-block mr-2 px-2 py-0.5 rounded-full border border-border bg-muted/40 tabular-nums">
                       {r.request_code} · {r.status}

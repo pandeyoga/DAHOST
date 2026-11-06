@@ -458,17 +458,17 @@ async def promote_style_to_production(
     # tidak lahir tanpa HPP/harga (P1a/P1b). ──
     cat = await pm.resolve_category_by_text(db, style.get('category') or '',
                                             allow_create=False)
-    rnd_hpp = 0.0
-    hpp_doc = await db.dewi_rnd_hpp.find_one(
-        {'style_id': style_id}, {'_id': 0}, sort=[('created_at', -1)]) or {}
-    for key in ('hpp_per_pcs', 'hpp', 'total_hpp_per_pcs'):
-        if hpp_doc.get(key) is not None:
-            try:
-                rnd_hpp = float(hpp_doc.get(key) or 0)
-            except (TypeError, ValueError):
-                rnd_hpp = 0.0
-            if rnd_hpp:
-                break
+    # 2026-11-06 (Tahap 2): dulu field yang dibaca (`hpp_per_pcs`/`hpp`/`harga_jual`/
+    # `suggested_price`) TIDAK PERNAH ditulis kalkulator R&D (yang menyimpan `hpp_total` &
+    # `selling_price_proposal`) ⇒ model/FG/katalog lahir Rp 0. Nama field kini dipetakan, dokumen
+    # final/disetujui didahulukan atas draf, dan HPP dihitung dengan aturan owner (bahan + CMT,
+    # tanpa cutting/overhead) lewat `rnd_hpp_owner_rule`.
+    from routes.dewi_rnd_hpp import rnd_hpp_owner_rule
+    hpp_docs = await db.dewi_rnd_hpp.find(
+        {'style_id': style_id}, {'_id': 0}).sort('created_at', -1).to_list(50)
+    hpp_doc = next((d for d in hpp_docs if (d.get('status') or '') in ('final', 'approved', 'locked')),
+                   hpp_docs[0] if hpp_docs else {}) or {}
+    rnd_hpp = rnd_hpp_owner_rule(hpp_doc) if hpp_doc else 0.0
 
     def _num(*vals):
         for v in vals:
@@ -498,6 +498,7 @@ async def promote_style_to_production(
         'hpp_rnd': rnd_hpp,     # F5 — nilai ASAL R&D (pemisah sumber HPP)
         'base_hpp': 0.0,
         'retail_price': _num(style.get('target_price'), style.get('retail_price'),
+                             hpp_doc.get('selling_price_proposal'),
                              hpp_doc.get('harga_jual'), hpp_doc.get('suggested_price')),
         'weight_gram': _num(style.get('weight_gram'), (techpack or {}).get('weight_gram')),
         'active': True,          # F1/T1 — penanda hidup/mati KANONIK

@@ -45,6 +45,12 @@ SOURCE_LABEL = {
     "manual": "Koreksi manual",
     "adjust": "Penyesuaian stok",
     "return": "Retur",
+    # 2026-11-06 (Tahap 2 Pengadaan): sumber baru — jangan tampilkan kode mentah ke pengguna
+    "invoice_variance": "Selisih harga faktur pemasok",
+    "invoice_variance_void": "Batal faktur pemasok (selisih dibalik)",
+    "accept_discount": "Potongan harga retur pembelian",
+    "purchase_return": "Potongan harga retur pembelian",
+    "opening": "Harga awal (stok masih kosong)",
 }
 # Riwayat nilai POTONGAN memakai jalur `apply_receipt_cost` yang sama (source
 # `receive`), jadi dibedakan dari catatannya — lihat `core/cut_panel_value`.

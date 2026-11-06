@@ -115,7 +115,9 @@ export default function PortalSayaCuti({ user, headers }) {
   const [wdPreview, setWdPreview] = useState(null);
   const [wdLoading, setWdLoading] = useState(false);
 
-  const [otForm, setOtForm] = useState({ date: '', start_time: '08:00', end_time: '17:00', reason: '' });
+  // Tahap 2 (2026-11-06): karyawan mengisi tanggal, jumlah jam, dan alasan saja — pengali dari Pengaturan Payroll.
+  const OT_EMPTY = { date: '', hours: '', reason: '' };
+  const [otForm, setOtForm] = useState(OT_EMPTY);
   const [showOtForm, setShowOtForm] = useState(false);
 
   // Resolve employee from current user — pakai endpoint /portal-saya/me/employee
@@ -171,6 +173,10 @@ export default function PortalSayaCuti({ user, headers }) {
   const submitLeave = async () => {
     if (!form.leave_type_id || !form.from_date || !form.to_date)
       return toast({ title: 'Lengkapi field wajib', variant: 'destructive' });
+    if (!form.reason.trim())
+      return toast({ title: 'Alasan wajib diisi', variant: 'destructive' });
+    if (form.is_half_day && form.to_date !== form.from_date)
+      return toast({ title: 'Setengah hari hanya untuk satu tanggal', variant: 'destructive' });
     if (!employee?.id)
       return toast({ title: 'Data karyawan Anda tidak ditemukan. Hubungi HR.', variant: 'destructive' });
 
@@ -195,6 +201,7 @@ export default function PortalSayaCuti({ user, headers }) {
         attachment_url:    form.attachment?.url || '',
         attachment_filename: form.attachment?.filename || '',
         request_type:      selectedLT?.request_type || 'cuti',
+        leave_kind:        selectedLT?.request_type || 'cuti',
       }, { headers });
       toast({ title: 'Request berhasil dikirim! Menunggu persetujuan.' });
       setShowForm(false);
@@ -217,8 +224,8 @@ export default function PortalSayaCuti({ user, headers }) {
   };
 
   const submitOT = async () => {
-    if (!otForm.date || !otForm.start_time || !otForm.end_time || !otForm.reason)
-      return toast({ title: 'Lengkapi semua field', variant: 'destructive' });
+    if (!otForm.date || !(Number(otForm.hours) > 0) || !otForm.reason.trim())
+      return toast({ title: 'Isi tanggal, jumlah jam, dan alasan', variant: 'destructive' });
     if (!employee?.id)
       return toast({ title: 'Data karyawan tidak ditemukan', variant: 'destructive' });
     setSubmitting(true);
@@ -227,10 +234,11 @@ export default function PortalSayaCuti({ user, headers }) {
       // (body {employee_id, date, start_time, end_time, reason} sudah sesuai).
       // Sebelum ini setiap pengajuan lembur karyawan GAGAL dengan pesan generik.
       await axios.post(`${API}/api/rahaza/overtime`, {
-        employee_id: employee.id, ...otForm }, { headers });
+        employee_id: employee.id, date: otForm.date, hours: Number(otForm.hours), reason: otForm.reason.trim(),
+      }, { headers });
       toast({ title: 'Request lembur dikirim' });
       setShowOtForm(false);
-      setOtForm({ date: '', start_time: '08:00', end_time: '17:00', reason: '' });
+      setOtForm(OT_EMPTY);
       loadData();
     } catch (e) {
       toast({ title: e.response?.data?.detail || 'Gagal kirim request lembur', variant: 'destructive' });
@@ -380,7 +388,7 @@ export default function PortalSayaCuti({ user, headers }) {
               </div>
 
               <div>
-                <Label className="text-xs">Alasan</Label>
+                <Label className="text-xs">Alasan <span className="text-[hsl(var(--destructive))]">*</span></Label>
                 <Textarea className="mt-1 text-sm" rows={2}
                   placeholder="Tulis alasan..."
                   value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
@@ -446,7 +454,7 @@ export default function PortalSayaCuti({ user, headers }) {
                         <p className="text-xs text-red-700 dark:text-red-500 mt-0.5">Alasan: {lv.rejected_reason}</p>
                       )}
                     </div>
-                    {(lv.status === 'pending_approval') && (
+                    {['pending_approval', 'pending_hr_approval'].includes(lv.status) && (
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-700 dark:text-red-400"
                         onClick={() => cancelLeave(lv.id)}>
                         <Trash2 size={12} />
@@ -474,23 +482,19 @@ export default function PortalSayaCuti({ user, headers }) {
           </div>
           {showOtForm && (
             <Card className="p-4 space-y-3">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
                   <Label className="text-xs">Tanggal</Label>
-                  <GlassInput type="date" className="mt-1 h-9 text-sm"
+                  <GlassInput type="date" className="mt-1 h-9 text-sm" data-testid="ot-date"
                     value={otForm.date} onChange={e => setOtForm(f => ({ ...f, date: e.target.value }))} />
                 </div>
                 <div>
-                  <Label className="text-xs">Mulai</Label>
-                  <GlassInput type="time" className="mt-1 h-9 text-sm"
-                    value={otForm.start_time} onChange={e => setOtForm(f => ({ ...f, start_time: e.target.value }))} />
-                </div>
-                <div>
-                  <Label className="text-xs">Selesai</Label>
-                  <GlassInput type="time" className="mt-1 h-9 text-sm"
-                    value={otForm.end_time} onChange={e => setOtForm(f => ({ ...f, end_time: e.target.value }))} />
+                  <Label className="text-xs">Jumlah jam</Label>
+                  <GlassInput type="number" min="0.5" max="12" step="0.5" className="mt-1 h-9 text-sm" data-testid="ot-hours"
+                    value={otForm.hours} onChange={e => setOtForm(f => ({ ...f, hours: e.target.value }))} />
                 </div>
               </div>
+              <p className="text-[11px] text-muted-foreground">Pengali upah lembur mengikuti Pengaturan Payroll.</p>
               <div>
                 <Label className="text-xs">Alasan / Pekerjaan</Label>
                 <Textarea className="mt-1 text-sm" rows={2}
@@ -511,7 +515,9 @@ export default function PortalSayaCuti({ user, headers }) {
                   <div className="flex items-center gap-2">
                     <Clock size={14} className="text-muted-foreground shrink-0" />
                     <div className="flex-1">
-                      <p className="text-sm font-medium">{ot.date} · {ot.start_time} – {ot.end_time}</p>
+                      <p className="text-sm font-medium">
+                        {ot.date} · {ot.hours} jam{ot.start_time && ot.end_time ? ` (${ot.start_time}–${ot.end_time})` : ''}
+                      </p>
                       <p className="text-xs text-muted-foreground">{ot.reason}</p>
                     </div>
                     <StatusBadge status={ot.status || 'pending_approval'} />

@@ -60,20 +60,42 @@ function ApBadge({ status }) {
   );
 }
 
-function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
+/**
+ * 2026-11-06 (Tahap 2): faktur dibuat DI HALAMAN (PANDUAN_UI G13) dan mencatat angka faktur pemasok yang
+ * SEBENARNYA — qty & harga per baris, ongkos kirim, potongan. Selisihnya dengan penerimaan masuk HPP bahan
+ * saat faktur dijurnal (bagian yang barangnya masih ada; sisanya 5-1900).
+ */
+function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
   const [taxPct, setTaxPct] = useState(0);
   const { profile: taxProfile } = useTaxProfile(token);
   const [invNo, setInvNo] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
+  const [freight, setFreight] = useState('');
+  const [discount, setDiscount] = useState('');
+  const [lines, setLines] = useState(() => (gr?.billable_lines || []).map((b) => ({
+    key: b.key, name: b.material_name || b.key, unit: b.unit || '', maxQty: Number(b.qty || 0),
+    grPrice: Number(b.price || 0), qty: String(Number(b.qty || 0)), price: String(Number(b.price || 0)),
+  })));
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+  const setLine = (key, patch) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
-  const subtotal = Number(gr?.receivable_amount || 0);
-  const tax = Math.round(subtotal * Number(taxPct || 0)) / 100;
-  const total = subtotal + tax;
+  const billed = lines.filter((l) => Number(l.qty) > 0);
+  const subtotal = billed.reduce((s, l) => s + Number(l.qty) * Number(l.price || 0), 0);
+  const grValue = billed.reduce((s, l) => s + Number(l.qty) * l.grPrice, 0);
+  const disc = Number(discount || 0);
+  const frt = Number(freight || 0);
+  const tax = Math.round((subtotal - disc) * Number(taxPct || 0)) / 100;
+  const total = subtotal - disc + frt + tax;
+  const diff = total - grValue - (taxProfile.pkp ? tax : 0);
+  const overQty = lines.find((l) => Number(l.qty) - l.maxQty > 1e-6);
+  const problem = !billed.length ? 'Isi qty faktur minimal satu baris.'
+    : overQty ? `Qty ${overQty.name} melebihi yang belum ditagih (${fmtNum(overQty.maxQty)}).`
+      : disc - subtotal > 0.5 ? 'Potongan tidak boleh melebihi nilai barang.' : '';
 
   const submit = async () => {
+    if (problem) { setErr(problem); return; }
     setErr('');
     setSaving(true);
     try {
@@ -83,6 +105,9 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
         supplier_faktur_number: invNo || undefined,   // 2026-11-03: dulu isian ini tidak ikut dikirim
         due_date: dueDate || undefined,
         notes: notes || undefined,
+        freight_amount: frt,
+        invoice_discount: disc,
+        items_override: billed.map((l) => ({ gr_item_id: l.key, invoiced_qty: Number(l.qty), unit_price: Number(l.price || 0) })),
       });
       toast.success(`Faktur ${out?.invoice_number} dibuat dari ${gr.receipt_number}`);
       onCreated?.(out);
@@ -94,7 +119,11 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
   };
 
   return (
-    <Modal onClose={onClose} title={`Buat Faktur dari ${gr.receipt_number}`} size="lg">
+    <DetailPanel title={`Buat faktur dari ${gr.receipt_number}`} description={gr.supplier_name} onClose={onClose}
+      testId="ap-create-panel"
+      actions={<Button onClick={submit} disabled={saving || !!problem} data-testid="ap-form-submit">
+        {saving ? 'Menyimpan...' : 'Buat faktur'}
+      </Button>}>
       <div className="space-y-4" data-testid="ap-create-modal">
         {err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
         <div className="grid grid-cols-2 gap-3 text-sm">
@@ -121,6 +150,51 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
           <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1">
             <span>Qty bersih difakturkan</span>
             <span className="tabular-nums">{fmtNum(gr.total_net)}</span>
+          </div>
+        </div>
+
+        {/* 2026-11-06 (Tahap 2): angka di FAKTUR PEMASOK (bawaan = angka penerimaan) */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="ap-form-lines">
+            <thead className="border-b border-[var(--glass-border)]">
+              <tr className="text-left text-muted-foreground text-xs">
+                <th className="pb-2">Barang</th>
+                <th className="pb-2 text-right">Harga penerimaan</th>
+                <th className="pb-2 text-right">Qty di faktur</th>
+                <th className="pb-2 text-right">Harga di faktur</th>
+                <th className="pb-2 text-right">Jumlah</th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.key} className="border-b border-[var(--glass-border)]">
+                  <td className="py-1.5 text-xs">{l.name}<div className="text-[11px] text-muted-foreground">sisa ditagih {fmtNum(l.maxQty)} {l.unit}</div></td>
+                  <td className="py-1.5 text-right text-xs tabular-nums">{fmtRp(l.grPrice)}</td>
+                  <td className="py-1.5 text-right">
+                    <GlassInput type="number" min="0" step="any" value={l.qty} className="h-8 w-24 ml-auto text-right text-xs"
+                      onChange={(e) => setLine(l.key, { qty: e.target.value })} data-testid={`ap-form-qty-${l.key}`} />
+                  </td>
+                  <td className="py-1.5 text-right">
+                    <GlassInput type="number" min="0" step="any" value={l.price} className="h-8 w-28 ml-auto text-right text-xs"
+                      onChange={(e) => setLine(l.key, { price: e.target.value })} data-testid={`ap-form-price-${l.key}`} />
+                  </td>
+                  <td className="py-1.5 text-right text-xs tabular-nums">{fmtRp(Number(l.qty || 0) * Number(l.price || 0))}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="block text-xs font-medium mb-1" htmlFor="ap-form-freight">Ongkos kirim di faktur</label>
+            <MoneyInput glass id="ap-form-freight" value={freight} onChange={(e) => setFreight(e.target.value)}
+                        placeholder="0" className="text-right" data-testid="ap-form-freight" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1" htmlFor="ap-form-discount">Potongan di faktur</label>
+            <MoneyInput glass id="ap-form-discount" value={discount} onChange={(e) => setDiscount(e.target.value)}
+                        placeholder="0" className="text-right" data-testid="ap-form-discount" />
           </div>
         </div>
 
@@ -156,6 +230,18 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
             <span className="text-muted-foreground">Subtotal</span>
             <span className="tabular-nums" data-testid="ap-form-subtotal">{fmtRp(subtotal)}</span>
           </div>
+          {disc > 0 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Potongan</span>
+              <span className="tabular-nums">−{fmtRp(disc)}</span>
+            </div>
+          )}
+          {frt > 0 && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Ongkos kirim</span>
+              <span className="tabular-nums">{fmtRp(frt)}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-muted-foreground">PPN {taxPct || 0}%</span>
             <span className="tabular-nums">{fmtRp(tax)}</span>
@@ -165,15 +251,16 @@ function CreateInvoiceModal({ token, gr, onClose, onCreated }) {
             <span className="tabular-nums" data-testid="ap-form-total">{fmtRp(total)}</span>
           </div>
         </div>
-
-        <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
-          <Button variant="secondary" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={saving} data-testid="ap-form-submit">
-            {saving ? 'Menyimpan...' : 'Buat Faktur'}
-          </Button>
-        </div>
+        {Math.abs(diff) >= 1 && (
+          <p className="text-[11px] text-muted-foreground" data-testid="ap-form-diff-note">
+            Selisih dengan nilai penerimaan {diff > 0 ? '+' : '−'}{fmtRp(Math.abs(diff))}
+            {taxProfile.pkp ? '' : ' (termasuk PPN yang tidak dapat dikreditkan)'} — masuk HPP bahan untuk barang yang
+            masih ada di gudang; bagian barang yang sudah terpakai dicatat sebagai selisih harga beli.
+          </p>
+        )}
+        {problem && <Notice tone="warning" icon={AlertTriangle}>{problem}</Notice>}
       </div>
-    </Modal>
+    </DetailPanel>
   );
 }
 
@@ -371,6 +458,14 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
             <tfoot className="font-semibold">
               <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">Subtotal</td>
                   <td className="py-1 text-right font-mono text-xs">{fmtRp(inv.subtotal)}</td></tr>
+              {Number(inv.invoice_discount || 0) > 0 && (
+                <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">Potongan</td>
+                    <td className="py-1 text-right text-xs tabular-nums">−{fmtRp(inv.invoice_discount)}</td></tr>
+              )}
+              {Number(inv.freight_amount || 0) > 0 && (
+                <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">Ongkos kirim</td>
+                    <td className="py-1 text-right text-xs tabular-nums">{fmtRp(inv.freight_amount)}</td></tr>
+              )}
               <tr><td colSpan="4" className="py-1 text-right text-xs text-muted-foreground">PPN {inv.tax_pct || 0}%</td>
                   <td className="py-1 text-right font-mono text-xs">{fmtRp(inv.tax_amount)}</td></tr>
               <tr className="border-t-2 border-[var(--glass-border)]">
@@ -382,6 +477,13 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
 
         {inv.notes && (
           <p className="text-xs text-muted-foreground"><span className="font-medium text-foreground">Catatan:</span> {inv.notes}</p>
+        )}
+        {/* 2026-11-06 (Tahap 2): ke mana selisih harga faktur vs penerimaan dicatat */}
+        {(inv.gl_hpp_inventory !== undefined || inv.gl_ppv_posted !== undefined) && (
+          <p className="text-xs text-muted-foreground" data-testid="ap-detail-hpp-note">
+            Selisih harga masuk HPP bahan {fmtRp(inv.gl_hpp_inventory || 0)} · selisih harga beli
+            (barang sudah terpakai / tanpa master) {fmtRp(inv.gl_ppv_posted || 0)}
+          </p>
         )}
 
         {inv.status !== 'draft' && (
@@ -543,7 +645,11 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
       filters={filters}
       tools={<Button size="icon" variant="outline" onClick={load} data-testid="ap-refresh" title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
       summary={err && <Notice tone="danger" icon={AlertTriangle}>{err}</Notice>}
-      detail={detail && (
+      detail={createGr ? (
+        <CreateInvoicePanel key={createGr.id} token={token} gr={createGr}
+                            onClose={() => setCreateGr(null)}
+                            onCreated={() => { load(); setTab('invoices'); }} />
+      ) : detail && (
         <InvoiceDetail inv={detail} onClose={() => setDetail(null)} onSend={approve} sending={sending} token={token}
                        onPay={finance ? (inv) => { setDetail(null); setPaying(inv); } : null} />
       )}
@@ -587,7 +693,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                     <td className="py-3 text-right font-mono text-xs">{fmtNum(g.total_net)}</td>
                     <td className="py-3 text-right font-mono text-xs">{fmtRp(g.receivable_amount)}</td>
                     <td className="py-3 pr-4 text-right">
-                      <Button size="sm" variant="outline" onClick={() => setCreateGr(g)} data-testid={`ap-create-${g.id}`}>
+                      <Button size="sm" variant="outline" onClick={() => { setDetail(null); setCreateGr(g); }} data-testid={`ap-create-${g.id}`}>
                         Buat faktur
                       </Button>
                     </td>
@@ -625,7 +731,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
                         data-testid={`ap-invoice-row-${i.id}`}>
                       <td className="py-3 pl-4 text-xs whitespace-nowrap">
                         {i.kind !== 'cmt'
-                          ? <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => setDetail(detail?.id === i.id ? null : i)} data-testid={`ap-view-${i.id}`}>{i.invoice_number}</Button>
+                          ? <Button variant="link" size="sm" className="h-auto p-0 text-xs" onClick={() => { setCreateGr(null); setDetail(detail?.id === i.id ? null : i); }} data-testid={`ap-view-${i.id}`}>{i.invoice_number}</Button>
                           : i.invoice_number}
                       </td>
                       {financeMode && <td className="py-3 text-xs whitespace-nowrap">{KIND_LABEL[i.kind] || i.kind}</td>}
@@ -661,11 +767,6 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
           </GlassCard>
       )}
 
-      {createGr && (
-        <CreateInvoiceModal token={token} gr={createGr}
-                            onClose={() => setCreateGr(null)}
-                            onCreated={() => { load(); setTab('invoices'); }} />
-      )}
       {paying && (
         <PayInvoiceModal token={token} inv={paying} onClose={() => setPaying(null)} onPaid={() => load()} />
       )}

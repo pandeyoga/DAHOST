@@ -97,6 +97,17 @@ DEFAULT_ENTITY_TYPES = {
         "target_field": "ar_account_code",
         "name_prefix": "Piutang Maklon",
     },
+    # 2026-11-06 (Tahap 2, keputusan owner): pendapatan maklon per klien = 4-1500-<KODE klien>
+    # di bawah kelompok 4-1500 Pendapatan Maklon. Akun lama dicocokkan lewat
+    # flags.subledger_entity_type + subledger_entity_id (bukan nama).
+    "maklon_revenue": {
+        "enabled": True,
+        "parent_code": "4-1500",          # Pendapatan Maklon (kelompok)
+        "label": "Klien Maklon — Pendapatan",
+        "collection": "dewi_maklon_clients",
+        "target_field": "revenue_account_code",
+        "name_prefix": "Pendapatan Maklon",
+    },
     "bank": {
         "enabled": True,
         "parent_code": "1-1200",          # Bank (group control)

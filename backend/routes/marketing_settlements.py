@@ -434,10 +434,17 @@ async def import_preview(request: Request, file: UploadFile = File(...),
     draft["expected_net_payout"] = round(sum(sign * float(draft.get(f) or 0)
                                              for f, sign in MONEY_FIELDS.items()), 2)
     if not parsed["mapping"]:
-        raise HTTPException(
-            400, "Tidak ada satu pun kolom uang yang dikenali di berkas ini. Pastikan yang "
-                 "diunggah adalah laporan Penghasilan (Shopee) / Settlement (TikTok), bukan "
-                 "ekspor pesanan.")
+        if not parsed.get("numeric_columns"):
+            raise HTTPException(
+                400, "Tidak ada satu pun kolom angka di berkas ini. Pastikan yang "
+                     "diunggah adalah laporan Penghasilan (Shopee) / Settlement (TikTok), bukan "
+                     "ekspor pesanan.")
+        # 2026-11-06 (Tahap 2) — berkas yang kolomnya belum dikenali tidak lagi
+        # buntu: kolom angkanya tetap ditampilkan supaya staf mengarahkannya sendiri.
+        parsed.setdefault("warnings", []).append(
+            "Belum ada kolom uang yang dikenali otomatis. Arahkan setiap kolom angka di "
+            "tabel ke field tujuannya, periksa angkanya, lalu simpan — pemetaannya akan "
+            "diingat untuk format laporan ini.")
     return {"ok": True, **parsed, "draft": draft}
 
 

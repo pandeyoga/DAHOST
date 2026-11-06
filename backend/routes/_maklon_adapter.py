@@ -196,7 +196,7 @@ def po_to_legacy_order(po: Dict[str, Any]) -> Dict[str, Any]:
             product_name_parts.append(desc)
         if not product_category:
             product_category = it.get('artikel') or ''
-        rate = float(it.get('selling_price_per_pcs') or it.get('cmt_rate_per_pcs') or 0)
+        rate = float(it.get('selling_price_per_pcs') or 0)  # 2026-11-06 (Tahap 2): tanpa cadangan upah CMT
         price_sum_weighted += rate * qty
 
     total_qty = int(po.get('total_qty') or qty_total or 0)

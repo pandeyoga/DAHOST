@@ -47,7 +47,6 @@ def _normalize_unit(unit: str) -> str:
 # (satukan ke rahaza_material_stock flat via stock_service; hilangkan duplikasi Schema-B nested).
 from core.accessory_stock import (  # noqa: E402
     get_accessory_location_id as _get_accessory_location_id,
-    add_stock as _add_stock,
 )
 
 async def _log_movement(db, user: dict, *, material_id: str, mv_type: str, qty: float,
@@ -118,6 +117,10 @@ async def list_purchase_requests(request: Request):
     )
     cfg = await chain_config(db)
     u = await with_department(db, user)
+    # 2026-11-06 (Tahap 2): PR yang sudah diteruskan menampilkan status Permintaan Pengadaan, PO &
+    # penerimaannya (barang masuk lewat Penerimaan Barang — bernilai & berjurnal).
+    from core.accessory_procurement import link_info
+    links = await link_info(db, docs)
     out = []
     for d in docs:
         chain = doc_chain(d, cfg)
@@ -126,9 +129,16 @@ async def list_purchase_requests(request: Request):
             stage = STAGE_DEPT
         row = serialize_doc(d)
         row.update(eval_approval(d, u, chain, stage=stage))
-        row["can_submit"] = (d.get("status") == "Draft" and (
-            not d.get("requested_by") or d.get("requested_by") == user.get("id")
-            or (user.get("role") or "").lower() in ("superadmin", "admin", "owner")))
+        link = links.get(d.get("id"))
+        row["procurement"] = link
+        is_owner = (not d.get("requested_by") or d.get("requested_by") == user.get("id")
+                    or (user.get("role") or "").lower() in ("superadmin", "admin", "owner"))
+        # Draf (atau sudah diteruskan tapi PR pengadaannya masih draf hasil migrasi) → boleh diajukan
+        row["can_submit"] = is_owner and (
+            d.get("status") == "Draft"
+            or (d.get("status") == "Forwarded" and (link or {}).get("pr_status") == "draft"))
+        if d.get("status") == "Forwarded":
+            row.update(can_approve=False, can_reject=False)
         out.append(row)
     return out
 
@@ -237,41 +247,25 @@ async def update_purchase_request(pr_id: str, request: Request):
             "Perubahan status persetujuan tidak lagi lewat endpoint ini. "
             "Gunakan /purchase-requests/{id}/submit, /approve, atau /reject "
             "supaya aturan persetujuan & jejak auditnya tercatat.")
-    if new_status in ("Ordered", "Received"):
-        from routes.shared import assert_can_act
-        assert_can_act(user, "purchasing.manage", "proc.po.manage", "wh.receive",
-                       legacy_roles=("admin_pengadaan", "manager_pengadaan", "purchasing",
-                                     "admin_gudang", "admin_aksesoris", "spv_aksesoris",
-                                     "accounting", "staff_keuangan", "manager_keuangan"),
-                       what="mencatat pesanan / penerimaan barang aksesoris")
-        if new_status == "Ordered" and doc.get("status") != "Approved":
-            raise HTTPException(400, "Hanya PR yang sudah disetujui penuh bisa dipesan.")
-        if new_status == "Received" and doc.get("status") != "Ordered":
-            raise HTTPException(400, "Hanya PR berstatus Ordered yang bisa diterima.")
-
-    if new_status == "Ordered":
-        upd.update({"status": "Ordered", "ordered_at": _now_iso()})
-    elif new_status == "Received":
-        loc_id = await _get_accessory_location_id(db)
-        for it in doc.get("items", []):
-            acc_id = it.get("acc_id")
-            try:
-                qty = float(it.get("qty_requested") or 0)
-            except Exception:
-                qty = 0.0
-            if not acc_id or qty <= 0:
-                continue
-            await _add_stock(db, acc_id, loc_id, qty)
-            await _log_movement(
-                db, user,
-                material_id=acc_id, mv_type="receive", qty=qty,
-                related_type="purchase_request", related_ref=pr_id,
-                notes=f"Terima dari PR {doc['pr_number']}",
-            )
-        upd.update({"status": "Received", "received_at": _now_iso()})
-    else:
-        allowed = {k: v for k, v in body.items() if k not in ("_id", "id", "created_at", "created_by", "pr_number")}
-        upd.update(allowed)
+    if new_status in ("Ordered", "Received", "Forwarded"):
+        # 2026-11-06 (Tahap 2): "Diterima" dulu MENAMBAH STOK tanpa nilai & tanpa jurnal (stok ≠ buku
+        # besar) dan tidak pernah tersambung ke PO pengadaan. Pesan & terima sekarang HANYA lewat
+        # Pengadaan: Permintaan Pengadaan → PO → Penerimaan Barang (bernilai, berjurnal).
+        raise HTTPException(400,
+            "Pemesanan dan penerimaan aksesoris kini lewat Pengadaan: ajukan PR ini (otomatis diteruskan "
+            "ke Permintaan Pengadaan), lalu buat PO dan terima barangnya di Penerimaan Barang supaya stok "
+            "masuk dengan nilai dan jurnal.")
+    if doc.get("status") == "Forwarded":
+        raise HTTPException(400, "PR ini sudah diteruskan ke Permintaan Pengadaan "
+                                 f"{doc.get('procurement_pr_number', '')} — ubah di sana.")
+    if new_status and new_status != doc.get("status") and not (
+            new_status == "Cancelled" and doc.get("status") in ("Draft", "Rejected")):
+        raise HTTPException(400, "Status PR hanya bisa diubah lewat tombol Ajukan / Setujui / Tolak.")
+    # field alur kerja / tautan tidak boleh ditimpa lewat ubah detail
+    locked = ("_id", "id", "created_at", "created_by", "pr_number", "requested_by",
+              "approval_steps", "approval_chain", "current_approver_stage", "procurement_pr_id",
+              "procurement_pr_number", "status_before_forward")
+    upd.update({k: v for k, v in body.items() if k not in locked})
 
     await db.acc_purchase_requests.update_one({"id": pr_id}, {"$set": upd})
     result = await db.acc_purchase_requests.find_one({"id": pr_id}, {"_id": 0})
@@ -340,46 +334,60 @@ async def get_purchase_request_timeline(pr_id: str, request: Request):
 
 @router.post("/purchase-requests/{pr_id}/submit")
 async def submit_purchase_request(pr_id: str, request: Request):
-    from core.pr_approval import (
-        STAGE_DEPT, STAGE_LABELS, SUPER_APPROVER_ROLES, chain_config,
-        compute_chain, notify_stage_approvers,
-    )
+    from core.pr_approval import SUPER_APPROVER_ROLES
     user = await require_auth(request)
     db = get_db()
     doc = await db.acc_purchase_requests.find_one({"id": pr_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "PR tidak ditemukan")
-    if doc.get("status") != "Draft":
+    from core import accessory_procurement as ap
+    if doc.get("status") not in ("Draft", ap.ACC_STATUS_FORWARDED):
         raise HTTPException(400, "Hanya PR berstatus Draft yang bisa diajukan.")
     owner_id = doc.get("requested_by")
     if owner_id and owner_id != user.get("id") \
             and (user.get("role") or "").lower() not in SUPER_APPROVER_ROLES:
         raise HTTPException(403, "Hanya pembuat PR atau admin yang boleh mengajukan.")
 
-    cfg = await chain_config(db)
-    chain = compute_chain(doc.get("total_estimated"), cfg)
-    step = {
-        "id": _id(), "step": "submit", "stage": None,
-        "actor_id": user.get("id"),
-        "actor_name": user.get("name", "") or user.get("email", ""),
-        "actor_role": (user.get("role") or "").lower(),
-        "action": "submitted", "action_label": "Diajukan", "comment": "",
-        "timestamp": _now_iso(),
-    }
-    await db.acc_purchase_requests.update_one({"id": pr_id}, {
-        "$set": {"status": "Submitted", "submitted_at": _now_iso(),
-                 "approval_chain": chain, "approval_thresholds": dict(cfg),
-                 "current_approver_stage": STAGE_DEPT, "updated_at": _now_iso()},
-        "$push": {"approval_steps": step}})
-    after = {**doc, "status": "Submitted", "approval_chain": chain}
-    await notify_stage_approvers(db, after, STAGE_DEPT, chain,
-                                 module_id="proc-accessory-pr",
-                                 number=doc.get("pr_number", ""),
-                                 title=doc.get("purpose", ""),
-                                 kind_label="Request Pembelian Aksesoris")
-    return {"ok": True, "new_status": "Submitted", "approval_chain": chain,
-            "stage": STAGE_DEPT, "stage_label": STAGE_LABELS[STAGE_DEPT],
-            "total_stages": len(chain)}
+    # 2026-11-06 (Tahap 2): MENGAJUKAN = meneruskan ke Permintaan Pengadaan (dibuat + langsung diajukan
+    # lewat fungsi Portal Pengadaan). Persetujuan, PO, dan Penerimaan Barang (bernilai & berjurnal)
+    # berjalan di sana — tidak ada lagi jalur persetujuan & "Terima Barang" kedua di PR aksesoris.
+    try:
+        res = await ap.forward_acc_pr(db, doc, user, submit=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    pr = res.get("request") or {}
+    return {"ok": True, "new_status": ap.ACC_STATUS_FORWARDED,
+            "procurement_pr_id": pr.get("id"), "procurement_pr_number": pr.get("request_number", ""),
+            "procurement_status": pr.get("status", ""),
+            "message": (f"Diteruskan ke Permintaan Pengadaan {pr.get('request_number', '')} dan diajukan ke "
+                        "persetujuan. Barang masuk stok lewat PO dan Penerimaan Barang.")}
+
+
+@router.post("/purchase-requests/{pr_id}/forward")
+async def forward_purchase_request(pr_id: str, request: Request):
+    """2026-11-06 (Tahap 2): teruskan PR aksesoris LAMA yang sudah diajukan / disetujui / dipesan
+    (sebelum alur Pengadaan) ke Permintaan Pengadaan, membawa status & jejak persetujuannya, supaya
+    barangnya bisa dibuatkan PO dan diterima lewat Penerimaan Barang. Sama dengan skrip migrasi."""
+    from routes.shared import assert_can_act
+    from core import accessory_procurement as ap
+    user = await require_auth(request)
+    assert_can_act(user, "purchasing.manage", "proc.po.manage",
+                   legacy_roles=("admin_pengadaan", "manager_pengadaan", "purchasing",
+                                 "admin_aksesoris", "spv_aksesoris"),
+                   what="meneruskan PR aksesoris ke Pengadaan")
+    db = get_db()
+    doc = await db.acc_purchase_requests.find_one({"id": pr_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "PR tidak ditemukan")
+    if doc.get("status") not in ap.ACC_FORWARDABLE and doc.get("status") != ap.ACC_STATUS_FORWARDED:
+        raise HTTPException(400, f"PR berstatus {doc.get('status')} tidak perlu diteruskan.")
+    try:
+        res = await ap.forward_acc_pr(db, doc, user, submit=False)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    pr = res.get("request") or {}
+    return {"ok": True, "already": res.get("already", False),
+            "procurement_pr_number": pr.get("request_number", ""), "procurement_status": pr.get("status", "")}
 
 
 @router.post("/purchase-requests/{pr_id}/approve")

@@ -633,8 +633,10 @@ async def create_employee(request: Request):
         "contract_type": body.get("contract_type") or None,       # PKWT | PKWTT | Magang | Tetap
         "contract_start_date": body.get("contract_start_date") or None,
         "contract_end_date": body.get("contract_end_date") or None,
-        "wage_scheme": body.get("wage_scheme") or "borongan_pcs",
-        "base_rate": body.get("base_rate") or 0,
+        # 2026-11-06 (Tahap 2): skema & tarif gaji TIDAK lagi disimpan di sini — satu sumber = Profil Gaji
+        # (Penggajian). Tanggal masuk/keluar dipakai payroll untuk prorata.
+        "join_date": (body.get("join_date") or "")[:10] or None,
+        "resign_date": (body.get("resign_date") or "")[:10] or None,
         "joined_at": body.get("joined_at") or _now().isoformat(),
         # ─── Atasan / Manager (Sprint 42 - Salary Adjustment Workflow)
         "manager_id": manager_id,
@@ -699,6 +701,12 @@ async def update_employee(eid: str, request: Request):
     body["updated_at"] = _now()
     if "employee_code" in body:
         body["employee_code"] = body["employee_code"].strip().upper()
+    # 2026-11-06 (Tahap 2): gaji hanya di Profil Gaji — field gaji lama di Data Karyawan tidak ditulis lagi.
+    body.pop("base_rate", None)
+    body.pop("wage_scheme", None)
+    for _k in ("join_date", "resign_date"):
+        if _k in body:
+            body[_k] = (body[_k] or "")[:10] or None
     if "bpjs_programs" in body:  # 2026-11-02 (K23): simpan hanya bentuk bersih {kes, jht, jp, jkk_jkm}
         if body["bpjs_programs"] is None:
             body.pop("bpjs_programs")

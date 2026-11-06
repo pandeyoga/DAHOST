@@ -143,7 +143,7 @@ export function StatusBadge({ status, label, tone, className, testId }) {
     s === 'overdue' || s === 'cancelled' || s === 'rejected' ? 'danger' :
     s === 'hadir' ? 'success' :
     s === 'izin' || s === 'sakit' || s === 'cuti' || s === 'libur' ? 'info' :
-    s === 'alfa' ? 'danger' :
+    s === 'alfa' || s === 'alpa' ? 'danger' :   // 'alpa' = status kontrak payroll (Tahap 2)
     'default';
   const final = tone || autoTone;
   const toneClass = {

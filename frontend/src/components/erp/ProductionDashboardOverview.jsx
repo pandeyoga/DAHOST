@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { StatCard, ChartCard, HeroCrystalCard } from './dashboardAtoms';
 import NextActionWidget from './NextActionWidget';
 import SetupWizard from './SetupWizard';
+import { fmtPerUnit } from './cutting/cuttingApi';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const n = (v) => Number(v || 0).toLocaleString('id-ID');
@@ -166,8 +167,8 @@ export default function ProductionDashboardOverview({ token, onNavigate, busines
             ))}
           </div>
           <div className="text-xs text-foreground/60 space-y-1 pt-2 border-t border-[var(--glass-border)]">
-            <div className="flex justify-between"><span>Kain terpakai</span><b className="text-foreground">{n(cut.kain_terpakai)}</b></div>
-            <div className="flex justify-between"><span>Rendemen (pcs / satuan kain)</span><b className="text-foreground">{cut.rendemen ?? 0}</b></div>
+            <div className="flex justify-between gap-2"><span>Kain terpakai</span><b className="text-foreground text-right">{fmtPerUnit(cut.per_satuan, 'consumed')}</b></div>
+            <div className="flex justify-between gap-2"><span>Rendemen</span><b className="text-foreground text-right">{fmtPerUnit(cut.per_satuan, 'yield')}</b></div>
             <div className="flex justify-between"><span>Jenis potongan aktif</span><b className="text-foreground">{n(cut.panel_aktif)}</b></div>
           </div>
           <Button size="sm" variant="outline" className="w-full mt-3 text-xs"

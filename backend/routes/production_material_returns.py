@@ -22,6 +22,7 @@ from database import get_db
 from auth import require_auth, log_activity
 from utils.counters import next_counter, gen_prefixed_number
 from core import stock_service
+from core import accessory_valuation, quarantine  # 2026-11-06 (Tahap 1): HPP rata-rata saat retur
 import logging
 from core.authz import only  # T-01 2.3
 from core.roles import PRODUCTION_ROLES  # T-01 2.3
@@ -29,6 +30,11 @@ from utils.waktu import fmt_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/production/material-returns", tags=["production-material-returns"])
+
+# 2026-11-06 (Tahap 1): status sementara selama gudang menerima retur (klaim atomik approved → receiving)
+RECEIVE_CLAIM_STATUS = "receiving"
+NO_GL_REASON = ("Bahan berasal dari pengeluaran Portal Cutting yang memang tidak dijurnal (nilai kain "
+                "berpindah ke potongan), jadi retur ini hanya mengembalikan stok tanpa jurnal.")
 
 
 def _coerce_id(id_str: str):
@@ -144,35 +150,55 @@ async def _resolve_mi(db, material_issue_id: str = "", vendor_shipment_id: str =
     return mi
 
 
+def _returned_all(it: dict) -> float:
+    """Qty baris MI yang sudah kembali dalam kondisi APA PUN (baik + rusak/sisa tak masuk stok)."""
+    return float(it.get("qty_returned") or 0) + float(it.get("qty_returned_nonstock") or 0)
+
+
 def mi_returnable(mi: dict) -> dict:
-    """{material_id: qty yang masih bisa diretur} = dikeluarkan − sudah diretur (fungsi murni)."""
+    """{material_id: qty yang masih bisa diretur} = dikeluarkan − sudah diretur (fungsi murni).
+
+    2026-11-06 (Tahap 2): retur rusak/sisa (tidak masuk stok) ikut mengurangi batas — dulu hanya
+    retur baik yang dicatat, sehingga barang yang sama bisa "diretur" berulang kali."""
     out: dict = {}
     for it in mi.get("items") or []:
         mid = it.get("material_id")
         if not mid:
             continue
-        out[mid] = out.get(mid, 0.0) + float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0)
+        out[mid] = out.get(mid, 0.0) + float(it.get("qty_issued") or 0) - _returned_all(it)
     return {k: round(v, 4) for k, v in out.items()}
 
 
-def mi_after_return(mi: dict, returned: dict) -> dict:
-    """Baris MI + `return_status` setelah retur `returned` {material_id: qty baik} (fungsi murni).
+def mi_after_return(mi: dict, returned: dict, nonstock: dict | None = None) -> dict:
+    """Baris MI + `return_status` setelah retur (fungsi murni).
+
+    `returned` {material_id: qty baik → `qty_returned`, dibaca HPP sebagai pengurang pemakaian};
+    `nonstock` {material_id: qty rusak/sisa → `qty_returned_nonstock`, TIDAK mengurangi pemakaian
+    karena nilainya tetap terpakai, tetapi ikut menghabiskan batas retur} — 2026-11-06 (Tahap 2).
     Status dokumen MI TETAP 'issued' (dibaca HPP & gerbang produksi); retur dicatat per baris."""
     left = dict(returned)
+    left_ns = dict(nonstock or {})
     items = []
     for it in mi.get("items") or []:
         it = dict(it)
         mid = it.get("material_id")
-        cap = max(0.0, float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0))
+        cap = max(0.0, float(it.get("qty_issued") or 0) - _returned_all(it))
         take = min(cap, left.get(mid, 0.0))
         if take > 0:
             it["qty_returned"] = round(float(it.get("qty_returned") or 0) + take, 4)
             left[mid] = round(left[mid] - take, 4)
+            cap = round(cap - take, 4)
+        take_ns = min(max(0.0, cap), left_ns.get(mid, 0.0))
+        if take_ns > 0:
+            it["qty_returned_nonstock"] = round(float(it.get("qty_returned_nonstock") or 0) + take_ns, 4)
+            left_ns[mid] = round(left_ns[mid] - take_ns, 4)
         items.append(it)
     issued = sum(float(i.get("qty_issued") or 0) for i in items)
     ret = sum(float(i.get("qty_returned") or 0) for i in items)
-    status = "full" if issued > 0 and ret >= issued - 1e-6 else ("partial" if ret > 1e-9 else None)
-    return {"items": items, "return_status": status, "qty_returned_total": round(ret, 4)}
+    ret_all = sum(_returned_all(i) for i in items)
+    status = "full" if issued > 0 and ret_all >= issued - 1e-6 else ("partial" if ret_all > 1e-9 else None)
+    return {"items": items, "return_status": status, "qty_returned_total": round(ret, 4),
+            "qty_returned_nonstock_total": round(ret_all - ret, 4)}
 
 
 def deduct_pending(can: dict, pending_docs) -> dict:
@@ -188,7 +214,7 @@ def deduct_pending(can: dict, pending_docs) -> dict:
 async def returnable_now(db, mi: dict, exclude_return_id=None) -> dict:
     """{material_id: sisa} = dikeluarkan − sudah diretur − retur submitted/approved lain atas MI yang sama.
     Satu-satunya rumus sisa retur — dipakai form (`/source`), pembuatan, dan submit."""
-    q: dict = {"material_issue_id": mi["id"], "status": {"$in": ["submitted", "approved"]}}
+    q: dict = {"material_issue_id": mi["id"], "status": {"$in": ["submitted", "approved", RECEIVE_CLAIM_STATUS]}}
     if exclude_return_id is not None:
         q["id"] = {"$ne": exclude_return_id}
     pending = await db.production_material_returns.find(q, {"_id": 0, "items": 1}).to_list(200)
@@ -258,7 +284,7 @@ async def get_return_source(request: Request, material_issue_id: str = "", vendo
                       "unit": m.get("unit") or it.get("unit") or "pcs",
                       "qty_issued": round(sum(float(x.get("qty_issued") or 0) for x in mi["items"]
                                               if x.get("material_id") == mid), 4),
-                      "qty_returned": round(sum(float(x.get("qty_returned") or 0) for x in mi["items"]
+                      "qty_returned": round(sum(_returned_all(x) for x in mi["items"]
                                                 if x.get("material_id") == mid), 4),
                       "returnable": max(0.0, can.get(mid, 0.0))})
     return _ok({"material_issue_id": mi["id"], "mi_number": mi.get("mi_number"),
@@ -506,6 +532,8 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
     doc = await db.production_material_returns.find_one({"id": _coerce_id(return_id)}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Return tidak ditemukan.")
+    if doc.get("status") in (RECEIVE_CLAIM_STATUS, "received"):   # 2026-11-06 (Tahap 1): klik ganda
+        raise HTTPException(409, "Retur ini sedang/sudah diterima gudang. Muat ulang daftar retur.")
     if doc.get("status") != "approved":
         raise HTTPException(400, "Return harus disetujui supervisor sebelum diterima gudang.")
     now = _now()
@@ -524,84 +552,135 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
     # 2026-11-02 (K10): MI asal (langsung, atau MI 'issued' WO-nya) → HPP saat keluar per material
     mi = await _resolve_mi(db, doc.get("material_issue_id") or "") if doc.get("material_issue_id") else None
     issue_cost = await _issue_costs(db, doc, mi)
-    je_lines, good_by_mat = [], {}
-    for item in items:
-        mat_id = item.get("material_id")
-        qty = float(item.get("qty_returned", 0))
-        condition = item.get("condition", "good")
-        if not mat_id or qty <= 0:
-            continue
-        if condition == "good" and loc_id:
-            good_by_mat[mat_id] = good_by_mat.get(mat_id, 0.0) + qty
+
+    # ── 2026-11-06 (Tahap 1): KLAIM ATOMIK approved → receiving SEBELUM stok disentuh ──
+    # Klik ganda / dua petugas gudang dulu sama-sama lolos cek status 'approved' → stok kembali dua
+    # kali. Sekarang hanya satu yang lolos klaim; yang lain 409. Gagal di tengah → stok yang sudah
+    # masuk dikembalikan dan klaim dilepas (status 'approved' lagi) supaya bisa diterima ulang.
+    rid = _coerce_id(return_id)
+    claim = await db.production_material_returns.update_one(
+        {"id": rid, "status": "approved"},
+        {"$set": {"status": RECEIVE_CLAIM_STATUS, "receiving_at": now, "updated_at": now}})
+    if not claim.matched_count:
+        raise HTTPException(409, "Retur ini sedang/sudah diterima gudang oleh pengguna lain. Muat ulang daftar retur.")
+    actor = {"id": str(user.get("id") or ""), "email": user.get("email", "")}
+    added: list = []
+    try:
+        je_lines, good_by_mat, no_gl = [], {}, []
+        other_by_mat: dict = {}   # 2026-11-06 (Tahap 2): rusak/sisa ikut mengurangi batas retur MI
+        for item in items:
+            mat_id = item.get("material_id")
+            qty = float(item.get("qty_returned", 0))
+            condition = item.get("condition", "good")
+            if not mat_id or qty <= 0:
+                continue
             ic = issue_cost.get(mat_id) or {}
-            je_lines.append({"material_id": mat_id, "qty": qty, "unit_cost": ic.get("unit_cost", 0.0),
-                             "kind": ic.get("kind"), "cost_target": ic.get("cost_target")})
-        if condition in ("good", "scrap"):   # 'damaged' tidak kembali ke stok
-            # INV-6 FIX: kembalikan stok via stock_service (qty kanonik + alias + available),
-            # bukan field hantu qty_available/qty_on_hand tanpa lokasi. Hanya 'good' yang jadi
-            # stok siap pakai; 'scrap' hanya dicatat movement (tidak masuk stok usable).
+            if condition != "good":
+                other_by_mat[mat_id] = other_by_mat.get(mat_id, 0.0) + qty
             if condition == "good" and loc_id:
-                mat = await db.rahaza_materials.find_one({"id": mat_id}, {"_id": 0})
-                mtype = ((mat or {}).get("type") or "").lower()
-                await stock_service.add(
-                    mat_id, loc_id, qty,
-                    meta={
-                        "material_type": mtype or None,
-                        "material_code": item.get("material_code"),
-                        "material_name": item.get("material_name"),
-                        "ownership": "cv_da",
-                        "inventory_category": "fg_internal" if mtype == "fg" else "raw_material",
-                    },
-                    ref={"source": "production_return", "return_id": str(return_id),
-                         "ref_code": doc.get("ref_no", ""), "condition": condition},
-                    actor={"id": str(user.get("id") or ""), "email": user.get("email", "")},
-                    db=db,
-                )
-            # Catat movement (audit) — semua kondisi good/scrap
-            await db.rahaza_material_movements.insert_one({
-                "material_id": mat_id,
-                "material_code": item.get("material_code", ""),
-                "material_name": item.get("material_name", ""),
-                "movement_type": "production_return",
-                "qty": qty,
-                "condition": condition,
-                "ref_id": return_id,
-                "ref_code": doc.get("ref_no", ""),
-                "note": f"Return dari produksi ({condition}): {body.note or 'received'}",
-                "created_at": now,
-            })
-    # ── 2026-11-02 (K10): jurnal balik Dr persediaan (per jenis) / Cr WIP pada nilai keluar ──
-    posting = {"ok": True, "skipped": True, "reason": "tidak ada bahan kondisi baik yang kembali ke stok"}
-    if je_lines:
-        from routes.rahaza_posting import post_material_return
-        try:
-            posting = await post_material_return(
-                db, {**doc, "received_at": now, "mi_number": doc.get("mi_number") or (mi or {}).get("mi_number")},
-                je_lines, user)
-        except Exception as e:  # noqa: BLE001 — stok sudah kembali; kegagalan jurnal dicatat di dokumen
-            logger.exception("jurnal retur material gagal")
-            posting = {"ok": False, "error": str(e)}
-    # ── status MI ikut diperbarui (qty_returned per baris + return_status partial/full) ──
-    mi_update = None
-    if mi and good_by_mat:
-        mi_update = mi_after_return(mi, good_by_mat)
-        await db.rahaza_material_issues.update_one({"id": mi["id"]}, {"$set": {
-            "items": mi_update["items"], "return_status": mi_update["return_status"],
-            "qty_returned_total": mi_update["qty_returned_total"], "updated_at": now}})
-    await db.production_material_returns.update_one(
-        {"id": _coerce_id(return_id)},
-        {"$set": {
-            "status": "received",
-            "received_by": user.get("full_name") or user.get("email") or "",
-            "received_by_id": str(user.get("id") or user.get("_id") or ""),
-            "received_at": now,
-            "receive_note": body.note,
-            "location_id": loc_id,
-            "gl_je_number": posting.get("je_number"),
-            "gl_error": None if posting.get("ok") else posting.get("error"),
-            "updated_at": now,
-        }},
-    )
+                good_by_mat[mat_id] = good_by_mat.get(mat_id, 0.0) + qty
+                if ic.get("no_gl"):
+                    no_gl.append(item.get("material_code") or mat_id)
+                else:
+                    je_lines.append({"material_id": mat_id, "qty": qty, "unit_cost": ic.get("unit_cost", 0.0),
+                                     "kind": ic.get("kind"), "cost_target": ic.get("cost_target"),
+                                     "credit_account": ic.get("credit_account")})
+            if condition in ("good", "scrap"):   # 'damaged' tidak kembali ke stok
+                # INV-6 FIX: kembalikan stok via stock_service (qty kanonik + alias + available),
+                # bukan field hantu qty_available/qty_on_hand tanpa lokasi. Hanya 'good' yang jadi
+                # stok siap pakai; 'scrap' hanya dicatat movement (tidak masuk stok usable).
+                if condition == "good" and loc_id:
+                    mat = await db.rahaza_materials.find_one({"id": mat_id}, {"_id": 0})
+                    mtype = ((mat or {}).get("type") or "").lower()
+                    # qty bernilai SEBELUM barang retur masuk — dasar rata-rata bergerak (Tahap 1)
+                    qty_before = await quarantine.valued_onhand(db, mat_id)
+                    await stock_service.add(
+                        mat_id, loc_id, qty,
+                        meta={
+                            "material_type": mtype or None,
+                            "material_code": item.get("material_code"),
+                            "material_name": item.get("material_name"),
+                            "ownership": "cv_da",
+                            "inventory_category": "fg_internal" if mtype == "fg" else "raw_material",
+                        },
+                        ref={"source": "production_return", "return_id": str(return_id),
+                             "ref_code": doc.get("ref_no", ""), "condition": condition},
+                        actor=actor,
+                        db=db,
+                    )
+                    added.append((mat_id, loc_id, qty))
+                    # ── 2026-11-06 (Tahap 1): HPP rata-rata ikut bergerak pada HPP SAAT KELUAR ──
+                    # Jurnal baliknya bernilai qty × HPP keluar; tanpa ini master tetap di HPP lama
+                    # sehingga qty × HPP master ≠ saldo persediaan di buku besar. Retur atas MI Cutting
+                    # (tanpa jurnal) tidak menggeser HPP.
+                    if not ic.get("no_gl") and float(ic.get("unit_cost") or 0) > 0:
+                        await accessory_valuation.apply_receipt_cost(
+                            db, mat_id, qty, float(ic["unit_cost"]), qty_before=qty_before,
+                            actor={"id": user.get("id"), "name": user.get("name", "")},
+                            notes=f"Retur Material {doc.get('ref_no') or return_id} ← MI "
+                                  f"{doc.get('mi_number') or (mi or {}).get('mi_number') or '-'}",
+                            update_last_purchase=False)
+                # Catat movement (audit) — semua kondisi good/scrap
+                await db.rahaza_material_movements.insert_one({
+                    "material_id": mat_id,
+                    "material_code": item.get("material_code", ""),
+                    "material_name": item.get("material_name", ""),
+                    "movement_type": "production_return",
+                    "qty": qty,
+                    "condition": condition,
+                    "ref_id": return_id,
+                    "ref_code": doc.get("ref_no", ""),
+                    "note": f"Return dari produksi ({condition}): {body.note or 'received'}",
+                    "created_at": now,
+                })
+        # ── 2026-11-02 (K10): jurnal balik Dr persediaan (per jenis) / Cr akun yang didebit MI asal ──
+        posting = {"ok": True, "skipped": True, "reason": "tidak ada bahan kondisi baik yang kembali ke stok"}
+        if no_gl and not je_lines:
+            posting = {"ok": True, "skipped": True, "reason": NO_GL_REASON}
+        if je_lines:
+            from routes.rahaza_posting import post_material_return
+            try:
+                posting = await post_material_return(
+                    db, {**doc, "received_at": now, "mi_number": doc.get("mi_number") or (mi or {}).get("mi_number")},
+                    je_lines, user)
+            except Exception as e:  # noqa: BLE001 — stok sudah kembali; kegagalan jurnal dicatat di dokumen
+                logger.exception("jurnal retur material gagal")
+                posting = {"ok": False, "error": str(e)}
+        # ── status MI ikut diperbarui (qty_returned per baris + return_status partial/full) ──
+        mi_update = None
+        if mi and (good_by_mat or other_by_mat):
+            mi_update = mi_after_return(mi, good_by_mat, other_by_mat)
+            await db.rahaza_material_issues.update_one({"id": mi["id"]}, {"$set": {
+                "items": mi_update["items"], "return_status": mi_update["return_status"],
+                "qty_returned_total": mi_update["qty_returned_total"],
+                "qty_returned_nonstock_total": mi_update["qty_returned_nonstock_total"], "updated_at": now}})
+        await db.production_material_returns.update_one(
+            {"id": rid},
+            {"$set": {
+                "status": "received",
+                "received_by": user.get("full_name") or user.get("email") or "",
+                "received_by_id": str(user.get("id") or user.get("_id") or ""),
+                "received_at": now,
+                "receive_note": body.note,
+                "location_id": loc_id,
+                "gl_je_number": posting.get("je_number"),
+                "gl_error": None if posting.get("ok") else posting.get("error"),
+                "gl_skip_reason": posting.get("reason") if posting.get("skipped") else None,
+                "receiving_at": None,
+                "updated_at": now,
+            }},
+        )
+    except BaseException:
+        for mat_id, lid, q in reversed(added):
+            try:
+                await stock_service.issue(mat_id, lid, q, ref={"source": "production_return_rollback",
+                                                               "return_id": str(return_id)},
+                                          actor=actor, db=db, allow_negative=True)
+            except Exception:  # noqa: BLE001
+                logger.exception("pengembalian stok retur material %s gagal", return_id)
+        await db.production_material_returns.update_one(
+            {"id": rid, "status": RECEIVE_CLAIM_STATUS}, {"$set": {"status": "approved", "receiving_at": None}})
+        raise
     await log_activity(
         str(user.get("id") or user.get("_id") or ""),
         user.get("full_name") or user.get("name") or user.get("email") or "",
@@ -613,20 +692,40 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
                posting=posting, mi_return_status=(mi_update or {}).get("return_status"))
 
 
+def _is_cutting_mi(mi: dict) -> bool:
+    """MI dari Portal Cutting — dokumen jejak tanpa jurnal (lihat core.cutting_material_issue)."""
+    from core import cutting_material_issue as cmi
+    return (mi.get("ref_type") == cmi.REF_TYPE or mi.get("source") == cmi.SOURCE
+            or mi.get("stock_moved_by") == cmi.SOURCE)
+
+
 async def _issue_costs(db, doc: dict, mi: Optional[dict]) -> dict:
-    """{material_id: {unit_cost, kind, cost_target}} — HPP SAAT KELUAR (`unit_cost_applied` baris MI),
-    dari MI asal atau MI 'issued' WO-nya (terbaru). Tanpa MI: HPP master (cadangan)."""
-    from routes.rahaza_posting import inventory_kind
+    """{material_id: {unit_cost, kind, cost_target, credit_account, no_gl}} — HPP SAAT KELUAR
+    (`unit_cost_applied` baris MI), dari MI asal atau MI 'issued' WO-nya (terbaru). Tanpa MI: HPP master.
+
+    2026-11-06 (Tahap 1): retur WAJIB mengkredit PERSIS akun yang didebit jurnal MI asal
+    (`credit_account` = baris debit jurnal `inventory_issue` / `mi:{id}`). MI Cutting tidak pernah
+    dijurnal (nilai kain berpindah ke potongan) → `no_gl`: stok kembali tanpa jurnal. Dulu retur MI
+    Cutting dijurnal Dr Persediaan / Cr WIP padahal WIP itu tidak pernah didebit → WIP minus."""
+    from routes.rahaza_posting import _account_from_issuance_je, inventory_kind
     mis = [mi] if mi else []
     if not mis and doc.get("work_order_id"):
         mis = await db.rahaza_material_issues.find(
             {"work_order_id": doc["work_order_id"], "status": "issued"}, {"_id": 0}).sort("issued_at", -1).to_list(50)
     out: dict = {}
     for m in mis:
+        cutting = _is_cutting_mi(m)
+        credit = None if cutting else await _account_from_issuance_je(
+            db, ["inventory_issue"], f"mi:{m.get('id')}", "debit")
         for it in m.get("items") or []:
             mid = it.get("material_id")
-            if mid and mid not in out and float(it.get("unit_cost_applied") or 0) > 0:
-                out[mid] = {"unit_cost": float(it["unit_cost_applied"]), "cost_target": m.get("cost_target")}
+            if not mid or mid in out:
+                continue
+            if cutting:
+                out[mid] = {"unit_cost": 0.0, "cost_target": m.get("cost_target"), "no_gl": True}
+            elif float(it.get("unit_cost_applied") or 0) > 0:
+                out[mid] = {"unit_cost": float(it["unit_cost_applied"]), "cost_target": m.get("cost_target"),
+                            "credit_account": credit}
     for it in doc.get("items") or []:
         mid = it.get("material_id")
         if not mid:

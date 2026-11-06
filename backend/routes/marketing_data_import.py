@@ -49,6 +49,7 @@ from auth import require_auth, log_activity
 from core import marketing_account_scope as scope
 from core.marketing_import_schema import (
     get_source_type, source_type_catalog, source_group_catalog, SourceType,
+    is_retired_mapping,
 )
 from core import marketing_import_engine as eng
 from core import marketing_sales_shape as _shape
@@ -428,8 +429,11 @@ async def upload(
     if not fname.lower().endswith((".csv", ".xlsx", ".xls", ".xlsm", ".tsv", ".txt")):
         raise HTTPException(400, "Format berkas harus CSV atau Excel (.xlsx)")
 
+    # 2026-11-06 (Tahap 2) — penolakan PENORMAL (ekspor KPI yang bentuknya belum
+    # dikenal) tidak lagi menghentikan unggahan: berkas dibaca apa adanya dan
+    # staf sampai ke langkah pemetaan dengan peringatan (`parse_warning`).
     try:
-        headers, rows = eng.parse_table(raw, fname, st)
+        headers, rows, parse_warning = eng.parse_table_lenient(raw, fname, st)
     except Exception as e:
         raise HTTPException(400, f"Berkas tidak bisa dibaca: {e}") from None
     if not headers:
@@ -476,8 +480,16 @@ async def upload(
                 continue                      # kolom tidak ada di berkas ini
             fld = m.get("field") or None
             if fld and fld not in valid_fields:
-                dropped.append({"column": col, "field": fld})
+                dropped.append({"column": col, "field": fld,
+                                "reason": "field-nya sudah tidak ada di jenis data ini"})
                 remembered.append(auto_by_col[col])     # dipetakan ulang mesin
+                continue
+            # 2026-11-06 (Tahap 2) — pasangan yang terbukti salah (mis. "Harga
+            # Setelah Diskon" → subtotal) tidak boleh terpasang lagi dari ingatan.
+            if fld and is_retired_mapping(st.key, eng._norm_header(col), fld):
+                dropped.append({"column": col, "field": fld,
+                                "reason": "kamus kolom diperbaiki — arti kolom ini dulu salah"})
+                remembered.append(auto_by_col[col])
                 continue
             remembered.append({**auto_by_col[col], **{
                 "column": col, "field": fld,
@@ -488,6 +500,8 @@ async def upload(
                 "candidates": (auto_by_col[col].get("candidates")
                                or m.get("candidates") or []),
                 "note": m.get("note") or "",
+                # 2026-11-06 (Tahap 2) — arti nilai yang pernah dipilih staf ikut diingat
+                "value_map": _clean_value_map(st, fld, m.get("value_map")),
             }})
         # kolom berkas yang tidak ada di ingatan tetap memakai hasil mesin
         seen_cols = {m["column"] for m in remembered}
@@ -515,6 +529,7 @@ async def upload(
 
     preview = eng.build_rows(rows, mapping, st)
     report = eng.mapping_report(mapping, st)
+    value_report = eng.value_report(rows, mapping, st)
 
     # ── sesi #34 — APA JENIS BERKAS INI SEBENARNYA? ───────────────────────────
     # Staf tetap yang MEMILIH jenis data (aturan anti-AI dipertahankan), tetapi
@@ -630,6 +645,10 @@ async def upload(
         "headers": headers,
         "mapping": mapping,
         "mapping_report": report,
+        # 2026-11-06 (Tahap 2) — berkas yang bentuknya tidak dikenali penormal
+        # dibaca APA ADANYA; `_reparse` wajib membaca dengan cara yang sama.
+        "prenorm_fallback": bool(parse_warning),
+        "parse_warning": parse_warning or "",
         # ── sesi #34 — VIEWER TABEL: 10 baris MENTAH apa adanya dari berkas ────
         # Layar pemetaan dulu hanya menampilkan nama kolom; staf tidak pernah
         # melihat ISI berkasnya, jadi "kolom mana yang benar" harus dihafal.
@@ -679,7 +698,21 @@ async def upload(
     return {"ok": True, "session": _ser(doc), "preview": _ser(preview[:50]),
             "preview_total": len(preview),
             "duplicates": dup,
+            "value_report": _ser(value_report),
             "summary": _summary(preview)}
+
+
+def _clean_value_map(st: SourceType, field: Optional[str], vm: Any) -> dict:
+    """Pemetaan NILAI pilihan staf yang sah: kunci teks → salah satu `choices` field.
+
+    2026-11-06 (Tahap 2). Nilai di luar pilihan field dibuang diam-diam di sini
+    hanya untuk data INGATAN lama; masukan dari layar diperiksa ketat di
+    `update_mapping` (galat 400 dengan pesan yang jelas).
+    """
+    f = st.field(field) if field else None
+    if f is None or not f.choices or not isinstance(vm, dict):
+        return {}
+    return {eng.value_key(k): v for k, v in vm.items() if v in f.choices}
 
 
 def _detect_from_headers(headers: List[str], chosen: SourceType,
@@ -808,7 +841,11 @@ def _reparse(session: dict) -> List[dict]:
         st_pre = get_source_type(session.get("source_type") or "")
     except Exception as e:  # noqa: BLE001
         logger.debug("jenis impor sesi %s tidak dikenali: %s", session.get("id"), e)
-    _, rows = eng.parse_table(raw, session.get("filename") or "data.csv", st_pre)
+    if session.get("prenorm_fallback"):
+        # 2026-11-06 (Tahap 2) — sesi ini dibaca APA ADANYA saat unggah
+        _, rows = eng.parse_table_fallback(raw, session.get("filename") or "data.csv", st_pre)
+    else:
+        _, rows = eng.parse_table(raw, session.get("filename") or "data.csv", st_pre)
     # F1 — baris keterangan kolom harus dilewati di SEMUA pemakai (pratinjau,
     # commit, unduh galat). Kalau hanya di `upload`, commit akan menghitung
     # 602 baris sementara pratinjau 601 — layar yang membantah dirinya sendiri.
@@ -932,6 +969,7 @@ async def get_session(session_id: str, request: Request,
     rows = _reparse(s)
     built = eng.build_rows(rows, s.get("mapping") or [], st, limit=eng.MAX_PREVIEW_ROWS)
     built = await _annotate_master_links(db, st, s, built)
+    value_report = eng.value_report(rows, s.get("mapping") or [], st)
     if only:
         built = [r for r in built if r["status"] == only]
     total = len(built)
@@ -939,6 +977,7 @@ async def get_session(session_id: str, request: Request,
     s.pop("_id", None)
     return {"ok": True, "session": _ser(s),
             "rows": _ser(built[start:start + page_size]),
+            "value_report": _ser(value_report),
             "summary": _summary(built),
             "pagination": {"total": total, "page": page, "page_size": page_size},
             "fields": [{"name": f.name, "label": f.label, "kind": f.kind,
@@ -997,6 +1036,25 @@ async def update_mapping(session_id: str, body: MappingIn, request: Request):
         else:
             method = "manual" if fld else "none"
             score = 1.0 if fld else 0.0
+        # 2026-11-06 (Tahap 2) — ARTI NILAI pilihan staf (mis. "Telah Dikirim" =
+        # Sudah diterima pembeli). Layar lama tidak mengirim `value_map`; saat itu
+        # pilihan yang tersimpan dipertahankan selama field kolomnya tidak berubah.
+        vm_in = m.get("value_map", None)
+        if vm_in is None:
+            vm = (old.get("value_map") or {}) if unchanged else {}
+        else:
+            if not isinstance(vm_in, dict):
+                raise HTTPException(400, "Arti nilai harus berupa pasangan nilai berkas → pilihan")
+            f_obj = st.field(fld) if fld else None
+            if vm_in and (f_obj is None or not f_obj.choices):
+                raise HTTPException(400, f"Kolom '{col}' bukan kolom pilihan — arti nilainya "
+                                         "tidak bisa dipilih")
+            bad = sorted({str(v) for v in vm_in.values() if v and v not in f_obj.choices}) \
+                if vm_in else []
+            if bad:
+                raise HTTPException(400, f"Arti '{', '.join(bad)}' tidak tersedia untuk "
+                                         f"{f_obj.label}")
+            vm = {eng.value_key(k): v for k, v in vm_in.items() if v}
         cleaned.append({"column": col, "field": fld,
                         "field_label": (st.field(fld).label if fld else None),
                         "method": method, "score": score,
@@ -1005,19 +1063,21 @@ async def update_mapping(session_id: str, body: MappingIn, request: Request):
                         # mengunggah ulang berkasnya.
                         "candidates": (m.get("candidates")
                                        or old.get("candidates") or []),
-                        "note": old.get("note") or m.get("note") or ""})
+                        "note": old.get("note") or m.get("note") or "",
+                        "value_map": vm})
 
     report = eng.mapping_report(cleaned, st)
     rows = _reparse(s)
     built = eng.build_rows(rows, cleaned, st)
     built = await _annotate_master_links(db, st, s, built)
+    value_report = eng.value_report(rows, cleaned, st)
     await db[SESSIONS].update_one({"id": session_id}, {"$set": {
         "mapping": cleaned, "mapping_report": report,
         "status": "ready" if report["ready"] else "mapping",
         "updated_at": _now()}})
     dup = await _annotate_existing(db, st, s, built)
     return {"ok": True, "mapping": cleaned, "mapping_report": report,
-            "duplicates": dup,
+            "duplicates": dup, "value_report": _ser(value_report),
             "summary": _summary(built), "preview": _ser(built[:50])}
 
 
@@ -1425,7 +1485,7 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
 
         items_out: List[dict] = []
         n_unlinked = 0
-        rev_product = rev_gross = disc_seller = disc_platform = 0.0
+        rev_product = rev_gross = disc_seller = disc_platform = disc_line_total = 0.0
         qty_total = qty_returned_total = 0
         any_preorder = False
         for it in items_in:
@@ -1456,10 +1516,24 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
                 it["hpp_snapshot"] = None
                 n_unlinked += 1
             it["master_link_source"] = link
+            # 2026-11-06 (Tahap 2) — subtotal baris dari HARGA SATUAN × jumlah bila
+            # berkas tidak memuat kolom subtotalnya (ekspor Shopee tidak punya
+            # "subtotal sebelum diskon"). Harga satuan tidak pernah dipakai
+            # sebagai subtotal — itu yang dulu membuat omzet ~15% terlalu rendah.
+            _q = int(it.get("quantity") or 0)
+            if it.get("sku_subtotal_before_discount") is None and \
+                    it.get("sku_unit_original_price") is not None:
+                it["sku_subtotal_before_discount"] = round(
+                    float(it["sku_unit_original_price"]) * _q, 2)
+            if it.get("sku_subtotal_after_discount") is None and \
+                    it.get("sku_unit_deal_price") is not None:
+                it["sku_subtotal_after_discount"] = round(
+                    float(it["sku_unit_deal_price"]) * _q, 2)
             rev_product += float(it.get("sku_subtotal_after_discount") or 0)
             rev_gross += float(it.get("sku_subtotal_before_discount") or 0)
             disc_seller += float(it.get("sku_seller_discount") or 0)
             disc_platform += float(it.get("sku_platform_discount") or 0)
+            disc_line_total += float(it.get("total_discount") or 0)
             qty_total += int(it.get("quantity") or 0)
             qty_returned_total += int(it.get("qty_returned") or 0)
             any_preorder = any_preorder or it.get("is_preorder") is True
@@ -1472,12 +1546,22 @@ def _finish(st: SourceType, data: dict, session: dict, refidx: dict,
         d["revenue_gross"] = round(rev_gross, 2)
         d["seller_discount_total"] = round(disc_seller, 2)
         d["platform_discount_total"] = round(disc_platform, 2)
+        # 2026-11-06 (Tahap 2) — "Total Diskon" Shopee adalah diskon PER BARIS SKU;
+        # total pesanan = jumlah semua baris (dulu hanya baris pertama yang terbaca).
+        if any(it.get("total_discount") is not None for it in items_out):
+            d["total_discount"] = round(disc_line_total, 2)
         d["quantity"] = qty_total
         d["qty_returned_total"] = qty_returned_total
         d["is_preorder"] = any_preorder
         # kompatibilitas pembaca lama (41 pembaca memakai dua nama ini)
         d["revenue"] = d["revenue_product"]
-        d["total_payment"] = round(float(d.get("order_amount") or 0), 2)
+        # Ekspor TikTok memakai "Order Amount"; ekspor Shopee "Total Pembayaran".
+        # Dulu `total_payment` SELALU ditimpa `order_amount` ⇒ pesanan Shopee
+        # tercatat dibayar Rp 0. Sekarang `order_amount` dipakai bila ada.
+        if d.get("order_amount") is not None:
+            d["total_payment"] = round(float(d.get("order_amount") or 0), 2)
+        else:
+            d["total_payment"] = round(float(d.get("total_payment") or 0), 2)
         # Komisi platform TIDAK ADA di ekspor ini — dilarang dikarang. Angka bersih
         # hanya boleh datang dari impor Pencairan/Settlement (F9).
         d["platform_fee"] = None
@@ -2567,10 +2651,16 @@ async def sku_map_save(session_id: str, request: Request, body: List[SkuMapIn]):
                       "items.$[it].fg_material_id": item.get("fg_material_id"),
                       "items.$[it].variant_id": item.get("variant_id"),
                       "items.$[it].model_id": item.get("model_id"),
-                      "items.$[it].hpp_snapshot": item.get("hpp"),
                       "items.$[it].master_link_source": "sku_map",
                       "updated_at": _now()}},
             array_filters=[{"it.platform_sku_id": psid}])
+        # 2026-11-06 (Tahap 2, paket HPP): HPP baris pesanan dibekukan — pemetaan SKU hanya mengisi
+        # snapshot yang masih kosong, tidak menimpanya dengan HPP katalog hari ini.
+        if float(item.get("hpp") or 0) > 0:
+            await db[st.collection].update_many(
+                {"account_id": aid, "items.platform_sku_id": psid},
+                {"$set": {"items.$[it].hpp_snapshot": float(item.get("hpp") or 0)}},
+                array_filters=[{"it.platform_sku_id": psid, "it.hpp_snapshot": None}])
         orders_touched += res.modified_count
 
     await log_activity(user.get("id", ""), user.get("name", ""),
@@ -3115,6 +3205,7 @@ async def commit(session_id: str, request: Request, body: Optional[CommitIn] = N
                                      or cr.get("creator_code") or cr.get("name"))
 
     inserted, updated, skipped, rejected = [], 0, 0, 0
+    updated_ids: List[str] = []      # 2026-11-06 — ikut dihitung ulang di rekap harian
     row_notes: List[dict] = []
     now = _now()
     # F3 — jejak UNDO untuk impor `update_only`. Impor yang hanya MEMPERBARUI tidak
@@ -3274,6 +3365,7 @@ async def commit(session_id: str, request: Request, body: Optional[CommitIn] = N
                         await db[st.collection].update_one(
                             {"id": existing["id"]}, {"$set": payload})
                         updated += 1
+                        updated_ids.append(existing["id"])
                         row_notes.append({"row": r["row_id"] + 2, "action": "diperbarui",
                                           "why": st_note, "id": existing["id"]})
                     else:
@@ -3381,6 +3473,12 @@ async def commit(session_id: str, request: Request, body: Optional[CommitIn] = N
             from core import marketing_daily_rollup as rollup
             touched = set(await rollup.pairs_from_orders(
                 db, {"_import_session_id": session_id}))
+            # 2026-11-06 (Tahap 2) — pesanan yang DIPERBARUI (impor ulang "Perbarui
+            # yang lama", mis. untuk membetulkan omzet impor lama) juga mengubah
+            # rekap harian; dulu hanya pesanan BARU yang dihitung ulang.
+            if updated_ids:
+                touched |= set(await rollup.pairs_from_orders(
+                    db, {"id": {"$in": updated_ids}}))
             rollup_result = await rollup.recompute_pairs(
                 db, touched, actor=user.get("email", "system"))
             logger.info("[F2] rekap harian turunan: %s", {
@@ -3535,17 +3633,35 @@ async def rollback(session_id: str, request: Request):
     # F2 — tanggal terdampak dicatat SEBELUM dokumen dihapus, kalau tidak
     # rekap harian akan tetap memuat omzet dari pesanan yang sudah tidak ada.
     touched: set = set()
+    updated_doc_ids: list = []
     if st.key == "marketplace_orders":
         try:
             from core import marketing_daily_rollup as rollup
             touched = set(await rollup.pairs_from_orders(
                 db, {"id": {"$in": ids}, "_import_session_id": session_id}))
+            # 2026-11-06 (Tahap 2) — pesanan yang DIPERBARUI sesi ini (impor ulang
+            # "Perbarui yang lama") ikut dihitung ulang rekapnya setelah dipulihkan.
+            async for u in db[UNDO].find({"session_id": session_id, "restored_at": None,
+                                          "collection": st.collection},
+                                         {"_id": 0, "doc_id": 1}):
+                if u.get("doc_id"):
+                    updated_doc_ids.append(u["doc_id"])
+            if updated_doc_ids:
+                touched |= set(await rollup.pairs_from_orders(
+                    db, {"id": {"$in": updated_doc_ids}}))
         except Exception:
             logger.exception("gagal mengumpulkan tanggal terdampak (sesi=%s)", session_id)
     res = await db[st.collection].delete_many({"id": {"$in": ids},
                                                "_import_session_id": session_id})
     # F3 — PEMULIHAN keadaan pesanan untuk impor yang hanya memperbarui.
     restore = await _restore_fulfillment_session(db, s, st, user)
+    if updated_doc_ids:
+        try:
+            from core import marketing_daily_rollup as rollup
+            touched |= set(await rollup.pairs_from_orders(
+                db, {"id": {"$in": updated_doc_ids}}))   # tanggal SESUDAH dipulihkan
+        except Exception:
+            logger.exception("gagal mengumpulkan tanggal pulih (sesi=%s)", session_id)
     rolled = None
     if touched:
         try:

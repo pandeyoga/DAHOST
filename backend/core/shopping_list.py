@@ -31,6 +31,10 @@ ATURAN JUJUR YANG DITEGAKKAN DI SINI
      diusulkan, TETAPI dihitung dan DIKATAKAN (dengan jalan keluarnya).
   6. ANTI DOBEL BELANJA: barang yang sudah punya PR/PO terbuka di minggu ISO ini
      ditandai + tidak dihitung sebagai "perlu dibeli".
+     2026-11-06 (Tahap 2): PR/PO terbuka dibaca TANPA batas minggu (PO minggu lalu yang belum datang
+     tetap "sedang dipesan"), dan sisa qty PO terbuka (dipesan − diterima, satuan dasar) MENGURANGI
+     kekurangan: kurang = ambang − (stok + barang dalam perjalanan). PR yang sudah menjadi PO dihitung
+     lewat PO-nya (tidak dobel).
 """
 from __future__ import annotations
 
@@ -46,8 +50,8 @@ PRICE_LIST = "rahaza_supplier_price_lists"
 PR_COLL = "dewi_procurement_requests"
 PO_COLL = "rahaza_purchase_orders"
 
-PR_DEAD = ("rejected", "cancelled", "canceled", "closed")
-PO_DEAD = ("rejected", "cancelled", "canceled", "closed", "completed")
+PR_DEAD = ("rejected", "cancelled", "canceled", "closed", "completed")
+PO_DEAD = ("rejected", "cancelled", "canceled", "closed", "completed", "fully_received")
 ORIGIN = "weekly_shopping_list"
 
 
@@ -124,40 +128,61 @@ async def _price_index(db, material_ids: list) -> dict:
     return best
 
 
-async def _open_orders(db, material_ids: list, since: datetime) -> dict:
-    """PR/PO terbuka minggu ini per material — dasar ANTI DOBEL BELANJA."""
+async def _open_orders(db, material_ids: list, since: datetime | None = None) -> dict:
+    """PR/PO terbuka per material — dasar ANTI DOBEL BELANJA.
+
+    2026-11-06 (Tahap 2): tanpa batas minggu (`since` diabaikan; dipertahankan demi pemanggil lama).
+    Tiap entri membawa `incoming_base` = Σ sisa qty PO terbuka (dipesan − diterima, satuan dasar) yang
+    mengurangi kekurangan, dan `orders` = daftar dokumen terbukanya. PR yang sudah punya PO
+    (`linked_po_id` / status `in_procurement`) tidak dihitung lagi — PO-nya yang dihitung."""
     ids = set(m for m in (material_ids or []) if m)
     if not ids:
         return {}
     out: dict = {}
+
+    def slot(mid):
+        return out.setdefault(mid, {"incoming_base": 0.0, "orders": []})
+
     prs = await db[PR_COLL].find(
-        {"created_at": {"$gte": since}, "status": {"$nin": list(PR_DEAD)},
-         "items.material_id": {"$in": list(ids)}}, {"_id": 0}).to_list(2000)
+        {"status": {"$nin": list(PR_DEAD) + ["in_procurement"]},
+         "items.material_id": {"$in": list(ids)}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     for pr in prs:
+        if pr.get("linked_po_id"):
+            continue
         for it in (pr.get("items") or []):
             mid = it.get("material_id")
-            if mid in ids and mid not in out:
-                out[mid] = {
+            if mid in ids:
+                slot(mid)["orders"].append({
                     "type": "pr", "id": pr.get("id"), "number": pr.get("request_number") or "",
                     "status": pr.get("status") or "", "created_at": pr.get("created_at"),
                     "qty": round(_f(it.get("qty")), 4), "uom": it.get("uom") or "",
                     "origin": pr.get("origin") or "",
                     "label": f"PR {pr.get('request_number') or ''} ({pr.get('status') or ''})",
-                }
+                })
     pos = await db[PO_COLL].find(
-        {"created_at": {"$gte": since}, "status": {"$nin": list(PO_DEAD)},
-         "items.material_id": {"$in": list(ids)}}, {"_id": 0}).to_list(2000)
+        {"status": {"$nin": list(PO_DEAD)},
+         "items.material_id": {"$in": list(ids)}}, {"_id": 0}).sort("created_at", -1).to_list(2000)
     for po in pos:
         for it in (po.get("items") or []):
             mid = it.get("material_id")
-            if mid in ids and mid not in out:
-                out[mid] = {
-                    "type": "po", "id": po.get("id"), "number": po.get("po_number") or "",
-                    "status": po.get("status") or "", "created_at": po.get("created_at"),
-                    "qty": round(_f(it.get("qty_ordered")), 4), "uom": it.get("uom") or "",
-                    "origin": "",
-                    "label": f"PO {po.get('po_number') or ''} ({po.get('status') or ''})",
-                }
+            if mid not in ids:
+                continue
+            remaining = max(0.0, _f(it.get("qty_ordered")) - _f(it.get("qty_received")))
+            if remaining <= 1e-9:
+                continue
+            s = slot(mid)
+            s["incoming_base"] = round(s["incoming_base"] + remaining, 4)
+            s["orders"].append({
+                "type": "po", "id": po.get("id"), "number": po.get("po_number") or "",
+                "status": po.get("status") or "", "created_at": po.get("created_at"),
+                "qty": round(_f(it.get("qty_ordered")), 4), "qty_remaining_base": round(remaining, 4),
+                "uom": it.get("uom") or "", "origin": "",
+                "label": f"PO {po.get('po_number') or ''} ({po.get('status') or ''})",
+            })
+    for s in out.values():
+        # dokumen PO lebih dulu (sudah komitmen ke pemasok), lalu PR
+        s["orders"].sort(key=lambda o: 0 if o["type"] == "po" else 1)
+        s["first"] = dict(s["orders"][0]) if s["orders"] else None
     return out
 
 
@@ -194,10 +219,10 @@ async def weekly(db, *, types: list | None = None, search: str = "",
         need_ids.append(m["id"])
 
     prices = await _price_index(db, need_ids)
-    open_orders = await _open_orders(db, need_ids, wk["start"])
+    open_orders = await _open_orders(db, need_ids)
 
     rows = []
-    for m, th, qty, status, shortage in staged:
+    for m, th, qty, status, shortage_gross in staged:
         mid = m["id"]
         base = _uom.base_uom_of(m)
         p_uom = _uom.purchase_uom_of(m) or base
@@ -209,9 +234,15 @@ async def weekly(db, *, types: list | None = None, search: str = "",
 
         sup = prices.get(mid)
         notes = []
+        # 2026-11-06 (Tahap 2): sisa PO terbuka = barang dalam perjalanan → mengurangi kekurangan
+        oo = open_orders.get(mid) or {}
+        incoming = round(_f(oo.get("incoming_base")), 4)
+        shortage = round(max(0.0, shortage_gross - incoming), 4)
+        if incoming > 0:
+            notes.append(f"dikurangi sisa PO terbuka {incoming:g} {base}")
         qty_target = shortage
         moq_base = _f((sup or {}).get("moq_base"))
-        if moq_base > qty_target:
+        if moq_base > qty_target and shortage > 0:
             qty_target = moq_base
             notes.append(f"dinaikkan ke MOQ supplier {moq_base:g} {base}")
         qty_buy = _ceil_to_uom(qty_target, factor)
@@ -228,7 +259,14 @@ async def weekly(db, *, types: list | None = None, search: str = "",
             price_base, price_source = 0.0, "none"
         valued = price_base > 0
         est_total = round(qty_buy_base * price_base, 2) if valued else 0.0
-        order = open_orders.get(mid)
+        # 2026-11-06 (Tahap 2): baris "sudah dipesan" bila PO terbuka menutup seluruh kekurangan, atau ada
+        # PR terbuka (belum jadi PO) — anti dobel belanja. PO yang hanya menutup sebagian: sisanya tetap
+        # diusulkan dibeli (catatan "dikurangi sisa PO terbuka").
+        has_pr = any(o["type"] == "pr" for o in oo.get("orders") or [])
+        covered = shortage <= 1e-9
+        order = oo.get("first") if (covered or has_pr) else None
+        if order and has_pr and not covered:
+            order = next(o for o in oo["orders"] if o["type"] == "pr")
 
         row = {
             "material_id": mid,
@@ -250,6 +288,9 @@ async def weekly(db, *, types: list | None = None, search: str = "",
             "threshold_basis_note": m.get("threshold_basis_note") or "",
             "stock_status": status,
             "shortage": shortage,
+            "shortage_gross": round(shortage_gross, 4),
+            "incoming_po_qty": incoming,
+            "open_orders": list(oo.get("orders") or [])[:10],
             "qty_buy": qty_buy,
             "qty_buy_base": qty_buy_base,
             "qty_note": " · ".join(notes),

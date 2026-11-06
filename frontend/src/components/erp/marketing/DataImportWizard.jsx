@@ -39,7 +39,9 @@ import {
 } from '@/components/ui/alert-dialog';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
+import { Notice } from '@/components/erp/moduleAtoms';
 import SkuMappingPanel from './SkuMappingPanel';
+import ImportValueMapPanel from './ImportValueMapPanel';
 import ImportPlanPanel from './ImportPlanPanel';
 import {
   MarketingAccountSelect, MarketingCreatorSelect, MarketingHostSelect,
@@ -121,6 +123,9 @@ export default function DataImportWizard({ token }) {
   const [session, setSession] = useState(null);
   const [mapping, setMapping] = useState([]);
   const [report, setReport] = useState(null);
+  // 2026-11-06 (Tahap 2) — ARTI NILAI per kolom pilihan (status/kurir/kanal):
+  // nilai berkas yang belum dikenal kamus bisa dipilih artinya oleh staf.
+  const [valueReport, setValueReport] = useState([]);
   const [rows, setRows] = useState([]);
   const [summary, setSummary] = useState(null);
   const [busy, setBusy] = useState('');
@@ -437,6 +442,7 @@ export default function DataImportWizard({ token }) {
     setCatalogId(''); setLiveSessionId(''); setFile(null); setSession(null);
     setMapping([]); setReport(null); setRows([]); setSummary(null); setResult(null);
     setBlockError(null); setWarehouseSaved(null); setForgotten(false); setDups(null);
+    setValueReport([]);
   };
 
   /* ── GUDANG PLATFORM: simpan nama gudang yang TERBACA di berkas ke master toko ──
@@ -507,6 +513,7 @@ export default function DataImportWizard({ token }) {
       setRows(r.data.preview || []);
       setSummary(r.data.summary || null);
       setDups(r.data.duplicates || null);
+      setValueReport(r.data.value_report || []);
       setStep(4);
     } catch (e) {
       // Penolakan penjaga (platform/toko salah) adalah alasan PALING PENTING yang
@@ -522,14 +529,17 @@ export default function DataImportWizard({ token }) {
   const saveMapping = async (next) => {
     setBusy('mapping');
     try {
+      // `value_map` ikut dikirim hanya bila masih berlaku untuk field kolomnya
+      // (dibuang saat field kolom diganti — lihat `withField`).
       const r = await axios.put(`${BASE}/sessions/${session.id}/mapping`,
-        { mapping: next.map((m) => ({ column: m.column, field: m.field })) },
+        { mapping: next.map((m) => ({ column: m.column, field: m.field, value_map: m.value_map })) },
         { headers: authH });
       setMapping(r.data.mapping);
       setReport(r.data.mapping_report);
       setRows(r.data.preview || []);
       setSummary(r.data.summary || null);
       setDups(r.data.duplicates || null);
+      setValueReport(r.data.value_report || []);
     } catch (e) {
       toast({
         title: 'Pemetaan ditolak',
@@ -539,9 +549,26 @@ export default function DataImportWizard({ token }) {
     } finally { setBusy(''); }
   };
 
+  // Ganti field sebuah kolom ⇒ arti nilai lamanya tidak berlaku lagi.
+  const withField = (m, field) => (
+    (m.field || null) === (field || null) ? m : { ...m, field, value_map: undefined });
+
   const changeMap = (column, field) => {
     const next = mapping.map((m) => (m.column === column
-      ? { ...m, field: field === '__none__' ? null : field } : m));
+      ? withField(m, field === '__none__' ? null : field) : m));
+    setMapping(next);
+    saveMapping(next);
+  };
+
+  /* 2026-11-06 (Tahap 2) — ARTI NILAI: staf memilih arti satu nilai berkas
+     (mis. "Telah Dikirim" = Sudah diterima pembeli). '' = ikuti kamus. */
+  const changeValue = (fieldName, key, value) => {
+    const next = mapping.map((m) => {
+      if (m.field !== fieldName) return m;
+      const vm = { ...(m.value_map || {}) };
+      if (value) vm[key] = value; else delete vm[key];
+      return { ...m, value_map: vm };
+    });
     setMapping(next);
     saveMapping(next);
   };
@@ -558,8 +585,8 @@ export default function DataImportWizard({ token }) {
   const changeField = (fieldName, column) => {
     const col = column === '__none__' ? null : column;
     const next = mapping.map((m) => {
-      if (m.field === fieldName && m.column !== col) return { ...m, field: null };
-      if (col && m.column === col) return { ...m, field: fieldName };
+      if (m.field === fieldName && m.column !== col) return withField(m, null);
+      if (col && m.column === col) return withField(m, fieldName);
       return m;
     });
     setMapping(next);
@@ -574,7 +601,7 @@ export default function DataImportWizard({ token }) {
       if (!sug.length) { toast({ title: 'AI tidak punya usulan tambahan' }); return; }
       const next = mapping.map((m) => {
         const s = sug.find((x) => x.column === m.column);
-        return s && s.field && !m.field ? { ...m, field: s.field } : m;
+        return s && s.field && !m.field ? withField(m, s.field) : m;
       });
       setMapping(next);
       await saveMapping(next);
@@ -1479,6 +1506,14 @@ export default function DataImportWizard({ token }) {
             )}
           </CardHeader>
           <CardContent className="space-y-3">
+            {/* 2026-11-06 (Tahap 2) — berkas yang bentuknya belum dikenali penormal
+                tetap sampai di sini (dibaca apa adanya), dengan alasannya. */}
+            {session.parse_warning && (
+              <Notice tone="warning" icon={AlertTriangle} testId="import-parse-warning"
+                title="Bentuk berkas belum dikenali — isinya dibaca apa adanya">
+                {session.parse_warning}
+              </Notice>
+            )}
             {/* ── SESI #34 · SISTEM MEMBANTAH PILIHAN JENIS YANG KEMUNGKINAN SALAH ──
                 Pemilik: "bisa saja user ingin input pesanan tapi dia pilih
                 importnya berbeda… saya ingin system bisa tau dan assist".
@@ -1495,7 +1530,7 @@ export default function DataImportWizard({ token }) {
                 <Button size="sm" variant="outline" data-testid="import-type-mismatch-switch"
                   onClick={() => {
                     setTypeKey(session.detection.type_mismatch.suggested);
-                    setSession(null); setMapping([]); setReport(null); setRows([]);
+                    setSession(null); setMapping([]); setReport(null); setRows([]); setValueReport([]);
                     setStep(1);
                     toast({ title: `Jenis diganti ke “${session.detection.type_mismatch.suggested_label}”`,
                       description: 'Unggah ulang berkasnya untuk jenis ini.' });
@@ -1550,9 +1585,9 @@ export default function DataImportWizard({ token }) {
                 {(session.format_memory.dropped || []).length > 0 && (
                   <p className="text-amber-700 dark:text-amber-300"
                     data-testid="import-format-memory-dropped">
-                    {session.format_memory.dropped.length} pemetaan tersimpan DIBUANG karena
-                    field-nya sudah tidak ada di jenis data ini
-                    ({session.format_memory.dropped.map((d) => d.column).join(', ')})
+                    {session.format_memory.dropped.length} pemetaan tersimpan DIBUANG
+                    ({session.format_memory.dropped.map((d) => (d.reason
+                      ? `${d.column}: ${d.reason}` : d.column)).join('; ')})
                     — kolomnya dipetakan ulang oleh mesin, periksa di tabel bawah.
                   </p>
                 )}
@@ -1621,6 +1656,13 @@ export default function DataImportWizard({ token }) {
                 </div>
               </div>
             )}
+            {/* 2026-11-06 (Tahap 2) — ARTI NILAI DI BERKAS. Dulu nilai status yang
+                belum ada di kamus ("Telah Dikirim") menolak seluruh pesanannya dan
+                tidak ada jalan keluar di layar. Sekarang setiap nilai berbeda
+                ditampilkan dengan artinya, dan nilai yang belum dikenal bisa
+                dipilih artinya — pilihan ini ikut diingat bersama pemetaan kolom. */}
+            <ImportValueMapPanel report={valueReport} onChange={changeValue}
+              busy={busy === 'mapping'} />
             {unmappedCols.length > 0 && (
               <p className="text-[11px] text-muted-foreground" data-testid="import-unused-columns">
                 <b>{unmappedCols.length} kolom berkas tidak dipakai</b> — itu boleh:

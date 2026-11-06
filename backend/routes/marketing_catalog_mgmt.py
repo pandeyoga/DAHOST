@@ -231,63 +231,141 @@ async def stock_dashboard(
 ):
     """
     Ringkasan stok lintas semua katalog (atau filter per account/platform).
-    Returns: total_items, in_stock, low_stock, out_of_stock, catalogs summary.
+    Returns: total_items, in_stock, low_stock, out_of_stock, unlinked, catalogs summary.
+
+    2026-11-06 (Tahap 2) — angka "Total Item" dulu berbeda antara super admin dan
+    PIC karena TIGA sebab, semuanya ditutup di sini:
+      1. hanya 500 item pertama yang dibaca ⇒ sekarang dihitung lewat AGREGASI
+         (tanpa batas, tanpa memuat semua dokumen);
+      2. yang dihitung semua item toko menurut `account_id` item (item impor sering
+         tanpa/berbeda `account_id`) ⇒ sekarang ISI KATALOG yang boleh dilihat
+         pemakai (lingkup PIC lewat `visible_account_ids`, sama dengan daftar katalog);
+      3. status dari cache `stock_status` (kosong untuk item impor) ⇒ sekarang dari
+         stok jual LIVE (K-7a, `core.catalog_stock`), seperti daftar item katalog.
+    Item yang belum tertaut ke Master Produk tidak punya stok live — dihitung
+    terpisah sebagai `unlinked`, tidak ditebak masuk "Tersedia".
     """
     user = await require_auth(request)
     db = get_db()
 
-    q: dict = await _scope.scope_filter(db, user, {})
+    # ── 1. katalog AKTIF yang boleh dilihat pemakai (lingkup = daftar katalog) ──
+    cq: dict = {'is_active': {'$ne': False}}
     if account_id:
-        q['account_id'] = account_id
+        cq['account_id'] = account_id
     if platform:
-        q['platform'] = platform
+        cq['platform'] = platform
+    cq = await _scope.scope_filter(db, user, cq)
+    cat_platform: dict = {}
+    async for c in db.marketing_catalogs.find(cq, {'_id': 0, 'id': 1, 'platform': 1}):
+        if c.get('id'):
+            cat_platform[c['id']] = c.get('platform') or 'Other'
 
-    items = await db.marketing_catalog_items.find(q, {'_id': 0,
-        'catalog_id': 1, 'stock_quantity': 1, 'stock_alert_threshold': 1,
-        'stock_status': 1, 'name': 1, 'sku': 1, 'price': 1, 'platform': 1,
-        'account_id': 1, 'is_active': 1,
-    }).to_list(500)
+    # ── 2. item aktif per KUNCI TAUTAN (agregasi; satu baris per kombinasi) ────
+    groups: list = []
+    if cat_platform:
+        pipeline = [
+            {'$match': {'catalog_id': {'$in': list(cat_platform)}, 'is_active': {'$ne': False}}},
+            {'$group': {'_id': {k: f'${k}' for k in _DASH_GROUP_KEYS}, 'n': {'$sum': 1}}},
+        ]
+        async for g in db.marketing_catalog_items.aggregate(pipeline):
+            groups.append(g)
 
-    active_items = [i for i in items if i.get('is_active', True)]
-    total = len(active_items)
-    in_stock = sum(1 for i in active_items if i.get('stock_status') == 'in_stock')
-    low_stock = sum(1 for i in active_items if i.get('stock_status') == 'low_stock')
-    out_stock = sum(1 for i in active_items if i.get('stock_status') == 'out_of_stock')
+    # ── 3. stok jual LIVE per kunci tautan (query konstan, bukan N+1) ───────────
+    pseudo = [{'id': f'g{i}', **{k: (g.get('_id') or {}).get(k) for k in _DASH_LINK_KEYS}}
+              for i, g in enumerate(groups)]
+    blocked = await _cstock.blocked_location_ids(db)
+    links = await _cstock.resolve_links_bulk(db, pseudo)
+    mids = [v['fg_material_id'] for v in links.values() if v.get('fg_material_id')]
+    smap = await _cstock.sellable_map(db, mids, blocked_locs=blocked)
 
-    # Low stock items list (top 20 by stock_quantity asc)
-    low_items = sorted(
-        [i for i in active_items if i.get('stock_status') in ('low_stock', 'out_of_stock')],
-        key=lambda x: x.get('stock_quantity', 0)
-    )[:20]
-
-    # Per-platform breakdown
+    counts = {'in_stock': 0, 'low_stock': 0, 'out_of_stock': 0, 'unlinked': 0}
     platform_summary: dict = {}
-    for i in active_items:
-        p = i.get('platform', 'Other')
-        if p not in platform_summary:
-            platform_summary[p] = {'platform': p, 'total': 0, 'in_stock': 0, 'low_stock': 0, 'out_of_stock': 0}
-        platform_summary[p]['total'] += 1
-        st = i.get('stock_status', 'in_stock')
-        platform_summary[p][st] = platform_summary[p].get(st, 0) + 1
+    low_groups: list = []          # (available, indeks grup, status)
+    for i, g in enumerate(groups):
+        key = g.get('_id') or {}
+        n = int(g.get('n') or 0)
+        lk = links.get(f'g{i}') or {}
+        if lk.get('fg_material_id'):
+            res = smap.get(lk['fg_material_id']) or dict(_cstock.EMPTY)
+            avail = float(res.get('available') or 0)
+            st = _cstock.stock_status(avail, _threshold(key.get('stock_alert_threshold')))
+        else:
+            avail, st = None, 'unlinked'
+        counts[st] += n
+        p = cat_platform.get(key.get('catalog_id'), 'Other')
+        ps = platform_summary.setdefault(p, {'platform': p, 'total': 0, 'in_stock': 0,
+                                             'low_stock': 0, 'out_of_stock': 0, 'unlinked': 0})
+        ps['total'] += n
+        ps[st] += n
+        if st in ('low_stock', 'out_of_stock'):
+            low_groups.append((avail, i, st))
+    total = sum(counts.values())
+
+    # ── 4. daftar "perlu restock": 20 item dengan stok live terendah ────────────
+    low_groups.sort(key=lambda x: x[0])
+    low_items: list = []
+    seen: set = set()
+    for avail, i, st in low_groups:
+        if len(low_items) >= 20:
+            break
+        key = groups[i].get('_id') or {}
+        iq: dict = {'is_active': {'$ne': False}}
+        for k in _DASH_GROUP_KEYS:
+            iq[k] = key.get(k)              # None = kosong / tidak ada (sama di Mongo)
+        need = 20 - len(low_items)
+        docs = await db.marketing_catalog_items.find(iq, {'_id': 0,
+            'id': 1, 'catalog_id': 1, 'stock_alert_threshold': 1, 'name': 1, 'sku': 1,
+            'price': 1, 'platform': 1, 'account_id': 1}).limit(need).to_list(need)
+        for d in docs:
+            if d.get('id') in seen:
+                continue
+            seen.add(d.get('id'))
+            d['platform'] = d.get('platform') or cat_platform.get(d.get('catalog_id'), 'Other')
+            d['stock_status'] = st                    # status LIVE, bukan cache
+            d['stock_quantity'] = avail               # stok jual live
+            d['available'] = avail
+            low_items.append(d)
 
     # Get last sync info
+    sq: dict = await _scope.scope_filter(db, user, {'account_id': account_id} if account_id else {})
+    if platform:
+        sq['platform'] = platform
     last_sync = await db.marketing_stock_syncs.find_one(
-        q, {'_id': 0}, sort=[('synced_at', -1)]
+        sq, {'_id': 0}, sort=[('synced_at', -1)]
     )
 
     return {
         'ok': True,
         'summary': {
             'total_items': total,
-            'in_stock': in_stock,
-            'low_stock': low_stock,
-            'out_of_stock': out_stock,
-            'health_pct': round(in_stock / total * 100, 1) if total else 0,
+            'in_stock': counts['in_stock'],
+            'low_stock': counts['low_stock'],
+            'out_of_stock': counts['out_of_stock'],
+            'unlinked': counts['unlinked'],
+            'catalogs': len(cat_platform),
+            'health_pct': round(counts['in_stock'] / total * 100, 1) if total else 0,
+            'live_source': 'core.catalog_stock (K-6a/K-7a)',
         },
         'low_stock_items': [_s(i) for i in low_items],
         'platform_breakdown': list(platform_summary.values()),
         'last_sync': _s(last_sync) if last_sync else None,
     }
+
+
+# 2026-11-06 (Tahap 2) — kunci pengelompokan item untuk ringkasan stok: katalog +
+# semua field yang menentukan tautan ke FG (lihat `core.catalog_stock.resolve_link`)
+# + ambang stok rendah. Item dengan kunci sama PASTI punya status stok yang sama.
+_DASH_LINK_KEYS = ('fg_material_id', 'material_id', 'variant_sku', 'variant_id')
+_DASH_GROUP_KEYS = ('catalog_id',) + _DASH_LINK_KEYS + ('stock_alert_threshold',)
+
+
+def _threshold(v) -> float:
+    """Ambang stok rendah — rumus SAMA dengan `stock_live_status` di daftar item
+    (`marketing_catalog_items.list_catalog_items`: kosong/0 ⇒ 10)."""
+    try:
+        return float(v or 10)
+    except (TypeError, ValueError):
+        return 10.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

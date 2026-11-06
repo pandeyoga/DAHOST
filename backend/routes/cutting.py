@@ -302,7 +302,7 @@ async def list_locations(request: Request):
 
 
 @router.get("/rolls")
-async def list_rolls(request: Request, material_id: str):
+async def list_rolls(request: Request, material_id: str, location_id: Optional[str] = None):
     """Gulungan yang masih bersisa untuk satu kain (WAJIB dipilih saat lapor progres).
 
     Urut nomor roll = FIFO penerimaan, sehingga gulungan tertua dipakai lebih dulu
@@ -312,7 +312,17 @@ async def list_rolls(request: Request, material_id: str):
     db = get_db()
     rows = await fabric_roll_engine.open_rolls(db, material_id)
     out = []
+    far_ids: set = set()
+    if location_id:
+        # 2026-11-06 (Tahap 2): gulungan di gudang lain tidak bisa dipilih untuk order di gudang ini
+        want = await _place_of(db, location_id)
+        for r in rows:
+            loc = r.get("location_id") or r.get("position_id") or ""
+            if loc and want and await _place_of(db, loc) != want:
+                far_ids.add(r["id"])
     for r in rows:
+        if r["id"] in far_ids:
+            continue
         out.append({**r,
                     "remaining": round(fabric_roll_engine.remaining_of(r), 3),
                     "remaining_uom": r.get("uom", "")})
@@ -327,6 +337,7 @@ async def list_rolls(request: Request, material_id: str):
         # dan menampilkan jalan keluar bila daftarnya kosong.
         "roll_required": tracked,
         "total_remaining": round(sum(x["remaining"] for x in out), 3),
+        "other_location_count": len(far_ids),
         "uom": (out[0].get("uom") if out else (fabric_roll_engine.roll_uom(mat.get("unit")) if mat else "")),
     })
 
@@ -350,6 +361,33 @@ async def bom_requirement(request: Request, model_id: str, size_id: Optional[str
         db, model_id=model_id, size_id=size_id, variant_id=variant_id,
         qty_pcs=_f(qty_pcs), input_material_id=input_material_id, color=color)
     return serialize_doc(data)
+
+
+@router.get("/po-lines")
+async def list_po_lines(request: Request, model_id: str):
+    """Baris PO produksi (per ukuran) model ini yang masih terbuka — tautan OPSIONAL order cutting
+    (2026-11-06, Tahap 2) supaya BOM per ukuran & warna PO yang dipakai."""
+    await require_auth(request)
+    db = get_db()
+    items = await db.po_items.find({"model_id": model_id}, {"_id": 0}).to_list(500)
+    po_ids = list({i.get("po_id") for i in items if i.get("po_id")})
+    pos = {}
+    if po_ids:
+        for p in await db.production_pos.find(
+                {"id": {"$in": po_ids}}, {"_id": 0, "id": 1, "po_number": 1, "status": 1}).to_list(500):
+            pos[p["id"]] = p
+    out = []
+    for it in items:
+        po = pos.get(it.get("po_id")) or {}
+        if not po or po.get("status") in CLOSED_PO_STATUSES:
+            continue
+        out.append({"id": it.get("id"), "po_id": it.get("po_id"),
+                    "po_number": po.get("po_number") or it.get("po_number") or "",
+                    "size_id": it.get("size_id") or "", "size": it.get("size") or "",
+                    "color": it.get("color") or "", "qty": it.get("qty") or 0, "sku": it.get("sku") or "",
+                    "rahaza_variant_id": it.get("rahaza_variant_id") or ""})
+    out.sort(key=lambda x: (x["po_number"], x["size"]))
+    return serialize_doc(out)
 
 
 @router.get("/output-materials")
@@ -507,6 +545,13 @@ async def _plan_roll_consumption(db, o: dict, body: dict, input_used: float) -> 
             f"Gulungan yang dipilih tidak bisa dipakai untuk {label}: {detail}. Pilih dari "
             f"gulungan kain ini yang masih bersisa: {_roll_hint(open_rolls)}"))
 
+    # 2026-11-06 (Tahap 2): gulungan harus berada di gudang yang sama dengan lokasi stok order.
+    far = await _roll_location_errors(db, chosen, o.get("location_id"))
+    if far:
+        raise HTTPException(400, (
+            f"Gulungan {', '.join(far)} tercatat di gudang lain, bukan di {o.get('location_name') or 'gudang order'}. "
+            "Stok kain dipotong dari gudang order, jadi gulungannya juga harus dari sana — pindahkan "
+            "gulungannya dulu atau pilih gulungan di gudang ini."))
     # Urut nomor roll = FIFO penerimaan (gulungan tertua dipakai lebih dulu).
     chosen.sort(key=lambda r: str(r.get("roll_no", "")))
     unit_label = f" {chosen[0].get('uom', '')}" if chosen else ""
@@ -547,6 +592,145 @@ async def _ensure_output_material(db, o: dict, user: dict) -> dict:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — IDENTITAS OUTPUT, LOKASI GULUNGAN, SATUAN OPERATOR
+# ═════════════════════════════════════════════════════════════════════════════
+CLOSED_PO_STATUSES = ("Closed", "Closed Short", "Completed", "Cancelled", "cancelled")
+
+
+async def _po_line(db, po_item_id: str) -> tuple[dict, dict]:
+    """Baris PO produksi (ukuran) yang dipotong — OPSIONAL, untuk BOM per ukuran."""
+    it = await db.po_items.find_one({"id": po_item_id}, {"_id": 0})
+    if not it:
+        raise HTTPException(400, "Baris PO yang dipilih tidak ditemukan.")
+    po = await db.production_pos.find_one({"id": it.get("po_id")}, {"_id": 0}) or {}
+    if po.get("status") in CLOSED_PO_STATUSES:
+        raise HTTPException(400, f"PO {po.get('po_number') or ''} sudah ditutup — tidak bisa dipakai untuk order cutting.")
+    return it, po
+
+
+async def _resolve_identity(db, *, model_id: str, body: dict, fabric: dict) -> dict:
+    """Model × varian × UKURAN (wajib) × warna, potongan BOM, dan tautan baris PO (opsional).
+
+    Tahap 2: dulu ukuran boleh kosong ⇒ hasil potong masuk master potongan TANPA ukuran yang
+    tidak dipakai BOM mana pun, dan kode output yang diketik bisa menunjuk material apa pun.
+    Satu penyelesai ini dipakai buat order DAN ubah order (ubah model = output ikut diganti)."""
+    po_item, po = None, None
+    pid = (body.get("po_item_id") or "").strip()
+    if pid:
+        po_item, po = await _po_line(db, pid)
+        if not model_id:
+            model_id = po_item.get("model_id") or ""
+        elif po_item.get("model_id") and po_item["model_id"] != model_id:
+            raise HTTPException(400, "Baris PO yang dipilih untuk model lain — pilih baris PO model ini.")
+    if not model_id:
+        raise HTTPException(400, (
+            "Model/style wajib dipilih dari Master Produk — bukan diketik. "
+            "Pilih model di dialog cutting, atau buat modelnya dulu lewat tombol "
+            "\"Model Baru\" supaya BOM & produksi mengenali produk ini."))
+    model = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0})
+    if not model:
+        raise HTTPException(404, "Model produk tidak ditemukan di master.")
+    if model.get("active") is False:
+        raise HTTPException(400, f"Model '{model.get('name')}' sudah non-aktif — pilih model lain.")
+    variant = None
+    variant_id = (body.get("variant_id") or "").strip() or ((po_item or {}).get("rahaza_variant_id") or "")
+    if variant_id:
+        variant = await db.rahaza_model_variants.find_one({"id": variant_id, "model_id": model_id}, {"_id": 0})
+        if not variant:
+            raise HTTPException(400, "Varian (warna/size) bukan milik model yang dipilih.")
+    size_doc = None
+    size_id_body = (body.get("size_id") or "").strip() or ((po_item or {}).get("size_id") or "")
+    if not variant and size_id_body:
+        size_doc = await db.rahaza_sizes.find_one({"id": size_id_body}, {"_id": 0})
+        if not size_doc:
+            raise HTTPException(400, "Ukuran tidak ditemukan di master ukuran.")
+    size_id = (variant or {}).get("size_id") or (size_doc or {}).get("id") or ""
+    output_size = ((variant or {}).get("size_code") or (size_doc or {}).get("code") or "").strip()
+    if not size_id or not output_size:
+        raise HTTPException(400, (
+            "Ukuran wajib dipilih (lewat varian warna·ukuran, ukuran BOM, atau baris PO). Tanpa ukuran, "
+            "potongan masuk master tanpa ukuran yang tidak dipakai BOM mana pun."))
+    if po_item and po_item.get("size_id") and po_item["size_id"] != size_id:
+        raise HTTPException(400, "Ukuran yang dipilih berbeda dengan ukuran baris PO.")
+    output_color = ((variant or {}).get("color_name") or (variant or {}).get("color")
+                    or body.get("output_color") or (po_item or {}).get("color") or fabric.get("color") or "").strip()
+    bom_panel = None
+    _bom = await product_costing.find_active_bom(
+        db, model_id, size_id, product_costing.color_of(variant) or output_color)
+    for _ln in (_bom or {}).get("materials") or []:
+        if cut_panel_master.is_panel_line(_ln):
+            bom_panel = await db.rahaza_materials.find_one(
+                {"id": _ln.get("material_id"), "active": True}, {"_id": 0, "id": 1, "code": 1, "name": 1})
+            if bom_panel:
+                break
+    typed = (body.get("output_material_code") or "").strip().upper()
+    typed_panel = None
+    if typed and not bom_panel:
+        # Kode ketikan hanya sah bila menunjuk POTONGAN model & ukuran ini (dulu material apa pun).
+        cand = await db.rahaza_materials.find_one({"code": typed, "active": True}, {"_id": 0})
+        if (not cand or not cand.get("is_cut_panel")
+                or (cand.get("model_id") and cand["model_id"] != model_id)
+                or (cand.get("size_code") and str(cand["size_code"]).upper() != output_size.upper())):
+            raise HTTPException(400, (
+                f"Kode potongan '{typed}' bukan potongan model {model.get('code') or ''} ukuran {output_size}. "
+                "Kosongkan kodenya — sistem membuat kode potongan yang benar saat cutting dimulai."))
+        typed_panel = {"id": cand["id"], "code": cand.get("code"), "name": cand.get("name")}
+    panel = bom_panel or typed_panel
+    return {
+        "style_sku": (model.get("code") or "").strip(), "style_name": (model.get("name") or "").strip(),
+        "model_id": model_id, "model_code": (model.get("code") or "").strip(),
+        "model_name": (model.get("name") or "").strip(),
+        "variant_id": (variant or {}).get("id") or "", "variant_sku": (variant or {}).get("sku") or "",
+        "size_id": size_id, "color_id": (variant or {}).get("color_id") or "",
+        "output_color": output_color, "output_size": output_size,
+        "output_material_id": (panel or {}).get("id"),
+        "output_material_code": (panel or {}).get("code") or "",
+        "output_material_name": (panel or {}).get("name") or "",
+        "output_from_bom": bool(bom_panel),
+        "po_item_id": (po_item or {}).get("id") or "", "po_id": (po_item or {}).get("po_id") or "",
+        "po_number": (po or {}).get("po_number") or (po_item or {}).get("po_number") or "",
+    }
+
+
+async def _place_of(db, location_id: Optional[str]) -> str:
+    """Zona kanonik sebuah lokasi (bin → zonanya; lokasi lama → zona petanya)."""
+    from core import location_resolver
+    if not location_id:
+        return ""
+    canon = await location_resolver.to_canonical_location_id(db, location_id)
+    pos = await db.wh_positions.find_one({"id": canon}, {"_id": 0, "zone_id": 1})
+    return (pos or {}).get("zone_id") or canon
+
+
+async def _roll_location_errors(db, rolls: list, order_location_id: str) -> list:
+    """Gulungan yang tercatat di gudang LAIN dari lokasi stok order cutting (Tahap 2)."""
+    want = await _place_of(db, order_location_id)
+    bad = []
+    for r in rolls:
+        loc = r.get("location_id") or r.get("position_id") or ""
+        if loc and want and await _place_of(db, loc) != want:
+            bad.append(f"{r.get('roll_no')} ({r.get('location_name') or 'lokasi lain'})")
+    return bad
+
+
+def _to_order_unit(mat: dict, qty: float, uom: str, order_uom: str) -> tuple[float, Optional[dict]]:
+    """Qty dalam satuan operator (gram, yard, …) → satuan order. Return (qty, jejak|None)."""
+    op = (uom or "").strip().lower()
+    order_uom = (order_uom or "").strip().lower()
+    if not op or op == order_uom or qty == 0:
+        return qty, None
+    f_op, _b, st_op, note_op = _bom_uom.line_factor(mat, op)
+    if st_op not in ("base", "uom", "global", "fabric"):
+        raise HTTPException(400, note_op or f"Satuan '{op}' tidak bisa dikonversi ke '{order_uom}'.")
+    f_ord, _b2, st_ord, _n = _bom_uom.line_factor(mat, order_uom)
+    if st_ord not in ("base", "uom", "global", "fabric") or not f_ord:
+        f_ord = 1.0
+    converted = round(float(qty) * float(f_op) / float(f_ord), 4)
+    return converted, {"input_qty": qty, "input_uom": op, "qty_order_unit": converted,
+                       "order_unit": order_uom, "factor": float(f_op), "source": st_op}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # CRUD ORDER
 # ═════════════════════════════════════════════════════════════════════════════
 @router.get("/orders")
@@ -571,6 +755,50 @@ async def list_orders(request: Request, status: Optional[str] = None,
     return serialize_doc(rows)
 
 
+def summarize_cutting_units(rows: list) -> dict:
+    """Ringkas hasil `$group` per satuan kain (murni; dipakai dashboard Cutting & Produksi).
+
+    Tahap 1 (6 Nov 2026): dulu kain terpakai, sisa, dan yield seluruh order DIJUMLAH
+    walau satuannya berbeda (kg + yard + meter = angka tanpa arti), dan order BATAL ikut
+    masuk rencana. Sekarang angka kain per satuan (`by_unit`); angka tunggal hanya diisi
+    bila semua order memakai satu satuan, selain itu None. Potongan (pcs) tetap dijumlah."""
+    units: dict = {}
+    planned = produced = 0.0
+    for r in rows or []:
+        u = str(r.get("_id") or "").strip().lower() or "-"
+        x = units.setdefault(u, {"unit": u, "orders": 0, "consumed": 0.0, "waste": 0.0, "produced": 0.0})
+        x["orders"] += int(r.get("n") or 0)
+        x["consumed"] += _f(r.get("consumed"))
+        x["waste"] += _f(r.get("waste"))
+        x["produced"] += _f(r.get("produced"))
+        planned += _f(r.get("planned"))
+        produced += _f(r.get("produced"))
+    by_unit = []
+    for x in sorted(units.values(), key=lambda v: -v["consumed"]):
+        by_unit.append({"unit": x["unit"], "orders": x["orders"],
+                        "consumed": round(x["consumed"], 3), "waste": round(x["waste"], 3),
+                        "produced": round(x["produced"], 2),
+                        "yield": round(x["produced"] / x["consumed"], 3) if x["consumed"] > 0 else None})
+    single = by_unit[0] if len(by_unit) == 1 else None
+    return {"planned_output": round(planned, 2), "produced": round(produced, 2), "by_unit": by_unit,
+            "consumed": single["consumed"] if single else None,
+            "waste": single["waste"] if single else None,
+            "yield": single["yield"] if single else None}
+
+
+async def cutting_unit_totals(db) -> dict:
+    """Total order cutting yang TIDAK batal, dipisah per satuan kain."""
+    rows = await db[ORDERS].aggregate([
+        {"$match": {"status": {"$ne": STATUS_CANCELLED}}},
+        {"$group": {"_id": "$input_unit", "n": {"$sum": 1},
+                    "planned": {"$sum": "$planned_output_qty"},
+                    "produced": {"$sum": "$produced_qty"},
+                    "consumed": {"$sum": "$consumed_input_qty"},
+                    "waste": {"$sum": "$waste_qty"}}},
+    ]).to_list(50)
+    return summarize_cutting_units(rows)
+
+
 @router.get("/dashboard")
 async def dashboard(request: Request):
     await require_auth(request)
@@ -579,20 +807,9 @@ async def dashboard(request: Request):
     cur = db[ORDERS].aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}])
     async for r in cur:
         by_status[r["_id"]] = r["n"]
-    agg = await db[ORDERS].aggregate([
-        {"$group": {
-            "_id": None,
-            "planned_output": {"$sum": "$planned_output_qty"},
-            "produced": {"$sum": "$produced_qty"},
-            "consumed": {"$sum": "$consumed_input_qty"},
-            "waste": {"$sum": "$waste_qty"},
-        }}
-    ]).to_list(1)
-    tot = agg[0] if agg else {}
+    tot = await cutting_unit_totals(db)
     panels = await db.rahaza_materials.count_documents({"is_cut_panel": True, "active": True})
     recent = await db[ORDERS].find({}, {"_id": 0}).sort("created_at", -1).limit(5).to_list(5)
-    consumed = _f(tot.get("consumed"))
-    produced = _f(tot.get("produced"))
     return serialize_doc({
         "total_orders": sum(by_status.values()),
         "by_status": {
@@ -601,11 +818,13 @@ async def dashboard(request: Request):
             "completed": by_status.get(STATUS_COMPLETED, 0),
             "cancelled": by_status.get(STATUS_CANCELLED, 0),
         },
-        "planned_output_qty": round(_f(tot.get("planned_output")), 2),
-        "produced_qty": round(produced, 2),
-        "consumed_input_qty": round(consumed, 3),
-        "waste_qty": round(_f(tot.get("waste")), 3),
-        "avg_yield": round(produced / consumed, 3) if consumed > 0 else 0.0,
+        # order batal tidak dihitung; kain/sisa/yield per satuan (`by_unit`)
+        "planned_output_qty": tot["planned_output"],
+        "produced_qty": tot["produced"],
+        "consumed_input_qty": tot["consumed"],
+        "waste_qty": tot["waste"],
+        "avg_yield": tot["yield"],
+        "by_unit": tot["by_unit"],
         "output_material_count": panels,
         "recent": recent,
     })
@@ -700,52 +919,10 @@ async def create_order(request: Request):
     if planned_output <= 0:
         raise HTTPException(400, "Rencana hasil potongan (pcs) harus > 0.")
 
-    style_name = (body.get("style_name") or "").strip()
     # ── STYLE/PRODUK WAJIB DARI MASTER (keputusan pemilik 2026-08-21) ─────────
-    # Dulu `style_name` adalah ketikan bebas, jadi order cutting TIDAK pernah
-    # menunjuk model manapun: BOM (disimpan per model+size) dan produksi tidak
-    # bisa tahu potongan ini milik produk yang mana, dan satu style bisa punya
-    # banyak ejaan ("Dress Jemina", "dress jemina", "Jemina Dress").
-    model_id = (body.get("model_id") or "").strip()
-    if not model_id:
-        raise HTTPException(400, (
-            "Model/style wajib dipilih dari Master Produk — bukan diketik. "
-            "Pilih model di dialog cutting, atau buat modelnya dulu lewat tombol "
-            "\"Model Baru\" supaya BOM & produksi mengenali produk ini."))
-    model = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0})
-    if not model:
-        raise HTTPException(404, "Model produk tidak ditemukan di master.")
-    if model.get("active") is False:
-        raise HTTPException(400, f"Model '{model.get('name')}' sudah non-aktif — pilih model lain.")
-    style_name = (model.get("name") or "").strip()
-    style_sku = (model.get("code") or "").strip()
-
-    # Varian (warna+size) juga dari master model itu, supaya kode potongan &
-    # penelusuran ke BOM/SKU tidak pernah mengarang warna/ukuran.
-    variant = None
-    variant_id = (body.get("variant_id") or "").strip()
-    if variant_id:
-        variant = await db.rahaza_model_variants.find_one(
-            {"id": variant_id, "model_id": model_id}, {"_id": 0})
-        if not variant:
-            raise HTTPException(400, "Varian (warna/size) bukan milik model yang dipilih.")
-    output_color = ((variant or {}).get("color_name") or (variant or {}).get("color")
-                    or body.get("output_color") or mat.get("color") or "").strip()
-    output_size = ((variant or {}).get("size_code") or body.get("output_size") or "").strip()
-
-    # 2026-08-23 — UKURAN TANPA VARIAN. Ada model yang BOM-nya sudah dibuat untuk
-    # sebuah ukuran tetapi varian (warna×size) belum didaftarkan; dulu ukuran itu
-    # MUSTAHIL dipilih di dialog cutting sehingga BOM-nya tidak bisa dipakai
-    # (jalan buntu yang terlihat saat mencoba layarnya). Sekarang `size_id` boleh
-    # dikirim langsung — divalidasi ke master ukuran — supaya order tetap menunjuk
-    # (model + ukuran) yang sama dengan BOM.
-    size_id_body = (body.get("size_id") or "").strip()
-    size_doc = None
-    if not variant and size_id_body:
-        size_doc = await db.rahaza_sizes.find_one({"id": size_id_body}, {"_id": 0})
-        if not size_doc:
-            raise HTTPException(400, "Ukuran tidak ditemukan di master ukuran.")
-        output_size = (size_doc.get("code") or output_size or "").strip()
+    # 2026-11-06 (Tahap 2): model × varian × UKURAN (wajib) × warna + potongan BOM + baris PO
+    # (opsional) diselesaikan satu fungsi `_resolve_identity` (dipakai juga oleh ubah order).
+    ident = await _resolve_identity(db, model_id=(body.get("model_id") or "").strip(), body=body, fabric=mat)
 
     loc_id, loc_name = await _default_location(db, body.get("location_id"), mat["id"])
     avail_here = _f(await stock_service.get_onhand(mat["id"], db=db))
@@ -778,6 +955,11 @@ async def create_order(request: Request):
             raise HTTPException(400, (
                 f"Gulungan {', '.join(unknown)} bukan milik kain {mat.get('code')} atau sudah "
                 f"habis. Gulungan yang bisa dipilih: {_roll_hint(open_rolls)}"))
+        far = await _roll_location_errors(db, [by_id[x["roll_id"]] for x in roll_docs], loc_id)
+        if far:
+            raise HTTPException(400, (
+                f"Gulungan {', '.join(far)} tercatat di gudang lain, bukan di {loc_name or 'gudang sumber kain'}. "
+                "Pindahkan gulungannya dulu (transfer) atau pilih gulungan di gudang ini."))
         picked_total = sum(x["remaining"] for x in roll_docs)
         if picked_total + 0.0001 < planned_input:
             raise HTTPException(400, (
@@ -790,22 +972,6 @@ async def create_order(request: Request):
         roll_docs = []
 
     number = await gen_prefixed_number(db, ORDERS, "number", f"CUT-{_now():%Y}-", 4)
-    # 2026-09-12 — output order = POTONGAN yang disebut BOM (model × ukuran × warna),
-    # supaya hasil cutting langsung menjadi bahan ber-HPP bagi BOM itu. Bila BOM belum
-    # punya baris potongan, identitas tetap dibangun dari model × warna × ukuran (SSOT).
-    bom_panel = None
-    _size_id = (variant or {}).get("size_id") or (size_doc or {}).get("id") or ""
-    if _size_id:
-        # 2026-11-02 (F1b): potongan yang dihasilkan = potongan BOM WARNA varian ini
-        # (dulu BOM warna mana pun → potongan CRL tercatat sebagai BRG).
-        _bom = await product_costing.find_active_bom(
-            db, model_id, _size_id, product_costing.color_of(variant) or output_color)
-        for _ln in (_bom or {}).get("materials") or []:
-            if cut_panel_master.is_panel_line(_ln):
-                bom_panel = await db.rahaza_materials.find_one(
-                    {"id": _ln.get("material_id"), "active": True}, {"_id": 0, "id": 1, "code": 1, "name": 1})
-                if bom_panel:
-                    break
     doc = {
         "id": _uid(),
         "number": number,
@@ -825,27 +991,13 @@ async def create_order(request: Request):
         "location_name": loc_name,
         "stock_at_create": round(stock_here, 4),
         "stock_total_at_create": round(avail_here, 4),
-        # output
-        # output — identitasnya DARI MASTER (model + varian), bukan ketikan
-        "style_sku": style_sku,
-        "style_name": style_name,
-        "model_id": model_id,
-        "model_code": style_sku,
-        "model_name": style_name,
-        "variant_id": (variant or {}).get("id") or "",
-        "variant_sku": (variant or {}).get("sku") or "",
-        "size_id": (variant or {}).get("size_id") or (size_doc or {}).get("id") or "",
-        "color_id": (variant or {}).get("color_id") or "",
-        "output_color": output_color,
-        "output_size": output_size,
+        # output — identitasnya DARI MASTER (model + varian + ukuran), bukan ketikan
+        **ident,
         "output_unit": OUTPUT_UNIT,
-        "output_material_id": (bom_panel or {}).get("id"),
-        "output_material_code": (bom_panel or {}).get("code") or (body.get("output_material_code") or "").strip().upper(),
-        "output_material_name": (bom_panel or {}).get("name") or "",
-        "output_from_bom": bool(bom_panel),
         "planned_output_qty": round(planned_output, 4),
         "produced_qty": 0.0,
         "waste_qty": 0.0,
+        "leftover_qty": 0.0,
         "output_unit_cost": 0.0,
         # meta
         "target_date": body.get("target_date") or None,
@@ -871,33 +1023,27 @@ async def update_order(oid: str, request: Request):
     patch: dict = {"updated_at": _now()}
     # Style/produk hanya boleh berganti lewat MASTER (model + varian) — bukan
     # ketikan bebas, agar order draft tidak bisa "lepas" dari master produk.
-    if "model_id" in body:
-        model = await db.rahaza_models.find_one(
-            {"id": (body.get("model_id") or "").strip()}, {"_id": 0})
-        if not model:
-            raise HTTPException(404, "Model produk tidak ditemukan di master.")
-        variant = None
-        if (body.get("variant_id") or "").strip():
-            variant = await db.rahaza_model_variants.find_one(
-                {"id": body["variant_id"].strip(), "model_id": model["id"]}, {"_id": 0})
-            if not variant:
-                raise HTTPException(400, "Varian (warna/size) bukan milik model yang dipilih.")
-        patch.update({
-            "model_id": model["id"], "model_code": model.get("code", ""),
-            "model_name": model.get("name", ""),
-            "style_name": model.get("name", ""), "style_sku": model.get("code", ""),
-            "variant_id": (variant or {}).get("id") or "",
-            "variant_sku": (variant or {}).get("sku") or "",
-            "size_id": (variant or {}).get("size_id") or "",
-            "color_id": (variant or {}).get("color_id") or "",
-        })
-        if variant:
-            patch["output_color"] = variant.get("color_name") or variant.get("color") or ""
-            patch["output_size"] = variant.get("size_code") or ""
-    elif any(k in body for k in ("style_name", "style_sku")):
+    # 2026-11-06 (Tahap 2): ganti model/varian/ukuran/baris PO = identitas DAN output dihitung
+    # ulang (dulu output model lama tertinggal ⇒ hasil potong masuk potongan model lama).
+    if any(k in body for k in ("model_id", "variant_id", "size_id", "po_item_id")):
+        merged = {"variant_id": o.get("variant_id"), "size_id": o.get("size_id"),
+                  "po_item_id": o.get("po_item_id"), "output_color": o.get("output_color"),
+                  **{k: body.get(k) for k in ("variant_id", "size_id", "po_item_id", "output_color",
+                                             "output_material_code") if k in body}}
+        if "model_id" in body and (body.get("model_id") or "") != (o.get("model_id") or ""):
+            # model berganti: varian/ukuran/baris PO lama tidak berlaku lagi kecuali dikirim ulang
+            for k in ("variant_id", "size_id", "po_item_id"):
+                if k not in body:
+                    merged[k] = ""
+        fabric = await db.rahaza_materials.find_one({"id": o.get("input_material_id")}, {"_id": 0}) or {}
+        ident = await _resolve_identity(
+            db, model_id=(body.get("model_id") if "model_id" in body else o.get("model_id")) or "",
+            body=merged, fabric=fabric)
+        patch.update(ident)
+    elif any(k in body for k in ("style_name", "style_sku", "output_material_code")):
         raise HTTPException(400, (
-            "Nama style tidak bisa diketik langsung — kirim `model_id` dari Master Produk "
-            "supaya BOM & produksi tetap mengenali produknya."))
+            "Nama style / kode potongan tidak bisa diketik langsung — kirim `model_id` dari Master "
+            "Produk supaya BOM & produksi tetap mengenali produknya."))
     for k in ("notes", "target_date"):
         if k in body:
             patch[k] = (body.get(k) or "") if isinstance(body.get(k), str) else body.get(k)
@@ -1001,38 +1147,41 @@ async def add_progress(oid: str, request: Request):
         raise HTTPException(400, "Progres hanya bisa diinput saat status 'in_progress'.")
 
     body = await request.json()
-    input_used = _f(body.get("input_consumed"))
+    input_taken = _f(body.get("input_consumed"))
     output_qty = _f(body.get("output_qty"))
-    waste = _f(body.get("waste_qty"))
-    if input_used <= 0:
+    leftover_in = _f(body.get("leftover_qty"))
+    waste_in = _f(body.get("waste_qty"))
+    if input_taken <= 0:
         raise HTTPException(400, "Kain terpakai harus > 0.")
     if output_qty <= 0:
         raise HTTPException(400, "Jumlah potongan jadi harus > 0.")
+    if leftover_in < 0 or waste_in < 0:
+        raise HTTPException(400, "Sisa kain dan limbah tidak boleh negatif.")
 
     # ── 2026-08-05 · SATUAN HITUNG OPERATOR (opsional, `input_uom`) ───────────
     # Kain dicatat di satuan order (`input_unit`, mis. "kg" atau "m"), tetapi
     # operator lantai sering menghitung dalam satuan lain (rol, gram, yard).
     # Bila `input_uom` dikirim, qty diterjemahkan DULU ke satuan order supaya
     # stok, sisa roll, dan akumulasi progres tetap satu bahasa.
-    _op_uom = (body.get("input_uom") or "").strip().lower()
+    # 2026-11-06 (Tahap 2): sisa kain (`leftover_uom`) & limbah (`waste_uom`) juga bersatuan.
     _order_uom = (o.get("input_unit") or "").strip().lower()
-    uom_applied = None
-    if _op_uom and _op_uom != _order_uom:
-        mat_in = await db.rahaza_materials.find_one({"id": o["input_material_id"]}, {"_id": 0})
-        f_op, base_u, st_op, note_op = _bom_uom.line_factor(mat_in, _op_uom)
-        if st_op not in ("base", "uom", "global", "fabric"):
-            raise HTTPException(400, note_op or (
-                f"Satuan '{_op_uom}' tidak bisa dikonversi ke '{_order_uom}'."))
-        f_ord, _b, st_ord, _n = _bom_uom.line_factor(mat_in, _order_uom)
-        if st_ord not in ("base", "uom", "global", "fabric") or not f_ord:
-            f_ord = 1.0
-        converted = round(float(input_used) * float(f_op) / float(f_ord), 4)
-        if converted <= 0:
-            raise HTTPException(400, "Hasil konversi kain terpakai harus > 0.")
-        uom_applied = {"input_qty": input_used, "input_uom": _op_uom,
-                       "qty_order_unit": converted, "order_unit": _order_uom,
-                       "factor": float(f_op), "source": st_op}
-        input_used = converted
+    mat_in = await db.rahaza_materials.find_one({"id": o["input_material_id"]}, {"_id": 0}) or {}
+    input_taken, uom_applied = _to_order_unit(mat_in, input_taken, body.get("input_uom"), _order_uom)
+    _same_uom = body.get("input_uom")
+    leftover, leftover_trace = _to_order_unit(mat_in, leftover_in, body.get("leftover_uom") or _same_uom, _order_uom)
+    waste, waste_trace = _to_order_unit(mat_in, waste_in, body.get("waste_uom") or _same_uom, _order_uom)
+    if input_taken <= 0:
+        raise HTTPException(400, "Hasil konversi kain terpakai harus > 0.")
+    # Kain yang diambil = masuk potongan + limbah + sisa yang kembali ke stok. Sisa kain KEMBALI ke
+    # stok kain pada harga kain (tidak dipotong dari stok/gulungan, tidak masuk nilai potongan);
+    # limbah adalah pemakaian (ikut memotong stok & gulungan, nilainya ikut biaya potongan).
+    if leftover + waste - input_taken > 0.0001:
+        raise HTTPException(400, (
+            f"Sisa kain ({leftover:g}) + limbah ({waste:g}) melebihi kain yang diambil ({input_taken:g} "
+            f"{_order_uom}). Periksa angkanya."))
+    input_used = round(input_taken - leftover, 4)
+    if input_used <= 0:
+        raise HTTPException(400, "Kain yang benar-benar terpakai (diambil − sisa) harus > 0.")
 
     loc_id = o["location_id"]
     actor = await _actor(user)
@@ -1125,6 +1274,11 @@ async def add_progress(oid: str, request: Request):
         "cutting_order_id": oid,
         "cutting_number": o["number"],
         "input_consumed": round(input_used, 4),
+        # 2026-11-06 (Tahap 2): jejak kain diambil, sisa yang kembali ke stok, dan limbah (satuan order)
+        "input_taken": round(input_taken, 4),
+        "leftover_qty": round(leftover, 4),
+        "leftover_input": leftover_trace,
+        "waste_input": waste_trace,
         "output_qty": round(output_qty, 4),
         "waste_qty": round(waste, 4),
         "roll_id": roll_id,
@@ -1177,7 +1331,8 @@ async def add_progress(oid: str, request: Request):
     await db[ORDERS].update_one({"id": oid}, {
         "$inc": {"consumed_input_qty": round(input_used, 4),
                  "produced_qty": round(output_qty, 4),
-                 "waste_qty": round(waste, 4)},
+                 "waste_qty": round(waste, 4),
+                 "leftover_qty": round(leftover, 4)},
         "$set": {"updated_at": _now()},
     })
     await log_activity(user["id"], user.get("name", ""), "progress", "cutting.order", o["number"])
@@ -1201,6 +1356,9 @@ async def add_progress(oid: str, request: Request):
         "value_note": value_trace.get("value_note", ""),
     }
     notices = []
+    if leftover > 0:
+        notices.append(
+            f"Sisa kain {leftover:g} {_order_uom} tetap di stok kain (harga kain), tidak ikut nilai potongan.")
     if value_trace.get("value_status") == "valued":
         notices.append(
             f"Nilai kain {value_trace.get('value_out', 0):,.0f} berpindah ke potongan ⇒ HPP "

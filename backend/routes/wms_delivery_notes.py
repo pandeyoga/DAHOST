@@ -98,6 +98,8 @@ class SJLine(BaseModel):
     remarks: str = ""
     roll_no: str = ""  # optional link to fabric roll
     material_code: str = ""
+    # 2026-11-06 (Tahap 2): SJ INTERNAL wajib menunjuk barang dari master (id atau kode).
+    material_id: str = ""
 
 
 class SJIn(BaseModel):
@@ -115,6 +117,10 @@ class SJIn(BaseModel):
     reference_type: str = ""   # wo, maklon_order, po
     reference_id: str = ""
     reference_no: str = ""
+    # 2026-11-06 (Tahap 2): SJ INTERNAL = transfer antar lokasi DA (stok keluar saat terbit,
+    # masuk saat diterima). Dua kolom ini WAJIB untuk SJ-INTERNAL, diabaikan jenis lain.
+    from_location_id: str = ""
+    to_location_id: str = ""
     lines: list[SJLine] = []
 
 
@@ -145,6 +151,93 @@ async def _next_sj_number(db, sj_type: str) -> str:
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1 -> dup/E11000)
     return await gen_prefixed_number(db, "wh_delivery_notes", "sj_number", prefix, 4,
                                      ctx={"TIPE": sj_type}, config_key=SJ_DOCNUM_KEY)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — SJ INTERNAL = TRANSFER ANTAR LOKASI (mesin `core.stock_transfer`)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dulu SJ internal hanya membuat antrean "Scan-Out" di layar yang sudah dihapus dari menu, dan
+# baris ke-2..n tertolak kunci ganda (satu antrean per dokumen) — stok tidak pernah bergerak.
+# Sekarang: terbit = stok keluar dari lokasi asal ke lokasi "Dalam Perjalanan"; diterima = masuk
+# lokasi tujuan; batal sesudah terbit = kembali ke lokasi asal. Ledger + kartu stok tercatat,
+# tanpa jurnal (nilai persediaan tidak berubah karena akun persediaannya sama).
+INTERNAL = "SJ-INTERNAL"
+
+
+async def _location_label(db, loc_id: str) -> str:
+    from core import location_resolver
+    d = (await location_resolver.build_display_map(db, [loc_id])).get(loc_id) or {}
+    return d.get("name") or d.get("code") or ""
+
+
+async def _internal_payload(db, *, from_location_id: str, to_location_id: str, lines: list) -> dict:
+    """Validasi & normalisasi SJ internal: dua lokasi sah & berbeda, tiap baris = barang master
+    dengan qty dalam satuan dasarnya (`qty_base`). Return {from/to + nama, lines}."""
+    from core import location_resolver, stock_transfer
+    from core import bom_uom as _bom_uom
+    from core import uom as _uom
+    src, dst = (from_location_id or "").strip(), (to_location_id or "").strip()
+    if not src or not dst:
+        raise HTTPException(400, "Surat Jalan internal wajib memilih lokasi asal dan lokasi tujuan.")
+    if src == dst:
+        raise HTTPException(400, "Lokasi asal dan tujuan tidak boleh sama.")
+    for lid, what in ((src, "asal"), (dst, "tujuan")):
+        if not await location_resolver.location_exists(db, lid):
+            raise HTTPException(400, f"Lokasi {what} tidak ditemukan di Struktur Gudang.")
+    blocked = await stock_transfer.blocked_ids(db)
+    try:
+        await stock_transfer.assert_destination(db, dst, blocked=blocked)
+    except stock_transfer.TransferError as e:
+        raise HTTPException(400, str(e))
+    if src in blocked:
+        raise HTTPException(400, "Lokasi asal adalah lokasi karantina/terblokir — barang di sana tidak "
+                                 "bisa dikirim lewat Surat Jalan internal.")
+    if not lines:
+        raise HTTPException(400, "Surat Jalan harus memiliki minimal 1 item")
+    out = []
+    for i, ln in enumerate(lines, start=1):
+        ln = dict(ln)
+        mid, code = (ln.get("material_id") or "").strip(), (ln.get("material_code") or "").strip()
+        mat = None
+        if mid:
+            mat = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0})
+        elif code:
+            mat = await db.rahaza_materials.find_one({"code": code}, {"_id": 0})
+        if not mat:
+            raise HTTPException(400, f"Baris {i} ({ln.get('description') or code or '-'}): pilih barangnya "
+                                     "dari master — Surat Jalan internal memindah stok, jadi barangnya "
+                                     "harus dikenali sistem.")
+        qty = float(ln.get("qty") or 0)
+        if qty <= 0:
+            raise HTTPException(400, f"Baris {i}: qty harus lebih dari 0.")
+        base = _uom.base_uom_of(mat)
+        unit = (ln.get("unit") or "").strip().lower() or base
+        factor = 1.0
+        if unit != base:
+            try:
+                factor, _src = _bom_uom.factor_to_base(mat, unit)
+            except _uom.UomError as e:
+                raise HTTPException(400, f"Baris {i}: {e}")
+        out.append({**ln, "line_no": i, "material_id": mat["id"], "material_code": mat.get("code", ""),
+                    "description": ln.get("description") or mat.get("name", ""), "unit": unit,
+                    "unit_base": base, "qty": round(qty, 4), "qty_base": round(qty * float(factor), 4)})
+    return {"from_location_id": src, "from_location_name": await _location_label(db, src),
+            "to_location_id": dst, "to_location_name": await _location_label(db, dst), "lines": out}
+
+
+async def _check_internal_stock(db, sj: dict) -> None:
+    """Pra-cek SEMUA baris sebelum stok disentuh (per material dijumlah)."""
+    from core import stock_transfer
+    blocked = await stock_transfer.blocked_ids(db)
+    need: dict = {}
+    for ln in sj.get("lines") or []:
+        need[ln["material_id"]] = need.get(ln["material_id"], 0.0) + float(ln.get("qty_base") or 0)
+    for mid, q in need.items():
+        try:
+            await stock_transfer.assert_movable(db, mid, sj["from_location_id"], q, blocked=blocked)
+        except stock_transfer.TransferError as e:
+            code = next((ln.get("material_code") for ln in sj["lines"] if ln["material_id"] == mid), mid)
+            raise HTTPException(400, f"{code}: {e}")
 
 
 @router.get("")
@@ -189,6 +282,12 @@ async def create_sj(data: SJIn, request: Request):
     db = get_db()
     if data.sj_type not in SJ_TYPES:
         raise HTTPException(400, f"sj_type harus salah satu dari {SJ_TYPES}")
+    internal = None
+    if data.sj_type == INTERNAL:
+        # 2026-11-06 (Tahap 2): validasi SEBELUM nomor diterbitkan (nomor tidak terbuang).
+        internal = await _internal_payload(db, from_location_id=data.from_location_id,
+                                           to_location_id=data.to_location_id,
+                                           lines=[ln.dict() for ln in data.lines])
     sj_id = _id()
     now = _now()
     # SESI #19 — SATU PINTU penomoran: menghormati mode Otomatis/Manual yang disetel
@@ -196,7 +295,8 @@ async def create_sj(data: SJIn, request: Request):
     # setelan MANUAL tersimpan tetapi tidak pernah berlaku).
     sj_number = await issue_number(db, SJ_DOCNUM_KEY, ctx={"TIPE": data.sj_type},
                                    requested=data.sj_number)
-    lines = [{"line_no": i + 1, **line.dict()} for i, line in enumerate(data.lines)]
+    lines = (internal or {}).get("lines") or [
+        {"line_no": i + 1, **line.dict()} for i, line in enumerate(data.lines)]
     doc = {
         "id": sj_id,
         "sj_number": sj_number,
@@ -218,6 +318,10 @@ async def create_sj(data: SJIn, request: Request):
         "updated_at": now,
         "updated_by": user.get("name", user["id"]),
     }
+    if internal:
+        doc.update({k: internal[k] for k in ("from_location_id", "from_location_name",
+                                             "to_location_id", "to_location_name")})
+        doc["stock_mode"] = "transfer"
     await db.wh_delivery_notes.insert_one(doc)
     out = await db.wh_delivery_notes.find_one({"id": sj_id}, {"_id": 0})
     return {"ok": True, "sj": serialize_doc(out)}
@@ -513,10 +617,22 @@ async def update_sj(sj_id: str, data: dict, request: Request):
     if sj["status"] != "draft":
         raise HTTPException(400, "Hanya draft Surat Jalan yang dapat diupdate")
     allowed = {"recipient_name", "recipient_address", "recipient_phone", "shipper_name",
-               "vehicle_no", "notes", "lines", "reference_type", "reference_id", "reference_no"}
+               "vehicle_no", "notes", "lines", "reference_type", "reference_id", "reference_no",
+               "from_location_id", "to_location_id"}
     updates = {k: v for k, v in data.items() if k in allowed}
-    if "lines" in updates:
-        updates["lines"] = [{"line_no": i + 1, **ln} for i, ln in enumerate(updates["lines"])]
+    if sj.get("sj_type") == INTERNAL:
+        # 2026-11-06 (Tahap 2): draft internal divalidasi ulang dengan aturan yang sama seperti buat.
+        internal = await _internal_payload(
+            db, from_location_id=updates.get("from_location_id", sj.get("from_location_id")),
+            to_location_id=updates.get("to_location_id", sj.get("to_location_id")),
+            lines=updates.get("lines", sj.get("lines") or []))
+        updates.update(internal)
+        updates["stock_mode"] = "transfer"
+    else:
+        updates.pop("from_location_id", None)
+        updates.pop("to_location_id", None)
+        if "lines" in updates:
+            updates["lines"] = [{**ln, "line_no": i + 1} for i, ln in enumerate(updates["lines"])]
     updates["updated_at"] = _now()
     updates["updated_by"] = user.get("name", user["id"])
     await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": updates})
@@ -547,50 +663,50 @@ async def issue_sj(sj_id: str, data: IssueIn, request: Request):
         updates["vehicle_no"] = data.vehicle_no
     if data.notes:
         updates["notes"] = (sj.get("notes", "") + " " + data.notes).strip()
-    await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": updates})
+    if sj.get("sj_type") != INTERNAL:
+        await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": updates})
+        out = await db.wh_delivery_notes.find_one({"id": sj_id}, {"_id": 0})
+        return {"ok": True, "sj": serialize_doc(out), "stock_moved": False}
 
-    # WS-E: SJ-INTERNAL → buat PENDING OUTBOUND_RM (best-effort resolve material_code).
-    # Stok BELUM turun; gudang wajib Scan-Out di WMS. Baris yang tak ter-resolve → dokumen saja.
-    pendings = []
-    if sj.get("sj_type") == "SJ-INTERNAL":
-        try:
-            from routes.wms_receiving import helper_create_pending_outbound_rm
-            for ln in sj.get("lines", []):
-                code = (ln.get("material_code") or "").strip()
-                if not code:
-                    continue
-                mat = await db.rahaza_materials.find_one({"code": code}, {"_id": 0})
-                if not mat:
-                    continue  # tak ter-resolve → tak sentuh stok
-                pending = await helper_create_pending_outbound_rm(
-                    db,
-                    material_id=mat.get("id"),
-                    material_code=code,
-                    material_name=mat.get("name", ln.get("description", "")),
-                    qty=float(ln.get("qty", 0) or 0),
-                    unit=ln.get("unit", "pcs"),
-                    source_type="delivery_note",
-                    source_id=sj_id,
-                    source_ref=sj.get("sj_number", ""),
-                    notes=f"SJ Internal {sj.get('sj_number','')} — Scan-Out diperlukan",
-                    created_by=user.get("email", user.get("name", "system")),
-                )
-                pendings.append({"pending_id": pending.get("id"), "ref_number": pending.get("ref_number"),
-                                 "material_name": mat.get("name", ""), "qty": ln.get("qty", 0)})
-            if pendings:
-                await db.wh_delivery_notes.update_one(
-                    {"id": sj_id},
-                    {"$set": {"wms_pending_refs": [p["ref_number"] for p in pendings]}}
-                )
-        except Exception as e:  # noqa: BLE001 — pembuatan pending WMS adalah LANGKAH
-            # TAMBAHAN: surat jalan sudah tersimpan, jadi kegagalan helper (mis. gedung
-            # belum dipetakan) tidak boleh menggagalkan penerbitan SJ. Dicatat sebagai
-            # warning supaya tetap terlihat, bukan ditelan.
-            log.warning(f"Gagal buat pending outbound_rm SJ-INTERNAL {sj_id}: {e}")
-
+    # ── 2026-11-06 (Tahap 2): SJ INTERNAL — stok keluar ke "Dalam Perjalanan" ──────────────
+    # (menggantikan antrean "Scan-Out" lama yang layarnya sudah tidak ada di menu).
+    from core import stock_transfer
+    internal = await _internal_payload(db, from_location_id=sj.get("from_location_id"),
+                                       to_location_id=sj.get("to_location_id"), lines=sj["lines"])
+    sj = {**sj, **internal}
+    await _check_internal_stock(db, sj)
+    seq = int(sj.get("stock_seq") or 0) + 1
+    claim = await db.wh_delivery_notes.update_one(
+        {"id": sj_id, "status": "draft"},
+        {"$set": {"status": "issuing", "stock_seq": seq, **internal, "updated_at": _now()}})
+    if not claim.matched_count:
+        raise HTTPException(409, "Surat Jalan ini sedang/sudah diterbitkan pengguna lain — muat ulang.")
+    sj["stock_seq"] = seq
+    actor = {"id": str(user.get("id") or ""), "name": user.get("name", ""), "email": user.get("email", "")}
+    transit = await stock_transfer.transit_location_id(db)
+    done = []
+    try:
+        for ln in sj["lines"]:
+            await stock_transfer.send_leg(db, sj=sj, line=ln, transit_id=transit, actor=actor)
+            done.append(ln)
+    except Exception as e:
+        # Baris yang sudah keluar dikembalikan ke asal; SJ kembali draft (bisa diterbitkan ulang).
+        log.exception("SJ internal %s gagal memindah stok", sj_id)
+        for ln in reversed(done):
+            try:
+                await stock_transfer.return_leg(db, sj=sj, line=ln, transit_id=transit, actor=actor)
+            except Exception:  # noqa: BLE001 — dicatat; pengembalian manual lewat transfer
+                log.exception("SJ internal %s: pengembalian baris %s gagal", sj_id, ln.get("line_no"))
+        await db.wh_delivery_notes.update_one({"id": sj_id, "status": "issuing"}, {"$set": {
+            "status": "draft", "stock_error": str(e)[:300], "updated_at": _now()}})
+        msg = str(e) if isinstance(e, stock_transfer.TransferError) else f"stok gagal dipindah: {e}"
+        raise HTTPException(400, f"Surat Jalan belum diterbitkan — {msg}")
+    updates.update({"stock_out_at": _now(), "transit_location_id": transit, "stock_error": None})
+    await db.wh_delivery_notes.update_one({"id": sj_id, "status": "issuing"}, {"$set": updates})
     out = await db.wh_delivery_notes.find_one({"id": sj_id}, {"_id": 0})
-    return {"ok": True, "sj": serialize_doc(out), "wms_pending": pendings,
-            "scan_out_required": bool(pendings)}
+    return {"ok": True, "sj": serialize_doc(out), "stock_moved": True,
+            "message": (f"Stok {len(done)} baris keluar dari {sj.get('from_location_name') or 'lokasi asal'} — "
+                        f"dalam perjalanan ke {sj.get('to_location_name') or 'lokasi tujuan'}.")}
 
 
 @router.post("/{sj_id}/receive")
@@ -602,13 +718,38 @@ async def receive_sj(sj_id: str, data: ReceiveIn, request: Request):
         raise HTTPException(404, "Surat Jalan tidak ditemukan")
     if sj["status"] != "issued":
         raise HTTPException(400, "Hanya Surat Jalan issued yang dapat dikonfirmasi diterima")
-    await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": {
+    upd = {
         "status": "received",
         "received_at": _now(),
         "received_by": data.received_by or user.get("name", user["id"]),
         "updated_at": _now(),
         "updated_by": user.get("name", user["id"]),
-    }})
+    }
+    if sj.get("sj_type") == INTERNAL and sj.get("stock_out_at"):
+        # 2026-11-06 (Tahap 2): Dalam Perjalanan → lokasi tujuan. Klaim atomik supaya klik ganda
+        # tidak memasukkan stok dua kali; gagal di tengah → tetap 'issued', diulang melanjutkan.
+        from core import stock_transfer
+        claim = await db.wh_delivery_notes.update_one(
+            {"id": sj_id, "status": "issued"}, {"$set": {"status": "receiving", "updated_at": _now()}})
+        if not claim.matched_count:
+            raise HTTPException(409, "Surat Jalan ini sedang/sudah dikonfirmasi diterima — muat ulang.")
+        actor = {"id": str(user.get("id") or ""), "name": user.get("name", ""), "email": user.get("email", "")}
+        transit = sj.get("transit_location_id") or await stock_transfer.transit_location_id(db)
+        try:
+            for ln in sj.get("lines") or []:
+                await stock_transfer.receive_leg(db, sj=sj, line=ln, transit_id=transit, actor=actor)
+        except Exception as e:
+            log.exception("SJ internal %s gagal masuk lokasi tujuan", sj_id)
+            await db.wh_delivery_notes.update_one({"id": sj_id, "status": "receiving"}, {"$set": {
+                "status": "issued", "stock_error": str(e)[:300], "updated_at": _now()}})
+            raise HTTPException(400, f"Stok belum masuk lokasi tujuan: {e}. Ulangi — langkah yang sudah "
+                                     "jalan tidak diulang.")
+        upd.update({"stock_in_at": _now(), "stock_error": None})
+    elif sj.get("sj_type") == INTERNAL:
+        # SJ internal LAMA (terbit sebelum Tahap 2): stok tidak pernah keluar saat terbit — diterima
+        # sebagai dokumen saja dan ditandai, supaya stoknya tidak dipindah dua kali secara diam-diam.
+        upd["stock_legacy"] = True
+    await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": upd})
     out = await db.wh_delivery_notes.find_one({"id": sj_id}, {"_id": 0})
     return {"ok": True, "sj": serialize_doc(out)}
 
@@ -622,13 +763,34 @@ async def cancel_sj(sj_id: str, data: CancelIn, request: Request):
         raise HTTPException(404, "Surat Jalan tidak ditemukan")
     if sj["status"] == "received":
         raise HTTPException(400, "Surat Jalan yang sudah diterima tidak dapat dibatalkan")
-    await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": {
+    if sj["status"] in ("issuing", "receiving", "cancelling"):
+        raise HTTPException(409, "Surat Jalan ini sedang diproses — tunggu sebentar lalu muat ulang.")
+    upd = {
         "status": "cancelled",
         "cancelled_at": _now(),
         "cancel_reason": data.reason,
         "updated_at": _now(),
         "updated_by": user.get("name", user["id"]),
-    }})
+    }
+    if sj.get("sj_type") == INTERNAL and sj["status"] == "issued" and sj.get("stock_out_at"):
+        # 2026-11-06 (Tahap 2): barang yang sudah keluar kembali ke lokasi asal.
+        from core import stock_transfer
+        claim = await db.wh_delivery_notes.update_one(
+            {"id": sj_id, "status": "issued"}, {"$set": {"status": "cancelling", "updated_at": _now()}})
+        if not claim.matched_count:
+            raise HTTPException(409, "Surat Jalan ini sedang diproses pengguna lain — muat ulang.")
+        actor = {"id": str(user.get("id") or ""), "name": user.get("name", ""), "email": user.get("email", "")}
+        transit = sj.get("transit_location_id") or await stock_transfer.transit_location_id(db)
+        try:
+            for ln in sj.get("lines") or []:
+                await stock_transfer.return_leg(db, sj=sj, line=ln, transit_id=transit, actor=actor)
+        except Exception as e:
+            log.exception("SJ internal %s gagal kembali ke asal", sj_id)
+            await db.wh_delivery_notes.update_one({"id": sj_id, "status": "cancelling"}, {"$set": {
+                "status": "issued", "stock_error": str(e)[:300], "updated_at": _now()}})
+            raise HTTPException(400, f"Stok belum kembali ke lokasi asal: {e}. Ulangi pembatalan.")
+        upd["stock_returned_at"] = _now()
+    await db.wh_delivery_notes.update_one({"id": sj_id}, {"$set": upd})
     return {"ok": True}
 
 
@@ -723,6 +885,9 @@ async def sj_pdf(
     ]
     if sj.get("recipient_phone"):
         info.append(("Telepon", sj["recipient_phone"]))
+    if sj.get("from_location_name") or sj.get("to_location_name"):   # SJ internal (Tahap 2)
+        info.append(("Dari lokasi", sj.get("from_location_name") or "-"))
+        info.append(("Ke lokasi", sj.get("to_location_name") or "-"))
     if sj.get("reference_no"):
         info.append((f"Acuan ({(sj.get('reference_type') or '-').upper()})",
                      sj["reference_no"]))

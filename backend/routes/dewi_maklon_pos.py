@@ -284,6 +284,8 @@ async def _create_engine_po_for_maklon(db, *, payload, client, po_number, items,
             'qty': it.get('qty', 0),
             'serial_number': it.get('serial_number') or it.get('seri_no', ''),
             'cmt_price_snapshot': it.get('cmt_rate_per_pcs', 0),
+            # 2026-11-06 (Tahap 2): harga jasa ke klien ikut dibawa (konfirmasi menolak harga 0)
+            'selling_price_snapshot': it.get('selling_price_per_pcs', 0),
         } for it in items],
     }
     try:
@@ -681,6 +683,15 @@ async def confirm_maklon_po(po_id: str, user: dict = Depends(require_auth)):
         raise HTTPException(400, f'PO status saat ini: {po["status"]}. Harus draft untuk di-confirm.')
     if not po.get('items'):
         raise HTTPException(400, 'PO harus memiliki minimal 1 item sebelum di-confirm')
+    # 2026-11-06 (Tahap 2): PO yang hidup di mesin produksi dikonfirmasi lewat menu PO Maklon
+    # (cek harga jasa + jadwal piutang/hutang). Jalur lama ini hanya untuk PO lama tanpa mesin.
+    if po.get('mirror_of') == 'production_pos':
+        raise HTTPException(409, 'Konfirmasi PO ini lewat menu PO Maklon (Produksi) — bukan dari layar lama.')
+    _no_price = [it.get('artikel') or it.get('item_id') for it in po.get('items', [])
+                 if float(it.get('selling_price_per_pcs') or 0) <= 0]
+    if _no_price:
+        raise HTTPException(400, 'Harga jasa ke klien belum diisi untuk: ' + ', '.join(map(str, _no_price[:8]))
+                                 + '. Harga jasa wajib — tidak memakai upah CMT.')
 
     wo_results = []
     for idx, item in enumerate(po.get('items', []), start=1):
@@ -706,8 +717,9 @@ async def confirm_maklon_po(po_id: str, user: dict = Depends(require_auth)):
             'line_id': _uid(),
             'description': f"Jasa CMT — {item['artikel']} {item.get('color','')} {item.get('size','')} (Seri {item['seri_no']})".strip(),
             'qty': item['qty'],
-            'unit_price': item.get('cmt_rate_per_pcs', 0),
-            'subtotal': item['qty'] * item.get('cmt_rate_per_pcs', 0),
+            # 2026-11-06 (Tahap 2): harga jasa ke klien — dulu upah CMT dipakai sebagai harga tagihan
+            'unit_price': float(item.get('selling_price_per_pcs') or 0),
+            'subtotal': item['qty'] * float(item.get('selling_price_per_pcs') or 0),
             'item_id': item['item_id'],
         })
 
@@ -722,13 +734,13 @@ async def confirm_maklon_po(po_id: str, user: dict = Depends(require_auth)):
         'invoice_date': today_wib().isoformat(),
         'due_date': None,
         'lines': lines,
-        'subtotal': po['total_value'],
+        'subtotal': round(sum(ln['subtotal'] for ln in lines), 2),
         'tax_pct': 0.0,
         'tax_amount': 0.0,
         'discount_amount': 0.0,
-        'total_amount': po['total_value'],
+        'total_amount': round(sum(ln['subtotal'] for ln in lines), 2),
         'amount_paid': 0.0,
-        'amount_due': po['total_value'],
+        'amount_due': round(sum(ln['subtotal'] for ln in lines), 2),
         'status': 'draft',
         'payment_terms': po.get('payment_terms', 'net_30'),
         'notes': f'Auto-generated dari PO {po["po_number"]}',
@@ -771,6 +783,10 @@ async def cancel_maklon_po(po_id: str, user: dict = Depends(require_auth)):
     po = await db.dewi_maklon_pos.find_one({'id': po_id})
     if not po:
         raise HTTPException(404, 'PO tidak ditemukan')
+    if po.get('mirror_of') == 'production_pos':
+        # 2026-11-06 (Tahap 2): PO mesin produksi — pembatalan memeriksa jurnal (pendapatan, pembayaran,
+        # tagihan CMT) lewat menu PO Maklon; cermin ini tidak boleh dibatalkan sendirian.
+        raise HTTPException(409, 'Batalkan PO ini lewat menu PO Maklon (Produksi).')
 
     # Check dispatches
     dispatched_count = await db.dewi_maklon_dispatches.count_documents(

@@ -268,7 +268,6 @@ const HRLeaveHub           = lazyRetry(() => import('./hubs/HRLeaveHub'));
 const MarketingKOLHub      = lazyRetry(() => import('./hubs/MarketingKOLHub'));
 
 // Staff Self-Service Portal
-const SelfServicePortal           = lazyRetry(() => import('./SelfServicePortal'));
 
 // Portal Saya — Self-Service HR + My Workspace
 const PortalSayaDashboard         = lazyRetry(() => import('./PortalSayaDashboard'));
@@ -1009,8 +1008,8 @@ export const MODULE_REGISTRY = {
   // Session 17 — Portal Saya AI Features
   'portal-career-coach':   CareerCoachModule,
 
-  // Staff Self-Service Portal
-  'self-dashboard':        SelfServicePortal,
+  // Staff Self-Service Portal — Tahap 2 (2026-11-06): satu menu absen; id lama diarahkan ke Absen Saya.
+  'self-dashboard':        makeRedirect('portal-absen'),
 
   // Portal Saya — Self-Service HR + My Workspace
   'portal-dashboard':      PortalSayaDashboard,

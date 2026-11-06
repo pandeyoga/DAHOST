@@ -31,6 +31,8 @@ const fmt = formatRupiah;
 // Nama status untuk pengguna (server memakai kode Inggris). `issued`/`sent` = sudah terbit, belum lunas.
 const AR_STATUS = {
   draft:        { label: 'Draf',              tone: 'muted' },
+  // 2026-11-06 (Tahap 2): piutang maklon terjadwal — PO dikonfirmasi, barang belum (semua) dikirim
+  scheduled:    { label: 'Terjadwal',         tone: 'info' },
   sent:         { label: 'Terbit',            tone: 'info' },
   issued:       { label: 'Terbit',            tone: 'info' },
   overdue:      { label: 'Lewat jatuh tempo', tone: 'danger' },
@@ -191,7 +193,11 @@ export default function RahazaARInvoicesModule({ token }) {
                         data-testid={`ar-row-${inv.invoice_number}`}>
                         <td className="px-4 py-2 whitespace-nowrap">
                           <div className="text-xs font-semibold text-foreground">{inv.invoice_number}</div>
-                          <div className="text-[10px] text-muted-foreground">{inv.shipment_number || '—'}</div>
+                          <div className="text-[10px] text-muted-foreground">
+                            {inv.schedule_mode === 'v2'
+                              ? `PO ${inv.linked_maklon_po_number || '—'} · nilai PO ${fmt(inv.scheduled_total)} · tertagih ${fmt(inv.billed_total)}`
+                              : (inv.shipment_number || '—')}
+                          </div>
                         </td>
                         <td className="px-3 py-2"><ChannelBadge channel={inv.sales_channel} channels={channels} /></td>
                         <td className="px-3 py-2 text-xs text-foreground">{inv.customer_name}</td>

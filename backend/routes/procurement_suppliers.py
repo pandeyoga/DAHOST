@@ -648,7 +648,30 @@ async def price_lookup(request: Request, material_id: str, supplier_id: Optional
         r["supplier_name"] = s.get("name")
         r["supplier_payment_terms"] = s.get("payment_terms")
     rows.sort(key=lambda r: float(r.get("price_base") or 0))
-    return {"items": serialize_doc(rows), "best": serialize_doc(rows[0]) if rows else None}
+    return {"items": serialize_doc(rows), "best": serialize_doc(rows[0]) if rows else None,
+            "last_po": serialize_doc(await last_po_price(db, material_id, supplier_id))}
+
+
+async def last_po_price(db, material_id: str, supplier_id: Optional[str] = None) -> Optional[dict]:
+    """2026-11-06 (Tahap 2): harga PO TERAKHIR untuk material (cadangan auto-isi harga PO baru bila
+    pemasok belum punya daftar harga). PO batal/ditolak dan baris tanpa harga diabaikan."""
+    q: dict = {"items.material_id": material_id, "status": {"$nin": ["cancelled", "rejected"]}}
+    if supplier_id:
+        q["supplier_id"] = supplier_id
+    po = None
+    async for doc in db.rahaza_purchase_orders.find(q, {"_id": 0}).sort("created_at", -1).limit(20):
+        if any(i.get("material_id") == material_id and float(i.get("unit_cost") or 0) > 0
+               for i in doc.get("items") or []):
+            po = doc
+            break
+    if not po:
+        return None
+    it = next(i for i in po.get("items") or []
+              if i.get("material_id") == material_id and float(i.get("unit_cost") or 0) > 0)
+    return {"po_id": po.get("id"), "po_number": po.get("po_number"), "po_date": po.get("po_date"),
+            "supplier_id": po.get("supplier_id"), "supplier_name": po.get("vendor_name"),
+            "uom": it.get("uom") or it.get("base_uom") or "", "price": float(it.get("unit_cost_input") or 0),
+            "price_base": float(it.get("unit_cost") or 0)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
