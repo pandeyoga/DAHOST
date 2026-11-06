@@ -54,6 +54,10 @@ async def create_unit(
         parent = await db.dewi_org_units.find_one({"unit_id": parent_id})
         level = (parent.get("level", 0) + 1) if parent else 1
     
+    # 2026-11-06 (pola P8): unit bernama setara di induk yang sama ditolak
+    from core.reference_dedup import assert_unique_ref
+    await assert_unique_ref(db, "dewi_org_units", name=body.get("name"), id_field="unit_id",
+                            label="Unit organisasi", scope={"parent_id": parent_id})
     doc = {
         "unit_id": sid(),
         "name": body.get("name", "Unit Baru"),
@@ -139,6 +143,10 @@ async def create_position(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
+    # 2026-11-06 (pola P8): jabatan bernama setara di unit yang sama ditolak
+    from core.reference_dedup import assert_unique_ref
+    await assert_unique_ref(db, "dewi_org_positions", name=body.get("title"), name_field="title",
+                            id_field="position_id", label="Jabatan", scope={"unit_id": body.get("unit_id")})
     doc = {
         "position_id": sid(),
         "title": body.get("title", "Posisi Baru"),

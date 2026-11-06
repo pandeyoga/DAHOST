@@ -937,7 +937,8 @@ async def warehouse_dashboard_kpi(request: Request):
     await require_auth(request)
     db = get_db()
 
-    pending_gr = await db.warehouse_receiving.count_documents({"status": {"$in": ["draft", "inspecting"]}})
+    # 2026-11-06 (pola P4): satu definisi GR terbuka (core.procurement_guards.GR_OPEN_STATUSES)
+    pending_gr = await db.warehouse_receiving.count_documents({"status": {"$in": list(pguard.GR_OPEN_STATUSES)}})
 
     pipeline = [
         {"$match": {"qty": {"$gt": 0}}},
@@ -968,7 +969,8 @@ async def warehouse_dashboard(request: Request):
     await require_auth(request)
     db = get_db()
 
-    pending_receipts = await db.warehouse_receiving.count_documents({"status": {"$in": ["draft", "inspecting"]}})
+    pending_receipts = await db.warehouse_receiving.count_documents(
+        {"status": {"$in": list(pguard.GR_OPEN_STATUSES)}})  # 2026-11-06 (pola P4)
 
     pipeline = [
         {"$match": {"qty": {"$gt": 0}}},

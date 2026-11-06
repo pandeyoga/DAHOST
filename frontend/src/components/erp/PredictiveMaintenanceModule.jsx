@@ -117,7 +117,9 @@ export default function PredictiveMaintenanceModule({ token }) {
       const r = await fetch(`${BASE}/api/production/predictive-maintenance/machines/${selectedMachine.id}/predict`, {
         method: 'POST', headers,
       });
-      const data = await r.json();
+      const data = await r.json().catch(() => ({}));
+      // 2026-11-06 (pola P6): penolakan server (kuota AI, akses) dulu tetap diberi pesan "selesai"
+      if (!r.ok) throw new Error(data?.detail || `HTTP ${r.status}`);
       setAiAdvice(data?.data || null);
       toast.success('AI prediction selesai', { icon: <Sparkles className="w-4 h-4" /> });
     } catch (e) {

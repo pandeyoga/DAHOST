@@ -27,6 +27,7 @@ from typing import Optional, List
 from datetime import datetime, date, timezone
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
+from core import doc_lock
 import logging
 import uuid
 import csv
@@ -59,6 +60,7 @@ STATUS_LABELS = {
 }
 
 from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from utils.employee_identity import job_title_of
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5): helper bersama
     ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
     split_own_requests,
@@ -229,7 +231,7 @@ async def create_travel_request(body: TravelCreate, user: dict = Depends(require
         'employee_id': user.get('id'),
         'employee_name': user.get('name') or (emp.get('name') if emp else ''),
         'employee_dept': emp.get('department') if emp else '',
-        'employee_position': emp.get('position') if emp else '',
+        'employee_position': job_title_of(emp),  # 2026-11-06 (pola P3)
         'destination': body.destination,
         'destination_type': body.destination_type,
         'destination_label': DESTINATION_LABELS.get(body.destination_type, body.destination_type),
@@ -536,7 +538,7 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
         raise HTTPException(400, (f"Uang muka disetujui (Rp {cash_adv_approved:,.0f}) melebihi yang diminta "
                                   f"(Rp {requested:,.0f}).").replace(',', '.'))
 
-    await db.employee_travel_requests.update_one(
+    res = await db.employee_travel_requests.update_one(
         {'id': req_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
@@ -549,6 +551,9 @@ async def approve_travel_request(req_id: str, payload: ApprovePayload, user: dic
             'updated_at': now,
         }}
     )
+    # 2026-11-06 (pola P9): yang kalah balapan tidak mengirim kabar "disetujui" palsu.
+    doc_lock.require_matched(res, f"Perjalanan dinas {doc.get('trip_number') or ''} baru saja diputuskan "
+                                  "pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'approve', 'travel_request',
                        f"Approve travel request {doc.get('trip_number')}")
     await _notify_travel_decision(db, doc, approved=True, note=payload.note or '',
@@ -583,8 +588,10 @@ async def reject_travel_request(req_id: str, payload: RejectPayload, user: dict 
         raise HTTPException(400, f"Status '{doc.get('status')}' tidak bisa di-reject")
 
     now = _now()
-    await db.employee_travel_requests.update_one(
-        {'id': req_id},
+    # 2026-11-06 (pola P9): tolak hanya bila MASIH submitted/approved & uang muka tidak sedang dibayar —
+    # dulu bisa menimpa dinas yang uang mukanya baru saja dibayar (jurnal uang muka tetap ada).
+    res = await db.employee_travel_requests.update_one(
+        {'id': req_id, 'status': {'$in': ['submitted', 'approved']}, **doc_lock.lock_free('advance_lock')},
         {'$set': {
             'status': 'rejected',
             'reject_reason': payload.reason,
@@ -594,6 +601,8 @@ async def reject_travel_request(req_id: str, payload: RejectPayload, user: dict 
             'updated_at': now,
         }}
     )
+    doc_lock.require_matched(res, f"Perjalanan dinas {doc.get('trip_number') or ''} baru saja diproses "
+                                  "pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'reject', 'travel_request',
                        f"Reject travel request {doc.get('trip_number')}: {payload.reason}")
     await _notify_travel_decision(db, doc, approved=False, note=payload.reason)
@@ -612,7 +621,17 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     role = (user.get('role') or '').lower()
     if role not in ADVANCE_PAYER_ROLES:
         raise HTTPException(403, 'Hanya Keuangan yang dapat membayar uang muka dinas (pemisahan tugas: HR tidak membayar).')
+    # 2026-11-06 (pola P9): dinas DIKUNCI selama uang muka dibayar (penolakan / bayar kedua → 409).
+    token = await doc_lock.claim(db, 'employee_travel_requests', req_id, field='advance_lock', actor=user,
+                                 not_found=f'Travel request {req_id} tidak ditemukan',
+                                 busy='Uang muka dinas ini sedang dibayar / diproses pengguna lain — muat ulang.')
+    try:
+        return await _mark_advance_paid_locked(db, req_id, payload, user)
+    finally:
+        await doc_lock.release(db, 'employee_travel_requests', req_id, token, field='advance_lock')
 
+
+async def _mark_advance_paid_locked(db, req_id: str, payload, user: dict):
     doc = await _get_or_404(db, req_id)
     if doc.get('status') != 'approved':
         raise HTTPException(400, f"Status '{doc.get('status')}' harus 'approved' untuk bayar uang muka")
@@ -683,7 +702,7 @@ async def mark_advance_paid(req_id: str, payload: AdvancePaidPayload, user: dict
     je_number = je_res['je_number']
 
     await db.employee_travel_requests.update_one(
-        {'id': req_id},
+        {'id': req_id, 'status': 'approved'},
         {'$set': {
             'status': 'advance_paid',
             'cash_advance_paid': amount,
@@ -719,10 +738,13 @@ async def complete_travel_request(req_id: str, user: dict = Depends(require_auth
         raise HTTPException(400, f"Status '{doc.get('status')}' tidak bisa diselesaikan")
 
     now = _now()
-    await db.employee_travel_requests.update_one(
-        {'id': req_id},
+    # 2026-11-06 (pola P9): status di filter — tidak menimpa dinas yang baru saja ditolak / sedang dibayar.
+    res = await db.employee_travel_requests.update_one(
+        {'id': req_id, 'status': doc.get('status'), **doc_lock.lock_free('advance_lock')},
         {'$set': {'status': 'completed', 'completed_at': now, 'updated_at': now}}
     )
+    doc_lock.require_matched(res, f"Perjalanan dinas {doc.get('trip_number') or ''} baru saja diproses "
+                                  "pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'complete', 'travel_request',
                        f"Selesai travel request {doc.get('trip_number')}")
     return {'ok': True, 'id': req_id, 'new_status': 'completed'}

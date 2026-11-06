@@ -751,10 +751,14 @@ async def cancel_return(return_id: str, request: Request):
         "status": "Cancelled", "at": _now(), "by": user["name"],
         "note": body.get("reason", "Dibatalkan")
     }
-    await db.wh_returns.update_one({"id": return_id}, {
+    # 2026-11-06 (pola P9): status lama di filter & belum ada stok masuk — batal tidak menimpa retur yang
+    # baru saja diputuskan gudang (stok/jurnal sudah bergerak, retur tampak batal).
+    res = await db.wh_returns.update_one({"id": return_id, "status": doc["status"], "restocked": {"$ne": True}}, {
         "$set": {"status": "Cancelled", "updated_at": _now()},
         "$push": {"timeline": timeline_entry}
     })
+    if not res.matched_count:
+        raise HTTPException(409, "Retur ini baru saja diproses gudang / pengguna lain — muat ulang.")
     result = await db.wh_returns.find_one({"id": return_id}, {"_id": 0})
     if result and result.get("source_marketing_return_id"):   # 2026-11-02 (K1)
         await _rb._stamp_marketing(db, result["source_marketing_return_id"], result)

@@ -15,6 +15,7 @@ import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
+import { apiDelete } from '@/lib/api';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -335,7 +336,8 @@ export default function RnDHPPCalculatorModule({ token }) {
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/rnd/hpp-calculator/${delId}`, { method: 'DELETE', headers: hdr });
+      // 2026-11-06 (pola P6): helper lib/api melempar bila server menolak → pesan sukses hanya bila benar tersimpan
+      await apiDelete(`/api/dewi/rnd/hpp-calculator/${delId}`);
       toast.success('HPP dihapus');
       setDelId(null);
       loadRecords();

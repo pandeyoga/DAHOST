@@ -1400,19 +1400,10 @@ app.include_router(search_router)
 app.include_router(activity_feed_router, dependencies=_DENY_EXTERNAL)
 app.include_router(study_groups_router, dependencies=_DENY_EXTERNAL)
 
-# Berkas unggahan dilayani dari Emergent Object Storage (fallback: berkas lama di /app/uploads)
-from fastapi import Response as _UploadResponse, HTTPException as _UploadHTTPException
-import object_storage as _objstore
-
-
-@app.get('/api/uploads/{path:path}')
-async def serve_upload(path: str):
-    if '..' in path:
-        raise _UploadHTTPException(status_code=400, detail='path tidak valid')
-    found = _objstore.get_object(path)
-    if not found:
-        raise _UploadHTTPException(status_code=404, detail='Berkas tidak ditemukan')
-    return _UploadResponse(content=found[0], media_type=found[1])
+# Berkas unggahan: GET /api/uploads/{path}. Berkas data pribadi (selfie absen, lampiran cuti, foto profil,
+# lampiran HR) wajib token — daftar SSOT di core/sensitive_files.py (2026-11-07).
+from routes.uploads_serve import router as uploads_serve_router
+app.include_router(uploads_serve_router)
 
 # Phase 1/2 — Marketing Webhooks (Tokopedia, Shopee, TikTok)
 from routes.marketing_webhooks import router as marketing_webhooks_router

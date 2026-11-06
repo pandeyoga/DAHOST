@@ -5,6 +5,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import Modal from '../Modal';
+import ImportExportToolbar from '../ImportExportToolbar';
 import { PageHeader } from '../moduleAtoms';
 import { apiGet, apiPost, apiPut, apiDelete, getToken } from '../../../lib/api';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
@@ -46,6 +47,7 @@ export default function SalesCustomersModule() {
       <PageHeader icon={Contact} eyebrow="Portal Penjualan · Master" title="Master Pelanggan" subtitle="Pelanggan penjualan langsung. Termin bayar menentukan jatuh tempo nota tempo; setiap pelanggan otomatis punya sub-akun piutang."
         actions={<>
           <Button variant="ghost" onClick={load} className="h-9 border border-[var(--glass-border)]" data-testid="cust-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" />Muat Ulang</Button>
+          <ImportExportToolbar collectionKey="customers" label="Master Pelanggan" onImported={load} />
           <Button onClick={() => setForm({ ...EMPTY })} className="h-9" data-testid="cust-add"><Plus className="w-3.5 h-3.5 mr-1.5" />Pelanggan Baru</Button>
         </>} />
       <GlassCard className="p-3 flex items-center gap-2"><Search className="w-4 h-4 text-muted-foreground" /><GlassInput value={q} onChange={e => setQ(e.target.value)} placeholder="Cari kode / nama / telepon" className="h-8 flex-1" data-testid="cust-search" /></GlassCard>

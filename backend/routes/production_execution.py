@@ -605,6 +605,23 @@ async def create_job(request: Request):
     require_write_actor(user, check_role)
     db = get_db()
     body = await request.json()
+    # 2026-11-06 (pola P9): sumber job (shipment vendor / PO internal) DIKUNCI selama job dibuat. Dulu
+    # klik ganda sama-sama lolos cek "job sudah ada" → dua job (dan dua set baris job) untuk satu sumber.
+    from core import doc_lock
+    internal = bool(body.get('po_id') and not body.get('vendor_shipment_id'))
+    coll, key = ('production_pos', body.get('po_id')) if internal else ('vendor_shipments', body.get('vendor_shipment_id'))
+    if not key:
+        return await _create_job_locked(request, db, body, user)
+    token = await doc_lock.claim(db, coll, key, field='job_lock', actor=user,
+                                 not_found='PO tidak ditemukan' if internal else 'Shipment tidak ditemukan',
+                                 busy='Production Job untuk dokumen ini sedang dibuat pengguna lain — muat ulang.')
+    try:
+        return await _create_job_locked(request, db, body, user)
+    finally:
+        await doc_lock.release(db, coll, key, token, field='job_lock')
+
+
+async def _create_job_locked(request: Request, db, body: dict, user: dict):
     # ── Fase 3: job INTERNAL dibuat langsung dari PO (tanpa vendor shipment).
     # Jalur shipment→inspeksi khusus maklon/CMT.
     if body.get('po_id') and not body.get('vendor_shipment_id'):

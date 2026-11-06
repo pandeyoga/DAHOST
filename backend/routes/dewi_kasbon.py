@@ -514,7 +514,11 @@ async def hr_review_kasbon(
         if abs(approved - requested) > 0.01:
             upd.update({"requested_amount": requested, "amount": approved,
                         "outstanding_balance": approved, "installment_amount": math.ceil(approved / max(count, 1))})
-    await db.dewi_kasbon_requests.update_one({"id": req_id, "status": "submitted"}, {"$set": upd})
+    res = await db.dewi_kasbon_requests.update_one({"id": req_id, "status": "submitted"}, {"$set": upd})
+    # 2026-11-06 (pola P9): yang kalah balapan (setuju vs tolak / klik ganda) tidak boleh mengirim kabar
+    # "disetujui/ditolak" yang berlawanan dengan keputusan yang tersimpan.
+    if not res.matched_count:
+        raise HTTPException(409, "Kasbon ini baru saja direview pengguna lain — muat ulang daftar.")
     updated = await db.dewi_kasbon_requests.find_one({"id": req_id}, {"_id": 0})
     # 2026-11-02 (P5 butir 12): beri tahu karyawan pemohon hasil review (tautan: Portal Saya → Kasbon).
     label = doc.get("type_label") or "Kasbon"
@@ -604,6 +608,20 @@ async def record_repayment(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
+    # 2026-11-06 (pola P9): kasbon DIKUNCI selama angsuran dicatat. Dulu klik ganda membaca saldo lama
+    # bersama-sama → dua jurnal angsuran, sedangkan saldo kasbon hanya berkurang sekali (ditimpa).
+    from core import doc_lock
+    token = await doc_lock.claim(
+        db, "dewi_kasbon_requests", req_id, field="repay_lock", actor=user,
+        not_found="Kasbon tidak ditemukan",
+        busy="Angsuran kasbon ini sedang dicatat pengguna lain. Muat ulang lalu periksa sisa kasbonnya.")
+    try:
+        return await _record_repayment_locked(req_id, request, db, user)
+    finally:
+        await doc_lock.release(db, "dewi_kasbon_requests", req_id, token, field="repay_lock")
+
+
+async def _record_repayment_locked(req_id: str, request: Request, db, user):
     body = await request.json()
     amount = float(body.get("amount", 0))
     if amount <= 0:
@@ -698,8 +716,10 @@ async def cancel_kasbon(
     if doc.get("status") not in ("submitted",):
         raise HTTPException(400, "Hanya bisa batalkan saat status 'submitted'")
 
-    await db.dewi_kasbon_requests.update_one(
-        {"id": req_id},
+    # 2026-11-06 (pola P9): batal hanya bila MASIH 'submitted' — dulu bisa menimpa kasbon yang baru saja
+    # disetujui HR / dicairkan Keuangan di sela baca & tulis.
+    res = await db.dewi_kasbon_requests.update_one(
+        {"id": req_id, "status": "submitted"},
         {"$set": {
             "status": "cancelled",
             "cancel_reason": body.get("reason", ""),
@@ -707,6 +727,8 @@ async def cancel_kasbon(
             "updated_at": _now().isoformat(),
         }},
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Kasbon ini baru saja diproses pengguna lain — muat ulang daftar.")
     await close_kasbon_notifs(db, req_id)   # 2026-11-02 (K30)
     return {"ok": True}
 

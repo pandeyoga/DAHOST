@@ -716,8 +716,8 @@ async def submit_po(po_id: str, request: Request):
         "action": "submitted", "action_label": "Diajukan", "comment": "",
         "timestamp": _now().isoformat(),
     }
-    await db.rahaza_purchase_orders.update_one(
-        {"id": po_id},
+    res = await db.rahaza_purchase_orders.update_one(
+        {"id": po_id, "status": po.get("status")},   # 2026-11-06 (pola P9)
         {"$set": {
             "status": "pending_approval",
             "submitted_at": _now(),
@@ -733,6 +733,8 @@ async def submit_po(po_id: str, request: Request):
             "updated_at": _now(),
         }}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "PO ini baru saja diproses pengguna lain — muat ulang lalu periksa statusnya.")
     after = {**po, "status": "pending_approval", "approval_chain": chain}
     await notify_stage_approvers(
         db, after, STAGE_DEPT, chain, module_id="proc-purchase-orders",
@@ -795,13 +797,18 @@ async def approve_po(po_id: str, request: Request):
     if not nxt:
         upd.update({"status": "approved", "approved_at": _now(),
                     "approved_by": user["id"]})
-    await db.rahaza_purchase_orders.update_one(
-        {"id": po_id}, {"$set": upd, "$push": {"approval_steps": step,
+    # 2026-11-06 (pola P9): status & tahap aktif di filter — klik ganda tidak mencatat tahap yang sama
+    # dua kali, dan setuju/tolak bersamaan tidak saling menimpa.
+    res = await db.rahaza_purchase_orders.update_one(
+        {"id": po_id, "status": "pending_approval", "current_approver_stage": po.get("current_approver_stage")},
+        {"$set": upd, "$push": {"approval_steps": step,
                                                "approvals": {
                                                    "user_id": user["id"],
                                                    "user_name": user.get("name", ""),
                                                    "approved_at": _now(),
                                                    "step": stage}}})
+    if not res.matched_count:
+        raise HTTPException(409, "PO ini baru saja diproses pengguna lain — muat ulang lalu periksa statusnya.")
     after = {**po, **upd}
     if nxt:
         await notify_stage_approvers(
@@ -879,12 +886,15 @@ async def reject_po(po_id: str, request: Request):
         "override_reasons": list(ev["override_reasons"]),
         "timestamp": _now().isoformat(),
     }
-    await db.rahaza_purchase_orders.update_one(
-        {"id": po_id},
+    res = await db.rahaza_purchase_orders.update_one(
+        {"id": po_id, "status": "pending_approval",   # 2026-11-06 (pola P9)
+         "current_approver_stage": po.get("current_approver_stage")},
         {"$set": {"status": "rejected", "rejected_at": _now(),
                   "rejected_by": user["id"], "rejected_reason": reason,
                   "current_approver_stage": None, "updated_at": _now()},
          "$push": {"approval_steps": step}})
+    if not res.matched_count:
+        raise HTTPException(409, "PO ini baru saja diproses pengguna lain — muat ulang lalu periksa statusnya.")
     await notify_requester(
         db, {**po, "status": "rejected"}, severity="warning",
         module_id="proc-purchase-orders", number=po.get("po_number", ""),
@@ -914,8 +924,9 @@ async def cancel_po(po_id: str, request: Request):
     if po.get("status") == "cancelled":
         raise HTTPException(400, "PO sudah dibatalkan.")
     
-    await db.rahaza_purchase_orders.update_one(
-        {"id": po_id},
+    # 2026-11-06 (pola P9): status di filter — tidak menimpa PO yang baru saja diterima penuh / diubah.
+    res = await db.rahaza_purchase_orders.update_one(
+        {"id": po_id, "status": po.get("status")},
         {
             "$set": {
                 "status": "cancelled",
@@ -926,6 +937,8 @@ async def cancel_po(po_id: str, request: Request):
             }
         }
     )
+    if not res.matched_count:
+        raise HTTPException(409, "PO ini baru saja diproses pengguna lain — muat ulang lalu periksa statusnya.")
     await log_activity(user["id"], user.get("name", ""), f"cancel:{reason}", "rahaza.po", po["po_number"])
     out = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0})
     await _enrich_po(db, out)
@@ -940,11 +953,24 @@ async def update_po_received_qty(db, po_id: str, items_received: list):
     items_received: [{"material_id": "...", "qty": ...}, ...]
     
     Update qty_received per item dan status PO.
+
+    2026-11-06 (pola P9): dulu baris PO dibaca lalu ditimpa utuh. Dua GR berbeda untuk PO yang sama
+    dikonfirmasi bersamaan → qty GR pertama hilang tertimpa GR kedua, dan PO yang baru dibatalkan bisa
+    "hidup lagi". Sekarang penulisan bersyarat (status & baris PO belum berubah sejak dibaca) dan
+    diulang dengan data segar bila bentrok.
     """
+    for _attempt in range(5):
+        if await _update_po_received_qty_once(db, po_id, items_received):
+            return
+    log.error(f"PO {po_id}: qty diterima gagal ditulis — bentrok terus dengan perubahan lain")
+    raise RuntimeError(f"PO {po_id}: qty diterima gagal ditulis karena bentrok dengan perubahan lain.")
+
+
+async def _update_po_received_qty_once(db, po_id: str, items_received: list) -> bool:
     po = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0})
     if not po:
         log.warning(f"PO {po_id} tidak ditemukan untuk update received qty")
-        return
+        return True
     
     # Build maps: by po_item_id (preferred) and material_id (fallback).
     # PR-derived POs have free-form items without material_id, so po_item_id
@@ -1005,8 +1031,8 @@ async def update_po_received_qty(db, po_id: str, items_received: list):
         elif total_received > 0:
             new_status = "partially_received"
     
-    await db.rahaza_purchase_orders.update_one(
-        {"id": po_id},
+    res = await db.rahaza_purchase_orders.update_one(
+        {"id": po_id, "status": po.get("status"), "items": po.get("items")},
         {
             "$set": {
                 "items": updated_items,
@@ -1015,7 +1041,10 @@ async def update_po_received_qty(db, po_id: str, items_received: list):
             }
         }
     )
+    if not res.matched_count:
+        return False
     log.info(f"PO {po.get('po_number')} updated: received {total_received}/{total_ordered}, status: {new_status}")
+    return True
 
 
 # ── PO → GR helpers (P1.C: Create GR from PO + audit trail) ──────────────────

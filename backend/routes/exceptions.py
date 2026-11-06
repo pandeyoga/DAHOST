@@ -233,6 +233,19 @@ async def update_material_request(req_id: str, request: Request):
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
+    # 2026-11-06 (pola P9): permintaan DIKUNCI selama diputuskan. Dulu Setuju ganda membuat DUA kiriman
+    # pengganti (shipment anak + baris aksesoris) untuk satu permintaan.
+    from core import doc_lock
+    token = await doc_lock.claim(db, 'material_requests', req_id, field='decide_lock', actor=user,
+                                 not_found='Request tidak ditemukan',
+                                 busy='Permintaan ini sedang diputuskan pengguna lain — muat ulang.')
+    try:
+        return await _update_material_request_locked(db, req_id, body, user)
+    finally:
+        await doc_lock.release(db, 'material_requests', req_id, token, field='decide_lock')
+
+
+async def _update_material_request_locked(db, req_id: str, body: dict, user: dict):
     req = await db.material_requests.find_one({'id': req_id})
     if not req: raise HTTPException(404, 'Request tidak ditemukan')
     new_status = body.get('status')

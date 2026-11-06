@@ -145,7 +145,13 @@ async def cancel_mi(mid: str, request: Request):
         raise HTTPException(404, "MI tidak ditemukan.")
     if mi.get("status") not in ("draft", "pending_approval"):
         raise HTTPException(400, "Hanya MI Draft atau Menunggu Approval yang bisa di-cancel.")
-    await db.rahaza_material_issues.update_one({"id": mid}, {"$set": {"status": "cancelled", "updated_at": _now()}})
+    # 2026-11-06 (pola P9): status di filter — dulu batal bisa menimpa MI yang baru saja di-approve
+    # (stok sudah terpotong & dijurnal, MI tampak "batal").
+    res = await db.rahaza_material_issues.update_one(
+        {"id": mid, "status": {"$in": ["draft", "pending_approval"]}},
+        {"$set": {"status": "cancelled", "updated_at": _now()}})
+    if not res.matched_count:
+        raise HTTPException(409, f"MI {mi.get('mi_number', '')} baru saja diproses pengguna lain — muat ulang.")
     return {"status": "cancelled"}
 
 
@@ -158,5 +164,8 @@ async def delete_mi(mid: str, request: Request):
         raise HTTPException(404, "MI tidak ditemukan.")
     if mi.get("status") not in ("draft", "cancelled"):
         raise HTTPException(400, "Hanya MI Draft/Cancelled yang bisa dihapus.")
-    await db.rahaza_material_issues.delete_one({"id": mid})
+    # 2026-11-06 (pola P9): hapus hanya bila status MASIH draft/batal (bukan yang baru saja diajukan/keluar).
+    res = await db.rahaza_material_issues.delete_one({"id": mid, "status": {"$in": ["draft", "cancelled"]}})
+    if not res.deleted_count:
+        raise HTTPException(409, f"MI {mi.get('mi_number', '')} baru saja diproses pengguna lain — muat ulang.")
     return {"status": "deleted"}

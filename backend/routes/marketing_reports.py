@@ -433,8 +433,9 @@ async def migrate_seed_accounts(request: Request):
     db = get_db()
 
     # Fetch all active platform accounts
+    # 2026-11-06 (pola P4): `account_code` dipakai di ringkasan hasil — dulu tidak diproyeksikan
     accounts = await db.marketing_platform_accounts.find(
-        {"status": "active"}, {"_id": 0, "id": 1, "account_name": 1, "platform": 1}
+        {"status": "active"}, {"_id": 0, "id": 1, "account_code": 1, "account_name": 1, "platform": 1}
     ).to_list(200)
 
     if not accounts:

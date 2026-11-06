@@ -474,12 +474,18 @@ async def issue_roll(roll_id: str, data: IssueIn, request: Request):
         raise HTTPException(400, f"Sisa hanya {remaining:.2f} {r_uom}. Issue {data.qty:.2f} melebihi sisa")
     new_remaining = remaining - data.qty
     new_status = _recalc_status({**roll, field: new_remaining})
-    await db.wh_fabric_rolls.update_one({"id": roll_id}, {"$set": {
+    # 2026-11-06 (pola P9): sisa lama di filter — dua pengeluaran bersamaan dulu sama-sama lolos cek sisa
+    # dan yang terakhir menimpa (sisa gulungan lebih besar dari kenyataan).
+    res = await db.wh_fabric_rolls.update_one({"id": roll_id, field: roll.get(field), "status": roll.get("status")},
+                                              {"$set": {
         field: new_remaining,
         "status": new_status,
         "updated_at": _now(),
         "updated_by": user.get("name", user["id"]),
     }})
+    if not res.matched_count:
+        raise HTTPException(409, "Sisa gulungan ini baru saja berubah (dikeluarkan/dikembalikan pengguna lain) — "
+                                 "muat ulang lalu ulangi.")
     await _log_movement(db, roll, "issue", data.qty, r_uom or d_uom,
                         data.reference_type, data.reference_id, data.reference_no,
                         roll.get("position_barcode", ""), data.reference_no,
@@ -497,12 +503,16 @@ async def return_roll(roll_id: str, data: ReturnIn, request: Request):
     field = "remaining_m" if data.unit == "meter" else "remaining_kg"
     new_remaining = roll.get(field, 0) + data.qty
     new_status = _recalc_status({**roll, field: new_remaining})
-    await db.wh_fabric_rolls.update_one({"id": roll_id}, {"$set": {
+    res = await db.wh_fabric_rolls.update_one({"id": roll_id, field: roll.get(field), "status": roll.get("status")},
+                                              {"$set": {   # 2026-11-06 (pola P9): sisa lama di filter
         field: new_remaining,
         "status": new_status,
         "updated_at": _now(),
         "updated_by": user.get("name", user["id"]),
     }})
+    if not res.matched_count:
+        raise HTTPException(409, "Sisa gulungan ini baru saja berubah (dikeluarkan/dikembalikan pengguna lain) — "
+                                 "muat ulang lalu ulangi.")
     await _log_movement(db, roll, "return", data.qty, data.unit,
                         data.reference_type, data.reference_id, data.reference_no,
                         data.reference_no, roll.get("position_barcode", ""),

@@ -60,11 +60,12 @@ SEED_UNITS = [
     {"code": "set",   "name": "Set",         "category": "count",   "symbol": "set",  "is_base": False},
     {"code": "pair",  "name": "Pair/Pasang", "category": "count",   "symbol": "pr",   "is_base": False},
     # Gulungan/Kemasan
-    {"code": "rol",   "name": "Rol/Gulungan","category": "roll",    "symbol": "rol",  "is_base": True},
-    {"code": "gulung","name": "Gulung",      "category": "roll",    "symbol": "glg",  "is_base": False},
+    # 2026-11-06 (pola P8): kode resmi "roll" & "pack" (= data material & impor Excel). Dulu benih
+    # menulis "rol"/"gulung"/"pak", lalu sinkron master menambah "roll"/"pack" → satuan kembar.
+    {"code": "roll",  "name": "Roll/Gulungan","category": "roll",   "symbol": "roll", "is_base": True},
     {"code": "bal",   "name": "Bal",         "category": "pack",    "symbol": "bal",  "is_base": True},
     {"code": "karton","name": "Karton",      "category": "pack",    "symbol": "ktn",  "is_base": False},
-    {"code": "pak",   "name": "Pak",         "category": "pack",    "symbol": "pak",  "is_base": False},
+    {"code": "pack",  "name": "Pack/Pak",    "category": "pack",    "symbol": "pack", "is_base": False},
     {"code": "sak",   "name": "Sak/Kantong", "category": "pack",    "symbol": "sak",  "is_base": False},
     # Volume
     {"code": "liter", "name": "Liter",       "category": "volume",  "symbol": "L",    "is_base": True},
@@ -167,37 +168,10 @@ async def ensure_unit_master(db=None) -> dict:
 async def seed_units(request: Request):
     """Seed default unit master and conversions. Safe to call multiple times."""
     await require_auth(request)
-    db = get_db()
-    created_units = 0
-    created_convs = 0
-
-    for u in SEED_UNITS:
-        if not await db.wh_unit_master.find_one({"code": u["code"]}):
-            await db.wh_unit_master.insert_one({
-                "id": _uid(), "code": u["code"], "name": u["name"],
-                "category": u["category"], "symbol": u["symbol"],
-                "is_base": u["is_base"], "notes": "", "active": True,
-                "created_at": _now(),
-            })
-            created_units += 1
-
-    for c in SEED_CONVERSIONS:
-        fu = await db.wh_unit_master.find_one({"code": c["from"]}, {"_id": 0})
-        tu = await db.wh_unit_master.find_one({"code": c["to"]}, {"_id": 0})
-        if fu and tu:
-            existing = await db.wh_unit_conversions.find_one({
-                "from_unit_id": fu["id"], "to_unit_id": tu["id"]
-            })
-            if not existing:
-                await db.wh_unit_conversions.insert_one({
-                    "id": _uid(), "from_unit_id": fu["id"], "to_unit_id": tu["id"],
-                    "from_unit_code": fu["code"], "to_unit_code": tu["code"],
-                    "factor": c["factor"], "notes": c.get("notes", ""), "active": True,
-                    "created_at": _now(),
-                })
-                created_convs += 1
-
-    return {"message": "Seed selesai", "units_created": created_units, "conversions_created": created_convs}
+    # 2026-11-06 (pola P8): satu mesin benih — dulu salinan baris-per-baris `ensure_unit_master`.
+    res = await ensure_unit_master(get_db())
+    return {"message": "Seed selesai", "units_created": res["units_created"],
+            "conversions_created": res["conversions_created"]}
 
 
 # ─── Unit CRUD ────────────────────────────────────────────────────────────────
@@ -228,9 +202,16 @@ async def get_all_unit_codes(request: Request):
 async def create_unit(data: UnitIn, request: Request):
     user = await require_auth(request)
     db = get_db()
-    code = data.code.lower().strip()
-    if await db.wh_unit_master.find_one({"code": code}):
-        raise HTTPException(400, f"Unit '{code}' sudah ada")
+    # 2026-11-06 (pola P8): ejaan resmi + nama ternormalisasi — "rol"/"Gulung" tidak lagi lahir
+    # di samping "roll" yang sudah ada.
+    from core.uom import canonical_unit
+    from core.reference_dedup import assert_unique_ref
+    code = canonical_unit(data.code)
+    dup = await db.wh_unit_master.find_one({"code": code}, {"_id": 0, "code": 1, "active": 1})
+    if dup:
+        raise HTTPException(400, f"Unit '{code}' sudah ada" + ("" if dup.get("active") is not False
+                                                               else " (nonaktif — aktifkan kembali)"))
+    await assert_unique_ref(db, "wh_unit_master", name=data.name, label="Satuan")
     unit = {
         "id": _uid(), "code": code, "name": data.name, "category": data.category,
         "symbol": data.symbol, "is_base": data.is_base, "notes": data.notes or "",

@@ -113,7 +113,8 @@ async def payment_receipt_pdf(kind: str, iid: str, pid: str, request: Request):
         raise HTTPException(404, "Pembayaran tidak ditemukan.")
     inv = await db[k["invoices"]].find_one({"id": iid}, {"_id": 0}) or {}
     if not inv.get(k["party"]):
-        coll, fk = ("rahaza_customers", "customer_id") if kind == "ar" else ("rahaza_vendors", "vendor_id")
+        # 2026-11-06 (pola P2): master pemasok = rahaza_suppliers; faktur menyimpan supplier_id
+        coll, fk = ("rahaza_customers", "customer_id") if kind == "ar" else ("rahaza_suppliers", "supplier_id")
         party = await db[coll].find_one({"id": inv.get(fk)}, {"_id": 0, "name": 1}) if inv.get(fk) else None
         inv[k["party"]] = (party or {}).get("name") or inv.get("customer") or inv.get("vendor") or "-"
     account = await db.rahaza_cash_accounts.find_one({"id": pay.get("account_id")}, {"_id": 0}) if pay.get("account_id") else None

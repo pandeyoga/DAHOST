@@ -783,7 +783,8 @@ async def koreksi_hasil_qc(receipt_id: str, line_id: str, request: Request):
                 409, f"Reject baris ini sudah diproses permak/retur ke CMT "
                      f"({permak_doc.get('permak_number')}) — angka reject tidak bisa dikoreksi. "
                      f"Selesaikan dulu dokumen permaknya.")
-        q_doc = await db.wh_quarantine_items.find_one(
+        from core.quarantine import QUARANTINE_COLL  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+        q_doc = await db[QUARANTINE_COLL].find_one(
             {"source.receipt_line_id": line_id}, {"_id": 0, "id": 1, "quarantine_number": 1,
                                                   "code": 1, "remaining_qty": 1})
         if q_doc:
@@ -1033,6 +1034,8 @@ async def resolve_short_shipment(short_id: str, request: Request):
             notes=(body.get("notes") or "").strip(), actor=user)
     except LookupError as e:
         raise HTTPException(404, str(e))
+    except shortmod.AlreadyDecided as e:   # 2026-11-06 (pola P9)
+        raise HTTPException(409, str(e))
     except ValueError as e:
         raise HTTPException(400, str(e))
     if doc and doc.get("po_item_id"):
@@ -1117,6 +1120,24 @@ async def _log_fg_movement_in(db, ln: dict, doc: dict, user: dict, *, sku: str, 
 
 
 async def _finish_receipt(receipt_id: str, request: Request):
+    """2026-11-06 (pola P9): penerimaan DIKUNCI selama QC diselesaikan.
+
+    Tahap 1 membuat penyelesaian aman DIULANG (baris bertanda `fg_stock_posted_at` dilewati), tetapi
+    dua permintaan BERSAMAAN (klik ganda) membaca baris yang sama sebelum ada penanda → stok FG dan
+    lapisan HPP tercatat dua kali. Kunci membuat permintaan kedua menunggu (409) lalu membaca
+    penandanya."""
+    from core import doc_lock
+    db = get_db()
+    token = await doc_lock.claim(
+        db, "cmt_receipts", receipt_id, field="finish_lock", not_found="Penerimaan tidak ditemukan",
+        busy="Penerimaan ini sedang diselesaikan pengguna lain. Tunggu sebentar lalu muat ulang.")
+    try:
+        return await _finish_receipt_locked(receipt_id, request)
+    finally:
+        await doc_lock.release(db, "cmt_receipts", receipt_id, token, field="finish_lock")
+
+
+async def _finish_receipt_locked(receipt_id: str, request: Request):
     from routes.shared import require_perm
     user = await require_perm(
         request, 'cmt.approve', 'cmt.manage', 'production.approve',
@@ -1348,11 +1369,16 @@ async def reject_receipt(receipt_id: str, request: Request):
         raise HTTPException(404, "Penerimaan tidak ditemukan")
     if _canon_status(doc.get("status")) != ST_QC:
         raise HTTPException(400, "Tidak bisa dibatalkan — QC sudah selesai")
-    await db.cmt_receipts.update_one({"id": receipt_id}, {"$set": {
-        "status": ST_CANCELLED,
-        "reject_reason": body.get("reason", ""),
-        "updated_at": _now()
-    }})
+    # 2026-11-06 (pola P9): batal hanya bila status MASIH sama & QC tidak sedang diselesaikan — dulu
+    # bisa menimpa penerimaan yang baru saja selesai QC (stok FG & tagihan CMT sudah terbentuk).
+    from core import doc_lock
+    res = await db.cmt_receipts.update_one(
+        {"id": receipt_id, "status": doc.get("status"), **doc_lock.lock_free("finish_lock")}, {"$set": {
+            "status": ST_CANCELLED,
+            "reject_reason": body.get("reason", ""),
+            "updated_at": _now()
+        }})
+    doc_lock.require_matched(res, "Penerimaan ini sedang/baru saja diselesaikan pengguna lain — muat ulang.")
     result = await db.cmt_receipts.find_one({"id": receipt_id}, {"_id": 0})
     return serialize_doc(result)
 

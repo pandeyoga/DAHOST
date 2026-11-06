@@ -281,7 +281,11 @@ async def change_status(sid: str, body: dict, request: Request):
     if new_status == "delivered":
         upd["delivered_at"] = _now()
 
-    await db.rahaza_shipments.update_one({"id": sid}, {"$set": upd})
+    # 2026-11-06 (pola P9): status lama di filter. Dulu klik ganda "Kirim" menjalankan efek dispatch dua
+    # kali (draf faktur piutang + pending scan-out FG ganda → stok bisa keluar dua kali).
+    _res = await db.rahaza_shipments.update_one({"id": sid, "status": shp["status"]}, {"$set": upd})
+    if not _res.matched_count:
+        raise HTTPException(409, "Kiriman ini baru saja diubah pengguna lain — muat ulang.")
 
     await log_audit(db, entity_type="rahaza_shipment", entity_id=sid, action="status_change",
                     before={"status": shp["status"]}, after={"status": new_status},

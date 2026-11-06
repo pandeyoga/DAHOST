@@ -242,6 +242,8 @@ async def create_cost_center(request: Request):
         raise HTTPException(400, "code & name wajib.")
     if await db.rahaza_cost_centers.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah dipakai.")
+    from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8)
+    await assert_unique_ref(db, "rahaza_cost_centers", name=name, label="Pusat biaya")
     doc = {
         "id": _uid(), "code": code, "name": name,
         "category": body.get("category") or "umum",
@@ -421,7 +423,12 @@ async def change_ar_status(iid: str, request: Request):
         new_status = "issued"   # kanonik (H-01)
     if new_status == "issued" and old_status not in ("issued", "sent"):
         await _reject_marketplace_ar(db, inv)  # 2026-11-02 (D2): draft lama ber-channel marketplace
-    await db.rahaza_ar_invoices.update_one({"id": iid}, {"$set": {"status": new_status, "updated_at": _now()}})
+    # 2026-11-06 (pola P9): status lama di filter — dulu "batal" bisa menimpa faktur yang baru saja
+    # menerima pembayaran (pembayaran atomik mengubah status ke partial_paid/paid).
+    _res = await db.rahaza_ar_invoices.update_one({"id": iid, "status": old_status},
+                                                  {"$set": {"status": new_status, "updated_at": _now()}})
+    if not _res.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
 
     # ── F2 Auto-post hook ────────────────────────────────────────────────────
@@ -456,7 +463,11 @@ async def send_ar_invoice(iid: str, request: Request):
         raise HTTPException(400, f"Hanya draft/issued yang bisa di-send. Status: {inv.get('status')}")
     if inv.get("status") == "draft":
         await _reject_marketplace_ar(db, inv)  # 2026-11-02 (D2)
-    await db.rahaza_ar_invoices.update_one({"id": iid}, {"$set": {"status": "issued", "updated_at": _now()}})
+    # 2026-11-06 (pola P9): status lama di filter — "kirim" ulang tidak menimpa status pembayaran yang baru masuk.
+    _res = await db.rahaza_ar_invoices.update_one({"id": iid, "status": inv.get("status")},
+                                                  {"$set": {"status": "issued", "updated_at": _now()}})
+    if not _res.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     posting_result = None
     try:
@@ -980,7 +991,12 @@ async def change_ap_status(iid: str, request: Request):
                                  f"dibatalkan. Batalkan/void pembayarannya dulu atau buat nota debit/retur pemasok.")
     if new_status == "cancelled" and (inv.get("source") == "gr" or inv.get("gr_ids")):
         return await _cancel_ap_from_gr(db, inv, user)
-    await db.rahaza_ap_invoices.update_one({"id": iid}, {"$set": {"status": new_status, "updated_at": _now()}})
+    # 2026-11-06 (pola P9): status lama di filter — pemeriksaan "sudah dibayar" di atas tidak lagi bisa
+    # disalip pembayaran yang masuk di sela baca & tulis.
+    _res = await db.rahaza_ap_invoices.update_one({"id": iid, "status": old_status},
+                                                  {"$set": {"status": new_status, "updated_at": _now()}})
+    if not _res.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
 
     posting_result = None
@@ -1038,7 +1054,11 @@ async def send_ap_invoice(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     if inv.get("status") not in ("draft", "sent"):
         raise HTTPException(400, f"Hanya draft/sent yang bisa di-send. Status: {inv.get('status')}")
-    await db.rahaza_ap_invoices.update_one({"id": iid}, {"$set": {"status": "sent", "updated_at": _now()}})
+    # 2026-11-06 (pola P9): status lama di filter — "kirim" ulang tidak menimpa status pembayaran yang baru masuk.
+    _res = await db.rahaza_ap_invoices.update_one({"id": iid, "status": inv.get("status")},
+                                                  {"$set": {"status": "sent", "updated_at": _now()}})
+    if not _res.matched_count:
+        raise HTTPException(409, "Faktur ini baru saja diubah pengguna lain (mis. pembayaran tercatat) — muat ulang lalu ulangi.")
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
     posting_result = None
     try:
@@ -1340,8 +1360,11 @@ async def finance_summary(request: Request):
         {"$match": {"status": {"$in": ["sent", "issued", "partial_paid", "overdue"]}}},
         {"$group": {"_id": None, "outstanding": {"$sum": "$balance"}, "count": {"$sum": 1}}},
     ]).to_list(500)
+    # 2026-11-06 (pola P4): status hutang terbuka = core.payables.AP_OPEN (cron menandai `overdue`;
+    # dulu tagihan jatuh tempo hilang dari angka hutang di ringkasan ini)
+    from core.payables import AP_OPEN
     ap = await db.rahaza_ap_invoices.aggregate([
-        {"$match": {"status": {"$in": ["sent", "partial_paid"]}}},
+        {"$match": {"status": {"$in": list(AP_OPEN)}}},
         {"$group": {"_id": None, "outstanding": {"$sum": "$balance"}, "count": {"$sum": 1}}},
     ]).to_list(500)
     cash_rows = await _cash_accounts_with_gl(db, {"active": True})

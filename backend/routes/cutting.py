@@ -69,6 +69,7 @@ from core import cut_panel_master   # 2026-09-12: SSOT identitas potongan = mode
 from core import bom_uom as _bom_uom  # cakupan lebar: kemasan + global + kain (gsm & lebar)
 from core import product_costing  # BOM → kebutuhan kain per pcs (rencana tidak lagi ditebak)
 from core.stock_service import InsufficientStock
+from core import doc_lock
 from database import get_db
 from utils.counters import gen_prefixed_number
 
@@ -84,7 +85,8 @@ STATUS_COMPLETED = "completed"
 STATUS_CANCELLED = "cancelled"
 
 # Satuan kain yang wajar jadi INPUT cutting (roll).
-INPUT_UNITS = {"kg", "gram", "m", "cm", "yard", "inch", "rol", "gulung", "bal"}
+# 2026-11-06 (pola P8): "roll" = ejaan resmi master satuan; "rol"/"gulung" tetap diterima (data lama)
+INPUT_UNITS = {"kg", "gram", "m", "cm", "yard", "inch", "roll", "rol", "gulung", "bal"}
 OUTPUT_UNIT = "pcs"
 OUTPUT_CATEGORY = "POTONGAN"
 
@@ -1139,9 +1141,24 @@ async def start_order(oid: str, request: Request):
 
 @router.post("/orders/{oid}/progress")
 async def add_progress(oid: str, request: Request):
-    """Catat hasil potong sebagian: kain berkurang, potongan bertambah (SSOT stok)."""
+    """Catat hasil potong sebagian: kain berkurang, potongan bertambah (SSOT stok).
+
+    2026-11-06 (pola P9): order DIKUNCI selama satu laporan progres dicatat. Dulu Selesai/Batal bisa
+    menyalip laporan yang sedang memotong stok (order batal/selesai tetapi stoknya tetap bergerak),
+    dan dua laporan bersamaan berebut sisa gulungan yang sama."""
     user = await _require_cutting_user(request)
     db = get_db()
+    token = await doc_lock.claim(db, ORDERS, oid, field="progress_lock", actor=user,
+                                 not_found="Cutting order tidak ditemukan.",
+                                 busy="Laporan progres lain untuk order ini sedang dicatat. Tunggu sebentar "
+                                      "lalu muat ulang.")
+    try:
+        return await _add_progress_locked(db, oid, request, user)
+    finally:
+        await doc_lock.release(db, ORDERS, oid, token, field="progress_lock")
+
+
+async def _add_progress_locked(db, oid: str, request: Request, user: dict):
     o = await _get_order(db, oid)
     if o["status"] != STATUS_IN_PROGRESS:
         raise HTTPException(400, "Progres hanya bisa diinput saat status 'in_progress'.")
@@ -1437,13 +1454,18 @@ async def complete_order(oid: str, request: Request):
         )
         panel_filled = True
 
-    await db[ORDERS].update_one({"id": oid}, {"$set": {
-        "status": STATUS_COMPLETED,
-        "output_unit_cost": out_unit_cost,
-        "total_input_cost": round(total_cost, 2),
-        "value_source": value_source,
-        "completed_at": _now(), "updated_at": _now(),
-    }})
+    # 2026-11-06 (pola P9): selesai hanya bila MASIH berjalan & tidak ada laporan progres yang sedang
+    # dicatat (nilai order dihitung dari progres yang sudah lengkap).
+    _res = await db[ORDERS].update_one(
+        {"id": oid, "status": STATUS_IN_PROGRESS, **doc_lock.lock_free("progress_lock")}, {"$set": {
+            "status": STATUS_COMPLETED,
+            "output_unit_cost": out_unit_cost,
+            "total_input_cost": round(total_cost, 2),
+            "value_source": value_source,
+            "completed_at": _now(), "updated_at": _now(),
+        }})
+    doc_lock.require_matched(_res, "Order ini sedang mencatat progres / baru saja diubah pengguna lain. "
+                                   "Muat ulang lalu selesaikan lagi.")
     await log_activity(user["id"], user.get("name", ""), "complete", "cutting.order", o["number"])
     out = await _enrich(db, await _get_order(db, oid))
     notes = []
@@ -1489,11 +1511,15 @@ async def cancel_order(oid: str, request: Request):
         # akan menjadi string kosong. Sengaja dibiarkan tanpa log agar tidak
         # membanjiri log dengan kejadian normal.
         body = {}
-    await db[ORDERS].update_one({"id": oid}, {"$set": {
-        "status": STATUS_CANCELLED,
-        "cancel_reason": (body or {}).get("reason") or "",
-        "updated_at": _now(),
-    }})
+    # 2026-11-06 (pola P9): batal hanya bila status belum berubah & tidak ada progres yang sedang dicatat
+    # (dulu progres yang sedang memotong stok lolos, order batal dengan stok yang sudah bergerak).
+    _res = await db[ORDERS].update_one(
+        {"id": oid, "status": o["status"], **doc_lock.lock_free("progress_lock")}, {"$set": {
+            "status": STATUS_CANCELLED,
+            "cancel_reason": (body or {}).get("reason") or "",
+            "updated_at": _now(),
+        }})
+    doc_lock.require_matched(_res, "Order ini sedang mencatat progres / baru saja diubah pengguna lain — muat ulang.")
     # ── SESI #32 · PENJAGA ANTI-POTONGAN-YATIM ───────────────────────────────
     # `start` melahirkan master POTONGAN. Sebelum ini, membatalkan order (sah
     # selama belum ada progres) meninggalkan master itu tanpa induk SELAMANYA:

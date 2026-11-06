@@ -36,6 +36,8 @@ from database import get_db
 from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
+# 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+USAGE_LOGS = "rahaza_ai_usage_logs"
 
 # ── Tarif resmi per 1 jt token (USD) ─────────────────────────────────────────
 # 2026-11-02: sumber skill `claude-api` (tabel "Current Models", cache 2026-10-06):
@@ -526,7 +528,7 @@ async def log_usage(
     """
     try:
         db = get_db()
-        await db.rahaza_ai_usage_logs.insert_one({
+        await db[USAGE_LOGS].insert_one({
             "id": str(uuid.uuid4()),
             "feature": feature,
             "feature_group": feature_group(feature),  # K29: cocok dengan toggle Monitor AI

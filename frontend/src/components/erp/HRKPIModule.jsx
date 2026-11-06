@@ -303,7 +303,8 @@ export default function HRKPIModule({ token }) {
 
   const handleDeleteQuestion = async (qid) => {
     if (!window.confirm('Nonaktifkan pertanyaan ini?')) return;
-    await kpi(`/questions/${qid}`, { method: 'DELETE', headers });
+    const r = await kpi(`/questions/${qid}`, { method: 'DELETE', headers });
+    if (!r.ok) { toast.error('Gagal menonaktifkan pertanyaan'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
     toast.success('Pertanyaan dinonaktifkan');
     loadQuestions();
   };
@@ -1212,7 +1213,8 @@ export default function HRKPIModule({ token }) {
                         <Button size="icon" variant="ghost" className="h-7 w-7"
                           onClick={async () => {
                             if (!window.confirm('Hapus goal ini?')) return;
-                            await kpi(`/goals/${goal.goal_id}`, { method: 'DELETE', headers });
+                            const r = await kpi(`/goals/${goal.goal_id}`, { method: 'DELETE', headers });
+                            if (!r.ok) { toast.error('Gagal menghapus goal'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
                             toast.success('Goal dihapus');
                             loadGoals(goalsPeriodId, goalsEmployeeId);
                           }}>
@@ -1335,7 +1337,8 @@ export default function HRKPIModule({ token }) {
 
 function PeriodDialog({ initial, employees, headers, onSave, onClose }) {
   const [form, setForm] = useState({
-    name: '', period_from: '', period_to: '', working_days: 26,
+    // 2026-11-06 (pola P5): kosong = dihitung server dari hari kerja per minggu + Kalender Produksi (dulu 26 tetap)
+    name: '', period_from: '', period_to: '', working_days: '',
     notes: '', participant_employee_ids: [], supervisor_assignments: [],
     ...initial,
   });
@@ -1386,8 +1389,9 @@ function PeriodDialog({ initial, employees, headers, onSave, onClose }) {
           </div>
           <div className="space-y-1">
             <Label>Jumlah Hari Kerja</Label>
-            <Input type="number" value={form.working_days} min={1} max={31}
-              onChange={e => setForm(f => ({ ...f, working_days: parseInt(e.target.value) || 26 }))} />
+            <Input type="number" value={form.working_days} min={1}
+              placeholder="Kosongkan = dihitung otomatis dari Kalender Produksi"
+              onChange={e => setForm(f => ({ ...f, working_days: parseInt(e.target.value) || '' }))} />
           </div>
 
           <div className="space-y-2">

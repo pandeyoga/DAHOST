@@ -97,18 +97,18 @@ export default function CompanySettingsModule({ token, userRole }) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      formData.append('entity_type', 'company_logo');
-      formData.append('entity_id', 'general');
-      
-      const res = await fetch('/api/upload', {
+
+      // 2026-11-06 (pola P1/P6): /api/upload membaca entity_type/entity_id dari query dan membalas
+      // `storage_path` (bukan url/filepath/filename) — dulu logo tidak pernah terisi dan penolakan
+      // server diam saja. Logo dipasang lewat /api/uploads/<path> (tanpa token, aman untuk <img>).
+      const res = await fetch('/api/upload?entity_type=company_logo&entity_id=general', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
       });
-      const data = await res.json();
-      if (data.url || data.filepath) {
-        setSettings(s => ({ ...s, company_logo_url: data.url || `/uploads/${data.filename}` }));
-      }
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.storage_path) throw new Error(data.detail || 'server menolak berkas');
+      setSettings(s => ({ ...s, company_logo_url: `/api/uploads/${data.storage_path}` }));
     } catch (e) {
       alert('Gagal upload logo: ' + e.message);
     }

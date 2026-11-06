@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { GlassInput } from '@/components/ui/glass';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmt = (d) => d ? new Date(d).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
@@ -78,7 +79,7 @@ function DocUpload({ value, onChange, required, docNote, headers }) {
         <div className="flex items-center gap-2 p-2 rounded border bg-muted/30">
           <FileText size={14} className="text-emerald-600 shrink-0" />
           <span className="text-xs text-emerald-600 truncate flex-1">{value.filename}</span>
-          <a href={`${API}${value.url}`} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline">Lihat</a>
+          <a href={withFileAuth(`${API}${value.url}`)} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline">Lihat</a>
           <button onClick={() => onChange(null)} className="text-red-700 dark:text-red-400 hover:text-red-700 dark:text-red-500"><X size={12} /></button>
         </div>
       ) : (
@@ -430,7 +431,7 @@ export default function PortalSayaCuti({ user, headers }) {
                         <StatusBadge status={lv.status} />
                         {lv.is_half_day && <Badge variant="outline" className="text-[10px]">½ {lv.half_day_period}</Badge>}
                         {lv.attachment_url && (
-                          <a href={`${API}${lv.attachment_url}`} target="_blank" rel="noreferrer"
+                          <a href={withFileAuth(`${API}${lv.attachment_url}`)} target="_blank" rel="noreferrer"
                             className="inline-flex items-center gap-1 text-[10px] text-blue-500 hover:underline">
                             <Paperclip size={9} /> Dok
                           </a>

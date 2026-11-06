@@ -211,8 +211,8 @@ async def approve_by_manager(adj_id: str, request: Request):
         if role not in ("superadmin", "admin", "owner", "hr"):
             raise HTTPException(403, "Hanya manager yang assigned yang bisa approve.")
     
-    await db.rahaza_salary_adjustments.update_one(
-        {"id": adj_id},
+    res = await db.rahaza_salary_adjustments.update_one(
+        {"id": adj_id, "status": "pending_manager"},   # 2026-11-06 (pola P9)
         {"$set": {
             "status": "pending_hr",
             "manager_approved_at": _now(),
@@ -223,6 +223,8 @@ async def approve_by_manager(adj_id: str, request: Request):
         }}
     )
     
+    if not res.matched_count:
+        raise HTTPException(409, "Penyesuaian gaji ini baru saja diproses pengguna lain — muat ulang halaman.")
     await log_activity(user["id"], user.get("name", ""), "approve_manager", "rahaza.salary_adjustment", adj_id)
     
     # Notify HR
@@ -252,22 +254,29 @@ async def approve_by_hr(adj_id: str, request: Request):
     # Apply to payroll profile — 2026-11-06 (Tahap 2): versi tarif baru BERLAKU MULAI `effective_date`
     # (dulu tarif langsung ditimpa dan tanggal berlaku diabaikan). Satu fungsi dengan Kotak Masuk HR.
     from routes.rahaza_payroll_profiles import apply_salary_adjustment_to_profile
-    applied = await apply_salary_adjustment_to_profile(db, doc, user)
-
-    # Update adjustment status
-    await db.rahaza_salary_adjustments.update_one(
-        {"id": adj_id},
+    # 2026-11-06 (pola P9): status ditulis bersyarat DULU — dulu Profil Gaji diubah lalu status ditimpa,
+    # sehingga "tolak" yang menyalip meninggalkan kenaikan di profil dengan status ditolak.
+    res = await db.rahaza_salary_adjustments.update_one(
+        {"id": adj_id, "status": doc.get("status")},
         {"$set": {
             "status": "approved",
             "hr_approved_at": _now(),
             "hr_approved_by": user["id"],
             "hr_approved_by_name": user.get("name", ""),
             "hr_notes": body.get("notes") or "",
-            "applied_at": _now(),
-            "applied_effective_from": applied.get("effective_from"),
             "updated_at": _now(),
         }}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Penyesuaian gaji ini baru saja diproses pengguna lain — muat ulang halaman.")
+    try:
+        applied = await apply_salary_adjustment_to_profile(db, doc, user)
+    except BaseException:
+        await db.rahaza_salary_adjustments.update_one({"id": adj_id, "status": "approved"},
+                                                      {"$set": {"status": doc.get("status")}})
+        raise
+    await db.rahaza_salary_adjustments.update_one({"id": adj_id}, {"$set": {
+        "applied_at": _now(), "applied_effective_from": applied.get("effective_from")}})
     
     await log_activity(user["id"], user.get("name", ""), "approve_hr", "rahaza.salary_adjustment", 
                       f"{doc.get('employee_name')} - {doc.get('raise_pct')}% applied")
@@ -313,8 +322,8 @@ async def reject_adjustment(adj_id: str, request: Request):
     
     rejected_by = "HR" if is_hr else "Manager"
     
-    await db.rahaza_salary_adjustments.update_one(
-        {"id": adj_id},
+    res = await db.rahaza_salary_adjustments.update_one(
+        {"id": adj_id, "status": doc.get("status")},   # 2026-11-06 (pola P9)
         {"$set": {
             "status": "rejected",
             "rejected_at": _now(),
@@ -326,6 +335,8 @@ async def reject_adjustment(adj_id: str, request: Request):
         }}
     )
     
+    if not res.matched_count:
+        raise HTTPException(409, "Penyesuaian gaji ini baru saja diproses pengguna lain — muat ulang halaman.")
     await log_activity(user["id"], user.get("name", ""), "reject", "rahaza.salary_adjustment", adj_id)
     
     return {"ok": True, "message": f"Adjustment ditolak oleh {rejected_by}."}
@@ -348,10 +359,12 @@ async def cancel_adjustment(adj_id: str, request: Request):
     if doc.get("status") == "approved":
         raise HTTPException(400, "Tidak bisa cancel adjustment yang sudah approved. Buat adjustment baru untuk reversal.")
     
-    await db.rahaza_salary_adjustments.update_one(
-        {"id": adj_id},
+    res = await db.rahaza_salary_adjustments.update_one(
+        {"id": adj_id, "status": doc.get("status")},   # 2026-11-06 (pola P9)
         {"$set": {"status": "cancelled", "updated_at": _now()}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Penyesuaian gaji ini baru saja diproses pengguna lain — muat ulang halaman.")
     
     return {"ok": True, "message": "Adjustment dibatalkan."}
 

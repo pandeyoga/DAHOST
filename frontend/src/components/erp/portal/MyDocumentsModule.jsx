@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { toast } from 'sonner';
 import { FileText, Upload, Trash2, FileCheck, AlertTriangle, Loader2, Download, Calendar } from 'lucide-react';
 import { IconButton } from '../IconButton';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const DOC_TYPE_LABEL = {
   ktp: 'KTP',
@@ -187,7 +188,7 @@ export default function MyDocumentsModule({ token }) {
                     Upload: {new Date(doc.created_at).toLocaleDateString('id-ID')}
                   </div>
                   {doc.file_url && (
-                    <Button variant="outline" size="sm" className="w-full mt-3" onClick={() => window.open(doc.file_url, '_blank')}>
+                    <Button variant="outline" size="sm" className="w-full mt-3" onClick={() => window.open(withFileAuth(doc.file_url), '_blank')}>
                       <Download className="w-3 h-3 mr-2" /> Download
                     </Button>
                   )}
@@ -219,7 +220,7 @@ export default function MyDocumentsModule({ token }) {
                   </div>
                 </div>
                 {doc.file_url && (
-                  <Button variant="outline" size="sm" className="w-full" onClick={() => window.open(doc.file_url, '_blank')}>
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => window.open(withFileAuth(doc.file_url), '_blank')}>
                     <Download className="w-3 h-3 mr-2" /> Download
                   </Button>
                 )}

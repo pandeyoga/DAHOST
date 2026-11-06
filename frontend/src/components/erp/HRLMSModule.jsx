@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -130,10 +131,14 @@ export default function HRLMSModule({ token }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      if (editing) {
-        await API(`/courses/${editing.course_id}`, { method: 'PUT', headers, body: JSON.stringify(form) });
-      } else {
-        await API(`/courses`, { method: 'POST', headers, body: JSON.stringify(form) });
+      const r = editing
+        ? await API(`/courses/${editing.course_id}`, { method: 'PUT', headers, body: JSON.stringify(form) })
+        : await API(`/courses`, { method: 'POST', headers, body: JSON.stringify(form) });
+      // 2026-11-06 (pola P6): dulu form ditutup walau server menolak, tanpa pesan apa pun
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan kursus');
+        return;
       }
       setShowForm(false);
       fetchAll();
@@ -142,7 +147,8 @@ export default function HRLMSModule({ token }) {
 
   const handleDelete = async (cid) => {
     if (!window.confirm('Yakin hapus kursus ini?')) return;
-    await API(`/courses/${cid}`, { method: 'DELETE', headers });
+    const r = await API(`/courses/${cid}`, { method: 'DELETE', headers });
+    if (!r.ok) { toast.error('Gagal menghapus kursus'); return; }  // 2026-11-06 (pola P6): dulu penolakan diam
     fetchAll();
     if (selected?.course_id === cid) setSelected(null);
   };

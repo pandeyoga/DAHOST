@@ -14,6 +14,21 @@ Pengaman:
   * Dry-run bawaan; `--apply` WAJIB didahului mongodump ke /app/backups/pre_golive_<waktu>/
     (gagal backup = berhenti). Restore: `mongorestore --uri "$MONGO_URL" --db "$DB_NAME" <folder>`.
   * Koleksi yang dipertahankan dicetak eksplisit; tidak ada pola regex "kira-kira".
+
+MODE CUTOFF "HAPUS TRANSAKSI SAJA" (keputusan owner 2026-11-06, T5):
+
+    python3 scripts/reset_for_golive.py --transaksi-saja                  # DRY-RUN per jenis koleksi
+    python3 scripts/reset_for_golive.py --transaksi-saja --reset-nomor    # + nomor dokumen mulai dari 1
+    python3 scripts/reset_for_golive.py --transaksi-saja --apply --yes    # mongodump, lalu ketik HAPUS TRANSAKSI
+
+  * Jenis tiap koleksi (konfigurasi / master / transaksi / log) dibaca dari
+    `backend/core/collection_registry.py` (KIND). Transaksi + log DIHAPUS; konfigurasi + master
+    (termasuk SEMUA pengguna) dipertahankan. Koleksi yang belum diklasifikasi = skrip MENOLAK jalan.
+  * Field turunan di master (cache stok katalog, saldo awal kas, cuti terpakai, ...) dikembalikan ke
+    keadaan pembukaan sesuai `DERIVED_FIELDS`; `unit_cost` / HPP master TIDAK disentuh.
+  * Nomor dokumen DILANJUTKAN, kecuali `--reset-nomor` (hanya penghitung milik koleksi transaksi/log).
+  * `--apply` di mode ini WAJIB `--yes` DAN konfirmasi ketik `HAPUS TRANSAKSI` (boleh lewat stdin),
+    serta mongodump ke backups/pre_cutoff_<waktu>/ lebih dulu.
 """
 from __future__ import annotations
 
@@ -52,14 +67,95 @@ async def plan(db) -> tuple[list[tuple[str, int]], list[tuple[str, int]], int]:
     return wipe, keep, other_users
 
 
-def mongodump(uri: str, dbname: str) -> Path:
-    dest = BACKUP_ROOT / f"pre_golive_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}"
+def mongodump(uri: str, dbname: str, label: str = "pre_golive") -> Path:
+    dest = BACKUP_ROOT / f"{label}_{datetime.now(timezone.utc):%Y%m%d_%H%M%S}"
     dest.mkdir(parents=True, exist_ok=True)
     cmd = ["mongodump", f"--uri={uri}", f"--db={dbname}", f"--out={dest}", "--gzip", "--quiet"]
     res = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
     if res.returncode != 0 or not any((dest / dbname).glob("*.bson*")):
         raise SystemExit(f"{R}mongodump GAGAL — reset dibatalkan.{X}\n{res.stderr[-800:]}")
     return dest
+
+
+CUTOFF_CONFIRM = "HAPUS TRANSAKSI"
+
+
+def print_cutoff_plan(p: dict, dbname: str, apply: bool) -> None:
+    """Tabel rencana cutoff per jenis koleksi: nama, jumlah dokumen, nasibnya."""
+    from core import collection_registry as cr
+    print(f"{B}Basis data :{X} {dbname}\n{B}Mode       :{X} HAPUS TRANSAKSI SAJA — "
+          + (f"{R}EKSEKUSI (--apply){X}" if apply else f"{G}DRY-RUN (rencana saja){X}"))
+    for kind in cr.KINDS:
+        rows = p["classes"][kind]
+        hapus = kind in cr.KINDS_DIHAPUS
+        nasib = f"{R}DIHAPUS{X}" if hapus else f"{G}DIPERTAHANKAN{X}"
+        isi = sum(r["count"] for r in rows)
+        print(f"\n{B}{cr.KIND_LABEL[kind].upper()}{X} — {nasib} · {len(rows)} koleksi · {isi} dokumen")
+        for r in rows:
+            if r["count"] or not hapus:
+                print(f"  {r['name']:40s} {r['count']:8d}")
+    if p["unknown"]:
+        print(f"\n{R}{B}BELUM DIKLASIFIKASI{X} ({len(p['unknown'])} koleksi) — skrip menolak berjalan:")
+        for r in p["unknown"]:
+            print(f"  {r['name']:40s} {r['count']:8d}")
+    print(f"\n{B}FIELD TURUNAN DI MASTER{X}")
+    for d in p["derived"]:
+        what = ((d["special"] or ", ".join(d["fields"])) if d["action"] == "reset"
+                else "tetap: " + ", ".join(d["keep"]))
+        tag = f"{Y}reset{X}" if d["action"] == "reset" else "tetap"
+        print(f"  {d['collection']:32s} {d['docs']:6d} dok · {tag} · {what}")
+    c = p["counters"]
+    print(f"\n{B}NOMOR DOKUMEN{X} — " + (
+        f"{Y}--reset-nomor: {len(c['reset'])} penghitung transaksi dihapus{X}, {len(c['keep'])} tetap"
+        if p["reset_nomor"] else f"dilanjutkan ({len(c['keep']) + len(c['unknown'])} penghitung tidak disentuh)"))
+    if p["reset_nomor"] and c["unknown"]:
+        print(f"  {R}penghitung tidak dikenal:{X} " + ", ".join(r["key"] for r in c["unknown"][:20]))
+    t = p["totals"]
+    print(f"\n  Dokumen dihapus: {B}{t['hapus']}{X} · dipertahankan: {B}{t['pertahankan']}{X} "
+          f"· koleksi: {t['koleksi']}")
+
+
+async def main_transaksi_saja(apply: bool, yes: bool, reset_nomor: bool) -> int:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / "backend" / ".env")
+    sys.path.insert(0, str(ROOT / "backend"))
+    from core import cutoff_reset
+    from motor.motor_asyncio import AsyncIOMotorClient
+    uri, dbname = os.environ["MONGO_URL"], os.environ["DB_NAME"]
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=10000)
+    try:
+        db = client[dbname]
+        p = await cutoff_reset.build_plan(db, reset_nomor=reset_nomor)
+        print_cutoff_plan(p, dbname, apply)
+        reasons = cutoff_reset.refusal_reasons(p)
+        if reasons:
+            print(f"\n{R}DITOLAK:{X} " + "\n  ".join(reasons))
+            return 2
+        if not apply:
+            print(f"\n{G}Dry-run selesai — tidak ada yang diubah.{X} Jalankan dengan --apply --yes untuk mengeksekusi.")
+            return 0
+        if not yes:
+            print(f"\n{R}--apply di mode transaksi-saja wajib disertai --yes.{X}")
+            return 1
+        ans = input(f"\nKetik {B}{CUTOFF_CONFIRM}{X} untuk melanjutkan (mongodump dibuat lebih dulu): ").strip()
+        if ans != CUTOFF_CONFIRM:
+            print("Dibatalkan.")
+            return 1
+        dest = mongodump(uri, dbname, label="pre_cutoff")
+        print(f"{G}Backup mongodump:{X} {dest}")
+        # rencana dihitung ulang sesudah backup — yang dihapus = yang ada di cadangan
+        p = await cutoff_reset.build_plan(db, reset_nomor=reset_nomor)
+        res = await cutoff_reset.apply_plan(db, p)
+        print(f"\n{G}{B}CUTOFF SELESAI.{X} {res['deleted_total']} dokumen transaksi/log dihapus dari "
+              f"{len(res['deleted'])} koleksi; field turunan direset di {len(res['derived'])} koleksi; "
+              f"{res['counters_reset']} penghitung nomor direset.")
+        print(f"Pulihkan bila perlu: mongorestore --uri \"$MONGO_URL\" --gzip --nsInclude '{dbname}.*' "
+              f"--drop {dest}")
+        print(f"{Y}Restart backend sesudah cutoff, lalu isi saldo awal (kas/bank, persediaan, WIP, "
+              f"piutang/hutang) dan impor PO berjalan.{X}")
+        return 0
+    finally:
+        client.close()
 
 
 async def main(apply: bool, yes: bool) -> int:
@@ -118,5 +214,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--yes", action="store_true", help="lewati konfirmasi interaktif")
+    ap.add_argument("--transaksi-saja", action="store_true",
+                    help="cutoff: hapus transaksi & log saja, pertahankan konfigurasi & master")
+    ap.add_argument("--reset-nomor", action="store_true",
+                    help="(dengan --transaksi-saja) nomor dokumen transaksi mulai dari 1 lagi")
     a = ap.parse_args()
+    if a.reset_nomor and not a.transaksi_saja:
+        ap.error("--reset-nomor hanya berlaku bersama --transaksi-saja")
+    if a.transaksi_saja:
+        sys.exit(asyncio.run(main_transaksi_saja(a.apply, a.yes, a.reset_nomor)))
     sys.exit(asyncio.run(main(a.apply, a.yes)))

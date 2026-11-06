@@ -332,6 +332,25 @@ def stock_status(qty: float, threshold: float) -> str:
     return 'in_stock'
 
 
+async def refresh_catalog_stats(db, catalog_id: str) -> dict:
+    """Ringkasan katalog (jumlah item aktif, total stok, stok rendah/habis) → `marketing_catalogs`.
+
+    2026-11-06 (pola P7): dulu EMPAT salinan `_refresh_catalog_stats` (items/mgmt/stock/shared) membaca
+    `to_list(500)` — katalog toko > 500 item (data VPS kini sampai 313 per toko, 1.243 varian) membuat
+    jumlah item & total stok terpotong diam-diam. Kini satu fungsi, dihitung dari SEMUA item."""
+    n, total, low, out = 0, 0.0, 0, 0
+    async for i in db.marketing_catalog_items.find(
+            {'catalog_id': catalog_id, 'is_active': True}, {'_id': 0, 'stock_quantity': 1, 'stock_status': 1}):
+        n += 1
+        total += _f(i.get('stock_quantity'))
+        st = i.get('stock_status')
+        low += 1 if st == 'low_stock' else 0
+        out += 1 if st == 'out_of_stock' else 0
+    stats = {'item_count': n, 'total_stock': total, 'low_stock_count': low, 'out_of_stock_count': out}
+    await db.marketing_catalogs.update_one({'id': catalog_id}, {'$set': {**stats, 'updated_at': _now()}})
+    return stats
+
+
 def cache_patch(res: dict, threshold: float) -> dict:
     """Fragment `$set` untuk menyegarkan CACHE stok item katalog (K-7a)."""
     avail = float(res.get('available') or 0)

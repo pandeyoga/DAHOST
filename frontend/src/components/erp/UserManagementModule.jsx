@@ -1,5 +1,6 @@
 
 import { useState, useEffect } from 'react';
+import { toast } from 'sonner';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Plus, Pencil, UserX, UserCheck, Trash2, Link as LinkIcon } from 'lucide-react';
 import axios from 'axios';
@@ -102,6 +103,14 @@ export default function UserManagementModule({ token }) {
     setShowModal(true);
   };
 
+  // 2026-11-06 (pola P6): jawaban server diperiksa; bila ditolak pesan server ditampilkan.
+  const okOrToast = async (r, fallback) => {
+    if (r.ok) return true;
+    const d = await r.json().catch(() => ({}));
+    toast.error(typeof d.detail === 'string' ? d.detail : fallback);
+    return false;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const payload = { ...form };
@@ -113,27 +122,31 @@ export default function UserManagementModule({ token }) {
     }
     const url = editData ? `/api/users/${editData.id}` : '/api/users';
     const method = editData ? 'PUT' : 'POST';
-    await fetch(url, {
+    const r = await fetch(url, {
       method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload)
     });
+    // 2026-11-06 (pola P6): dulu popup langsung ditutup walau server menolak (email dobel, tidak berhak)
+    if (!(await okOrToast(r, 'Gagal menyimpan pengguna'))) return;
     setShowModal(false);
     fetchUsers();
   };
 
   const toggleStatus = async (row) => {
     const newStatus = row.status === 'active' ? 'inactive' : 'active';
-    await fetch(`/api/users/${row.id}`, {
+    const r = await fetch(`/api/users/${row.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ status: newStatus })
     });
+    await okOrToast(r, 'Gagal mengubah status pengguna');
     fetchUsers();
   };
 
   const handleDelete = async () => {
     if (!confirmDelete) return;
-    await fetch(`/api/users/${confirmDelete.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    const r = await fetch(`/api/users/${confirmDelete.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    if (!(await okOrToast(r, 'Gagal menghapus pengguna'))) return;
     setConfirmDelete(null);
     fetchUsers();
   };

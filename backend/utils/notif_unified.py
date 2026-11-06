@@ -616,6 +616,8 @@ async def run_action_resolver(db, *, now=None, today: Optional[date] = None,
 # Action yang masih terbuka TIDAK PERNAH dihapus. Hanya kanal in-app: outbox
 # WA/email klien maklon & notifikasi portal host live tidak disentuh.
 # ─────────────────────────────────────────────────────────────────────────────
+# 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+CATEGORY_CONFIG = "notif_category_config"
 RETENTION_DEFAULT_DAYS = 90
 RETENTION_MIN_DAYS = 7
 RETENTION_MAX_DAYS = 3650
@@ -631,7 +633,7 @@ def clamp_retention_days(v) -> int:
 
 
 async def retention_days(db) -> int:
-    doc = await db.notif_category_config.find_one({'id': 'default'}, {'_id': 0, 'retention_days': 1}) or {}
+    doc = await db[CATEGORY_CONFIG].find_one({'id': 'default'}, {'_id': 0, 'retention_days': 1}) or {}
     return clamp_retention_days(doc.get('retention_days') or RETENTION_DEFAULT_DAYS)
 
 

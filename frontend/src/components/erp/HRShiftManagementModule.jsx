@@ -75,7 +75,7 @@ function ShiftCard({ shift, onEdit, onDelete, assignCount }) {
 function ShiftForm({ initial, shifts, onSave, onCancel }) {
   const [form, setForm] = useState(initial || {
     shift_code: '', shift_name: '', start_time: '08:00', end_time: '17:00',
-    break_duration_minutes: 60, days_active: ['Mon','Tue','Wed','Thu','Fri'],
+    break_duration_minutes: 60, days_active: ['Mon','Tue','Wed','Thu','Fri','Sat'], // pola P5 (2026-11-06): 6 hari kerja
     is_overnight: false, color: '#3b82f6', description: '',
   });
   const [saving, setSaving] = useState(false);

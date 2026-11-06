@@ -267,4 +267,5 @@ async def product_detail(material_id: str, request: Request):
     return {"ok": True, "material": serialize_doc(mat), "model": serialize_doc(model),
             "hpp_layers": serialize_doc(snap), "catalog_items": serialize_doc(cat),
             "bom": {"exists": bool(bom), "id": bom.get("id", ""),
-                    "line_count": len(bom.get("items") or bom.get("lines") or [])}}
+                    # 2026-11-06 (pola P3): baris BOM disimpan di `materials` (bukan items/lines)
+                    "line_count": len(bom.get("materials") or bom.get("items") or bom.get("lines") or [])}}

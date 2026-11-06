@@ -27,16 +27,9 @@ def _now():   return datetime.now(timezone.utc)
 # menjadi "pcs" (form menawarkan "lembar" → tersimpan "pcs"). Sekarang ditolak dengan pesan.
 from routes.rahaza_inventory_shared import MATERIAL_UNITS  # noqa: E402
 
-# Ejaan lain untuk satuan yang SAMA (bukan konversi ke satuan lain).
-_UNIT_SPELLINGS = {
-    "piece": "pcs", "pieces": "pcs", "buah": "pcs",
-    "meter": "m", "centimeter": "cm",
-    "kilogram": "kg", "gr": "gram", "grams": "gram",
-    "pasang": "pair", "set/pair": "set",
-    "rolls": "rol", "roll": "rol",
-    "pack": "pak", "packs": "pak",
-    "karton/dus": "karton", "dus": "karton",
-}
+# 2026-11-06 (pola P8): kamus ejaan satuan dipindah ke `core.uom.UNIT_SPELLINGS` (satu sumber).
+# Dulu di sini "roll" → "rol" dan "pack" → "pak", berlawanan dengan data master material.
+from core.uom import canonical_unit  # noqa: E402
 
 
 HPP_EDIT_BLOCKED_MSG = (
@@ -48,8 +41,7 @@ HPP_EDIT_BLOCKED_MSG = (
 def _normalize_unit(unit: str) -> str:
     if not unit:
         return "pcs"
-    u = str(unit).strip().lower()
-    u = _UNIT_SPELLINGS.get(u, u)
+    u = canonical_unit(unit)
     if u not in MATERIAL_UNITS:
         raise HTTPException(400, f"Satuan '{unit}' tidak dikenal. Pilih salah satu: {', '.join(MATERIAL_UNITS)}.")
     return u
@@ -85,31 +77,9 @@ async def _log_movement(db, user: dict, *, material_id: str, mv_type: str, qty: 
     }
     await db.rahaza_material_movements.insert_one(mvdoc)
 
-async def _enrich_movement(db, mv: dict) -> dict:
-    """Lengkapi baris kartu stok dengan konteks permintaan/pinjaman — SSOT SAJA.
-
-    FASE 10: sebelumnya membaca `acc_internal_requests` & `acc_loans` (koleksi legacy
-    yang akan di-drop). Sekarang membaca SSOT: `dewi_accessory_requests` untuk
-    permintaan internal dan `dewi_asset_loans` untuk peminjaman alat.
-    """
-    if mv.get("related_req_id"):
-        req = await db.dewi_accessory_requests.find_one(
-            {"id": mv["related_req_id"]},
-            {"_id": 0, "request_code": 1, "divisi": 1, "request_type": 1},
-        )
-        if req:
-            mv["related_request"] = {
-                "request_number": req.get("request_code", ""),
-                "division": req.get("divisi", ""),
-            }
-    if mv.get("related_loan_id"):
-        loan = await db.dewi_asset_loans.find_one(
-            {"id": mv["related_loan_id"]},
-            {"_id": 0, "loan_number": 1, "borrower_name": 1},
-        )
-        if loan:
-            mv["related_loan"] = loan
-    return mv
+# 2026-11-06 (pola P2): salinan `_enrich_movement` yang tidak pernah dipanggil dihapus — versi yang
+# dipakai ada di routes/dewi_accessories_stock.py (dulu salinan ini membaca `dewi_asset_loans` lewat
+# `related_loan_id` yang tidak pernah ditulis).
 
 # 2026-11-06 (Tahap 2): nama kategori untuk layar — satu definisi di core.accessory_stock
 from core.accessory_stock import (  # noqa: E402
@@ -239,9 +209,12 @@ async def create_item(request: Request):
     # RC-5 fix: atomic race-safe numbering (was count_documents()+1)
     code = (body.get("code") or await gen_prefixed_number(db, "rahaza_materials", "code", "ACC-", 4)).strip().upper()
 
-    # Duplicate code guard (only within accessory namespace + active)
-    if await db.rahaza_materials.find_one({"code": code, "type": "accessory", "active": True}):
-        raise HTTPException(409, f"Kode '{code}' sudah terpakai untuk aksesoris.")
+    # 2026-11-06 (pola P8): cek kode SAMA dengan master material (`rahaza_inventory_materials`):
+    # kode unik di SEMUA jenis material aktif (indeks unik `code` + active). Dulu hanya sesama
+    # aksesoris → kode milik kain/FG lolos cek lalu gagal di indeks sebagai galat 500.
+    clash = await db.rahaza_materials.find_one({"code": code, "active": True}, {"_id": 0, "type": 1, "name": 1})
+    if clash:
+        raise HTTPException(409, f"Kode '{code}' sudah terpakai ({clash.get('name') or clash.get('type')}).")
 
     unit = _normalize_unit(body.get("unit") or "pcs")
 

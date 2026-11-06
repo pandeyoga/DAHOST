@@ -29,6 +29,7 @@ import { PageHeader } from './moduleAtoms';
 import { EmptyState } from './EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatNumber } from '@/lib/format';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -113,7 +114,7 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
                   <Row label="Paid?" value={meta.is_paid ? '✓ Ya' : '✗ Tidak'} />
                   {meta.half_day && <Row label="Setengah Hari" value={meta.half_day} />}
                   {meta.attachment_url && (
-                    <Row label="Lampiran" value={<a className="text-blue-600 dark:text-blue-300 underline" href={`${API}${meta.attachment_url}`} target="_blank" rel="noreferrer">Lihat dokumen</a>} />
+                    <Row label="Lampiran" value={<a className="text-blue-600 dark:text-blue-300 underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Lihat dokumen</a>} />
                   )}
                 </>
               )}
@@ -166,8 +167,8 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
                   {(meta.photo_url || meta.photo_out_url) && (
                     <div className="grid grid-cols-2 gap-2 pt-1" data-testid="hr-inbox-selfie">
                       {[['Selfie masuk', meta.photo_url], ['Selfie pulang', meta.photo_out_url]].filter(([, u]) => u).map(([lbl, u]) => (
-                        <a key={lbl} href={`${API}${u}`} target="_blank" rel="noreferrer" title={lbl}>
-                          <img src={`${API}${u}`} alt={lbl} className="w-full aspect-[3/4] object-cover rounded-[var(--radius-md)] border border-[var(--glass-border)]" />
+                        <a key={lbl} href={withFileAuth(`${API}${u}`)} target="_blank" rel="noreferrer" title={lbl}>
+                          <img src={withFileAuth(`${API}${u}`)} alt={lbl} className="w-full aspect-[3/4] object-cover rounded-[var(--radius-md)] border border-[var(--glass-border)]" />
                           <span className="text-[11px] text-muted-foreground">{lbl}</span>
                         </a>
                       ))}
@@ -176,7 +177,7 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
                 </>
               )}
               {item.type === 'leave' && meta.attachment_url && (
-                <Row label="Lampiran" value={<a className="text-primary underline" href={`${API}${meta.attachment_url}`} target="_blank" rel="noreferrer">Buka lampiran</a>} />
+                <Row label="Lampiran" value={<a className="text-primary underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>} />
               )}
               {item.type === 'leave' && meta.pay_decision_suggestion && (
                 <Row label="Usulan bayar" value={`${meta.pay_decision_suggestion.decision === 'paid' ? 'Dibayar' : 'Tidak dibayar'} — ${meta.pay_decision_suggestion.reason}`} multiline />
@@ -186,7 +187,7 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
                   <Row label="Tanggal" value={meta.date || '—'} />
                   <Row label="Diminta" value={[meta.requested?.clock_in && `masuk ${meta.requested.clock_in}`, meta.requested?.clock_out && `pulang ${meta.requested.clock_out}`, meta.requested?.status && `status ${meta.requested.status}`].filter(Boolean).join(', ') || '—'} />
                   {meta.locked && <Row label="Catatan" value="Tanggal ini sudah digaji — bila disetujui, selisihnya jadi penyesuaian di gaji berikutnya." multiline />}
-                  {meta.attachment_url && <Row label="Lampiran" value={<a className="text-primary underline" href={`${API}${meta.attachment_url}`} target="_blank" rel="noreferrer">Buka lampiran</a>} />}
+                  {meta.attachment_url && <Row label="Lampiran" value={<a className="text-primary underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>} />}
                 </>
               )}
               <Row label="Alasan" value={item.reason || raw.reason || '—'} multiline />
@@ -315,7 +316,7 @@ function ApproveDialog({ open, item, onClose, onConfirm }) {
                 {KIND_LABEL[item.meta?.leave_kind] || 'Cuti'} · {item.reason || 'tanpa alasan'}
               </p>
               {item.meta?.attachment_url && (
-                <a className="text-xs text-primary underline" href={`${API}${item.meta.attachment_url}`} target="_blank" rel="noreferrer">Buka lampiran</a>
+                <a className="text-xs text-primary underline" href={withFileAuth(`${API}${item.meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>
               )}
               {finalStep ? (
                 <>

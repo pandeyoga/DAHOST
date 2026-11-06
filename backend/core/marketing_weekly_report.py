@@ -284,7 +284,7 @@ async def build_weekly_report(db, week_start: Any = None,
             "account_code": acc.get("account_code") or "",
             "account_name": acc.get("account_name") or acc.get("name") or "",
             "platform": acc.get("platform") or "",
-            "pic": acc.get("pic_name") or "",
+            "pic": acc.get("pic_user_name") or acc.get("pic_name") or "",  # 2026-11-06 (pola P3): penulis = pic_user_name
             "omzet": round(rev),
             "omzet_produk": round(cur["revenue_product"]),
             "pesanan": int(cur["orders"]),

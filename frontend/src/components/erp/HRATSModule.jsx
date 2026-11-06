@@ -126,12 +126,15 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
         method: 'PUT', headers,
         body: JSON.stringify({ stage: targetStage, stage_note: form.notes || form.rejection_reason || '' }),
       });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
       if (d.ok) {
         toast.success(targetStage === 'Hired'
           ? 'Kandidat diterima! Onboarding otomatis dibuat.'
           : `Kandidat dipindahkan ke "${targetStage}"`);
         onSuccess();
+      } else {
+        // 2026-11-06 (pola P6): dulu penolakan server diam saja (popup tetap terbuka tanpa pesan)
+        toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal memperbarui');
       }
     } catch (e) {
       toast.error('Gagal memperbarui');
@@ -324,7 +327,7 @@ function InterviewResultModal({ interview, candidateId, headers, onSuccess, onCl
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      await api(`/candidates/${candidateId}/interviews/${interview.interview_id}`, {
+      const r = await api(`/candidates/${candidateId}/interviews/${interview.interview_id}`, {
         method: 'PUT', headers,
         body: JSON.stringify({
           status: form.status,
@@ -333,6 +336,7 @@ function InterviewResultModal({ interview, candidateId, headers, onSuccess, onCl
           notes: form.notes,
         }),
       });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       toast.success('Hasil interview disimpan');
       onSuccess();
     } catch { toast.error('Gagal menyimpan'); }
@@ -424,10 +428,11 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
     setUploadingCV(true);
     try {
       if (cvInput.mode === 'url') {
-        await api(`/candidates/${candidate.candidate_id}/upload-cv`, {
+        const r = await api(`/candidates/${candidate.candidate_id}/upload-cv`, {
           method: 'POST', headers,
           body: JSON.stringify({ cv_url: cvInput.url }),
         });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       }
       toast.success('CV disimpan');
       refreshCandidate();
@@ -443,13 +448,15 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
       const reader = new FileReader();
       reader.onload = async (e) => {
         const base64 = e.target.result.split(',')[1];
-        await api(`/candidates/${candidate.candidate_id}/upload-cv`, {
+        const r = await api(`/candidates/${candidate.candidate_id}/upload-cv`, {
           method: 'POST', headers,
           body: JSON.stringify({ cv_data: base64, cv_filename: file.name, cv_size: file.size }),
         });
+        setUploadingCV(false);
+        // 2026-11-06 (pola P6): onload berjalan di luar try → cek jawaban di sini
+        if (!r.ok) { toast.error('Gagal upload CV'); return; }
         toast.success('CV berhasil diupload');
         refreshCandidate();
-        setUploadingCV(false);
       };
       reader.readAsDataURL(file);
     } catch { toast.error('Gagal upload CV'); setUploadingCV(false); }
@@ -812,7 +819,8 @@ function CandidateDetailModal({ candidate: initCandidate, headers, jobs, onStage
         {/* Talent pool footer */}
         <div className="p-4 border-t border-[var(--glass-border)] shrink-0">
           <button onClick={async () => {
-            await api(`/talent-pool/${candidate.candidate_id}/toggle`, { method: 'POST', headers });
+            const r = await api(`/talent-pool/${candidate.candidate_id}/toggle`, { method: 'POST', headers });
+            if (!r.ok) { toast.error('Gagal mengubah Talent Pool'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
             setCandidate(p => ({...p, is_talent_pool: !p.is_talent_pool}));
             onRefresh();
             toast.success(candidate.is_talent_pool ? 'Dikeluarkan dari Talent Pool' : 'Ditambahkan ke Talent Pool');
@@ -1032,11 +1040,10 @@ export default function HRATSModule({ token }) {
   const handleSaveJob = async () => {
     setSaving(true);
     try {
-      if (editJob) {
-        await api(`/jobs/${editJob.job_id}`, { method: 'PUT', headers, body: JSON.stringify(jobForm) });
-      } else {
-        await api(`/jobs`, { method: 'POST', headers, body: JSON.stringify(jobForm) });
-      }
+      const r = editJob
+        ? await api(`/jobs/${editJob.job_id}`, { method: 'PUT', headers, body: JSON.stringify(jobForm) })
+        : await api(`/jobs`, { method: 'POST', headers, body: JSON.stringify(jobForm) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): dulu form ditutup walau ditolak
       setShowJobForm(false);
       await refresh();
       toast.success(editJob ? 'Lowongan diperbarui' : 'Lowongan dibuat');
@@ -1047,15 +1054,18 @@ export default function HRATSModule({ token }) {
     setSaving(true);
     try {
       const r = await api(`/candidates`, { method: 'POST', headers, body: JSON.stringify(candForm) });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      // 2026-11-06 (pola P6): dulu "Kandidat ditambahkan" muncul & form ditutup walau server menolak
+      if (!r.ok || !d.ok) { toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menambah kandidat'); return; }
       if (d.ok && cvFile) {
         const reader = new FileReader();
         reader.onload = async (e) => {
           const base64 = e.target.result.split(',')[1];
-          await api(`/candidates/${d.candidate.candidate_id}/upload-cv`, {
+          const rc = await api(`/candidates/${d.candidate.candidate_id}/upload-cv`, {
             method: 'POST', headers,
             body: JSON.stringify({ cv_data: base64, cv_filename: cvFile.name, cv_size: cvFile.size }),
           });
+          if (!rc.ok) toast.error('Kandidat tersimpan, tetapi CV gagal diunggah. Unggah ulang dari detail kandidat.');  // 2026-11-06 (pola P6): dulu penolakan server diam saja
         };
         reader.readAsDataURL(cvFile);
       }
@@ -1282,7 +1292,7 @@ export default function HRATSModule({ token }) {
                       <td className="px-4 py-3">
                         <div className="flex gap-1">
                           <button onClick={() => setSelectedCandidate(c)} className="p-1.5 rounded hover:bg-foreground/10 text-muted-foreground"><Eye className="w-4 h-4" /></button>
-                          <button onClick={async () => { await api(`/talent-pool/${c.candidate_id}/toggle`, { method: 'POST', headers }); refresh(); toast.success('Dikeluarkan dari pool'); }}
+                          <button onClick={async () => { const r = await api(`/talent-pool/${c.candidate_id}/toggle`, { method: 'POST', headers }); if (!r.ok) { toast.error('Gagal mengeluarkan dari pool'); return; } refresh(); toast.success('Dikeluarkan dari pool'); }}
                             className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-500/10 text-red-700 dark:text-red-400" data-testid={`remove-talent-pool-${c.candidate_id}`}>
                             <X className="w-4 h-4" />
                           </button>

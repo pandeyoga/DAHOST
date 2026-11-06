@@ -52,10 +52,10 @@ async def get_garments(request: Request):
     for p in partners:
         # Kenali beberapa varian field status: `active` (seed), `is_active` (dibuat via UI),
         # atau `status` string. Default AKTIF bila tidak ada penanda apa pun.
-        if 'active' in p:
-            is_active = bool(p.get('active', True))
-        elif 'is_active' in p:
-            is_active = bool(p.get('is_active', True))
+        # 2026-11-06 (pola P3): layar Vendor CMT menonaktifkan lewat `is_active` sementara dokumen impor
+        # juga membawa `active: True` — dulu `active` menang sehingga vendor nonaktif tetap tampil aktif.
+        if 'active' in p or 'is_active' in p:
+            is_active = p.get('active', True) is not False and p.get('is_active', True) is not False
         elif 'status' in p:
             is_active = (p.get('status') == 'active')
         else:

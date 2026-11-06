@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 from utils.waktu import now_wib
+from utils.employee_identity import job_title_of
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/dewi/kpi", tags=["dewi-kpi-reports"])
@@ -494,7 +495,7 @@ async def export_employee_kpi_pdf(period_id: str, employee_id: str, request: Req
             ["Nama Karyawan", emp.get("name", "-") if emp else "-",
              "NIK / Kode", emp.get("employee_code", "-") if emp else "-"],
             ["Departemen", emp.get("department", "-") if emp else "-",
-             "Jabatan", emp.get("position", "-") if emp else "-"],
+             "Jabatan", job_title_of(emp) or "-"],  # 2026-11-06 (pola P3)
             ["Periode", period.get("name", period_id), "Tahun", str(period.get("year", ""))],
         ]
         emp_table = Table(emp_data, colWidths=[3.5*cm, 5.5*cm, 3.5*cm, 4.5*cm])

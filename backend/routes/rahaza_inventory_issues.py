@@ -183,12 +183,14 @@ async def submit_mi(mid: str, request: Request):
     missing = [it for it in items if not it.get("location_id")]
     if missing:
         raise HTTPException(400, f"{len(missing)} item belum punya lokasi dan tidak ada gudang aktif untuk dipilih otomatis.")
-    await db.rahaza_material_issues.update_one(
-        {"id": mid},
+    res = await db.rahaza_material_issues.update_one(
+        {"id": mid, "status": mi.get("status")},   # 2026-11-06 (pola P9)
         {"$set": {"items": items, "status": "pending_approval", "submitted_at": _now(),
                   "submitted_by": user["id"], "updated_at": _now(),
                   **({"autofilled_locations": filled} if filled else {})}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, f"MI {mi.get('mi_number', '')} baru saja diubah pengguna lain — muat ulang.")
     await log_activity(user["id"], user.get("name", ""), "submit", "rahaza.mi", mi["mi_number"])
     out = await db.rahaza_material_issues.find_one({"id": mid}, {"_id": 0})
     await _enrich_mi(db, out)
@@ -246,11 +248,15 @@ async def reject_mi(mid: str, request: Request):
         raise HTTPException(404, "MI tidak ditemukan.")
     if mi.get("status") != "pending_approval":
         raise HTTPException(400, f"Hanya MI Pending Approval yang bisa di-reject. Status: {mi.get('status')}")
-    await db.rahaza_material_issues.update_one(
-        {"id": mid},
+    # 2026-11-06 (pola P9): hanya yang MASIH menunggu — dulu "tolak" bisa menimpa MI yang baru saja
+    # di-approve (stok terpotong & dijurnal, MI tampak ditolak).
+    res = await db.rahaza_material_issues.update_one(
+        {"id": mid, "status": "pending_approval"},
         {"$set": {"status": "rejected", "rejected_at": _now(), "rejected_by": user["id"],
                  "rejected_by_name": user.get("name", ""), "rejected_reason": reason, "updated_at": _now()}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, f"MI {mi.get('mi_number', '')} sedang/baru saja diproses pengguna lain — muat ulang.")
     await log_activity(user["id"], user.get("name", ""), f"reject:{reason}", "rahaza.mi", mi["mi_number"])
     out = await db.rahaza_material_issues.find_one({"id": mid}, {"_id": 0})
     await _enrich_mi(db, out)

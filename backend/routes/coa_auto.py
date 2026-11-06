@@ -14,7 +14,8 @@ Prinsip:
 
 Collection: rahaza_coa_auto_settings (single doc id='default')
 Registry entity_type default:
-  cmt_vendor → dewi_cmt_partners (parent 2-1100 Hutang Usaha/AP), field ap_account_code
+  cmt_vendor → vendor_partners (parent 2-1110 Hutang Vendor CMT), field ap_account_code
+  supplier   → rahaza_suppliers (parent 2-1100 Hutang Usaha/AP), field ap_account_code
   bank       → rahaza_cash_accounts (parent 1-1200 Bank), field gl_account_code
 """
 from fastapi import APIRouter, Request, HTTPException, Depends, Query
@@ -69,7 +70,10 @@ DEFAULT_ENTITY_TYPES = {
         "enabled": True,
         "parent_code": "2-1100",          # Hutang Usaha (AP control)
         "label": "Supplier Bahan/Aksesori — Hutang (AP)",
-        "collection": "rahaza_vendors",
+        # 2026-11-06 (pola P2): master pemasok = `rahaza_suppliers` (layar Pemasok, PO, GR, faktur
+        # dari GR). Dulu `rahaza_vendors` — koleksi yang tidak ada → sub-ledger hutang per pemasok
+        # tidak pernah dibuat & faktur pemasok selalu jatuh ke akun kontrol 2-1100.
+        "collection": "rahaza_suppliers",
         "target_field": "ap_account_code",
         "name_prefix": "Hutang Supplier",
     },
@@ -138,11 +142,15 @@ ENTITY_CODE_FIELDS = {
     "dewi_cmt_partners": ["code"],
     "vendor_partners": ["code"],
     "dewi_maklon_clients": ["code"],
-    "rahaza_vendors": ["code"],
+    "rahaza_suppliers": ["code"],
     "rahaza_customers": ["code"],
     "marketing_platform_accounts": ["account_code", "code"],
     "rahaza_cash_accounts": ["code"],
 }
+
+
+# Meta yang ditentukan program (tidak bisa diubah lewat PUT /settings) — lihat get_auto_settings.
+CODE_OWNED_META = ("collection", "target_field")
 
 
 async def get_auto_settings(db) -> dict:
@@ -170,6 +178,13 @@ async def get_auto_settings(db) -> dict:
                 for meta in ("collection", "target_field", "name_prefix", "label",
                              "kind", "parent_by_platform", "code_format"):
                     if meta in v and meta not in et[k]:
+                        et[k][meta] = v[meta]
+                        changed = True
+                # 2026-11-06 (pola P2): koleksi master & field tujuan milik PROGRAM (layar hanya
+                # mengubah enabled/parent_code) → nilai tersimpan yang lama (mis. supplier →
+                # `rahaza_vendors`) disembuhkan ke bawaan, bukan dibiarkan menunjuk koleksi yang salah.
+                for meta in CODE_OWNED_META:
+                    if meta in v and et[k].get(meta) != v[meta]:
                         et[k][meta] = v[meta]
                         changed = True
         if changed:

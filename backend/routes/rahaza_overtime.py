@@ -344,8 +344,10 @@ async def approve_overtime_request(db, ot_id: str, user: dict, note: str = "") -
         raise HTTPException(400, f"Hanya request pending yang bisa di-approve (current: {doc.get('status')}).")
     await ensure_not_own_overtime(db, doc, user)
 
-    await db.rahaza_overtime_requests.update_one(
-        {"id": ot_id},
+    # 2026-11-06 (pola P9): hanya yang MASIH pending — setuju/tolak bersamaan tidak saling menimpa
+    # (lembur disetujui masuk upah lembur payroll) dan yang kalah tidak mengirim kabar palsu.
+    res = await db.rahaza_overtime_requests.update_one(
+        {"id": ot_id, "status": "pending"},
         {"$set": {
             "status": "approved",
             "approved_by": user["id"],
@@ -355,6 +357,8 @@ async def approve_overtime_request(db, ot_id: str, user: dict, note: str = "") -
             "updated_at": _now(),
         }}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Pengajuan lembur ini baru saja diputuskan orang lain — muat ulang halaman.")
     out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
     await notify_overtime_decision(db, out or doc, approved=True)  # 2026-11-02
     return out or doc
@@ -367,8 +371,8 @@ async def reject_overtime_request(db, ot_id: str, user: dict, reason: str) -> di
     if doc.get("status") != "pending":
         raise HTTPException(400, "Hanya request pending yang bisa di-reject.")
     await ensure_not_own_overtime(db, doc, user)
-    await db.rahaza_overtime_requests.update_one(
-        {"id": ot_id},
+    res = await db.rahaza_overtime_requests.update_one(
+        {"id": ot_id, "status": "pending"},   # 2026-11-06 (pola P9)
         {"$set": {
             "status": "rejected",
             "rejected_reason": reason,
@@ -379,6 +383,8 @@ async def reject_overtime_request(db, ot_id: str, user: dict, reason: str) -> di
             "updated_at": _now(),
         }}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Pengajuan lembur ini baru saja diputuskan orang lain — muat ulang halaman.")
     out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
     await notify_overtime_decision(db, out or doc, approved=False, reason=reason)  # 2026-11-02
     return out or doc
@@ -417,9 +423,13 @@ async def cancel_request(ot_id: str, request: Request):
         if doc.get("status") != "pending":
             raise HTTPException(400, "Hanya pending yang bisa di-cancel.")
 
-    await db.rahaza_overtime_requests.update_one(
-        {"id": ot_id},
+    # 2026-11-06 (pola P9): status lama di filter — pembatalan karyawan tidak menimpa keputusan atasan
+    # yang baru saja masuk di sela baca & tulis.
+    res = await db.rahaza_overtime_requests.update_one(
+        {"id": ot_id, "status": doc.get("status")},
         {"$set": {"status": "cancelled", "updated_at": _now()}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Pengajuan lembur ini baru saja diputuskan orang lain — muat ulang halaman.")
     await close_overtime_notifs(db, ot_id)   # 2026-11-02 (K30)
     return {"ok": True}

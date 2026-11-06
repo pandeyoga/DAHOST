@@ -26,6 +26,7 @@ from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
+from core import doc_lock
 import logging
 import uuid
 import csv
@@ -52,6 +53,7 @@ STATUS_LABELS = {
 }
 
 from core.roles import APPROVER_ROLES, FINANCE_ROLES  # T-08: satu konstanta
+from utils.employee_identity import job_title_of
 from routes.rahaza_payroll_shared import (  # 2026-11-02 (P5) · K25 pemisahan tugas
     ensure_not_self_approval, merge_own_failures, notify_requester, parse_ymd, resolve_payment_account,
     split_own_requests,
@@ -196,7 +198,7 @@ async def create_claim(body: ClaimCreate, user: dict = Depends(require_auth)):
         'employee_id': user.get('id'),
         'employee_name': user.get('name') or (emp.get('name') if emp else ''),
         'employee_dept': emp.get('department') if emp else '',
-        'employee_position': emp.get('position') if emp else '',
+        'employee_position': job_title_of(emp),  # 2026-11-06 (pola P3)
         'title': body.title,
         'items': items,
         'total_amount': total,
@@ -456,7 +458,7 @@ async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Dep
     ensure_not_self_approval(doc, user, what='klaim biaya')
 
     now = _now()
-    await db.rahaza_expense_claims.update_one(
+    res = await db.rahaza_expense_claims.update_one(
         {'id': claim_id, 'status': 'submitted'},
         {'$set': {
             'status': 'approved',
@@ -467,6 +469,8 @@ async def approve_claim(claim_id: str, payload: ApprovePayload, user: dict = Dep
             'updated_at': now,
         }}
     )
+    # 2026-11-06 (pola P9): yang kalah balapan tidak mengirim kabar "disetujui" palsu.
+    doc_lock.require_matched(res, f"Klaim {doc.get('claim_number') or ''} baru saja diputuskan pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'approve', 'expense_claim',
                        f"Approve klaim {doc.get('claim_number')}")
     await _notify_claim_decision(db, doc, approved=True, note=payload.note or '')
@@ -486,8 +490,10 @@ async def reject_claim(claim_id: str, payload: RejectPayload, user: dict = Depen
         raise HTTPException(400, f"Status klaim saat ini: {doc.get('status')}. Tidak bisa di-reject.")
 
     now = _now()
-    await db.rahaza_expense_claims.update_one(
-        {'id': claim_id},
+    # 2026-11-06 (pola P9): tolak hanya bila status MASIH submitted/approved dan klaim tidak sedang
+    # dicairkan — dulu bisa menimpa klaim yang baru saja dicairkan (jurnal bayar tetap ada).
+    res = await db.rahaza_expense_claims.update_one(
+        {'id': claim_id, 'status': {'$in': ['submitted', 'approved']}, **doc_lock.lock_free('disburse_lock')},
         {'$set': {
             'status': 'rejected',
             'reject_reason': payload.reason,
@@ -497,6 +503,7 @@ async def reject_claim(claim_id: str, payload: RejectPayload, user: dict = Depen
             'updated_at': now,
         }}
     )
+    doc_lock.require_matched(res, f"Klaim {doc.get('claim_number') or ''} baru saja diproses pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'reject', 'expense_claim',
                        f"Reject klaim {doc.get('claim_number')}: {payload.reason}")
     await _notify_claim_decision(db, doc, approved=False, note=payload.reason)
@@ -512,7 +519,17 @@ async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = D
     # (termasuk hr/manager) sehingga HR bisa menyetujui sekaligus mencairkan.
     if role not in FINANCE_ROLES:  # FIN-02
         raise HTTPException(403, 'Hanya Keuangan yang dapat mencairkan klaim (pemisahan tugas: HR tidak membayar).')
+    # 2026-11-06 (pola P9): klaim DIKUNCI selama dicairkan — penolakan / pencairan kedua menunggu (409).
+    token = await doc_lock.claim(db, 'rahaza_expense_claims', claim_id, field='disburse_lock', actor=user,
+                                 not_found='Klaim tidak ditemukan',
+                                 busy='Klaim ini sedang dicairkan / diproses pengguna lain — muat ulang.')
+    try:
+        return await _disburse_claim_locked(db, claim_id, payload, user)
+    finally:
+        await doc_lock.release(db, 'rahaza_expense_claims', claim_id, token, field='disburse_lock')
 
+
+async def _disburse_claim_locked(db, claim_id: str, payload, user: dict):
     doc = await _get_claim_or_404(db, claim_id)
     if doc.get('status') != 'approved':
         raise HTTPException(400, f"Status klaim saat ini: {doc.get('status')}. Harus approved untuk disbursement.")
@@ -565,7 +582,7 @@ async def disburse_claim(claim_id: str, payload: DisbursePayload, user: dict = D
 
     # Update claim status
     await db.rahaza_expense_claims.update_one(
-        {'id': claim_id},
+        {'id': claim_id, 'status': 'approved'},
         {'$set': {
             'status': 'posted',
             'paid_by': user.get('id'),
@@ -650,7 +667,10 @@ async def get_categories(user: dict = Depends(require_auth)):
     coa_categories = await db.rahaza_coa_accounts.find(
         {
             'code': {'$regex': '^6-3'},
-            'is_active': {'$ne': False},
+            # 2026-11-06 (pola P3): Bagan Akun menandai nonaktif dengan `active`, dan akun grup tidak
+            # bisa dijurnal — dulu disaring `is_active` (tak pernah ditulis) → akun nonaktif ikut tampil.
+            'active': {'$ne': False},
+            'is_group': {'$ne': True},
         },
         {'_id': 0, 'code': 1, 'name': 1, 'description': 1}
     ).sort('code', 1).to_list(100)

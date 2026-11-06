@@ -41,7 +41,7 @@ async def create_task_template(data: TaskTemplateCreate, request: Request):
         "description": _sanitize(data.description or "", 2000),
         "task_type": data.task_type,
         "recurrence": data.recurrence,
-        "recurrence_config": data.recurrence_config.dict(),
+        "recurrence_config": data.recurrence_config.model_dump(exclude_none=True),  # 2026-11-06 (pola P1): tanpa kunci None (scheduler membaca int(...))
         "default_assigned_role": data.default_assigned_role,
         "account_id": data.account_id,
         "priority": data.priority,
@@ -113,7 +113,7 @@ async def update_task_template(template_id: str, data: TaskTemplateCreate, reque
         "description": data.description or "",
         "task_type": data.task_type,
         "recurrence": data.recurrence,
-        "recurrence_config": data.recurrence_config.dict(),
+        "recurrence_config": data.recurrence_config.model_dump(exclude_none=True),  # 2026-11-06 (pola P1): tanpa kunci None (scheduler membaca int(...))
         "default_assigned_role": data.default_assigned_role,
         "account_id": data.account_id,
         "priority": data.priority,

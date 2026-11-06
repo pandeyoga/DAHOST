@@ -365,6 +365,27 @@ async def _calc_attitude_score(db, period_id: str, employee_id: str) -> dict:
     }
 
 
+async def resolve_working_days(db, value, period_from, period_to) -> int:
+    """Jumlah hari kerja periode KPI.
+
+    2026-11-06 (pola P5): dulu kosong → 26 (angka tetap) apa pun panjang periodenya — periode triwulan ikut
+    dibagi 26 dan bulan berisi libur nasional tidak terkoreksi. Kini kosong/0 → dihitung dari aturan hari kerja
+    perusahaan (`core.workdays`: hari kerja per minggu + Kalender Produksi). Isian HR (> 0) tetap dipakai."""
+    try:
+        n = int(float(value or 0))
+    except (TypeError, ValueError):
+        n = 0
+    if n > 0:
+        return n
+    if period_from and period_to:
+        from core import workdays
+        try:
+            return max(1, await workdays.count_working_days(db, period_from, period_to))
+        except ValueError:
+            return 1
+    return 0
+
+
 async def _calc_absensi_score(db, period_id: str, employee_id: str) -> dict:
     """
     Hitung absensi score dari data attendance.
@@ -375,10 +396,9 @@ async def _calc_absensi_score(db, period_id: str, employee_id: str) -> dict:
 
     period_from = period.get("period_from")
     period_to = period.get("period_to")
-    working_days = int(period.get("working_days") or 26)
-
     if not period_from or not period_to:
         return {"absensi_score": None, "detail": {"error": "Tanggal periode belum diatur"}}
+    working_days = await resolve_working_days(db, period.get("working_days"), period_from, period_to)
 
     # Query attendance
     att_records = await db.rahaza_attendance_events.find(

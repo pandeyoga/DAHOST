@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint } from './uom/UomPicker';
 import StorageLocationSelect from './StorageLocationSelect';
+import ImportExportToolbar from './ImportExportToolbar';
 // F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
 import { tone } from '@/lib/tone';
 
@@ -311,9 +312,12 @@ function StructureTab({ token }) {
         <div>
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold">Gedung ({buildings.length})</h3>
+            <div className="flex items-center gap-2">
+            <ImportExportToolbar collectionKey="wh_bins" label="Rak & Bin Gudang" onImported={loadBuildings} />
             <button data-testid="add-building-btn" onClick={() => openBldgModal()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-xs font-medium transition-colors">
               <Plus size={13} /> Tambah Gedung
             </button>
+            </div>
           </div>
           {buildings.length === 0 ? (
             <EmptyState

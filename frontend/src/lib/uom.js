@@ -28,11 +28,13 @@ const ROUND = 6;
  * data nyata memakai `rol`/`pak`/`lusin`/`yard` (136 material) — akibatnya
  * satuan bisa tertukar diam-diam saat material lama diedit.
  */
+// 2026-11-06 (pola P8): 'roll'/'pack' = ejaan data (master material & impor Excel); server menerima
+// 'rol'/'gulung'/'pak' lalu menyimpannya sebagai roll/pack (core.uom.canonical_unit).
 export const MATERIAL_UNITS = [
   'm', 'cm', 'yard', 'inch',
   'kg', 'gram', 'ton',
   'pcs', 'lusin', 'kodi', 'gross', 'helai', 'set', 'pair',
-  'rol', 'gulung', 'bal', 'karton', 'pak', 'sak',
+  'roll', 'bal', 'karton', 'pack', 'sak',
   'liter', 'ml',
 ];
 

@@ -548,8 +548,11 @@ async def reject_request(request_id: str, body: dict = None, user: dict = Depend
         # 2026-11-06 (Tahap 2): stok sudah (sebagian) keluar — menolak tidak mengembalikan stok
         raise HTTPException(400, 'Stok permintaan ini sudah (sebagian) dikeluarkan, jadi tidak bisa ditolak. '
                                  'Periksa kartu stok aksesoris.')
-    await db.dewi_accessory_requests.update_one(
-        {'id': request_id},
+    # 2026-11-06 (pola P9): kunci serah (Tahap 1) ikut dihormati — dulu "tolak" bisa menimpa permintaan
+    # yang sedang/baru saja diserahkan (stok sudah terpotong, status tampak ditolak).
+    res = await db.dewi_accessory_requests.update_one(
+        {'id': request_id, 'status': doc['status'], 'stock_issued': {'$ne': True},
+         'delivering': {'$ne': True}},
         {'$set': {
             'status': 'rejected',
             'rejection_reason': body.get('reason', ''),
@@ -558,6 +561,8 @@ async def reject_request(request_id: str, body: dict = None, user: dict = Depend
             'updated_at': now_utc(),
         }}
     )
+    if not res.matched_count:
+        raise HTTPException(409, 'Permintaan ini sedang/baru saja diproses pengguna lain — muat ulang daftar.')
     return {'ok': True}
 
 

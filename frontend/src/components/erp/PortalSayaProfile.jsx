@@ -8,6 +8,7 @@ import {
   Phone, MapPin, UserCheck, Camera, Upload, X,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -135,7 +136,7 @@ export default function PortalSayaProfile({ user, headers }) {
                   <Loader2 className="w-7 h-7 animate-spin text-primary" />
                 ) : previewUrl ? (
                   <img
-                    src={previewUrl.startsWith('blob:') ? previewUrl : (previewUrl.startsWith('/api') ? `${API}${previewUrl}` : previewUrl)}
+                    src={previewUrl.startsWith('blob:') ? previewUrl : withFileAuth(previewUrl.startsWith('/api') ? `${API}${previewUrl}` : previewUrl)}
                     alt="foto profil"
                     className="w-full h-full object-cover"
                     onError={() => setPreviewUrl(null)}

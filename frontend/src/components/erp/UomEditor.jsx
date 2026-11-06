@@ -23,9 +23,10 @@ import {
   MAX_UOMS, normalizeCode, sanitizeUoms, validateUoms, describeHierarchy,
 } from '@/lib/uom';
 
+// 2026-11-06 (pola P8): roll/pack = ejaan master material (dulu rol/gulung/pak → satuan kembar)
 const SATUAN_UMUM = [
-  'pcs', 'lusin', 'kodi', 'gross', 'pak', 'bks', 'box', 'karton', 'bal',
-  'rol', 'gulung', 'cone', 'set', 'pasang', 'lembar',
+  'pcs', 'lusin', 'kodi', 'gross', 'pack', 'bks', 'box', 'karton', 'bal',
+  'roll', 'cone', 'set', 'pasang', 'lembar',
   'm', 'cm', 'yard', 'kg', 'gram', 'liter',
 ];
 

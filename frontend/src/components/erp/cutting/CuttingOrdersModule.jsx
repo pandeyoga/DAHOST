@@ -231,7 +231,9 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
         headers: { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` },
       });
       const d = await r.json();
-      setVariants((Array.isArray(d) ? d : (d?.items || [])).filter((v) => v.active !== false));
+      // 2026-11-06 (pola P1): server membalas {model, variants, count} — dulu dibaca `d.items`
+      // sehingga pilihan varian di form Order Cutting selalu kosong.
+      setVariants((Array.isArray(d) ? d : (d?.variants || [])).filter((v) => v.active !== false));
     } catch {
       setVariants([]);
     }

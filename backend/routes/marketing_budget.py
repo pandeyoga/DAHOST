@@ -264,7 +264,7 @@ async def _livehost_auto_spend(db, account_id: str, period: str):
         info = sal.get(h['id']) or {'salary': 0.0, 'source': 'none', 'reason': ''}
         salary = _num(info.get('salary'), 0)
         share = salary / max(1, len(accs))
-        prorated = round(share * min(1.0, days / 30.0), 2)
+        prorated = round(share * _cycle.month_share(start, end), 2)   # pola P5: bulan kalender, bukan ÷30
         total += prorated
         detail.append({
             'host_id': h['id'], 'host_name': h.get('name', ''),
@@ -719,5 +719,5 @@ async def list_change_log(request: Request,
         q['period'] = period
     if entity:
         q['entity'] = entity
-    rows = await db.marketing_change_log.find(q, {'_id': 0}).sort('at', -1).to_list(limit)
+    rows = await db[_cycle.CHANGE_LOG].find(q, {'_id': 0}).sort('at', -1).to_list(limit)  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
     return serialize_doc({'ok': True, 'total': len(rows), 'entries': rows})

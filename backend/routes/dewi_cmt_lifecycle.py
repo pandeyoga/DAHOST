@@ -176,7 +176,10 @@ async def _compute_vendor_kpis(db, vendor: Dict[str, Any], deep: bool = False) -
     active_dispatches = await db.wh_cmt_dispatches.count_documents(
         {**_disp_q, 'status': {'$in': ['dispatched', 'partially_returned']}}
     )
-    dos_count = await db.dewi_cmt_delivery_orders.count_documents({'partner_id': vid})
+    # 2026-11-06 (pola P2): DO CMT lama (`dewi_cmt_delivery_orders`) & laporan progres lama
+    # (`dewi_cmt_progress`) tidak punya penulis lagi (router diarsipkan; kirim ke CMT kini
+    # `wh_cmt_dispatches`/`vendor_shipments`). Bacaan mati dihapus; bentuk respons tetap.
+    dos_count = 0
 
     # ── CMT Receipts (returns from vendor) ──────────────────────────────────
     receipts_count = await db.cmt_receipts.count_documents({'partner_id': vid})
@@ -202,10 +205,7 @@ async def _compute_vendor_kpis(db, vendor: Dict[str, Any], deep: bool = False) -
     pending_payments_amt = sum(float(p.get('net_amount', 0) or 0) for p in pending_payments)
 
     # ── Progress reports (last 30 days) ─────────────────────────────────────
-    progress_count_30 = await db.dewi_cmt_progress.count_documents({
-        'partner_id': vid,
-        'date': {'$gte': last_30},
-    })
+    progress_count_30 = 0  # 2026-11-06 (pola P2): lihat catatan `dos_count` di atas
 
     kpis = {
         'partner_id': vid,
@@ -265,9 +265,7 @@ async def _compute_vendor_kpis(db, vendor: Dict[str, Any], deep: bool = False) -
                     j['is_overdue'] = False
                     j['days_to_deadline'] = (dl - today).days
         # Progress reports
-        progress = await db.dewi_cmt_progress.find(
-            {'partner_id': vid}, {'_id': 0}
-        ).sort('date', -1).limit(60).to_list(length=60)
+        progress = []  # 2026-11-06 (pola P2): koleksi lama tanpa penulis
         # Dispatches — RC-28: SSOT wh_cmt_dispatches (by cmt_name; tak ada partner_id)
         _pd = await db.dewi_cmt_partners.find_one({'id': vid}, {'_id': 0, 'name': 1})
         _cn = (_pd or {}).get('name') or '__none__'
@@ -275,9 +273,7 @@ async def _compute_vendor_kpis(db, vendor: Dict[str, Any], deep: bool = False) -
             {'cmt_name': _cn}, {'_id': 0}
         ).sort('created_at', -1).limit(50).to_list(length=50)
         # DOs
-        dos = await db.dewi_cmt_delivery_orders.find(
-            {'partner_id': vid}, {'_id': 0}
-        ).sort('created_at', -1).limit(50).to_list(length=50)
+        dos = []  # 2026-11-06 (pola P2): koleksi lama tanpa penulis
         # Receipts
         receipts = await db.cmt_receipts.find(
             {'partner_id': vid}, {'_id': 0}

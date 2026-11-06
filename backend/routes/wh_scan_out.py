@@ -98,8 +98,10 @@ async def today(request: Request, location_id: Optional[str] = None):
     if location_id:
         sheets = await db[so.SHEETS].find({"date": day, "location_id": location_id}, {"_id": 0}
                                           ).sort("seq", 1).to_list(50)
-        lines = await db[so.LINES].find({"date": day, "location_id": location_id}, {"_id": 0}
-                                        ).sort("scanned_at", -1).to_list(2000)
+        # 2026-11-06 (pola P7): SEMUA baris hari ini untuk total & per SKU (dulu to_list(2000) — hari ramai
+        # memotong total scan diam-diam, padahal total ini dicocokkan dengan pesanan). Layar tetap 500 baris.
+        lines = [ln async for ln in db[so.LINES].find({"date": day, "location_id": location_id}, {"_id": 0}
+                                                      ).sort("scanned_at", -1)]
         rejects = await db[so.REJECTS].find({"date": day, "location_id": location_id}, {"_id": 0}
                                             ).sort("at", -1).to_list(300)
     open_sheet = next((s for s in sheets if s.get("status") != "closed"), None)

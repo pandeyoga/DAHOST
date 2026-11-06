@@ -81,10 +81,12 @@ export default function AccessSyncModule({ token }) {
     setBusy(true);
     try {
       const r = await fetch(`${API}/api/admin/access-sync/fix`, { method: 'POST', headers });
-      const j = await r.json();
+      const j = await r.json().catch(() => ({}));
+      // 2026-11-06 (pola P6): dulu "undefined akun disinkronkan" muncul walau server menolak
+      if (!r.ok) throw new Error(j.detail || 'Gagal menyinkronkan');
       toast.success(`${j.fixed} akun disinkronkan`);
       await load();
-    } catch { toast.error('Gagal menyinkronkan'); setBusy(false); }
+    } catch (e) { toast.error(typeof e.message === 'string' && e.message ? e.message : 'Gagal menyinkronkan'); setBusy(false); }
   };
 
   const s = data?.summary;

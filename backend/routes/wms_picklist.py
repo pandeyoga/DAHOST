@@ -202,9 +202,9 @@ async def generate_from_source(source_type: str, source_id: str, request: Reques
                 "unit": line.get("unit") or "pcs",
             })
     elif source_type == "material_issue":
+        # 2026-11-06 (pola P2): SSOT `rahaza_material_issues` saja (cadangan `dewi_material_issues`
+        # tidak pernah ditulis siapa pun).
         mi = await db.rahaza_material_issues.find_one({"id": source_id}, {"_id": 0})
-        if not mi:
-            mi = await db.dewi_material_issues.find_one({"id": source_id}, {"_id": 0})
         if not mi:
             raise HTTPException(404, "Material issue tidak ditemukan.")
         ref = mi.get("mi_number") or mi.get("issue_number") or source_id[:8]

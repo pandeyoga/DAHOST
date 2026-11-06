@@ -115,6 +115,9 @@ async def create_category(data: CategoryIn, request: Request):
         raise HTTPException(400, 'Prefix SKU hanya boleh huruf/angka.')
     if await db[COLL].find_one({'code': code}, {'_id': 0, 'id': 1}):
         raise HTTPException(409, f"Kode kategori '{code}' sudah ada.")
+    # 2026-11-06 (pola P8): nama setara ("Set/Setelan" = "One set", "Jacket" = "Jaket") ditolak
+    from core.reference_dedup import assert_unique_ref
+    await assert_unique_ref(db, COLL, name=name, label='Kategori produk')
     dupe_prefix = await db[COLL].find_one(
         {'sku_prefix': prefix, 'active': {'$ne': False}}, {'_id': 0, 'name': 1})
     if dupe_prefix:
@@ -146,6 +149,8 @@ async def update_category(cid: str, data: CategoryUpdate, request: Request):
     if data.name is not None:
         if not data.name.strip():
             raise HTTPException(400, 'Nama kategori tidak boleh kosong.')
+        from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8)
+        await assert_unique_ref(db, COLL, name=data.name, label='Kategori produk', exclude_id=cid)
         patch['name'] = data.name.strip()
     if data.sku_prefix is not None:
         prefix = data.sku_prefix.strip().upper()

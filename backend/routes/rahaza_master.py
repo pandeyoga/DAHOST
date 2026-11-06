@@ -223,6 +223,10 @@ async def create_location(request: Request):
         raise HTTPException(400, "type must be 'gedung' or 'zona'")
     if await db.rahaza_locations.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai (aktif). Gunakan kode lain.")
+    # 2026-11-06 (pola P8): nama setara di induk yang sama ditolak (kode beda, tempat sama = stok terbelah)
+    from core.reference_dedup import assert_unique_ref
+    await assert_unique_ref(db, "rahaza_locations", name=name, label="Lokasi",
+                            scope={"parent_id": body.get("parent_id") if type_ == "zona" else None})
     from core.location_resolver import STORAGE_ROLES, EXEMPT_ROLES
     storage_role = (body.get("storage_role") or "").strip().lower()
     if storage_role and storage_role not in STORAGE_ROLES + EXEMPT_ROLES:
@@ -288,6 +292,10 @@ async def update_process(pid: str, request: Request):
     allowed = {k: body[k] for k in ("active", "description", "name") if k in body}
     if not allowed:
         return serialize_doc(await db.rahaza_processes.find_one({"id": pid}, {"_id": 0}))
+    if allowed.get("name"):
+        # 2026-11-06 (pola P8): proses tidak boleh diganti nama menjadi kembaran proses lain ("Jahit" vs "Sewing")
+        from core.reference_dedup import assert_unique_ref
+        await assert_unique_ref(db, "rahaza_processes", name=allowed["name"], label="Proses", exclude_id=pid)
     allowed["updated_at"] = _now()
     await db.rahaza_processes.update_one({"id": pid}, {"$set": allowed})
     await log_activity(user["id"], user.get("name", ""), "update", "rahaza.process", pid)
@@ -314,6 +322,8 @@ async def create_shift(request: Request):
         raise HTTPException(400, "code & name required")
     if await db.rahaza_shifts.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai (aktif). Gunakan kode lain.")
+    from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8)
+    await assert_unique_ref(db, "rahaza_shifts", name=name, label="Shift")
     doc = {
         "id": _uid(),
         "code": code,
@@ -386,6 +396,9 @@ async def create_machine(request: Request):
         raise HTTPException(400, "code required")
     if await db.rahaza_machines.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai (aktif). Gunakan kode lain.")
+    if body.get("name"):  # 2026-11-06 (pola P8): nama mesin setara ditolak (nama kosong = kode, sudah dicek)
+        from core.reference_dedup import assert_unique_ref
+        await assert_unique_ref(db, "rahaza_machines", name=name, label="Mesin")
     doc = {
         "id": _uid(),
         "code": code,
@@ -459,6 +472,9 @@ async def create_line(request: Request):
         raise HTTPException(400, "code required")
     if await db.rahaza_lines.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai (aktif). Gunakan kode lain.")
+    if body.get("name"):  # 2026-11-06 (pola P8)
+        from core.reference_dedup import assert_unique_ref
+        await assert_unique_ref(db, "rahaza_lines", name=name, label="Lini produksi")
     doc = {
         "id": _uid(),
         "code": code,

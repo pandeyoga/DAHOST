@@ -218,8 +218,9 @@ async def get_peers_for_feedback(request: Request):
     emp = await _get_my_employee(db, user)
     my_id = emp.get("id") or emp.get("employee_code") if emp else user.get("id")
 
+    from utils.employee_identity import ACTIVE_EMPLOYEE_FILTER
     emps = await db.rahaza_employees.find(
-        {"employment_status": "active"},
+        dict(ACTIVE_EMPLOYEE_FILTER),  # 2026-11-06 (pola P3): dulu `employment_status` (tak pernah ditulis) → kosong
         {"_id": 0, "id": 1, "employee_code": 1, "name": 1, "department": 1, "job_title": 1}
     ).sort("name", 1).to_list(200)
 

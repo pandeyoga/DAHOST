@@ -12,7 +12,7 @@ from routes.dewi_kpi_shared import (
     _uid, _now, _s, _grade,
     _require_hr, _get_linked_employee,
     _calc_section_score, _calc_attitude_score, _calc_absensi_score,
-    DEFAULT_QUESTIONS,
+    DEFAULT_QUESTIONS, resolve_working_days,
 )
 from routes.shared import get_pagination_params, paginated_response
 import logging
@@ -63,7 +63,9 @@ async def create_period(request: Request):
         "name": name,
         "period_from": body.get("period_from") or "",
         "period_to": body.get("period_to") or "",
-        "working_days": int(body.get("working_days") or 26),
+        # 2026-11-06 (pola P5): kosong → dihitung dari aturan hari kerja (dulu angka tetap 26)
+        "working_days": await resolve_working_days(db, body.get("working_days"), body.get("period_from"),
+                                                   body.get("period_to")),
         "status": "draft",
         "participant_employee_ids": body.get("participant_employee_ids") or [],
         "supervisor_assignments": body.get("supervisor_assignments") or [],
@@ -103,6 +105,11 @@ async def update_period(period_id: str, request: Request):
     allowed = ["name", "period_from", "period_to", "working_days", "status",
                "participant_employee_ids", "supervisor_assignments", "notes"]
     upd = {k: body[k] for k in allowed if k in body}
+    if "working_days" in upd:
+        # 2026-11-06 (pola P5): hari kerja dikosongkan → dihitung dari tanggal periode (bukan 26)
+        upd["working_days"] = await resolve_working_days(
+            db, upd["working_days"], upd.get("period_from", period.get("period_from")),
+            upd.get("period_to", period.get("period_to")))
     upd["updated_at"] = _now()
     upd["updated_by"] = user["id"]
 

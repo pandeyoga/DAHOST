@@ -48,7 +48,7 @@ from auth import require_auth, serialize_doc
 from database import get_db
 from routes.shared import PORTAL_ACCESS, SUPER_ROLES
 from utils.notif_unified import (
-    KIND_ACTION, RETENTION_DEFAULT_DAYS, action_of, clamp_retention_days, kind_of,
+    CATEGORY_CONFIG, KIND_ACTION, RETENTION_DEFAULT_DAYS, action_of, clamp_retention_days, kind_of,
     link_for_portals, notif_is_unread_for, notif_times_iso, notif_user_id, resolve_rows,
     resolved_label, source_collection_of,
 )
@@ -74,7 +74,7 @@ def _explicitly_addressed(notif: dict, user: dict) -> bool:
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications-category"])
 
-CFG = "notif_category_config"
+CFG = CATEGORY_CONFIG  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
 PREF = "notif_user_prefs"
 
 # Kategori = portal sumber. `key` sengaja sama dengan portal id supaya tombol

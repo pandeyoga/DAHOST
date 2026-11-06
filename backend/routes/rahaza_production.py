@@ -123,7 +123,7 @@ async def _resolve_category_or_400(db, body: dict, *, required: bool = False) ->
     if text:
         cat = await pm.resolve_category_by_text(db, text, allow_create=False)
         if not cat:
-            names = [c["name"] for c in await db.rahaza_product_categories.find(
+            names = [c["name"] for c in await db[pm.CATEGORIES].find(  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
                 {"active": {"$ne": False}}, {"_id": 0, "name": 1}
             ).sort("order_seq", 1).to_list(50)]
             raise HTTPException(400, f"Kategori '{text}' tidak ada di master. "
@@ -539,6 +539,9 @@ async def create_size(request: Request):
         raise HTTPException(400, "code required")
     if await db.rahaza_sizes.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai (aktif). Gunakan kode lain.")
+    if body.get("name"):  # 2026-11-06 (pola P8): nama ukuran setara ("All Size" = "ALL SIZE") ditolak
+        from core.reference_dedup import assert_unique_ref
+        await assert_unique_ref(db, "rahaza_sizes", name=name, label="Ukuran")
     doc = {
         "id": _uid(),
         "code": code,

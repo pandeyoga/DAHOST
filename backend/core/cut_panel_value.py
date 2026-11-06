@@ -182,7 +182,8 @@ async def order_value_totals(db, order_id: str) -> dict:
     total_in = 0.0
     traced = 0
     n = 0
-    async for p in db.cutting_progress.find(
+    from core.cutting_material_issue import PROGRESS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    async for p in db[PROGRESS].find(
             {"cutting_order_id": order_id},
             {"_id": 0, "value_out": 1, "output_qty": 1, "input_consumed": 1}):
         n += 1

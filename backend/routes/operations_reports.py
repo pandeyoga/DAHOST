@@ -205,13 +205,9 @@ async def get_report(report_type: str, request: Request):
         for r in reqs:
             if sp.get('vendor_id') and r.get('vendor_id') != sp['vendor_id']:
                 continue
-            # Get request items for detail
+            # 2026-11-06 (pola P2): baris permintaan tersimpan di `items` dokumennya sendiri
+            # (routes.exceptions); cadangan `material_request_items` dihapus — koleksi itu tak pernah ditulis.
             req_items = r.get('items', [])
-            if not req_items:
-                # Try to get items from a separate collection if stored there
-                req_items_db = await db.material_request_items.find({'request_id': r['id']}).to_list(500)
-                if req_items_db:
-                    req_items = req_items_db
             if req_items:
                 for ri in req_items:
                     rows.append({
@@ -244,11 +240,7 @@ async def get_report(report_type: str, request: Request):
         for r in reqs:
             if sp.get('vendor_id') and r.get('vendor_id') != sp['vendor_id']:
                 continue
-            req_items = r.get('items', [])
-            if not req_items:
-                req_items_db = await db.material_request_items.find({'request_id': r['id']}).to_list(500)
-                if req_items_db:
-                    req_items = req_items_db
+            req_items = r.get('items', [])  # 2026-11-06 (pola P2): tanpa cadangan koleksi hantu
             if req_items:
                 for ri in req_items:
                     rows.append({
@@ -276,12 +268,11 @@ async def get_report(report_type: str, request: Request):
                 })
         return rows
     if report_type == 'accessory':
-        acc_ships = await db.accessory_shipments.find({}, {'_id': 0}).sort('created_at', -1).to_list(500)
+        # 2026-11-06 (pola P2): kepala kiriman aksesoris = `vendor_shipments` (id-nya disimpan di
+        # `accessory_shipment_items.shipment_id`). Dulu dibaca dari `accessory_shipments` yang tidak
+        # pernah ditulis → laporan aksesoris selalu kosong.
         rows = []
-        for s in acc_ships:
-            if sp.get('vendor_id') and s.get('vendor_id') != sp['vendor_id']:
-                continue
-            items = await db.accessory_shipment_items.find({'shipment_id': s['id']}).to_list(500)
+        for s, items in await _accessory_shipments(db, sp.get('vendor_id')):
             for item in items:
                 rows.append({
                     'shipment_number': s.get('shipment_number', ''),
@@ -295,6 +286,26 @@ async def get_report(report_type: str, request: Request):
     return {'error': 'Unknown report type', 'available_types': [
         'production', 'financial', 'shipment', 'progress', 'defect', 'return',
         'missing-material', 'replacement', 'accessory']}
+
+
+async def _accessory_shipments(db, vendor_id=None) -> list:
+    """[(kepala `vendor_shipments`, [baris `accessory_shipment_items`])] — terbaru dulu.
+
+    2026-11-06 (pola P2): satu sumber untuk laporan aksesoris (JSON & PDF). Baris aksesoris
+    ditulis per kiriman vendor (`core.shipment_accessories`, `routes.exceptions`).
+    """
+    items = await db.accessory_shipment_items.find({}, {'_id': 0}).to_list(5000)
+    by_ship: dict = {}
+    for it in items:
+        if it.get('shipment_id'):
+            by_ship.setdefault(it['shipment_id'], []).append(it)
+    if not by_ship:
+        return []
+    q = {'id': {'$in': list(by_ship)}}
+    if vendor_id:
+        q['vendor_id'] = vendor_id
+    heads = await db.vendor_shipments.find(q, {'_id': 0}).sort('created_at', -1).to_list(len(by_ship))
+    return [(h, by_ship.get(h['id'], [])) for h in heads]
 
 
 # ─── (DIHAPUS FASE 14) SALINAN MATI `/api/import-data` & `/api/import-template` ──

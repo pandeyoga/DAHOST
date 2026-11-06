@@ -323,7 +323,7 @@ async def _create_rework_shipment(db, permak: dict, actor: dict) -> dict:
     if permak.get("source_receipt_line_id"):
         try:
             from core import quarantine as qmod
-            q_item = await db.wh_quarantine_items.find_one(
+            q_item = await db[qmod.QUARANTINE_COLL].find_one(  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
                 {"source.receipt_line_id": permak["source_receipt_line_id"], "status": "open"},
                 {"_id": 0})
             if q_item:

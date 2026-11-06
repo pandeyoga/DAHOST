@@ -1522,11 +1522,9 @@ async def export_pdf(request: Request):
                 all_col_keys = ['no', 'request_number', 'vendor_name', 'po_number', 'total_qty', 'reason', 'status', 'child_shipment', 'date']
 
             elif report_type == 'accessory':
-                acc_ships = await db.accessory_shipments.find({}, {'_id': 0}).sort('created_at', -1).to_list(500)
-                for s in acc_ships:
-                    if sp.get('vendor_id') and s.get('vendor_id') != sp['vendor_id']:
-                        continue
-                    items = await db.accessory_shipment_items.find({'shipment_id': s['id']}).to_list(500)
+                # 2026-11-06 (pola P2): sumber yang sama dengan laporan JSON (kepala = vendor_shipments)
+                from routes.operations_reports import _accessory_shipments
+                for s, items in await _accessory_shipments(db, sp.get('vendor_id')):
                     for item in items:
                         report_data.append({
                             'shipment_number': s.get('shipment_number', ''), 'vendor_name': s.get('vendor_name', ''),

@@ -10,6 +10,7 @@ import { toast } from '../ui/sonner';
 import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
 import { formatRupiah } from '@/lib/format';
+import { apiDelete } from '@/lib/api';
 import RnDUnitSelect, { UOM_STATUS } from './RnDUnitSelect';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
@@ -179,7 +180,8 @@ export default function RnDCostingTab({ token }) {
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/rnd/sample-costing/${delId}`, { method: 'DELETE', headers: h });
+      // 2026-11-06 (pola P6): helper lib/api melempar bila server menolak → pesan sukses hanya bila benar tersimpan
+      await apiDelete(`/api/dewi/rnd/sample-costing/${delId}`);
       toast.success('Costing dihapus');
       setDelId(null);
       fetchCostings();

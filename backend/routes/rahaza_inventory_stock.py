@@ -394,10 +394,19 @@ async def material_adjust(request: Request):
     user = await _require_admin(request)
     db = get_db()
     body = await request.json()
-    material_id = body.get("material_id")
-    location_id = body.get("location_id")
-    delta = float(body.get("qty") or 0)
-    reason = body.get("reason") or ""
+    return serialize_doc(await apply_material_adjust(
+        db, user, material_id=body.get("material_id"), location_id=body.get("location_id"),
+        delta=float(body.get("qty") or 0), reason=body.get("reason") or ""))
+
+
+async def apply_material_adjust(db, user: dict, *, material_id, location_id, delta: float, reason: str,
+                                extra: dict | None = None) -> dict:
+    """SATU mesin penyesuaian stok manual: stok + kartu stok (`stock_service`) + mutasi + jurnal.
+
+    2026-11-06 (pola P8): dipakai juga oleh `POST /api/wms/stock/unified/adjust` (Viewer Stok). Dulu jalur itu
+    menulis `rahaza_material_stock` langsung — tanpa kartu stok, tanpa jurnal persediaan, tanpa cek
+    lokasi — sehingga stok dan buku besar berselisih (aturan: stok = GL).
+    """
     if not (material_id and location_id) or delta == 0:
         raise HTTPException(400, "material_id, location_id, qty (≠0) wajib.")
     # 2026-11-02 (audit g.md No.18) — dulu lokasi diketik sebagai UUID dan tidak dicek:
@@ -417,7 +426,7 @@ async def material_adjust(request: Request):
     mv = await _log_movement(db, user,
         type="adjust", material_id=material_id, qty=delta,
         from_location_id=None, to_location_id=location_id,
-        ref_type="adjustment", ref_id=None, notes=reason,
+        ref_type="adjustment", ref_id=None, notes=reason, **(extra or {}),
     )
     posting_result = None
     try:
@@ -425,9 +434,9 @@ async def material_adjust(request: Request):
     except Exception as e:
         log.exception("Inventory adjust auto-post failed")
         posting_result = {"ok": False, "error": str(e)}
-    mv_refresh = await db.rahaza_material_movements.find_one({"id": mv["id"]}, {"_id": 0})
+    mv_refresh = await db.rahaza_material_movements.find_one({"id": mv["id"]}, {"_id": 0}) or dict(mv)
     mv_refresh["_posting_result"] = posting_result
-    return serialize_doc(mv_refresh)
+    return mv_refresh
 
 
 # ──────────────────────────────────────────────────────────────────────────────

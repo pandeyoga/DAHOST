@@ -152,6 +152,14 @@ async def ensure_panel(db, *, model: dict, color_code: str, color_name: str, siz
                           size_id=size_id, source_fabric=source_fabric, created_from=created_from,
                           cutting_order=cutting_order)
     if apply:
+        # 2026-11-06 (pola P8): kategori = baris master kategori material CUT_PANEL (rujukan id,
+        # sama dengan `core.master_sync`). Dulu teks "POTONGAN" tanpa `category_id` sampai sinkron
+        # master berikutnya — di DB cerminan lokal 352 potongan baru tercatat begitu.
+        cat = await db.rahaza_material_categories.find_one(
+            {"code": "CUT_PANEL", "active": {"$ne": False}}, {"_id": 0, "id": 1, "code": 1, "name": 1})
+        if cat:
+            doc.update({"category": cat["id"], "category_id": cat["id"], "category_code": cat["code"],
+                        "category_name": cat.get("name") or PANEL_CATEGORY_NAME})
         await db.rahaza_materials.insert_one(dict(doc))
     return doc, True
 

@@ -9,6 +9,7 @@ import { toast } from '../ui/sonner';
 import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
 import RnDRevisionCompare from './RnDRevisionCompare';
+import { apiPost, apiDelete } from '@/lib/api';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -76,9 +77,8 @@ export default function RnDRevisionsTab({ token }) {
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
     if (!form.revision_name.trim()) return toast.error('Nama revisi wajib diisi');
     try {
-      await fetch(`${API}/api/dewi/rnd/revisions`, {
-        method: 'POST', headers: h, body: JSON.stringify(form),
-      });
+      // 2026-11-06 (pola P6): helper lib/api melempar bila server menolak → pesan sukses hanya bila benar tersimpan
+      await apiPost('/api/dewi/rnd/revisions', form);
       toast.success('Revisi berhasil ditambahkan');
       setShowForm(false);
       setForm({ ...emptyForm });
@@ -88,7 +88,7 @@ export default function RnDRevisionsTab({ token }) {
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/rnd/revisions/${delId}`, { method: 'DELETE', headers: h });
+      await apiDelete(`/api/dewi/rnd/revisions/${delId}`);  // 2026-11-06 (pola P6): lihat simpan revisi
       toast.success('Revisi dihapus');
       setDelId(null);
       fetchRevisions();

@@ -363,11 +363,23 @@ async def complete_task_action(task_id: str, payload: TaskCompleteAction, reques
     await require_auth(request)
     user = _get_user(request)
     db = get_db()
-    
+    # 2026-11-06 (pola P9): tugas DIKUNCI selama aksinya dijalankan. Dulu klik ganda sama-sama lolos cek
+    # status → aksi berjalan dua kali (mis. baris data penjualan tercatat ganda → omzet dobel).
+    from core import doc_lock
+    token = await doc_lock.claim(db, "marketing_tasks", task_id, field="action_lock", actor=user,
+                                 not_found="Task tidak ditemukan",
+                                 busy="Aksi tugas ini sedang dijalankan pengguna lain — muat ulang.")
+    try:
+        return await _complete_task_action_locked(db, task_id, payload, user)
+    finally:
+        await doc_lock.release(db, "marketing_tasks", task_id, token, field="action_lock")
+
+
+async def _complete_task_action_locked(db, task_id: str, payload, user: dict):
     task = await db.marketing_tasks.find_one({"id": task_id}, {"_id": 0})
     if not task:
         raise HTTPException(404, "Task tidak ditemukan")
-    
+
     if task.get("status") in ("done", "cancelled"):
         raise HTTPException(409, f"Task sudah berstatus '{task.get('status')}', tidak bisa di-action lagi.")
     

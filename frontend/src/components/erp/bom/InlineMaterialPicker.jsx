@@ -23,7 +23,8 @@ import { readField, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
  * - token: JWT token
  * - onSelect: (material) => void
  */
-const UNIT_OPTIONS = ['kg', 'gram', 'm', 'yard', 'pcs', 'lusin', 'set', 'pair', 'rol', 'karton', 'pak'];
+// 2026-11-06 (pola P8): ejaan satuan sama dengan master material (roll/pack, bukan rol/pak)
+const UNIT_OPTIONS = ['kg', 'gram', 'm', 'yard', 'pcs', 'lusin', 'set', 'pair', 'roll', 'karton', 'pack'];
 // 3 kategori bisnis; komponen BOM = Bahan & Aksesoris.
 const TYPE_OPTIONS = [
   { value: 'bahan', label: 'Bahan' },

@@ -69,3 +69,17 @@ Peringatan ±558 (harga aksesoris 0, BOM tanpa aksesoris, sandi awal) — bukan 
 ```bash
 mongorestore --uri "$MONGO_URL" --gzip --nsInclude "$DB_NAME.*" --drop backups/pre_golive_<waktu>
 ```
+
+## Cutoff "hapus transaksi saja" (keputusan owner 2026-11-06)
+Dipakai bila master sudah benar dan hanya transaksi uji yang harus dibuang.
+```bash
+python3 scripts/reset_for_golive.py --transaksi-saja                 # dry-run: tabel per jenis koleksi
+python3 scripts/reset_for_golive.py --transaksi-saja --reset-nomor   # + nomor dokumen transaksi mulai dari 1
+python3 scripts/reset_for_golive.py --transaksi-saja --apply --yes   # mongodump ke backups/pre_cutoff_<waktu>, ketik HAPUS TRANSAKSI
+```
+- Jenis tiap koleksi (konfigurasi / master / transaksi / log) ada di `backend/core/collection_registry.py` (`KIND`);
+  koleksi yang belum diklasifikasi membuat skrip menolak jalan. Semua pengguna dan master dipertahankan.
+- Field turunan di master (cache stok katalog, saldo awal kas, cuti terpakai, akumulasi katalog buyer, ...)
+  direset sesuai `DERIVED_FIELDS`; `unit_cost`/HPP master tidak disentuh.
+- Sesudahnya: restart backend, isi saldo awal (kas/bank, persediaan, nilai bahan di CMT sebagai barang dalam
+  proses, piutang/hutang), lalu **Portal Produksi → PO Produksi → Impor PO berjalan** untuk potongan yang masih di CMT.

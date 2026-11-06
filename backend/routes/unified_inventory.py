@@ -28,7 +28,6 @@ import logging
 
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
-from pymongo import ReturnDocument
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/wms", tags=["unified-inventory"])
@@ -50,6 +49,8 @@ class StockAdjustIn(BaseModel):
     qty_delta: float = Field(..., description="Selisih (boleh negatif). Misal opname temukan kelebihan 5 → 5; jika kurang 3 → -3")
     reason: str = Field(..., min_length=3, description="Alasan/keterangan adjustment")
     reference_no: Optional[str] = Field(default=None, description="Nomor berita acara / referensi dokumen")
+    # 2026-11-06 (pola P8): lokasi baris stok (wajib bila material ada di beberapa lokasi)
+    location_id: Optional[str] = Field(default=None, description="Lokasi stok yang disesuaikan")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -302,13 +303,6 @@ async def adjust_stock(payload: StockAdjustIn, request: Request):
     user = await _require_admin(request)
     db = get_db()
 
-    stock = await db.rahaza_material_stock.find_one({"material_id": payload.material_id})
-    if not stock:
-        raise HTTPException(404, f"Stock untuk material {payload.material_id} tidak ditemukan")
-
-    qty_before = float(stock.get("quantity", stock.get("qty", 0)))
-    available_before = float(stock.get("available_quantity", qty_before))
-
     # Enforce sign based on adjustment_type at backend for safety
     raw = float(payload.qty_delta)
     if payload.adjustment_type in ("opname_decrease", "damage"):
@@ -318,52 +312,34 @@ async def adjust_stock(payload: StockAdjustIn, request: Request):
     else:  # correction — gunakan sign apa adanya
         signed_delta = raw
 
-    # ── R10 concurrency hardening (TOCTOU-safe): guard non-negativity INSIDE the
-    # filter ($expr) and apply the delta atomically via an aggregation pipeline.
-    # Prevents lost-update / negative stock under parallel adjustments (CC6).
-    _q = {"$ifNull": ["$quantity", {"$ifNull": ["$qty", 0]}]}
-    _a = {"$ifNull": ["$available_quantity", {"$ifNull": ["$quantity", {"$ifNull": ["$qty", 0]}]}]}
-    updated = await db.rahaza_material_stock.find_one_and_update(
-        {
-            "id": stock["id"],
-            "$expr": {"$and": [
-                {"$gte": [{"$add": [_q, signed_delta]}, 0]},
-                {"$gte": [{"$add": [_a, signed_delta]}, 0]},
-            ]},
-        },
-        [{"$set": {
-            "quantity": {"$add": [_q, signed_delta]},
-            "qty": {"$add": [_q, signed_delta]},
-            "available_quantity": {"$add": [_a, signed_delta]},
-            "updated_at": _now(),
-        }}],
-        return_document=ReturnDocument.AFTER,
-    )
-    if not updated:
-        raise HTTPException(400, "Adjustment tidak valid: qty/available akan menjadi negatif (kemungkinan race concurrent adjust).")
-
-    # Derive from the authoritative post-update doc for an accurate movement log.
-    new_qty = float(updated.get("quantity", updated.get("qty", 0)))
-    qty_before = new_qty - signed_delta
-
-    # Log movement
-    movement = {
-        "id": _uid(),
-        "material_id": payload.material_id,
-        "movement_type": "ADJUST",
-        "quantity": signed_delta,
-        "qty_before": qty_before,
-        "qty_after": new_qty,
-        "adjustment_type": payload.adjustment_type,
-        "reason": payload.reason,
-        "reference_no": payload.reference_no,
-        "source_module": "unified-inventory",
-        "performed_by": user.get("email") or user.get("id"),
-        "performed_by_name": user.get("name"),
-        "created_at": _now(),
-        "notes": f"{payload.adjustment_type}: {payload.reason}" + (f" (ref: {payload.reference_no})" if payload.reference_no else ""),
-    }
-    await db.rahaza_material_movements.insert_one(movement)
+    # 2026-11-06 (pola P8): penyesuaian lewat mesin yang SAMA dengan Gudang › Penyesuaian
+    # (`apply_material_adjust`: kartu stok + jurnal persediaan + cek lokasi). Dulu di sini stok
+    # diubah langsung pada baris pertama material itu — stok berubah, buku besar tidak.
+    rows = await db.rahaza_material_stock.find({"material_id": payload.material_id},
+                                               {"_id": 0, "location_id": 1}).to_list(1000)
+    if not rows:
+        raise HTTPException(404, f"Stock untuk material {payload.material_id} tidak ditemukan")
+    location_id = payload.location_id
+    if not location_id:
+        locs = {r.get("location_id") for r in rows if r.get("location_id")}
+        if len(locs) != 1:
+            raise HTTPException(400, "Material ini tersimpan di beberapa lokasi — pilih lokasinya "
+                                     "(atau pakai Gudang › Penyesuaian).")
+        location_id = locs.pop()
+    from routes.rahaza_inventory_stock import apply_material_adjust
+    from core.stock_schema import read_qty
+    before = await db.rahaza_material_stock.find_one(
+        {"material_id": payload.material_id, "location_id": location_id}, {"_id": 0}) or {}
+    qty_before = float(read_qty(before) or 0)
+    note = f"{payload.adjustment_type}: {payload.reason}" + (
+        f" (ref: {payload.reference_no})" if payload.reference_no else "")
+    mv = await apply_material_adjust(
+        db, user, material_id=payload.material_id, location_id=location_id, delta=signed_delta, reason=note,
+        extra={"adjustment_type": payload.adjustment_type, "reference_no": payload.reference_no,
+               "source_module": "unified-inventory"})
+    after = await db.rahaza_material_stock.find_one(
+        {"material_id": payload.material_id, "location_id": location_id}, {"_id": 0}) or {}
+    new_qty = float(read_qty(after) or 0)
 
     try:
         await log_activity(
@@ -379,10 +355,12 @@ async def adjust_stock(payload: StockAdjustIn, request: Request):
     return {
         "status": "ok",
         "material_id": payload.material_id,
+        "location_id": location_id,
         "qty_before": qty_before,
         "qty_after": new_qty,
         "delta": signed_delta,
-        "movement_id": movement["id"],
+        "movement_id": mv.get("id"),
+        "posting": serialize_doc(mv.get("_posting_result")),
     }
 
 
@@ -394,7 +372,8 @@ async def list_adjustments(
 ):
     """Riwayat semua adjustment manual (opname / koreksi)."""
     db = get_db()
-    q: dict = {"movement_type": "ADJUST"}
+    # 2026-11-06 (pola P8): penyesuaian baru tercatat oleh mesin bersama (`type: adjust`); baris lama `ADJUST` tetap tampil
+    q: dict = {"$or": [{"movement_type": "ADJUST"}, {"type": "adjust"}]}
     if material_id:
         q["material_id"] = material_id
 

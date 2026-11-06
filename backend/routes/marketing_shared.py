@@ -95,14 +95,36 @@ class SalesDataEntry(BaseModel):
     # F2 — wajib diisi bila SPV MENGGANTI angka turunan (?override=true)
     override_reason: Optional[str] = None
 
+# 2026-11-06 (pola P1): model Tugas di bawah ini "diekstrak ulang" (sesi #11.20) TANPA field yang
+# dibaca handler marketing_tasks.py / marketing_task_templates.py / scheduler, mis. `data.recurrence`,
+# `data.checklist`, `payload.action_data`, `data.template_name`. Pydantic v2 melempar AttributeError →
+# buat tugas, simpan tugas, selesaikan aksi, dan simpan template SELALU gagal (500). Field dikembalikan
+# persis seperti yang dibaca handler + dikirim layar (CreateTaskDialog, TaskDetailDrawer, TaskTemplatesModule).
+class RecurrenceConfig(BaseModel):
+    frequency: str = "one-time"
+    interval: int = 1
+    time: Optional[str] = None
+    auto_create: Optional[bool] = None
+    days_of_week: Optional[List[str]] = None   # layar: ['monday', ...]
+    day_of_week: Optional[int] = None          # bentuk lama scheduler: 0=Senin
+    day_of_month: Optional[int] = None
+
 class TaskCreate(BaseModel):
-    account_id: str
+    # layar mengizinkan tugas tanpa toko kecuali tipe data_entry (CreateTaskDialog)
+    account_id: Optional[str] = None
     task_type: str
     title: str
     description: Optional[str] = None
     due_date: Optional[str] = None
     priority: str = "medium"
     assigned_to: Optional[str] = None
+    recurrence: str = "one-time"
+    recurrence_config: Optional[RecurrenceConfig] = None
+    checklist: Optional[List[dict]] = None
+    related_entity: Optional[str] = None
+    related_entity_id: Optional[str] = None
+    related_form_data: Optional[dict] = None
+    action_type: Optional[str] = None
 
 class TaskUpdate(BaseModel):
     title: Optional[str] = None
@@ -112,21 +134,26 @@ class TaskUpdate(BaseModel):
     priority: Optional[str] = None
     assigned_to: Optional[str] = None
     completed_at: Optional[str] = None
+    checklist: Optional[List[dict]] = None
+    completion_notes: Optional[str] = None
 
 class TaskCompleteAction(BaseModel):
+    action_data: Optional[dict] = None
+    completion_notes: Optional[str] = None
     action_notes: Optional[str] = None
 
 class TaskTemplateCreate(BaseModel):
-    name: str
+    template_name: str
+    title: str
     description: Optional[str] = None
     task_type: str
     priority: str = "medium"
-    duration_days: int = 7
+    recurrence: str = "one-time"
+    recurrence_config: RecurrenceConfig = Field(default_factory=RecurrenceConfig)
+    default_assigned_role: Optional[str] = None
+    account_id: Optional[str] = None
+    checklist_template: Optional[List[str]] = None
     is_active: bool = True
-
-class RecurrenceConfig(BaseModel):
-    frequency: str
-    interval: int = 1
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -24,6 +24,17 @@ router = APIRouter(prefix="/api/rahaza/resignation", tags=["rahaza-resignation"]
 
 def _uid(): return str(uuid.uuid4())
 def _now(): return datetime.now(timezone.utc)
+
+
+# 2026-11-06 (pola P3): status pengajuan resignasi disimpan di `employee_status` — dipakai juga
+# oleh Inbox HR (routes.hr_approval_inbox) supaya kedua pintu membaca/menulis field yang sama.
+RESIGNING = "resigning"
+
+
+def accept_update(user_id: str, rehire_eligible: bool = True) -> dict:
+    """$set saat resignasi DITERIMA (layar Resignasi & Inbox HR): karyawan nonaktif."""
+    return {"employee_status": "resigned", "active": False, "rehire_eligible": bool(rehire_eligible),
+            "resignation_accepted_by": user_id, "resignation_accepted_at": _now(), "updated_at": _now()}
 def _s(d):
     if not d:
         return None
@@ -60,7 +71,7 @@ async def submit_resignation(employee_id: str, request: Request):
         raise HTTPException(403, "Tidak boleh submit untuk karyawan lain.")
 
     upd = {
-        "employee_status": "resigning",  # pending HR acceptance
+        "employee_status": RESIGNING,  # pending HR acceptance
         "resignation_date": body.get("resignation_date") or today_wib().isoformat(),
         "last_working_date": body.get("last_working_date"),
         "reason_for_leaving": body.get("reason_for_leaving") or "",
@@ -86,14 +97,7 @@ async def accept_resignation(employee_id: str, request: Request):
     if not emp:
         raise HTTPException(404, "Karyawan tidak ditemukan.")
 
-    upd = {
-        "employee_status": "resigned",
-        "active": False,
-        "rehire_eligible": rehire_eligible,
-        "resignation_accepted_by": user["id"],
-        "resignation_accepted_at": _now(),
-        "updated_at": _now(),
-    }
+    upd = accept_update(user["id"], rehire_eligible)
     await db.rahaza_employees.update_one({"id": employee_id}, {"$set": upd})
     return {"ok": True}
 

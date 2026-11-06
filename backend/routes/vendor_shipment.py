@@ -338,6 +338,16 @@ async def create_vendor_shipment(request: Request):
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
+    return JSONResponse(await create_vendor_shipment_internal(db, body, user), status_code=201)
+
+
+async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening: bool = False) -> dict:
+    """SATU jalur pembuatan surat jalan kirim ke CMT (validasi FK, pagar lebih kirim, penomoran).
+
+    `opening=True` (2026-11-06, T6 impor PO berjalan saat cutoff): potongan SUDAH berada di CMT
+    sebelum cutoff — surat jalan dicatat sebagai saldo awal (`opening`, sudah diterima & diperiksa
+    vendor) TANPA Material Issue: stok tidak dipotong lagi dan tidak ada jurnal. Aksesoris per
+    kiriman juga tidak dicatat (sudah diserahkan sebelum cutoff)."""
     vendor = await resolve_vendor_doc(db, body.get('vendor_id'))
     if not vendor: raise HTTPException(404, 'Vendor not found')
     items_data = body.get('items', [])
@@ -427,6 +437,11 @@ async def create_vendor_shipment(request: Request):
         'status': 'Sent', 'notes': body.get('notes', ''),
         'created_by': user['name'], 'created_at': now(), 'updated_at': now()
     }
+    if opening:
+        _sent = sum(int(i.get('qty_sent', 0) or 0) for i in items_data)
+        shipment.update({'opening': True, 'status': 'Received', 'received_at': shipment['shipment_date'],
+                         'inspection_status': 'Inspected', 'inspected_at': shipment['shipment_date'],
+                         'total_received': _sent, 'total_missing': 0})
     await db.vendor_shipments.insert_one(shipment)
     inserted_items = []
     affected_pos = set()
@@ -448,6 +463,10 @@ async def create_vendor_shipment(request: Request):
             'parent_shipment_id': body.get('parent_shipment_id'),
             'created_at': now()
         }
+        if opening:
+            si.update({'opening': True,
+                       'opening_qty_cut': int(item.get('opening_qty_cut', 0) or 0),
+                       'opening_qty_received': int(item.get('opening_qty_received', 0) or 0)})
         await db.vendor_shipment_items.insert_one(si)
         inserted_items.append(si)
         if item.get('po_id'): affected_pos.add(item['po_id'])
@@ -488,6 +507,7 @@ async def create_vendor_shipment(request: Request):
     _is_material_out = (
         body.get('shipment_type', 'NORMAL') in ('NORMAL', 'ADDITIONAL', 'REPLACEMENT')
         and not is_vendor(user)
+        and not opening          # saldo awal cutoff: bahan sudah keluar sebelum cutoff
     )
     if _is_material_out:
         from core import material_issue_engine as mie
@@ -532,7 +552,8 @@ async def create_vendor_shipment(request: Request):
     # sehingga Surat Jalan kiriman sebagian mencetak seluruh kebutuhan PO). Form mengirim
     # `accessory_items` hasil pratinjau (boleh diubah); klien lama tanpa field itu → dihitung otomatis.
     acc_recorded = 0
-    if body.get('shipment_type', 'NORMAL') == 'NORMAL' and shipment_po_id and not is_vendor(user):
+    if (body.get('shipment_type', 'NORMAL') == 'NORMAL' and shipment_po_id and not is_vendor(user)
+            and not opening):
         try:
             from core import shipment_accessories as sa
             acc_rows = body.get('accessory_items')
@@ -555,7 +576,7 @@ async def create_vendor_shipment(request: Request):
             'already_existed': material_issue.get('already', False),
             'negative_stock_lines': material_issue.get('negative_stock_lines') or [],
         }
-    return JSONResponse(result, status_code=201)
+    return result
 
 async def draft_pos_of_shipment(db, sid: str) -> list:
     """Nomor PO surat jalan ini (kepala + baris) yang masih Draf.

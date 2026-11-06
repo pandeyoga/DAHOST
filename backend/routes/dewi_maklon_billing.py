@@ -491,6 +491,23 @@ async def record_payment(payload: PaymentIn, user: dict = Depends(require_auth))
             return await _schedule_payment(db, ar, payload.amount, payload.cash_account_id, payload.payment_date,
                                            payload.notes or '', payload.reference_no or '', user)
         raise HTTPException(404, 'Invoice tidak ditemukan')
+    # 2026-11-06 (pola P9): faktur DIKUNCI selama pembayaran dicatat — dulu klik ganda sama-sama lolos
+    # batas sisa tagihan (dua pembayaran + dua jurnal kas masuk untuk satu pelunasan).
+    from core import doc_lock
+    token = await doc_lock.claim(db, 'dewi_maklon_invoices', payload.invoice_id, field='pay_lock', actor=user,
+                                 not_found='Invoice tidak ditemukan',
+                                 busy='Pembayaran faktur ini sedang dicatat pengguna lain. Muat ulang lalu '
+                                      'periksa sisa tagihannya.')
+    try:
+        return await _record_invoice_payment_locked(db, payload, user)
+    finally:
+        await doc_lock.release(db, 'dewi_maklon_invoices', payload.invoice_id, token, field='pay_lock')
+
+
+async def _record_invoice_payment_locked(db, payload, user: dict):
+    inv = await db.dewi_maklon_invoices.find_one({'id': payload.invoice_id})
+    if not inv:
+        raise HTTPException(404, 'Invoice tidak ditemukan')
     if inv.get('status') == 'cancelled':
         raise HTTPException(400, 'Invoice dibatalkan')
     if payload.method not in PAYMENT_METHODS:

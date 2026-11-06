@@ -264,14 +264,19 @@ async def resolve_document(db, code: str) -> Optional[dict]:
                        meta={"Vendor": po.get("vendor_name") or "-",
                              "Tgl PO": str(po.get("po_date") or "-")[:10],
                              "Dari PR": po.get("from_pr_number") or "-"})
-    for coll in (db.dewi_cmt_delivery_orders, db.dewi_delivery_orders):
-        do = _prefer_active(await _find_by_code(coll, "do_number", code))
-        if do:
-            return _result("dokumen", do, kode=do.get("do_number") or "", subtipe="delivery_order",
-                           nama=f"DO ke {do.get('customer_name') or '-'}", via="nomor_do",
-                           meta={"Customer": do.get("customer_name") or "-",
-                                 "Tgl Kirim": str(do.get("delivery_date") or "-")[:10],
-                                 "Qty": str(do.get("total_qty") or "-")})
+    # 2026-11-06 (pola P2): surat jalan dicari di koleksi yang benar-benar ditulis — kirim ke CMT
+    # (`vendor_shipments`) & kirim ke buyer (`buyer_shipments`). Dulu `dewi_cmt_delivery_orders` /
+    # `dewi_delivery_orders` (arsip tanpa penulis) → scan nomor surat jalan selalu "tidak dikenal".
+    for coll, field, label, party in ((db.vendor_shipments, "shipment_number", "Vendor", "vendor_name"),
+                                      (db.vendor_shipments, "delivery_note_number", "Vendor", "vendor_name"),
+                                      (db.buyer_shipments, "shipment_number", "Customer", "customer_name")):
+        sj = _prefer_active(await _find_by_code(coll, field, code))
+        if sj:
+            return _result("dokumen", sj, kode=sj.get(field) or "", subtipe="delivery_order",
+                           nama=f"Surat jalan ke {sj.get(party) or '-'}", via="nomor_do",
+                           meta={label: sj.get(party) or "-",
+                                 "Tgl Kirim": str(sj.get("shipment_date") or sj.get("created_at") or "-")[:10],
+                                 "No. PO": sj.get("po_number") or "-"})
     return None
 
 

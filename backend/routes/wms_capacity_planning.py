@@ -93,8 +93,9 @@ async def _active_wo_load(db) -> dict:
 
 
 async def _employee_headcount(db) -> int:
+    from utils.employee_identity import ACTIVE_EMPLOYEE_FILTER
     return await db.rahaza_employees.count_documents({
-        "employment_status": "active",
+        **ACTIVE_EMPLOYEE_FILTER,  # 2026-11-06 (pola P3): dulu `employment_status` (tak pernah ditulis) → 0
         "department": {"$in": ["Produksi", "Production", "Jahit", "Rajut", "Packing"]},
     })
 

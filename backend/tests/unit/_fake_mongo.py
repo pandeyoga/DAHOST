@@ -3,7 +3,7 @@
 Mendukung operasi yang dipakai route payroll/kasbon/dinas/klaim: find/find_one/count_documents/
 insert_one/insert_many/update_one/delete_one/delete_many + kursor sort/skip/limit/to_list/async-for.
 Operator kueri: kesetaraan (termasuk elemen array), $in $nin $ne $lt $lte $gt $gte $exists $regex
-$or $and $not $elemMatch. Operator update: $set $push $inc $addToSet.
+$or $and $not $elemMatch. Operator update: $set $unset $push $inc $addToSet.
 """
 from __future__ import annotations
 
@@ -101,6 +101,17 @@ def _set_path(doc, dotted, value):
     cur[parts[-1]] = value
 
 
+def _unset_path(doc, dotted):
+    parts = dotted.split(".")
+    cur = doc
+    for p in parts[:-1]:
+        cur = cur.get(p) if isinstance(cur, dict) else None
+        if cur is None:
+            return
+    if isinstance(cur, dict):
+        cur.pop(parts[-1], None)
+
+
 class _Result:
     def __init__(self, matched=0, modified=0, deleted=0, inserted_id=None):
         self.matched_count = matched
@@ -175,6 +186,8 @@ class FakeCollection:
             if match(d, q):
                 for k, v in (upd.get("$set") or {}).items():
                     _set_path(d, k, copy.deepcopy(v))
+                for k in (upd.get("$unset") or {}):
+                    _unset_path(d, k)
                 for k, v in (upd.get("$inc") or {}).items():
                     _set_path(d, k, (_get(d, k) if _get(d, k) is not _MISSING else 0) + v)
                 for k, v in (upd.get("$push") or {}).items():
@@ -195,6 +208,8 @@ class FakeCollection:
             if match(d, q):
                 for k, v in (upd.get("$set") or {}).items():
                     _set_path(d, k, copy.deepcopy(v))
+                for k in (upd.get("$unset") or {}):
+                    _unset_path(d, k)
                 n += 1
         return _Result(matched=n, modified=n)
 

@@ -19,6 +19,7 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -245,7 +246,7 @@ export default function HREmployeeModule({ token }) {
           <tbody className="divide-y divide-white/5">
             {paged.map(e => <EmployeeRow key={e.id} emp={e}
               onEdit={() => setEditing(e)} onDelete={() => handleDelete(e)}
-              onLinkUser={() => openLinkUser(e)} token={token} />)}
+              onLinkUser={() => openLinkUser(e)} />)}
             {filtered.length === 0 && !loading && (
               <tr><td colSpan={7}>
                 <EmptyState icon={Users} title="Belum ada karyawan" description="Tambahkan karyawan pertama menggunakan tombol '+' di atas." />
@@ -265,7 +266,6 @@ export default function HREmployeeModule({ token }) {
           locations={locations}
           employees={employees}
           headers={headers}
-          token={token}
           onSave={handleSave}
           onClose={() => setEditing(null)}
         />
@@ -319,7 +319,7 @@ export default function HREmployeeModule({ token }) {
   );
 }
 
-function EmployeeRow({ emp, onEdit, onDelete, onLinkUser, token }) {
+function EmployeeRow({ emp, onEdit, onDelete, onLinkUser }) {
   // Kelengkapan score: essential fields present
   const fields = [
     emp.ktp_number && emp.ktp_number.length === 16,
@@ -341,7 +341,7 @@ function EmployeeRow({ emp, onEdit, onDelete, onLinkUser, token }) {
     <tr className="hover:bg-foreground/5" data-testid={`employee-row-${emp.id}`}>
       <td className="px-4 py-3">
         {emp.photo_url ? (
-          <img src={`${API}${emp.photo_url}${emp.photo_url.includes('?') ? '&' : '?'}auth=${token}`}
+          <img src={withFileAuth(`${API}${emp.photo_url}`)}
             alt={emp.name}
             className="w-9 h-9 rounded-full object-cover border border-foreground/10" />
         ) : (
@@ -416,7 +416,7 @@ function EmployeeRow({ emp, onEdit, onDelete, onLinkUser, token }) {
   );
 }
 
-function EmployeeDialog({ initial, locations, employees = [], headers, token, onSave, onClose }) {
+function EmployeeDialog({ initial, locations, employees = [], headers, onSave, onClose }) {
   const [form, setForm] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [documents, setDocuments] = useState([]);
@@ -512,10 +512,11 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
   const onDocUpload = async (e, category) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await uploadFile(file, () => {}, category);
+    const up = await uploadFile(file, () => {}, category);
+    e.target.value = '';
+    if (!up) return;  // 2026-11-06 (pola P6): uploadFile sudah menampilkan error; dulu lalu tetap "diunggah"
     toast.success(`Dokumen ${category} diunggah`);
     loadDocs();
-    e.target.value = '';
   };
 
   const deleteDoc = async (attId) => {
@@ -616,7 +617,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
               <div className="grid grid-cols-[120px_1fr] gap-4 items-start">
                 <div className="space-y-2">
                   {form.photo_url ? (
-                    <img src={`${API}${form.photo_url}${form.photo_url.includes('?') ? '&' : '?'}auth=${token}`} alt={form.name}
+                    <img src={withFileAuth(`${API}${form.photo_url}`)} alt={form.name}
                       className="w-28 h-28 rounded-xl object-cover border border-foreground/10" />
                   ) : (
                     <div className="w-28 h-28 rounded-xl bg-foreground/5 border border-dashed border-foreground/20 flex flex-col items-center justify-center text-muted-foreground">
@@ -810,7 +811,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                       {documents.map(d => (
                         <tr key={d.id} className="hover:bg-foreground/5">
                           <td className="px-3 py-2">
-                            <a href={`${API}/api/files/${d.storage_path}?auth=${token}`}
+                            <a href={withFileAuth(`${API}/api/files/${d.storage_path}`)}
                               target="_blank" rel="noreferrer"
                               className="text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
                               <FileText className="w-3 h-3" /> {d.original_filename}

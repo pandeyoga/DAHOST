@@ -18,6 +18,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import PageLayout, { DetailPanel } from './layout/PageLayout';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
 import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 const TZ = 'Asia/Jakarta';
@@ -45,7 +46,7 @@ function SelfiePhoto({ url, label, testId }) {
       </div>
     );
   }
-  const src = url.startsWith('http') ? url : `${BACKEND}${url}`;
+  const src = withFileAuth(url.startsWith('http') ? url : `${BACKEND}${url}`);
   return (
     <div className="space-y-1">
       <p className="text-xs text-muted-foreground">{label}</p>
@@ -207,7 +208,7 @@ export default function RahazaAttendanceApprovalModule({ token }) {
                 <TableCell className="tabular-nums">{fmtTime(rec.clock_in)} / {fmtTime(rec.clock_out)}</TableCell>
                 <TableCell>
                   {rec.photo_selfie_url ? (
-                    <img src={`${BACKEND}${rec.photo_selfie_url}`} alt="Selfie masuk"
+                    <img src={withFileAuth(`${BACKEND}${rec.photo_selfie_url}`)} alt="Selfie masuk"
                       className="w-10 h-10 rounded-[var(--radius-sm)] object-cover border border-[var(--glass-border)]" />
                   ) : <span className="text-xs text-muted-foreground">-</span>}
                 </TableCell>

@@ -77,6 +77,27 @@ def normalize_code(code: Any) -> str:
     return str(code or "").strip().lower()
 
 
+# 2026-11-06 (pola P8): SATU kamus ejaan satuan (dulu salinan di 6 berkas aksesoris, dan arahnya
+# berlawanan dengan data: master material & impor Excel memakai "roll"/"pack", sedangkan daftar
+# satuan & form memakai "rol"/"pak" — material ber-satuan roll tidak bisa disimpan ulang dan
+# aksesoris baru diam-diam menjadi "rol"). Ejaan lain untuk satuan yang SAMA, bukan konversi.
+UNIT_SPELLINGS = {
+    "piece": "pcs", "pieces": "pcs", "buah": "pcs",
+    "meter": "m", "centimeter": "cm",
+    "kilogram": "kg", "gr": "gram", "grams": "gram",
+    "pasang": "pair", "set/pair": "set", "stel": "set",
+    "rol": "roll", "rolls": "roll", "gulung": "roll", "gulungan": "roll",
+    "pak": "pack", "packs": "pack",
+    "karton/dus": "karton", "dus": "karton",
+}
+
+
+def canonical_unit(code: Any) -> str:
+    """Kode satuan dalam ejaan resmi (`rol`/`gulung` → `roll`, `pak` → `pack`, `buah` → `pcs`)."""
+    c = normalize_code(code)
+    return UNIT_SPELLINGS.get(c, c)
+
+
 def _num(v: Any, default: float = 0.0) -> float:
     try:
         f = float(v)

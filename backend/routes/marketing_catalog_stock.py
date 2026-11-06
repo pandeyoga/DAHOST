@@ -53,23 +53,8 @@ def _stock_status(qty: float, threshold: float) -> str:
         return 'in_stock'
 
 async def _refresh_catalog_stats(db, catalog_id: str):
-    items = await db.marketing_catalog_items.find(
-        {'catalog_id': catalog_id, 'is_active': True},
-        {'_id': 0, 'stock_quantity': 1, 'stock_status': 1}
-    ).to_list(500)
-    total_stock = sum(float(i.get('stock_quantity', 0)) for i in items)
-    low = sum(1 for i in items if i.get('stock_status') == 'low_stock')
-    out = sum(1 for i in items if i.get('stock_status') == 'out_of_stock')
-    await db.marketing_catalogs.update_one(
-        {'id': catalog_id},
-        {'$set': {
-            'item_count': len(items),
-            'total_stock': total_stock,
-            'low_stock_count': low,
-            'out_of_stock_count': out,
-            'updated_at': _now(),
-        }}
-    )
+    # 2026-11-06 (pola P7): satu rumus di core.catalog_stock (dulu to_list(500) → katalog besar terpotong)
+    await _cstock.refresh_catalog_stats(db, catalog_id)
 
 
 # Pydantic models
@@ -384,14 +369,16 @@ async def get_low_stock_items(catalog_id: str, request: Request):
     await require_auth(request)
     db = get_db()
 
-    items = await db.marketing_catalog_items.find(
+    # 2026-11-06 (pola P7): semua item stok rendah/habis (dulu to_list(500) → `count`/`out_of_stock` terpotong;
+    # saat cutoff stok FG 0 sehingga satu toko bisa > 500 item habis).
+    items = [i async for i in db.marketing_catalog_items.find(
         {
             'catalog_id': catalog_id,
             'is_active': True,
             'stock_status': {'$in': ['low_stock', 'out_of_stock']},
         },
         {'_id': 0}
-    ).sort('stock_quantity', 1).to_list(500)
+    ).sort('stock_quantity', 1)]
 
     return {
         'ok': True,

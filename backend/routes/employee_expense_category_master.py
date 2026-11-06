@@ -106,13 +106,12 @@ async def create_master_category(
         raise HTTPException(403, 'Hanya admin/finance yang dapat membuat kategori.')
     db = get_db()
 
-    # Cek duplikat nama (case-insensitive)
-    existing = await db.employee_expense_categories.find_one(
-        {'name': {'$regex': f'^{body.name}$', '$options': 'i'}},
-        {'_id': 0, 'id': 1},
-    )
+    # 2026-11-06 (pola P8): cek nama memakai aturan bersama (dulu regex dari teks ketikan TANPA escape —
+    # nama berisi "(" atau "+" membuat kueri galat/meleset, dan "Bensin " tidak sama dengan "bensin")
+    from core.reference_dedup import find_duplicate_ref
+    existing = await find_duplicate_ref(db, 'employee_expense_categories', name=body.name)
     if existing:
-        raise HTTPException(400, f'Kategori dengan nama "{body.name}" sudah ada.')
+        raise HTTPException(400, f'Kategori dengan nama "{existing.get("name")}" sudah ada.')
 
     doc = {
         'id': str(uuid.uuid4()),
@@ -152,10 +151,8 @@ async def update_master_category(
     updates: dict = {'updated_at': _now(), 'updated_by': user['id']}
     if body.name is not None:
         # Cek duplikat nama (exclude current)
-        dup = await db.employee_expense_categories.find_one(
-            {'name': {'$regex': f'^{body.name}$', '$options': 'i'}, 'id': {'$ne': cat_id}},
-            {'_id': 0, 'id': 1},
-        )
+        from core.reference_dedup import find_duplicate_ref  # 2026-11-06 (pola P8)
+        dup = await find_duplicate_ref(db, 'employee_expense_categories', name=body.name, exclude_id=cat_id)
         if dup:
             raise HTTPException(400, f'Kategori dengan nama "{body.name}" sudah ada.')
         updates['name'] = body.name.strip()

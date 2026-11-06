@@ -19,29 +19,8 @@ def _id():    return str(uuid.uuid4())
 def _now_iso(): return datetime.now(timezone.utc).isoformat()
 def _now():   return datetime.now(timezone.utc)
 
-_VALID_UNITS = {
-    "m", "cm", "yard", "inch",
-    "kg", "gram", "ton",
-    "pcs", "lusin", "kodi", "gross", "helai", "set", "pair",
-    "rol", "gulung", "bal", "karton", "pak", "sak",
-    "liter", "ml",
-}
-
-def _normalize_unit(unit: str) -> str:
-    if not unit:
-        return "pcs"
-    u = str(unit).strip().lower()
-    aliases = {
-        "piece": "pcs", "pieces": "pcs", "buah": "pcs",
-        "meter": "m", "centimeter": "cm",
-        "kilogram": "kg", "gr": "gram", "grams": "gram",
-        "pasang": "pair", "set/pair": "set",
-        "rolls": "rol", "roll": "rol",
-        "pack": "pak", "packs": "pak",
-        "karton/dus": "karton", "dus": "karton",
-    }
-    u = aliases.get(u, u)
-    return u if u in _VALID_UNITS else "pcs"
+# 2026-11-06 (pola P8): salinan `_normalize_unit`/`_VALID_UNITS` yang tidak dipakai dihapus —
+# ejaan satuan resmi ada di `core.uom.canonical_unit` (dipakai `dewi_accessories_items`).
 
 # Fase 2.8: helper stok aksesoris KANONIK dipindah ke core.accessory_stock
 # (satukan ke rahaza_material_stock flat via stock_service; hilangkan duplikasi Schema-B nested).
@@ -123,11 +102,12 @@ async def _log_movement(db, user: dict, *, material_id: str, mv_type: str, qty: 
     return mvdoc
 
 async def _enrich_movement(db, mv: dict) -> dict:
-    """Lengkapi baris kartu stok dengan konteks permintaan/pinjaman — SSOT SAJA.
+    """Lengkapi baris kartu stok dengan konteks permintaan — SSOT SAJA.
 
     FASE 10: sebelumnya membaca `acc_internal_requests` & `acc_loans` (koleksi legacy
-    yang akan di-drop). Sekarang membaca SSOT: `dewi_accessory_requests` untuk
-    permintaan internal dan `dewi_asset_loans` untuk peminjaman alat.
+    yang akan di-drop). Sekarang membaca SSOT `dewi_accessory_requests`.
+    2026-11-06 (pola P2/P3): cabang pinjaman (`related_loan_id` → `dewi_asset_loans`) dihapus —
+    field itu tidak pernah ditulis; peminjaman aset tidak membuat mutasi stok aksesoris.
     """
     # baris migrasi: `related_req_id`; baris nyata (serah permintaan): reference_type/_id
     req_id = mv.get("related_req_id") or (
@@ -142,13 +122,6 @@ async def _enrich_movement(db, mv: dict) -> dict:
                 "request_number": req.get("request_code", ""),
                 "division": req.get("divisi", ""),
             }
-    if mv.get("related_loan_id"):
-        loan = await db.dewi_asset_loans.find_one(
-            {"id": mv["related_loan_id"]},
-            {"_id": 0, "loan_number": 1, "borrower_name": 1},
-        )
-        if loan:
-            mv["related_loan"] = loan
     return mv
 
 # (dead code dibersihkan) _material_to_acc_item duplikat tak terpakai — SSOT serializer item aksesoris ada di routes/dewi_accessories_items.py

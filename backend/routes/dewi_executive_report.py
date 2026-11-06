@@ -324,7 +324,7 @@ async def _marketing_kpis(db, year: int, month: int) -> dict:
     )
 
     # ── F10 (2026-08-13) — METRIK MATI DIGANTI SUMBER YANG BENAR ─────────────
-    # Sebelumnya di sini ada `db.marketing_kol_campaigns.count_documents(...)`
+    # Sebelumnya di sini ada hitungan koleksi `marketing_kol_campaigns`
     # yang hasilnya bahkan TIDAK pernah dipakai. Koleksi itu tidak pernah ditulis
     # oleh satu pun jalur aplikasi — jadi metrik "kampanye KOL" adalah metrik mati:
     # selalu 0, dan pembaca laporan menyimpulkan "bulan ini tidak ada kampanye".

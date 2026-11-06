@@ -10,6 +10,7 @@ import FileAttachmentPanel from './FileAttachmentPanel';
 import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
 import SearchableSelect from './SearchableSelect';
 import ImportExportPanel from './ImportExportPanel';
+import ImportExportToolbar from '../ImportExportToolbar';
 import QuickCompleteModal from './QuickCompleteModal';
 import { BizBadge } from './BusinessTypeBadge';
 import { apiGet, apiPost, apiPut, apiDelete, apiFetch } from '../../../lib/api';
@@ -436,7 +437,10 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
       if (!editData && accPayload.length > 0) {
         try {
           await apiPost('/po-accessories', { po_id: data.id, items: accPayload });
-        } catch (e) { /* non-critical */ }
+        } catch (e) {
+          // 2026-11-06 (pola P6): PO tersimpan, tetapi aksesorisnya tidak — dulu ditelan tanpa pesan
+          toast.error(`PO tersimpan, tetapi aksesoris gagal disimpan: ${e.message}. Tambahkan lagi dari detail PO.`);
+        }
       }
       setShowModal(false);
       refetchPOs();
@@ -764,12 +768,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
         }}
         actions={
           <div className="flex items-center gap-2">
-            <ImportExportPanel 
-              importType="production-pos" 
-              exportType="production-pos" 
-              exportFilters={{ status: filterStatus }}
-              onImportSuccess={() => refetchPOs()} 
-            />
+            {/* 2026-11-06 (T6): impor PO lama (/import-data) dihentikan — satu jalur impor PO berjalan saat
+                cutoff lewat Data Transfer (pratinjau per baris; hanya admin/owner yang melihat tombolnya). */}
+            <ImportExportPanel importType={null} exportType="production-pos" exportFilters={{ status: filterStatus }} />
+            <ImportExportToolbar collectionKey="po_berjalan" label="PO berjalan saat cutoff"
+              importLabel="Impor PO berjalan" size="default" onImported={() => refetchPOs()} />
             {canCreate && (
               <Button onClick={openCreate} data-testid="create-po-btn"><Plus className="w-4 h-4" /> Buat PO</Button>
             )}

@@ -59,12 +59,11 @@ async def download_file(path: str, request: Request, auth: str = Query(None)):
     mengunduh berkas (foto karyawan, dokumen HR, lampiran RnD). Sekarang tanda
     tangan diverifikasi lewat `auth.verify_download_token` — satu jalur dengan
     `require_auth`. Query-param tetap didukung karena tag <img> browser tidak
-    bisa mengirim header Authorization.
+    bisa mengirim header Authorization. Pemeriksaan token SATU jalur dengan `GET /api/uploads/{path}`
+    (`core.sensitive_files.file_request_user`).
     """
-    from auth import verify_download_token
-    header = request.headers.get('Authorization', '')
-    raw = header.split(' ', 1)[1].strip() if header.startswith('Bearer ') else (auth or '')
-    if not raw or not verify_download_token(raw):
+    from core.sensitive_files import file_request_user
+    if not file_request_user(request, auth):
         raise HTTPException(401, 'Unauthorized')
     db = get_db()
     record = await db.attachments.find_one({'storage_path': path, 'is_deleted': False})

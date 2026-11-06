@@ -321,7 +321,9 @@ async def po_item_quantities(db, po_item_ids) -> dict:
                 r['scrap'] += qs
 
     # ── selisih kirim CMT→DA terbuka ──
-    async for s in db.cmt_short_shipments.find({'po_item_id': {'$in': ids}, 'status': 'open'}, {'_id': 0}):
+    # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    from core.short_shipment import CMT_SHORT, STATUS_OPEN
+    async for s in db[CMT_SHORT].find({'po_item_id': {'$in': ids}, 'status': STATUS_OPEN}, {'_id': 0}):
         r = out.get(s.get('po_item_id'))
         if r:
             r['cmt_short_open'] += max(0, _i(s.get('qty_short')) - _i(s.get('qty_resolved')))

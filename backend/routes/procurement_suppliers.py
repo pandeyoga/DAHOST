@@ -139,6 +139,14 @@ async def _gen_supplier_code(db, name: str = "") -> str:
     return await gen_prefixed_number(db, "rahaza_suppliers", "code", "SUP-", 4)
 
 
+async def sync_po_vendor_name(db, supplier_id: str, new_name: str | None, old_name: str | None) -> None:
+    """Nama supplier berubah → sinkronkan cache nama di PO (bukan SSOT, hanya cermin tampilan).
+    2026-11-06 (T4): satu helper untuk form supplier & impor Excel Data Transfer."""
+    if new_name and new_name != old_name:
+        await db.rahaza_purchase_orders.update_many(
+            {"supplier_id": supplier_id}, {"$set": {"vendor_name": new_name}})
+
+
 async def _require_procurement(request: Request):
     """Butuh peran pengadaan / gudang / keuangan / manajemen."""
     user = await require_auth(request)
@@ -456,11 +464,7 @@ async def update_supplier(supplier_id: str, request: Request):
     upd = _supplier_doc_from_body(body, current=cur)
     upd["updated_at"] = _now()
     await db.rahaza_suppliers.update_one({"id": supplier_id}, {"$set": upd})
-
-    # Nama berubah → sinkronkan cache nama di PO (bukan SSOT, hanya cermin tampilan)
-    if upd.get("name") and upd["name"] != cur.get("name"):
-        await db.rahaza_purchase_orders.update_many(
-            {"supplier_id": supplier_id}, {"$set": {"vendor_name": upd["name"]}})
+    await sync_po_vendor_name(db, supplier_id, upd.get("name"), cur.get("name"))
 
     await log_activity(user["id"], user.get("name", ""), "update", "rahaza_suppliers",
                        f"Update supplier {cur.get('code')} — {upd.get('name')}")

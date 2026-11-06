@@ -302,7 +302,7 @@ def _wired_db():
                                                "coa_revenue_code": "4-1111", "ar_account_code": "1-1303-SHP-01",
                                                "coa_receivable_code": "1-1303-SHP-01", "coa_cash_code": "1-1201"})
     d.rahaza_cash_accounts.docs.append({"id": "k1", "code": "1-1219", "name": "BCA Lainnya", "gl_account_code": "1-1219"})
-    d.rahaza_vendors.docs.append({"id": "v1", "code": "SUP-1", "name": "Pemasok A", "ap_account_code": "2-1100-SUP-1"})
+    d.rahaza_suppliers.docs.append({"id": "v1", "code": "SUP-1", "name": "Pemasok A", "ap_account_code": "2-1100-SUP-1"})
     d.employee_expense_gl_mappings.docs.append({"id": "m1", "category": "ATK / Perlengkapan", "gl_account_code": "6-2400", "is_active": True})
     d.rahaza_petty_cash_funds.docs.append({"id": "f1", "name": "Kas Kecil Gudang", "bank_account_code": "1-1201", "status": "active"})
     d.rahaza_fixed_assets.docs.append({"id": "a1", "asset_code": "AST-1", "name": "Laptop", "status": "active",

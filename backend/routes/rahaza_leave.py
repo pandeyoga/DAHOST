@@ -150,6 +150,8 @@ async def create_leave_type(request: Request):
 
     if await db.rahaza_leave_types.find_one({"code": doc["code"], "active": True}):
         raise HTTPException(409, f"Kode '{doc['code']}' sudah terpakai.")
+    from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8)
+    await assert_unique_ref(db, "rahaza_leave_types", name=doc.get("name"), label="Jenis cuti")
 
     doc.update({"id": _uid(), "created_at": _now()})
     await db.rahaza_leave_types.insert_one(dict(doc))
@@ -180,6 +182,10 @@ async def update_leave_type(lt_id: str, request: Request):
             {"code": doc["code"], "active": True, "id": {"$ne": lt_id}})
         if dup:
             raise HTTPException(409, f"Kode '{doc['code']}' sudah terpakai.")
+    if doc.get("name") != existing.get("name"):
+        from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8)
+        await assert_unique_ref(db, "rahaza_leave_types", name=doc.get("name"), label="Jenis cuti",
+                                exclude_id=lt_id)
 
     await db.rahaza_leave_types.update_one({"id": lt_id}, {"$set": doc})
     await log_activity(user["id"], user.get("name", ""), "update", "rahaza.leave_type", lt_id)
@@ -195,8 +201,11 @@ async def deactivate_leave_type(lt_id: str, request: Request):
     lt = await db.rahaza_leave_types.find_one({"id": lt_id}, {"_id": 0})
     if not lt:
         raise HTTPException(404, "Leave type tidak ditemukan.")
+    # 2026-11-06 (pola P4): status menunggu = core.leave_engine.PENDING_STATUSES (termasuk
+    # `pending_hr_approval` tahap HR — dulu terlewat sehingga jenis cuti bisa dimatikan di tengah alur)
+    from core.leave_engine import PENDING_STATUSES
     pending = await db.rahaza_leave_requests.count_documents(
-        {"leave_type_id": lt_id, "status": {"$in": ["draft", "pending_approval"]}})
+        {"leave_type_id": lt_id, "status": {"$in": ["draft", *PENDING_STATUSES]}})
     if pending:
         raise HTTPException(
             409, f"Masih ada {pending} pengajuan berstatus menunggu memakai jenis ini. "

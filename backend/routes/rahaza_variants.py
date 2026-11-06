@@ -83,8 +83,9 @@ async def _ensure_colors(db):
             "order_seq": c["order_seq"], "active": True,
             "created_at": _now(), "updated_at": _now(),
         } for c in DEFAULT_COLORS]
-        if docs:
-            await db.rahaza_colors.insert_many(docs)
+        # 2026-11-06 (pola P8): `_id` tetap per kode — dua permintaan bersamaan tidak menggandakan palet
+        from core.reference_dedup import seed_once
+        await seed_once(db, "rahaza_colors", docs)
 
 
 @router.get("/colors")
@@ -111,6 +112,10 @@ async def create_color(request: Request):
         raise HTTPException(400, "Kode warna wajib diisi.")
     if await db.rahaza_colors.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode warna '{code}' sudah dipakai. Gunakan kode lain.")
+    # 2026-11-06 (pola P8): nama warna setara (Putih = White, Abu = Abu-abu) ditolak — aturan kembar keputusan 6a
+    from core.reference_dedup import assert_unique_ref
+    from core.variant_identity import color_group_key
+    await assert_unique_ref(db, "rahaza_colors", name=name, label="Warna", key_fn=color_group_key)
     hex_val = (body.get("hex") or "#CCCCCC").strip()
     if not hex_val.startswith("#"):
         hex_val = "#" + hex_val

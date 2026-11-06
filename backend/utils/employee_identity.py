@@ -57,6 +57,13 @@ HR_ROLES = {"superadmin", "admin", "owner", "hr", "hr_manager", "manager",
 ACTIVE_EMPLOYEE_FILTER = {"active": {"$ne": False}}
 
 
+def job_title_of(emp: dict | None) -> str:
+    """Jabatan karyawan. 2026-11-06 (pola P3): master karyawan menulis `job_title`; beberapa layar
+    dulu membaca `position` (tidak pernah ditulis) sehingga kolom Jabatan selalu kosong."""
+    e = emp or {}
+    return e.get("job_title") or e.get("position") or ""
+
+
 def is_hr(user: dict) -> bool:
     """True bila user boleh bertindak atas nama karyawan lain."""
     role = (user.get("role") or "").lower()

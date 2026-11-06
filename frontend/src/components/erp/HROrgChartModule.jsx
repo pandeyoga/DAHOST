@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { OrgNode } from './OrgNode';
 import { Skeleton } from '@/components/ui/skeleton';
+import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -88,10 +89,14 @@ export default function HROrgChartModule({ token }) {
     setSaving(true);
     try {
       const body = { ...unitForm, parent_id: unitForm.parent_id || null };
-      if (editUnit) {
-        await API(`/units/${editUnit.unit_id}`, { method: 'PUT', headers, body: JSON.stringify(body) });
-      } else {
-        await API(`/units`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const r = editUnit
+        ? await API(`/units/${editUnit.unit_id}`, { method: 'PUT', headers, body: JSON.stringify(body) })
+        : await API(`/units`, { method: 'POST', headers, body: JSON.stringify(body) });
+      // 2026-11-06 (pola P6): dulu form ditutup walau server menolak, tanpa pesan apa pun
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan unit');
+        return;
       }
       setShowUnitForm(false);
       fetchAll();
@@ -113,7 +118,13 @@ export default function HROrgChartModule({ token }) {
     try {
       const unit = units.find(u => u.unit_id === posForm.unit_id);
       const body = { ...posForm, unit_name: unit?.name || '' };
-      await API(`/positions`, { method: 'POST', headers, body: JSON.stringify(body) });
+      const r = await API(`/positions`, { method: 'POST', headers, body: JSON.stringify(body) });
+      // 2026-11-06 (pola P6): dulu form ditutup walau server menolak, tanpa pesan apa pun
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyimpan jabatan');
+        return;
+      }
       setShowPosForm(false);
       fetchAll();
     } catch {} finally { setSaving(false); }

@@ -70,8 +70,9 @@ function TaskNoteModal({ task, checklistId, headers, onSuccess, onClose }) {
       const r = await api(`/checklists/${checklistId}/tasks/${task.task_id}`, {
         method: 'PUT', headers, body: JSON.stringify({ status: 'done', notes }),
       });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
       if (d.ok) { toast.success('Tugas diselesaikan'); onSuccess(d.checklist); }
+      else toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal');  // 2026-11-06 (pola P6): dulu diam
     } catch { toast.error('Gagal'); }
     finally { setSaving(false); }
   };
@@ -122,8 +123,9 @@ function AddTaskModal({ checklistId, headers, onSuccess, onClose }) {
       const r = await api(`/checklists/${checklistId}/tasks`, {
         method: 'POST', headers, body: JSON.stringify(payload),
       });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
       if (d.ok) { toast.success('Aktivitas ditambahkan'); onSuccess(d.checklist); }
+      else toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menambah aktivitas');  // 2026-11-06 (pola P6): dulu diam
     } catch (_e) { toast.error('Gagal menambah aktivitas'); }
     finally { setSaving(false); }
   };
@@ -222,8 +224,9 @@ function ChecklistDetail({ cl: initCl, headers, onUpdate, onClose }) {
     if (!window.confirm(`Hapus aktivitas "${task.title}"?`)) return;
     try {
       const r = await api(`/checklists/${cl.checklist_id}/tasks/${task.task_id}`, { method: 'DELETE', headers });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
       if (d.ok) { handleUpdate(d.checklist); toast.success('Aktivitas dihapus'); }
+      else toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menghapus');  // 2026-11-06 (pola P6): dulu diam
     } catch { toast.error('Gagal menghapus'); }
   };
 
@@ -233,8 +236,9 @@ function ChecklistDetail({ cl: initCl, headers, onUpdate, onClose }) {
       const r = await api(`/checklists/${cl.checklist_id}`, {
         method: 'PUT', headers, body: JSON.stringify({ status: newStatus }),
       });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
       if (d.ok) { handleUpdate(d.checklist); toast.success(`Status diubah ke: ${STATUS_CFG[newStatus]?.label}`); }
+      else toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal mengubah status');  // 2026-11-06 (pola P6): dulu diam
     } catch { toast.error('Gagal mengubah status'); }
     finally { setSavingStatus(false); }
   };
@@ -708,7 +712,8 @@ export default function HROnboardingModule({ token }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await api(`/checklists`, { method: 'POST', headers, body: JSON.stringify(form) });
+      const r = await api(`/checklists`, { method: 'POST', headers, body: JSON.stringify(form) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       setShowForm(false);
       await refreshAll();
       toast.success('Onboarding checklist dibuat');
@@ -723,7 +728,8 @@ export default function HROnboardingModule({ token }) {
   const handleDeleteTemplate = async (tplId, name) => {
     if (!window.confirm(`Hapus template "${name}"?`)) return;
     try {
-      await api(`/templates/${tplId}`, { method: 'DELETE', headers });
+      const r = await api(`/templates/${tplId}`, { method: 'DELETE', headers });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       await refreshAll();
       toast.success('Template dihapus');
     } catch { toast.error('Gagal menghapus'); }
