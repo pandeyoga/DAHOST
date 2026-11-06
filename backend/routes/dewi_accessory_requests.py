@@ -23,7 +23,7 @@ from typing import Optional
 import uuid
 import re
 from core.authz import only  # T-01 2.3
-from core.roles import WAREHOUSE_ROLES  # T-01 2.3
+from core.roles import MGMT_ROLES, WAREHOUSE_ROLES  # T-01 2.3
 from utils.waktu import fmt_wib
 
 router = APIRouter(prefix="/api/dewi/accessory-requests", tags=["RnD-Accessory-Requests"])
@@ -49,6 +49,31 @@ def serialize(doc):
 
 
 VALID_STATUSES = {'draft', 'submitted', 'allocated', 'delivered', 'rejected', 'cancelled'}
+
+# 2026-11-06 (Tahap 1) — status hanya berpindah lewat endpoint transisi (/submit, /allocate,
+# /deliver, /reject). Dulu POST & PUT menerima status apa pun, sehingga `PUT status=delivered`
+# menandai permintaan "terkirim" TANPA stok keluar. Saat dibuat, status boleh draf atau langsung
+# diajukan (Request Internal & sampel R&D mengirim 'submitted').
+CREATE_STATUSES = ('draft', 'submitted')
+# Field alur kerja yang hanya boleh ditulis endpoint transisi — bukan lewat PUT ubah detail.
+# `request_type` ikut dikunci: ia menentukan apakah /deliver memotong stok.
+WORKFLOW_FIELDS = (
+    'status', 'request_type', 'submitted_at',
+    'allocated_by', 'allocated_at', 'allocation_notes',
+    'delivered_by', 'delivered_at', 'delivery_notes',
+    'rejection_reason', 'rejected_by', 'rejected_at',
+    'stock_issued', 'stock_issue_results', 'stock_issued_at',
+)
+# Satu definisi "menunggu" untuk Inbox Approval DAN kartu "Request Pending" di dashboard:
+# status diajukan, semua jenis permintaan (inbox Portal Aksesoris membuka semua jenis).
+INBOX_PENDING_FILTER = {'status': 'submitted'}
+
+
+def _assert_can_fulfil(user: dict, *keys: str, what: str):
+    """Gerbang alokasi / serah / tolak: tim Portal Aksesoris (termasuk admin gudang) +
+    manajemen. Satu daftar peran untuk ketiga aksi — dulu hanya /reject yang dijaga."""
+    from routes.shared import assert_can_act
+    assert_can_act(user, *keys, portal='accessories', legacy_roles=MGMT_ROLES, what=what)
 
 # P3 TD-009: known request_type discriminators
 VALID_REQUEST_TYPES = {
@@ -132,6 +157,10 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
     items = body.get('items') or []
     if not items:
         raise HTTPException(400, 'Minimal 1 item aksesoris harus diisi')
+    status = str(body.get('status') or 'draft').strip().lower()
+    if status not in CREATE_STATUSES:
+        raise HTTPException(400, 'Permintaan baru hanya bisa disimpan sebagai draf atau langsung diajukan. '
+                                 'Menyiapkan, menyerahkan, dan menolak dilakukan dari Inbox Approval.')
 
     rt = _normalize_request_type(body.get('request_type'))
     sample_id = body.get('sample_request_id') or ''
@@ -200,7 +229,8 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
         'urgent': bool(body.get('urgent', False)),
         'needed_by_date': body.get('needed_by_date', '') or body.get('needed_by', ''),
         'notes': body.get('notes', '') or body.get('reason', ''),
-        'status': body.get('status', 'draft'),
+        'status': status,
+        'submitted_at': now_utc() if status == 'submitted' else None,
         'requester_id': user['id'],
         'requester_name': user.get('name', ''),
         'allocated_by': None,
@@ -224,8 +254,13 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
         raise HTTPException(404, 'Request tidak ditemukan')
     if doc['status'] in ('delivered', 'rejected', 'cancelled'):
         raise HTTPException(400, f"Tidak bisa edit request dengan status {doc['status']}")
+    if 'status' in body and body.get('status') != doc.get('status'):
+        raise HTTPException(400, 'Status permintaan tidak bisa diubah dari sini. Gunakan tombol Ajukan, '
+                                 'Siapkan, Tandai Kirim, atau Tolak supaya stok dan jejak auditnya tercatat.')
 
-    upd = {k: v for k, v in body.items() if k not in ('id', '_id', 'created_at', 'created_by', 'requester_id', 'request_code')}
+    upd = {k: v for k, v in body.items()
+           if k not in ('id', '_id', 'created_at', 'created_by', 'requester_id', 'request_code')
+           and k not in WORKFLOW_FIELDS}
     if 'items' in upd:
         upd['items'] = [
             {
@@ -264,6 +299,7 @@ async def submit_request(request_id: str, user: dict = Depends(require_auth)):
 # ─── ALLOCATE (submitted → allocated, by Admin Aksesoris) ────────────────────
 @router.post('/{request_id}/allocate')
 async def allocate_request(request_id: str, body: dict = None, user: dict = Depends(require_auth)):
+    _assert_can_fulfil(user, 'accessories.approve', what='menyiapkan permintaan aksesoris')
     db = get_db()
     body = body or {}
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})
@@ -301,6 +337,8 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
       * IDEMPOTEN: dokumen ditandai `stock_issued` sehingga klik ganda tidak memotong
         stok dua kali.
     """
+    _assert_can_fulfil(user, 'accessories.approve', 'wh.accessory.manage',
+                       what='menyerahkan permintaan aksesoris')
     db = get_db()
     body = body or {}
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})
@@ -362,11 +400,8 @@ async def deliver_request(request_id: str, body: dict = None, user: dict = Depen
 # ─── REJECT ──────────────────────────────────────────────────────────────────
 @router.post('/{request_id}/reject')
 async def reject_request(request_id: str, body: dict = None, user: dict = Depends(require_auth)):
-    from routes.shared import assert_can_act
-    assert_can_act(user, 'accessories.approve', 'accessories.manage', portal='accessories',
-                   legacy_roles=('admin_aksesoris', 'spv_aksesoris', 'admin_gudang',
-                                 'manager', 'owner', 'admin', 'superadmin'),
-                   what='menolak permintaan aksesoris')
+    _assert_can_fulfil(user, 'accessories.approve', 'accessories.manage',
+                       what='menolak permintaan aksesoris')
     db = get_db()
     body = body or {}
     doc = await db.dewi_accessory_requests.find_one({'id': request_id})

@@ -95,17 +95,20 @@ async def production_dashboard(
                     "waste": {"$sum": "$waste_qty"}}},
     ]).to_list(20)
     cut_by_status = {r["_id"]: r for r in cut_rows}
-    cut_consumed = sum(_f(r.get("consumed")) for r in cut_rows)
-    cut_produced = sum(_f(r.get("produced")) for r in cut_rows)
+    # Tahap 1 (6 Nov 2026): kain/sisa/rendemen per SATUAN kain dan tanpa order batal
+    # (dulu kg + yard dijumlah jadi satu angka). Satu rumus dengan dashboard Cutting.
+    from routes.cutting import cutting_unit_totals
+    cut_tot = await cutting_unit_totals(db)
     cutting = {
         "draft": _i(cut_by_status.get("draft", {}).get("n")),
         "in_progress": _i(cut_by_status.get("in_progress", {}).get("n")),
         "completed": _i(cut_by_status.get("completed", {}).get("n")),
         "qty_dalam_proses": round(sum(_f(cut_by_status.get(s, {}).get("planned")) for s in CUT_ACTIVE)),
-        "qty_potongan_jadi": round(cut_produced),
-        "kain_terpakai": round(cut_consumed, 2),
-        "waste": round(sum(_f(r.get("waste")) for r in cut_rows), 2),
-        "rendemen": round(cut_produced / cut_consumed, 3) if cut_consumed > 0 else 0.0,
+        "qty_potongan_jadi": round(cut_tot["produced"]),
+        "kain_terpakai": cut_tot["consumed"],
+        "waste": cut_tot["waste"],
+        "rendemen": cut_tot["yield"],
+        "per_satuan": cut_tot["by_unit"],
         "panel_aktif": await db.rahaza_materials.count_documents({"is_cut_panel": True, "active": True}),
     }
 

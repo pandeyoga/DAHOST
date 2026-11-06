@@ -74,30 +74,41 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
   useEffect(() => { fetchRequests(); }, [filterStatus, filterType, urgentOnly]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { fetchStats(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2026-11-06 (Tahap 1): aksi dianggap berhasil HANYA bila server menjawab ok. Dulu `res.ok`
+  // tidak diperiksa, jadi pesan "berhasil" muncul walau server menolak (stok kurang, tidak
+  // berhak, status sudah berubah). Bila ditolak: pesan server ditampilkan, baris tidak diubah.
+  const sendAction = async (path, method, body) => {
+    const res = await fetch(`${API}/api/dewi/accessory-requests/${path}`, {
+      method, headers: h, ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const d = data?.detail;
+      throw new Error(typeof d === 'string' ? d : (d?.message || `Server menolak permintaan ini (kode ${res.status}).`));
+    }
+    return data;
+  };
+
   const handleAllocate = async () => {
     if (!actionModal) return;
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${actionModal.id}/allocate`, {
-        method: 'POST', headers: h, body: JSON.stringify({ notes: actionModal.notes || '' }),
-      });
+      await sendAction(`${actionModal.id}/allocate`, 'POST', { notes: actionModal.notes || '' });
       toast.success('Request dialokasikan');
       setActionModal(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal mengalokasikan'); }
+    } catch (e) { toast.error(e.message || 'Gagal mengalokasikan'); }
   };
 
   const handleDeliver = async () => {
     if (!actionModal) return;
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${actionModal.id}/deliver`, {
-        method: 'POST', headers: h, body: JSON.stringify({ notes: actionModal.notes || '' }),
-      });
+      await sendAction(`${actionModal.id}/deliver`, 'POST', { notes: actionModal.notes || '' });
       toast.success('Request ditandai sudah diterima');
       setActionModal(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal update status'); }
+    } catch (e) { toast.error(e.message || 'Gagal update status'); }
   };
 
   const handleReject = async () => {
@@ -107,24 +118,22 @@ export default function AccessoryRequestInbox({ token, moduleId }) {
       return;
     }
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${actionModal.id}/reject`, {
-        method: 'POST', headers: h, body: JSON.stringify({ reason: actionModal.notes }),
-      });
+      await sendAction(`${actionModal.id}/reject`, 'POST', { reason: actionModal.notes });
       toast.success('Request ditolak');
       setActionModal(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal reject'); }
+    } catch (e) { toast.error(e.message || 'Gagal menolak'); }
   };
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/accessory-requests/${delId}`, { method: 'DELETE', headers: h });
+      await sendAction(delId, 'DELETE');
       toast.success('Request dihapus');
       setDelId(null);
       fetchRequests();
       fetchStats();
-    } catch { toast.error('Gagal menghapus'); }
+    } catch (e) { toast.error(e.message || 'Gagal menghapus'); }
   };
 
   const filtered = useMemo(() => requests.filter(r => {

@@ -712,21 +712,20 @@ async def approve_leave(leave_id: str, request: Request):
 
     # ─── Approve final (step 1 single OR step 2 HR) ──────────────────────────────
     # Validate leave balance (hanya saat final approve)
+    # Tahap 1 (2026-11-06): SELALU diperiksa. Dulu hanya bila dokumen saldo sudah ada; bila belum,
+    # consume_balance di bawah membuatnya dari jatah lalu langsung memakai seluruh durasi ⇒ saldo minus.
+    # Cara menghitung hari (duration_days) sengaja tidak diubah di tahap ini.
     try:
+        from routes.rahaza_leave_balances import balance_snapshot
         d_from_check = date.fromisoformat(leave["from_date"])
         year = d_from_check.year
-        bal = await db.rahaza_leave_balances.find_one({
-            "employee_id": leave["employee_id"],
-            "leave_type_id": leave["leave_type_id"],
-            "year": year,
-        }, {"_id": 0})
-        if bal:
-            remaining = int(bal.get("allocated", 0)) - float(bal.get("used", 0))
-            lt_check  = await db.rahaza_leave_types.find_one({"id": leave["leave_type_id"]}, {"_id": 0})
-            unpaid    = _lt_is_unpaid(lt_check)   # BUG-4: SSOT dua-field
-            duration  = float(leave.get("duration_days", 1))
-            if remaining < duration and not unpaid:
-                raise HTTPException(400, f"Sisa cuti tidak cukup. Sisa: {remaining} hari, diminta: {duration} hari.")
+        lt_check  = await db.rahaza_leave_types.find_one({"id": leave["leave_type_id"]}, {"_id": 0})
+        bal = await balance_snapshot(db, leave["employee_id"], leave["leave_type_id"], year, lt=lt_check)
+        remaining = bal["remaining"]
+        unpaid    = _lt_is_unpaid(lt_check)   # BUG-4: SSOT dua-field
+        duration  = float(leave.get("duration_days", 1))
+        if remaining < duration and not unpaid:
+            raise HTTPException(400, f"Sisa cuti tidak cukup. Sisa: {remaining:g} hari, diminta: {duration:g} hari.")
     except HTTPException:
         raise
     except Exception as e:
@@ -1010,11 +1009,37 @@ async def delete_leave(leave_id: str, request: Request):
     return {"status": "deleted"}
 
 
+PENDING_LEAVE_STATUSES = ("pending_approval", "pending_hr_approval")
+
+
+async def _cancel_pending_leave(db, leave: dict, user: dict, cancel_reason: str) -> dict:
+    """Tarik pengajuan yang belum diputuskan: status 'cancelled', tanpa sentuh saldo/absensi."""
+    leave_id = leave["id"]
+    now = _now()
+    await db.rahaza_leave_requests.update_one(
+        {"id": leave_id, "status": {"$in": list(PENDING_LEAVE_STATUSES)}},
+        {"$set": {"status": "cancelled", "cancelled_at": now, "cancelled_by": user["id"],
+                  "cancelled_by_name": user.get("name", ""), "cancel_reason": cancel_reason,
+                  "updated_at": now}})
+    try:  # antrean persetujuan & "Perlu Tindakan" atasan/HR ikut ditutup
+        await db.approval_requests.update_many(
+            {"type": "leave", "ref_id": leave_id, "status": "pending"},
+            {"$set": {"status": "cancelled", "updated_at": now.isoformat()}})
+        from utils.notif_unified import resolve_for_source
+        await resolve_for_source(db, "rahaza_leave_requests", leave_id)
+    except Exception as e:  # noqa: BLE001 — pembatalan tetap sah walau antrean gagal dirapikan
+        log.warning(f"[cancel_leave] antrean persetujuan {leave_id} gagal ditutup: {e}")
+    await log_activity(user["id"], user.get("name", ""), "cancel", "rahaza.leave",
+                       f"{leave_id} — {cancel_reason} (pengajuan ditarik)")
+    out = await db.rahaza_leave_requests.find_one({"id": leave_id}, {"_id": 0})
+    return serialize_doc(out)
+
+
 @router.post("/leaves/{leave_id}/cancel")
 async def cancel_leave(leave_id: str, request: Request):
     """
-    Batalkan leave yang sudah approved (future dates only).
-    Saldo cuti dikembalikan. Attendance records (status=cuti) juga dihapus.
+    Batalkan pengajuan cuti yang masih menunggu persetujuan, atau cuti approved (future dates only).
+    Cuti approved: saldo cuti dikembalikan dan attendance records (status=cuti) dihapus.
     """
     user = await require_auth(request)
     db   = get_db()
@@ -1026,8 +1051,13 @@ async def cancel_leave(leave_id: str, request: Request):
         raise HTTPException(404, "Leave request tidak ditemukan.")
     await _ensure_own_or_hr(db, user, leave.get("employee_id"),
                             "Hanya pemohon cuti sendiri atau HR yang boleh membatalkan cuti ini.")
+    # Tahap 1 (2026-11-06): pengajuan yang MASIH MENUNGGU persetujuan juga boleh dibatalkan (tombol
+    # Batalkan di Portal Saya). Dulu ditolak "Hanya leave Approved" sehingga karyawan tidak bisa menarik
+    # pengajuannya. Pengajuan menunggu belum memakai saldo dan belum membuat absensi cuti.
+    if leave.get("status") in PENDING_LEAVE_STATUSES:
+        return await _cancel_pending_leave(db, leave, user, cancel_reason)
     if leave.get("status") != "approved":
-        raise HTTPException(400, "Hanya leave Approved yang bisa dibatalkan.")
+        raise HTTPException(400, "Hanya cuti yang menunggu persetujuan atau sudah disetujui yang bisa dibatalkan.")
 
     # Cek apakah cuti sudah mulai (tanggal from_date sudah lewat)
     today = today_wib()

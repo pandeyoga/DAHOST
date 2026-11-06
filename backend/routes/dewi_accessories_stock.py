@@ -50,6 +50,7 @@ from core.accessory_stock import (  # noqa: E402
     stock_qty as _stock_qty,
     all_accessory_stock as _all_accessory_stock,
     add_stock as _add_stock,
+    usable_qty as _usable_qty,  # tanpa stok karantina (Tahap 1, 2026-11-06)
 )
 # FASE 8: valuasi HPP aksesoris (moving average + ringkasan nilai persediaan) +
 # poster jurnal supaya mutasi aksesoris masuk buku besar.
@@ -112,9 +113,12 @@ async def _enrich_movement(db, mv: dict) -> dict:
     yang akan di-drop). Sekarang membaca SSOT: `dewi_accessory_requests` untuk
     permintaan internal dan `dewi_asset_loans` untuk peminjaman alat.
     """
-    if mv.get("related_req_id"):
+    # baris migrasi: `related_req_id`; baris nyata (serah permintaan): reference_type/_id
+    req_id = mv.get("related_req_id") or (
+        mv.get("reference_id") if mv.get("reference_type") == "accessory_request" else None)
+    if req_id:
         req = await db.dewi_accessory_requests.find_one(
-            {"id": mv["related_req_id"]},
+            {"id": req_id},
             {"_id": 0, "request_code": 1, "divisi": 1, "request_type": 1},
         )
         if req:
@@ -174,15 +178,23 @@ async def get_movements(request: Request):
     await require_auth(request)
     db = get_db()
     sp = request.query_params
-    query: dict = {"domain": "accessory"}
+    # 2026-11-06 (Tahap 1): kartu stok = SEMUA baris `rahaza_material_movements` milik material
+    # aksesoris. Dulu disaring `domain='accessory'` — field yang hanya ditulis skrip migrasi —
+    # sehingga terima/keluar/scrap/opname/GR yang sebenarnya tidak pernah muncul.
     if sp.get("acc_id"):
-        query["material_id"] = sp["acc_id"]
+        query: dict = {"material_id": sp["acc_id"]}
+    else:
+        acc_ids = [m["id"] for m in await db.rahaza_materials.find(
+            {"type": "accessory"}, {"_id": 0, "id": 1}).to_list(20000)]
+        query = {"material_id": {"$in": acc_ids}}
     if sp.get("movement_type"):
-        # accept both legacy and canonical types
+        # jenis mutasi ditulis di field berbeda per penulis: `movement_type` (Portal Aksesoris),
+        # `type` (gudang/opname), `legacy_movement_type` (hasil migrasi)
         mt = sp["movement_type"].strip()
         query["$or"] = [
-            {"legacy_movement_type": mt.upper()},
+            {"movement_type": mt.lower()},
             {"type": mt.lower()},
+            {"legacy_movement_type": mt.upper()},
         ]
     docs = await db.rahaza_material_movements.find(query, {"_id": 0}).sort("created_at", -1).limit(500).to_list(500)
     out = [await _enrich_movement(db, d) for d in docs]
@@ -277,7 +289,11 @@ async def receive_stock(request: Request):
     if unit_cost_in < 0:
         raise HTTPException(400, "Harga satuan tidak boleh negatif")
 
-    qty_before = await _stock_qty(db, acc_id)
+    # 2026-11-06 (Tahap 1): "qty lama" rata-rata bergerak = stok yang ada di nilai persediaan
+    # (`quarantine.valued_onhand`, definisi yang sama dengan Penerimaan Barang & Set HPP). Dulu
+    # on-hand mentah, sehingga barang reject di karantina yang belum bernilai ikut membobot HPP.
+    from core import quarantine
+    qty_before = await quarantine.valued_onhand(db, acc_id)
     await _add_stock(db, acc_id, loc_id, qty_in_base_unit)
     cost_info = await accessory_valuation.apply_receipt_cost(
         db, acc_id, qty_in_base_unit, unit_cost_in,
@@ -408,9 +424,10 @@ async def scrap_stock(request: Request):
         pack_size = 1
     qty_base = qty * pack_size if body.get("input_unit") == "pack" else qty
 
-    current = await _stock_qty(db, acc_id)
+    current = await _usable_qty(db, acc_id)
     if current < qty_base:
-        raise HTTPException(400, f"Stok tidak cukup untuk di-scrap. Stok saat ini: {current}")
+        raise HTTPException(400, f"Stok tidak cukup untuk di-scrap. Stok yang bisa dipakai: {current:g} "
+                                 f"(barang di karantina dimusnahkan lewat dokumen karantina).")
 
     await _add_stock(db, acc_id, await _get_accessory_location_id(db), -qty_base)
     unit_cost = accessory_valuation.resolve_unit_cost(item)

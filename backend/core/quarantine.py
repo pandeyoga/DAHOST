@@ -27,7 +27,7 @@ dilakukan pemanggil (`routes/wms_quarantine.py`).
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core import stock_service
 from core.stock_schema import read_qty, read_reserved
@@ -227,6 +227,40 @@ async def quarantine_in(db, *, material_id: str, qty: float, unit: str = "pcs",
 # ─────────────────────────────────────────────────────────────────────────────
 # KELUAR KARANTINA (dipakai router; JE ditangani pemanggil)
 # ─────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# 2026-11-06 (Tahap 1): KLAIM DISPOSISI. Dulu dua klik "Lepas"/"Scrap" bersamaan sama-sama membaca
+# sisa lama → stok dipindah/dikeluarkan dua kali, sementara qty bernilai & jurnalnya hanya tercatat
+# sekali (stok ≠ buku besar). Disposisi kini memegang kunci per item (atomik, syarat: item terbuka
+# dan kunci kosong / basi) selama stok + jurnal + qty bernilai ditulis.
+# ─────────────────────────────────────────────────────────────────────────────
+DISPOSITION_LOCK_STALE = timedelta(minutes=10)
+
+
+class ItemBusy(Exception):
+    """Item karantina sedang didisposisi permintaan lain."""
+
+
+async def claim_item(db, item_id: str, actor: dict | None = None) -> str:
+    """Ambil kunci disposisi item terbuka. Return token; melempar `ItemBusy` bila dipegang orang lain."""
+    token = _uid()
+    now = _now()
+    res = await db[QUARANTINE_COLL].update_one(
+        {"id": item_id, "status": "open",
+         "$or": [{"disposition_lock": None}, {"disposition_lock_at": {"$lt": now - DISPOSITION_LOCK_STALE}}]},
+        {"$set": {"disposition_lock": token, "disposition_lock_at": now,
+                  "disposition_lock_by": (actor or {}).get("id", "")}})
+    if not res.matched_count:
+        raise ItemBusy("Item karantina ini sedang diproses pengguna lain (atau sudah ditutup). "
+                       "Muat ulang lalu periksa sisanya.")
+    return token
+
+
+async def release_item_claim(db, item_id: str, token: str) -> None:
+    await db[QUARANTINE_COLL].update_one(
+        {"id": item_id, "disposition_lock": token},
+        {"$set": {"disposition_lock": None, "disposition_lock_at": None}})
+
+
 async def quarantine_out(db, *, item: dict, action: str, qty: float,
                          to_location_id: str | None = None,
                          actor: dict | None = None, notes: str = "",

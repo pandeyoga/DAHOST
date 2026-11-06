@@ -46,6 +46,31 @@ def _fmt_num(n):
         return "0"
 
 
+NO_DATA = "belum ada data"
+
+
+async def _wo_cost_row(db, wo: dict) -> dict:
+    """Biaya satu WO untuk unduhan laporan PO — dari mesin HPP yang sama dengan layar
+    (`rahaza_hpp._compute_hpp`: bahan keluar × biaya saat keluar, upah dari hasil
+    produksi × tarif, overhead dari pengaturan).
+
+    Tahap 1 (6 Nov 2026): dulu upah = jumlah event × Rp5.000 dan overhead = 15% dari
+    bahan+upah — angka karangan."""
+    from routes.rahaza_hpp import _compute_hpp
+    model = await db.rahaza_models.find_one({"id": wo.get("model_id")}, {"_id": 0, "code": 1})
+    size = await db.rahaza_sizes.find_one({"id": wo.get("size_id")}, {"_id": 0, "code": 1})
+    hpp = await _compute_hpp(db, wo["id"])
+    return {
+        "model_code": (model or {}).get("code") or hpp.get("model_code") or "",
+        "size_code": (size or {}).get("code") or hpp.get("size_code") or "",
+        "completed_qty": int(wo.get("completed_qty") or 0),
+        "material_cost": hpp.get("material_cost", 0),
+        "labor_cost": hpp.get("labor_cost", 0),
+        "overhead_cost": hpp.get("overhead_cost", 0),
+        "total_cost": hpp.get("total_cost", 0),
+    }
+
+
 @router.get("/production/po/{po_id}/export.csv")
 async def export_po_report_csv(po_id: str, request: Request):
     """
@@ -83,53 +108,14 @@ async def export_po_report_csv(po_id: str, request: Request):
         "Status", "Material Cost", "Labor Cost", "Overhead Cost", "Total Cost"
     ])
     
-    # Compute HPP for each WO (reuse logic from rahaza_hpp.py)
-    # Simplified for export: just fetch basic WO data
+    # Tahap 1 (6 Nov 2026): biaya per WO dari mesin HPP yang sama dengan layar
+    # (`rahaza_hpp._compute_hpp`) — lihat `_wo_cost_row`.
     for wo in wos:
-        wo_id = wo["id"]
-        # Get model/size names
-        model = await db.rahaza_models.find_one({"id": wo.get("model_id")}, {"_id": 0, "code": 1, "name": 1})
-        size = await db.rahaza_sizes.find_one({"id": wo.get("size_id")}, {"_id": 0, "code": 1})
-        
-        model_code = model.get("code", "") if model else ""
-        size_code = size.get("code", "") if size else ""
-        
-        # Simplified cost calculation (full logic in rahaza_hpp.py endpoint)
-        # For export, we can call the endpoint or do simplified aggregation
-        # Here: simplified aggregation
-        
-        # Material cost
-        mi_pipe = [
-            {"$match": {"work_order_id": wo_id, "status": "issued"}},
-            {"$unwind": "$items"},
-            {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$items.qty_issued", "$items.unit_cost"]}}}}
-        ]
-        mi_result = await db.rahaza_material_issues.aggregate(mi_pipe).to_list(1)
-        material_cost = mi_result[0]["total"] if mi_result else 0
-        
-        # Labor cost (simplified: count WIP output × default rate)
-        wip_count = await db.rahaza_wip_events.count_documents({
-            "work_order_id": wo_id, "event_type": "output"
-        })
-        labor_cost = wip_count * 5000  # fallback rate
-        
-        # Overhead (simplified: 15% of material+labor)
-        overhead_cost = (material_cost + labor_cost) * 0.15
-        
-        total_cost = material_cost + labor_cost + overhead_cost
-        
-        # Completed qty
-        procs = await db.rahaza_processes.find({"active": True, "is_rework": False}, {"_id": 0}).sort("order_seq", 1).to_list(500)
-        completed_qty = 0
-        if procs:
-            last_proc = procs[-1]
-            pipe = [
-                {"$match": {"event_type": "output", "work_order_id": wo_id, "process_id": last_proc["id"]}},
-                {"$group": {"_id": None, "total": {"$sum": "$qty"}}},
-            ]
-            res = await db.rahaza_wip_events.aggregate(pipe).to_list(1)
-            completed_qty = res[0]["total"] if res else 0
-        
+        r = await _wo_cost_row(db, wo)
+        model_code, size_code, completed_qty = r["model_code"], r["size_code"], r["completed_qty"]
+        material_cost, labor_cost = r["material_cost"], r["labor_cost"]
+        overhead_cost, total_cost = r["overhead_cost"], r["total_cost"]
+
         writer.writerow([
             wo.get("wo_number", ""),
             model_code,
@@ -197,37 +183,22 @@ async def export_maklon_client_report_csv(client_id: str, request: Request):
     writer.writerow([])
     
     # Summary KPIs
+    # Tahap 1 (6 Nov 2026): angka per order dari `rahaza_hpp.maklon_order_figures` — dulu
+    # HPP aktual = bahan +30% +15% dan HPP estimasi = pendapatan (angka karangan).
+    from routes.rahaza_hpp import maklon_order_figures
+    figs = {o["id"]: await maklon_order_figures(db, o) for o in orders}
     total_qty = 0
     total_revenue = 0
-    total_hpp_estimated = 0
-    total_hpp_actual = 0
+    total_material = 0
     on_time = 0
     late = 0
-    
+
     for order in orders:
-        qty = int(order.get("qty_ordered") or 0)
-        price_per_pcs = float(order.get("price_per_pcs") or 0)
-        revenue = qty * price_per_pcs
-        
-        total_qty += qty
-        total_revenue += revenue
-        
-        estimated_hpp = price_per_pcs * qty
-        total_hpp_estimated += estimated_hpp
-        
-        # Simplified actual HPP
-        mi_sum_pipe = [
-            {"$match": {"order_id": order["id"]}},
-            {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$qty", "$unit_cost"]}}}}
-        ]
-        mi_result = await db.dewi_maklon_material_issues.aggregate(mi_sum_pipe).to_list(1)
-        material_cost = mi_result[0]["total"] if mi_result else 0
-        
-        labor_est = material_cost * 0.3
-        overhead_est = (material_cost + labor_est) * 0.15
-        actual_hpp = material_cost + labor_est + overhead_est
-        total_hpp_actual += actual_hpp
-        
+        fig = figs[order["id"]]
+        total_qty += fig["qty"]
+        total_revenue += fig["revenue"]
+        total_material += fig["material_cost"]
+
         # On-time check
         if order.get("status") == "completed":
             deadline = order.get("deadline_date")
@@ -237,17 +208,16 @@ async def export_maklon_client_report_csv(client_id: str, request: Request):
             else:
                 late += 1
     
-    margin = total_revenue - total_hpp_actual
-    margin_pct = (margin / total_revenue * 100) if total_revenue > 0 else 0
     on_time_rate = (on_time / (on_time + late) * 100) if (on_time + late) > 0 else 0
-    
+
     writer.writerow(["KPI Summary"])
     writer.writerow(["Total Qty", _fmt_num(total_qty)])
     writer.writerow(["Total Revenue", _fmt_num(total_revenue)])
-    writer.writerow(["Total HPP Estimated", _fmt_num(total_hpp_estimated)])
-    writer.writerow(["Total HPP Actual", _fmt_num(total_hpp_actual)])
-    writer.writerow(["Margin", _fmt_num(margin)])
-    writer.writerow(["Margin %", f"{margin_pct:.2f}%"])
+    writer.writerow(["Biaya bahan tercatat", _fmt_num(total_material)])
+    writer.writerow(["Total HPP Estimated", NO_DATA])
+    writer.writerow(["Total HPP Actual", NO_DATA])
+    writer.writerow(["Margin", NO_DATA])
+    writer.writerow(["Margin %", NO_DATA])
     writer.writerow(["On-Time Orders", on_time])
     writer.writerow(["Late Orders", late])
     writer.writerow(["On-Time Rate", f"{on_time_rate:.2f}%"])
@@ -256,31 +226,14 @@ async def export_maklon_client_report_csv(client_id: str, request: Request):
     # Orders Table
     writer.writerow(["Order Details"])
     writer.writerow([
-        "Order Code", "Product", "Qty", "Status", "Revenue", 
+        "Order Code", "Product", "Qty", "Status", "Revenue", "Biaya bahan",
         "HPP Estimated", "HPP Actual", "Margin", "Deadline", "Completion", "On-Time"
     ])
-    
+
     for order in orders:
-        qty = int(order.get("qty_ordered") or 0)
-        price_per_pcs = float(order.get("price_per_pcs") or 0)
-        revenue = qty * price_per_pcs
-        
-        estimated_hpp = price_per_pcs * qty
-        
-        # Simplified actual HPP
-        mi_sum_pipe = [
-            {"$match": {"order_id": order["id"]}},
-            {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$qty", "$unit_cost"]}}}}
-        ]
-        mi_result = await db.dewi_maklon_material_issues.aggregate(mi_sum_pipe).to_list(1)
-        material_cost = mi_result[0]["total"] if mi_result else 0
-        
-        labor_est = material_cost * 0.3
-        overhead_est = (material_cost + labor_est) * 0.15
-        actual_hpp = material_cost + labor_est + overhead_est
-        
-        margin = revenue - actual_hpp
-        
+        fig = figs[order["id"]]
+        qty, revenue = fig["qty"], fig["revenue"]
+
         deadline = order.get("deadline_date", "")
         completion = order.get("completion_date", "")
         is_on_time = ""
@@ -293,9 +246,10 @@ async def export_maklon_client_report_csv(client_id: str, request: Request):
             qty,
             order.get("status", ""),
             _fmt_num(revenue),
-            _fmt_num(estimated_hpp),
-            _fmt_num(actual_hpp),
-            _fmt_num(margin),
+            _fmt_num(fig["material_cost"]),
+            NO_DATA,
+            NO_DATA,
+            NO_DATA,
             deadline,
             completion,
             is_on_time,
@@ -394,41 +348,11 @@ async def export_po_report_excel(po_id: str, request: Request):
     # WO Data
     for wo in wos:
         row += 1
-        wo_id = wo["id"]
-        
-        # Get model/size
-        model = await db.rahaza_models.find_one({"id": wo.get("model_id")}, {"_id": 0, "code": 1})
-        size = await db.rahaza_sizes.find_one({"id": wo.get("size_id")}, {"_id": 0, "code": 1})
-        
-        model_code = model.get("code", "") if model else ""
-        size_code = size.get("code", "") if size else ""
-        
-        # Simplified cost
-        mi_pipe = [
-            {"$match": {"work_order_id": wo_id, "status": "issued"}},
-            {"$unwind": "$items"},
-            {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$items.qty_issued", "$items.unit_cost"]}}}}
-        ]
-        mi_result = await db.rahaza_material_issues.aggregate(mi_pipe).to_list(1)
-        material_cost = mi_result[0]["total"] if mi_result else 0
-        
-        wip_count = await db.rahaza_wip_events.count_documents({"work_order_id": wo_id, "event_type": "output"})
-        labor_cost = wip_count * 5000
-        overhead_cost = (material_cost + labor_cost) * 0.15
-        total_cost = material_cost + labor_cost + overhead_cost
-        
-        # Completed qty
-        procs = await db.rahaza_processes.find({"active": True, "is_rework": False}, {"_id": 0}).sort("order_seq", 1).to_list(500)
-        completed_qty = 0
-        if procs:
-            last_proc = procs[-1]
-            pipe = [
-                {"$match": {"event_type": "output", "work_order_id": wo_id, "process_id": last_proc["id"]}},
-                {"$group": {"_id": None, "total": {"$sum": "$qty"}}},
-            ]
-            res = await db.rahaza_wip_events.aggregate(pipe).to_list(1)
-            completed_qty = res[0]["total"] if res else 0
-        
+        r = await _wo_cost_row(db, wo)
+        model_code, size_code, completed_qty = r["model_code"], r["size_code"], r["completed_qty"]
+        material_cost, labor_cost = r["material_cost"], r["labor_cost"]
+        overhead_cost, total_cost = r["overhead_cost"], r["total_cost"]
+
         # Write row
         data = [
             wo.get("wo_number", ""),
@@ -512,7 +436,7 @@ async def export_maklon_client_report_excel(client_id: str, request: Request):
     )
     
     # Title
-    ws.merge_cells('A1:K1')
+    ws.merge_cells('A1:L1')
     ws['A1'] = "LAPORAN PER KLIEN MAKLON - CV. Dewi Aditya"
     ws['A1'].font = Font(bold=True, size=14)
     ws['A1'].alignment = Alignment(horizontal='center')
@@ -556,7 +480,7 @@ async def export_maklon_client_report_excel(client_id: str, request: Request):
     
     # Orders Table
     row += 1
-    headers = ["Order Code", "Product", "Qty", "Status", "Revenue", "HPP Est", "HPP Actual", "Margin", "Deadline", "Completion", "On-Time"]
+    headers = ["Order Code", "Product", "Qty", "Status", "Revenue", "Biaya bahan", "HPP Est", "HPP Actual", "Margin", "Deadline", "Completion", "On-Time"]
     for col_idx, header in enumerate(headers, 1):
         cell = ws.cell(row=row, column=col_idx, value=header)
         cell.fill = header_fill
@@ -564,28 +488,14 @@ async def export_maklon_client_report_excel(client_id: str, request: Request):
         cell.alignment = Alignment(horizontal='center')
         cell.border = border
     
-    # Order data
+    # Order data — Tahap 1 (6 Nov 2026): angka nyata saja (`maklon_order_figures`);
+    # dulu HPP aktual = bahan +30% +15% dan HPP estimasi = pendapatan.
+    from routes.rahaza_hpp import maklon_order_figures
     for order in orders:
         row += 1
-        qty = int(order.get("qty_ordered") or 0)
-        price_per_pcs = float(order.get("price_per_pcs") or 0)
-        revenue = qty * price_per_pcs
-        estimated_hpp = price_per_pcs * qty
-        
-        # Simplified actual HPP
-        mi_sum_pipe = [
-            {"$match": {"order_id": order["id"]}},
-            {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$qty", "$unit_cost"]}}}}
-        ]
-        mi_result = await db.dewi_maklon_material_issues.aggregate(mi_sum_pipe).to_list(1)
-        material_cost = mi_result[0]["total"] if mi_result else 0
-        
-        labor_est = material_cost * 0.3
-        overhead_est = (material_cost + labor_est) * 0.15
-        actual_hpp = material_cost + labor_est + overhead_est
-        
-        margin = revenue - actual_hpp
-        
+        fig = await maklon_order_figures(db, order)
+        qty, revenue = fig["qty"], fig["revenue"]
+
         deadline = order.get("deadline_date", "")
         completion = order.get("completion_date", "")
         is_on_time = ""
@@ -598,18 +508,19 @@ async def export_maklon_client_report_excel(client_id: str, request: Request):
             qty,
             order.get("status", ""),
             revenue,
-            estimated_hpp,
-            actual_hpp,
-            margin,
+            fig["material_cost"],
+            NO_DATA,
+            NO_DATA,
+            NO_DATA,
             deadline,
             completion,
             is_on_time,
         ]
-        
+
         for col_idx, value in enumerate(data, 1):
             cell = ws.cell(row=row, column=col_idx, value=value)
             cell.border = border
-            if col_idx in [5, 6, 7, 8]:  # Currency
+            if col_idx in [5, 6]:  # Currency
                 cell.number_format = '#,##0'
             cell.alignment = Alignment(horizontal='right' if col_idx >= 3 else 'left')
     

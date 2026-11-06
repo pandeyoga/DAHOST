@@ -208,6 +208,19 @@ async def enforce_attendance_policy(db, *, photo_b64: Optional[str],
     return {"office": office, "geo": geo}
 
 
+def attendance_counts(rec: Optional[dict]) -> bool:
+    """Apakah satu record absensi DIHITUNG oleh pembaca (payroll, rekap jam).
+
+    Tahap 1 (2026-11-06, keputusan owner): selfie yang masih `pending` dihitung hadir sampai HR
+    menolaknya. Selfie yang DITOLAK (`approval_status='rejected'`, status jadi 'alfa') bukan
+    kehadiran: tidak dihitung hadir dan jam kerja/lembur/terlambatnya tidak dipakai — padahal jamnya
+    masih tersimpan (penolakan tidak menghapus jam; absen pulang sesudah ditolak tetap mengisi jam).
+    Pengecualian: HR kemudian menandainya Hadir lagi secara manual (status 'hadir').
+    """
+    r = rec or {}
+    return not (r.get("approval_status") == "rejected" and (r.get("status") or "").lower() != "hadir")
+
+
 def determine_approval(geo: dict, face: dict, office: dict) -> str:
     """`auto_approved` atau `pending` (menunggu HR).
 

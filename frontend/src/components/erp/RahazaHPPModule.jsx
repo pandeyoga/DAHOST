@@ -19,7 +19,8 @@ import { todayWIB } from '@/lib/waktu';
 import { readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
 const fmt = formatRupiah;
-const pct = (n) => `${Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+const NO_DATA = 'belum ada data';
+const pct =(n) => `${Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 
 // Status job produksi & order maklon dalam bahasa staf (dulu kode mentah: "In Progress", "in_production").
 const STATUS_ID = {
@@ -184,14 +185,8 @@ function InternalWOTab({ headers, page }) {
     }
   };
 
-  // Estimated HPP calculation (simplified: from BOM or fallback)
-  const getEstimatedHPP = (wo) => {
-    // Simplified: use material_cost + labor_fallback + overhead as estimated
-    // In real scenario, this would come from BOM snapshot at WO creation
-    // For now, we'll use actual as baseline (can be improved later)
-    return hpp ? hpp.total_cost * 0.95 : 0; // assume 5% variance for demo
-  };
-
+  // Tahap 1 (6 Nov 2026): job belum menyimpan estimasi HPP. Dulu estimasi = aktual × 0,95
+  // (angka karangan); sekarang ditampilkan "belum ada data".
   const detail = selected && (
     <DetailPanel
       testId="hpp-detail-panel"
@@ -208,7 +203,7 @@ function InternalWOTab({ headers, page }) {
         <Skeleton className="h-32 w-full" />
       ) : (
         <div className="space-y-4" data-testid="hpp-detail">
-          <HppComparisonInline estimated={getEstimatedHPP(selected)} actual={hpp.total_cost} />
+          <HppComparisonInline estimated={null} actual={hpp.total_cost} />
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <Figure label="Bahan" value={fmt(hpp.material_cost)} testId="hpp-material-cost" />
             <Figure label="Upah" value={fmt(hpp.labor_cost)} testId="hpp-labor-cost" />
@@ -521,9 +516,15 @@ function ClientAnalysisTab({ headers, page }) {
           <StatTile label="Jumlah order" value={analysis.total_orders} testId="client-report-total-orders" />
           <StatTile label="Total qty" value={`${analysis.total_qty.toLocaleString('id-ID')} pcs`} />
           <StatTile label="Pendapatan" value={fmt(analysis.total_revenue)} testId="client-report-revenue" />
-          <StatTile label="Margin" value={pct(analysis.margin_pct)} accent={analysis.margin_pct < 0 ? 'danger' : 'default'} testId="client-report-margin-kpi" />
+          <StatTile label="Margin" value={analysis.margin_pct == null ? NO_DATA : pct(analysis.margin_pct)} accent={analysis.margin_pct < 0 ? 'danger' : 'default'} testId="client-report-margin-kpi" />
         </div>
-        <HppComparisonInline estimated={analysis.total_hpp_estimated} actual={analysis.total_hpp_actual} />
+        {analysis.total_hpp_actual == null ? (
+          <p className="text-sm text-muted-foreground" data-testid="client-report-hpp-note">
+            Biaya bahan tercatat {fmt(analysis.total_material_cost)}. HPP dan margin belum ada data karena upah dan overhead order maklon belum tercatat.
+          </p>
+        ) : (
+          <HppComparisonInline estimated={analysis.total_hpp_estimated} actual={analysis.total_hpp_actual} />
+        )}
       </>}
     >
       {ready ? (
@@ -543,6 +544,7 @@ function ClientAnalysisTab({ headers, page }) {
                     <th className="text-right">Qty</th>
                     <th className="text-left">Status</th>
                     <th className="text-right">Pendapatan</th>
+                    <th className="text-right">Biaya bahan</th>
                     <th className="text-right">HPP aktual</th>
                     <th className="text-right">Margin</th>
                     <th className="text-center">Tepat waktu</th>
@@ -556,9 +558,10 @@ function ClientAnalysisTab({ headers, page }) {
                       <td className="text-right tabular-nums">{order.qty}</td>
                       <td><JobStatus status={order.status} /></td>
                       <td className="text-right tabular-nums">{fmt(order.revenue)}</td>
-                      <td className="text-right tabular-nums">{fmt(order.hpp_actual)}</td>
+                      <td className="text-right tabular-nums">{fmt(order.material_cost)}</td>
+                      <td className="text-right tabular-nums">{order.hpp_actual == null ? '–' : fmt(order.hpp_actual)}</td>
                       <td className={`text-right tabular-nums ${order.margin > 0 ? 'text-[hsl(var(--success))]' : order.margin < 0 ? 'text-[hsl(var(--destructive))]' : 'text-muted-foreground'}`}>
-                        {fmt(order.margin)}
+                        {order.margin == null ? '–' : fmt(order.margin)}
                       </td>
                       <td className="text-center">
                         {order.is_on_time === true ? (

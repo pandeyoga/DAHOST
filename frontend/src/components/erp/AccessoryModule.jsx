@@ -21,7 +21,9 @@ import { EmptyState } from './EmptyState';
 import { Skeleton } from '@/components/ui/skeleton';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import UomEditor from './UomEditor';
-import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf } from '@/lib/uom';
+// MATERIAL_UNITS = cermin persis daftar satuan backend (satu sumber, tanpa konversi diam-diam)
+import { resolveUoms, sanitizeUoms, purchaseUomOf, issueUomOf, displayUomOf, MATERIAL_UNITS } from '@/lib/uom';
+import { Button } from '@/components/ui/button';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint, baseUnitOf, toBaseQty } from './uom/UomPicker';
 // FASE 8: tab valuasi HPP aksesoris (nilai persediaan + set HPP + scrap bernilai)
@@ -36,7 +38,11 @@ import WMSOpnameScanModule from './WMSOpnameScanModule';
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
 const DIVISI = ['Produksi', 'Cutting', 'CMT', 'Gudang', 'Kantor', 'SDM', 'QC', 'Packing', 'Marketing', 'Lainnya'];
-const UNITS  = ['pcs', 'meter', 'roll', 'yard', 'kg', 'set', 'lembar', 'buah'];
+// 2026-11-06 (Tahap 1): pilihan satuan = MATERIAL_UNITS (sama dengan yang diterima backend).
+// Dulu daftar sendiri: "lembar" tersimpan jadi "pcs", "roll" jadi "rol", pak/gross tidak ada.
+// Satuan lama item yang tidak ada di daftar tetap ditampilkan supaya tidak berubah diam-diam.
+const unitOptions = (current) => (current && !MATERIAL_UNITS.includes(current)
+  ? [current, ...MATERIAL_UNITS] : MATERIAL_UNITS);
 const STATUS_COLOR = {
   ok:      'text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10',
   low:     'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10',
@@ -81,7 +87,7 @@ async function api(method, path, token, body) {
 }
 
 // ─── TAB 1: MASTER & STOK ────────────────────────────────────────────────────
-function MasterTab({ token, onRefreshDash }) {
+function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const [items, setItems]       = useState([]);
   const [loading, setLoading]   = useState(true);
   const [search, setSearch]     = useState('');
@@ -132,7 +138,8 @@ function MasterTab({ token, onRefreshDash }) {
       // Satuan dinormalkan dulu; backend (core/uom) memvalidasi ulang dan
       // menulis cermin pack_unit/pack_size sendiri (INV-UOM-4).
       const payload = { ...form, uoms: sanitizeUoms(form.uoms, form.unit) };
-      if (editItem) await api('PUT', `/api/acc/items/${editItem.id}`, token, payload);
+      // HPP item lama tidak dikirim: perubahan HPP hanya lewat Set HPP (revaluasi berjurnal, K12)
+      if (editItem) { delete payload.unit_cost; await api('PUT', `/api/acc/items/${editItem.id}`, token, payload); }
       else          await api('POST', '/api/acc/items', token, payload);
       setShowForm(false); load(); onRefreshDash();
     } catch(e) { setErr(e.message); }
@@ -371,9 +378,9 @@ function MasterTab({ token, onRefreshDash }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Unit</label>
-                  <select value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]">
-                    {UNITS.map(u=><option key={u} value={u}>{u}</option>)}
-                  </select>
+                  <SmartNativeSelect value={form.unit} onChange={e=>setForm({...form,unit:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-unit-select">
+                    {unitOptions(editItem?.unit).map(u=><option key={u} value={u}>{u}</option>)}
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Stok Minimum</label>
@@ -384,11 +391,28 @@ function MasterTab({ token, onRefreshDash }) {
               {/* FASE G+: harga satuan — dasar nilai selisih opname & jurnal keuangan */}
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Harga Satuan / HPP (Rp)</label>
-                <MoneyInput unstyled value={form.unit_cost}
-                  onChange={e=>setForm({...form,unit_cost:e.target.value})}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
-                  placeholder="0" data-testid="acc-unit-cost-input" />
-                <p className="text-[11px] text-muted-foreground mt-1">Dipakai untuk menilai stok &amp; <strong>jurnal penyesuaian keuangan</strong> saat opname disetujui. Kosong/0 = selisih opname tidak masuk keuangan.</p>
+                {editItem ? (
+                  // 2026-11-06 (Tahap 1, K12): HPP item yang sudah ada hanya diubah lewat Set HPP
+                  // (revaluasi berjurnal + alasan) — bukan ditimpa dari form ini.
+                  <>
+                    <div className="text-sm tabular-nums" data-testid="acc-unit-cost-readonly">{fmtRp(editItem.unit_cost)}</div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      HPP diubah lewat Set HPP di Valuasi HPP supaya perubahan nilai stok tercatat dengan jurnal dan alasannya.
+                      {onOpenValuation && (
+                        <> <Button variant="link" size="sm" className="px-0" onClick={() => { setShowForm(false); onOpenValuation(); }}
+                          data-testid="acc-open-set-hpp">Buka Valuasi HPP</Button></>
+                      )}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <MoneyInput unstyled value={form.unit_cost}
+                      onChange={e=>setForm({...form,unit_cost:e.target.value})}
+                      className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]"
+                      placeholder="0" data-testid="acc-unit-cost-input" />
+                    <p className="text-[11px] text-muted-foreground mt-1">Harga awal. Dipakai untuk menilai stok &amp; <strong>jurnal penyesuaian keuangan</strong> saat opname disetujui. Kosong/0 = selisih opname tidak masuk keuangan.</p>
+                  </>
+                )}
               </div>
               
               {/* Satuan & kemasan berjenjang (maks 3 tingkat) — SSOT lib/uom.js */}
@@ -1195,7 +1219,8 @@ export default function AccessoryModule({
 
       {/* Tab Content */}
       <div>
-        {tab === 'master'   && <MasterTab token={token} onRefreshDash={() => { loadDash(); loadItems(); }} />}
+        {tab === 'master'   && <MasterTab token={token} onRefreshDash={() => { loadDash(); loadItems(); }}
+          onOpenValuation={TABS.some(t => t.id === 'valuasi') ? () => setTab('valuasi') : null} />}
         {tab === 'internal' && <RequestInternalTab token={token} items={items} />}
         {tab === 'opname'   && <StokOpnameTab token={token} />}
         {/* FASE 10 — tautan lama `?tab=pinjam` tidak boleh buntu: tampilkan penunjuk arah

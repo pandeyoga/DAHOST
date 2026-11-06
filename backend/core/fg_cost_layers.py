@@ -77,6 +77,20 @@ def _r(v, nd: int = 2) -> float:
 # ══════════════════════════════════════════════════════════════════════════════
 # MENGHITUNG BIAYA SATU BATCH
 # ══════════════════════════════════════════════════════════════════════════════
+def permak_to_absorb(rows: list | None) -> list:
+    """Sisa ongkos tiap dokumen permak yang belum dibebankan ke lapisan mana pun (murni).
+
+    sisa = total_cost (atau cost_per_pcs × qty) − permak_absorbed_cost. Bila ongkos permak
+    dinaikkan setelah diserap, hanya selisihnya yang ikut batch berikutnya."""
+    out = []
+    for r in rows or []:
+        total = _f(r.get("total_cost")) or _f(r.get("cost_per_pcs")) * _f(r.get("qty"))
+        left = round(total - _f(r.get("permak_absorbed_cost")), 2)
+        if r.get("id") and left > 0:
+            out.append({"id": r["id"], "amount": left})
+    return out
+
+
 async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
     """Biaya per pcs satu batch = bahan (BOM) + upah jahit (SPK) + permak + internal.
 
@@ -122,16 +136,24 @@ async def compute_batch_unit_cost(db, *, po_item: dict, qty: int) -> dict:
     else:
         out["gaps"].append("biaya jahit/pcs SPK ini belum diisi — isi di layar Biaya Jahit SPK")
 
-    # ── permak: ongkos perbaikan item ini, dibagi qty batch ─────────────────
+    # ── permak: ongkos perbaikan item ini yang BELUM masuk batch mana pun ────
+    # Tahap 1 (6 Nov 2026): dulu SEMUA permak item SPK dibagi qty batch INI pada setiap
+    # penerimaan (permak Rp20.000 → terima 45 pcs lalu 5 pcs = Rp40.000 terbebankan).
+    # Sekarang hanya sisa yang belum diserap (`permak_absorbed_cost`); `push_layer`
+    # menandai dokumen permak begitu lapisannya tercatat, jadi tiap rupiah dibebankan sekali.
+    out["permak_absorb"] = []
     pid = (po_item or {}).get("id")
     if pid and qty > 0:
         rows = await db.dewi_cmt_permak.find(
-            {"po_item_id": pid}, {"_id": 0, "total_cost": 1, "cost_per_pcs": 1, "qty": 1}
+            {"po_item_id": pid}, {"_id": 0, "id": 1, "total_cost": 1, "cost_per_pcs": 1, "qty": 1,
+                                  "permak_absorbed_cost": 1}
         ).to_list(500)
-        total = sum(_f(r.get("total_cost")) or _f(r.get("cost_per_pcs")) * _f(r.get("qty")) for r in rows)
+        absorb = permak_to_absorb(rows)
+        total = sum(a["amount"] for a in absorb)
         if total > 0:
             out["permak_cost"] = _r(total / qty)
-            out["permak_source"] = f"permak ({len(rows)} dokumen, dibagi {qty} pcs batch)"
+            out["permak_source"] = f"permak ({len(absorb)} dokumen, dibagi {qty} pcs batch)"
+            out["permak_absorb"] = absorb
 
     # ── upah internal (cutting dll) + overhead: dari kalkulator model ────────
     if model_id:
@@ -464,8 +486,9 @@ async def push_layer(db, *, material_id: str, qty: int, po_item: dict | None = N
         "qty_remaining": qty,
         "unit_cost": _r(unit_cost),
         "total_cost": _r(_f(unit_cost) * qty),
-        "breakdown": {k: v for k, v in (breakdown or {}).items() if k != "gaps"},
+        "breakdown": {k: v for k, v in (breakdown or {}).items() if k not in ("gaps", "permak_absorb")},
         "gaps": (breakdown or {}).get("gaps") or [],
+        "permak_absorbed": list((breakdown or {}).get("permak_absorb") or []),
         "batch": {
             "po_id": (po_item or {}).get("po_id") or (ref or {}).get("po_id") or "",
             "po_number": (po_item or {}).get("po_number") or (ref or {}).get("po_number") or "",
@@ -479,6 +502,11 @@ async def push_layer(db, *, material_id: str, qty: int, po_item: dict | None = N
     }
     await db[LAYERS].insert_one(doc)
     doc.pop("_id", None)
+    # ongkos permak yang ikut lapisan ini ditandai SUDAH diserap (sekali saja)
+    for a in doc["permak_absorbed"]:
+        await db.dewi_cmt_permak.update_one({"id": a["id"]}, {
+            "$inc": {"permak_absorbed_cost": _r(a["amount"])},
+            "$addToSet": {"permak_absorbed_layer_ids": doc["id"]}})
     qty_before = await valued_onhand(db, material_id) - qty
     res = wac_after_receipt(qty_before, state["unit_cost"], state["components"], qty,
                             _f(unit_cost), components if components is not None else breakdown)

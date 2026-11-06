@@ -140,11 +140,17 @@ async def _recompute_run_totals(db, run_id: str) -> dict:
 # RBAC
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Peran yang boleh membuka & mengelola penggajian (aturan gaji, tunjangan, run, slip semua karyawan).
+# Keputusan owner 6 Nov 2026: tetap seperti semula — HR Manager & Staf HR TIDAK ditambahkan
+# (gaji semua karyawan bersifat rahasia). Tahap 1 hanya memakai gerbang ini di endpoint yang dulu terbuka.
+PAYROLL_HR_ROLES = ("superadmin", "admin", "owner", "hr", "manager")
+
+
 async def _require_hr(request: Request):
-    """Authorization: only HR/Manager/Admin/Owner roles can access payroll runs."""
+    """Authorization: hanya peran PAYROLL_HR_ROLES (atau izin hr.manage / payroll.manage) yang boleh mengelola payroll."""
     user = await require_auth(request)
     role = (user.get("role") or "").lower()
-    if role in ("superadmin", "admin", "owner", "hr", "manager"):
+    if role in PAYROLL_HR_ROLES:
         return user
     perms = user.get("_permissions") or []
     if "*" in perms or "hr.manage" in perms or "payroll.manage" in perms:
@@ -193,6 +199,88 @@ async def _get_applicable_allowances(db, employee: dict) -> list:
     return applicable
 
 
+def lwop_days_in_period(leaves: list, period_from: date, period_to: date, holiday_set: set) -> float:
+    """Hari cuti tanpa gaji yang jatuh DI DALAM periode (Tahap 1, 2026-11-06).
+
+    Aturan hari kerja = pembagi LWOP di mesin hitung: Senin–Jumat dan bukan libur kalender produksi.
+    Cuti setengah hari bernilai 0,5 per hari kerja. Cuti yang melintasi dua periode hanya dihitung
+    bagian yang ada di periode yang sedang dihitung.
+    """
+    total = 0.0
+    for lv in leaves or []:
+        try:
+            start = max(period_from, _to_date(str(lv.get("from_date"))[:10]))
+            end = min(period_to, _to_date(str(lv.get("to_date") or lv.get("from_date"))[:10]))
+        except (TypeError, ValueError):
+            log.warning("[payroll] cuti tanpa gaji %s: tanggal tidak valid — dilewati", lv.get("id"))
+            continue
+        weight = 0.5 if lv.get("is_half_day") else 1.0
+        cur = start
+        while cur <= end:
+            if cur.weekday() < 5 and cur.isoformat() not in holiday_set:
+                total += weight
+            cur += timedelta(days=1)
+    return total
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KASBON: SATU CICILAN PER BULAN HANYA UNTUK SATU RUN (Tahap 1, 2026-11-06)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+async def kasbon_claimed_by_other_runs(db, employee_id: str, period_ym: str, kasbon_ids: list) -> dict:
+    """{kasbon_id: nomor run} untuk kasbon yang potongan bulan `period_ym`-nya SUDAH ada di slip run
+    lain yang belum dibatalkan (draft maupun final).
+
+    Dulu dua run draft di bulan yang sama (mis. dua run mingguan) sama-sama memotong kasbon yang sama:
+    karyawan menerima gaji kurang dua kali, sementara modul kasbon hanya mencatat satu potongan
+    (dedupe periode saat finalisasi) ⇒ selisih tertinggal di Hutang Gaji. Bulan = `period_from[:7]`,
+    sama dengan kunci dedupe kasbon (FIN-16)."""
+    if not kasbon_ids:
+        return {}
+    slips = await db.rahaza_payslips.find({
+        "employee_id": employee_id,
+        "period_from": {"$gte": f"{period_ym}-01", "$lte": f"{period_ym}-31"},
+        "deductions": {"$elemMatch": {"type": "kasbon", "kasbon_id": {"$in": list(kasbon_ids)}}},
+    }, {"_id": 0, "run_id": 1, "deductions": 1}).to_list(100)
+    run_ids = list({s.get("run_id") for s in slips if s.get("run_id")})
+    if not run_ids:
+        return {}
+    live = {r["id"]: r for r in await db.rahaza_payroll_runs.find(
+        {"id": {"$in": run_ids}, "status": {"$ne": "cancelled"}},
+        {"_id": 0, "id": 1, "run_number": 1}).to_list(len(run_ids))}
+    out: dict = {}
+    for s in slips:
+        run = live.get(s.get("run_id"))
+        if not run:
+            continue
+        for d in s.get("deductions") or []:
+            if (d.get("type") or "").lower() == "kasbon" and d.get("kasbon_id") in kasbon_ids:
+                out.setdefault(d["kasbon_id"], run.get("run_number") or run["id"])
+    return out
+
+
+async def kasbon_deducted_elsewhere(db, run: dict, payslips: list) -> list:
+    """Potongan kasbon di slip `run` yang untuk bulan yang sama SUDAH tercatat dari run lain (atau
+    potong gaji manual Keuangan). Dipakai finalisasi sebagai pengaman run draft lama yang dibuat
+    sebelum aturan satu-cicilan-satu-run: run itu harus dihapus lalu dibuat ulang."""
+    period_ym = (run.get("period_from") or "")[:7]
+    ids = list({d.get("kasbon_id") for s in payslips for d in (s.get("deductions") or [])
+                if (d.get("type") or "").lower() == "kasbon" and d.get("kasbon_id")})
+    if not ids:
+        return []
+    docs = await db.dewi_kasbon_requests.find(
+        {"id": {"$in": ids}}, {"_id": 0, "id": 1, "request_number": 1, "repayments": 1}).to_list(len(ids))
+    out = []
+    for k in docs:
+        for r in k.get("repayments") or []:
+            if (r.get("period") == period_ym and r.get("method") == "payroll_deduction"
+                    and r.get("run_id") != run.get("id")):
+                out.append({"kasbon_id": k["id"], "request_number": k.get("request_number") or k["id"],
+                            "run_number": r.get("run_number") or "potong gaji manual"})
+                break
+    return out
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAYSLIP COMPUTATION — SATU-SATUNYA SSOT (FASE 15)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -221,6 +309,13 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
         "date": _date_range_filter(period_from, period_to),
     }, {"_id": 0}).to_list(500)
     source_refs["attendance_event_count"] = len(att_rows)
+    # Tahap 1 (keputusan owner): selfie DITOLAK HR bukan kehadiran — tidak dihitung hadir, jam kerja,
+    # lembur, maupun terlambat. Selfie yang masih menunggu review tetap dihitung (SSOT attendance_policy).
+    from utils.attendance_policy import attendance_counts
+    rejected = [r for r in att_rows if not attendance_counts(r)]
+    if rejected:
+        att_rows = [r for r in att_rows if attendance_counts(r)]
+        source_refs["attendance_rejected_count"] = len(rejected)
 
     total_hours = sum(float(r.get("hours_worked") or 0) for r in att_rows)
     # FASE 15: jam BERSIH (sudah dikurangi istirahat & izin keluar). Pakai
@@ -489,12 +584,10 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
                 "from_date": {"$lte": period_to},
                 "to_date": {"$gte": period_from},
             }, {"_id": 0}).to_list(100)
-            lwop_days = sum(
-                float(lv.get("duration_working_days") or lv.get("duration_days") or 0)
-                for lv in lwop_leaves)
-            if lwop_days > 0:
+            if lwop_leaves:
+                pf, pt = _to_date(period_from[:10]), _to_date(period_to[:10])
+                holiday_set: set = set()
                 try:
-                    pf, pt = _to_date(period_from[:10]), _to_date(period_to[:10])
                     hol = await db.rahaza_production_calendar.find(
                         {"date": {"$gte": period_from[:10], "$lte": period_to[:10]},
                          "type": "holiday"}, {"_id": 0, "date": 1}).to_list(50)
@@ -517,16 +610,22 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
                         "potongan LWOP memakai pembagi cadangan 22 hari; angka "
                         "potongan perlu diverifikasi manual", period_from, period_to)
                     working_days = 22
-                daily_rate = round(base_rate / working_days)
-                lwop_amount = round(daily_rate * lwop_days)
-                deductions.append({
-                    "type": "lwop",
-                    "label": f"Potongan cuti tanpa gaji ({lwop_days:.1f} hari)",
-                    "days": lwop_days, "daily_rate": daily_rate, "amount": lwop_amount,
-                })
-                deductions_total += lwop_amount
-                source_refs["lwop_days"] = lwop_days
-                source_refs["lwop_amount"] = lwop_amount
+                # Tahap 1 (2026-11-06): hanya hari cuti yang JATUH DI PERIODE INI, dengan aturan hari
+                # kerja yang sama dengan pembagi di atas (Senin–Jumat, bukan libur kalender produksi).
+                # Dulu seluruh durasi cuti dihitung di SETIAP periode yang beririsan ⇒ cuti 28 Okt–5 Nov
+                # dipotong penuh di run Oktober DAN di run November.
+                lwop_days = lwop_days_in_period(lwop_leaves, pf, pt, holiday_set)
+                if lwop_days > 0:
+                    daily_rate = round(base_rate / working_days)
+                    lwop_amount = round(daily_rate * lwop_days)
+                    deductions.append({
+                        "type": "lwop",
+                        "label": f"Potongan cuti tanpa gaji ({lwop_days:.1f} hari)",
+                        "days": lwop_days, "daily_rate": daily_rate, "amount": lwop_amount,
+                    })
+                    deductions_total += lwop_amount
+                    source_refs["lwop_days"] = lwop_days
+                    source_refs["lwop_amount"] = lwop_amount
     except Exception as e:  # noqa: BLE001
         log.warning(f"LWOP deduction calculation failed for {emp_id}: {e}")
 
@@ -587,11 +686,19 @@ async def _compute_payslip_for_employee(db, profile: dict, period_from: str,
             "deduction_start_period": {"$lte": period_ym},
         }, {"_id": 0, "documents": 0}).sort("disbursed_at", 1).to_list(20)
         available = max(round(gross - deductions_total), 0)
+        # Tahap 1: cicilan bulan ini yang sudah diklaim slip run lain (draft/final) tidak dipotong lagi.
+        claimed = await kasbon_claimed_by_other_runs(
+            db, emp_id, period_ym, [ks.get("id") for ks in active_ks if ks.get("id")])
+        if claimed:
+            source_refs["kasbon_skipped_other_run"] = [
+                {"kasbon_id": k, "run_number": rn} for k, rn in claimed.items()]
         for ks in active_ks:
             if available <= 0:
                 break
             outstanding = float(ks.get("outstanding_balance", 0))
             if outstanding <= 0:
+                continue
+            if ks.get("id") in claimed:
                 continue
             # FIN-16: potongan payroll yang SUDAH dicatat Keuangan untuk periode ini tidak dipotong lagi
             if any(r.get("period") == period_ym and r.get("method") == "payroll_deduction"

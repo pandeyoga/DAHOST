@@ -28,6 +28,7 @@ from core.accessory_stock import (
     add_stock as _add_stock,
     get_accessory_location_id as _get_accessory_location_id,
     stock_qty as _stock_qty,
+    usable_qty as _usable_qty,   # tanpa stok karantina (Tahap 1, 2026-11-06)
 )
 
 _log = logging.getLogger(__name__)
@@ -83,12 +84,12 @@ async def check_availability(db, items: list[dict]) -> list[dict]:
         resolved.append({"material": mat, "qty": qty,
                          "unit": it.get("unit") or mat.get("unit", "pcs")})
     for mat_id, total in needed.items():
-        onhand = await _stock_qty(db, mat_id)
+        onhand = await _usable_qty(db, mat_id)
         if onhand < total:
             mat = next(r["material"] for r in resolved if r["material"]["id"] == mat_id)
             problems.append(
                 f"{mat.get('code') or mat.get('name')}: stok tidak cukup "
-                f"(butuh {total:g}, tersedia {onhand:g})")
+                f"(butuh {total:g}, bisa dipakai {onhand:g}; stok karantina tidak ikut)")
     if problems:
         raise IssueError("Tidak bisa mengeluarkan stok — " + "; ".join(problems))
     return resolved
@@ -129,9 +130,10 @@ async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
         except _uom.UomError as e:
             raise IssueError(str(e))
 
-    current = await _stock_qty(db, acc_id)
+    current = await _usable_qty(db, acc_id)
     if current < qty_base:
-        raise IssueError(f"Stok tidak cukup. Stok saat ini: {current:g}")
+        raise IssueError(f"Stok tidak cukup. Stok yang bisa dipakai: {current:g} "
+                         f"(stok di lokasi karantina tidak ikut).")
 
     loc_id = await _get_accessory_location_id(db)
     await _add_stock(db, acc_id, loc_id, -qty_base)

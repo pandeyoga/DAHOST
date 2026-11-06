@@ -571,6 +571,50 @@ async def list_orders(request: Request, status: Optional[str] = None,
     return serialize_doc(rows)
 
 
+def summarize_cutting_units(rows: list) -> dict:
+    """Ringkas hasil `$group` per satuan kain (murni; dipakai dashboard Cutting & Produksi).
+
+    Tahap 1 (6 Nov 2026): dulu kain terpakai, sisa, dan yield seluruh order DIJUMLAH
+    walau satuannya berbeda (kg + yard + meter = angka tanpa arti), dan order BATAL ikut
+    masuk rencana. Sekarang angka kain per satuan (`by_unit`); angka tunggal hanya diisi
+    bila semua order memakai satu satuan, selain itu None. Potongan (pcs) tetap dijumlah."""
+    units: dict = {}
+    planned = produced = 0.0
+    for r in rows or []:
+        u = str(r.get("_id") or "").strip().lower() or "-"
+        x = units.setdefault(u, {"unit": u, "orders": 0, "consumed": 0.0, "waste": 0.0, "produced": 0.0})
+        x["orders"] += int(r.get("n") or 0)
+        x["consumed"] += _f(r.get("consumed"))
+        x["waste"] += _f(r.get("waste"))
+        x["produced"] += _f(r.get("produced"))
+        planned += _f(r.get("planned"))
+        produced += _f(r.get("produced"))
+    by_unit = []
+    for x in sorted(units.values(), key=lambda v: -v["consumed"]):
+        by_unit.append({"unit": x["unit"], "orders": x["orders"],
+                        "consumed": round(x["consumed"], 3), "waste": round(x["waste"], 3),
+                        "produced": round(x["produced"], 2),
+                        "yield": round(x["produced"] / x["consumed"], 3) if x["consumed"] > 0 else None})
+    single = by_unit[0] if len(by_unit) == 1 else None
+    return {"planned_output": round(planned, 2), "produced": round(produced, 2), "by_unit": by_unit,
+            "consumed": single["consumed"] if single else None,
+            "waste": single["waste"] if single else None,
+            "yield": single["yield"] if single else None}
+
+
+async def cutting_unit_totals(db) -> dict:
+    """Total order cutting yang TIDAK batal, dipisah per satuan kain."""
+    rows = await db[ORDERS].aggregate([
+        {"$match": {"status": {"$ne": STATUS_CANCELLED}}},
+        {"$group": {"_id": "$input_unit", "n": {"$sum": 1},
+                    "planned": {"$sum": "$planned_output_qty"},
+                    "produced": {"$sum": "$produced_qty"},
+                    "consumed": {"$sum": "$consumed_input_qty"},
+                    "waste": {"$sum": "$waste_qty"}}},
+    ]).to_list(50)
+    return summarize_cutting_units(rows)
+
+
 @router.get("/dashboard")
 async def dashboard(request: Request):
     await require_auth(request)
@@ -579,20 +623,9 @@ async def dashboard(request: Request):
     cur = db[ORDERS].aggregate([{"$group": {"_id": "$status", "n": {"$sum": 1}}}])
     async for r in cur:
         by_status[r["_id"]] = r["n"]
-    agg = await db[ORDERS].aggregate([
-        {"$group": {
-            "_id": None,
-            "planned_output": {"$sum": "$planned_output_qty"},
-            "produced": {"$sum": "$produced_qty"},
-            "consumed": {"$sum": "$consumed_input_qty"},
-            "waste": {"$sum": "$waste_qty"},
-        }}
-    ]).to_list(1)
-    tot = agg[0] if agg else {}
+    tot = await cutting_unit_totals(db)
     panels = await db.rahaza_materials.count_documents({"is_cut_panel": True, "active": True})
     recent = await db[ORDERS].find({}, {"_id": 0}).sort("created_at", -1).limit(5).to_list(5)
-    consumed = _f(tot.get("consumed"))
-    produced = _f(tot.get("produced"))
     return serialize_doc({
         "total_orders": sum(by_status.values()),
         "by_status": {
@@ -601,11 +634,13 @@ async def dashboard(request: Request):
             "completed": by_status.get(STATUS_COMPLETED, 0),
             "cancelled": by_status.get(STATUS_CANCELLED, 0),
         },
-        "planned_output_qty": round(_f(tot.get("planned_output")), 2),
-        "produced_qty": round(produced, 2),
-        "consumed_input_qty": round(consumed, 3),
-        "waste_qty": round(_f(tot.get("waste")), 3),
-        "avg_yield": round(produced / consumed, 3) if consumed > 0 else 0.0,
+        # order batal tidak dihitung; kain/sisa/yield per satuan (`by_unit`)
+        "planned_output_qty": tot["planned_output"],
+        "produced_qty": tot["produced"],
+        "consumed_input_qty": tot["consumed"],
+        "waste_qty": tot["waste"],
+        "avg_yield": tot["yield"],
+        "by_unit": tot["by_unit"],
         "output_material_count": panels,
         "recent": recent,
     })

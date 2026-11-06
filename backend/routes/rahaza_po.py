@@ -842,35 +842,46 @@ async def update_po_received_qty(db, po_id: str, items_received: list):
     # Build maps: by po_item_id (preferred) and material_id (fallback).
     # PR-derived POs have free-form items without material_id, so po_item_id
     # is the reliable linkage between GR lines and PO lines.
-    received_by_item = {}
-    received_by_mid = {}
+    # 2026-11-06 (Tahap 1): dulu qty per material ditambahkan ke SETIAP baris PO bermaterial sama
+    # (material sama di dua baris PO ⇒ kedua baris bertambah, sisa satu baris tak pernah bisa
+    # diterima). Sekarang: baris GR bertautan `po_item_id` hanya mengisi baris PO itu; baris GR lama
+    # tanpa tautan dibagi ke baris PO material itu berurutan sesuai sisanya (sisa lebih ke baris terakhir).
+    po_items = list(po.get("items") or [])
+    line_ids = {it.get("id") for it in po_items if it.get("id")}
+    add_by_idx: dict = {}
+    unlinked_by_mid: dict = {}
     for r in items_received:
         qty = float(r.get("qty") or 0)
         if qty <= 0:
             continue
         pid = r.get("po_item_id")
         mid = r.get("material_id")
-        if pid:
-            received_by_item[pid] = received_by_item.get(pid, 0) + qty
-        if mid:
-            received_by_mid[mid] = received_by_mid.get(mid, 0) + qty
+        if pid and pid in line_ids:
+            idx = next(i for i, it in enumerate(po_items) if it.get("id") == pid)
+            add_by_idx[idx] = add_by_idx.get(idx, 0.0) + qty
+        elif mid:
+            unlinked_by_mid[mid] = unlinked_by_mid.get(mid, 0.0) + qty
+    for mid, qty in unlinked_by_mid.items():
+        idxs = [i for i, it in enumerate(po_items) if it.get("material_id") == mid]
+        for n, i in enumerate(idxs):
+            if qty <= 1e-9:
+                break
+            it = po_items[i]
+            room = max(0.0, float(it.get("qty_ordered") or 0) - float(it.get("qty_received") or 0)
+                       - add_by_idx.get(i, 0.0))
+            take = qty if n == len(idxs) - 1 else min(qty, room)
+            if take > 0:
+                add_by_idx[i] = add_by_idx.get(i, 0.0) + take
+                qty -= take
 
     # Update PO items
     updated_items = []
     total_ordered = 0
     total_received = 0
-    for it in (po.get("items") or []):
-        pid = it.get("id")
-        mid = it.get("material_id")
+    for i, it in enumerate(po_items):
         qty_ordered = float(it.get("qty_ordered") or 0)
         current_received = float(it.get("qty_received") or 0)
-        if pid and pid in received_by_item:
-            add = received_by_item[pid]
-        elif mid and mid in received_by_mid:
-            add = received_by_mid[mid]
-        else:
-            add = 0
-        new_received = current_received + add
+        new_received = current_received + add_by_idx.get(i, 0.0)
 
         updated_items.append({
             **it,

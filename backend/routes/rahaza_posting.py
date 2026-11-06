@@ -1875,7 +1875,9 @@ async def post_material_return(db, ret: dict, lines_in: list, user: dict) -> dic
     Dr Persediaan per jenis (bahan 1-1401 · aksesoris 1-1402) / Cr WIP 1-1403 — atau Cr biaya proyek
     maklon bila MI-nya maklon (`cost_target='maklon'`) — sebesar qty × HPP SAAT KELUAR
     (`unit_cost_applied` baris MI), bukan HPP hari ini. Akun = profil `inventory_issue` (peran yang
-    sama dengan jurnal keluarnya). `lines_in`: [{material_id, qty, unit_cost, kind, cost_target}]."""
+    sama dengan jurnal keluarnya). `lines_in`: [{material_id, qty, unit_cost, kind, cost_target,
+    credit_account?}] — 2026-11-06 (Tahap 1): `credit_account` = akun yang DIDEBIT jurnal MI asal;
+    bila ada, itulah yang dikredit (bukan peran profil hari ini), supaya retur menutup akun yang sama."""
     rid = ret.get("id")
     source_ref = f"pmr:{rid}"
     existing = await _find_existing_je(db, "inventory_issue_return", source_ref)
@@ -1890,7 +1892,7 @@ async def post_material_return(db, ret: dict, lines_in: list, user: dict) -> dic
             continue
         inv_code, inv_err = inventory_account(mapping, "inventory_issue", ln.get("kind") or "bahan")
         cr_role = "debit_maklon_material" if ln.get("cost_target") == "maklon" else "debit_wip"
-        cr_code = mapping.get(cr_role)
+        cr_code = ln.get("credit_account") or mapping.get(cr_role)
         if not inv_code or not cr_code:
             return {"ok": False, "error": inv_err or f"Mapping 'inventory_issue.{cr_role}' belum diisi."}
         debit_by[inv_code] = debit_by.get(inv_code, 0.0) + amt

@@ -45,6 +45,18 @@ export function StatusPill({ status }) {
 export const fmtNum = (n, d = 0) =>
   Number(n || 0).toLocaleString('id-ID', { minimumFractionDigits: d, maximumFractionDigits: d });
 
+/**
+ * Angka kain per satuan dari `by_unit` dashboard (Tahap 1, 6 Nov 2026): kg, yard, dan meter
+ * tidak dijumlah jadi satu angka. Contoh: "12,50 kg · 300,00 yard". Tanpa data → "–".
+ * `key` = 'consumed' | 'waste' | 'yield'; untuk yield satuannya "pcs/<satuan>".
+ */
+export function fmtPerUnit(byUnit, key, d = 2) {
+  const parts = (byUnit || [])
+    .filter((u) => u[key] !== null && u[key] !== undefined)
+    .map((u) => `${fmtNum(u[key], d)} ${key === 'yield' ? `pcs/${u.unit}` : u.unit}`);
+  return parts.length ? parts.join(' · ') : '–';
+}
+
 export const fmtRp = (n) => `Rp ${Number(n || 0).toLocaleString('id-ID')}`;
 
 export function fmtDate(iso) {

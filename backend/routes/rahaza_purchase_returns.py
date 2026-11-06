@@ -113,6 +113,40 @@ def _gr_line(gr: dict, gr_item_id: str | None, material_id: str) -> dict:
     return line
 
 
+async def _check_return_limit(db, gr: dict, lines: list, exclude_rid: str | None = None) -> None:
+    """2026-11-06 (Tahap 1): qty retur per baris GR ≤ qty fisik yang diterima baris itu − retur lain.
+
+    Dulu tidak dibatasi sama sekali: barang yang sama bisa diretur berkali-kali sehingga nota debit
+    melebihi tagihan. Qty fisik baris = qty diterima − qty ditolak karena alasan dokumen (yang tidak
+    pernah masuk gudang). Retur lain = semua Retur Pembelian GR ini yang tidak batal, KECUALI tukar
+    barang yang penggantinya sudah datang (barangnya sudah kembali utuh)."""
+    want: dict = {}
+    for ln in lines:
+        want[ln["gr_item_id"]] = want.get(ln["gr_item_id"], 0.0) + _f(ln.get("qty"))
+    prev: dict = {}
+    async for r in db[pr.RTP_COLL].find({"gr_id": gr["id"], "status": {"$ne": "cancelled"}}, {"_id": 0}):
+        if exclude_rid and r.get("id") == exclude_rid:
+            continue
+        if r.get("settlement") == "exchange" and r.get("status") == "settled":
+            continue
+        for ln in r.get("lines") or []:
+            k = ln.get("gr_item_id")
+            prev[k] = prev.get(k, 0.0) + _f(ln.get("qty"))
+    by_id = {pr.line_id_of(li): li for li in gr.get("items") or []}
+    errors = []
+    for lid, q in want.items():
+        li = by_id.get(lid) or {}
+        base = max(0.0, _f(li.get("received_qty")) - _f(li.get("rejected_doc_qty")))
+        left = round(base - prev.get(lid, 0.0), 4)
+        if q - left > 1e-6:
+            name = li.get("material_name") or li.get("product_name") or li.get("sku") or "?"
+            errors.append(f"{name}: retur {q:g}, sisa yang bisa diretur {max(left, 0.0):g} "
+                          f"(diterima {base:g} − sudah/sedang diretur {prev.get(lid, 0.0):g})")
+    if errors:
+        raise HTTPException(400, f"Qty retur melebihi qty yang diterima di GR {gr.get('receipt_number') or ''}: "
+                                 + "; ".join(errors[:5]) + ".")
+
+
 async def _ap_code_for_gr(db, gr: dict, line: dict) -> str | None:
     """Akun hutang faktur asal (sub-ledger pemasok) untuk nota debit setelah faktur."""
     inv_id = line.get("base_ap_invoice_id") or gr.get("ap_invoice_id")
@@ -298,6 +332,7 @@ async def create_purchase_return(request: Request):
             "kind": inventory_kind(mat), "qty": round(s["qty"], 4), "gr_price": price,
             "amount": round(s["qty"] * price, 2), "reason": s["reason"],
             "valued_qty_est": s["valued_est"], "unvalued_qty_est": s["unvalued_est"]})
+    await _check_return_limit(db, gr, lines)
     rtp = {
         "id": pr._uid(),
         "rtp_number": await gen_prefixed_number(db, pr.RTP_COLL, "rtp_number", f"RTP-{_now():%Y%m}-", 4),
@@ -339,6 +374,8 @@ async def send_purchase_return(rid: str, request: Request):
     destroy_da = settlement == "destroy" and rtp.get("destroy_borne_by") == "da"
     await _check_roles(db, {"supplier_claim", "price_variance", "grni", "scrap_expense"},
                        {ln.get("kind") or "bahan" for ln in rtp["lines"]})
+    # 2026-11-06 (Tahap 1): dua draf yang dibuat bersamaan tidak boleh lolos melebihi qty GR
+    await _check_return_limit(db, await _gr_or_400(db, rtp["gr_id"]), rtp["lines"], exclude_rid=rid)
     actor = _actor(user)
     # validasi SEMUA baris dulu — tidak ada baris yang keluar bila satu baris tidak cukup
     for ln in rtp["lines"]:

@@ -946,6 +946,8 @@ async def change_ap_status(iid: str, request: Request):
         _paid = f"{float(inv.get('paid_amount') or 0):,.0f}".replace(",", ".")
         raise HTTPException(400, f"Faktur {inv.get('invoice_number')} sudah dibayar Rp {_paid} — tidak bisa "
                                  f"dibatalkan. Batalkan/void pembayarannya dulu atau buat nota debit/retur pemasok.")
+    if new_status == "cancelled" and (inv.get("source") == "gr" or inv.get("gr_ids")):
+        return await _cancel_ap_from_gr(db, inv, user)
     await db.rahaza_ap_invoices.update_one({"id": iid}, {"$set": {"status": new_status, "updated_at": _now()}})
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
 
@@ -962,6 +964,35 @@ async def change_ap_status(iid: str, request: Request):
     out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
     if posting_result is not None:
         out["_posting_result"] = posting_result
+    return serialize_doc(out)
+
+
+async def _cancel_ap_from_gr(db, inv: dict, user: dict) -> dict:
+    """2026-11-06 (Tahap 1): batal faktur dari GR = klaim status atomik → void jurnal (GRNI terbuka
+    lagi) → baris GR dilepas supaya bisa ditagih ulang. Void gagal (mis. periode tertutup) ⇒ batal
+    DITOLAK dan status dikembalikan, supaya GR tidak dilepas sementara jurnalnya masih mendebit GRNI."""
+    iid, old_status = inv["id"], inv.get("status")
+    if old_status == "cancelled":
+        raise HTTPException(400, f"Faktur {inv.get('invoice_number')} sudah dibatalkan.")
+    claim = await db.rahaza_ap_invoices.update_one(
+        {"id": iid, "status": old_status}, {"$set": {"status": "cancelled", "updated_at": _now()}})
+    if not claim.matched_count:
+        raise HTTPException(409, f"Faktur {inv.get('invoice_number')} sedang diubah pengguna lain. Muat ulang.")
+    try:
+        posting_result = await void_ap_invoice_posting(db, iid, user, reason="AP cancelled")
+    except Exception as e:  # noqa: BLE001
+        log.exception("void jurnal faktur dari GR gagal")
+        posting_result = {"ok": False, "error": str(e)}
+    if not posting_result.get("ok"):
+        await db.rahaza_ap_invoices.update_one({"id": iid, "status": "cancelled"},
+                                               {"$set": {"status": old_status, "updated_at": _now()}})
+        raise HTTPException(400, f"Faktur {inv.get('invoice_number')} tidak bisa dibatalkan: jurnalnya tidak bisa "
+                                 f"dibalik ({posting_result.get('error')}). Buka periodenya dulu lalu ulangi.")
+    from routes.rahaza_ap_from_gr import release_gr_for_cancelled_invoice
+    released = await release_gr_for_cancelled_invoice(db, inv)
+    out = await db.rahaza_ap_invoices.find_one({"id": iid}, {"_id": 0})
+    out["_posting_result"] = posting_result
+    out["_released_grs"] = released
     return serialize_doc(out)
 
 

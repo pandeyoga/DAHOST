@@ -118,12 +118,16 @@ async def get_dashboard(request: Request):
         lt_map = {lt["id"]: lt for lt in lts}
         for b in bals:
             lt = lt_map.get(b.get("leave_type_id"), {})
+            # Tahap 1 (2026-11-06): jatah tersimpan di `allocated` (bukan `quota`). Dulu dibaca
+            # `quota` = 0 sehingga "Sisa Cuti" di dashboard = 0 − terpakai (minus).
+            allocated = b.get("allocated", 0) or 0
+            used = b.get("used", 0) or 0
             leave_balance.append({
                 "type_name": lt.get("name", "Cuti"),
                 "code": lt.get("code", ""),
-                "quota": b.get("quota", 0),
-                "used": b.get("used", 0),
-                "remaining": b.get("quota", 0) - b.get("used", 0),
+                "quota": allocated,
+                "used": used,
+                "remaining": allocated - used,
             })
 
     # --- Last payslip ---

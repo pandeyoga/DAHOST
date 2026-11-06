@@ -826,7 +826,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 )}
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">{isInternal ? 'Customer / Tujuan FG' : 'Buyer / Customer *'}</label>
+                <label className="block text-sm font-medium text-foreground/90 mb-1">{isInternal ? 'Pelanggan / tujuan barang jadi' : 'Pembeli / pelanggan *'}</label>
                 {isInternal ? (
                   <input data-testid="po-customer-input" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
                     value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})}
@@ -846,7 +846,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 {!form.buyer_id && (
                   <input className="w-full border border-border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" 
                     value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})} 
-                    placeholder="Atau ketik nama customer manual" />
+                    placeholder="Atau ketik nama pelanggan" />
                 )}
                 </>)}
               </div>
@@ -872,11 +872,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                 <GlassInput type="date" value={form.po_date} onChange={e => setForm({...form, po_date: e.target.value})} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Deadline Produksi</label>
+                <label className="block text-sm font-medium text-foreground/90 mb-1">Tenggat produksi</label>
                 <GlassInput type="date" value={form.deadline} onChange={e => setForm({...form, deadline: e.target.value})} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-foreground/90 mb-1">Deadline Pengiriman</label>
+                <label className="block text-sm font-medium text-foreground/90 mb-1">Tenggat pengiriman</label>
                 <GlassInput type="date" value={form.delivery_deadline} onChange={e => setForm({...form, delivery_deadline: e.target.value})} />
               </div>
             </div>
@@ -956,7 +956,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       </>) : (<>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Produk (Buyer Catalog) *</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Produk (Katalog Buyer) *</label>
                         <SearchableSelect
                           options={catalogItems.map(c => ({ value: c.id, label: c.product_name, sub: c.artikel_code }))}
                           value={item.catalog_item_id}
@@ -1008,7 +1008,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     )}
                     <div className="grid grid-cols-4 gap-2 mt-2">
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Size{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Ukuran{autoLocked && <span className="text-[10px] ml-1 text-muted-foreground/60">(auto)</span>}</label>
                         <input className="w-full border border-border rounded px-2 py-1.5 text-xs disabled:bg-muted disabled:text-muted-foreground" value={item.size} onChange={e => updateItem(idx, 'size', e.target.value)} placeholder="M" disabled={hasShipments || autoLocked} />
                       </div>
                       <div>
@@ -1058,11 +1058,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       </div>
                       {!isInternal && (<>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">Selling Price (Rp)</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Harga jasa ke klien (Rp)</label>
                         <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.selling_price_snapshot} onChange={e => updateItem(idx, 'selling_price_snapshot', e.target.value)} placeholder="85.000" data-testid={`po-item-${idx}-selling`} />
                       </div>
                       <div>
-                        <label className="block text-xs text-muted-foreground mb-1">CMT Price (Rp)</label>
+                        <label className="block text-xs text-muted-foreground mb-1">Upah CMT (Rp)</label>
                         <MoneyInput unstyled className="w-full border border-border rounded px-2 py-1.5 text-xs" value={item.cmt_price_snapshot} onChange={e => updateItem(idx, 'cmt_price_snapshot', e.target.value)} placeholder="35.000" data-testid={`po-item-${idx}-rate`} />
                       </div>
                       </>)}
@@ -1174,11 +1174,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                         placeholder="Pilih Aksesoris"
                       />
                     </div>
-                    <input type="number" min="1" className="w-24 border border-border rounded px-2 py-1.5 text-xs" 
+                    <input type="number" min="0" step="any" className="w-24 border border-border rounded px-2 py-1.5 text-xs" 
                       value={acc.qty_needed} onChange={e => updateAccessoryItem(idx, 'qty_needed', e.target.value)} placeholder="Qty" />
                     <span className="text-xs text-muted-foreground w-10">{acc.unit || 'pcs'}</span>
                     <input className="w-32 border border-border rounded px-2 py-1.5 text-xs" 
-                      value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Notes" />
+                      value={acc.notes || ''} onChange={e => updateAccessoryItem(idx, 'notes', e.target.value)} placeholder="Catatan" />
                     <button type="button" onClick={() => removeAccessoryItem(idx)} className="text-[hsl(var(--destructive))] hover:text-[hsl(var(--destructive))]"><X className="w-4 h-4" /></button>
                   </div>
                 ))}

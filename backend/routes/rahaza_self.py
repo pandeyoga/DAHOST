@@ -97,13 +97,15 @@ async def self_attendance(
     rows = await db.rahaza_attendance_events.find(q, {"_id": 0}).sort("date", -1).limit(limit).to_list(500)
 
     # Summary stats
+    from utils.attendance_policy import attendance_counts
     summary = {"hadir": 0, "izin": 0, "sakit": 0, "alfa": 0, "cuti": 0, "libur": 0}
     total_hours = 0.0
     for r in rows:
         s = r.get("status", "hadir")
         if s in summary:
             summary[s] += 1
-        total_hours += r.get("hours_worked") or 0
+        if attendance_counts(r):   # Tahap 1: selfie ditolak HR tidak membawa jam kerja
+            total_hours += r.get("hours_worked") or 0
 
     return {
         "employee_id": emp_id,

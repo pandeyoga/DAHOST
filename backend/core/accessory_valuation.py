@@ -108,33 +108,33 @@ async def _record_history(db, *, material_id: str, old_cost: float, new_cost: fl
 
 async def apply_receipt_cost(db, material_id: str, qty_in: float, cost_in: float, *,
                              qty_before: float | None = None, actor: dict | None = None,
-                             notes: str = "") -> dict:
+                             notes: str = "", update_last_purchase: bool = True) -> dict:
     """Terapkan HPP rata-rata bergerak ke master saat penerimaan aksesoris.
 
     Return {old_unit_cost, new_unit_cost, changed, method, qty_before}.
     Bila `cost_in <= 0` → tidak ada perubahan (HPP lama dipertahankan).
+    `update_last_purchase=False` (2026-11-06): barang masuk yang BUKAN pembelian (mis. Retur Material
+    dari produksi pada HPP saat keluar) — rata-rata tetap diperbarui, "harga beli terakhir" tidak.
     """
     mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
     old_cost = resolve_unit_cost(mat)
     if qty_before is None:
-        qty_before = await stock_service.get_onhand(material_id, db=db)
+        # 2026-11-06 (Tahap 1): qty yang ada di nilai persediaan — tanpa barang reject karantina
+        # yang belum bernilai (definisi K11 yang sama dengan GR & Set HPP), bukan on-hand mentah.
+        from core import quarantine
+        qty_before = await quarantine.valued_onhand(db, material_id)
     new_cost = moving_average(qty_before, old_cost, qty_in, cost_in)
     changed = abs(new_cost - old_cost) > 1e-6
     if changed:
-        await db.rahaza_materials.update_one(
-            {"id": material_id},
-            {"$set": {
-                "unit_cost": new_cost,
-                "cost_method": COST_METHOD,
-                "last_receipt_unit_cost": round(_f(cost_in), 4),
-                "cost_updated_at": _now(),
-                "updated_at": _now(),
-            }},
-        )
+        upd = {"unit_cost": new_cost, "cost_method": COST_METHOD,
+               "cost_updated_at": _now(), "updated_at": _now()}
+        if update_last_purchase:
+            upd["last_receipt_unit_cost"] = round(_f(cost_in), 4)
+        await db.rahaza_materials.update_one({"id": material_id}, {"$set": upd})
         await _record_history(db, material_id=material_id, old_cost=old_cost, new_cost=new_cost,
                               qty_before=qty_before, qty_in=qty_in, cost_in=cost_in,
                               source="receive", actor=actor, notes=notes)
-    elif _f(cost_in) > 0:
+    elif _f(cost_in) > 0 and update_last_purchase:
         # harga masuk sama dengan HPP lama → tetap catat harga beli terakhir (jejak audit)
         await db.rahaza_materials.update_one(
             {"id": material_id},

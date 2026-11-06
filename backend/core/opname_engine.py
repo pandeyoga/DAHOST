@@ -903,18 +903,51 @@ async def approve(db, user: dict, sess: dict) -> dict:
         {"$set": {"status": "approving", "approving_at": _now(), "approving_by": user.get("id", "")}})
     if not claim:
         raise HTTPException(409, "Sesi sedang/sudah diproses pengguna lain")
+    try:
+        return await _apply_approval(db, user, sess, ev, level, rows, meta, sc, plans, place_changes,
+                                     findings, count_date)
+    except BaseException:
+        # 2026-11-06 (Tahap 1): klaim dilepas bila gagal — sesi bisa disetujui ulang. Aman diulang:
+        # baris yang sudah diterapkan tercatat di `applied_keys`, jurnal idempoten `opname:{id}`.
+        await db[SESS].update_one({"id": sess["id"], "status": "approving"},
+                                  {"$set": {"status": "submitted", "approving_at": None}})
+        raise
+
+
+async def _apply_approval(db, user: dict, sess: dict, ev: dict, level: str, rows: dict, meta: dict,
+                          sc: dict, plans: list, place_changes: dict, findings: list, count_date: str) -> dict:
     actor = {"id": user.get("id", ""), "email": user.get("email", ""), "name": user.get("name", "")}
     ref = {"source": "opname", "type": "opname", "session_id": sess["id"], "session_no": sess.get("session_no")}
     from core.negative_stock import stock_meta
     writes, valued = [], []
+    for x in ev["lines"]:
+        if level == LEVEL_LOKASI and x["variance_qty"] and x.get("variance_value"):
+            valued.append({"kind": x["kind"], "value": x["variance_value"], "reason": x.get("reason") or "",
+                           "material_code": x.get("material_code")})
+    # ── 2026-11-06 (Tahap 1): JURNAL DULU, STOK KEMUDIAN ─────────────────────
+    # Dulu stok ditimpa lebih dulu, lalu jurnal diposting; bila jurnal gagal (periode tertutup, akun
+    # belum dipetakan) sesi tetap 'approved' dengan stok sudah berubah dan tanpa jalan posting ulang
+    # ⇒ stok ≠ buku besar. Sekarang jurnal gagal = approve ditolak, stok TIDAK berubah, sesi kembali
+    # 'submitted' (bisa disetujui ulang setelah penyebabnya dibereskan).
+    je = await _post_session_je(db, user, sess, valued, count_date) if level == LEVEL_LOKASI else \
+        {"ok": True, "skipped": "hitung rak hanya memperbaiki penempatan"}
+    if not je.get("ok"):
+        raise HTTPException(400, f"Approve ditolak: jurnal selisih opname gagal — {je.get('error')}. "
+                                 "Stok belum diubah; bereskan penyebabnya lalu setujui ulang.")
     for x, cur, target in plans:
         mat = meta.get(x["material_id"]) or {"id": x["material_id"]}
         m_meta = stock_meta(mat, sc["location"])
         if x["kind"] == "fg":
             m_meta.update({"inventory_category": "fg_internal", "ownership": "cv_da"})
+        row_qty = {r.get("location_id"): _r(r.get("qty")) for r in rows.get(x["material_id"], [])}
         for loc_id, q in plan_stock_writes(rows.get(x["material_id"], []), target, sess["location_id"]):
-            await stock_service.adjust(x["material_id"], loc_id, q, meta=m_meta, ref=ref, actor=actor, db=db)
-            writes.append({"material_id": x["material_id"], "location_id": loc_id, "qty": q})
+            # 2026-11-06 (Tahap 1): tulis SELISIH (hasil rencana − qty yang dibaca saat approve) secara
+            # atomik, bukan qty absolut — mutasi transaksi lain di sela baca & tulis tidak terhapus.
+            delta = _r(q - row_qty.get(loc_id, 0.0))
+            if delta:
+                await stock_service.adjust_by(x["material_id"], loc_id, delta, meta=m_meta, ref=ref,
+                                              actor=actor, db=db)
+            writes.append({"material_id": x["material_id"], "location_id": loc_id, "qty": q, "delta": delta})
         await db.rahaza_material_movements.insert_one({
             # type 'opname' (bukan 'adjust'): jurnalnya SATU per sesi; tombol "post ulang" per mutasi
             # (`/material-movements/{id}/post-to-gl`) menolak tipe ini → tidak bisa terjurnal dobel.
@@ -928,13 +961,7 @@ async def approve(db, user: dict, sess: dict) -> dict:
             "created_by": user.get("id", ""), "created_by_name": user.get("name", ""),
             "created_at": _now(), "timestamp": _now()})
         await db[SESS].update_one({"id": sess["id"]}, {"$addToSet": {"applied_keys": x["key"]}})
-    for x in ev["lines"]:
-        if level == LEVEL_LOKASI and x["variance_qty"] and x.get("variance_value"):
-            valued.append({"kind": x["kind"], "value": x["variance_value"], "reason": x.get("reason") or "",
-                           "material_code": x.get("material_code")})
     n_pos = await _write_positions(db, user, sess, place_changes, meta)
-    je = await _post_session_je(db, user, sess, valued, count_date) if level == LEVEL_LOKASI else \
-        {"ok": True, "skipped": "hitung rak hanya memperbaiki penempatan"}
     if je.get("je_id"):
         await db.rahaza_material_movements.update_many(
             {"ref_type": "opname", "ref_id": sess["id"]},

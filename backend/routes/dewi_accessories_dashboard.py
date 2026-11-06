@@ -101,6 +101,14 @@ async def _enrich_movement(db, mv: dict) -> dict:
 
 # (dead code dibersihkan) _material_to_acc_item duplikat tak terpakai — SSOT serializer item aksesoris ada di routes/dewi_accessories_items.py
 
+
+async def _active_accessory_opname(db) -> dict | None:
+    """Sesi opname aksesoris yang masih dihitung, dari mesin opname tunggal (`core.opname_engine`).
+    Arsip lama tidak bisa dilanjutkan, jadi tidak dihitung sebagai "berjalan"."""
+    from core import opname_engine
+    rows = await opname_engine.list_sessions(db, status="counting", kind="aksesoris", limit=50)
+    return next((s for s in rows if not s.get("archived")), None)
+
 @router.get("/dashboard")
 async def get_dashboard(request: Request):
     await require_auth(request)
@@ -138,11 +146,14 @@ async def get_dashboard(request: Request):
                 "unit": m.get("unit", "pcs"),
             })
 
-    # RC-25: SSOT = dewi_accessory_requests (request_type='internal_issuance';
-    # status workflow: draft→submitted→allocated→delivered). "Pending" = submitted/allocated.
+    # RC-25: SSOT = dewi_accessory_requests (status workflow: draft→submitted→allocated→delivered).
+    # 2026-11-06 (Tahap 1): "Request Pending" = definisi yang SAMA dengan Inbox Approval
+    # (`INBOX_PENDING_FILTER`: diajukan, semua jenis). Dulu hanya permintaan internal berstatus
+    # diajukan + disiapkan, sehingga angkanya beda dari inbox dan yang disiapkan terhitung dua
+    # kali (juga di "Perlu Diserahkan").
     # JANGAN repoint acc_loans / acc_purchase_requests — keduanya SELF-CONSISTENT dgn modulnya.
-    pending_requests = await db.dewi_accessory_requests.count_documents(
-        {"request_type": "internal_issuance", "status": {"$in": ["submitted", "allocated"]}})
+    from routes.dewi_accessory_requests import INBOX_PENDING_FILTER
+    pending_requests = await db.dewi_accessory_requests.count_documents(dict(INBOX_PENDING_FILTER))
     # FASE 10 — KPI "Dipinjam Aktif" DIHAPUS: peminjaman sudah pindah ke domain Aset
     # (dewi_asset_loans) sejak ACC-3, sehingga angka dari `acc_loans` selalu 0 dan
     # justru menyesatkan. Koleksinya di-drop di FASE 10. Penggantinya: "Perlu Diserahkan"
@@ -151,7 +162,9 @@ async def get_dashboard(request: Request):
     ready_to_deliver = await db.dewi_accessory_requests.count_documents(
         {"request_type": "internal_issuance", "status": "allocated"})
     pending_pr = await db.acc_purchase_requests.count_documents({"status": {"$in": ["Draft", "Submitted"]}})
-    active_opname = await db.wh_opname_sessions2.find_one({"domain": "accessory", "status": "open"})
+    # 2026-11-06 (Tahap 1): opname aksesoris berjalan di mesin opname tunggal (K9). Dulu dibaca
+    # dari `wh_opname_sessions2` (arsip baca-saja) sehingga kartu ini selalu kosong.
+    active_opname = await _active_accessory_opname(db)
 
     return {
         "total_items": total_items,

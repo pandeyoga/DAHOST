@@ -117,6 +117,20 @@ def env(monkeypatch):
         return row
     monkeypatch.setattr(stock_service, "adjust", adjust)
 
+    async def adjust_by(material_id, location_id, delta, *, meta=None, ref=None, actor=None, db=None):
+        """2026-11-06 (Tahap 1): approve opname menulis SELISIH atomik (qty += delta)."""
+        coll = db[stock_service.STOCK]
+        row = next((r for r in coll.docs if r["material_id"] == material_id and r["location_id"] == location_id), None)
+        if row is None:
+            row = {"id": f"st-{len(coll.docs)}", "material_id": material_id, "location_id": location_id, "qty": 0.0,
+                   **{k: v for k, v in (meta or {}).items() if v is not None}}
+            coll.docs.append(row)
+        row["qty"] = round(float(row.get("qty") or 0) + delta, 4)
+        db[stock_service.LEDGER].docs.append({"op": "adjust", "material_id": material_id, "location_id": location_id,
+                                              "delta": round(delta, 4), "ref": ref or {}, "created_at": clock.t})
+        return row
+    monkeypatch.setattr(stock_service, "adjust_by", adjust_by)
+
     async def gen(db_, coll, field, prefix, width, **kw):
         return f"{prefix}{len(db_[coll].docs) + 1:0{width}d}"
     import utils.counters as uc

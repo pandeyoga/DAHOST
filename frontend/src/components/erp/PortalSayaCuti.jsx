@@ -446,7 +446,7 @@ export default function PortalSayaCuti({ user, headers }) {
                         <p className="text-xs text-red-700 dark:text-red-500 mt-0.5">Alasan: {lv.rejected_reason}</p>
                       )}
                     </div>
-                    {(lv.status === 'pending_approval') && (
+                    {['pending_approval', 'pending_hr_approval'].includes(lv.status) && (
                       <Button variant="ghost" size="sm" className="h-7 w-7 p-0 text-red-700 dark:text-red-400"
                         onClick={() => cancelLeave(lv.id)}>
                         <Trash2 size={12} />

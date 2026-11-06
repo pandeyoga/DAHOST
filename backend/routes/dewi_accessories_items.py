@@ -21,29 +21,37 @@ def _id():    return str(uuid.uuid4())
 def _now_iso(): return datetime.now(timezone.utc).isoformat()
 def _now():   return datetime.now(timezone.utc)
 
-_VALID_UNITS = {
-    "m", "cm", "yard", "inch",
-    "kg", "gram", "ton",
-    "pcs", "lusin", "kodi", "gross", "helai", "set", "pair",
-    "rol", "gulung", "bal", "karton", "pak", "sak",
-    "liter", "ml",
+# 2026-11-06 (Tahap 1): SATU daftar satuan — `MATERIAL_UNITS` master material (cermin FE
+# `lib/uom.js`). Dulu berkas ini punya salinan sendiri dan satuan tak dikenal DIAM-DIAM
+# menjadi "pcs" (form menawarkan "lembar" → tersimpan "pcs"). Sekarang ditolak dengan pesan.
+from routes.rahaza_inventory_shared import MATERIAL_UNITS  # noqa: E402
+
+# Ejaan lain untuk satuan yang SAMA (bukan konversi ke satuan lain).
+_UNIT_SPELLINGS = {
+    "piece": "pcs", "pieces": "pcs", "buah": "pcs",
+    "meter": "m", "centimeter": "cm",
+    "kilogram": "kg", "gr": "gram", "grams": "gram",
+    "pasang": "pair", "set/pair": "set",
+    "rolls": "rol", "roll": "rol",
+    "pack": "pak", "packs": "pak",
+    "karton/dus": "karton", "dus": "karton",
 }
+
+
+HPP_EDIT_BLOCKED_MSG = (
+    "Harga satuan (HPP) tidak bisa diubah dari Ubah aksesoris. Pakai Valuasi HPP › Set HPP "
+    "supaya perubahan nilai stok tercatat sebagai revaluasi berjurnal beserta alasannya."
+)
+
 
 def _normalize_unit(unit: str) -> str:
     if not unit:
         return "pcs"
     u = str(unit).strip().lower()
-    aliases = {
-        "piece": "pcs", "pieces": "pcs", "buah": "pcs",
-        "meter": "m", "centimeter": "cm",
-        "kilogram": "kg", "gr": "gram", "grams": "gram",
-        "pasang": "pair", "set/pair": "set",
-        "rolls": "rol", "roll": "rol",
-        "pack": "pak", "packs": "pak",
-        "karton/dus": "karton", "dus": "karton",
-    }
-    u = aliases.get(u, u)
-    return u if u in _VALID_UNITS else "pcs"
+    u = _UNIT_SPELLINGS.get(u, u)
+    if u not in MATERIAL_UNITS:
+        raise HTTPException(400, f"Satuan '{unit}' tidak dikenal. Pilih salah satu: {', '.join(MATERIAL_UNITS)}.")
+    return u
 
 # Fase 2.8: helper stok aksesoris KANONIK dipindah ke core.accessory_stock
 # (satukan ke rahaza_material_stock flat via stock_service; hilangkan duplikasi Schema-B nested).
@@ -236,19 +244,28 @@ async def update_item(item_id: str, request: Request):
     if "code" in body and body["code"]:
         upd["code"] = str(body["code"]).strip().upper()
     if "unit" in body and body["unit"]:
-        upd["unit"] = _normalize_unit(body["unit"])
+        # satuan lama yang tidak diubah tetap boleh disimpan apa adanya
+        same = str(body["unit"]).strip().lower() == str(existing.get("unit") or "").strip().lower()
+        upd["unit"] = existing.get("unit") if same else _normalize_unit(body["unit"])
     if "min_stock" in body:
         try:
             upd["min_stock"] = float(body["min_stock"] or 0)
         except Exception:
             upd["min_stock"] = 0.0
-    # FASE G+: harga satuan (unit_cost / alias hpp)
+    # 2026-11-06 (Tahap 1, aturan owner K12): HPP TIDAK diubah lewat "Ubah aksesoris". Dulu
+    # field ini menimpa `unit_cost` langsung — tanpa jurnal, tanpa riwayat — sehingga nilai stok
+    # berbeda dari buku besar. Koreksi HPP hanya lewat Valuasi HPP → Set HPP (revaluasi berjurnal
+    # + alasan). Nilai yang sama (form lama mengirim ulang seluruh isian) tetap diterima.
     if "unit_cost" in body or "hpp" in body:
+        raw = body.get("unit_cost") if body.get("unit_cost") not in (None, "") else body.get("hpp")
         try:
-            upd["unit_cost"] = float(body.get("unit_cost") if body.get("unit_cost") is not None else body.get("hpp") or 0)
-        except Exception:
-            upd["unit_cost"] = 0.0
-    
+            sent = float(raw or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Harga satuan harus berupa angka.")
+        from core.accessory_valuation import resolve_unit_cost
+        if abs(sent - resolve_unit_cost(existing)) > 1e-6:
+            raise HTTPException(400, HPP_EDIT_BLOCKED_MSG)
+
     # Satuan & kemasan — hanya diproses bila salah satu field satuan dikirim,
     # supaya PATCH parsial (mis. hanya ubah nama) tidak menyentuh `uoms`.
     if any(k in body for k in ("uoms", "unit", "base_uom", "pack_unit", "pack_size",

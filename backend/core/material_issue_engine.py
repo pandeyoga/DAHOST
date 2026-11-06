@@ -56,6 +56,15 @@ class BomMissing(Exception):
     """BOM tidak bisa dipakai — jangan menebak isi kiriman material."""
 
 
+class AlreadyProcessing(Exception):
+    """MI sedang/sudah dikeluarkan oleh permintaan lain (klik ganda / dua penyetuju) → HTTP 409."""
+
+
+# 2026-11-06 (Tahap 1): status sementara selama stok MI dipotong. Klaim atomik status lama → issuing
+# SEBELUM stok disentuh; permintaan kedua tidak lolos klaim, jadi stok & jurnal tidak terpotong dua kali.
+MI_CLAIM_STATUS = "issuing"
+
+
 def _f(v) -> float:
     try:
         return float(v or 0)
@@ -148,31 +157,63 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
         raise MaterialShortage(shortages)
     negative_lines = shortages if neg_ok else []
 
+    # ── (c0) 2026-11-06 (Tahap 1): KLAIM ATOMIK sebelum stok disentuh ──────
+    prev_status = mi.get("status")
+    if prev_status in ("issued", MI_CLAIM_STATUS):
+        raise AlreadyProcessing(f"MI {mi.get('mi_number', '')} sudah/sedang dikeluarkan — muat ulang daftar.")
+    claim = await db.rahaza_material_issues.update_one(
+        {"id": mi["id"], "status": prev_status},
+        {"$set": {"status": MI_CLAIM_STATUS, "issuing_at": _now(), "issuing_by": user.get("id")}})
+    if not claim.matched_count:
+        raise AlreadyProcessing(f"MI {mi.get('mi_number', '')} sedang/sudah diproses pengguna lain — "
+                                "muat ulang daftar.")
+
+    actor = {"id": str(user.get("id") or ""), "email": user.get("email", "")}
+    done: list = []
+
+    async def _rollback():
+        """Kembalikan baris yang sudah terpotong pada percobaan ini + lepas klaim — supaya MI bisa
+        di-approve ulang tanpa memotong baris yang sama dua kali."""
+        for p in reversed(done):
+            try:
+                await stock_service.add(
+                    p["material_id"], p["location_id"], p["qty"],
+                    ref={"source": "material_issue_rollback", "mi_number": mi.get("mi_number"),
+                         "item_id": p.get("item_id"), "ref_type": default_ref, "ref_id": mi["id"]},
+                    actor=actor, db=db)
+            except Exception:  # noqa: BLE001 — dicatat; klaim tetap dilepas
+                logger.exception("pengembalian stok MI %s gagal (%s)", mi.get("mi_number"), p["material_id"])
+        await db.rahaza_material_issues.update_one(
+            {"id": mi["id"], "status": MI_CLAIM_STATUS},
+            {"$set": {"status": prev_status, "issuing_at": None}})
+
     # ── (c) potong stok (atomik per baris) ────────────────────────────────
     race_failures = []
-    for p in plan:
-        try:
-            await stock_service.issue(
-                p["material_id"], p["location_id"], p["qty"],
-                ref={"source": "material_issue", "mi_number": mi.get("mi_number"),
-                     "item_id": p.get("item_id"), "ref_type": default_ref,
-                     "ref_id": mi["id"]},
-                actor={"id": str(user.get("id") or ""), "email": user.get("email", "")},
-                db=db, allow_negative=neg_ok,
-                meta=negative_stock.stock_meta(mat_meta.get(p["material_id"]),
-                                               loc_meta.get(p["location_id"])) if neg_ok else None,
-            )
-        except stock_service.InsufficientStock:
-            race_failures.append({"material_id": p["material_id"],
-                                  "location_id": p["location_id"],
-                                  "required": p["qty"]})
-            continue
-        await _log_movement(
-            db, user, type="issue", material_id=p["material_id"], qty=p["qty"],
-            from_location_id=p["location_id"], to_location_id=None,
-            ref_type=default_ref, ref_id=mi["id"],
-            notes=f"MI {mi.get('mi_number', '')}")
+    try:
+        for p in plan:
+            try:
+                await stock_service.issue(
+                    p["material_id"], p["location_id"], p["qty"],
+                    ref={"source": "material_issue", "mi_number": mi.get("mi_number"),
+                         "item_id": p.get("item_id"), "ref_type": default_ref,
+                         "ref_id": mi["id"]},
+                    actor=actor,
+                    db=db, allow_negative=neg_ok,
+                    meta=negative_stock.stock_meta(mat_meta.get(p["material_id"]),
+                                                   loc_meta.get(p["location_id"])) if neg_ok else None,
+                )
+            except stock_service.InsufficientStock:
+                race_failures.append({"material_id": p["material_id"],
+                                      "location_id": p["location_id"],
+                                      "required": p["qty"]})
+                continue
+            done.append(p)
+    except BaseException:
+        await _rollback()
+        raise
     if race_failures:
+        # semua atau tidak sama sekali: baris yang sempat terpotong dikembalikan
+        await _rollback()
         raise MaterialShortage([{
             "material_id": f["material_id"],
             "material_code": (mat_meta.get(f["material_id"]) or {}).get("code", "?"),
@@ -180,6 +221,12 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
             "required": f["required"], "available": 0.0,
             "location_id": f["location_id"],
         } for f in race_failures])
+    for p in done:
+        await _log_movement(
+            db, user, type="issue", material_id=p["material_id"], qty=p["qty"],
+            from_location_id=p["location_id"], to_location_id=None,
+            ref_type=default_ref, ref_id=mi["id"],
+            notes=f"MI {mi.get('mi_number', '')}")
 
     # ── (d) tutup dokumen + posting GL ────────────────────────────────────
     new_items = [{**it, "qty_issued": _f(it.get("qty_required")),
@@ -188,7 +235,7 @@ async def issue_material_issue(db, mi: dict, user: dict, *, loc_overrides: dict 
     await db.rahaza_material_issues.update_one(
         {"id": mi["id"]},
         {"$set": {"items": new_items, "status": "issued", "issued_at": _now(),
-                  "issued_by": user.get("id"), "updated_at": _now(),
+                  "issued_by": user.get("id"), "updated_at": _now(), "issuing_at": None,
                   "negative_stock_lines": negative_lines}})
     out = await db.rahaza_material_issues.find_one({"id": mi["id"]}, {"_id": 0})
     await _enrich_mi(db, out)

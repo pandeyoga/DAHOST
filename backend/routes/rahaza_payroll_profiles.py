@@ -30,7 +30,9 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-payroll-profiles"])
 
 @router.get("/payroll-profiles")
 async def list_profiles(request: Request, employee_id: Optional[str] = None, active_only: bool = True):
-    await require_auth(request)
+    # Tahap 1 (2026-11-06): daftar Profil Gaji memuat gaji semua karyawan → hanya HR & manajemen.
+    # Dulu cukup login. Karyawan melihat gajinya sendiri lewat slip di Portal Saya.
+    await _require_hr(request)
     db = get_db()
     q = {}
     if active_only:
@@ -52,7 +54,7 @@ async def list_profiles(request: Request, employee_id: Optional[str] = None, act
 
 @router.get("/payroll-profiles/{employee_id}")
 async def get_profile(employee_id: str, request: Request):
-    await require_auth(request)
+    await _require_hr(request)  # Tahap 1: sama dengan daftar profil
     db = get_db()
     row = await db.rahaza_payroll_profiles.find_one({"employee_id": employee_id, "active": True}, {"_id": 0})
     if not row:

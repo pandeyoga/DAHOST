@@ -605,6 +605,15 @@ async def update_line(receipt_id: str, line_id: str, request: Request):
         'po_item_id', 'job_item_id',
     }
     update = {k: v for k, v in body.items() if k in allowed_keys}
+    # Tahap 1: baris yang stoknya SUDAH tercatat (QC sempat berjalan lalu gagal di
+    # langkah lain) tidak boleh diubah qty/SKU-nya — ulangi "Selesai QC" saja.
+    _cur = await db.cmt_receipt_lines.find_one({"id": line_id, "receipt_id": receipt_id},
+                                               {"_id": 0, "fg_stock_posted_at": 1})
+    if (_cur or {}).get("fg_stock_posted_at") and set(update) & {
+            "qty_actual", "sku_code", "po_item_id", "job_item_id"}:
+        raise HTTPException(
+            409, "Stok barang jadi baris ini sudah tercatat — qty lolos dan SKU tidak bisa "
+                 "diubah lagi. Klik 'Selesai QC' untuk menuntaskan penerimaan.")
     # Coerce numeric fields
     for nk in ('qty_expected', 'qty_actual', 'reject_qty'):
         if nk in update and update[nk] is not None:
@@ -622,9 +631,31 @@ async def update_line(receipt_id: str, line_id: str, request: Request):
 
 @router.delete("/cmt-receipts/{receipt_id}/lines/{line_id}", dependencies=only(*PRODUCTION_ROLES))  # T-01 2.3
 async def delete_line(receipt_id: str, line_id: str, request: Request):
+    """Hapus baris — hanya selama penerimaan masih "Sedang QC" dan stok baris itu belum
+    tercatat. Tahap 1 (6 Nov 2026): dulu tanpa penjaga status, sehingga baris yang sudah
+    menjadi stok FG, lapisan HPP, dan tagihan CMT bisa dihapus dan angkanya bercabang."""
     await require_auth(request)
     db = get_db()
+    receipt = await db.cmt_receipts.find_one({"id": receipt_id}, {"_id": 0, "status": 1})
+    if not receipt:
+        raise HTTPException(404, "Penerimaan tidak ditemukan")
+    st = _canon_status(receipt.get("status"))
+    if st == ST_DONE:
+        raise HTTPException(
+            409, "QC penerimaan ini sudah selesai — baris tidak bisa dihapus karena stok barang "
+                 "jadi dan tagihan CMT sudah terbentuk. Pakai 'Koreksi hasil QC' bila angkanya salah.")
+    if st == ST_CANCELLED:
+        raise HTTPException(409, "Penerimaan sudah dibatalkan — baris tidak bisa dihapus.")
+    line = await db.cmt_receipt_lines.find_one({"id": line_id, "receipt_id": receipt_id},
+                                               {"_id": 0, "fg_stock_posted_at": 1})
+    if not line:
+        raise HTTPException(404, "Baris penerimaan tidak ditemukan")
+    if line.get("fg_stock_posted_at"):
+        raise HTTPException(
+            409, "Stok barang jadi baris ini sudah tercatat — baris tidak bisa dihapus. "
+                 "Klik 'Selesai QC' untuk menuntaskan penerimaan.")
     await db.cmt_receipt_lines.delete_one({"id": line_id, "receipt_id": receipt_id})
+    await _recalc_receipt_totals(db, receipt_id)
     return {"ok": True}
 
 
@@ -1039,6 +1070,23 @@ async def approve_receipt(receipt_id: str, request: Request):
     return await _finish_receipt(receipt_id, request)
 
 
+async def _log_fg_movement_in(db, ln: dict, doc: dict, user: dict, *, sku: str, qty: int,
+                              material_id: str, location_id: str) -> None:
+    """Catat mutasi FG masuk SEKALI per baris (penanda `fg_movement_id` di baris)."""
+    mv_id = _id()
+    await db.rahaza_fg_movements.insert_one({
+        "id": mv_id, "sku_code": sku,
+        "movement_type": "IN", "qty": qty,
+        "source": "cmt_receipt", "ref_id": doc["id"],
+        "ref_number": doc.get("receipt_code"),
+        "receipt_line_id": ln["id"],
+        "material_id": material_id,
+        "location_id": location_id,
+        "notes": f"Terima dari CMT {doc.get('cmt_name')} — lolos QC",
+        "created_by": user["name"], "created_at": _now()})
+    await db.cmt_receipt_lines.update_one({"id": ln["id"]}, {"$set": {"fg_movement_id": mv_id}})
+
+
 async def _finish_receipt(receipt_id: str, request: Request):
     from routes.shared import require_perm
     user = await require_perm(
@@ -1089,14 +1137,49 @@ async def _finish_receipt(receipt_id: str, request: Request):
         "name": (po_doc or {}).get("customer_name") or ""}
     ownership_warnings = []
 
+    # ── 0. Tahap 1 (6 Nov 2026): periksa SEMUA baris sebelum menulis apa pun ──
+    # Dulu baris 1 sudah masuk stok lalu baris 2 gagal (SKU tanpa master) → status
+    # tetap "Sedang QC" → saat diulang, stok baris 1 tercatat dua kali.
+    if not await qty_ledger.resolve_fg_location_id(db):
+        raise HTTPException(
+            400, "Lokasi gudang barang jadi belum ditandai di Master Lokasi — "
+                 "penerimaan belum bisa diselesaikan.")
+    fg_by_line = {}
+    for ln in lines:
+        if int(ln.get("qty_actual") or 0) <= 0 or ln.get("fg_stock_posted_at"):
+            continue
+        fg = await _ensure_fg_for_cmt_line(db, ln, doc, user, client_owner=client_owner)
+        if not fg:
+            sku = (ln.get("sku_code") or "").strip()
+            raise HTTPException(
+                400,
+                f"Baris {sku or ln['id']} tidak punya SKU/master FG — tidak bisa masuk stok. "
+                "Lengkapi SKU baris penerimaan atau varian PO-nya.")
+        fg_by_line[ln["id"]] = fg
+
     # ── 1. Stok FG untuk qty lolos QC — lewat SSOT stok ──
+    # Tiap baris ditandai `fg_stock_posted_at` begitu stoknya (dan lapisan HPP-nya)
+    # tercatat, sehingga bila langkah berikutnya gagal dan QC diulang, baris itu
+    # dilewati — stok & lapisan biaya hanya dicatat sekali.
     stock_result = []
     for ln in lines:
         qty = int(ln.get("qty_actual") or 0)
         if qty <= 0:
             continue
         sku = (ln.get("sku_code") or "").strip()
-        fg = await _ensure_fg_for_cmt_line(db, ln, doc, user, client_owner=client_owner)
+        if ln.get("fg_stock_posted_at"):
+            stock_result.append({"sku": ln.get("fg_material_code") or sku,
+                                 "qty": int(ln.get("fg_stock_posted_qty") or qty),
+                                 "location_id": ln.get("fg_stock_location_id"),
+                                 "cost_layer_id": ln.get("fg_cost_layer_id"),
+                                 "already_posted": True})
+            if not ln.get("fg_movement_id"):
+                await _log_fg_movement_in(db, ln, doc, user, sku=sku,
+                                          qty=int(ln.get("fg_stock_posted_qty") or qty),
+                                          material_id=ln.get("fg_material_id"),
+                                          location_id=ln.get("fg_stock_location_id"))
+            continue
+        fg = fg_by_line.get(ln["id"])
         owner_for_stock = ""
         if client_owner and fg:
             if fg.get("owner_type") == "client":
@@ -1107,11 +1190,6 @@ async def _finish_receipt(receipt_id: str, request: Request):
                 ownership_warnings.append(
                     f"K14: SKU {sku} PO maklon memakai master barang jadi DA — stok ini tercatat "
                     f"milik DA. Pakai SKU artikel klien (Katalog Buyer) supaya barang klien terpisah.")
-        if not fg:
-            raise HTTPException(
-                400,
-                f"Baris {sku or ln['id']} tidak punya SKU/master FG — tidak bisa masuk stok. "
-                "Lengkapi SKU baris penerimaan atau varian PO-nya.")
         material_id = fg["id"]
         # simpan tautan material di baris supaya karantina & audit bisa memakainya
         await db.cmt_receipt_lines.update_one(
@@ -1138,18 +1216,17 @@ async def _finish_receipt(receipt_id: str, request: Request):
         except Exception as e:  # noqa: BLE001
             logger.exception("post stok FG gagal (receipt %s line %s)", receipt_id, ln["id"])
             raise HTTPException(500, f"Gagal menambah stok FG: {e}")
+        layer_id = (posted.get("cost_layer") or {}).get("id")
+        # tandai SEGERA setelah stok tercatat — sebelum langkah lain yang bisa gagal
+        await db.cmt_receipt_lines.update_one({"id": ln["id"]}, {"$set": {
+            "fg_stock_posted_at": _now(), "fg_stock_posted_qty": qty,
+            "fg_stock_location_id": posted["location_id"],
+            "fg_cost_layer_id": layer_id}})
         stock_result.append({"sku": fg.get("code", sku), "qty": qty,
                              "location_id": posted["location_id"],
-                             "cost_layer_id": ((posted.get("cost_layer") or {}).get("id"))})
-        await db.rahaza_fg_movements.insert_one({
-            "id": _id(), "sku_code": sku,
-            "movement_type": "IN", "qty": qty,
-            "source": "cmt_receipt", "ref_id": receipt_id,
-            "ref_number": doc.get("receipt_code"),
-            "material_id": material_id,
-            "location_id": posted["location_id"],
-            "notes": f"Terima dari CMT {doc.get('cmt_name')} — lolos QC",
-            "created_by": user["name"], "created_at": _now()})
+                             "cost_layer_id": layer_id})
+        await _log_fg_movement_in(db, ln, doc, user, sku=sku, qty=qty,
+                                  material_id=material_id, location_id=posted["location_id"])
 
     # ── 2. Status selesai QC ──
     await db.cmt_receipts.update_one({"id": receipt_id}, {"$set": {

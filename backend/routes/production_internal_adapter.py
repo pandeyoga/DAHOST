@@ -413,6 +413,7 @@ async def compute_hpp_job(db, job_id: str) -> dict:
     """HPP aktual ter-anchor job_id:
     material = MI (job_id, issued) × unit_cost; labor = Σ qty_done × rate_per_pcs
     (wip mirror job); overhead AD-2 = overhead_rate × Σproduced."""
+    from routes.rahaza_hpp import mi_item_unit_cost
     job = await db.production_jobs.find_one({'id': job_id}, {'_id': 0})
     if not job:
         raise HTTPException(404, 'Job tidak ditemukan')
@@ -442,11 +443,8 @@ async def compute_hpp_job(db, job_id: str) -> dict:
     for mi in mi_rows:
         for item in (mi.get('items') or []):
             mat = mat_map.get(item.get('material_id')) or {}
-            unit_cost = float(mat.get('unit_cost') or 0)
-            if unit_cost <= 0:
-                # FASE 12 / BUG-B2: dulu `mat.get('type') in ('yarn','fabric')` ⇒ material
-                # `kain`/`benang`/`interlining` tanpa unit_cost memakai default AKSESORIS.
-                unit_cost = default_yarn if material_fields.is_kglike_material(mat) else default_acc
+            # Tahap 1 (6 Nov 2026): biaya saat keluar (`unit_cost_applied`), bukan harga master hari ini.
+            unit_cost = mi_item_unit_cost(item, mat, default_yarn, default_acc)
             qty = float(item.get('qty_issued') or item.get('qty_required') or 0)
             amount = qty * unit_cost
             material_cost += amount

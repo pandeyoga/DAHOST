@@ -18,6 +18,7 @@ from routes.rahaza_payroll_shared import (
     _generate_run_number, _compute_payslip_for_employee,
     employee_is_active, find_duplicate_run_conflicts,
     list_payment_cash_accounts, resolve_payment_account, parse_ymd,
+    kasbon_deducted_elsewhere,
 )
 from routes.rahaza_posting import post_payroll_run, payroll_deduction_totals
 from core.roles import FINANCE_ROLES, HR_ROLES
@@ -246,6 +247,13 @@ async def finalize_run(run_id: str, request: Request):
         raise HTTPException(400, f"Run sudah ber-status '{run.get('status')}', tidak bisa finalize.")
     # Recalc totals dari payslips (in case deductions diubah)
     payslips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0}).to_list(500)
+    # Tahap 1: satu cicilan kasbon per bulan hanya untuk satu run (run draft lama bisa masih dobel).
+    dup_kasbon = await kasbon_deducted_elsewhere(db, run, payslips)
+    if dup_kasbon:
+        rows = "; ".join(f"{d['request_number']} sudah dipotong di {d['run_number']}" for d in dup_kasbon)
+        raise HTTPException(409, (
+            f"Finalisasi ditolak: potongan kasbon bulan {(run.get('period_from') or '')[:7]} akan terpotong dua kali "
+            f"({rows}). Hapus run draft ini lalu buat ulang — run baru tidak memotong kasbon yang sama lagi."))
     total_gross = sum(s.get("gross_pay", 0) for s in payslips)
     total_ded = sum(s.get("deductions_total", 0) for s in payslips)
     total_net = sum(s.get("net_pay", 0) for s in payslips)
@@ -305,26 +313,31 @@ async def finalize_run(run_id: str, request: Request):
         from routes.rahaza_notifications import publish_notification
         # Kumpulkan user_id dari employees dalam run
         payslip_emps = await db.rahaza_payslips.find(
-            {"run_id": run_id}, {"_id": 0, "employee_id": 1, "net_pay": 1}
+            {"run_id": run_id}, {"_id": 0, "id": 1, "employee_id": 1, "net_pay": 1}
         ).to_list(500)
         emp_ids_in_run = [s["employee_id"] for s in payslip_emps]
         if emp_ids_in_run:
+            # Tahap 1: proyeksi WAJIB memuat `id` — dulu tanpa `id`, slip tidak pernah cocok sehingga
+            # kabar selalu berbunyi "Rp 0", dan tautannya ke layar Kehadiran (bukan Slip Gaji).
             linked_emps = await db.rahaza_employees.find(
                 {"id": {"$in": emp_ids_in_run}, "user_id": {"$exists": True, "$ne": None}},
-                {"_id": 0, "user_id": 1, "name": 1}
+                {"_id": 0, "id": 1, "user_id": 1, "name": 1}
             ).to_list(500)
+            slip_by_emp = {s["employee_id"]: s for s in payslip_emps}
             for le in linked_emps:
-                net = next((s["net_pay"] for s in payslip_emps if s["employee_id"] == le.get("id")), 0)
+                slip = slip_by_emp.get(le.get("id")) or {}
+                net = f"{round(float(slip.get('net_pay') or 0)):,}".replace(",", ".")
                 await publish_notification(
                     db,
                     type_="payslip_ready",
                     severity="info",
-                    title="Slip Gaji Tersedia",
+                    title="Slip gaji tersedia",
                     message=(
                         f"Slip gaji periode {out.get('period_from','')[:7]} sudah tersedia. "
-                        f"Take-home: Rp {net:,.0f}."
+                        f"Gaji bersih diterima: Rp {net}."
                     ),
-                    link_module="self-dashboard",
+                    link_module="portal-payslip",
+                    link_id=slip.get("id"),
                     target_user_ids=[le["user_id"]],
                     dedup_key=f"payslip_ready_{run_id}_{le['user_id']}",
                 )
@@ -447,7 +460,16 @@ async def void_payroll_payment_endpoint(run_id: str, request: Request):
         raise HTTPException(400, "Tidak ada pembayaran aktif yang bisa dibatalkan.")
 
     from routes.rahaza_posting import void_payroll_payment
-    await void_payroll_payment(db, run_id, user, reason)
+    # Tahap 1 (2026-11-06): hasil pembatalan jurnal WAJIB diperiksa. Dulu kegagalan (mis. periode
+    # jurnal pembayaran sudah ditutup) diabaikan lalu status tetap diubah 'void' ⇒ run tampak belum
+    # dibayar padahal jurnal pembayarannya masih aktif, dan gaji bisa dibayar dua kali.
+    res = await void_payroll_payment(db, run_id, user, reason) or {}
+    if not res.get("ok"):
+        raise HTTPException(400, (
+            f"Pembatalan pembayaran {run.get('run_number') or ''} gagal: "
+            f"{res.get('error') or 'jurnal pembayaran tidak bisa dibatalkan.'} "
+            "Status tetap sudah dibayar. Perbaiki penyebabnya (mis. minta Keuangan membuka kembali "
+            "periode jurnal pembayaran), lalu ulangi.").replace("  ", " "))
     await db.rahaza_payroll_runs.update_one(
         {"id": run_id},
         {"$set": {"payment_status": "void", "updated_at": _now()}}

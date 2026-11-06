@@ -978,6 +978,7 @@ function HPPTab({ data }) {
             <HPPRow label="Nilai PO (Revenue)" value={hpp.po_total_value} tone="green" />
             <HPPRow label="BOM Estimasi (Biaya)" value={hpp.bom_estimated_cost} tone="blue" />
             <HPPRow label="BOM Aktual (Biaya)" value={hpp.bom_actual_cost} tone="cyan" />
+            <HPPRow label="BOM milik DA (dasar margin)" value={hpp.bom_estimated_cost_da} tone="blue" />
             <HPPRow label="Material Diterima dari Klien" value={hpp.material_received_value} tone="amber" />
             <HPPRow label="Margin Estimasi" value={hpp.gross_margin_estimate} tone="emerald" emphasized />
             <HPPRow label="Margin Aktual" value={hpp.gross_margin_actual} tone="emerald" emphasized />
@@ -1009,7 +1010,7 @@ function HPPRow({ label, value, tone = 'slate', emphasized = false }) {
     <tr className="border-b border-foreground/5">
       <td className={`py-1.5 px-2 ${emphasized ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>{label}</td>
       <td className={`py-1.5 px-2 text-right ${t} ${emphasized ? 'font-bold' : ''}`}>
-        {value === null || value === undefined ? <span className="text-muted-foreground/50 italic">N/A</span> : fmtRp(value)}
+        {value === null || value === undefined ? <span className="text-muted-foreground/50 italic">belum ada data</span> : fmtRp(value)}
       </td>
     </tr>
   );

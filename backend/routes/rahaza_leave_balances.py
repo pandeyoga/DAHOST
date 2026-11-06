@@ -44,6 +44,29 @@ async def _require_admin(request: Request):
     return user
 
 
+def default_allocation(lt: Optional[dict]) -> int:
+    """Jatah bawaan satu jenis cuti per tahun — dipakai bila dokumen saldo belum ada."""
+    return int(lt.get("quota_default", 12)) if lt else 12
+
+
+async def balance_snapshot(db, employee_id: str, leave_type_id: str, year: int,
+                           lt: Optional[dict] = None) -> dict:
+    """Saldo cuti {allocated, used, remaining} TANPA menulis apa pun.
+
+    Tahap 1 (2026-11-06): dokumen saldo ada → dipakai apa adanya; belum ada → dihitung dari jatah jenis
+    cuti, sama persis dengan yang dibuat `get_or_create_balance` (layar saldo) — dulu persetujuan cuti
+    melewati pemeriksaan saldo bila dokumennya belum ada, sehingga saldo bisa minus."""
+    doc = await db.rahaza_leave_balances.find_one(
+        {"employee_id": employee_id, "leave_type_id": leave_type_id, "year": year}, {"_id": 0})
+    if doc:
+        allocated, used = float(doc.get("allocated", 0) or 0), float(doc.get("used", 0) or 0)
+    else:
+        if lt is None:
+            lt = await db.rahaza_leave_types.find_one({"id": leave_type_id}, {"_id": 0})
+        allocated, used = float(default_allocation(lt)), 0.0
+    return {"allocated": allocated, "used": used, "remaining": allocated - used, "exists": bool(doc)}
+
+
 async def get_or_create_balance(db, employee_id: str, leave_type_id: str, year: int) -> dict:
     """Ensure balance record exists for (employee, leave_type, year)."""
     existing = await db.rahaza_leave_balances.find_one(
@@ -54,7 +77,7 @@ async def get_or_create_balance(db, employee_id: str, leave_type_id: str, year: 
         return existing
 
     lt = await db.rahaza_leave_types.find_one({"id": leave_type_id}, {"_id": 0})
-    allocated = int(lt.get("quota_default", 12)) if lt else 12
+    allocated = default_allocation(lt)
 
     doc = {
         "id": _uid(),

@@ -72,6 +72,21 @@ CLOSE_SHORT_ALLOWED_FROM = [
 ]
 
 
+def accessory_qty(v) -> float:
+    """Qty kebutuhan aksesoris PO — DESIMAL dipertahankan (benang dalam meter, pita dalam
+    yard). Tahap 1 (6 Nov 2026): dulu `int()` sehingga 2,5 m benang tersimpan 2 setiap
+    kali PO diubah. Kosong = 0; teks bukan angka atau negatif ditolak dengan pesan jelas."""
+    if v in (None, ''):
+        return 0.0
+    try:
+        q = float(str(v).replace(',', '.')) if isinstance(v, str) else float(v)
+    except (TypeError, ValueError):
+        raise HTTPException(400, f"Qty aksesoris '{v}' bukan angka.")
+    if q < 0:
+        raise HTTPException(400, 'Qty aksesoris tidak boleh negatif.')
+    return round(q, 4)
+
+
 async def _resolve_rahaza_variant(db, item: dict):
     """Fase 2: bila item PO internal memilih varian ber-SKU (rahaza_model_variants),
     resolve varian → inject model_id/size_id ke `item` (agar validasi model/size lolos)
@@ -879,7 +894,7 @@ async def update_po(po_id: str, request: Request):
                 'accessory_id': raw.get('accessory_id'),
                 'accessory_name': raw.get('accessory_name', ''),
                 'accessory_code': raw.get('accessory_code', ''),
-                'qty_needed': int(raw.get('qty_needed', 0) or 0),
+                'qty_needed': accessory_qty(raw.get('qty_needed')),
                 'unit': raw.get('unit', 'pcs'),
                 'notes': raw.get('notes', ''),
             }
@@ -1536,7 +1551,7 @@ async def add_po_accessory(request: Request):
             'accessory_id': item.get('accessory_id'),
             'accessory_name': item.get('accessory_name', ''),
             'accessory_code': item.get('accessory_code', ''),
-            'qty_needed': int(item.get('qty_needed', 0) or 0),
+            'qty_needed': accessory_qty(item.get('qty_needed')),
             'unit': item.get('unit', 'pcs'),
             'notes': item.get('notes', ''),
             'created_at': now()

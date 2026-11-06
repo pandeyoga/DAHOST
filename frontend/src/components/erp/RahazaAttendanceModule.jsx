@@ -21,6 +21,8 @@ export default function RahazaAttendanceModule({ token }) {
   const today = todayWIB();
   const [date, setDate] = useState(today);
   const [rows, setRows] = useState([]);
+  // Nilai grid seperti dimuat dari server — dasar "kolom apa yang diubah HR" saat menyimpan.
+  const [savedRows, setSavedRows] = useState({});
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -35,6 +37,7 @@ export default function RahazaAttendanceModule({ token }) {
       if (r.ok) {
         const data = await r.json();
         setRows(data.rows || []);
+        setSavedRows(Object.fromEntries((data.rows || []).map(row => [row.employee_id, row])));
         setShifts(data.shifts || []);
       }
     } finally { setLoading(false); }
@@ -93,23 +96,51 @@ export default function RahazaAttendanceModule({ token }) {
     } finally { setCopying(false); }
   };
 
-  const saveAll = async (rowsToSave = rows) => {
-    // Validasi: status Hadir wajib punya Shift + Jam Kerja > 0
-    const invalid = rowsToSave.filter(r => (r.status || 'hadir') === 'hadir' && (!r.shift_id || !(Number(r.hours_worked) > 0)));
-    if (invalid.length > 0) {
-      toast.error(`${invalid.length} karyawan berstatus "Hadir" belum lengkap Shift/Jam Kerja. Lengkapi dulu atau gunakan tombol "Tandai Hadir & Simpan".`);
-      return;
-    }
-    setSaving(true);
-    try {
-      const entries = rowsToSave.map(r => ({
-        employee_id: r.employee_id,
+  const saveAll = async (rowsArg) => {
+    // Tombol "Simpan Semua" memanggil saveAll(event) — hanya array yang dianggap daftar baris.
+    const rowsToSave = Array.isArray(rowsArg) ? rowsArg : rows;
+    // Baris yang SUDAH tercatat (absen selfie/mesin, cuti, alfa) hanya mengirim kolom yang diubah HR,
+    // supaya jam masuk/pulang dan menit terlambatnya tidak ikut tertimpa. Baris baru dikirim lengkap.
+    const entries = [];
+    const toValidate = [];
+    rowsToSave.forEach(r => {
+      const full = {
         status: r.status || 'hadir',
         shift_id: r.shift_id || null,
         hours_worked: Number(r.hours_worked) || 0,
         overtime_hours: Number(r.overtime_hours) || 0,
         notes: r.notes || '',
-      }));
+      };
+      const saved = r.existing_id ? savedRows[r.employee_id] : null;
+      if (!saved) {
+        entries.push({ employee_id: r.employee_id, ...full });
+        toValidate.push(r);
+        return;
+      }
+      const before = {
+        status: saved.status || 'hadir',
+        shift_id: saved.shift_id || null,
+        hours_worked: Number(saved.hours_worked) || 0,
+        overtime_hours: Number(saved.overtime_hours) || 0,
+        notes: saved.notes || '',
+      };
+      const changed = Object.keys(full).filter(k => full[k] !== before[k]);
+      if (changed.length === 0) return;
+      entries.push({ employee_id: r.employee_id, ...Object.fromEntries(changed.map(k => [k, full[k]])) });
+      if (changed.some(k => ['status', 'shift_id', 'hours_worked'].includes(k))) toValidate.push(r);
+    });
+    // Validasi: status Hadir wajib punya Shift + Jam Kerja > 0
+    const invalid = toValidate.filter(r => (r.status || 'hadir') === 'hadir' && (!r.shift_id || !(Number(r.hours_worked) > 0)));
+    if (invalid.length > 0) {
+      toast.error(`${invalid.length} karyawan berstatus "Hadir" belum lengkap Shift/Jam Kerja. Lengkapi dulu atau gunakan tombol "Tandai Hadir & Simpan".`);
+      return;
+    }
+    if (entries.length === 0) {
+      toast.info('Tidak ada perubahan untuk disimpan.');
+      return;
+    }
+    setSaving(true);
+    try {
       const res = await fetch('/api/rahaza/attendance/bulk', {
         method: 'POST', headers, body: JSON.stringify({ date, entries }),
       });
@@ -117,14 +148,17 @@ export default function RahazaAttendanceModule({ token }) {
         toast.success(`Absensi ${date} berhasil disimpan (${entries.length} karyawan).`);
         fetchGrid();
       } else {
-        toast.error('Gagal menyimpan absensi.');
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.detail || 'Gagal menyimpan absensi.');
       }
     } finally { setSaving(false); }
   };
 
-  /* Tandai semua Hadir (auto-isi shift + jam) lalu simpan */
+  /* Isi Hadir (auto-isi shift + jam) lalu simpan — HANYA untuk karyawan yang belum punya catatan hari itu.
+     Catatan yang sudah ada (cuti, izin, sakit, alfa, absen selfie/mesin) dan status lain yang dipilih HR
+     di baris baru tidak ditimpa. */
   const markAllHadirAndSave = () => {
-    const filled = rows.map(r => ({
+    const filled = rows.map(r => ((r.existing_id || (r.status || 'hadir') !== 'hadir') ? r : {
       ...r, status: 'hadir',
       shift_id: r.shift_id || defaultShiftId(),
       hours_worked: Number(r.hours_worked) > 0 ? r.hours_worked : DEFAULT_HOURS,
@@ -240,7 +274,7 @@ export default function RahazaAttendanceModule({ token }) {
             onClick={markAllHadirAndSave}
             className="px-3 py-1 rounded-full text-[11px] font-semibold border border-emerald-400 dark:border-emerald-400/30 bg-emerald-50 dark:bg-emerald-400/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:bg-emerald-400/20 transition-colors duration-150 flex items-center gap-1"
             data-testid="att-setall-hadir-save"
-            title="Set semua Hadir (auto shift + 8 jam) dan langsung simpan"
+            title="Isi Hadir (shift otomatis + 8 jam) untuk karyawan yang belum tercatat, lalu simpan. Cuti, izin, sakit, alfa, dan absen selfie tidak ditimpa."
           >
             <CheckCircle2 className="w-3 h-3" /> Tandai Hadir & Simpan
           </button>

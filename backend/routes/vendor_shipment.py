@@ -448,10 +448,10 @@ async def create_vendor_shipment(request: Request):
         await db.vendor_shipment_items.insert_one(si)
         inserted_items.append(si)
         if item.get('po_id'): affected_pos.add(item['po_id'])
-    for pid in affected_pos:
-        po = await db.production_pos.find_one({'id': pid})
-        if po and po.get('status') == 'Draft':
-            await db.production_pos.update_one({'id': pid}, {'$set': {'status': 'Distributed', 'updated_at': now()}})
+    # Tahap 1 (6 Nov 2026): dulu PO Draf di sini langsung dinaikkan ke 'Distributed' —
+    # melompati 'Confirmed' beserta sinkron keuangan maklon, dan dari 'Distributed' PO
+    # tidak bisa kembali dikonfirmasi. Sekarang status PO tidak diubah; penerimaan
+    # kiriman ditolak selama PO masih Draf (lihat `draft_pos_of_shipment`).
 
     # ═════════════════════════════════════════════════════════════════════════
     # FASE H-1 (2026-08-15) — MENGIRIM MATERIAL KE CMT MENGURANGI STOK GUDANG
@@ -554,6 +554,28 @@ async def create_vendor_shipment(request: Request):
         }
     return JSONResponse(result, status_code=201)
 
+async def draft_pos_of_shipment(db, sid: str) -> list:
+    """Nomor PO surat jalan ini (kepala + baris) yang masih Draf.
+
+    Tahap 1 (6 Nov 2026): kiriman ke CMT tidak boleh diterima selama PO-nya belum
+    dikonfirmasi — konfirmasi adalah satu-satunya jalan Draf → Confirmed yang juga
+    menyinkronkan keuangan PO maklon."""
+    ship = await db.vendor_shipments.find_one({'id': sid}, {'_id': 0, 'po_id': 1})
+    po_ids = {(ship or {}).get('po_id')}
+    async for it in db.vendor_shipment_items.find({'shipment_id': sid}, {'_id': 0, 'po_id': 1}):
+        po_ids.add(it.get('po_id'))
+    po_ids.discard(None)
+    po_ids.discard('')
+    if not po_ids:
+        return []
+    out = []
+    async for p in db.production_pos.find({'id': {'$in': list(po_ids)}},
+                                          {'_id': 0, 'po_number': 1, 'status': 1}):
+        if (p.get('status') or 'Draft') == 'Draft':
+            out.append(p.get('po_number') or '(tanpa nomor)')
+    return sorted(out)
+
+
 @router.put("/vendor-shipments/{sid}")
 async def update_vendor_shipment(sid: str, request: Request):
     user = await require_auth(request)
@@ -586,6 +608,12 @@ async def update_vendor_shipment(sid: str, request: Request):
         if body['status'] != cur and not (cur == 'Sent' and body['status'] == 'Received'):
             raise HTTPException(400,
                 f"Transisi status shipment ilegal: '{cur}' → '{body['status']}' (hanya 'Sent' → 'Received')")
+        if body['status'] == 'Received' and cur != 'Received':
+            drafts = await draft_pos_of_shipment(db, sid)
+            if drafts:
+                raise HTTPException(
+                    400, f"PO {', '.join(drafts)} masih Draf — konfirmasi PO dulu di Detail PO "
+                         "sebelum menerima kiriman ini.")
     # ── BUG-FIX 2026-08-08 (Rekap Harian) — `received_at` diisi SERVER ────────
     # SEBELUM: satu-satunya penulis `received_at` adalah browser
     # (`VendorReceiving.jsx` mengirim `received_at: new Date()`), sehingga:

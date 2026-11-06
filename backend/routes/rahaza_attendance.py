@@ -17,6 +17,15 @@ from utils.waktu import today_wib
 # koreksi manual. Absen mandiri karyawan WAJIB lewat /attendance/selfie/* atau
 # /attendance/webauthn/* (dipakai AbsenPage). Ini menutup celah self-service tanpa verifikasi.
 OPERATOR_ATTENDANCE_ROLES = ['admin', 'superadmin', 'hr', 'hr_manager', 'supervisor_produksi']
+
+# Tahap 1 (2026-11-06): input/koreksi absensi oleh HR (grid harian, POST /attendance) hanya untuk HR &
+# manajemen (`core.roles.HR_ROLES`) + admin. Dulu tanpa cek peran: peran internal mana pun — termasuk
+# peran tanpa daftar portal — bisa menulis absensi & jam lembur dirinya sendiri lewat endpoint ini.
+# Absen mandiri karyawan tetap lewat /attendance/selfie/*, /attendance/webauthn/*, /attendance/sessions/*.
+from core.roles import HR_ROLES
+HR_ATTENDANCE_WRITE_ROLES = ['admin', *HR_ROLES]
+MSG_HR_ATTENDANCE_ONLY = ("Input absensi manual hanya untuk HR dan manajemen. "
+                          "Absen mandiri lewat Portal Saya › Absen Saya.")
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -301,6 +310,8 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
 @router.post("/attendance/bulk")
 async def bulk_attendance(request: Request):
     user = await require_auth(request)
+    if not check_role(user, HR_ATTENDANCE_WRITE_ROLES, "hr.manage"):
+        raise HTTPException(403, MSG_HR_ATTENDANCE_ONLY)
     db = get_db()
     body = await request.json()
     # Terima dua bentuk payload: {"rows":[...]} (legacy) atau {"date":..,"entries":[...]} (grid UI).
@@ -342,14 +353,70 @@ async def bulk_attendance(request: Request):
     return {"ok": True, "saved": saved}
 
 
+def _as_dt(v):
+    """Nilai jam dari body: '' / None → None, teks ISO → datetime."""
+    if not v:
+        return None
+    return _parse_iso(v) if isinstance(v, str) else v
+
+
+async def _build_att_patch(db, existing: dict, body: dict, user: dict) -> dict:
+    """Record SUDAH ada: tulis HANYA kolom yang dikirim (Tahap 1, 2026-11-06).
+
+    Dulu grid HR menimpa SELURUH record: jam masuk/pulang dan menit terlambat hasil absen selfie/mesin
+    ikut terhapus (grid tidak mengirimnya, lalu ditulis None/0) setiap kali HR menekan Simpan.
+    Nilai turunan dihitung ulang hanya bila sumbernya ikut diubah."""
+    upd: dict = {}
+    if "status" in body:
+        upd["status"] = (body.get("status") or "hadir").lower()
+    if "shift_id" in body:
+        upd["shift_id"] = body.get("shift_id") or None
+    if "notes" in body:
+        upd["notes"] = body.get("notes") or ""
+    if body.get("source"):
+        upd["source"] = str(body["source"]).lower()
+    cin, cout = existing.get("clock_in"), existing.get("clock_out")
+    if "clock_in" in body:
+        cin = upd["clock_in"] = _as_dt(body.get("clock_in"))
+    if "clock_out" in body:
+        cout = upd["clock_out"] = _as_dt(body.get("clock_out"))
+    if body.get("hours_worked") not in (None, ""):
+        upd["hours_worked"] = round(max(0.0, float(body["hours_worked"])), 2)
+    elif "clock_in" in body or "clock_out" in body:
+        upd["hours_worked"] = round(max(0.0, _calc_hours(cin, cout)), 2)
+    if "overtime_hours" in body:
+        upd["overtime_hours"] = round(max(0.0, float(body.get("overtime_hours") or 0)), 2)
+    if {"status", "shift_id", "clock_in"} & set(body):
+        from utils.employee_identity import compute_late_minutes
+        status = upd.get("status", (existing.get("status") or "hadir").lower())
+        shift_id = upd["shift_id"] if "shift_id" in upd else existing.get("shift_id")
+        emp_doc = await db.rahaza_employees.find_one({"id": existing.get("employee_id")}, {"_id": 0}) or {}
+        # Hari tidak hadir tidak punya keterlambatan; jam masuknya tetap disimpan apa adanya.
+        upd.update(await compute_late_minutes(db, emp_doc, cin if status == "hadir" else None, shift_id))
+    if "hours_worked" in upd:
+        from routes.rahaza_attendance_sessions import recompute_session_totals
+        upd.update(recompute_session_totals({"sessions": existing.get("sessions") or [],
+                                             "hours_worked": upd["hours_worked"]}))
+    upd.update({"updated_by": user["id"], "updated_by_name": user.get("name", ""), "updated_at": _now()})
+    return upd
+
+
 async def _build_att_doc(db, body, user, prefetched_existing: dict = None):
     emp_id = body.get("employee_id")
     if not emp_id:
         return None
+    date_str = body.get("date") or _today_iso()
+    # Use prefetched map when available (bulk case), else fall back to DB lookup (single upsert case)
+    if prefetched_existing is not None:
+        existing = prefetched_existing.get((emp_id, date_str))
+    else:
+        existing = await db.rahaza_attendance_events.find_one(
+            {"employee_id": emp_id, "date": date_str}, {"_id": 0})
+    if existing:
+        return await _build_att_patch(db, existing, body, user)
     status  = (body.get("status") or "hadir").lower()
     cin     = body.get("clock_in")
     cout    = body.get("clock_out")
-    date_str = body.get("date") or _today_iso()
     hours_override = body.get("hours_worked")
     if isinstance(cin, str) and cin:
         cin = _parse_iso(cin)
@@ -378,30 +445,21 @@ async def _build_att_doc(db, body, user, prefetched_existing: dict = None):
         "updated_by": user["id"], "updated_by_name": user.get("name", ""),
         "updated_at": _now(),
     }
-    # Jam BERSIH = jam kotor − istirahat − izin (sesi keluar-masuk hari itu).
+    # Jam BERSIH = jam kotor − istirahat − izin (record baru belum punya sesi keluar-masuk).
     from routes.rahaza_attendance_sessions import recompute_session_totals
-    prev = await db.rahaza_attendance_events.find_one(
-        {"employee_id": emp_id, "date": date_str}, {"_id": 0, "sessions": 1})
-    doc.update(recompute_session_totals({
-        "sessions": (prev or {}).get("sessions") or [],
-        "hours_worked": doc["hours_worked"],
-    }))
-    # Use prefetched map when available (bulk case), else fall back to DB lookup (single upsert case)
-    if prefetched_existing is not None:
-        is_new = (emp_id, date_str) not in prefetched_existing
-    else:
-        is_new = not await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": date_str})
-    if is_new:
-        doc["id"] = _uid()
-        doc["created_by"] = user["id"]
-        doc["created_by_name"] = user.get("name", "")
-        doc["created_at"] = _now()
+    doc.update(recompute_session_totals({"sessions": [], "hours_worked": doc["hours_worked"]}))
+    doc["id"] = _uid()
+    doc["created_by"] = user["id"]
+    doc["created_by_name"] = user.get("name", "")
+    doc["created_at"] = _now()
     return doc
 
 
 @router.post("/attendance")
 async def upsert_attendance(request: Request):
     user = await require_auth(request)
+    if not check_role(user, HR_ATTENDANCE_WRITE_ROLES, "hr.manage"):
+        raise HTTPException(403, MSG_HR_ATTENDANCE_ONLY)
     db = get_db()
     body = await request.json()
     doc = await _build_att_doc(db, body, user)
@@ -432,6 +490,7 @@ async def attendance_summary(request: Request, from_: Optional[str] = None, to: 
     if employee_id:
         q["employee_id"] = employee_id
     rows = await db.rahaza_attendance_events.find(q, {"_id": 0}).to_list(500)
+    from utils.attendance_policy import attendance_counts
     summary = {}
     for r in rows:
         eid = r["employee_id"]
@@ -439,6 +498,8 @@ async def attendance_summary(request: Request, from_: Optional[str] = None, to: 
         k = f"days_{r.get('status', 'hadir')}"
         if k in s:
             s[k] += 1
+        if not attendance_counts(r):   # Tahap 1: selfie ditolak HR = alfa, jamnya tidak dihitung
+            continue
         s["total_hours"]    += float(r.get("hours_worked") or 0)
         s["total_overtime"] += float(r.get("overtime_hours") or 0)
     eids = list(summary.keys())

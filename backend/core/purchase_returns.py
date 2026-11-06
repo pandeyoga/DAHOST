@@ -133,14 +133,17 @@ def gr_billable_lines(gr: dict) -> list:
       potongan (nota debit / diskon) — hanya bila qty bersih baris itu belum masuk faktur;
     * tiap penerimaan susulan (lepas reject, pengganti tukar barang, musnah ditanggung DA) yang
       belum masuk faktur = baris tersendiri pada harganya sendiri.
+    * 2026-11-06 (Tahap 1): tagihan SEBAGIAN dicatat per baris (`base_billed_qty`/`base_billed_value`,
+      atau `billed_qty`/`billed_value` pada penerimaan susulan) — sisanya tetap bisa ditagih. Penanda
+      `base_ap_invoice_id` / `ap_invoice_id` baru diisi bila baris itu sudah tertagih penuh.
     """
     out = []
     for li in (gr or {}).get("items") or []:
         lid = line_id_of(li)
         v = line_values(li)
         if not base_billed(gr, li):
-            q = _r4(v["net_qty"] - v["deducted_qty"])
-            amt = _r2(v["net_qty"] * v["price"] - v["deducted_value"])
+            q = _r4(v["net_qty"] - v["deducted_qty"] - _f(li.get("base_billed_qty")))
+            amt = _r2(v["net_qty"] * v["price"] - v["deducted_value"] - _f(li.get("base_billed_value")))
             if q > 1e-9 or amt > 0.005:
                 out.append({"key": lid, "gr_item_id": lid, "type": "base", "qty": max(q, 0.0),
                             "price": round(amt / q, 4) if q > 1e-9 else v["price"], "amount": amt,
@@ -148,9 +151,13 @@ def gr_billable_lines(gr: dict) -> list:
         for lr in li.get("late_receipts") or []:
             if not isinstance(lr, dict) or lr.get("ap_invoice_id"):
                 continue
+            q = _r4(_f(lr.get("qty")) - _f(lr.get("billed_qty")))
+            amt = _r2(_f(lr.get("amount")) - _f(lr.get("billed_value")))
+            if q <= 1e-9 and amt <= 0.005:
+                continue
             out.append({"key": f"{lid}:late:{lr.get('id')}", "gr_item_id": lid, "type": "late",
-                        "late_id": lr.get("id"), "qty": _r4(lr.get("qty")), "price": _f(lr.get("unit_price")),
-                        "amount": _r2(lr.get("amount")), "gr_price": _f(lr.get("unit_price")),
+                        "late_id": lr.get("id"), "qty": max(q, 0.0), "price": _f(lr.get("unit_price")),
+                        "amount": amt, "gr_price": _f(lr.get("unit_price")),
                         "source": lr.get("source")})
     return out
 

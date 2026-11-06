@@ -93,6 +93,24 @@ def mi_item_net_qty(item: dict) -> float:
     return max(0.0, round(gross - float(item.get("qty_returned") or 0), 4))
 
 
+def mi_item_unit_cost(item: dict, mat: dict, default_kg: float, default_acc: float) -> float:
+    """Harga satuan bahan satu baris MI untuk HPP.
+
+    Tahap 1 (6 Nov 2026): biaya SAAT KELUAR (`unit_cost_applied` baris MI, sama dengan jurnal
+    pengeluaran bahan) yang dipakai — dulu harga master HARI INI, sehingga HPP job lama ikut
+    berubah tiap harga bahan naik/turun. Harga master hanya untuk baris lama yang belum
+    menyimpan biaya saat keluar; harga bawaan pengaturan hanya bila master pun kosong."""
+    unit_cost = float((item or {}).get("unit_cost_applied") or 0)
+    if unit_cost <= 0:
+        unit_cost = float((mat or {}).get("unit_cost") or 0)
+    if unit_cost <= 0:
+        # FASE 12 / BUG-B2: dulu `mat.get("type") == "yarn"` saja ⇒ material
+        # `fabric`/`kain`/`benang`/`interlining` tanpa unit_cost memakai default
+        # AKSESORIS (per unit), bukan default bahan (per kg) ⇒ HPP salah diam-diam.
+        unit_cost = default_kg if material_fields.is_kglike_material(mat or {}) else default_acc
+    return unit_cost
+
+
 async def _compute_hpp(db, wo_id: str):
     from core.wo_reader import get_wo  # T-03: SSOT production_jobs
     wo = await get_wo(db, wo_id)
@@ -117,12 +135,7 @@ async def _compute_hpp(db, wo_id: str):
     for mi in mi_rows:
         for item in (mi.get("items") or []):
             mat = mat_map.get(item.get("material_id")) or {}
-            unit_cost = float(mat.get("unit_cost") or 0)
-            if unit_cost <= 0:
-                # FASE 12 / BUG-B2: dulu `mat.get("type") == "yarn"` saja ⇒ material
-                # `fabric`/`kain`/`benang`/`interlining` tanpa unit_cost memakai default
-                # AKSESORIS (per unit), bukan default bahan (per kg) ⇒ HPP salah diam-diam.
-                unit_cost = default_yarn if material_fields.is_kglike_material(mat) else default_acc
+            unit_cost = mi_item_unit_cost(item, mat, default_yarn, default_acc)
             # 2026-11-02 (K10): pemakaian = keluar − diretur (Retur Material mengisi `qty_returned` baris MI;
             # status MI tetap 'issued'). Dulu bahan yang sudah kembali ke gudang tetap dibebankan ke HPP.
             qty = mi_item_net_qty(item)
@@ -322,7 +335,7 @@ async def hpp_for_maklon_order(order_id: str, request: Request):
     - Material: dari dewi_maklon_material_issues (qty × unit_cost)
     - Labor: dari WO maklon (source=maklon) WIP events × payroll rate
     - Overhead: overhead_rate × qty_completed
-    - Estimated: price_per_pcs × qty (sebagai baseline)
+    - Estimasi: belum ada sumbernya → None (dulu harga jasa × qty = pendapatan)
     """
     await require_auth(request)
     db = get_db()
@@ -454,15 +467,15 @@ async def hpp_for_maklon_order(order_id: str, request: Request):
     total_cost_actual = material_cost + labor_cost + overhead_cost
     hpp_unit_actual = total_cost_actual / qty_completed if qty_completed > 0 else 0
     
-    # ── 5) Estimated (baseline: price_per_pcs) ──
-    price_per_pcs = float(order.get("price_per_pcs") or 0)
-    estimated_hpp_total = price_per_pcs * qty_ordered if price_per_pcs > 0 else 0
-    estimated_hpp_unit = price_per_pcs if price_per_pcs > 0 else 0
-    
-    # ── 6) Delta ──
-    delta_unit = hpp_unit_actual - estimated_hpp_unit
-    delta_pct = (delta_unit / estimated_hpp_unit * 100) if estimated_hpp_unit > 0 else 0
-    
+    # ── 5) Estimasi & selisih ──
+    # Tahap 1 (6 Nov 2026): dulu "estimasi" = harga jasa × qty, yaitu PENDAPATAN, bukan
+    # estimasi biaya. Order maklon belum punya sumber estimasi HPP, jadi dikirim None
+    # ("belum ada data") — bukan angka karangan.
+    estimated_hpp_total = None
+    estimated_hpp_unit = None
+    delta_unit = None
+    delta_pct = None
+
     return serialize_doc({
         "order_id": order_id,
         "order_code": order.get("order_code", ""),
@@ -478,13 +491,11 @@ async def hpp_for_maklon_order(order_id: str, request: Request):
         "total_cost_actual": round(total_cost_actual),
         "hpp_unit_actual": round(hpp_unit_actual),
         
-        # Estimated
-        "estimated_hpp_total": round(estimated_hpp_total),
-        "estimated_hpp_unit": round(estimated_hpp_unit),
-        
-        # Delta
-        "delta_unit": round(delta_unit),
-        "delta_pct": round(delta_pct, 2),
+        # Estimasi: belum ada sumbernya (None = "belum ada data")
+        "estimated_hpp_total": estimated_hpp_total,
+        "estimated_hpp_unit": estimated_hpp_unit,
+        "delta_unit": delta_unit,
+        "delta_pct": delta_pct,
         
         # Breakdown
         "material_breakdown": material_breakdown,
@@ -526,9 +537,9 @@ async def hpp_for_production_po(po_id: str, request: Request):
             "po_number": po.get("po_number", ""),
             "customer_name": po.get("customer_name", ""),
             "total_cost_actual": 0,
-            "total_cost_estimated": 0,
-            "delta_total": 0,
-            "delta_pct": 0,
+            "total_cost_estimated": None,
+            "delta_total": None,
+            "delta_pct": None,
             "wo_count": 0,
             "wo_breakdown": [],
             "computed_at": _now().isoformat(),
@@ -537,25 +548,15 @@ async def hpp_for_production_po(po_id: str, request: Request):
     # Compute HPP for each WO
     wo_breakdown = []
     total_actual = 0
-    total_estimated = 0
-    
+
     for wo in wos:
         wo_id = wo["id"]
         # Reuse existing _compute_hpp function
         hpp_data = await _compute_hpp(db, wo_id)
         actual = hpp_data.get("total_cost", 0)
         total_actual += actual
-        
-        # Estimated: dari BOM snapshot
-        wo.get("bom_snapshot") or {}
-        # Simplified estimated: material dari BOM unit_cost + labor fallback + overhead
-        # (actual implementation sudah lengkap di _compute_hpp, kita ambil dari sana)
-        # Untuk estimated, kita pakai default/fallback logic
-        # Atau kita bisa tambah field estimated di WO saat create
-        # Sementara: estimated = actual (nanti bisa diperbaiki)
-        estimated = actual  # Simplifikasi: estimated=actual (estimasi berbasis BOM dapat ditambahkan bila diperlukan)
-        total_estimated += estimated
-        
+        # Tahap 1 (6 Nov 2026): dulu "estimasi" = aktual (selisih selalu 0%). Job belum
+        # menyimpan estimasi HPP, jadi estimasi & selisih = None ("belum ada data").
         wo_breakdown.append({
             "wo_id": wo_id,
             "wo_number": wo.get("wo_number", ""),
@@ -564,32 +565,45 @@ async def hpp_for_production_po(po_id: str, request: Request):
             "qty": hpp_data.get("qty", 0),
             "qty_completed": hpp_data.get("qty_completed", 0),
             "total_cost_actual": round(actual),
-            "total_cost_estimated": round(estimated),
-            "delta": round(actual - estimated),
+            "total_cost_estimated": None,
+            "delta": None,
             "material_cost": hpp_data.get("material_cost", 0),
             "labor_cost": hpp_data.get("labor_cost", 0),
             "overhead_cost": hpp_data.get("overhead_cost", 0),
         })
-    
-    delta = total_actual - total_estimated
-    delta_pct = (delta / total_estimated * 100) if total_estimated > 0 else 0
-    
+
     return serialize_doc({
         "po_id": po_id,
         "po_number": po.get("po_number", ""),
         "customer_name": po.get("customer_name", ""),
         "status": po.get("status", ""),
-        
+
         "total_cost_actual": round(total_actual),
-        "total_cost_estimated": round(total_estimated),
-        "delta_total": round(delta),
-        "delta_pct": round(delta_pct, 2),
+        "total_cost_estimated": None,
+        "delta_total": None,
+        "delta_pct": None,
         
         "wo_count": len(wos),
         "wo_breakdown": wo_breakdown,
         
         "computed_at": _now().isoformat(),
     })
+
+
+async def maklon_order_figures(db, order: dict) -> dict:
+    """Angka NYATA satu order maklon (lama) untuk analisa/unduhan per klien.
+
+    Tahap 1 (6 Nov 2026): dulu "HPP aktual" = bahan + 30% (upah) + 15% (overhead) dan
+    "HPP estimasi" = harga jasa × qty (= pendapatan) — semuanya angka karangan. Yang
+    tercatat hanya nilai order (qty × harga jasa) dan biaya bahan keluar; upah, overhead,
+    estimasi HPP, dan margin belum ada sumbernya ⇒ None ("belum ada data")."""
+    qty = int(order.get("qty_ordered") or 0)
+    revenue = qty * float(order.get("price_per_pcs") or 0)
+    rows = await db.dewi_maklon_material_issues.find(
+        {"order_id": order.get("id")}, {"_id": 0, "qty": 1, "unit_cost": 1}).to_list(2000)
+    material_cost = sum(float(r.get("qty") or 0) * float(r.get("unit_cost") or 0) for r in rows)
+    return {"qty": qty, "revenue": revenue, "material_cost": material_cost,
+            "hpp_estimated": None, "hpp_actual": None, "margin": None}
 
 
 @router.get("/hpp/maklon-client/{client_id}")
@@ -656,10 +670,11 @@ async def hpp_for_maklon_client(client_id: str, request: Request):
             "total_orders": 0,
             "total_qty": 0,
             "total_revenue": 0,
-            "total_hpp_estimated": 0,
-            "total_hpp_actual": 0,
-            "margin_amount": 0,
-            "margin_pct": 0,
+            "total_material_cost": 0,
+            "total_hpp_estimated": None,
+            "total_hpp_actual": None,
+            "margin_amount": None,
+            "margin_pct": None,
             "on_time_count": 0,
             "late_count": 0,
             "on_time_rate": 0,
@@ -678,43 +693,19 @@ async def hpp_for_maklon_client(client_id: str, request: Request):
     # Aggregate metrics
     total_qty = 0
     total_revenue = 0
-    total_hpp_estimated = 0
-    total_hpp_actual = 0
+    total_material_cost = 0
     on_time_count = 0
     late_count = 0
-    
+
     order_details = []
-    
+
     for order in orders:
-        qty = int(order.get("qty_ordered") or 0)
-        price_per_pcs = float(order.get("price_per_pcs") or 0)
-        revenue = qty * price_per_pcs
-        
+        fig = await maklon_order_figures(db, order)
+        qty, revenue = fig["qty"], fig["revenue"]
         total_qty += qty
         total_revenue += revenue
-        
-        # Estimated HPP: price_per_pcs sebagai baseline
-        estimated_hpp = price_per_pcs * qty
-        total_hpp_estimated += estimated_hpp
-        
-        # Actual HPP: hitung dari material issues + labor (simplified aggregation)
-        # Full computation dari endpoint hpp_for_maklon_order, tapi untuk bulk lebih ringan
-        # Simplified: material issues sum
-        mi_sum_pipe = [
-            {"$match": {"order_id": order["id"]}},
-            {"$group": {"_id": None, "total": {"$sum": {"$multiply": ["$qty", "$unit_cost"]}}}}
-        ]
-        mi_result = await db.dewi_maklon_material_issues.aggregate(mi_sum_pipe).to_list(1)
-        material_cost_actual = mi_result[0]["total"] if mi_result else 0
-        
-        # Labor: simplified (bisa diabaikan untuk ringkasan atau pakai fallback)
-        # Untuk KPI dashboard, cukup material saja atau estimate labor sebagai % dari material
-        labor_est = material_cost_actual * 0.3  # assume 30% dari material
-        overhead_est = (material_cost_actual + labor_est) * 0.15  # assume 15% overhead
-        
-        actual_hpp = material_cost_actual + labor_est + overhead_est
-        total_hpp_actual += actual_hpp
-        
+        total_material_cost += fig["material_cost"]
+
         # On-time check
         deadline = order.get("deadline_date")
         completion = order.get("completion_date")
@@ -735,16 +726,15 @@ async def hpp_for_maklon_client(client_id: str, request: Request):
             "qty": qty,
             "status": order.get("status", ""),
             "revenue": round(revenue),
-            "hpp_estimated": round(estimated_hpp),
-            "hpp_actual": round(actual_hpp),
-            "margin": round(revenue - actual_hpp),
+            "material_cost": round(fig["material_cost"]),
+            "hpp_estimated": fig["hpp_estimated"],
+            "hpp_actual": fig["hpp_actual"],
+            "margin": fig["margin"],
             "is_on_time": is_on_time,
             "deadline_date": deadline,
             "completion_date": completion,
         })
-    
-    margin = total_revenue - total_hpp_actual
-    margin_pct = (margin / total_revenue * 100) if total_revenue > 0 else 0
+
     on_time_rate = (on_time_count / (on_time_count + late_count) * 100) if (on_time_count + late_count) > 0 else 0
     
     total_pages = (total_count + limit - 1) // limit if limit > 0 else 1
@@ -757,10 +747,12 @@ async def hpp_for_maklon_client(client_id: str, request: Request):
         "total_orders": len(orders),
         "total_qty": total_qty,
         "total_revenue": round(total_revenue),
-        "total_hpp_estimated": round(total_hpp_estimated),
-        "total_hpp_actual": round(total_hpp_actual),
-        "margin_amount": round(margin),
-        "margin_pct": round(margin_pct, 2),
+        "total_material_cost": round(total_material_cost),
+        # Tahap 1: belum ada sumber estimasi, upah, dan overhead order maklon → None
+        "total_hpp_estimated": None,
+        "total_hpp_actual": None,
+        "margin_amount": None,
+        "margin_pct": None,
         
         "on_time_count": on_time_count,
         "late_count": late_count,
