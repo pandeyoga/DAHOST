@@ -23,6 +23,7 @@ from auth import require_auth, serialize_doc, log_activity
 from storage import put_object, delete_object, generate_storage_path
 from core import material_fields  # FASE 6.6-B: SSOT nama field + alias legacy yarn_*
 from core import product_master as pm  # F2–F5: SSOT kategori/HPP/kode otomatis/propagasi
+from core import product_status as pstatus  # status produk per SKU → ringkasan per model (dihitung saat dibaca)
 import uuid
 import io
 from datetime import datetime, timezone, date
@@ -93,6 +94,11 @@ async def list_models(request: Request):
     for r in rows:
         if r.get("active") is None:
             r["active"] = pm.model_is_live(r)
+    # Status produk model = ringkasan status varian AKTIF, dihitung saat dibaca (pola sama dengan
+    # `active` di atas) — skrip data yang mengisi `product_status` varian langsung tidak membuatnya basi.
+    summaries = await pstatus.model_summaries(db)
+    for r in rows:
+        r[pstatus.SUMMARY_FIELD] = summaries.get(r.get("id")) or pstatus.summarize([])
     return serialize_doc(rows)
 
 

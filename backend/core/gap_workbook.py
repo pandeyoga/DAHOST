@@ -17,8 +17,11 @@ from openpyxl.styles import Font, PatternFill
 
 from core.master_fill import MAT_COLS, REK_COLS, TOKO_COLS, BOM_COLS, MODEL_COLS, _head, _num
 from core import opening_balance as _ob
+from core import product_status as _ps
 
-SKU_PRICE_COLS = ["sku", "nama", "kode_model", "warna", "ukuran", "harga_saran_dari_saudara", "harga_jual", "keterangan"]
+# `status_produk` (opsional) ditambahkan PALING KANAN supaya posisi kolom lama tidak bergeser.
+SKU_PRICE_COLS = ["sku", "nama", "kode_model", "warna", "ukuran", "harga_saran_dari_saudara", "harga_jual", "keterangan",
+                  "status_produk"]
 STOK_FG_COLS = ["sku", "nama", "kode_model", "warna", "ukuran", "lokasi_kode", "qty_awal", "hpp_satuan_sistem", "keterangan"]
 STOK_MAT_COLS = ["kode", "nama", "tipe", "satuan_dasar", "lokasi_kode", "qty_awal", "harga_satuan_sistem", "keterangan"]
 GAJI_COLS = ["kode_karyawan", "nama", "skema", "gaji_pokok_per_periode", "tarif_lembur_per_jam", "keterangan"]
@@ -37,6 +40,8 @@ PETUNJUK = [
     "                      dipisah koma — lihat kolom 'varian_tersedia'. Kosong = semua varian model. Kode model sama dengan nama sama = model beda ukuran.",
     "  MODEL             — berat_gram per model (untuk ongkir).",
     "  HARGA_JUAL_SKU    — SKU barang jadi yang belum berharga; harga_saran = harga SKU saudara di model yang sama (salin ke harga_jual bila setuju).",
+    "                      Kolom status_produk (opsional, juga di VARIAN_BARU): Baru · Best Seller · Slow · Dead · Stop (label atau kode).",
+    "                      SKU lain boleh ditambahkan sebagai baris baru hanya untuk mengubah statusnya. Kosong = status tidak diubah.",
     "  STOK_AWAL_FG      — stok fisik barang jadi per SKU per tanggal go-live (qty). Nilai rupiahnya diambil dari SALDO_AWAL (akun Persediaan), bukan dari sini.",
     "  STOK_AWAL_MATERIAL— stok fisik kain & aksesoris per tanggal go-live (qty dalam satuan dasar).",
     "  REKENING / TOKO   — no. rekening & atas nama; rekening pencairan tiap toko (sekarang default 1-1201 Bank BCA).",
@@ -183,6 +188,8 @@ async def build_gap_workbook(db, parsed: dict | None = None, data: bytes | None 
             sib.setdefault(f.get("model_code"), set()).add(p)
     ws = wb.create_sheet("HARGA_JUAL_SKU")
     _head(ws, SKU_PRICE_COLS)
+    st_by_sku = {v["sku"]: v.get(_ps.FIELD) for v in await db.rahaza_model_variants.find(
+        {"active": True}, {"_id": 0, "sku": 1, _ps.FIELD: 1}).to_list(50000) if v.get("sku")}
     n = 0
     for f in fgs:
         if float(f.get("retail_price_master") or 0) > 0:
@@ -190,11 +197,12 @@ async def build_gap_workbook(db, parsed: dict | None = None, data: bytes | None 
         prices = sorted(sib.get(f.get("model_code")) or [])
         saran = prices[0] if len(prices) == 1 else None
         ket = "" if saran else ("model ini punya beberapa harga: " + " / ".join(f"{int(p):,}".replace(",", ".") for p in prices) if prices else "belum ada SKU berharga di model ini")
+        st = st_by_sku.get(f.get("code"))
         ws.append([f.get("code"), f.get("name"), f.get("model_code"), f.get("color_name"), f.get("size_code"), saran, None,
-                   ket or "salin harga_saran ke harga_jual bila setuju"])
+                   ket or "salin harga_saran ke harga_jual bila setuju", _ps.label(st) if st else None])
         n += 1
     _mark(ws, SKU_PRICE_COLS, ["harga_jual"])
-    _widths(ws, (26, 34, 12, 14, 10, 20, 14, 48))
+    _widths(ws, (26, 34, 12, 14, 10, 20, 14, 48, 14))
     stats["sku_tanpa_harga"] = n
 
     # ── STOK_AWAL_FG & STOK_AWAL_MATERIAL ──
@@ -273,8 +281,40 @@ async def build_gap_workbook(db, parsed: dict | None = None, data: bytes | None 
 
 
 # ── PARSE & APPLY sheet tambahan (dipanggil dari master_fill) ────────────────────────
+def parse_status_cell(raw):
+    """Sel `status_produk` → kode (label "Best Seller" atau kode "best_seller"); kosong → None (tidak diubah)."""
+    if raw is None:
+        return None
+    return _ps.parse(str(raw))
+
+
+def sku_status_row(row: int, sku: str, raw, variants: dict, errors: list, new_variants: list | None = None) -> dict | None:
+    """Baris HARGA_JUAL_SKU → perubahan status produk SKU itu (None = tidak ada yang diubah).
+
+    SKU yang baru akan dibuat dari VARIAN_BARU di unggahan yang sama menerima statusnya langsung."""
+    try:
+        code = parse_status_cell(raw)
+    except _ps.ProductStatusError as e:
+        errors.append(f"HARGA_JUAL_SKU baris {row}: {e}")
+        return None
+    if code is None:
+        return None
+    v = variants.get(sku)
+    pending = next((nv for nv in (new_variants or []) if nv.get("sku") == sku), None)
+    if not v and pending is not None:
+        pending["product_status"] = pending.get("product_status") or code
+        return None
+    if not v:
+        errors.append(f"HARGA_JUAL_SKU baris {row}: SKU {sku} tidak ada di master varian (status_produk tidak bisa disimpan)")
+        return None
+    if (v.get(_ps.FIELD) or None) == code:
+        return None  # sudah sama → idempoten
+    return {"row": row, "sku": sku, "variant_id": v["id"], "product_status": code, "label": _ps.label(code)}
+
+
 async def parse_extra_sheets(db, wb, errors: list) -> dict:
-    out = {"sku_prices": [], "sku_deactivate": [], "stock_fg": [], "stock_mat": [], "salaries": [], "new_variants": [], "warnings": []}
+    out = {"sku_prices": [], "sku_deactivate": [], "sku_status": [], "stock_fg": [], "stock_mat": [], "salaries": [], "new_variants": [],
+           "warnings": []}
     locs = {l["code"]: l for l in await db.rahaza_locations.find({}, {"_id": 0, "id": 1, "code": 1}).to_list(2000)}
     if "VARIAN_BARU" in wb.sheetnames:
         models = {m["code"]: m for m in await db.rahaza_models.find({"active": {"$ne": False}}, {"_id": 0, "id": 1, "code": 1, "name": 1}).to_list(5000)}
@@ -282,8 +322,10 @@ async def parse_extra_sheets(db, wb, errors: list) -> dict:
         sizes = {s["code"].upper(): s for s in await db.rahaza_sizes.find({}, {"_id": 0}).to_list(200)}
         existing = {v["sku"] for v in await db.rahaza_model_variants.find({}, {"_id": 0, "sku": 1}).to_list(50000)}
         from utils.variant_ssot import build_variant_sku
+        from core import gap_sisa
+        i_status = gap_sisa.VARIAN_BARU_COLS.index("status_produk")
         for i, r in enumerate(wb["VARIAN_BARU"].iter_rows(values_only=True, min_row=2), start=2):
-            r = tuple(r) + (None,) * (7 - len(r))
+            r = tuple(r) + (None,) * (len(gap_sisa.VARIAN_BARU_COLS) - len(r))
             if not r or not r[0]:
                 continue
             mcode, ccode, scode = str(r[0]).strip().upper(), str(r[3] or "").strip().upper(), str(r[4] or "").strip().upper()
@@ -303,21 +345,31 @@ async def parse_extra_sheets(db, wb, errors: list) -> dict:
             except ValueError:
                 errors.append(f"VARIAN_BARU baris {i}: harga_jual bukan angka")
                 continue
+            try:
+                status = parse_status_cell(r[i_status])
+            except _ps.ProductStatusError as e:
+                errors.append(f"VARIAN_BARU baris {i}: {e}")
+                continue
             sku = build_variant_sku(mcode, ccode, scode)
             if sku in existing:
-                continue  # sudah ada → idempoten
+                continue  # sudah ada → idempoten (status SKU lama diubah lewat HARGA_JUAL_SKU)
             existing.add(sku)
-            out["new_variants"].append({"row": i, "sku": sku, "model": models[mcode], "color": colors[ccode], "size": sizes[scode], "harga": harga})
+            out["new_variants"].append({"row": i, "sku": sku, "model": models[mcode], "color": colors[ccode], "size": sizes[scode], "harga": harga,
+                                        "product_status": status})
     if "HARGA_JUAL_SKU" in wb.sheetnames:
         fg = {f["code"]: f for f in await db.rahaza_materials.find({"type": "fg"}, {"_id": 0, "id": 1, "code": 1, "retail_price_master": 1, "active": 1}).to_list(20000)}
         variants = {}
-        for v in await db.rahaza_model_variants.find({}, {"_id": 0, "id": 1, "sku": 1, "active": 1}).to_list(50000):
+        for v in await db.rahaza_model_variants.find({}, {"_id": 0, "id": 1, "sku": 1, "active": 1, _ps.FIELD: 1}).to_list(50000):
             if v["sku"] not in variants or v.get("active") is not False:
                 variants[v["sku"]] = v
+        i_status = SKU_PRICE_COLS.index("status_produk")
         for i, r in enumerate(wb["HARGA_JUAL_SKU"].iter_rows(values_only=True, min_row=2), start=2):
             if not r or not r[0]:
                 continue
             sku = str(r[0]).strip()
+            st_row = sku_status_row(i, sku, r[i_status] if len(r) > i_status else None, variants, errors, out["new_variants"])
+            if st_row:
+                out["sku_status"].append(st_row)
             raw = r[6] if len(r) > 6 else None
             try:
                 harga = _num(raw)
@@ -402,7 +454,8 @@ async def apply_new_variants(db, new_variants: list[dict], user: dict | None) ->
         m, c, s = v["model"], v["color"], v["size"]
         doc = {"id": str(uuid.uuid4()), "model_id": m["id"], "model_code": m["code"], "model_name": m.get("name"),
                "size_id": s["id"], "size_code": s["code"], "color_id": c.get("id"), "color_code": c["code"], "color_name": c.get("name") or c["code"],
-               "color_hex": c.get("hex"), "sku": v["sku"], "barcode": "", "notes": "", "active": True, "created_at": now, "updated_at": now,
+               "color_hex": c.get("hex"), "sku": v["sku"], "barcode": "", "notes": "", "product_status": v.get("product_status"),
+               "active": True, "created_at": now, "updated_at": now,
                "created_from": "varian_baru_excel", "created_by": str((user or {}).get("id") or "system")}
         await db.rahaza_model_variants.insert_one(doc)
         fg = await ensure_fg_material(db, doc, user=user)
@@ -418,6 +471,9 @@ async def apply_extra(db, parsed: dict, user: dict | None) -> dict:
     actor = {"id": str((user or {}).get("id") or "system"), "email": (user or {}).get("email", "")}
     for p in parsed.get("sku_prices") or []:
         await db.rahaza_materials.update_one({"id": p["id"]}, {"$set": {"retail_price_master": p["harga"], "updated_at": now}})
+    # status produk per SKU — tidak ada status (termasuk Stop) yang menonaktifkan varian
+    for st in parsed.get("sku_status") or []:
+        await db.rahaza_model_variants.update_one({"id": st["variant_id"]}, {"$set": {_ps.FIELD: st["product_status"], "updated_at": now}})
     n_deact = 0
     for d in parsed.get("sku_deactivate") or []:
         if d.get("variant_id"):
@@ -454,4 +510,5 @@ async def apply_extra(db, parsed: dict, user: dict | None) -> dict:
             upd["pay_scheme"] = g["scheme"]
         await db.rahaza_payroll_profiles.update_one({"employee_id": g["employee_id"]}, {"$set": upd})
     return {"sku_prices_updated": len(parsed.get("sku_prices") or []), "sku_deactivated": n_deact, "opening_stock_rows": n_stock,
+            "sku_status_updated": len(parsed.get("sku_status") or []),
             "salaries_updated": len(parsed.get("salaries") or [])}

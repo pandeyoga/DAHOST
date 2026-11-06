@@ -53,15 +53,25 @@ def latest_applied(snapshots: list) -> tuple:
     by_fg, by_size = {}, {}
     for s in sorted(snapshots or [], key=lambda d: _key(d.get('created_at'))):
         for a in s.get('applied_sizes') or []:
+            # 2026-11-06 (uji di VPS): penerapan TERAKHIR menang walau nilainya 0. Dulu penerapan 0
+            # dilewati sehingga angka lama (mis. September, sebelum potongan dibuat Rp 0 per keputusan
+            # 23 Sep) dipasang lagi ke FG — angka basi, bukan pemulihan.
             hpp = float(a.get('hpp_unit') or 0)
-            if hpp <= 0:
-                continue
             entry = {'hpp': round(hpp, 2), 'breakdown': a.get('breakdown') or {}, 'at': s.get('created_at'),
                      'model_id': s.get('model_id'), 'size_id': a.get('size_id')}
             if a.get('fg_id'):
                 by_fg[a['fg_id']] = entry
             elif a.get('size_id'):
                 by_size[(s.get('model_id'), a['size_id'])] = entry
+        # Ukuran/FG yang DILEWATI penerapan lebih baru (mis. "baris BOM belum bisa dinilai") = penerapan
+        # terakhirnya tidak menghasilkan HPP → jangan pulihkan angka lama.
+        for k in s.get('skipped_sizes') or []:
+            entry = {'hpp': 0.0, 'breakdown': {}, 'at': s.get('created_at'), 'model_id': s.get('model_id'),
+                     'size_id': k.get('size_id'), 'skipped': True}
+            if k.get('fg_id'):
+                by_fg[k['fg_id']] = entry
+            elif k.get('size_id'):
+                by_size[(s.get('model_id'), k['size_id'])] = entry
     return by_fg, by_size
 
 
@@ -71,8 +81,8 @@ def fg_target(fg: dict, by_fg: dict, by_size: dict):
 
 
 def fg_needs_restore(fg: dict, target: dict | None) -> bool:
-    if not target:
-        return False
+    if not target or target['hpp'] <= 0:
+        return False   # penerapan terakhir bernilai 0 → biarkan (HPP diisi dari cutting/penerapan berikutnya)
     return abs(float(fg.get('hpp') or 0) - target['hpp']) > EPS or (fg.get('hpp_source') or '') != 'bom'
 
 
@@ -92,6 +102,10 @@ def model_target(model: dict):
     """`hpp` efektif model yang benar (resolve_hpp) bila `hpp_bom` ada tetapi `hpp` tertimpa."""
     if float(model.get('hpp_bom') or 0) <= 0:
         return None
+    # Keputusan owner 23 Sep: model berstatus "menunggu cutting" SENGAJA ber-HPP 0 sampai cutting nyata —
+    # `hpp_bom` lamanya basi, jangan dipasang lagi (ditemukan saat pratinjau di VPS 6 Nov).
+    if (model.get('hpp_source') or '') == 'menunggu_cutting':
+        return None
     hpp, src = pm.resolve_hpp({k: v for k, v in model.items() if k != 'hpp'})
     if abs(float(model.get('hpp') or 0) - hpp) <= EPS and (model.get('hpp_source') or '') == src:
         return None
@@ -102,7 +116,7 @@ def model_target(model: dict):
 async def plan_and_apply(db, apply: bool) -> dict:
     now = datetime.now(timezone.utc)
     snaps = await db.product_cost_snapshots.find(
-        {}, {'_id': 0, 'model_id': 1, 'applied_sizes': 1, 'created_at': 1}).to_list(200000)
+        {}, {'_id': 0, 'model_id': 1, 'applied_sizes': 1, 'skipped_sizes': 1, 'created_at': 1}).to_list(200000)
     by_fg, by_size = latest_applied(snaps)
     model_ids = sorted({e['model_id'] for e in list(by_fg.values()) + list(by_size.values()) if e.get('model_id')})
     fgs = await db.rahaza_materials.find(

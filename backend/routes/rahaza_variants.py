@@ -15,13 +15,15 @@ Endpoints (prefix /api/rahaza):
     GET    /models/{model_id}/variants             : List varian per model (enriched)
     POST   /models/{model_id}/variants/generate    : Generate matriks (color_ids × size_ids) → SKU auto
     POST   /variants                               : Create single variant
-    PUT    /variants/{vid}                          : Update (active/barcode/notes)
+    PUT    /variants/{vid}                          : Update (active/barcode/notes/product_status)
     DELETE /variants/{vid}                          : Soft delete
+  Penyaring daftar varian: `product_status=best_seller` · `stop,dead` · `belum_diisi` (core/product_status).
 
 Schema rahaza_colors:   {id, code, name, hex, order_seq, active, created_at, updated_at}
 Schema rahaza_model_variants:
   {id, model_id, model_code, size_id, size_code, color_id, color_code, color_name,
-   sku(UNIQUE aktif), barcode?, notes?, active, created_at, updated_at}
+   sku(UNIQUE aktif), barcode?, notes?, product_status? (new|best_seller|slow|dead|stop|null),
+   active, created_at, updated_at}
 """
 from fastapi import APIRouter, Request, HTTPException
 from database import get_db
@@ -29,6 +31,7 @@ from auth import require_auth, serialize_doc, log_activity
 from utils.variant_ssot import ensure_fg_material
 from core.cut_panel_master import ensure_panel_for_variant, ensure_bom_for_variant  # 2026-09-24: potongan + BOM otomatis per varian
 from core import product_master as pm  # K-9a: varian dihentikan ⇒ item katalog nonaktif
+from core import product_status as ps  # status produk per SKU (keputusan owner 6 Nov 2026)
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -169,6 +172,28 @@ async def deactivate_color(cid: str, request: Request):
 
 # ══════════════════════════════ MODEL VARIANTS ══════════════════════════════
 
+def _status_or_400(value):
+    """Kode/label status produk → kode; kosong → None ("belum diisi"); tak dikenal → 400."""
+    try:
+        return ps.parse(value)
+    except ps.ProductStatusError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+def _status_filter_or_400(value) -> dict:
+    try:
+        return ps.filter_query(value)
+    except ps.ProductStatusError as e:
+        raise HTTPException(400, str(e)) from None
+
+
+def _with_status(rows: list) -> list:
+    """Kontrak daftar varian: field `product_status` selalu ada (null = belum diisi)."""
+    for r in rows:
+        r.setdefault(ps.FIELD, None)
+    return rows
+
+
 def _make_sku(model_code: str, color_code: str, size_code: str) -> str:
     parts = [str(model_code or "").strip().upper(),
              str(color_code or "").strip().upper(),
@@ -188,28 +213,35 @@ async def _enrich_variant(db, v, model=None, colors_map=None, sizes_map=None):
 
 
 @router.get("/variants")
-async def list_variants(request: Request, model_id: Optional[str] = None, include_inactive: bool = False):
+async def list_variants(request: Request, model_id: Optional[str] = None, include_inactive: bool = False,
+                        product_status: Optional[str] = None):
     await require_auth(request)
     db = get_db()
     q = {} if include_inactive else {"active": True}
     if model_id:
         q["model_id"] = model_id
+    q.update(_status_filter_or_400(product_status))
     rows = await db.rahaza_model_variants.find(q, {"_id": 0}).sort("sku", 1).to_list(2000)
-    return serialize_doc(rows)
+    return serialize_doc(_with_status(rows))
 
 
 @router.get("/models/{model_id}/variants")
-async def list_model_variants(model_id: str, request: Request, include_inactive: bool = False):
+async def list_model_variants(model_id: str, request: Request, include_inactive: bool = False,
+                              product_status: Optional[str] = None):
     await require_auth(request)
     db = get_db()
     model = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0})
     if not model:
         raise HTTPException(404, "Model tidak ditemukan.")
     q = {"model_id": model_id} if include_inactive else {"model_id": model_id, "active": True}
+    q.update(_status_filter_or_400(product_status))
     rows = await db.rahaza_model_variants.find(q, {"_id": 0}).sort([("color_code", 1), ("size_code", 1)]).to_list(2000)
+    # ringkasan status model = SEMUA varian aktif (tidak ikut penyaring), dihitung saat dibaca
+    summary = (await ps.model_summaries(db, [model_id])).get(model_id) or ps.summarize([])
     return serialize_doc({
-        "model": {"id": model["id"], "code": model["code"], "name": model["name"]},
-        "variants": rows,
+        "model": {"id": model["id"], "code": model["code"], "name": model["name"],
+                  ps.SUMMARY_FIELD: summary},
+        "variants": _with_status(rows),
         "count": len(rows),
     })
 
@@ -229,6 +261,7 @@ async def generate_variants(model_id: str, request: Request):
     if not color_ids:
         raise HTTPException(400, "Pilih minimal 1 warna.")
     size_ids = body.get("size_ids") or []
+    status = _status_or_400(body.get("product_status"))
 
     # Resolve colors
     colors = await db.rahaza_colors.find({"id": {"$in": color_ids}, "active": True}, {"_id": 0}).to_list(300)
@@ -265,7 +298,7 @@ async def generate_variants(model_id: str, request: Request):
                 "size_id": size["id"], "size_code": size.get("code"),
                 "color_id": color["id"], "color_code": color.get("code"), "color_name": color.get("name"),
                 "color_hex": color.get("hex"),
-                "sku": sku, "barcode": "", "notes": "",
+                "sku": sku, "barcode": "", "notes": "", "product_status": status,
                 "active": True, "created_at": _now(), "updated_at": _now(),
             }
             to_insert.append(doc)
@@ -304,6 +337,7 @@ async def create_variant(request: Request):
     color_id = body.get("color_id")
     if not (model_id and size_id and color_id):
         raise HTTPException(400, "model_id, size_id, color_id wajib diisi.")
+    status = _status_or_400(body.get("product_status"))
     model = await db.rahaza_models.find_one({"id": model_id}, {"_id": 0})
     size = await db.rahaza_sizes.find_one({"id": size_id}, {"_id": 0})
     color = await db.rahaza_colors.find_one({"id": color_id}, {"_id": 0})
@@ -328,6 +362,7 @@ async def create_variant(request: Request):
         "color_id": color_id, "color_code": color.get("code"), "color_name": color.get("name"),
         "color_hex": color.get("hex"),
         "sku": sku, "barcode": (body.get("barcode") or "").strip(), "notes": body.get("notes") or "",
+        "product_status": status,
         "active": True, "created_at": _now(), "updated_at": _now(),
     }
     await db.rahaza_model_variants.insert_one(doc)
@@ -350,8 +385,11 @@ async def create_variant(request: Request):
 
 @router.put("/variants/{vid}")
 async def update_variant(vid: str, request: Request):
-    """Update varian: barcode/notes/active. (size/color/sku tidak diubah di sini —
-    ganti varian = hapus & generate ulang untuk jaga konsistensi SKU)."""
+    """Update varian: barcode/notes/active/product_status. (size/color/sku tidak diubah di sini —
+    ganti varian = hapus & generate ulang untuk jaga konsistensi SKU).
+
+    `product_status` kosong/null = "belum diisi". `stop` TIDAK menonaktifkan varian (keputusan owner):
+    varian tetap aktif, hanya tidak diusulkan untuk cutting/restock."""
     user = await _require_admin(request)
     db = get_db()
     body = await request.json()
@@ -362,6 +400,8 @@ async def update_variant(vid: str, request: Request):
         upd["notes"] = body.get("notes") or ""
     if "active" in body:
         upd["active"] = bool(body["active"])
+    if ps.FIELD in body:
+        upd[ps.FIELD] = _status_or_400(body.get(ps.FIELD))
     res = await db.rahaza_model_variants.update_one({"id": vid}, {"$set": upd})
     if res.matched_count == 0:
         raise HTTPException(404, "Varian tidak ditemukan.")

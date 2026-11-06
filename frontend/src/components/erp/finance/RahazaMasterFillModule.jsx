@@ -33,7 +33,7 @@ function ResultCard({ result }) {
       <p className="font-semibold text-sm text-[hsl(var(--success))]">Selesai ({result.scope === 'bom' ? 'hanya BOM' : 'semua sheet'})</p>
       <div>BOM: {result.bom_lines_appended || 0} baris aksesoris terpasang (mengganti {result.bom_lines_replaced || 0} baris lama) di {result.boms_touched || 0} BOM · {result.boms_unchanged || 0} BOM sudah sama · {result.bom_groups || 0} kelompok / {result.bom_models || 0} model · {result.bom_base_created || 0} BOM dasar baru</div>
       <div>HPP: {result.models_hpp_applied} model dihitung · <span className="text-[hsl(var(--warning))]" data-testid="fill-result-hpp-unvalidated">{result.hpp_unvalidated || 0} model HPP belum tervalidasi</span> (material harga 0 / kemasan tanpa isi) · {result.hpp_validated || 0} tervalidasi{result.variants_created ? <> · <span data-testid="fill-result-variants">{result.variants_created} varian/SKU baru dibuat (sheet VARIAN_BARU)</span></> : null}</div>
-      {result.scope !== 'bom' && <div data-testid="fill-result-extra">{result.materials_updated} material · {result.accounts_updated} rekening · {result.stores_updated} toko · {result.sku_prices_updated || 0} harga SKU · <span data-testid="fill-result-deactivated">{result.sku_deactivated || 0} SKU dinonaktifkan (sudah tidak dijual)</span> · {result.opening_stock_rows || 0} stok awal · {result.salaries_updated || 0} gaji · {result.models_weight_updated || 0} berat model</div>}
+      {result.scope !== 'bom' && <div data-testid="fill-result-extra">{result.materials_updated} material · {result.accounts_updated} rekening · {result.stores_updated} toko · {result.sku_prices_updated || 0} harga SKU · <span data-testid="fill-result-deactivated">{result.sku_deactivated || 0} SKU dinonaktifkan (sudah tidak dijual)</span> · <span data-testid="fill-result-status">{result.sku_status_updated || 0} status produk</span> · {result.opening_stock_rows || 0} stok awal · {result.salaries_updated || 0} gaji · {result.models_weight_updated || 0} berat model</div>}
       {(result.bom_conflicts || []).length > 0 && <div className="text-[hsl(var(--warning))]">Konflik qty (kelompok belakangan menimpa): {result.bom_conflicts.join(' | ')}</div>}
       {/* 2026-11-06 (Tahap 2): harga barang berstok hanya lewat revaluasi berjurnal (stok = buku besar) */}
       {result.price_report && (
@@ -102,7 +102,7 @@ export default function RahazaMasterFillModule({ token }) {
   const dlFokus = () => postXlsx('/api/rahaza/master/gap-fokus', token, file, 'DATA_YANG_PERLU_DIISI_DA_FOKUS.xlsx').catch((e) => toast.error(e.message));
   const dlHarga = () => downloadXlsx('/api/rahaza/master/harga-review', token, 'REVIEW_HARGA_MATERIAL_DA.xlsx').catch((e) => toast.error(e.message));
   const t = preview?.totals || {};
-  const nApply = (t.materials || 0) + (t.accounts || 0) + (t.stores || 0) + (t.bom_lines || 0) + (t.models || 0) + (t.sku_prices || 0) + (t.sku_deactivate || 0) + (t.stock_rows || 0) + (t.salaries || 0);
+  const nApply = (t.materials || 0) + (t.accounts || 0) + (t.stores || 0) + (t.bom_lines || 0) + (t.models || 0) + (t.sku_prices || 0) + (t.sku_deactivate || 0) + (t.sku_status || 0) + (t.stock_rows || 0) + (t.salaries || 0);
   const bomWarn = preview?.warnings || [];
   const cats = Object.entries(preview?.bom_issue_counts || {});
 
@@ -179,10 +179,11 @@ export default function RahazaMasterFillModule({ token }) {
           {(preview.models || []).length > 0 && (
             <GlassCard className="p-4 text-xs space-y-1" data-testid="fill-models">{preview.models.map((m) => <div key={m.model_code}>Model {m.model_code} → berat {m.weight_gram} gram</div>)}</GlassCard>
           )}
-          {(preview.accounts.length > 0 || preview.stores.length > 0 || (preview.sku_deactivate || []).length > 0) && (
+          {(preview.accounts.length > 0 || preview.stores.length > 0 || (preview.sku_deactivate || []).length > 0 || (preview.sku_status || []).length > 0) && (
             <GlassCard className="p-4 text-xs space-y-1" data-testid="fill-acc-store">
               {preview.accounts.map((a) => <div key={a.gl_account_code}>Akun {a.gl_account_code} → no. rek {a.account_number || '-'} a.n. {a.holder_name || '-'}</div>)}
               {preview.stores.map((s) => <div key={s.account_code}>Toko {s.account_code} → pencairan ke akun {s.coa_cash_code}</div>)}
+              {(preview.sku_status || []).length > 0 && <div data-testid="fill-status-list">Status produk diubah ({preview.sku_status.length} SKU): {preview.sku_status.map((d) => `${d.sku} → ${d.label}`).join(', ')}</div>}
               {(preview.sku_deactivate || []).length > 0 && <div className="text-[hsl(var(--warning))]" data-testid="fill-deactivate-list">SKU akan dinonaktifkan ("{preview.sku_deactivate[0].teks}"): {preview.sku_deactivate.map((d) => d.sku).join(', ')}</div>}
             </GlassCard>
           )}
