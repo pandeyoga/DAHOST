@@ -1,6 +1,8 @@
 
 import { useState, useEffect } from 'react';
 import { Settings, Save, Upload, Building2, FileText, RefreshCw, CheckCircle, Image, Receipt } from 'lucide-react';
+import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { resetTaxProfileCache } from '../../lib/taxProfile';
 
 export default function CompanySettingsModule({ token, userRole }) {
@@ -52,9 +54,15 @@ export default function CompanySettingsModule({ token, userRole }) {
   const handleSave = async (e) => {
     e.preventDefault();
     const taxChanged = tax.pkp !== taxSaved.pkp || (tax.pkp && tax.pkp_since !== taxSaved.pkp_since);
-    if (taxChanged && !window.confirm(tax.pkp
-      ? `Ubah status pajak menjadi PKP sejak ${tax.pkp_since || '-'}?\n\nDokumen penjualan BARU akan memungut PPN 12% × DPP 11/12, dan PPN dari supplier dikreditkan. Dokumen lama tidak berubah.`
-      : 'Ubah status pajak menjadi NON-PKP?\n\nDokumen penjualan BARU tidak memungut PPN, dan PPN dari supplier dicatat sebagai bagian harga beli. Dokumen lama tidak berubah.')) return;
+    // 2026-11-07 (audit form Tahap 5): syarat PKP disebut sebelum simpan (dulu baru ditolak server), dan
+    // konfirmasi memakai dialog aplikasi (PANDUAN_UI G9 — dulu window.confirm/alert bawaan browser).
+    if (tax.pkp && !tax.pkp_since) { toast.error('Isi tanggal "PKP sejak" (tanggal pengukuhan PKP).'); return; }
+    if (tax.pkp && !settings.npwp.trim()) { toast.error('Isi NPWP perusahaan dulu — wajib untuk status PKP.'); return; }
+    if (taxChanged && !(await confirmDialog(tax.pkp
+      ? { title: `Ubah status pajak menjadi PKP sejak ${tax.pkp_since}?`, confirmLabel: 'Ubah ke PKP',
+          body: 'Dokumen penjualan BARU akan memungut PPN 12% × DPP 11/12, dan PPN dari supplier dikreditkan. Dokumen lama tidak berubah.' }
+      : { title: 'Ubah status pajak menjadi Non-PKP?', confirmLabel: 'Ubah ke Non-PKP',
+          body: 'Dokumen penjualan BARU tidak memungut PPN, dan PPN dari supplier dicatat sebagai bagian harga beli. Dokumen lama tidak berubah.' }))) return;
     setSaving(true);
     setSaved(false);
     try {
@@ -73,9 +81,9 @@ export default function CompanySettingsModule({ token, userRole }) {
         setTimeout(() => setSaved(false), 3000);
       } else {
         const data = await res.json().catch(() => ({}));
-        alert(data.detail || data.error || 'Gagal menyimpan');
+        toast.error(data.detail || data.error || 'Gagal menyimpan');
       }
-    } catch (e) { alert('Gagal menyimpan: ' + e.message); }
+    } catch (e) { toast.error('Gagal menyimpan: ' + e.message); }
     setSaving(false);
   };
 
@@ -85,11 +93,11 @@ export default function CompanySettingsModule({ token, userRole }) {
     
     // Validate file type and size
     if (!file.type.startsWith('image/')) {
-      alert('Hanya file gambar yang diperbolehkan');
+      toast.error('Hanya file gambar yang diperbolehkan');
       return;
     }
     if (file.size > 2 * 1024 * 1024) {
-      alert('Ukuran file maksimal 2MB');
+      toast.error('Ukuran file maksimal 2 MB');
       return;
     }
 
@@ -110,7 +118,7 @@ export default function CompanySettingsModule({ token, userRole }) {
       if (!res.ok || !data.storage_path) throw new Error(data.detail || 'server menolak berkas');
       setSettings(s => ({ ...s, company_logo_url: `/api/uploads/${data.storage_path}` }));
     } catch (e) {
-      alert('Gagal upload logo: ' + e.message);
+      toast.error('Gagal mengunggah logo: ' + e.message);
     }
     setUploading(false);
   };

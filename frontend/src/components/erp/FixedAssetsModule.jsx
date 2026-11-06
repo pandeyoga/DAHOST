@@ -31,10 +31,21 @@ const FUNDING = [
 const ACC_FIELDS = ['account_id_asset', 'account_id_accum_depr', 'account_id_depr_expense'];
 
 const CATEGORIES = ['tanah','bangunan','mesin','kendaraan','peralatan','it','furnitur','lain-lain'];
+// 2026-11-07 (audit form Tahap 5): pilihan disamakan dengan server (routes/rahaza_fixed_assets.DEPR_METHODS):
+// "Tidak disusutkan" (`none`, mis. tanah) dulu tidak ada di layar — tanah terpaksa diberi umur & disusutkan.
 const DEPR_METHODS = [
   { value: 'straight_line', label: 'Garis lurus' },
   { value: 'double_declining', label: 'Saldo menurun ganda' },
+  { value: 'none', label: 'Tidak disusutkan (mis. tanah)' },
 ];
+const DEPRECIATING = ['straight_line', 'double_declining'];
+// Akun per peran dibatasi tipenya (dulu ketiga pilihan memuat seluruh bagan akun — beban, hutang, modal…):
+// aset & akumulasi penyusutan = Aset (akumulasi = akun kontra aset); beban penyusutan = beban / HPP (overhead).
+const ACC_TYPES = {
+  account_id_asset: ['ASSET'],
+  account_id_accum_depr: ['ASSET'],
+  account_id_depr_expense: ['EXPENSE', 'COGS', 'OTHER_EXPENSE'],
+};
 const CAT_LABELS = {
   tanah: 'Tanah', bangunan: 'Bangunan', mesin: 'Mesin', kendaraan: 'Kendaraan',
   peralatan: 'Peralatan', it: 'IT', furnitur: 'Furnitur', 'lain-lain': 'Lain-lain'
@@ -87,16 +98,27 @@ export default function FixedAssetsModule({ token }) {
   // Akun bawaan kategori → isi dropdown akun (bisa diganti per aset)
   const applyCategoryDefaults = (cat, opts = acqOpts) => {
     const def = opts?.category_accounts?.[cat] || {};
-    setForm(v => ({ ...v, category: cat, ...Object.fromEntries(ACC_FIELDS.map(f => [f, def[f]?.id || ''])) }));
+    // tanah tidak disusutkan (kategori tanah di server tanpa akun akumulasi/beban penyusutan)
+    setForm(v => ({
+      ...v, category: cat, ...Object.fromEntries(ACC_FIELDS.map(f => [f, def[f]?.id || ''])),
+      ...(cat === 'tanah' ? { depreciation_method: 'none' }
+        : (v.category === 'tanah' && v.depreciation_method === 'none' ? { depreciation_method: 'straight_line' } : {})),
+    }));
   };
   const openCreate = async () => {
-    setForm(BLANK_FORM); setModalOpen(true); fetchCoa();
+    setForm(BLANK_FORM); setModalOpen(true); fetchCoa(); loadSuppliers();
     const r = await fetch('/api/rahaza/finance/fixed-assets/acquisition-options', { headers });
     if (r.ok) {
       const o = await r.json(); setAcqOpts(o);
       setForm(v => ({ ...v, golive_date: o.golive_default || '' }));
       applyCategoryDefaults('peralatan', o);
     }
+  };
+  // Pemasok = saran dari master pemasok (tetap boleh diketik untuk toko yang belum terdaftar — server menyimpan teks)
+  const [suppliers, setSuppliers] = useState([]);
+  const loadSuppliers = async () => {
+    const r = await fetch('/api/procurement/suppliers/options', { headers });  // 403 (tanpa akses Pengadaan) → tanpa saran
+    if (r.ok) { const d = await r.json(); setSuppliers(Array.isArray(d) ? d : (d.items || [])); }
   };
   const loadApInvoices = async () => {
     const r = await fetch('/api/rahaza/ap-invoices', { headers });
@@ -157,7 +179,7 @@ export default function FixedAssetsModule({ token }) {
     // K18 — validasi sama dengan server: jenis perolehan wajib, harga > 0, umur > 0, tanggal ≤ hari ini (WIB)
     if (!form.acquisition_type) { toast.error('Pilih jenis perolehan: Pembelian baru atau Aset lama (saldo awal)'); return; }
     if (!(parseFloat(form.purchase_cost) > 0)) { toast.error('Harga perolehan harus lebih dari 0'); return; }
-    if (!(parseInt(form.useful_life_months, 10) > 0)) { toast.error('Masa manfaat (bulan) harus lebih dari 0'); return; }
+    if (DEPRECIATING.includes(form.depreciation_method) && !(parseInt(form.useful_life_months, 10) > 0)) { toast.error('Masa manfaat (bulan) harus lebih dari 0'); return; }
     if (form.purchase_date && form.purchase_date > maxDate) { toast.error(`Tanggal pembelian melewati hari ini (${formatDateID(maxDate)})`); return; }
     if (form.acquisition_type === 'purchase' && !form.funding_source) { toast.error('Pilih sumber dana pembelian'); return; }
     if (form.acquisition_type === 'opening' && !form.golive_date) { toast.error('Isi tanggal go-live untuk aset lama'); return; }
@@ -229,6 +251,7 @@ export default function FixedAssetsModule({ token }) {
   };
 
   const curPeriod = thisMonthWIB();
+  const accountsFor = (fld) => coa.filter(a => ACC_TYPES[fld].includes(a.type) || a.id === form[fld]);
   const refreshAll = () => { fetchAssets(1); fetchSummary(); fetchDeprDue(); };
 
   // ── RINCIAN SATU ASET (di halaman, di atas tabel)
@@ -445,7 +468,7 @@ export default function FixedAssetsModule({ token }) {
             </div>
             <div className="flex gap-2 pt-1 justify-end">
               <Button variant="outline" onClick={() => setDisposeOpen(false)}>Batal</Button>
-              <Button variant="destructive" onClick={disposeAsset}>Lepaskan aset</Button>
+              <Button variant="destructive" onClick={disposeAsset} disabled={!disposeForm.disposal_date}>Lepaskan aset</Button>
             </div>
           </div>
         </Modal>
@@ -460,12 +483,12 @@ export default function FixedAssetsModule({ token }) {
               <label className="block text-xs text-muted-foreground mb-1">Jenis perolehan *</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {ACQ_TYPES.map(t => (
-                  <button key={t.value} type="button" onClick={() => setForm(v => ({ ...v, acquisition_type: t.value }))}
+                  <Button key={t.value} type="button" variant="outline" onClick={() => setForm(v => ({ ...v, acquisition_type: t.value }))}
                     data-testid={`asset-acq-${t.value}`} aria-pressed={form.acquisition_type === t.value}
-                    className={`text-left rounded border px-3 py-2 text-sm ${form.acquisition_type === t.value ? 'border-primary bg-primary/10' : 'border-border'}`}>
-                    <div className="font-medium">{t.label}</div>
-                    <div className="text-[11px] text-muted-foreground">{t.hint}</div>
-                  </button>
+                    className={`h-auto flex-col items-start justify-start whitespace-normal text-left py-2 ${form.acquisition_type === t.value ? 'border-primary bg-primary/10' : ''}`}>
+                    <span className="font-medium">{t.label}</span>
+                    <span className="text-[11px] font-normal text-muted-foreground">{t.hint}</span>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -486,7 +509,7 @@ export default function FixedAssetsModule({ token }) {
                 )}
                 {form.funding_source === 'ap_invoice' && (
                   <div className="sm:col-span-2"><label className="block text-xs text-muted-foreground mb-1">Faktur pemasok *</label>
-                    <SmartNativeSelect value={form.ap_invoice_id} onChange={e => setForm(f => ({ ...f, ap_invoice_id: e.target.value }))}
+                    <SmartNativeSelect value={form.ap_invoice_id} onChange={e => { const id = e.target.value; const inv = apInvoices.find(i => i.id === id); setForm(f => ({ ...f, ap_invoice_id: id, supplier: inv?.vendor_name || f.supplier })); }}
                       data-testid="asset-ap-invoice" className="h-9 w-full">
                       <option value="">Pilih faktur pemasok</option>
                       {apInvoices.map(i => <option key={i.id} value={i.id}>{i.invoice_number} · {i.vendor_name} · DPP {fmtRp(i.subtotal || i.total)}</option>)}
@@ -520,7 +543,7 @@ export default function FixedAssetsModule({ token }) {
               <GlassInput placeholder="mis. Mesin Jahit Singer" value={form.name} onChange={e => setForm(v => ({...v, name: e.target.value}))} data-testid="asset-name" />
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Kategori *</label>
-              <SmartNativeSelect value={form.category} onChange={e => applyCategoryDefaults(e.target.value)} searchable={false} className="h-9 w-full">
+              <SmartNativeSelect value={form.category} onChange={e => applyCategoryDefaults(e.target.value)} searchable={false} className="h-9 w-full" data-testid="asset-category">
                 {CATEGORIES.map(c => <option key={c} value={c}>{CAT_LABELS[c]}</option>)}
               </SmartNativeSelect>
             </div>
@@ -534,37 +557,42 @@ export default function FixedAssetsModule({ token }) {
               <MoneyInput glass placeholder="0" value={form.residual_value} onChange={e => setForm(v => ({...v, residual_value: e.target.value}))} />
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Masa manfaat (bulan) *</label>
-              <GlassInput type="number" placeholder="60" value={form.useful_life_months} onChange={e => setForm(v => ({...v, useful_life_months: e.target.value}))} />
+              <GlassInput type="number" min="0" placeholder="60" value={form.depreciation_method === 'none' ? '' : form.useful_life_months} disabled={form.depreciation_method === 'none'}
+                onChange={e => setForm(v => ({...v, useful_life_months: e.target.value}))} data-testid="asset-life" />
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Metode penyusutan *</label>
-              <SmartNativeSelect value={form.depreciation_method} onChange={e => setForm(v => ({...v, depreciation_method: e.target.value}))} searchable={false} className="h-9 w-full">
+              <SmartNativeSelect value={form.depreciation_method} onChange={e => setForm(v => ({...v, depreciation_method: e.target.value}))} searchable={false} className="h-9 w-full" data-testid="asset-method">
                 {DEPR_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
               </SmartNativeSelect>
             </div>
             <div className="sm:col-span-2 text-[11px] text-muted-foreground">Akun di bawah terisi otomatis dari kategori; jurnal perolehan, penyusutan, dan pelepasan memakai akun ini.</div>
             <div><label className="block text-xs text-muted-foreground mb-1">Akun aset</label>
-              <SmartNativeSelect value={form.account_id_asset} onChange={e => setForm(v => ({...v, account_id_asset: e.target.value}))} className="h-9 w-full">
+              <SmartNativeSelect value={form.account_id_asset} onChange={e => setForm(v => ({...v, account_id_asset: e.target.value}))} className="h-9 w-full" data-testid="asset-acc-asset">
                 <option value="">Pilih (opsional)</option>
-                {coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                {accountsFor('account_id_asset').map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name}`}</option>)}
               </SmartNativeSelect>
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Akun akumulasi penyusutan</label>
-              <SmartNativeSelect value={form.account_id_accum_depr} onChange={e => setForm(v => ({...v, account_id_accum_depr: e.target.value}))} className="h-9 w-full">
+              <SmartNativeSelect value={form.account_id_accum_depr} onChange={e => setForm(v => ({...v, account_id_accum_depr: e.target.value}))} className="h-9 w-full" data-testid="asset-acc-accum">
                 <option value="">Pilih (opsional)</option>
-                {coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                {accountsFor('account_id_accum_depr').map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name}`}</option>)}
               </SmartNativeSelect>
             </div>
             <div><label className="block text-xs text-muted-foreground mb-1">Akun beban penyusutan</label>
-              <SmartNativeSelect value={form.account_id_depr_expense} onChange={e => setForm(v => ({...v, account_id_depr_expense: e.target.value}))} className="h-9 w-full">
+              <SmartNativeSelect value={form.account_id_depr_expense} onChange={e => setForm(v => ({...v, account_id_depr_expense: e.target.value}))} className="h-9 w-full" data-testid="asset-acc-expense">
                 <option value="">Pilih (opsional)</option>
-                {coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                {accountsFor('account_id_depr_expense').map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name}`}</option>)}
               </SmartNativeSelect>
             </div>
-            {[{l:'Lokasi', k:'location'},{l:'Pemasok', k:'supplier'},{l:'No. seri', k:'serial_number'}].map(f => (
+            {[{l:'Lokasi', k:'location'},{l:'Pemasok', k:'supplier', list: 'fa-supplier-list'},{l:'No. seri', k:'serial_number'}].map(f => (
               <div key={f.k}><label className="block text-xs text-muted-foreground mb-1">{f.l}</label>
-                <GlassInput value={form[f.k]} onChange={e => setForm(v => ({...v, [f.k]: e.target.value}))} />
+                <GlassInput value={form[f.k]} onChange={e => setForm(v => ({...v, [f.k]: e.target.value}))} list={f.list}
+                  placeholder={f.k === 'supplier' ? 'Ketik / pilih dari master pemasok' : undefined} data-testid={`asset-${f.k}`} />
               </div>
             ))}
+            <datalist id="fa-supplier-list">
+              {suppliers.map(x => <option key={x.id} value={x.name}>{x.code}</option>)}
+            </datalist>
             <div className="sm:col-span-2 flex gap-2 pt-2 justify-end">
               <Button variant="outline" onClick={() => setModalOpen(false)}>Batal</Button>
               <Button onClick={createAsset} data-testid="btn-submit-asset">Daftarkan aset</Button>

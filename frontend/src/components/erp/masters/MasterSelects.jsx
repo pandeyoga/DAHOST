@@ -21,6 +21,7 @@
 import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { apiGet } from '@/lib/api';
 
 const BASE_CLS =
@@ -61,13 +62,15 @@ function MasterSelect({ label, hint, value, onChange, rows, loading, placeholder
     <div>
       {label ? <Label className="text-xs">{label}</Label> : null}
       <div className="relative">
-        <select className={BASE_CLS} value={value || ''} disabled={disabled || loading}
+        {/* 2026-11-07 (Tahap 5) — dulu pemilih bawaan browser: 105 warna / 104 model / 645 barang jadi
+            tanpa kotak cari. SmartNativeSelect = API sama + bisa dicari (≥8 opsi). */}
+        <SmartNativeSelect className={BASE_CLS} value={value || ''} disabled={disabled || loading}
                 onChange={(e) => onChange(e.target.value)} data-testid={testId}>
           <option value="">{loading ? 'Memuat master…' : placeholder}</option>
           {rows.map((r) => (
             <option key={optionValue(r)} value={optionValue(r)}>{optionLabel(r)}</option>
           ))}
-        </select>
+        </SmartNativeSelect>
         {loading && (
           <Loader2 className="w-4 h-4 animate-spin absolute right-8 top-3 text-muted-foreground" />
         )}
@@ -176,7 +179,7 @@ export function FGMaterialSelect({ value, onChange, label = 'Barang jadi (master
                   rows={rows.filter((r) => r.active !== false)} loading={loading}
                   placeholder="— pilih barang dari master produk jadi —"
                   optionValue={(r) => r.id}
-                  optionLabel={(r) => `${r.code || r.sku} · ${r.name}`}
+                  optionLabel={(r) => [r.code || r.sku, r.name, r.color, r.size_code].filter(Boolean).join(' · ')}
                   testId={testId} disabled={disabled} />
   );
 }

@@ -15,6 +15,7 @@ import ConfirmDialog from './ConfirmDialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import OnwardCTA from './OnwardCTA';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import RnDUnitSelect from './RnDUnitSelect';
 
 const STATUS_CONF = {
   draft:     { label: 'Draft',     cls: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: Clock },
@@ -81,8 +82,9 @@ export default function RnDSamplesTab({ token, onNavigate }) {
 
   const handleCreate = async () => {
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
+    if (!(Number(form.quantity) > 0)) return toast.error('Jumlah sample minimal 1 pcs');
     try {
-      await apiFetch('/dewi/rnd/sample-requests', { method: 'POST', body: form });
+      await apiFetch('/dewi/rnd/sample-requests', { method: 'POST', body: { ...form, quantity: Number(form.quantity) } });
       toast.success('Sample request berhasil dibuat');
       setShowForm(false);
       setForm({ ...emptyForm });
@@ -357,25 +359,27 @@ export default function RnDSamplesTab({ token, onNavigate }) {
           <div>
             <Label>Style <span className="text-red-700 dark:text-red-400">*</span></Label>
             <SmartNativeSelect value={form.style_id} onChange={e => f('style_id', e.target.value)}
-              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
+              className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground"
+              data-testid="sample-style-select">
               <option value="">-- Pilih Style --</option>
               {styles.map(s => <option key={s.id} value={s.id}>{s.style_code} — {s.style_name}</option>)}
             </SmartNativeSelect>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label>Quantity (pcs)</Label>
+              <Label>Jumlah (pcs) <span className="text-[hsl(var(--destructive))]">*</span></Label>
               <Input className="mt-1" type="number" min="1" value={form.quantity}
-                onChange={e => f('quantity', parseInt(e.target.value))} />
+                onChange={e => f('quantity', e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                data-testid="sample-qty-input" />
             </div>
             <div>
               <Label>Prioritas</Label>
-              <select value={form.priority} onChange={e => f('priority', e.target.value)}
-                className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
+              <SmartNativeSelect value={form.priority} onChange={e => f('priority', e.target.value)}
+                className="w-full mt-1" data-testid="sample-priority-select">
                 <option value="low">Rendah</option>
                 <option value="normal">Normal</option>
                 <option value="high">Tinggi</option>
-              </select>
+              </SmartNativeSelect>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -475,16 +479,12 @@ export default function RnDSamplesTab({ token, onNavigate }) {
                     <Input className="col-span-2" type="number" min="0" step="0.1" placeholder="Qty"
                       value={it.qty}
                       onChange={e => updateAccReqItem(idx, 'qty', e.target.value)} />
-                    <select className="col-span-2 border border-input bg-background rounded-md px-2 py-2 text-sm text-foreground"
-                      value={it.unit}
-                      onChange={e => updateAccReqItem(idx, 'unit', e.target.value)}>
-                      <option value="pcs">pcs</option>
-                      <option value="meter">meter</option>
-                      <option value="kg">kg</option>
-                      <option value="roll">roll</option>
-                      <option value="set">set</option>
-                      <option value="lusin">lusin</option>
-                    </select>
+                    {/* 2026-11-07: satuan dari daftar satuan RnD yang sama dengan Costing/Tech Pack (dulu daftar
+                        sendiri berisi "meter" — ejaan yang tidak dikenal master; yang dikenal "m") */}
+                    <div className="col-span-2">
+                      <RnDUnitSelect value={it.unit} onChange={e => updateAccReqItem(idx, 'unit', e.target.value)}
+                        testId={`acc-req-unit-${idx}`} />
+                    </div>
                     <button type="button" onClick={() => removeAccReqItemRow(idx)}
                       disabled={accReqModal.items.length <= 1}
                       className="col-span-1 h-9 rounded-md border border-red-400 dark:border-red-500/30 text-red-700 dark:text-red-400 hover:bg-red-100 dark:bg-red-500/10 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center"

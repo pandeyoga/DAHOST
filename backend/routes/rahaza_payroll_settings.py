@@ -209,7 +209,7 @@ async def set_late_penalty(request: Request):
 
     mode = (body.get("mode") or "per_minute").strip()
     if mode not in VALID_LATE_MODES:
-        raise HTTPException(400, f"mode harus salah satu: {list(VALID_LATE_MODES)}")
+        raise HTTPException(400, "Cara potongan terlambat tidak dikenal (pilih per menit, per kejadian, atau bertingkat).")
 
     tiers = []
     for t in (body.get("tiers") or []):
@@ -219,9 +219,9 @@ async def set_late_penalty(request: Request):
             to = int(to) if to not in (None, "") else None
             amt = float(t.get("amount") or 0)
         except (TypeError, ValueError):
-            raise HTTPException(400, "tiers harus berisi angka (from_minutes/to_minutes/amount).")
+            raise HTTPException(400, "Tingkat potongan harus berisi angka (dari menit, sampai menit, nominal).")
         if frm < 0 or amt < 0 or (to is not None and to < frm):
-            raise HTTPException(400, "Rentang tier tidak valid (to_minutes < from_minutes atau nilai negatif).")
+            raise HTTPException(400, "Rentang tingkat tidak valid (sampai menit lebih kecil dari dari menit, atau nilai negatif).")
         tiers.append({"from_minutes": frm, "to_minutes": to, "amount": amt})
 
     apm = float(body.get("amount_per_minute") or 0)
@@ -232,11 +232,11 @@ async def set_late_penalty(request: Request):
     enabled = bool(body.get("enabled"))
     if enabled:
         if mode == "per_minute" and apm <= 0:
-            raise HTTPException(400, "mode 'per_minute' aktif tapi amount_per_minute masih 0.")
+            raise HTTPException(400, "Potongan per menit aktif tapi nominal per menit masih 0.")
         if mode == "per_occurrence" and apo <= 0:
-            raise HTTPException(400, "mode 'per_occurrence' aktif tapi amount_per_occurrence masih 0.")
+            raise HTTPException(400, "Potongan per kejadian aktif tapi nominal per kejadian masih 0.")
         if mode == "tiered" and not tiers:
-            raise HTTPException(400, "mode 'tiered' aktif tapi belum ada tier.")
+            raise HTTPException(400, "Potongan bertingkat aktif tapi belum ada tingkat.")
 
     doc = {
         "key": LATE_KEY,

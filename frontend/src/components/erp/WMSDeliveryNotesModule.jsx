@@ -15,6 +15,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import { Skeleton } from '@/components/ui/skeleton';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -962,7 +963,7 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                             className="col-span-2 w-full h-10 rounded-md border border-foreground/10 bg-foreground/5 px-2 text-sm"
                             data-testid={`line-material-${idx}`}>
                             <option value="">— pilih barang dari master —</option>
-                            {materials.map((m) => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+                            {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
                           </SmartNativeSelect>
                         ) : (
                           <Input
@@ -981,10 +982,14 @@ export default function WMSDeliveryNotesModule({ token, onNavigate }) {
                           className="bg-foreground/5 border-foreground/10"
                           data-testid={`line-qty-${idx}`}
                         />
+                        {/* 2026-11-07 (Tahap 5): barang dari master → satuan = satuan dasar barang (terkunci). Dulu
+                            bisa diketik bebas sehingga "12 lusin" tercatat sebagai 12 pcs saat stok dipindah. */}
                         <Input
-                          placeholder="Unit"
+                          placeholder="Satuan"
                           value={line.unit}
                           onChange={(e) => updateLine(idx, 'unit', e.target.value)}
+                          disabled={isInternal && !!line.material_id}
+                          title={isInternal && line.material_id ? 'Satuan dasar barang dari master' : undefined}
                           className="bg-foreground/5 border-foreground/10"
                           data-testid={`line-unit-${idx}`}
                         />

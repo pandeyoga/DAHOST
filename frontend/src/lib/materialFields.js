@@ -90,3 +90,17 @@ export function mirrorField(canonical, value) {
   (WRITE_ALIASES[canonical] || []).forEach((legacy) => { out[legacy] = value; });
   return out;
 }
+
+/**
+ * Label opsi pemilih material/barang: "KODE · Nama (satuan)".
+ *
+ * 2026-11-07 (Tahap 5, audit form Pengadaan/Gudang/Aksesoris): pemilih material di PO, PR, daftar harga
+ * supplier, penyesuaian stok, dsb. dulu hanya "KODE - Nama" (atau nama saja) sehingga dua barang bernama
+ * mirip dengan satuan berbeda (roll vs kg) tidak bisa dibedakan saat memilih. Satu bentuk label di semua form.
+ */
+export function materialOptionLabel(m) {
+  if (!m) return '';
+  const unit = m.unit || m.base_uom || '';
+  const head = [m.code, m.name].filter(Boolean).join(' · ');
+  return unit ? `${head} (${unit})` : head;
+}

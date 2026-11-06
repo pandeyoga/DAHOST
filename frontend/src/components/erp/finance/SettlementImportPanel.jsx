@@ -7,6 +7,7 @@
  */
 import { FileSpreadsheet, X, AlertTriangle, BookmarkCheck, Wand2 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Badge } from '@/components/ui/badge';
 import { formatRupiah as rp } from '@/lib/format';
 import { Notice } from '@/components/erp/moduleAtoms';
@@ -112,12 +113,13 @@ export function SettlementImportPanel({ result, onClose, onMappingChange }) {
                   <td className="py-1.5 pr-2">{c}</td>
                   <td className="py-1.5 px-2 text-right tabular-nums">{rp(result.column_totals?.[c] || 0)}</td>
                   <td className="py-1.5 pl-2">
-                    <select value={f} onChange={(e) => retarget(c, e.target.value)}
+                    {/* 2026-11-07 (audit form Tahap 5): pilihan aplikasi (dulu <select> polos) */}
+                    <SmartNativeSelect value={f} onChange={(e) => retarget(c, e.target.value)} searchable={false}
                       data-testid={`fin-settlement-import-target-${c.replace(/[^a-zA-Z0-9]+/g, '-')}`}
-                      className={`h-7 rounded-md border px-1.5 text-xs bg-foreground/5 ${f ? 'border-foreground/10' : 'border-amber-500/50 text-amber-700 dark:text-amber-300'}`}>
-                      <option value="">— abaikan —</option>
+                      className={`h-7 w-48 text-xs ${f ? '' : 'border-[hsl(var(--warning))]'}`}>
+                      <option value="">— Abaikan —</option>
                       {Object.entries(FIELD_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                    </select>
+                    </SmartNativeSelect>
                   </td>
                 </tr>
               );

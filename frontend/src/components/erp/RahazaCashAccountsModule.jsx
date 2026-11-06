@@ -11,6 +11,8 @@ import { journalSourceLabel } from '@/lib/financeLabels';
 import { formatRupiah, formatDateID, formatNumber } from '@/lib/format';
 import PaginationLite from '@/components/ui/pagination-lite';
 import { MoneyInput } from '@/components/ui/money-input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import Modal from './Modal';
 import { toast } from 'sonner';
 
 const fmt = formatRupiah;
@@ -84,7 +86,8 @@ export default function RahazaCashAccountsModule({ token }) {
   };
   const del = async (a) => {
     if (!(await confirmDialog({ title: `Nonaktifkan ${a.name}?`, body: 'Rekening tidak bisa dipilih lagi untuk transaksi baru. Riwayat mutasinya tetap ada.', confirmLabel: 'Nonaktifkan', danger: true }))) return;
-    await fetch(`/api/rahaza/cash-accounts/${a.id}`, { method: 'DELETE', headers });
+    const r = await fetch(`/api/rahaza/cash-accounts/${a.id}`, { method: 'DELETE', headers });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); toast.error(d.detail || `Gagal menonaktifkan rekening (HTTP ${r.status})`); }
     fetchAccounts();
   };
 
@@ -246,32 +249,39 @@ function CAEditor({ value, onClose, onSave, headers }) {
     const o = glOptions.find(x => x.code === code);
     setS(x => ({ ...x, gl_account_code: code, code: o ? code : x.code, name: o && !x.name ? o.name : x.name, type: o ? (code.startsWith('1-11') ? 'cash' : 'bank') : x.type }));
   };
+  // 2026-11-07 (audit form Tahap 5): Dialog aplikasi (dulu lapisan buatan sendiri + <h2> + 2 <select> polos);
+  // kode & nama wajib disebut sebelum simpan (dulu baru ditolak server "code & name wajib").
+  const missing = !String(s.code || '').trim() ? 'Isi kode rekening.' : !String(s.name || '').trim() ? 'Isi nama rekening.' : '';
+  const lbl = 'text-xs text-muted-foreground';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
-      <GlassCard className="p-6 max-w-md w-full" onClick={e => e.stopPropagation()}>
-        <h2 className="text-xl font-bold text-foreground mb-4">{s.id ? 'Edit' : 'Tambah'} Rekening</h2>
-        <div className="space-y-3">
-          {!s.id && (
-            <div>
-              <label className="text-xs uppercase text-muted-foreground">Akun GL (Bagan Akun)</label>
-              <select value={s.gl_account_code || ''} onChange={e => pickGl(e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="ca-gl-select">
-                <option value="">— Buat akun GL baru otomatis di bawah Kas/Bank —</option>
-                {glOptions.map(o => <option key={o.code} value={o.code}>{o.code} · {o.name}</option>)}
-              </select>
-              <p className="text-[11px] text-muted-foreground mt-1">{glOptions.length ? `${glOptions.length} akun kas/bank di Bagan Akun belum punya rekening — pilih supaya tidak dobel.` : 'Semua akun kas/bank di Bagan Akun sudah punya rekening.'}</p>
-            </div>
-          )}
-          <div><label className="text-xs uppercase text-muted-foreground">Kode</label><GlassInput value={s.code} onChange={e => upd('code', e.target.value.toUpperCase())} disabled={!!s.id} data-testid="ca-code" /></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Nama</label><GlassInput value={s.name} onChange={e => upd('name', e.target.value)} data-testid="ca-name" /></div>
-          <div><label className="text-xs uppercase text-muted-foreground">Tipe</label><select value={s.type} onChange={e => upd('type', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="cash">Kas</option><option value="bank">Bank</option></select></div>
-          {s.type === 'bank' && <>
-            <div><label className="text-xs uppercase text-muted-foreground">Nama Bank</label><GlassInput value={s.bank_name || ''} onChange={e => upd('bank_name', e.target.value)} /></div>
-            <div><label className="text-xs uppercase text-muted-foreground">Nomor Rekening</label><GlassInput value={s.account_number || ''} onChange={e => upd('account_number', e.target.value)} /></div>
-          </>}
-          {!s.id && <div><label className="text-xs uppercase text-muted-foreground">Saldo Awal</label><MoneyInput glass value={s.opening_balance || 0} onChange={e => upd('opening_balance', Number(e.target.value))} /></div>}
+    <Modal title={s.id ? `Ubah rekening ${s.code}` : 'Rekening baru'} onClose={onClose} size="sm" data-testid="ca-editor">
+      <div className="space-y-3">
+        {!s.id && (
+          <div>
+            <label className={lbl}>Akun buku besar (Bagan Akun)</label>
+            <SmartNativeSelect value={s.gl_account_code || ''} onChange={e => pickGl(e.target.value)} className="w-full h-9"
+              searchPlaceholder="Cari kode atau nama akun…" data-testid="ca-gl-select">
+              <option value="">— Buat akun baru otomatis di bawah Kas/Bank —</option>
+              {glOptions.map(o => <option key={o.code} value={o.code}>{`${o.code} · ${o.name}`}</option>)}
+            </SmartNativeSelect>
+            <p className="text-[11px] text-muted-foreground mt-1">{glOptions.length ? `${glOptions.length} akun kas/bank di Bagan Akun belum punya rekening — pilih supaya tidak dobel.` : 'Semua akun kas/bank di Bagan Akun sudah punya rekening.'}</p>
+          </div>
+        )}
+        <div><label className={lbl} htmlFor="ca-code">Kode *</label><GlassInput id="ca-code" value={s.code} onChange={e => upd('code', e.target.value.toUpperCase())} disabled={!!s.id} data-testid="ca-code" /></div>
+        <div><label className={lbl} htmlFor="ca-name">Nama *</label><GlassInput id="ca-name" value={s.name} onChange={e => upd('name', e.target.value)} data-testid="ca-name" /></div>
+        <div><label className={lbl}>Jenis</label>
+          <SmartNativeSelect value={s.type} onChange={e => upd('type', e.target.value)} searchable={false} className="w-full h-9" data-testid="ca-type">
+            <option value="cash">Kas</option><option value="bank">Bank</option>
+          </SmartNativeSelect>
         </div>
-        <div className="flex gap-2 mt-6 justify-end"><Button variant="outline" onClick={onClose} >Batal</Button><Button onClick={() => onSave(s)} data-testid="ca-save">Simpan</Button></div>
-      </GlassCard>
-    </div>
+        {s.type === 'bank' && <>
+          <div><label className={lbl} htmlFor="ca-bank-name">Nama bank</label><GlassInput id="ca-bank-name" value={s.bank_name || ''} onChange={e => upd('bank_name', e.target.value)} data-testid="ca-bank-name" /></div>
+          <div><label className={lbl} htmlFor="ca-acc-no">Nomor rekening</label><GlassInput id="ca-acc-no" value={s.account_number || ''} onChange={e => upd('account_number', e.target.value)} data-testid="ca-account-number" /></div>
+        </>}
+        {!s.id && <div><label className={lbl}>Saldo awal</label><MoneyInput glass value={s.opening_balance || 0} onChange={e => upd('opening_balance', Number(e.target.value))} data-testid="ca-opening" /></div>}
+        {missing && <p className="text-[11px] text-muted-foreground" data-testid="ca-missing">{missing}</p>}
+      </div>
+      <div className="flex gap-2 mt-4 justify-end"><Button variant="outline" onClick={onClose}>Batal</Button><Button onClick={() => onSave(s)} disabled={!!missing} data-testid="ca-save">Simpan</Button></div>
+    </Modal>
   );
 }

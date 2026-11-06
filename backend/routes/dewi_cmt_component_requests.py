@@ -66,6 +66,25 @@ async def _resolve_product_from_master(db, body: dict) -> dict:
     }
 
 
+async def _resolve_partner_from_master(db, body: dict) -> dict:
+    """2026-11-07 (Tahap 5): vendor CMT permintaan = master `vendor_partners`, nama mengikuti master.
+
+    Form dulu mengetik nama vendor bebas ⇒ `cmt_partner_id`/`vendor_id` selalu kosong, sehingga penyaring
+    per vendor dan rekap tagihan vendor tidak pernah cocok. Kalau `cmt_partner_id` dikirim, ia WAJIB ada di
+    master dan nama ketikan diabaikan. Tanpa id (dokumen lama / lahir dari inspeksi) = apa adanya."""
+    pid = (body.get('cmt_partner_id') or '').strip()
+    if not pid:
+        return {}
+    v = await db.vendor_partners.find_one({'id': pid}, {'_id': 0, 'id': 1, 'name': 1, 'garment_name': 1})
+    if not v:
+        raise HTTPException(400, 'Vendor CMT yang dipilih tidak ada di master Vendor CMT — pilih dari daftar.')
+    name = v.get('name') or v.get('garment_name') or ''
+    out = {'cmt_partner_id': pid, 'cmt_partner_name': name}
+    if not (body.get('vendor_id') or '').strip() or body.get('vendor_id') == pid:
+        out.update({'vendor_id': pid, 'vendor_name': name})
+    return out
+
+
 def serialize(doc):
     if doc is None:
         return None
@@ -294,6 +313,7 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
         'created_at': now_utc(),
         'updated_at': now_utc(),
     }
+    doc.update(await _resolve_partner_from_master(db, body))
     await db.dewi_cmt_component_requests.insert_one(doc)
     return serialize(doc)
 
@@ -313,6 +333,8 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
     # dikirim, ia diresolusi ulang lewat SATU fungsi yang sama dengan create;
     # kalau tidak, nama produk yang tersimpan DIPERTAHANKAN apa adanya (bukan
     # ditimpa ketikan baru yang bisa berbeda ejaan).
+    if 'cmt_partner_id' in body:
+        upd.update(await _resolve_partner_from_master(db, body))
     if 'model_id' in body:
         upd.update(await _resolve_product_from_master(db, body))
     else:

@@ -14,6 +14,9 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { useHrMasters, useDepartmentFilterOptions } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const fmtRp = formatRupiah;
@@ -65,7 +68,7 @@ export default function RahazaPayrollAllowancesModule({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Hapus tunjangan ini? Tidak akan mempengaruhi payroll yang sudah final.')) return;
+    if (!(await confirmDialog({ title: 'Hapus tunjangan ini?', body: 'Gaji yang sudah final tidak berubah.', confirmLabel: 'Hapus', danger: true }))) return;
     const r = await fetch(`${API}/api/rahaza/payroll-allowances/${id}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal hapus'); return; }
     toast.success('Tunjangan dihapus');
@@ -81,11 +84,10 @@ export default function RahazaPayrollAllowancesModule({ token }) {
     load();
   };
 
-  const departments = useMemo(() => {
-    const set = new Set();
-    employees.forEach(e => { if (e.department) set.add(e.department); });
-    return Array.from(set).sort();
-  }, [employees]);
+  // Tahap 5 (2026-11-07): departemen dari master Struktur Organisasi + departemen yang dipakai karyawan
+  // (tunjangan per departemen dicocokkan ke `employee.department`). Dulu hanya dari data karyawan.
+  const { units } = useHrMasters(token, { positions: false, shifts: false });
+  const departments = useDepartmentFilterOptions(units, employees);
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(items, 10);
   return (
@@ -321,12 +323,12 @@ function AllowanceDialog({ initial, departments, employees, onSave, onClose }) {
           {form.applicable_to === 'department' && (
             <div className="space-y-1">
               <Label>Departemen</Label>
-              <Select value={form.department} onValueChange={v => setForm(f => ({ ...f, department: v }))}>
-                <SelectTrigger><SelectValue placeholder="Pilih departemen..." /></SelectTrigger>
-                <SelectContent>
-                  {departments.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SmartNativeSelect value={form.department || ''} onChange={e => setForm(f => ({ ...f, department: e.target.value }))}
+                data-testid="allowance-department"
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+                <option value="">— Pilih departemen —</option>
+                {departments.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+              </SmartNativeSelect>
             </div>
           )}
 

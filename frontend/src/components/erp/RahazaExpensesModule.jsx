@@ -128,13 +128,13 @@ export default function RahazaExpensesModule({ token, onNavigate }) {
         emptyIcon={CreditCard}
         exportFilename={`pengeluaran-${todayWIB()}.csv`}
       />
-      {creating && <ExpEditor centers={centers} accounts={accounts} accountsLoaded={accountsLoaded}
+      {creating && <ExpEditor centers={centers} accounts={accounts} accountsLoaded={accountsLoaded} categories={categoryOptions.map(c => c.value)}
                               expenseAccounts={expenseAccounts} onClose={() => setCreating(false)} onSave={create} saving={savingExp} />}
     </PageLayout>
   );
 }
 
-function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, onClose, onSave, saving }) {
+function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, categories = [], onClose, onSave, saving }) {
   const [s, setS] = useState({ date: todayWIB(), category: 'operasional', description: '', amount: 0, gl_debit_code: '', cost_center_id: '', account_id: '', notes: '' });
   const upd = (k, v) => setS(x => ({ ...x, [k]: v }));
   // Rekening pembayar juga wajib: bila kosong, jurnal dulu jatuh diam-diam ke rekening bawaan profil.
@@ -149,15 +149,17 @@ function ExpEditor({ centers, accounts, accountsLoaded, expenseAccounts, onClose
           <div><label className="text-xs text-muted-foreground" htmlFor="exp-date">Tanggal</label><GlassInput id="exp-date" type="date" value={s.date} onChange={e => upd('date', e.target.value)} /></div>
           <div><label className="text-xs text-muted-foreground">Akun beban</label>
             <SmartNativeSelect value={s.gl_debit_code} onChange={e => upd('gl_debit_code', e.target.value)} searchable
-              className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="exp-gl-account">
+              className="w-full h-9" data-testid="exp-gl-account">
               <option value="">— Pilih akun beban (ketik untuk mencari) —</option>
               {expenseAccounts.map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
             </SmartNativeSelect></div>
           <div><label className="text-xs text-muted-foreground" htmlFor="exp-desc">Deskripsi</label><GlassInput id="exp-desc" value={s.description} onChange={e => upd('description', e.target.value)} placeholder="mis. Listrik kantor Oktober" data-testid="exp-desc" /></div>
           <div><label className="text-xs text-muted-foreground" htmlFor="exp-amount">Jumlah</label><MoneyInput glass id="exp-amount" value={s.amount} onChange={e => upd('amount', Number(e.target.value))} data-testid="exp-amount" /></div>
           <div><label className="text-xs text-muted-foreground">Bayar dari rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={s.account_id} onChange={v => upd('account_id', v)} testId="exp-cash-account" /></div>
-          <div><label className="text-xs text-muted-foreground" htmlFor="exp-category">Kategori (untuk penyaring daftar)</label><GlassInput id="exp-category" value={s.category} onChange={e => upd('category', e.target.value)} placeholder="operasional | sewa | listrik | ..." /></div>
-          <div><label className="text-xs text-muted-foreground">Pusat biaya (opsional)</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
+          {/* 2026-11-07 (audit form Tahap 5): kategori = teks bebas (tidak ada master), kini dengan saran kategori yang sudah dipakai supaya ejaannya seragam */}
+          <div><label className="text-xs text-muted-foreground" htmlFor="exp-category">Kategori (untuk penyaring daftar)</label><GlassInput id="exp-category" list="exp-category-list" value={s.category} onChange={e => upd('category', e.target.value)} placeholder="operasional | sewa | listrik | ..." data-testid="exp-category" />
+            <datalist id="exp-category-list">{[...new Set(['operasional', ...categories])].map(c => <option key={c} value={c} />)}</datalist></div>
+          <div><label className="text-xs text-muted-foreground">Pusat biaya (opsional)</label><SmartNativeSelect value={s.cost_center_id} onChange={e => upd('cost_center_id', e.target.value)} className="w-full h-9" data-testid="exp-cost-center"><option value="">— Tanpa —</option>{centers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect></div>
           {missing && <p className="text-[11px] text-muted-foreground" data-testid="exp-missing">{missing}</p>}
         </div>
         <DialogFooter><Button variant="outline" onClick={onClose}>Batal</Button><Button onClick={() => onSave(s)} disabled={saving || !!missing} data-testid="exp-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button></DialogFooter>

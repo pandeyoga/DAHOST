@@ -22,6 +22,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { GlassCard } from '@/components/ui/glass';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { InlineMaterialPicker } from './bom/InlineMaterialPicker';
+import RnDUnitSelect, { RND_UNITS } from './RnDUnitSelect';
 import {
   History,
   Package2,
@@ -703,6 +704,9 @@ const EMPTY_BOM_LINE = {
   qty_per_pcs: 0, cost_per_unit: 0, supplier: '', notes: '', ownership: 'client_provided',
 };
 const OWNERSHIP_LABEL = { client_provided: 'Disediakan klien', cv_da_stock: 'Stok DA' };
+// 2026-11-07 (Tahap 5): kategori bahan milik klien = daftar tetap yang dikenali pengelompok server
+// (`_classify_line`: kain/benang → bahan curah, aksesoris, kemasan). Dulu diketik bebas ("Fabric", "fabrik", …).
+const BOM_CATEGORIES = ['Kain', 'Benang', 'Aksesoris', 'Kemasan', 'Lainnya'];
 
 function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
   const token = String(headers?.Authorization || '').replace(/^Bearer\s+/i, '');
@@ -916,20 +920,30 @@ function BOMTemplateEditor({ mode, data, catalog, headers, onClose, onSaved }) {
                       {Object.entries(OWNERSHIP_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                     </SmartNativeSelect>
                   </td>
+                  {/* Baris tertaut master: kategori & satuan IKUT master (tidak bisa diubah di sini — dulu bisa
+                      diketik ulang sehingga satuan BOM berbeda dari satuan stok). Bahan milik klien: pilih. */}
                   <td className="p-1">
-                    <Input
-                      value={m.category}
-                      onChange={(e) => updateMat(idx, 'category', e.target.value)}
-                      placeholder="Fabric"
-                      className="h-7 text-xs w-24"
-                    />
+                    {m.material_id ? (
+                      <span className="text-xs text-muted-foreground" data-testid={`bom-mat-${idx}-category`}>{m.category || '—'}</span>
+                    ) : (
+                      <SmartNativeSelect value={m.category || ''} onChange={(e) => updateMat(idx, 'category', e.target.value)}
+                        className="w-28 text-xs" data-testid={`bom-mat-${idx}-category`}>
+                        <option value="">— Kategori —</option>
+                        {m.category && !BOM_CATEGORIES.includes(m.category) && <option value={m.category}>{m.category}</option>}
+                        {BOM_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </SmartNativeSelect>
+                    )}
                   </td>
                   <td className="p-1">
-                    <Input
-                      value={m.unit}
-                      onChange={(e) => updateMat(idx, 'unit', e.target.value)}
-                      className="h-7 text-xs w-16"
-                    />
+                    {m.material_id ? (
+                      <span className="text-xs tabular-nums" data-testid={`bom-mat-${idx}-unit`}>{m.unit || '—'}</span>
+                    ) : (
+                      <div className="w-24">
+                        <RnDUnitSelect value={m.unit} onChange={(e) => updateMat(idx, 'unit', e.target.value)}
+                          units={m.unit && !RND_UNITS.includes(m.unit) ? [m.unit, ...RND_UNITS] : undefined}
+                          testId={`bom-mat-${idx}-unit`} />
+                      </div>
+                    )}
                   </td>
                   <td className="p-1">
                     <Input

@@ -17,6 +17,7 @@ import {
   Table2, LayoutGrid, ArrowUpDown,
 } from 'lucide-react';
 import { formatRupiah } from '@/lib/format';
+import { materialOptionLabel } from '@/lib/materialFields';
 import { MoneyInput } from '@/components/ui/money-input';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite from '@/components/ui/pagination-lite';
@@ -204,13 +205,17 @@ function CreatePRModal({ onClose, onCreated, token }) {
 
   const pickMaterial = async (i, materialId) => {
     const mat = materials.find((m) => m.id === materialId);
+    // 2026-11-07 (Tahap 5): nama item ikut material baru bila nama itu dulu terisi otomatis dari material
+    // sebelumnya (dulu tetap nama material LAMA saat material diganti → PR berisi nama ≠ barang).
+    const prevMat = materials.find((m) => m.id === items[i]?.material_id);
+    const autoName = (nm) => !nm?.trim() || (prevMat && nm.trim() === (prevMat.name || '').trim());
     setItem(i, 'material_id', materialId);
     if (!materialId) return;
     const opt = await loadUom(materialId);
     setItems((p) => p.map((it, idx) => (idx === i ? {
       ...it,
       material_id: materialId,
-      name: it.name?.trim() ? it.name : (mat?.name || ''),
+      name: autoName(it.name) ? (mat?.name || '') : it.name,
       unit: opt?.base_unit || mat?.unit || it.unit,
     } : it)));
     // Saran harga dari daftar harga supplier (harga per satuan beli)
@@ -244,7 +249,14 @@ function CreatePRModal({ onClose, onCreated, token }) {
 
   const submit = async () => {
     if (!form.title.trim()) return setError('Judul wajib diisi');
-    if (!items[0].name.trim()) return setError('Minimal 1 item harus diisi');
+    // 2026-11-07 (Tahap 5): periksa SEMUA baris. Dulu hanya baris pertama; baris tanpa nama dibuang diam-diam
+    // oleh server dan qty 0 tersimpan sebagai 1.
+    const filled = items.filter((it) => it.material_id || (it.name || '').trim());
+    if (filled.length === 0) return setError('Minimal 1 item harus diisi');
+    const noName = filled.findIndex((it) => !(it.name || '').trim());
+    if (noName >= 0) return setError(`Nama item baris ${items.indexOf(filled[noName]) + 1} wajib diisi`);
+    const noQty = filled.findIndex((it) => !(Number(it.qty) > 0));
+    if (noQty >= 0) return setError(`Qty item "${filled[noQty].name}" harus lebih dari 0`);
     if (numPolicy?.mode === 'manual' && !form.request_number.trim()) {
       return setError(`Nomor PR wajib diisi (pola ${numPolicy.format}).`);
     }
@@ -254,7 +266,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
       await axios.post(`${API}/api/procurement/requests`, {
         ...rest,
         ...docNumberPayload(numPolicy, 'request_number', form.request_number),
-        items: items.map((it) => ({
+        items: filled.map((it) => ({
           material_id: it.material_id || undefined,
           name: it.name,
           specification: it.specification,
@@ -298,13 +310,13 @@ function CreatePRModal({ onClose, onCreated, token }) {
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Tipe Pengadaan</label>
-              <SmartNativeSelect className={sel} value={form.request_type} onChange={e => setForm(p=>({...p,request_type:e.target.value}))}>
+              <SmartNativeSelect className={sel} value={form.request_type} onChange={e => setForm(p=>({...p,request_type:e.target.value}))} data-testid="pr-form-type">
                 {requestTypes.map(rt => <option key={rt.value} value={rt.value}>{rt.label}</option>)}
               </SmartNativeSelect>
             </div>
             <div>
               <label className="text-xs text-muted-foreground mb-1 block">Prioritas</label>
-              <SmartNativeSelect className={sel} value={form.priority} onChange={e => setForm(p=>({...p,priority:e.target.value}))}>
+              <SmartNativeSelect className={sel} value={form.priority} onChange={e => setForm(p=>({...p,priority:e.target.value}))} data-testid="pr-form-priority">
                 {Object.entries(PRIORITY_CFG).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
               </SmartNativeSelect>
             </div>
@@ -340,7 +352,7 @@ function CreatePRModal({ onClose, onCreated, token }) {
                     >
                       <option value="">Item bebas / non-master</option>
                       {materials.map(m => (
-                        <option key={m.id} value={m.id}>{`${m.code} - ${m.name}`}</option>
+                        <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
                       ))}
                     </SmartNativeSelect>
                     {items.length > 1 && (
@@ -454,12 +466,15 @@ function CreatePOFromPRModal({ pr, token, onClose, onCreated }) {
               onChange={(e) => {
                 const sid = e.target.value;
                 const s = suppliers.find((x) => x.id === sid);
+                // 2026-11-07 (Tahap 5): kontak & alamat ikut supplier baru (dulu mewarisi supplier sebelumnya)
+                const prevSup = suppliers.find((x) => x.id === form.supplier_id);
+                const fromPrev = (v, k) => !prevSup || v === (prevSup[k] || '');
                 setForm((p) => ({
                   ...p,
                   supplier_id: sid,
                   vendor_name: s?.name || '',
-                  vendor_contact: s?.phone || p.vendor_contact,
-                  vendor_address: s?.address || p.vendor_address,
+                  vendor_contact: s?.phone || (fromPrev(p.vendor_contact, 'phone') ? '' : p.vendor_contact),
+                  vendor_address: s?.address || (fromPrev(p.vendor_address, 'address') ? '' : p.vendor_address),
                 }));
               }}
               data-testid="po-vendor-name"
@@ -1272,8 +1287,8 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
                 data-testid="pr-search"
               />
             </div>
-            <select
-              className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none"
+            <SmartNativeSelect
+              className="w-56 bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none"
               value={filterStatus} onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
               data-testid="pr-filter-status"
             >
@@ -1287,7 +1302,7 @@ export default function ProcurementRequestModule({ token, user, onNavigate }) {
               <option value="rejected">Ditolak</option>
               <option value="completed">Selesai</option>
               <option value="cancelled">Dibatalkan</option>
-            </select>
+            </SmartNativeSelect>
             <SmartNativeSelect
               className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-1.5 text-sm text-foreground focus:outline-none"
               value={filterPriority} onChange={(e) => { setFilterPriority(e.target.value); setPage(1); }}

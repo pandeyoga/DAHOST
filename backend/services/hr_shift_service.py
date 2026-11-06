@@ -279,6 +279,16 @@ async def assign_shift(
         raise ValueError(f"Shift ID {shift_id!r} tidak ditemukan atau tidak aktif.")
     shift = _to_hr_shape(shift_raw)
 
+    # 2026-11-07 (Tahap 5): karyawan harus ada & aktif di master (dulu ID diketik bebas di formulir dan tidak
+    # diperiksa). Kode/nama disimpan untuk daftar; departemen mengikuti data karyawan bila tidak diisi.
+    emp = await db.rahaza_employees.find_one(
+        {"id": employee_id, "active": {"$ne": False}},
+        {"_id": 0, "id": 1, "employee_code": 1, "name": 1, "department": 1})
+    if not emp:
+        raise ValueError("Karyawan tidak ditemukan atau sudah nonaktif.")
+    if effective_until and str(effective_until) < str(effective_from):
+        raise ValueError("Tanggal berakhir tidak boleh sebelum tanggal mulai.")
+
     # Deactivate previous active assignment for same employee
     await db.hr_shift_assignments.update_many(
         {"employee_id": employee_id, "status": "active"},
@@ -291,13 +301,15 @@ async def assign_shift(
         "_id": aid,
         "id": aid,
         "employee_id": employee_id,
+        "employee_code": emp.get("employee_code") or "",
+        "employee_name": emp.get("name") or "",
         "shift_id": _id,
         "shift_code": shift["shift_code"],
         "shift_name": shift["shift_name"],
         "shift_color": shift.get("color", "#64748b"),
         "effective_from": effective_from,
         "effective_until": effective_until,
-        "department": department,
+        "department": department or emp.get("department") or "",
         "assigned_by": assigned_by,
         "notes": notes,
         "status": "active",

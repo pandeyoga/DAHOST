@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   Key, Plus, Trash2, TestTube2, CheckCircle, XCircle,
@@ -83,7 +84,7 @@ export default function IntegrationSettingsModule({ token, userRole }) {
 
   const handleDelete = async (keyName) => {
     // 2026-11-02: tanpa istilah teknis "environment variable" di layar.
-    if (!window.confirm(`Hapus kunci ${keyName} dari database? Bila kunci juga diatur di server, nilai server yang dipakai.`)) return;
+    if (!(await confirmDialog(`Hapus kunci ${keyName} dari database? Bila kunci juga diatur di server, nilai server yang dipakai.`))) return;
     try {
       const res = await fetch(`/api/rahaza/integration-settings/${keyName}`, {
         method: 'DELETE',

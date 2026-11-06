@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { formatRupiah } from '@/lib/format';
 import { apiGet } from '@/lib/api';
 
@@ -77,12 +78,12 @@ export default function RnDProductViewer() {
               onChange={(e) => setQ(e.target.value)} placeholder="cari SKU / nama / model…"
               className="bg-transparent py-2 text-sm outline-none w-56" />
           </div>
-          <select data-testid="rnd-viewer-sort" value={sort} onChange={(e) => setSort(e.target.value)}
-            className="h-9 bg-foreground/5 border border-foreground/10 rounded-lg px-2 text-sm">
+          <SmartNativeSelect data-testid="rnd-viewer-sort" value={sort} onChange={(e) => setSort(e.target.value)}
+            className="w-64" wrapperClassName="w-64">
             <option value="">Urut: nama model</option>
             <option value="margin_asc">Urut: margin paling tipis dulu</option>
             <option value="margin_desc">Urut: margin paling tebal dulu</option>
-          </select>
+          </SmartNativeSelect>
           <label className="flex items-center gap-1.5 text-xs text-foreground/60">
             <input data-testid="rnd-viewer-only-broken" type="checkbox" checked={onlyBroken}
               onChange={(e) => setOnlyBroken(e.target.checked)} />

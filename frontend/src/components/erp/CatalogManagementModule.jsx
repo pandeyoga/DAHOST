@@ -546,8 +546,8 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
                     onChange={e => setSearchQ(e.target.value)}
                   />
                 </div>
-                <select
-                  className="text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
+                <SmartNativeSelect
+                  className="w-36 text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
                   value={filterStatus}
                   onChange={e => setFilterStatus(e.target.value)}
                 >
@@ -555,9 +555,9 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
                   <option value="in_stock">Tersedia</option>
                   <option value="low_stock">Stok Rendah</option>
                   <option value="out_of_stock">Habis</option>
-                </select>
-                <select
-                  className="text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
+                </SmartNativeSelect>
+                <SmartNativeSelect
+                  className="w-48 text-xs rounded border border-foreground/10 bg-foreground/5 px-3 py-1.5 text-foreground"
                   value={filterCategoryId}
                   onChange={e => setFilterCategoryId(e.target.value)}
                   title="Kategori dari Master Produk (bukan teks bebas)"
@@ -567,7 +567,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
                   {productCategories.map(c => (
                     <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>
                   ))}
-                </select>
+                </SmartNativeSelect>
               </div>
 
               {/* F11 — chip "Perlu Perhatian". Ada di samping filter lain supaya
@@ -1174,6 +1174,7 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
       category: fg.category || fg.subtype || '',
       variant_info: [
         fg.color ? `Warna: ${fg.color}` : null,
+        fg.size_code ? `Size: ${fg.size_code}` : null,
         readField(fg, FIELD.composition) ? `Material: ${readField(fg, FIELD.composition)}` : null,
       ].filter(Boolean).join(' | '),
       stock_quantity: fg.stock_qty || 0,
@@ -1304,7 +1305,7 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                     </>
                   ) : (
                     <>
-                      <select
+                      <SmartNativeSelect
                         className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground"
                         value={form.category_id || ''}
                         onChange={e => setForm(f => ({ ...f, category_id: e.target.value }))}
@@ -1314,7 +1315,7 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                         {productCategories.map(c => (
                           <option key={c.id} value={c.id}>{c.sku_prefix} · {c.name}</option>
                         ))}
-                      </select>
+                      </SmartNativeSelect>
                       <p className="text-[10px] text-muted-foreground">
                         Dari Master Kategori Produk (bukan teks bebas) supaya
                         pengelompokan katalog bisa dipercaya.
@@ -1349,7 +1350,10 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                 />
               </div>
 
-              {mode === 'manual' && (
+              {/* 2026-11-07 (Tahap 5) — penautan varian HANYA untuk item lama yang belum tertaut
+                  Master FG. Dulu pilihan ini juga muncul saat mengubah item dari FG, sehingga
+                  variant_id/SKU bisa menunjuk varian lain dari FG-nya (stok & HPP jadi salah). */}
+              {mode === 'manual' && !(initial.fg_material_id || initial.material_id) && (
                 <div className="space-y-1">
                   <Label className="text-xs">Tautkan Varian Produksi (opsional)</Label>
                   <Select
@@ -1371,7 +1375,9 @@ function ItemDialog({ initial, catalog, token, productCategories = [], onSave, o
                     <SelectContent>
                       <SelectItem value="none">— Tidak ditautkan —</SelectItem>
                       {prodVariants.map(v => (
-                        <SelectItem key={v.id} value={v.id}>{v.sku} · {v.color_name} {v.size_code}</SelectItem>
+                        <SelectItem key={v.id} value={v.id}>
+                          {[v.sku, v.model_name, v.color_name, v.size_code].filter(Boolean).join(' · ')}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>

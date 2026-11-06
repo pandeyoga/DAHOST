@@ -1202,9 +1202,11 @@ export default function DataImportWizard({ token }) {
                     </div>
                     <p className="text-[11px] text-muted-foreground mt-1 line-clamp-3">{t.describe}</p>
                     <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                      <Badge variant="outline" className="text-[10px]">
-                        <Database className="w-2.5 h-2.5 mr-1" />{t.collection}
-                      </Badge>
+                      {t.module_hint && (
+                        <Badge variant="outline" className="text-[10px]">
+                          <Database className="w-2.5 h-2.5 mr-1" />{t.module_hint}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="text-[10px]">{t.total_columns} kolom</Badge>
                       {t.account_scope === 'required' && (
                         <Badge className="text-[10px] bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300">
@@ -1330,8 +1332,8 @@ export default function DataImportWizard({ token }) {
               <p className="text-xs flex items-start gap-1.5">
                 <Info className="w-3.5 h-3.5 mt-px shrink-0 text-[hsl(var(--primary))]" />
                 <span>
-                  Data akan masuk ke <b>{selectedType.collection}</b> dan bisa dilihat di
-                  menu <b>{selectedType.module_hint || '—'}</b>.
+                  {/* 2026-11-07 (Tahap 5) — nama koleksi database tidak ditampilkan ke staf (AGENTS.md §5) */}
+                  Hasil impor bisa dilihat di menu <b>{selectedType.module_hint || selectedType.label}</b>.
                   {selectedType.prenorm ? (
                     <> Kolomnya dibaca otomatis dari bentuk ekspor Seller Center —
                     unggah berkasnya <b>apa adanya</b> (jangan dirapikan).</>

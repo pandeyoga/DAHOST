@@ -10,7 +10,14 @@ import StatusBadge from './StatusBadge';
 import ConfirmDialog from './ConfirmDialog';
 import ImportExportToolbar from './ImportExportToolbar';
 
-const SYSTEM_ROLES = ['admin', 'vendor', 'buyer', 'superadmin'];
+// Peran bawaan berizin tetap (backend `auth.FIXED_ROLE_PERMS`) — tidak ada di master Peran.
+// 2026-11-07 (Tahap 5): `cmt_vendor` dulu tidak ada di daftar, sehingga 12 akun vendor CMT
+// tampil sebagai "admin" saat diubah. Peran lain diambil dari master Peran (/api/roles).
+const SYSTEM_ROLES = ['superadmin', 'admin', 'vendor', 'cmt_vendor', 'buyer'];
+const SYSTEM_ROLE_LABEL = {
+  superadmin: 'Super admin', admin: 'Admin', vendor: 'Vendor garmen (lama)',
+  cmt_vendor: 'Vendor CMT', buyer: 'Buyer',
+};
 const API = process.env.REACT_APP_BACKEND_URL;
 
 export default function UserManagementModule({ token }) {
@@ -83,12 +90,16 @@ export default function UserManagementModule({ token }) {
       setShowLinkModal(null);
       fetchUsers();
     } catch (e) {
-      alert(e.response?.data?.detail || 'Gagal menghubungkan.');
+      toast.error(e.response?.data?.detail || 'Gagal menghubungkan.');
     } finally { setLinkLoading(false); }
   };
 
-  // All available roles: system + custom
-  const allRoles = [...SYSTEM_ROLES, ...customRoles.map(r => r.name)];
+  // Peran dari master (tanpa nama yang sama dengan peran bawaan), urut nama.
+  const masterRoles = customRoles
+    .filter(r => r && r.name && !SYSTEM_ROLES.includes(r.name))
+    .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const knownRole = (name) => SYSTEM_ROLES.includes(name) || masterRoles.some(r => r.name === name);
+  const roleLabel = (r) => (r.display_name || r.label || String(r.name).replace(/_/g, ' '));
 
   const openCreate = () => {
     setEditData(null);
@@ -253,27 +264,33 @@ export default function UserManagementModule({ token }) {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Role *</label>
-                <select className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                <label className="block text-sm font-medium text-foreground mb-1">Peran *</label>
+                <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={form.role} onChange={e => setForm({...form, role: e.target.value})} data-testid="user-role">
-                  <optgroup label="System Roles">
-                    {SYSTEM_ROLES.map(r => <option key={r} value={r} className="capitalize">{r}</option>)}
+                  {form.role && !knownRole(form.role) && (
+                    <option value={form.role}>{`${form.role} (tidak ada di master Peran)`}</option>
+                  )}
+                  <optgroup label="Peran bawaan">
+                    {SYSTEM_ROLES.map(r => <option key={r} value={r}>{SYSTEM_ROLE_LABEL[r] || r}</option>)}
                   </optgroup>
-                  {customRoles.length > 0 && (
-                    <optgroup label="Custom Roles">
-                      {customRoles.map(r => <option key={r.name} value={r.name}>{`${r.name} (${(r.permissions || []).length} perms)`}</option>)}
+                  {masterRoles.length > 0 && (
+                    <optgroup label="Master Peran">
+                      {masterRoles.map(r => <option key={r.name} value={r.name}>{roleLabel(r)}</option>)}
                     </optgroup>
                   )}
-                </select>
+                </SmartNativeSelect>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-foreground mb-1">Status</label>
-                <select className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={form.status} onChange={e => setForm({...form, status: e.target.value})}>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
-              </div>
+              {/* Akun baru selalu aktif (server) — status hanya bisa diubah saat mengedit. */}
+              {editData && (
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-1">Status</label>
+                  <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={form.status} onChange={e => setForm({...form, status: e.target.value})} data-testid="user-status">
+                    <option value="active">Aktif</option>
+                    <option value="inactive">Nonaktif</option>
+                  </SmartNativeSelect>
+                </div>
+              )}
             </div>
 
             {/* Vendor link for vendor role */}
@@ -306,7 +323,9 @@ export default function UserManagementModule({ token }) {
             <div className="bg-amber-50 rounded-lg p-3 text-xs text-amber-700">
               {form.role === 'vendor' && 'Catatan: Akun vendor biasanya dibuat otomatis dari Data Vendor/Garmen'}
               {form.role === 'buyer' && 'Catatan: Akun buyer biasanya dibuat otomatis dari Data Buyer'}
-              {!['vendor', 'buyer'].includes(form.role) && `Password default: User@123 | Role: ${form.role}`}
+              {form.role === 'cmt_vendor' && 'Catatan: akun vendor CMT sebaiknya dibuat dari menu Vendor CMT supaya tertaut ke vendornya'}
+              {!['vendor', 'buyer', 'cmt_vendor'].includes(form.role) && !editData && 'Password kosong = password bawaan User@123 — minta pengguna menggantinya setelah masuk.'}
+              {!['vendor', 'buyer', 'cmt_vendor'].includes(form.role) && editData && 'Kosongkan password bila tidak diubah.'}
             </div>
 
             <div className="flex gap-3">

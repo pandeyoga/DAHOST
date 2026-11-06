@@ -73,7 +73,11 @@ export function DetailPanel({ title, description, actions, onClose, children, te
   useEffect(() => { ref.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }); }, []);
   useEffect(() => {
     if (!onClose) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    // 2026-11-07 (audit form Tahap 5): Esc yang sudah dipakai lapisan Radix di atas panel (daftar pilihan
+    // SmartNativeSelect, dialog konfirmasi, popover) TIDAK ikut menutup panel. Radix memanggil
+    // preventDefault() saat menutup lapisannya; dulu Esc untuk menutup daftar akun di "Jurnal baru"
+    // ikut menutup seluruh panel dan isian yang sudah diketik hilang.
+    const onKey = (e) => { if (e.key === 'Escape' && !e.defaultPrevented) onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);

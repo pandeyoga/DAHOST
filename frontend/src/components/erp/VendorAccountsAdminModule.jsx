@@ -518,17 +518,22 @@ function AllJobsTab({ token, showToast }) {
   const [editId, setEditId] = useState(null);
   const [confirm, setConfirm] = useState(null);   // { job } | null
   const [deleting, setDeleting] = useState(false);
+  const [processes, setProcesses] = useState([]);
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [jr, pr, mr] = await Promise.all([
+      const [jr, pr, mr, prc] = await Promise.all([
         fetch('/api/vendor-portal/jobs', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
         fetch('/api/vendor-portal/partners', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
         fetch('/api/rahaza/models', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []),
+        // 2026-11-07 (Tahap 5): proses job DARI MASTER PROSES (dulu daftar tetap berisi "EMBROIDERY" yang tidak
+        // ada di master, dan PACKING/PERMAK yang ada di master tidak bisa dipilih)
+        fetch('/api/rahaza/processes', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       setJobs(jr || []); setPartners(pr || []); setModels((mr || []).filter(m => m.active !== false));
+      setProcesses((Array.isArray(prc) ? prc : (prc?.items || [])).filter(x => x.active !== false && x.code));
     } finally { setLoading(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
@@ -608,7 +613,8 @@ function AllJobsTab({ token, showToast }) {
               placeholder="Qty target" className="px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground" data-testid="job-form-qty" />
             <SmartNativeSelect value={form.process} onChange={e => setForm(p => ({ ...p, process: e.target.value }))} data-testid="job-form-process"
               className="w-full px-3 py-2 rounded-lg bg-[var(--glass-bg)] border border-foreground/15 text-sm text-foreground appearance-none">
-              {['SEWING', 'FINISHING', 'QC', 'EMBROIDERY', 'CUTTING'].map(x => <option key={x} value={x}>{x}</option>)}
+              {form.process && !processes.some(x => x.code === form.process) && <option value={form.process}>{form.process}</option>}
+              {processes.map(x => <option key={x.code} value={x.code}>{`${x.name} (${x.code})`}</option>)}
             </SmartNativeSelect>
             <GlassInput type="date" value={form.due_date} onChange={e => setForm(p => ({ ...p, due_date: e.target.value }))}
               title="Tenggat job" data-testid="job-form-due" />

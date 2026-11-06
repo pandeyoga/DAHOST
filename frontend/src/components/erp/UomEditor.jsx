@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import {
   MAX_UOMS, normalizeCode, sanitizeUoms, validateUoms, describeHierarchy,
 } from '@/lib/uom';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 // 2026-11-06 (pola P8): roll/pack = ejaan master material (dulu rol/gulung/pak → satuan kembar)
 const SATUAN_UMUM = [
@@ -245,14 +246,14 @@ export const UomEditor = ({
           ].map((f) => (
             <div key={f.key}>
               <label className="block text-[11px] text-muted-foreground mb-1">{f.label}</label>
-              <select value={normalizeCode(f.value) || base}
+              <SmartNativeSelect value={normalizeCode(f.value) || base}
                 onChange={(e) => emit(packs, { [f.key]: e.target.value })}
                 className={inputCls}
                 data-testid={f.testid}>
                 {allRows.map((r) => (
                   <option key={r.code || 'x'} value={r.code}>{r.code || '—'}</option>
                 ))}
-              </select>
+              </SmartNativeSelect>
             </div>
           ))}
         </div>

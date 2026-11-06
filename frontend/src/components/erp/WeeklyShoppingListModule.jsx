@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 /**
  * Daftar Belanja Mingguan (sesi #33) — "minggu ini saya harus belanja apa?"
@@ -235,14 +236,14 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
                 placeholder="Cari kode / nama barang…" className="pl-8 h-9 text-sm"
                 data-testid="shopping-search" />
             </div>
-            <select value={filterType} onChange={e => setFilterType(e.target.value)}
-              className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+            <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)}
+              className="w-48 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
               data-testid="shopping-filter-type">
               <option value="">Semua jenis</option>
               <option value="bahan">Bahan (kain/benang)</option>
               <option value="aksesoris">Aksesoris</option>
               <option value="fg">Produk Jadi</option>
-            </select>
+            </SmartNativeSelect>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
               <input type="checkbox" checked={hideRequested}
                 onChange={e => setHideRequested(e.target.checked)}

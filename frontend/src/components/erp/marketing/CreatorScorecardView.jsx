@@ -19,6 +19,7 @@
  * Ditambah paginasi 10/hal (standar RC-UI-03) dan unduh CSV untuk bahan rapat.
  */
 import { useState, useEffect, useCallback } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   RefreshCw, Loader2, Info, Target, AlertTriangle, Table2, LayoutGrid, Search,
   Download, X, ShoppingCart, Video, Radio,
@@ -162,11 +163,11 @@ export default function CreatorScorecardView({ token, onNavigate }) {
       <div className="flex flex-wrap items-end gap-2">
         <div>
           <label className="text-[11px] text-muted-foreground block">Bulan</label>
-          <select value={month} onChange={(e) => setMonth(Number(e.target.value))}
+          <SmartNativeSelect value={month} onChange={(e) => setMonth(Number(e.target.value))}
             data-testid="scorecard-month"
-            className="h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs">
+            className="w-40 h-9 rounded-md border border-border bg-background text-foreground px-2 text-xs">
             {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
-          </select>
+          </SmartNativeSelect>
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground block">Tahun</label>

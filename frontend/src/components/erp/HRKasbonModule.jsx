@@ -20,6 +20,8 @@ import {
 import { formatRupiah } from '@/lib/format';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { MoneyInput } from '@/components/ui/money-input';
 
 const HRKASBON_VIEW_KEY = 'hr_kasbon_view';
 const CSV_HEAD = ['No. Pengajuan', 'Karyawan', 'Kode', 'Departemen', 'Jenis',
@@ -113,7 +115,8 @@ function ReviewModal({ req, onClose, onDone }) {
           {action === 'approve' && (
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Nilai disetujui (maks {fmt(req.amount)})</label>
-              <input type="number" min="1" max={req.amount} value={approvedAmount}
+              {/* Tahap 5 (2026-11-07): nominal uang memakai MoneyInput (pemisah ribuan), bukan input angka polos */}
+              <MoneyInput unstyled value={approvedAmount}
                 onChange={e => setApprovedAmount(e.target.value)} data-testid="kasbon-approved-amount"
                 className="w-full h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
               {tooHigh && <div className="text-[10px] text-red-600 mt-1">Tidak boleh melebihi nilai yang diminta.</div>}
@@ -294,16 +297,17 @@ export default function HRKasbonModule() {
             data-testid="hrkasbon-search"
             className="w-full h-9 pl-9 pr-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
         </div>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
           data-testid="hrkasbon-filter-status"
           className="h-9 px-3 rounded-xl border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-          <option value="all">Semua Status</option>
+          <option value="all">Semua status</option>
           <option value="submitted">Menunggu HR</option>
           <option value="hr_approved">Disetujui HR</option>
           <option value="hr_rejected">Ditolak</option>
           <option value="disbursed">Aktif</option>
           <option value="paid_off">Lunas</option>
-        </select>
+          <option value="cancelled">Dibatalkan</option>
+        </SmartNativeSelect>
         <div className="flex items-center gap-2">
           <div className="inline-flex rounded-lg border border-[var(--glass-border)] overflow-hidden">
             <button type="button" onClick={() => setView('table')} data-testid="hrkasbon-view-table"

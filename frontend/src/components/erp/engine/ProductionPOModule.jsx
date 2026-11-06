@@ -933,7 +933,11 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                       <div>
                         <label className="block text-xs text-muted-foreground mb-1">Model (RnD) *</label>
                         <SearchableSelect
-                          options={models.map(m => ({ value: m.id, label: m.name, sub: m.code }))}
+                          options={models
+                            // 2026-11-07: model non-aktif tidak ditawarkan (server mengirim semua model) — kecuali
+                            // yang sudah tersimpan di baris ini supaya PO lama tetap terbaca.
+                            .filter(m => m.active !== false || m.id === item.model_id)
+                            .map(m => ({ value: m.id, label: m.name, sub: m.code }))}
                           value={item.model_id}
                           onChange={val => updateItem(idx, 'model_id', val)}
                           placeholder="Pilih Model"
@@ -947,8 +951,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                         <SearchableSelect
                           options={(rahazaVariants[item.model_id] || []).map(v => ({
                             value: v.id,
-                            label: `${v.color_name || '-'} · ${v.size_code || '-'} — ${v.sku}`,
-                            sub: v.sku,
+                            label: `${v.color_name || '-'} · ${v.size_code || '-'} · ${v.sku}`,
                           }))}
                           value={item.rahaza_variant_id}
                           onChange={val => updateItem(idx, 'rahaza_variant_id', val)}
@@ -998,8 +1001,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                           <SearchableSelect
                             options={maklonVariants.map(v => ({
                               value: v.sku,
-                              label: `${v.color || '-'} · ${v.size || '-'} — ${v.sku}`,
-                              sub: v.sku,
+                              label: `${v.color || '-'} · ${v.size || '-'} · ${v.sku}`,
                             }))}
                             value={item.sku}
                             onChange={val => updateItem(idx, 'maklon_variant_sku', val)}

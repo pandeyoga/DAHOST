@@ -121,14 +121,23 @@ export default function RnDCostingTab({ token }) {
 
   const setStyleField = sid => {
     const sel = styles.find(s => s.id === sid);
-    setForm(p => ({ ...p, style_id: sid, style_name: sel?.style_name || '' }));
+    // 2026-11-07 (Tahap 5): sample milik style LAIN dilepas saat style diganti (dulu tertinggal ⇒ costing
+    // menunjuk sample style A tetapi style B).
+    setForm(p => {
+      const cur = samples.find(x => x.sample_code === p.sample_code);
+      const drop = cur && cur.style_id && sid && cur.style_id !== sid;
+      return { ...p, style_id: sid, style_name: sel?.style_name || '',
+               ...(drop ? { sample_code: '', sample_request_id: '' } : {}) };
+    });
   };
 
   const setSampleField = sc => {
     const sel = samples.find(s => s.sample_code === sc);
     if (sel) setForm(p => ({ ...p, sample_code: sc, sample_request_id: sel.id, style_id: sel.style_id || p.style_id, style_name: sel.style_name || p.style_name }));
-    else f('sample_code', sc);
+    else setForm(p => ({ ...p, sample_code: sc, sample_request_id: '' }));
   };
+  // Pilihan sample = sample milik style terpilih (tanpa style: semua).
+  const sampleChoices = form.style_id ? samples.filter(s => !s.style_id || s.style_id === form.style_id) : samples;
 
   const openEdit = rec => {
     setForm({
@@ -327,7 +336,7 @@ export default function RnDCostingTab({ token }) {
                 data-testid="costing-sample-select"
                 className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
                 <option value="">-- Pilih Kode Sample --</option>
-                {samples.map(s => <option key={s.id} value={s.sample_code}>{s.sample_code} — {s.style_name}</option>)}
+                {sampleChoices.map(s => <option key={s.id} value={s.sample_code}>{`${s.sample_code} — ${s.style_name || ''}`}</option>)}
               </SmartNativeSelect>
             </div>
             <div>

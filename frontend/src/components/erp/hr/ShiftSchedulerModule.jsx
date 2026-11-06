@@ -1,10 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { useHrMasters, useActiveEmployees, useDepartmentFilterOptions } from './hrPickers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
@@ -46,6 +48,11 @@ export default function ShiftSchedulerModule({ token }) {
   });
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  // Tahap 5 (2026-11-07): departemen dari master Struktur Organisasi + departemen karyawan. Dulu daftar tetap
+  // berbahasa Inggris (Production/Warehouse/QC/Finishing) yang tidak cocok dengan data karyawan → jadwal kosong.
+  const { units } = useHrMasters(token, { positions: false, shifts: false });
+  const { employees: activeEmployees } = useActiveEmployees(token);
+  const deptOptions = useDepartmentFilterOptions(units, activeEmployees);
 
   const fetchSchedules = useCallback(async () => {
     setLoading(true);
@@ -100,7 +107,7 @@ export default function ShiftSchedulerModule({ token }) {
   };
 
   const handleDeleteTemplate = async (templateId) => {
-    if (!confirm('Hapus template ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus template ini?', danger: true }))) return;
     
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/templates/${templateId}`, {
@@ -142,7 +149,7 @@ export default function ShiftSchedulerModule({ token }) {
   };
 
   const handlePublishSchedule = async (scheduleId) => {
-    if (!confirm('Publish jadwal ini? Karyawan akan bisa melihat jadwal mereka.')) return;
+    if (!(await confirmDialog({ title: 'Terbitkan jadwal ini?', body: 'Karyawan akan bisa melihat jadwal mereka.' }))) return;
     
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/shift-scheduler/schedules/${scheduleId}/publish`, {
@@ -400,7 +407,7 @@ export default function ShiftSchedulerModule({ token }) {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>Start Date *</Label>
+                <Label>Tanggal mulai *</Label>
                 <Input 
                   type="date"
                   value={generateForm.start_date}
@@ -408,7 +415,7 @@ export default function ShiftSchedulerModule({ token }) {
                 />
               </div>
               <div>
-                <Label>End Date *</Label>
+                <Label>Tanggal selesai *</Label>
                 <Input 
                   type="date"
                   value={generateForm.end_date}
@@ -417,19 +424,12 @@ export default function ShiftSchedulerModule({ token }) {
               </div>
             </div>
             <div>
-              <Label>Department (Optional)</Label>
-              <Select value={generateForm.department} onValueChange={v => setGenerateForm({ ...generateForm, department: v })}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Semua departemen" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="">Semua Departemen</SelectItem>
-                  <SelectItem value="Production">Production</SelectItem>
-                  <SelectItem value="Warehouse">Warehouse</SelectItem>
-                  <SelectItem value="QC">QC</SelectItem>
-                  <SelectItem value="Finishing">Finishing</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Departemen (opsional)</Label>
+              <SmartNativeSelect value={generateForm.department || ''} onChange={e => setGenerateForm({ ...generateForm, department: e.target.value })}
+                data-testid="sched-gen-department" className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+                <option value="">Semua departemen</option>
+                {deptOptions.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+              </SmartNativeSelect>
             </div>
             <div>
               <Label>Shift Templates * (Pilih minimal 1)</Label>

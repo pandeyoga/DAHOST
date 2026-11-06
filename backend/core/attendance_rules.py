@@ -155,6 +155,53 @@ async def resolve_day_shift(db, emp: Optional[dict], day, explicit_shift_id=None
     return None
 
 
+async def default_shift_ids(db, emps: list, day, shifts: list) -> dict:
+    """{employee_id: shift_id} — shift bawaan grid absensi HR untuk `day` (2026-11-07, Tahap 5).
+
+    Urutan SAMA dengan `resolve_day_shift` (tanpa record hari itu): Jadwal Shift terbit → penugasan shift →
+    shift bawaan karyawan. Versi massal (3 kueri untuk semua karyawan) supaya grid tidak memanggil
+    `resolve_day_shift` per baris. Hanya shift AKTIF di `shifts` yang dikembalikan; jadwal (yang menyimpan
+    kode shift) dipetakan ke id lewat kode. Karyawan tanpa shift yang diketahui tidak ada di hasil — grid
+    memakai shift pertama seperti sebelumnya. Dulu grid SELALU memakai shift pertama untuk semua karyawan."""
+    day = str(day)[:10]
+    by_id = {str(s.get("id")): s for s in shifts or [] if s.get("id") is not None}
+    by_code = {str(s.get("code") or "").upper(): s for s in shifts or [] if s.get("code")}
+    emp_ids = [e.get("id") for e in emps or [] if e.get("id")]
+    out: dict = {}
+    if not emp_ids:
+        return out
+
+    def _ok(sid):
+        return str(sid) if sid is not None and str(sid) in by_id else None
+
+    scheds = await db.rahaza_schedules.find(
+        {"status": "published", "start_date": {"$lte": day}, "end_date": {"$gte": day}},
+        {"_id": 0, "shifts": 1, "published_at": 1}).sort("published_at", -1).to_list(20)
+    for sc in scheds:   # terbit paling baru menang (sama dengan resolve_day_shift)
+        for e in sc.get("shifts") or []:
+            eid = e.get("employee_id")
+            if eid in out or str(e.get("date") or "")[:10] != day:
+                continue
+            sh = by_code.get(str(e.get("shift_code") or "").upper()) or by_id.get(str(e.get("shift_id")))
+            if sh:
+                out[eid] = str(sh["id"])
+    rest = [i for i in emp_ids if i not in out]
+    if rest:
+        async for a in db.hr_shift_assignments.find({
+            "employee_id": {"$in": rest}, "status": "active", "effective_from": {"$lte": day},
+            "$or": [{"effective_until": None}, {"effective_until": ""}, {"effective_until": {"$gte": day}}],
+        }, {"_id": 0, "employee_id": 1, "shift_id": 1}):
+            sid = _ok(a.get("shift_id"))
+            if sid and a.get("employee_id") not in out:
+                out[a["employee_id"]] = sid
+    for e in emps or []:
+        if e.get("id") and e["id"] not in out:
+            sid = _ok(e.get("shift_id"))
+            if sid:
+                out[e["id"]] = sid
+    return out
+
+
 def shift_end_utc(day, shift: Optional[dict], clock_in=None) -> Optional[datetime]:
     """Instan jam pulang shift untuk tanggal kerja `day` (shift lewat tengah malam → besoknya)."""
     d = date.fromisoformat(str(day)[:10])

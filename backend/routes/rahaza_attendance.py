@@ -302,8 +302,10 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
     ot_by_emp: dict = {}
     for o in ot_req:
         ot_by_emp[o.get("employee_id")] = ot_by_emp.get(o.get("employee_id"), 0) + float(o.get("hours") or 0)
-    from core.attendance_rules import attendance_lock
+    from core.attendance_rules import attendance_lock, default_shift_ids
     lock_cache: dict = {}
+    # 2026-11-07 (Tahap 5): shift bawaan per karyawan (jadwal → penugasan → shift karyawan) untuk baris baru
+    default_shift = await default_shift_ids(db, emps, d, shifts)
     rows = []
     for e in emps:
         r = by_emp.get(e["id"])
@@ -318,6 +320,7 @@ async def attendance_grid(request: Request, date: Optional[str] = None):
             "existing_id": r["id"] if r else None,
             "status":        (r or {}).get("status",   "hadir"),
             "shift_id":      (r or {}).get("shift_id") or None,
+            "default_shift_id": default_shift.get(e["id"]),
             "clock_in":      (r or {}).get("clock_in"),
             "clock_out":     (r or {}).get("clock_out"),
             "hours_worked":       (r or {}).get("hours_worked", 0),

@@ -21,6 +21,7 @@
  * melahirkan "bukti tayang" yang salah — lebih buruk daripada tidak ada bukti.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   Table2, LayoutGrid, ExternalLink, Image as ImageIcon, Upload, Trash2, Edit2,
   Rocket, Download, Loader2, AlertTriangle, CheckCircle2, XCircle, Archive,
@@ -539,7 +540,7 @@ export default function CatalogItemsView({
 
       {/* ── baris alat: penayangan · foto · urutan · tampilan · CSV ─────────── */}
       <div className="flex flex-wrap items-center gap-2">
-        <select className="text-xs rounded border border-border bg-[hsl(var(--background))]
+        <SmartNativeSelect className="w-40 text-xs rounded border border-border bg-[hsl(var(--background))]
           text-foreground px-2 py-1.5" data-testid="catalog-filter-publish"
           value={filters.publishState || ''}
           onChange={(e) => onFilterChange({ publishState: e.target.value })}>
@@ -548,16 +549,16 @@ export default function CatalogItemsView({
           <option value="published">Tayang</option>
           <option value="rejected">Ditolak</option>
           <option value="archived">Diarsipkan</option>
-        </select>
-        <select className="text-xs rounded border border-border bg-[hsl(var(--background))]
+        </SmartNativeSelect>
+        <SmartNativeSelect className="w-32 text-xs rounded border border-border bg-[hsl(var(--background))]
           text-foreground px-2 py-1.5" data-testid="catalog-filter-photo"
           value={filters.hasPhoto || ''}
           onChange={(e) => onFilterChange({ hasPhoto: e.target.value })}>
           <option value="">Foto: semua</option>
           <option value="true">Punya foto</option>
           <option value="false">Tanpa foto</option>
-        </select>
-        <select className="text-xs rounded border border-border bg-[hsl(var(--background))]
+        </SmartNativeSelect>
+        <SmartNativeSelect className="w-44 text-xs rounded border border-border bg-[hsl(var(--background))]
           text-foreground px-2 py-1.5" data-testid="catalog-sort"
           value={`${filters.sort || 'name'}:${filters.order || 'asc'}`}
           onChange={(e) => {
@@ -571,7 +572,7 @@ export default function CatalogItemsView({
           <option value="margin:asc">Marjin terendah</option>
           <option value="stock:asc">Stok paling sedikit</option>
           <option value="updated:desc">Terakhir diubah</option>
-        </select>
+        </SmartNativeSelect>
 
         <div className="ml-auto flex items-center gap-1.5">
           <Button size="sm" variant="outline" onClick={exportCsv} data-testid="catalog-export-csv">

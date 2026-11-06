@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import FGStockMatrixView from './FGStockMatrixView';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const REASON_OPTIONS = [
   { value: 'surat_jalan_internal', label: 'Surat Jalan Internal',  color: 'text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)]' },
@@ -227,7 +228,7 @@ export default function RahazaFGInventoryModule({ token }) {
             {/* Lokasi asal — wajib dipilih (No.18a) */}
             <div className="md:col-span-2">
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Lokasi Asal *</label>
-              <select
+              <SmartNativeSelect
                 value={form.location_id}
                 onChange={e => setForm(f => ({ ...f, location_id: e.target.value }))}
                 disabled={!form.material_id}
@@ -241,7 +242,7 @@ export default function RahazaFGInventoryModule({ token }) {
                     {(r.location_code ? `${r.location_code} · ` : '') + (r.location_name || r.location_id)} — {r.qty} pcs
                   </option>
                 ))}
-              </select>
+              </SmartNativeSelect>
               {form.material_id && locOptions.length === 0 && (
                 <div className="mt-1 text-xs text-[hsl(var(--destructive))]">Produk ini tidak punya stok di lokasi mana pun.</div>
               )}

@@ -19,7 +19,9 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { MoneyInput } from '@/components/ui/money-input';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
 import Modal from '../Modal';
+import ConfirmDialog from '../ConfirmDialog';
 import ImportExportToolbar from '../ImportExportToolbar';
 import { toast } from 'sonner';
 import {
@@ -337,6 +339,8 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
   const [uomOpts, setUomOpts] = useState(null);
   const [savingPrice, setSavingPrice] = useState(false);
   const [priceErr, setPriceErr] = useState('');
+  // 2026-11-07 (Tahap 5): konfirmasi aplikasi (dulu window.confirm); dirender DI DALAM Modal supaya bisa diklik
+  const [confirmDelPrice, setConfirmDelPrice] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -399,8 +403,9 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
     } finally { setSavingPrice(false); }
   };
 
-  const delPrice = async (rowId) => {
-    if (!window.confirm('Hapus baris harga ini?')) return;
+  const delPrice = (rowId) => setConfirmDelPrice(rowId);
+  const doDelPrice = async (rowId) => {
+    setConfirmDelPrice(null);
     try {
       await apiDelete(token, EP.priceRow(supplierId, rowId));
       toast.success('Baris harga dihapus');
@@ -553,7 +558,7 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
                     className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
                     data-testid="price-form-material">
                     <option value="">Pilih material</option>
-                    {materials.map((m) => <option key={m.id} value={m.id}>{`${m.code} - ${m.name}`}</option>)}
+                    {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
                   </SmartNativeSelect>
                 </div>
                 <div className="col-span-4 md:col-span-2">
@@ -707,6 +712,10 @@ function SupplierDetail({ token, supplierId, materials, onClose, onChanged }) {
           </div>
         )}
       </div>
+      {confirmDelPrice && (
+        <ConfirmDialog title="Hapus baris harga?" message="Baris harga ini dihapus dari daftar harga supplier."
+          onConfirm={() => doDelPrice(confirmDelPrice)} onCancel={() => setConfirmDelPrice(null)} />
+      )}
     </Modal>
   );
 }
@@ -857,8 +866,10 @@ export default function SupplierMasterModule({ token }) {
       .catch(() => {});
   }, [token]);
 
-  const deactivate = async (s) => {
-    if (!window.confirm(`Nonaktifkan supplier ${s.name}?`)) return;
+  const [confirmOff, setConfirmOff] = useState(null);
+  const deactivate = (s) => setConfirmOff(s);
+  const doDeactivate = async (s) => {
+    setConfirmOff(null);
     try {
       await apiDelete(token, EP.supplier(s.id));
       toast.success('Supplier dinonaktifkan');
@@ -1065,6 +1076,11 @@ export default function SupplierMasterModule({ token }) {
       {migrateOpen && (
         <MigrateModal token={token} onClose={() => setMigrateOpen(false)}
                       onDone={() => load(1)} />
+      )}
+      {confirmOff && (
+        <ConfirmDialog type="warning" title={`Nonaktifkan supplier ${confirmOff.name}?`}
+          message="Supplier tidak bisa dipilih lagi di PO/PR baru; riwayatnya tetap ada."
+          onConfirm={() => doDeactivate(confirmOff)} onCancel={() => setConfirmOff(null)} />
       )}
     </div>
   );

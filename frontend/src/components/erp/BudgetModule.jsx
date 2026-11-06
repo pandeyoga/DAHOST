@@ -99,8 +99,14 @@ export default function BudgetModule({ token }) {
       fetch('/api/rahaza/coa/accounts?active_only=false', { headers }),
     ]);
     if (ccRes.ok) setCostCenters(await ccRes.json());
-    if (coaRes.ok) setCoa(await coaRes.json());
+    // 2026-11-07 (audit form Tahap 5): item anggaran hanya ke akun AKTIF dan BUKAN grup — realisasi dibaca dari
+    // baris jurnal (akun rinci), jadi anggaran di akun grup/nonaktif selalu "realisasi 0". Dulu daftar memuat
+    // seluruh bagan akun (termasuk grup & nonaktif).
+    if (coaRes.ok) setCoa((await coaRes.json()).filter(a => a.active !== false && !a.is_group));
   };
+  // Pusat biaya & akun dimuat saat layar dibuka — dulu hanya saat rincian anggaran dibuka, sehingga pilihan
+  // "Pusat biaya" di form "Anggaran baru" kosong.
+  useEffect(() => { fetchMeta(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchItems = async (bid) => {
     const r = await fetch(`/api/rahaza/finance/budgets/${bid}/items`, { headers });
@@ -113,7 +119,6 @@ export default function BudgetModule({ token }) {
     setVariance(null);
     setItems([]);
     await fetchItems(budget.id);
-    await fetchMeta();
   };
   const closeDetail = () => { setSelected(null); setVariance(null); setPanelView('items'); };
   const toggleDetail = (b) => (selected?.id === b.id ? closeDetail() : openDetail(b));
@@ -379,14 +384,15 @@ export default function BudgetModule({ token }) {
           <div className="space-y-3">
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Akun *</label>
-              <SmartNativeSelect value={itemForm.account_id} onChange={e => setItemForm(f => ({...f, account_id: e.target.value}))} className="h-9 w-full">
+              <SmartNativeSelect value={itemForm.account_id} onChange={e => setItemForm(f => ({...f, account_id: e.target.value}))} className="h-9 w-full"
+                searchPlaceholder="Cari kode atau nama akun…" data-testid="budget-item-account">
                 <option value="">Pilih akun</option>
-                {coa.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
+                {coa.map(a => <option key={a.id} value={a.id}>{`${a.code} · ${a.name}`}</option>)}
               </SmartNativeSelect>
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Bulan *</label>
-              <SmartNativeSelect value={itemForm.month} onChange={e => setItemForm(f => ({...f, month: e.target.value}))} className="h-9 w-full">
+              <SmartNativeSelect value={itemForm.month} onChange={e => setItemForm(f => ({...f, month: e.target.value}))} className="h-9 w-full" data-testid="budget-item-month">
                 <option value="">Pilih bulan</option>
                 {/* 2026-11-02 (audit No.53): nilai bulan dulu memakai tahun form "Budget baru" (tahun berjalan) → item tersimpan ke tahun yang salah */}
                 {MONTHS.map(m => <option key={m} value={`${selected.year}-${m}`}>{periodLabel(`${selected.year}-${m}`)}</option>)}
@@ -402,7 +408,7 @@ export default function BudgetModule({ token }) {
             </div>
             <div className="flex gap-2 pt-1 justify-end">
               <Button variant="outline" onClick={() => setModalItem(false)}>Batal</Button>
-              <Button onClick={addItem}>Simpan</Button>
+              <Button onClick={addItem} disabled={!itemForm.account_id || !itemForm.month} data-testid="budget-item-save">Simpan</Button>
             </div>
           </div>
         </Modal>
@@ -436,7 +442,7 @@ export default function BudgetModule({ token }) {
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Pusat biaya</label>
-              <SmartNativeSelect value={budgetForm.cost_center_id} onChange={e => setBudgetForm(f => ({...f, cost_center_id: e.target.value}))} className="h-9 w-full">
+              <SmartNativeSelect value={budgetForm.cost_center_id} onChange={e => setBudgetForm(f => ({...f, cost_center_id: e.target.value}))} className="h-9 w-full" data-testid="budget-cost-center">
                 <option value="">Pilih (opsional)</option>
                 {costCenters.map(c => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
               </SmartNativeSelect>
@@ -447,7 +453,7 @@ export default function BudgetModule({ token }) {
             </div>
             <div className="flex gap-2 pt-1 justify-end">
               <Button variant="outline" onClick={() => setModalBudget(false)}>Batal</Button>
-              <Button onClick={createBudget} data-testid="btn-submit-budget">Simpan anggaran</Button>
+              <Button onClick={createBudget} disabled={!budgetForm.name.trim()} data-testid="btn-submit-budget">Simpan anggaran</Button>
             </div>
           </div>
         </Modal>

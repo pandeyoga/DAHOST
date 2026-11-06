@@ -843,11 +843,10 @@ export default function RnDVariantModule({ token }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>Status</Label>
-              <select value={status} onChange={e => setStatus(e.target.value)}
-                data-testid="rnd-variant-status"
-                className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
+              <SmartNativeSelect value={status} onChange={e => setStatus(e.target.value)}
+                data-testid="rnd-variant-status" className="w-full mt-1">
                 {STATUS_OPTS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               <Label>Catatan</Label>

@@ -101,11 +101,12 @@ export default function RahazaARInvoicesModule({ token }) {
   }, [token, tick]);
 
   const changeStatus = useCallback(async (id, status) => {
-    await fetch(`/api/rahaza/ar-invoices/${id}/status`, {
+    const r = await fetch(`/api/rahaza/ar-invoices/${id}/status`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
     });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); setError(d.detail || `Gagal mengubah status faktur (HTTP ${r.status})`); }
     setTick(t => t + 1);
   }, [token]);
 
@@ -224,12 +225,13 @@ export default function RahazaARInvoicesModule({ token }) {
                             {inv.status === 'draft' && (
                               <Button variant="outline" size="sm" onClick={() => sendInvoice(inv.id)} data-testid={`ar-send-${inv.id}`} title="Terbitkan faktur dan catat ke buku besar">Terbitkan</Button>
                             )}
-                            {inv.status === 'sent' && (
+                            {/* 2026-11-07: server menyimpan status terbit sebagai `issued` (H-01) — dulu tombol hanya untuk `sent` sehingga tidak pernah tampil */}
+                            {['sent', 'issued'].includes(inv.status) && inv.schedule_mode !== 'v2' && (
                               <Button variant="outline" size="sm" onClick={() => changeStatus(inv.id, 'overdue')} title="Tandai lewat jatuh tempo">Jatuh tempo</Button>
                             )}
                             {/* Bayar — form terisi sisa tagihan; rekening wajib dipilih. 2026-11-04: tombol ⚡ "Lunas"
                                 sekali-klik dilepas karena diam-diam memakai rekening pertama (Kas Kecil). */}
-                            {inv.status !== 'draft' && inv.status !== 'paid' && inv.balance > 0 && (
+                            {inv.status !== 'draft' && inv.status !== 'cancelled' && (inv.status !== 'paid' || inv.schedule_mode === 'v2') && arPayCap(inv) > 0 && (
                               <Button variant="outline" size="sm"
                                 onClick={() => setPaying(inv)}
                                 data-testid={`ar-pay-form-${inv.id}`}
@@ -272,9 +274,24 @@ export default function RahazaARInvoicesModule({ token }) {
   );
 }
 
+/** Batas bayar satu faktur. Piutang maklon terjadwal (`schedule_mode` v2) boleh menerima uang muka sampai
+ *  sisa nilai PO (server: max(nilai jadwal, tertagih) − dibayar, core.maklon_ledger) — bukan hanya piutang
+ *  yang sudah jatuh (`balance`). Dulu layar membatasi ke `balance`, sehingga uang muka klien maklon ditolak
+ *  di layar padahal server menerimanya, dan PO yang belum dikirim (balance 0) tidak punya tombol Bayar. */
+export function arPayCap(inv) {
+  if (inv?.schedule_mode === 'v2') {
+    const out = inv.outstanding_total;
+    if (out !== undefined && out !== null) return Math.max(0, Number(out) || 0);
+    return Math.max(0, Math.max(Number(inv.scheduled_total || 0), Number(inv.billed_total || 0)) - Number(inv.amount_paid ?? inv.paid_amount ?? 0));
+  }
+  return Math.max(0, Number(inv?.balance || 0));
+}
+
 function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
-  const balance = Number(invoice.balance || 0);
-  const [amount, setAmount] = useState(balance);
+  const due = Number(invoice.balance || 0);
+  const balance = arPayCap(invoice);
+  const isSchedule = invoice.schedule_mode === 'v2';
+  const [amount, setAmount] = useState(isSchedule ? (due > 0 ? due : balance) : balance);
   // 2026-11-04: tanpa rekening bawaan (dulu rekening pertama = Kas Kecil) dan tanpa pilihan
   // "tidak link ke rekening" — uang dari pelanggan harus masuk ke rekening yang nyata.
   const [account_id, setAccount] = useState('');
@@ -282,11 +299,15 @@ function PaymentModal({ invoice, accounts, accountsLoaded, onClose, onPay }) {
   const [notes, setNotes] = useState('');
   const problem = !account_id ? 'Pilih rekening penerima.'
     : !(Number(amount) > 0) ? 'Jumlah harus lebih dari 0.'
-      : Number(amount) > balance + 0.5 ? `Jumlah melebihi sisa tagihan (${fmt(balance)}).`
+      : Number(amount) > balance + 0.5 ? `Jumlah melebihi ${isSchedule ? 'sisa nilai PO' : 'sisa tagihan'} (${fmt(balance)}).`
         : '';
   return (
     <Modal onClose={onClose} title="Catat pembayaran" size="sm" description={`${invoice.invoice_number} · ${invoice.customer_name}`}>
-      <p className="text-xs text-muted-foreground mb-3">{invoice.invoice_number} · {invoice.customer_name} · Sisa: {fmt(balance)}</p>
+      <p className="text-xs text-muted-foreground mb-3" data-testid="ar-pay-cap">
+        {invoice.invoice_number} · {invoice.customer_name} · {isSchedule
+          ? `Piutang jatuh ${fmt(due)} · bisa diterima sampai ${fmt(balance)} (sisa nilai PO; kelebihan dicatat sebagai uang muka)`
+          : `Sisa: ${fmt(balance)}`}
+      </p>
       <div className="space-y-3">
         <div><label className="text-xs text-muted-foreground" htmlFor="ar-pay-amount">Jumlah diterima</label><MoneyInput glass id="ar-pay-amount" value={amount} onChange={e => setAmount(Number(e.target.value))} data-testid="ar-pay-amount" /></div>
         <div><label className="text-xs text-muted-foreground">Masuk ke rekening</label><CashAccountSelect accounts={accounts} loaded={accountsLoaded} value={account_id} onChange={setAccount} testId="ar-pay-account" /></div>

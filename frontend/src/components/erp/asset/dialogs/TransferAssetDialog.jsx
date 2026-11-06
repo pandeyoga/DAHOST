@@ -1,8 +1,13 @@
 /**
  * TransferAssetDialog — Transfer asset to new location/department/employee.
  * Extracted from AssetManagementPortal.jsx (Phase 2 refactor)
+ *
+ * 2026-11-07 (audit form Tahap 5): penanggung jawab baru DIPILIH dari master karyawan (nama · NIK · departemen,
+ * bisa dicari) — dulu dua kotak teks "Employee ID" + "Nama Employee" yang harus diketik cocok sendiri, sehingga
+ * `assigned_to_id` bisa berisi teks yang bukan id karyawan. Departemen ikut terisi dari karyawan (tetap bisa diubah).
  */
 import { useState, useEffect } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -15,6 +20,18 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
     to_location: '', to_department: '', to_employee_id: '', to_employee_name: '', reason: '', notes: '',
   });
   const [loading, setLoading] = useState(false);
+  const [employees, setEmployees] = useState([]);
+  useEffect(() => {
+    if (!open) return;
+    apicall('GET', '/api/rahaza/employees?active_only=true&limit=500', token)
+      .then((d) => setEmployees(Array.isArray(d) ? d : (d.items || [])))
+      .catch(() => setEmployees([]));
+  }, [open, token]);
+  const pickEmployee = (id) => {
+    const e = employees.find((x) => x.id === id);
+    setForm((p) => ({ ...p, to_employee_id: id, to_employee_name: e ? e.name : '',
+      to_department: e?.department || e?.department_name || p.to_department }));
+  };
 
   useEffect(() => {
     if (asset) {
@@ -32,20 +49,21 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
 
   const submit = async () => {
     if (!form.to_location.trim() && !form.to_department.trim() && !form.to_employee_id.trim()) {
-      toast.error('Minimal 1 field harus diisi (lokasi/departemen/employee)');
+      toast.error('Isi minimal satu tujuan: lokasi, departemen, atau karyawan');
       return;
     }
+    if (!form.reason.trim()) { toast.error('Alasan transfer wajib diisi'); return; }
     setLoading(true);
     try {
       const data = await apicall('POST', `/api/assets/${asset.id}/transfer`, token, form);
       if (data.ok) {
-        toast.success('Asset berhasil ditransfer');
+        toast.success('Aset dipindahkan');
         onTransferred();
         onClose();
       } else {
-        toast.error(data.detail || 'Gagal transfer asset');
+        toast.error(data.detail || 'Gagal memindahkan aset');
       }
-    } catch { toast.error('Gagal transfer asset'); }
+    } catch (e) { toast.error(e.message || 'Gagal memindahkan aset'); }
     finally { setLoading(false); }
   };
 
@@ -55,7 +73,7 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Transfer Asset</DialogTitle>
+          <DialogTitle>Pindahkan aset</DialogTitle>
           <p className="text-sm text-muted-foreground">
             {asset.asset_number} - {asset.name}
           </p>
@@ -66,11 +84,11 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div><span className="text-muted-foreground">Lokasi:</span> {asset.location || '-'}</div>
               <div><span className="text-muted-foreground">Dept:</span> {asset.department || '-'}</div>
-              <div><span className="text-muted-foreground">Assigned:</span> {asset.assigned_to_name || '-'}</div>
+              <div><span className="text-muted-foreground">Dipegang:</span> {asset.assigned_to_name || '-'}</div>
             </div>
           </div>
           <Separator />
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Transfer Ke</p>
+          <p className="text-xs font-semibold text-muted-foreground">Pindah ke</p>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Lokasi Baru</label>
             <Input placeholder="Rak A-12, Gudang Utama..." value={form.to_location}
@@ -82,14 +100,17 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
               onChange={e => set('to_department', e.target.value)} className="mt-1" />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Assign ke Employee (ID)</label>
-            <Input placeholder="Employee ID" value={form.to_employee_id}
-              onChange={e => set('to_employee_id', e.target.value)} className="mt-1" />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground">Nama Employee</label>
-            <Input placeholder="Nama lengkap" value={form.to_employee_name}
-              onChange={e => set('to_employee_name', e.target.value)} className="mt-1" />
+            <label className="text-xs font-medium text-muted-foreground">Penanggung jawab (karyawan)</label>
+            <SmartNativeSelect value={form.to_employee_id} onChange={e => pickEmployee(e.target.value)} className="mt-1 h-9 w-full"
+              searchPlaceholder="Cari nama / NIK karyawan…" data-testid="transfer-employee">
+              <option value="">— Tidak diubah / tanpa penanggung jawab —</option>
+              {form.to_employee_id && !employees.some(e => e.id === form.to_employee_id) && (
+                <option value={form.to_employee_id}>{form.to_employee_name || 'Penanggung jawab sekarang'}</option>
+              )}
+              {employees.map(e => (
+                <option key={e.id} value={e.id}>{[e.name, e.employee_code || e.nik, e.department || e.department_name].filter(Boolean).join(' · ')}</option>
+              ))}
+            </SmartNativeSelect>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Alasan Transfer *</label>
@@ -105,7 +126,7 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Batal</Button>
           <Button onClick={submit} disabled={loading} data-testid="submit-transfer-btn">
-            {loading ? 'Mentransfer...' : 'Transfer Asset'}
+            {loading ? 'Memindahkan…' : 'Pindahkan aset'}
           </Button>
         </DialogFooter>
       </DialogContent>

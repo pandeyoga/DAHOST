@@ -19,6 +19,8 @@ import {
 } from '@/components/ui/select';
 import { toast } from 'sonner';
 import { withFileAuth } from '@/lib/fileUrl';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { EmployeeSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -169,7 +171,8 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
       const [lr, lts, emps] = await Promise.all([
         fetch(`${API}/api/rahaza/leaves?${params}&limit=100`, { headers }).then(r => r.json()),
         fetch(`${API}/api/rahaza/leave-types`, { headers }).then(r => r.json()),
-        fetch(`${API}/api/rahaza/employees?limit=200`, { headers }).then(r => r.json()),
+        // Tahap 5 (2026-11-07): hanya karyawan AKTIF (dulu 200 baris pertama termasuk yang sudah keluar)
+        fetch(`${API}/api/rahaza/employees?active_only=true&limit=500`, { headers }).then(r => r.json()),
       ]);
       let allLeaves = lr?.items || (Array.isArray(lr) ? lr : []);
       if (filterReqType) allLeaves = allLeaves.filter(l => l.request_type === filterReqType);
@@ -203,7 +206,8 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
             is_half_day, half_day_period, attachment } = requestForm;
 
     if (!employee_id || !leave_type_id || !from_date || !to_date)
-      return toast.error('Lengkapi semua field wajib');
+      return toast.error('Lengkapi karyawan, jenis, dan tanggal');
+    if (to_date < from_date) return toast.error('Tanggal selesai tidak boleh sebelum tanggal mulai');
     if (!reason?.trim()) return toast.error('Alasan wajib diisi');   // Tahap 2: alasan wajib
 
     // Validate document if required
@@ -557,35 +561,28 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
           <div className="space-y-3 mt-2">
             <div>
               <Label className="text-xs">Karyawan <span className="text-red-700 dark:text-red-400">*</span></Label>
-              <Select value={requestForm.employee_id || 'none'}
-                onValueChange={v => setRequestForm(f => ({ ...f, employee_id: v === 'none' ? '' : v }))}>
-                <SelectTrigger className="mt-1 h-9" data-testid="req-employee"><SelectValue placeholder="Pilih karyawan..." /></SelectTrigger>
-                <SelectContent>
-                  {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.name} ({e.employee_code})</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <div className="mt-1">
+                <EmployeeSelect employees={employees} value={requestForm.employee_id}
+                  onChange={v => setRequestForm(f => ({ ...f, employee_id: v }))} testId="req-employee" />
+              </div>
             </div>
 
             <div>
               <Label className="text-xs">Tipe Izin/Cuti <span className="text-red-700 dark:text-red-400">*</span></Label>
-              <Select value={requestForm.leave_type_id || 'none'}
-                onValueChange={v => setRequestForm(f => ({ ...f, leave_type_id: v === 'none' ? '' : v }))}>
-                <SelectTrigger className="mt-1 h-9" data-testid="req-type"><SelectValue placeholder="Pilih tipe..." /></SelectTrigger>
-                <SelectContent>
-                  {['cuti', 'sakit', 'izin'].map(rt => (
-                    <div key={rt}>
-                      <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
-                        {REQ_TYPE_CFG[rt].icon} {REQ_TYPE_CFG[rt].label}
-                      </div>
-                      {leaveTypes.filter(lt => lt.request_type === rt).map(lt => (
-                        <SelectItem key={lt.id} value={lt.id}>
-                          {lt.name} ({lt.quota_default} hari)
-                        </SelectItem>
-                      ))}
-                    </div>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Tahap 5: hanya jenis AKTIF (jenis yang dinonaktifkan dulu tetap bisa dipilih lalu ditolak server) */}
+              <SmartNativeSelect value={requestForm.leave_type_id}
+                onChange={e => setRequestForm(f => ({ ...f, leave_type_id: e.target.value }))}
+                wrapperClassName="mt-1" data-testid="req-type"
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+                <option value="">— Pilih jenis izin/cuti —</option>
+                {['cuti', 'sakit', 'izin'].map(rt => (
+                  <optgroup key={rt} label={REQ_TYPE_CFG[rt].label}>
+                    {leaveTypes.filter(lt => lt.active !== false && (lt.request_type || 'cuti') === rt).map(lt => (
+                      <option key={lt.id} value={lt.id}>{`${REQ_TYPE_CFG[rt].label} · ${lt.name}${lt.quota_default ? ` (${lt.quota_default} hari)` : ''}`}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </SmartNativeSelect>
               {selectedLT?.legal_basis && (
                 <p className="text-[10px] text-muted-foreground mt-1">{selectedLT.legal_basis}</p>
               )}
@@ -596,13 +593,13 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
                 <Label className="text-xs">Dari Tanggal <span className="text-red-700 dark:text-red-400">*</span></Label>
                 <GlassInput type="date" className="mt-1 h-9 text-sm"
                   value={requestForm.from_date}
-                  onChange={e => setRequestForm(f => ({ ...f, from_date: e.target.value }))}
+                  onChange={e => setRequestForm(f => ({ ...f, from_date: e.target.value, to_date: f.is_half_day || !f.to_date ? e.target.value : f.to_date }))}
                   data-testid="req-from" />
               </div>
               <div>
                 <Label className="text-xs">Sampai Tanggal <span className="text-red-700 dark:text-red-400">*</span></Label>
                 <GlassInput type="date" className="mt-1 h-9 text-sm"
-                  value={requestForm.to_date}
+                  value={requestForm.to_date} min={requestForm.from_date || undefined} disabled={requestForm.is_half_day}
                   onChange={e => setRequestForm(f => ({ ...f, to_date: e.target.value }))}
                   data-testid="req-to" />
               </div>
@@ -646,8 +643,8 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
             {/* Half day option */}
             <div className="flex items-center gap-3">
               <label className="flex items-center gap-2 cursor-pointer text-sm">
-                <input type="checkbox" checked={requestForm.is_half_day}
-                  onChange={e => setRequestForm(f => ({ ...f, is_half_day: e.target.checked }))}
+                <input type="checkbox" checked={requestForm.is_half_day} data-testid="req-half-day"
+                  onChange={e => setRequestForm(f => ({ ...f, is_half_day: e.target.checked, to_date: e.target.checked ? f.from_date : f.to_date }))}
                   className="rounded" />
                 Setengah Hari
               </label>
@@ -664,7 +661,7 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
             </div>
 
             <div>
-              <Label className="text-xs">Alasan</Label>
+              <Label className="text-xs">Alasan <span className="text-red-700 dark:text-red-400">*</span></Label>
               <Textarea className="mt-1 text-sm" rows={2} placeholder="Tulis alasan..."
                 value={requestForm.reason}
                 onChange={e => setRequestForm(f => ({ ...f, reason: e.target.value }))}

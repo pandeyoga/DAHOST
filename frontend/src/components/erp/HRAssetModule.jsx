@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Package, Plus, Edit2, Trash2, RefreshCw, Search, Tag,
   UserCheck, ArrowLeftRight, Printer, CheckCircle2, Clock,
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmployeeSelect } from './hr/hrPickers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
@@ -186,7 +188,7 @@ export default function HRAssetModule({ token }) {
   };
 
   const handleDeleteAsset = async (assetId) => {
-    if (!window.confirm('Hapus aset ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus aset ini?', danger: true }))) return;
     const r = await asset(`/${assetId}`, { method: 'DELETE', headers });
     const d = await r.json();
     if (!r.ok) { toast.error(d.detail || 'Gagal hapus'); return; }
@@ -610,15 +612,13 @@ function AssignDialog({ data, employees, onAssign, onReturn, onClose }) {
             <>
               <div className="space-y-1">
                 <Label>Pilih Karyawan <span className="text-red-700 dark:text-red-400">*</span></Label>
-                <Select value={form.employee_id} onValueChange={v => {
-                  const emp = employees.find(e => e.id === v);
-                  setForm(f => ({ ...f, employee_id: v, employee_name: emp?.name || '' }));
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Pilih karyawan..." /></SelectTrigger>
-                  <SelectContent>
-                    {employees.map(e => <SelectItem key={e.id} value={e.id}>{e.employee_code} — {e.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                {/* Tahap 5 (2026-11-07): pemilih karyawan bisa dicari (dulu Select tanpa kotak cari) */}
+                <EmployeeSelect employees={employees} value={form.employee_id} testId="asset-assign-employee"
+                  className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground"
+                  onChange={v => {
+                    const emp = employees.find(e => e.id === v);
+                    setForm(f => ({ ...f, employee_id: v, employee_name: emp?.name || '' }));
+                  }} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">

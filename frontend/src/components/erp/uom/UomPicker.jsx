@@ -13,6 +13,7 @@
  */
 import React from 'react';
 import { AlertTriangle, ArrowRight } from 'lucide-react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const SOURCE_LABEL = {
   base: 'satuan dasar',
@@ -59,20 +60,22 @@ export function UomSelect({
     ? opt.units
     : (base ? [{ unit: base, label: `${base} (satuan dasar)`, factor_to_base: 1, source: 'base' }] : []);
   const only = units.length <= 1;
+  // 2026-11-07 (Tahap 5): SmartNativeSelect (aman di dalam dialog/sheet) — dulu pemilih bawaan browser. API sama:
+  // onChange menerima event bergaya native ({ target: { value } }).
   return (
-    <select
+    <SmartNativeSelect
       value={String(value || base || '')}
       onChange={onChange}
       disabled={disabled || only}
       data-testid={testId}
       title={only ? 'Belum ada satuan alternatif — tambahkan kemasan di Master Material' : 'Pilih satuan hitung fisik'}
-      className={`h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground
-        disabled:opacity-70 disabled:cursor-not-allowed ${className}`}
+      searchable={false}
+      className={`h-9 rounded-md border border-input bg-background px-2 text-sm text-foreground ${className}`}
     >
       {units.map((u) => (
         <option key={u.unit} value={u.unit}>{u.unit}</option>
       ))}
-    </select>
+    </SmartNativeSelect>
   );
 }
 

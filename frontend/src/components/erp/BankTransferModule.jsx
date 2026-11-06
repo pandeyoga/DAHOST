@@ -26,9 +26,8 @@ import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog';
@@ -53,42 +52,16 @@ function userRole() {
 }
 
 
-// Bank account list (COA)
-// FIN-13: daftar rekening dari master rekening kas/bank aktif (rahaza_cash_accounts), bukan konstanta.
-const FALLBACK_BANK_ACCOUNTS = [
-  { code: '1-1101', name: 'Kas Kecil' },
-  { code: '1-1201', name: 'Bank BCA' },
-  { code: '1-1202', name: 'Bank Mandiri' },
-];
-function useBankAccounts() {
-  const [accounts, setAccounts] = useState(FALLBACK_BANK_ACCOUNTS);
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await fetch('/api/rahaza/cash-accounts', { headers: { Authorization: `Bearer ${token()}` } });
-        if (!r.ok) return;
-        const data = await r.json();
-        const list = (Array.isArray(data) ? data : data.items || [])
-          .filter(a => a.active !== false && (a.gl_account_code || a.account_code))
-          .map(a => ({ code: a.gl_account_code || a.account_code, name: a.name || a.bank_name || a.gl_account_code }));
-        if (list.length) setAccounts(list);
-      } catch (e) { /* pakai fallback */ }
-    })();
-  }, []);
-  return accounts;
-}
+// Rekening sumber/tujuan = master rekening kas/bank AKTIF (SSOT `usePaymentCashAccounts`, sama dengan form
+// bayar piutang/hutang/gaji). 2026-11-07 (audit form Tahap 5): daftar cadangan hard-code (Kas Kecil/BCA/Mandiri)
+// dan bawaan 1-1201 → 1-1202 dilepas — dulu transfer bisa tersimpan dari/ke rekening yang tidak dipilih staf.
+const BLANK = () => ({ from_account_code: '', to_account_code: '', amount: '', transfer_date: todayWIB(), memo: '', ref_external: '' });
 
 // ── Transfer Form Dialog (formulir isian pendek — boleh popup, G13) ──────────
 function TransferDialog({ open, onClose, onCreated }) {
-  const [form, setForm] = useState({
-    from_account_code: '1-1201',
-    to_account_code: '1-1202',
-    amount: '',
-    transfer_date: todayWIB(),
-    memo: '',
-    ref_external: '',
-  });
-  const BANK_ACCOUNTS = useBankAccounts(); // FIN-13
+  const [form, setForm] = useState(BLANK);
+  const { accounts: cashAccounts, loaded } = usePaymentCashAccounts(token());
+  const BANK_ACCOUNTS = cashAccounts.map(a => ({ code: a.gl_account_code, name: a.name }));
   const [saving, setSaving] = useState(false);
   const [err, setErr]   = useState('');
   const [result, setResult] = useState(null);
@@ -100,14 +73,7 @@ function TransferDialog({ open, onClose, onCreated }) {
 
   useEffect(() => {
     if (open) {
-      setForm({
-        from_account_code: '1-1201',
-        to_account_code: '1-1202',
-        amount: '',
-        transfer_date: todayWIB(),
-        memo: '',
-        ref_external: '',
-      });
+      setForm(BLANK());
       setRefNumber('');
       setErr('');
       setResult(null);
@@ -118,6 +84,7 @@ function TransferDialog({ open, onClose, onCreated }) {
   const toName   = BANK_ACCOUNTS.find(a => a.code === form.to_account_code)?.name || form.to_account_code;
 
   const save = async () => {
+    if (!form.from_account_code || !form.to_account_code) return setErr('Pilih rekening sumber dan rekening tujuan.');
     if (!form.amount || parseFloat(form.amount) <= 0) return setErr('Jumlah transfer harus lebih dari 0.');
     if (form.from_account_code === form.to_account_code) return setErr('Rekening sumber dan tujuan tidak boleh sama.');
     setSaving(true); setErr('');
@@ -151,7 +118,7 @@ function TransferDialog({ open, onClose, onCreated }) {
         <DialogHeader>
           <DialogTitle>Transfer antar rekening</DialogTitle>
           <DialogDescription>
-            Jurnal otomatis: debit {toName || '?'} / kredit {fromName || '?'}
+            Jurnal otomatis: debit {toName || 'rekening tujuan'} / kredit {fromName || 'rekening sumber'}
           </DialogDescription>
         </DialogHeader>
 
@@ -191,32 +158,26 @@ function TransferDialog({ open, onClose, onCreated }) {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>Rekening sumber *</Label>
-                <Select value={form.from_account_code} onValueChange={v => setForm(p => ({ ...p, from_account_code: v }))}>
-                  <SelectTrigger data-testid="from-account"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {BANK_ACCOUNTS.map(a => (
-                      <SelectItem key={a.code} value={a.code} disabled={a.code === form.to_account_code}>
-                        {a.name} ({a.code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SmartNativeSelect value={form.from_account_code} onChange={e => setForm(p => ({ ...p, from_account_code: e.target.value }))}
+                  className="w-full h-9" searchPlaceholder="Cari rekening…" data-testid="transfer-from">
+                  <option value="">{loaded ? '— Pilih rekening sumber —' : 'Memuat rekening…'}</option>
+                  {BANK_ACCOUNTS.map(a => (
+                    <option key={a.code} value={a.code} disabled={a.code === form.to_account_code}>{`${a.name} · ${a.code}`}</option>
+                  ))}
+                </SmartNativeSelect>
               </div>
               <div className="space-y-1">
                 <Label>Rekening tujuan *</Label>
-                <Select value={form.to_account_code} onValueChange={v => setForm(p => ({ ...p, to_account_code: v }))}>
-                  <SelectTrigger data-testid="to-account"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {BANK_ACCOUNTS.map(a => (
-                      <SelectItem key={a.code} value={a.code} disabled={a.code === form.from_account_code}>
-                        {a.name} ({a.code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SmartNativeSelect value={form.to_account_code} onChange={e => setForm(p => ({ ...p, to_account_code: e.target.value }))}
+                  className="w-full h-9" searchPlaceholder="Cari rekening…" data-testid="transfer-to">
+                  <option value="">{loaded ? '— Pilih rekening tujuan —' : 'Memuat rekening…'}</option>
+                  {BANK_ACCOUNTS.map(a => (
+                    <option key={a.code} value={a.code} disabled={a.code === form.from_account_code}>{`${a.name} · ${a.code}`}</option>
+                  ))}
+                </SmartNativeSelect>
               </div>
             </div>
 
@@ -229,10 +190,10 @@ function TransferDialog({ open, onClose, onCreated }) {
                 onChange={e => setForm(p => ({ ...p, amount: e.target.value }))}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <Label>Tanggal transfer</Label>
-                <Input type="date" value={form.transfer_date} onChange={e => setForm(p => ({ ...p, transfer_date: e.target.value }))} />
+                <Input type="date" value={form.transfer_date} onChange={e => setForm(p => ({ ...p, transfer_date: e.target.value }))} data-testid="transfer-date" />
               </div>
               <div className="space-y-1">
                 <Label>No. referensi bank</Label>

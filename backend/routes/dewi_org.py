@@ -212,7 +212,10 @@ async def get_org_chart(
     unit_map = {u["unit_id"]: {**serialize(u), "children": []} for u in all_units}
     
     # Attach employee counts from HR
-    emps = await db.rahaza_employees.find({"status": "aktif"}).to_list(500)
+    # 2026-11-07 (Tahap 5): karyawan aktif = `active` (SSOT ACTIVE_EMPLOYEE_FILTER). Dulu `status: "aktif"` —
+    # field yang tidak pernah ada, sehingga headcount selalu 0/angka ketikan unit.
+    from utils.employee_identity import ACTIVE_EMPLOYEE_FILTER
+    emps = await db.rahaza_employees.find(ACTIVE_EMPLOYEE_FILTER, {"_id": 0, "department": 1}).to_list(5000)
     dept_counts = {}
     for emp in emps:
         dept = emp.get("department", "")
@@ -263,7 +266,10 @@ async def headcount_analysis(
     units = await db.dewi_org_units.find({"is_active": True}).to_list(200)
     
     # get actual employee counts per department
-    emps = await db.rahaza_employees.find({"status": "aktif"}).to_list(500)
+    # 2026-11-07 (Tahap 5): karyawan aktif = `active` (SSOT ACTIVE_EMPLOYEE_FILTER). Dulu `status: "aktif"` —
+    # field yang tidak pernah ada, sehingga headcount selalu 0/angka ketikan unit.
+    from utils.employee_identity import ACTIVE_EMPLOYEE_FILTER
+    emps = await db.rahaza_employees.find(ACTIVE_EMPLOYEE_FILTER, {"_id": 0, "department": 1}).to_list(5000)
     dept_counts = {}
     for emp in emps:
         dept = emp.get("department", "")
@@ -307,6 +313,10 @@ async def seed_org(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
+    # 2026-11-07 (Tahap 5): data contoh dulu MENGHAPUS seluruh struktur tanpa tanya, sekali klik "Muat Demo".
+    # Struktur organisasi kini master departemen & jabatan Data Karyawan → contoh hanya untuk struktur kosong.
+    from core.demo_seed_guard import ensure_empty_for_demo
+    await ensure_empty_for_demo(db, ["dewi_org_units", "dewi_org_positions"], "Struktur organisasi")
     await db.dewi_org_units.delete_many({})
     await db.dewi_org_positions.delete_many({})
     

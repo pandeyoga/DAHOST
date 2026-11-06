@@ -10,6 +10,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 /**
  * Riwayat Harga Barang (sesi #33).
@@ -152,15 +153,15 @@ export default function MaterialCostHistoryModule({ token }) {
               data-testid="cost-search" />
           </div>
           <div className="flex items-center gap-2">
-            <select value={filterType} onChange={e => setFilterType(e.target.value)}
-              className="h-9 px-2 flex-1 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+            <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)}
+              wrapperClassName="flex-1" className="h-9 px-2 w-full rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
               data-testid="cost-filter-type">
               <option value="">Semua jenis</option>
               <option value="bahan">Bahan (kain/benang)</option>
               <option value="aksesoris">Aksesoris</option>
               <option value="panel">Potongan</option>
               <option value="fg">Produk Jadi</option>
-            </select>
+            </SmartNativeSelect>
           </div>
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
             <input type="checkbox" checked={onlyChanged} onChange={e => setOnlyChanged(e.target.checked)}

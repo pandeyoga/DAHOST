@@ -345,6 +345,49 @@ async def _create_rework_shipment(db, permak: dict, actor: dict) -> dict:
             "parent_shipment_id": parent_ship_id, "quarantine": quarantine_note}
 
 
+# ─── Pilihan PO untuk form "Buat permak" (2026-11-07, Tahap 5) ────────────────
+# Form dulu membaca `/api/maklon-client/pos` — pintu portal KLIEN yang hanya berisi PO MAKLON — padahal
+# menu Permak juga ada di portal Produksi (internal) dan backend permak menerima PO internal. Akibatnya
+# PO internal tidak pernah bisa dipilih. Pintu ini: semua PO yang masih terbuka (internal + maklon),
+# dan baris itemnya dari SSOT progres yang sama (`services.maklon_progress.compute_po_progress`).
+BT_LABEL = {"internal": "Internal", "maklon": "Maklon"}
+
+
+@router.get("/po-options")
+async def permak_po_options(request: Request, business_type: Optional[str] = None):
+    user = await require_auth(request)
+    _require_admin(user)
+    from core.maklon_ledger import CLOSED_PO_STATUSES
+    db = get_db()
+    q: dict = {"status": {"$nin": list(CLOSED_PO_STATUSES) + ["Cancelled", "cancelled"]}}
+    if business_type == "internal":
+        q["business_type"] = "internal"
+    elif business_type == "maklon":
+        q["business_type"] = {"$ne": "internal"}
+    rows = await db.production_pos.find(
+        q, {"_id": 0, "id": 1, "po_number": 1, "status": 1, "business_type": 1, "customer_name": 1,
+            "vendor_name": 1}).sort("created_at", -1).to_list(500)
+    out = []
+    for p in rows:
+        bt = p.get("business_type") or "maklon"
+        out.append({"po_id": p["id"], "po_number": p.get("po_number") or "", "status": p.get("status") or "",
+                    "business_type": bt, "business_type_label": BT_LABEL.get(bt, bt),
+                    "customer_name": p.get("customer_name") or "", "vendor_name": p.get("vendor_name") or ""})
+    return out
+
+
+@router.get("/po-options/{po_id}/items")
+async def permak_po_items(po_id: str, request: Request):
+    user = await require_auth(request)
+    _require_admin(user)
+    from services.maklon_progress import compute_po_progress
+    db = get_db()
+    prog = await compute_po_progress(db, po_id)
+    if prog is None:
+        raise HTTPException(404, "PO tidak ditemukan")
+    return {"po_id": po_id, "items": prog.get("items") or []}
+
+
 # ─── Endpoints ───────────────────────────────────────────────────────────────
 @router.get("")
 async def list_permak(

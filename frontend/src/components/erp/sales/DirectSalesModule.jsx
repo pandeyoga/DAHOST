@@ -7,13 +7,27 @@ import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import Modal from '../Modal';
 import { PageHeader } from '../moduleAtoms';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { apiGet, apiPost, apiFetch } from '../../../lib/api';
 import SalesTaxFields from '../SalesTaxFields';
 import { useTaxProfile, previewOutputTax } from '../../../lib/taxProfile';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 const STATUS = { draft: ['Draft', 'text-amber-300 bg-amber-400/10 border-amber-400/25'], confirmed: ['Belum Lunas', 'text-sky-300 bg-sky-400/10 border-sky-400/25'], paid: ['Lunas', 'text-emerald-300 bg-emerald-400/10 border-emerald-400/25'], cancelled: ['Batal', 'text-red-300 bg-red-400/10 border-red-400/25'], confirming: ['Memproses', 'text-muted-foreground'] };
-const sel = 'w-full h-9 rounded-md border border-[var(--glass-border)] bg-transparent px-2 text-sm';
+// 2026-11-07 (audit form Tahap 5): semua pilihan = SmartNativeSelect (bisa dicari; dulu <select> polos) dan rekening
+// kas/bank tidak lagi terisi otomatis rekening PERTAMA (Kas Kecil) — sama dengan keputusan Faktur Penjualan
+// 2026-11-04: uang harus masuk ke rekening yang dipilih staf. Konfirmasi memakai dialog aplikasi (G9).
+const acctLabel = (a) => (a.gl_account_code ? `${a.name} · ${a.gl_account_code}` : a.name);
+function CashSelect({ accounts, value, onChange, testId, className = 'w-full h-9' }) {
+  return (
+    <SmartNativeSelect value={value || ''} onChange={(e) => onChange(e.target.value)} className={className}
+      searchPlaceholder="Cari rekening…" aria-label="Rekening kas/bank" data-testid={testId}>
+      <option value="">— Pilih rekening —</option>
+      {accounts.map((a) => <option key={a.id} value={a.id}>{acctLabel(a)}</option>)}
+    </SmartNativeSelect>
+  );
+}
 
 function Badge({ s }) { const [l, c] = STATUS[s] || [s, '']; return <span className={`text-[10px] uppercase tracking-wider font-semibold px-2 py-0.5 rounded border ${c}`} data-testid={`sale-status-${s}`}>{l}</span>; }
 
@@ -44,7 +58,7 @@ export default function DirectSalesModule() {
         </>} />
       <GlassCard className="p-3 flex items-center gap-2 text-xs">
         <span className="text-muted-foreground">Status</span>
-        <select className={`${sel} w-44`} value={filter} onChange={e => setFilter(e.target.value)} data-testid="sales-filter"><option value="">Semua</option><option value="draft">Draft</option><option value="confirmed">Belum Lunas</option><option value="paid">Lunas</option><option value="cancelled">Batal</option></select>
+        <SmartNativeSelect className="h-9 w-44" searchable={false} value={filter} onChange={e => setFilter(e.target.value)} aria-label="Status" data-testid="sales-filter"><option value="">Semua</option><option value="draft">Draf</option><option value="confirmed">Belum lunas</option><option value="paid">Lunas</option><option value="cancelled">Batal</option></SmartNativeSelect>
       </GlassCard>
       <GlassCard className="p-0 overflow-hidden">
         {!rows.length ? <div className="py-14 text-center text-sm text-muted-foreground" data-testid="sales-empty">Belum ada nota penjualan.</div> : (
@@ -89,7 +103,7 @@ function CreateSaleModal({ onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     Promise.all([apiGet('/sales/customers'), apiGet('/sales/fg-stock'), apiGet('/sales/cash-accounts')])
-      .then(([c, s, a]) => { setCustomers(c); setStock(s); setAccounts(a); if (a[0]) setF(x => ({ ...x, cash_account_id: a[0].id })); })
+      .then(([c, s, a]) => { setCustomers(c); setStock(s); setAccounts(a); })
       .catch(e => toast.error(e.message));
   }, []);
   const set = (k, v) => setF(x => ({ ...x, [k]: v }));
@@ -107,11 +121,18 @@ function CreateSaleModal({ onClose, onSaved }) {
 
   const submit = async () => {
     if (!f.customer_id) return toast.error('Pilih pelanggan.');
+    if (f.payment_type === 'cash' && !f.cash_account_id) return toast.error('Pilih rekening kas/bank penerima.');
     const clean = items.filter(it => it.material_id);
     if (!clean.length) return toast.error('Tambahkan minimal satu item.');
+    // qty = bilangan bulat pcs (server membulatkan ke bawah diam-diam: 1,5 → 1)
+    const bad = clean.find(it => !(Number(it.qty) > 0) || !Number.isInteger(Number(it.qty)) || Number(it.price) < 0);
+    if (bad) return toast.error(`${stock.find(x => x.material_id === bad.material_id)?.sku || 'Item'}: qty harus bilangan bulat lebih dari 0 dan harga tidak boleh negatif.`);
+    const over = clean.find(it => { const s = stock.find(x => x.material_id === it.material_id); return s && Number(it.qty) > Number(s.available_qty); });
+    if (over) { const s = stock.find(x => x.material_id === over.material_id); return toast.error(`Stok ${s.sku} tidak cukup (tersedia ${s.available_qty}).`); }
     setBusy(true);
     try {
-      const n = await apiPost('/sales/direct-sales', { ...f, items: clean, due_date: f.due_date || undefined, kena_ppn: kenaPpn,
+      const n = await apiPost('/sales/direct-sales', { ...f, items: clean.map(it => ({ material_id: it.material_id, qty: Number(it.qty), price: Number(it.price) || 0 })),
+                                                        discount_amount: Number(f.discount_amount) || 0, due_date: f.due_date || undefined, kena_ppn: kenaPpn,
                                                         ...(kenaPpn ? { faktur_number: taxF.faktur_number, faktur_date: taxF.faktur_date } : {}) });
       toast.success(`Draft ${n.note_number} tersimpan`); onSaved(n);
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
@@ -122,14 +143,14 @@ function CreateSaleModal({ onClose, onSaved }) {
       <div className="space-y-4 text-sm" data-testid="sale-form">
         <div className="grid md:grid-cols-3 gap-3">
           <label className="space-y-1 md:col-span-1"><span className="text-xs text-muted-foreground">Pelanggan *</span>
-            <select className={sel} value={f.customer_id} onChange={e => set('customer_id', e.target.value)} data-testid="sale-form-customer"><option value="">— pilih —</option>{customers.map(c => <option key={c.id} value={c.id}>{c.code} · {c.name}</option>)}</select>
+            <SmartNativeSelect className="w-full h-9" value={f.customer_id} onChange={e => set('customer_id', e.target.value)} searchPlaceholder="Cari kode atau nama pelanggan…" data-testid="sale-form-customer"><option value="">— Pilih pelanggan —</option>{customers.map(c => <option key={c.id} value={c.id}>{`${c.code} · ${c.name}`}</option>)}</SmartNativeSelect>
             {cust && <div className="text-[11px] text-muted-foreground">Termin: {cust.payment_terms}</div>}</label>
           <label className="space-y-1"><span className="text-xs text-muted-foreground">Tanggal</span><GlassInput type="date" value={f.sale_date} onChange={e => set('sale_date', e.target.value)} data-testid="sale-form-date" /></label>
           <label className="space-y-1"><span className="text-xs text-muted-foreground">Pembayaran</span>
-            <select className={sel} value={f.payment_type} onChange={e => set('payment_type', e.target.value)} data-testid="sale-form-payment"><option value="cash">Tunai (langsung lunas)</option><option value="credit">Tempo (piutang)</option></select></label>
+            <SmartNativeSelect className="w-full h-9" searchable={false} value={f.payment_type} onChange={e => set('payment_type', e.target.value)} data-testid="sale-form-payment"><option value="cash">Tunai (langsung lunas)</option><option value="credit">Tempo (piutang)</option></SmartNativeSelect></label>
           {f.payment_type === 'cash' ? (
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Masuk ke Kas/Bank *</span>
-              <select className={sel} value={f.cash_account_id} onChange={e => set('cash_account_id', e.target.value)} data-testid="sale-form-cash-account">{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+              <CashSelect accounts={accounts} value={f.cash_account_id} onChange={v => set('cash_account_id', v)} testId="sale-form-cash-account" /></label>
           ) : (
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Jatuh Tempo (kosong = termin pelanggan)</span><GlassInput type="date" value={f.due_date} onChange={e => set('due_date', e.target.value)} data-testid="sale-form-due" /></label>
           )}
@@ -139,16 +160,17 @@ function CreateSaleModal({ onClose, onSaved }) {
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between"><span className="text-xs font-semibold">Item (stok FG tersedia: {stock.length} SKU)</span><Button size="sm" variant="ghost" onClick={() => setItems(a => [...a, { material_id: '', qty: 1, price: 0 }])} data-testid="sale-form-add-item"><Plus className="w-3.5 h-3.5 mr-1" />Tambah baris</Button></div>
-          <table className="w-full text-xs"><thead className="text-muted-foreground"><tr><th className="text-left py-1">SKU</th><th className="w-20 text-right">Stok</th><th className="w-20">Qty</th><th className="w-32">Harga</th><th className="w-28 text-right">Jumlah</th><th className="w-8" /></tr></thead>
+          {/* 2026-11-07: di HP baris item digulir menyamping (dulu kotak qty menciut & tombol hapus terpotong) */}
+          <div className="overflow-x-auto"><table className="w-full min-w-[600px] text-xs"><thead className="text-muted-foreground"><tr><th className="text-left py-1">SKU</th><th className="w-20 text-right">Stok</th><th className="w-20">Qty</th><th className="w-32">Harga</th><th className="w-28 text-right">Jumlah</th><th className="w-8" /></tr></thead>
             <tbody>{items.map((it, i) => { const s = stock.find(x => x.material_id === it.material_id); return (
               <tr key={i} className="border-t border-foreground/5">
-                <td className="py-1 pr-2"><select className={sel} value={it.material_id} onChange={e => setItem(i, 'material_id', e.target.value)} data-testid={`sale-item-${i}-sku`}><option value="">— pilih SKU —</option>{stock.map(x => <option key={x.material_id} value={x.material_id}>{x.sku} · {x.name} (stok {x.available_qty})</option>)}</select></td>
+                <td className="py-1 pr-2"><SmartNativeSelect className="w-full h-9" value={it.material_id} onChange={e => setItem(i, 'material_id', e.target.value)} searchPlaceholder="Cari SKU / nama…" data-testid={`sale-item-${i}-sku`}><option value="">— Pilih SKU —</option>{stock.map(x => <option key={x.material_id} value={x.material_id}>{`${x.sku} · ${x.name} (stok ${x.available_qty})`}</option>)}</SmartNativeSelect></td>
                 <td className="text-right">{s ? s.available_qty : '-'}{s?.hpp > 0 && <div className="text-[10px] text-muted-foreground">HPP {fmt(s.hpp)}</div>}</td>
-                <td><GlassInput type="number" min="1" value={it.qty} onChange={e => setItem(i, 'qty', e.target.value)} className="h-8" data-testid={`sale-item-${i}-qty`} /></td>
+                <td><GlassInput type="number" min="1" step="1" value={it.qty} onChange={e => setItem(i, 'qty', e.target.value)} className="h-8" data-testid={`sale-item-${i}-qty`} /></td>
                 <td><MoneyInput value={it.price} onChange={e => setItem(i, 'price', e.target.value)} className="h-8" data-testid={`sale-item-${i}-price`} /></td>
                 <td className="text-right font-semibold">{fmt((Number(it.qty) || 0) * (Number(it.price) || 0))}</td>
                 <td><Button size="sm" variant="ghost" onClick={() => setItems(a => a.filter((_, idx) => idx !== i))}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button></td>
-              </tr>); })}</tbody></table>
+              </tr>); })}</tbody></table></div>
         </div>
         <div className="flex flex-wrap items-end justify-between gap-3">
           <label className="space-y-1 flex-1 min-w-[200px]"><span className="text-xs text-muted-foreground">Catatan</span><GlassInput value={f.notes} onChange={e => set('notes', e.target.value)} data-testid="sale-form-notes" /></label>
@@ -176,14 +198,24 @@ function SaleDetailModal({ note, onClose, onChanged }) {
   const returnedQty = (mid) => (note.returns || []).reduce((s, r) => s + r.items.filter(i => i.material_id === mid).reduce((a, i) => a + i.qty, 0), 0);
   const canReturn = ['confirmed', 'paid'].includes(note.status) && note.items.some(it => it.qty - returnedQty(it.material_id) > 0);
   const act = async (fn, ok) => { setBusy(true); try { const n = await fn(); toast.success(ok); onChanged(n.note || n); } catch (e) { toast.error(e.message); } finally { setBusy(false); } };
-  const confirm = () => window.confirm(`Konfirmasi ${note.note_number}? Stok FG akan dikurangi dan jurnal dibuat.`) && act(() => apiPost(`/sales/direct-sales/${note.id}/confirm`, {}), 'Nota dikonfirmasi');
-  const cancel = () => window.confirm('Batalkan draft ini?') && act(() => apiPost(`/sales/direct-sales/${note.id}/cancel`, {}), 'Draft dibatalkan');
-  const doPay = () => act(async () => { await apiPost(`/sales/direct-sales/${note.id}/payment`, pay); setPay(null); return apiGet(`/sales/direct-sales/${note.id}`); }, 'Pembayaran dicatat');
-  const openReturn = () => setRet({ items: note.items.map(it => ({ material_id: it.material_id, sku: it.sku, max: it.qty - returnedQty(it.material_id), qty: 0, condition: 'good' })), reason: '', refund_method: balance > 0 ? 'credit' : 'cash', cash_account_id: accounts[0]?.id || '' });
-  const doReturn = () => {
+  const confirm = async () => (await confirmDialog({ title: `Konfirmasi ${note.note_number}?`, body: 'Stok barang jadi dikurangi dan jurnal dibuat.', confirmLabel: 'Konfirmasi' }))
+    && act(() => apiPost(`/sales/direct-sales/${note.id}/confirm`, {}), 'Nota dikonfirmasi');
+  const cancel = async () => (await confirmDialog({ title: `Batalkan draf ${note.note_number}?`, confirmLabel: 'Batalkan draf', cancelLabel: 'Kembali', danger: true }))
+    && act(() => apiPost(`/sales/direct-sales/${note.id}/cancel`, {}), 'Draf dibatalkan');
+  const doPay = () => {
+    if (!pay.cash_account_id) return toast.error('Pilih rekening kas/bank penerima.');
+    if (!(Number(pay.amount) > 0)) return toast.error('Jumlah harus lebih dari 0.');
+    if (Number(pay.amount) > balance + 0.5) return toast.error(`Jumlah melebihi sisa tagihan (Rp ${fmt(balance)}).`);
+    return act(async () => { await apiPost(`/sales/direct-sales/${note.id}/payment`, { ...pay, amount: Number(pay.amount) }); setPay(null); return apiGet(`/sales/direct-sales/${note.id}`); }, 'Pembayaran dicatat');
+  };
+  const openReturn = () => setRet({ items: note.items.map(it => ({ material_id: it.material_id, sku: it.sku, max: it.qty - returnedQty(it.material_id), qty: 0, condition: 'good' })), reason: '', refund_method: balance > 0 ? 'credit' : 'cash', cash_account_id: '' });
+  const doReturn = async () => {
     const items = ret.items.filter(i => Number(i.qty) > 0).map(i => ({ material_id: i.material_id, qty: Number(i.qty), condition: i.condition }));
     if (!items.length) return toast.error('Isi qty retur minimal satu item.');
-    if (!window.confirm('Proses retur? Stok kembali, nota kredit & jurnal balik dibuat.')) return;
+    const over = ret.items.find(i => Number(i.qty) > i.max);
+    if (over) return toast.error(`${over.sku}: maksimal retur ${over.max} pcs.`);
+    if (ret.refund_method === 'cash' && !ret.cash_account_id) return toast.error('Pilih rekening kas/bank untuk refund tunai.');
+    if (!(await confirmDialog({ title: 'Proses retur?', body: 'Stok kembali, nota kredit & jurnal balik dibuat.', confirmLabel: 'Proses retur' }))) return;
     act(async () => { const r = await apiPost(`/sales/direct-sales/${note.id}/returns`, { ...ret, items }); setRet(null); toast.info(`Nota kredit ${r.cn_number}${r.refund_amount ? ` · refund Rp ${fmt(r.refund_amount)}` : ''}${r.customer_credit ? ` · saldo kredit pelanggan Rp ${fmt(r.customer_credit)}` : ''}`); return apiGet(`/sales/direct-sales/${note.id}`); }, 'Retur diproses');
   };
   const gl = useMemo(() => [
@@ -202,7 +234,7 @@ function SaleDetailModal({ note, onClose, onChanged }) {
             <Button size="sm" variant="ghost" onClick={() => openPdf(note.id, note.note_number)} data-testid="sale-detail-pdf"><Printer className="w-3.5 h-3.5 mr-1" />Cetak Nota</Button>
             {note.status === 'draft' && <Button size="sm" variant="ghost" onClick={cancel} disabled={busy} data-testid="sale-detail-cancel"><XCircle className="w-3.5 h-3.5 mr-1 text-red-400" />Batalkan</Button>}
             {note.status === 'draft' && <Button size="sm" onClick={confirm} disabled={busy} data-testid="sale-detail-confirm"><CheckCircle2 className="w-3.5 h-3.5 mr-1" />Konfirmasi</Button>}
-            {note.status === 'confirmed' && balance > 0 && <Button size="sm" onClick={() => setPay({ amount: balance, cash_account_id: accounts[0]?.id || '', date: todayWIB() })} disabled={busy} data-testid="sale-detail-pay"><Wallet className="w-3.5 h-3.5 mr-1" />Terima Pembayaran</Button>}
+            {note.status === 'confirmed' && balance > 0 && <Button size="sm" onClick={() => setPay({ amount: balance, cash_account_id: '', date: todayWIB() })} disabled={busy} data-testid="sale-detail-pay"><Wallet className="w-3.5 h-3.5 mr-1" />Terima Pembayaran</Button>}
             {canReturn && <Button size="sm" variant="ghost" onClick={openReturn} disabled={busy} data-testid="sale-detail-return"><Undo2 className="w-3.5 h-3.5 mr-1 text-amber-400" />Retur</Button>}
           </div>
         </div>
@@ -220,7 +252,7 @@ function SaleDetailModal({ note, onClose, onChanged }) {
         {pay && (
           <GlassCard className="p-3 flex flex-wrap items-end gap-3" data-testid="sale-pay-form">
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Jumlah</span><MoneyInput value={pay.amount} onChange={e => setPay(p => ({ ...p, amount: e.target.value }))} className="h-8 w-40" data-testid="sale-pay-amount" /></label>
-            <label className="space-y-1"><span className="text-xs text-muted-foreground">Kas/Bank</span><select className={`${sel} h-8`} value={pay.cash_account_id} onChange={e => setPay(p => ({ ...p, cash_account_id: e.target.value }))} data-testid="sale-pay-account">{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+            <label className="space-y-1"><span className="text-xs text-muted-foreground">Kas/Bank</span><CashSelect accounts={accounts} value={pay.cash_account_id} onChange={v => setPay(p => ({ ...p, cash_account_id: v }))} testId="sale-pay-account" className="h-8 w-56" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Tanggal</span><GlassInput type="date" value={pay.date} onChange={e => setPay(p => ({ ...p, date: e.target.value }))} className="h-8" /></label>
             <Button size="sm" onClick={doPay} disabled={busy} data-testid="sale-pay-submit">Simpan Pembayaran</Button>
             <Button size="sm" variant="ghost" onClick={() => setPay(null)}>Batal</Button>
@@ -233,13 +265,13 @@ function SaleDetailModal({ note, onClose, onChanged }) {
               <tbody>{ret.items.map((it, i) => (
                 <tr key={it.material_id} className="border-t border-foreground/5"><td className="py-1 font-mono">{it.sku}</td><td className="text-right">{it.max}</td>
                   <td><GlassInput type="number" min="0" max={it.max} value={it.qty} disabled={it.max <= 0} onChange={e => setRet(r => ({ ...r, items: r.items.map((x, idx) => idx === i ? { ...x, qty: e.target.value } : x) }))} className="h-8" data-testid={`sale-return-qty-${i}`} /></td>
-                  <td><select className={`${sel} h-8`} value={it.condition} onChange={e => setRet(r => ({ ...r, items: r.items.map((x, idx) => idx === i ? { ...x, condition: e.target.value } : x) }))} data-testid={`sale-return-cond-${i}`}><option value="good">Baik (kembali ke stok)</option><option value="damaged">Rusak (tidak ke stok)</option></select></td></tr>
+                  <td><SmartNativeSelect className="h-8 w-44" searchable={false} value={it.condition} onChange={e => setRet(r => ({ ...r, items: r.items.map((x, idx) => idx === i ? { ...x, condition: e.target.value } : x) }))} data-testid={`sale-return-cond-${i}`}><option value="good">Baik (kembali ke stok)</option><option value="damaged">Rusak (tidak ke stok)</option></SmartNativeSelect></td></tr>
               ))}</tbody></table>
             <div className="flex flex-wrap items-end gap-3">
               <label className="space-y-1 flex-1 min-w-[180px]"><span className="text-xs text-muted-foreground">Alasan</span><GlassInput value={ret.reason} onChange={e => setRet(r => ({ ...r, reason: e.target.value }))} className="h-8" data-testid="sale-return-reason" /></label>
               <label className="space-y-1"><span className="text-xs text-muted-foreground">Kelebihan kredit</span>
-                <select className={`${sel} h-8`} value={ret.refund_method} onChange={e => setRet(r => ({ ...r, refund_method: e.target.value }))} data-testid="sale-return-refund"><option value="credit">Potong tagihan / simpan sbg kredit pelanggan</option><option value="cash">Refund tunai dari kas</option></select></label>
-              {ret.refund_method === 'cash' && <label className="space-y-1"><span className="text-xs text-muted-foreground">Kas/Bank</span><select className={`${sel} h-8`} value={ret.cash_account_id} onChange={e => setRet(r => ({ ...r, cash_account_id: e.target.value }))} data-testid="sale-return-account">{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>}
+                <SmartNativeSelect className="h-8 w-72" searchable={false} value={ret.refund_method} onChange={e => setRet(r => ({ ...r, refund_method: e.target.value }))} data-testid="sale-return-refund"><option value="credit">Potong tagihan / simpan sebagai kredit pelanggan</option><option value="cash">Refund tunai dari kas</option></SmartNativeSelect></label>
+              {ret.refund_method === 'cash' && <label className="space-y-1"><span className="text-xs text-muted-foreground">Kas/Bank</span><CashSelect accounts={accounts} value={ret.cash_account_id} onChange={v => setRet(r => ({ ...r, cash_account_id: v }))} testId="sale-return-account" className="h-8 w-56" /></label>}
               <Button size="sm" onClick={doReturn} disabled={busy} data-testid="sale-return-submit">Proses Retur</Button>
               <Button size="sm" variant="ghost" onClick={() => setRet(null)}>Batal</Button>
             </div>

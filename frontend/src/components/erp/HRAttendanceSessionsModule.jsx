@@ -21,6 +21,8 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { EmployeeSelect } from './hr/hrPickers';
 import {
   Coffee, DoorOpen, Download, Loader2, RefreshCw, CheckCircle2, XCircle,
   Hourglass, Users, Timer, AlertCircle, Search,
@@ -118,7 +120,8 @@ export default function HRAttendanceSessionsModule({ token }) {
   }, [loadPending, loadRows]);
 
   useEffect(() => {
-    axios.get(`${API}/api/rahaza/employees`, { headers })
+    // Tahap 5 (2026-11-07): dulu tanpa limit → batas bawaan API 50 karyawan (penyaring rekap: termasuk yang sudah keluar)
+    axios.get(`${API}/api/rahaza/employees?limit=500`, { headers })
       .then((r) => {
         const d = r.data;
         setEmployees(Array.isArray(d) ? d : (d?.items || d?.rows || d?.data || []));
@@ -287,30 +290,24 @@ export default function HRAttendanceSessionsModule({ token }) {
                 </div>
                 <div>
                   <Label htmlFor="f-emp" className="text-xs">Karyawan</Label>
-                  <select id="f-emp" data-testid="filter-employee"
-                    className="w-full h-9 border rounded-md px-2 text-sm bg-background"
-                    value={filters.employee_id}
-                    onChange={(e) => setFilters((f) => ({ ...f, employee_id: e.target.value }))}>
-                    <option value="">Semua karyawan</option>
-                    {employees.map((e) => (
-                      <option key={e.id} value={e.id}>{e.employee_code} — {e.name}</option>
-                    ))}
-                  </select>
+                  <EmployeeSelect employees={employees} value={filters.employee_id} allLabel="Semua karyawan"
+                    onChange={(v) => setFilters((f) => ({ ...f, employee_id: v }))} testId="filter-employee"
+                    className="w-full h-9 border rounded-md px-2 text-sm bg-background" />
                 </div>
                 <div>
                   <Label htmlFor="f-kind" className="text-xs">Jenis</Label>
-                  <select id="f-kind" data-testid="filter-kind"
+                  <SmartNativeSelect id="f-kind" data-testid="filter-kind" searchable={false}
                     className="w-full h-9 border rounded-md px-2 text-sm bg-background"
                     value={filters.kind}
                     onChange={(e) => setFilters((f) => ({ ...f, kind: e.target.value }))}>
                     <option value="">Semua</option>
                     <option value="istirahat">Istirahat</option>
                     <option value="izin">Izin</option>
-                  </select>
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <Label htmlFor="f-status" className="text-xs">Status</Label>
-                  <select id="f-status" data-testid="filter-status"
+                  <SmartNativeSelect id="f-status" data-testid="filter-status" searchable={false}
                     className="w-full h-9 border rounded-md px-2 text-sm bg-background"
                     value={filters.status}
                     onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
@@ -320,7 +317,7 @@ export default function HRAttendanceSessionsModule({ token }) {
                     <option value="rejected">Ditolak</option>
                     <option value="cancelled">Dibatalkan</option>
                     <option value="not_required">Istirahat (tercatat)</option>
-                  </select>
+                  </SmartNativeSelect>
                 </div>
                 <Button onClick={exportExcel} disabled={exporting} data-testid="export-excel">
                   {exporting ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />

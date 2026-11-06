@@ -3,6 +3,7 @@ import { Settings, Save, RefreshCw, Lock, Eye, EyeOff } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -56,8 +57,8 @@ export default function MaklonSystemConfigModule({ token }) {
     setSaving(false);
     if (r.ok) {
       const d = await r.json();
-      toast.success(`${d.updated} config disimpan`);
-      if (d.errors?.length) toast.error(`Errors: ${d.errors.join(', ')}`);
+      toast.success(`${d.updated} setelan disimpan`);
+      if (d.errors?.length) toast.error(`Tidak tersimpan — ${d.errors.join('; ')}`);
       fetchConfigs();
     } else {
       toast.error('Gagal menyimpan');
@@ -74,6 +75,16 @@ export default function MaklonSystemConfigModule({ token }) {
     if (cfg.data_type === 'boolean') {
       return (
         <Switch checked={!!val} onCheckedChange={(v) => setValue(cfg.key, v)} data-testid={`cfg-${cfg.key}`} />
+      );
+    }
+    // 2026-11-07 (Tahap 5) — setelan berkode tetap dipilih, bukan diketik (server menolak nilai lain).
+    if (Array.isArray(cfg.choices) && cfg.choices.length) {
+      return (
+        <SmartNativeSelect value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)}
+          className="w-full" data-testid={`cfg-${cfg.key}`}>
+          {!cfg.choices.some(c => c.value === val) && <option value={val ?? ''}>{val ? `${val} (tidak dikenal)` : '— pilih —'}</option>}
+          {cfg.choices.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+        </SmartNativeSelect>
       );
     }
     if (cfg.data_type === 'number') {

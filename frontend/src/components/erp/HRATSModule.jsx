@@ -10,7 +10,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import {
   Briefcase, Users, TrendingUp, Plus, Search, RefreshCw,
   X, Clock, Star, Phone, Mail, Eye,
@@ -24,6 +24,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { MoneyInput } from '@/components/ui/money-input';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { useHrMasters, departmentOptions } from './hr/hrPickers';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 const api = (path, opts = {}) =>
@@ -186,10 +188,10 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Mode Interview</label>
-                    <select value={form.mode} onChange={e => setForm(p => ({...p, mode: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={form.mode} onChange={e => setForm(p => ({...p, mode: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option>Tatap Muka</option><option>Video Call</option><option>Phone</option>
-                    </select>
+                      <option value="Tatap Muka">Tatap Muka</option><option value="Video Call">Panggilan video</option><option value="Phone">Telepon</option>
+                    </SmartNativeSelect>
                   </div>
                 </div>
                 <div>
@@ -219,16 +221,16 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Tipe Kontrak</label>
-                    <select value={form.contract_type} onChange={e => setForm(p => ({...p, contract_type: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={form.contract_type} onChange={e => setForm(p => ({...p, contract_type: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
                       <option value="PKWTT">PKWTT (Tetap)</option>
                       <option value="PKWT">PKWT (Kontrak)</option>
                       <option value="Magang">Magang</option>
-                    </select>
+                    </SmartNativeSelect>
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Mulai Bekerja</label>
-                    <input type="date" value={form.start_date} onChange={e => setForm(p => ({...p, start_date: e.target.value}))}
+                    <GlassInput type="date" value={form.start_date} onChange={e => setForm(p => ({...p, start_date: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
                   </div>
                   <div>
@@ -271,14 +273,14 @@ function StageActionModal({ candidate, targetStage, headers, onSuccess, onClose 
             {isReject && (
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Alasan Penolakan</label>
-                <select value={form.rejection_reason} onChange={e => setForm(p => ({...p, rejection_reason: e.target.value}))}
+                <SmartNativeSelect searchable={false} value={form.rejection_reason} onChange={e => setForm(p => ({...p, rejection_reason: e.target.value}))}
                   className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm mb-2">
-                  <option>Tidak memenuhi kualifikasi</option>
-                  <option>Gaji tidak sesuai</option>
-                  <option>Posisi sudah diisi</option>
-                  <option>Hasil interview kurang</option>
-                  <option>Mengundurkan diri</option>
-                </select>
+                  <option value="Tidak memenuhi kualifikasi">Tidak memenuhi kualifikasi</option>
+                  <option value="Gaji tidak sesuai">Gaji tidak sesuai</option>
+                  <option value="Posisi sudah diisi">Posisi sudah diisi</option>
+                  <option value="Hasil interview kurang">Hasil interview kurang</option>
+                  <option value="Mengundurkan diri">Mengundurkan diri</option>
+                </SmartNativeSelect>
                 <textarea value={form.notes} onChange={e => setForm(p => ({...p, notes: e.target.value}))}
                   className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm h-16 resize-none"
                   placeholder="Catatan tambahan (opsional)" />
@@ -355,13 +357,13 @@ function InterviewResultModal({ interview, candidateId, headers, onSuccess, onCl
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Hasil</label>
-                <select value={form.result} onChange={e => setForm(p => ({...p, result: e.target.value}))}
+                <SmartNativeSelect searchable={false} value={form.result} onChange={e => setForm(p => ({...p, result: e.target.value}))}
                   className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
                   <option value="">Pilih hasil</option>
                   <option value="pass">Lulus</option>
                   <option value="fail">Tidak Lulus</option>
-                  <option value="hold">On Hold</option>
-                </select>
+                  <option value="hold">Ditunda</option>
+                </SmartNativeSelect>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Skor (1-100)</label>
@@ -931,6 +933,8 @@ function PipelineView({ pipeline, onViewCandidate }) {
 // MAIN MODULE
 // ────────────────────────────────────────────────────────────────────────────
 export default function HRATSModule({ token }) {
+  // Tahap 5 (2026-11-07): departemen lowongan dari master Struktur Organisasi (dulu diketik bebas)
+  const { units: orgUnits } = useHrMasters(token, { positions: false, shifts: false });
   const [tab, setTab] = useState('pipeline');
   const [jobs, setJobs] = useState([]);
   const [candidates, setCandidates] = useState([]);
@@ -1021,12 +1025,15 @@ export default function HRATSModule({ token }) {
   }, [headers, filterJobId, tab, talentSearch]);
 
   const handleSeed = async () => {
+    // Tahap 5 (2026-11-07): data contoh dulu MENGHAPUS semua lowongan & kandidat; kini hanya ke rekrutmen kosong
+    if (!(await confirmDialog({ title: 'Muat data contoh rekrutmen?', body: 'Hanya bisa bila belum ada lowongan dan kandidat.', confirmLabel: 'Muat contoh' }))) return;
     setSeeding(true);
     try {
-      await api(`/seed`, { method: 'POST', headers });
+      const r = await api(`/seed`, { method: 'POST', headers });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal memuat contoh'); return; }
       await refresh();
-      toast.success('Data demo dimuat');
-    } catch { toast.error('Gagal muat demo'); }
+      toast.success('Data contoh dimuat');
+    } catch { toast.error('Gagal memuat contoh'); }
     finally { setSeeding(false); }
   };
 
@@ -1367,21 +1374,24 @@ export default function HRATSModule({ token }) {
                     className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Departemen</label>
-                    <input value={jobForm.department} onChange={e => setJobForm(p => ({...p, department: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
+                    <SmartNativeSelect value={jobForm.department || ''} onChange={e => setJobForm(p => ({...p, department: e.target.value}))}
+                      data-testid="ats-job-department" className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
+                      <option value="">— Pilih departemen —</option>
+                      {departmentOptions(orgUnits, jobForm.department).map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+                    </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Lokasi</label>
                     <input value={jobForm.location} onChange={e => setJobForm(p => ({...p, location: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Tipe</label>
-                    <select value={jobForm.type} onChange={e => setJobForm(p => ({...p, type: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={jobForm.type} onChange={e => setJobForm(p => ({...p, type: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option>Full-time</option><option>Part-time</option><option>Contract</option><option>Magang</option>
-                    </select></div>
+                      <option value="Full-time">Penuh waktu</option><option value="Part-time">Paruh waktu</option><option value="Contract">Kontrak</option><option value="Magang">Magang</option>
+                    </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Level</label>
-                    <select value={jobForm.level} onChange={e => setJobForm(p => ({...p, level: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={jobForm.level} onChange={e => setJobForm(p => ({...p, level: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option>Staff</option><option>Senior</option><option>Supervisor</option><option>Manager</option>
-                    </select></div>
+                      <option value="Staff">Staff</option><option value="Senior">Senior</option><option value="Supervisor">Supervisor</option><option value="Manager">Manager</option>
+                    </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Gaji Min (Rp)</label>
                     <MoneyInput unstyled value={jobForm.salary_min} onChange={e => setJobForm(p => ({...p, salary_min: +e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
@@ -1392,13 +1402,13 @@ export default function HRATSModule({ token }) {
                     <input type="number" min={1} value={jobForm.headcount} onChange={e => setJobForm(p => ({...p, headcount: +e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Deadline</label>
-                    <input type="date" value={jobForm.deadline} onChange={e => setJobForm(p => ({...p, deadline: e.target.value}))}
+                    <GlassInput type="date" value={jobForm.deadline} onChange={e => setJobForm(p => ({...p, deadline: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div className="col-span-2"><label className="text-xs font-medium text-muted-foreground block mb-1">Status</label>
-                    <select value={jobForm.status} onChange={e => setJobForm(p => ({...p, status: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={jobForm.status} onChange={e => setJobForm(p => ({...p, status: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option value="open">Buka</option><option value="draft">Draft</option><option value="on_hold">Tunda</option><option value="closed">Tutup</option>
-                    </select></div>
+                      <option value="open">Buka</option><option value="draft">Draf</option><option value="on_hold">Tunda</option><option value="closed">Tutup</option>
+                    </SmartNativeSelect></div>
                 </div>
                 <div><label className="text-xs font-medium text-muted-foreground block mb-1">Deskripsi</label>
                   <textarea value={jobForm.description} onChange={e => setJobForm(p => ({...p, description: e.target.value}))}
@@ -1443,15 +1453,15 @@ export default function HRATSModule({ token }) {
                       {jobs.map(j => <option key={j.job_id} value={j.job_id}>{j.title}</option>)}
                     </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Sumber</label>
-                    <select value={candForm.source} onChange={e => setCandForm(p => ({...p, source: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={candForm.source} onChange={e => setCandForm(p => ({...p, source: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option>Walk-in</option><option>Jobstreet</option><option>LinkedIn</option><option>Referral</option><option>Website</option>
-                    </select></div>
+                      <option value="Walk-in">Datang langsung</option><option value="Jobstreet">Jobstreet</option><option value="LinkedIn">LinkedIn</option><option value="Referral">Rekomendasi</option><option value="Website">Situs web</option>
+                    </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Pendidikan</label>
-                    <select value={candForm.education} onChange={e => setCandForm(p => ({...p, education: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={candForm.education} onChange={e => setCandForm(p => ({...p, education: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option>SMA/SMK</option><option>D3</option><option>S1</option><option>S2</option>
-                    </select></div>
+                      <option value="SMA/SMK">SMA/SMK</option><option value="D3">D3</option><option value="S1">S1</option><option value="S2">S2</option>
+                    </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Pengalaman (tahun)</label>
                     <input type="number" min={0} value={candForm.experience_years} onChange={e => setCandForm(p => ({...p, experience_years: +e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>

@@ -41,7 +41,11 @@ async def create_user(request: Request):
     existing = await db.users.find_one({'email': email}, {'_id': 0, 'id': 1})
     if existing:
         raise HTTPException(409, f"Email '{email}' sudah terdaftar.")
-    hashed = hash_password(body.get('password', 'User@123'))
+    # 2026-11-07 (Tahap 5, audit form) — form Tambah User mengirim `password: ''` bila
+    # dikosongkan; `.get('password', default)` tidak berlaku untuk string kosong, sehingga
+    # akun baru tersimpan dengan sandi KOSONG (bisa masuk tanpa sandi). Layar menjanjikan
+    # sandi bawaan User@123 — itu yang dipakai.
+    hashed = hash_password(default_password(body.get('password')))
     new_user = {'id': new_id(), **body, 'email': email, 'password': hashed, 'status': 'active', 'created_at': now(), 'updated_at': now()}
     await _sync_role_link(db, new_user)
     try:
@@ -53,6 +57,15 @@ async def create_user(request: Request):
     bump_rbac_cache()
     result = {k: v for k, v in new_user.items() if k != 'password'}
     return JSONResponse(serialize_doc(result), status_code=201)
+
+
+DEFAULT_USER_PASSWORD = 'User@123'
+
+
+def default_password(raw) -> str:
+    """Sandi akun baru: isian bila ada, selain itu sandi bawaan (bukan string kosong)."""
+    pw = raw if isinstance(raw, str) else ''
+    return pw if pw.strip() else DEFAULT_USER_PASSWORD
 
 
 async def _sync_role_link(db, doc: dict) -> None:

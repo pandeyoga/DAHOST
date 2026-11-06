@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import {
@@ -114,8 +115,11 @@ export default function HRLMSModule({ token }) {
   useEffect(() => { if (tab === 'enrollments') fetchEnrollments(); }, [tab, fetchEnrollments]);
 
   const handleSeed = async () => {
+    // Tahap 5 (2026-11-07): data contoh dulu MENGHAPUS semua kursus/materi/peserta; kini hanya ke data kosong
+    if (!(await confirmDialog({ title: 'Muat data contoh pembelajaran?', body: 'Hanya bisa bila belum ada kursus.', confirmLabel: 'Muat contoh' }))) return;
     setSeeding(true);
-    await API(`/seed`, { method: 'POST', headers });
+    const r = await API(`/seed`, { method: 'POST', headers });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal memuat contoh'); }
     setSeeding(false);
     fetchAll();
   };
@@ -146,7 +150,7 @@ export default function HRLMSModule({ token }) {
   };
 
   const handleDelete = async (cid) => {
-    if (!window.confirm('Yakin hapus kursus ini?')) return;
+    if (!(await confirmDialog({ title: 'Yakin hapus kursus ini?', danger: true }))) return;
     const r = await API(`/courses/${cid}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal menghapus kursus'); return; }  // 2026-11-06 (pola P6): dulu penolakan diam
     fetchAll();
@@ -227,13 +231,13 @@ export default function HRLMSModule({ token }) {
               <option value="">Semua Kategori</option>
               {categories.map(c => <option key={c}>{c}</option>)}
             </SmartNativeSelect>
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+            <SmartNativeSelect searchable={false} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
               className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
               <option value="">Semua Status</option>
               <option value="active">Aktif</option>
-              <option value="draft">Draft</option>
+              <option value="draft">Draf</option>
               <option value="archived">Diarsipkan</option>
-            </select>
+            </SmartNativeSelect>
             <button onClick={fetchAll} className="h-9 w-9 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] flex items-center justify-center text-muted-foreground hover:text-foreground">
               <RefreshCw className="w-4 h-4" />
             </button>
@@ -527,10 +531,10 @@ export default function HRLMSModule({ token }) {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Level</label>
-                    <select value={form.level} onChange={e => setForm(p => ({...p, level: e.target.value}))}
+                    <SmartNativeSelect searchable={false} value={form.level} onChange={e => setForm(p => ({...p, level: e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                      <option>Beginner</option><option>Intermediate</option><option>Advanced</option>
-                    </select>
+                      <option value="Beginner">Pemula</option><option value="Intermediate">Menengah</option><option value="Advanced">Lanjutan</option>
+                    </SmartNativeSelect>
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Durasi (jam)</label>
@@ -550,10 +554,10 @@ export default function HRLMSModule({ token }) {
                 </div>
                 <div>
                   <label className="text-xs font-medium text-muted-foreground block mb-1">Status</label>
-                  <select value={form.status} onChange={e => setForm(p => ({...p, status: e.target.value}))}
+                  <SmartNativeSelect searchable={false} value={form.status} onChange={e => setForm(p => ({...p, status: e.target.value}))}
                     className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                    <option value="draft">Draft</option><option value="active">Aktif</option><option value="archived">Diarsipkan</option>
-                  </select>
+                    <option value="draft">Draf</option><option value="active">Aktif</option><option value="archived">Diarsipkan</option>
+                  </SmartNativeSelect>
                 </div>
               </div>
               <div className="flex gap-3 mt-6">

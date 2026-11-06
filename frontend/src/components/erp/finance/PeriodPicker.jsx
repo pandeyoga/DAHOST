@@ -41,11 +41,12 @@ export function periodFromPreset(key, prev = {}) {
 }
 
 const BULAN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-/** Pilihan bulan berlabel untuk formulir satu-bulan (pengganti input type="month"), terbaru di atas. */
-export function monthOptions(n = 24) {
+/** Pilihan bulan berlabel untuk formulir satu-bulan (pengganti input type="month"), terbaru di atas.
+ *  `ahead` = jumlah bulan SESUDAH bulan berjalan yang ikut ditampilkan (mis. mulai potong gaji kasbon). */
+export function monthOptions(n = 24, ahead = 0) {
   const [y, m] = thisMonthWIB().split('-').map(Number);
-  return Array.from({ length: n }, (_, i) => {
-    const d = new Date(Date.UTC(y, m - 1 - i, 1));
+  return Array.from({ length: n + ahead }, (_, i) => {
+    const d = new Date(Date.UTC(y, m - 1 + ahead - i, 1));
     const yy = d.getUTCFullYear(); const mm = d.getUTCMonth() + 1;
     return { value: `${yy}-${String(mm).padStart(2, '0')}`, label: `${BULAN[mm - 1]} ${yy}` };
   });

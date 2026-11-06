@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Plus, Edit2, Trash2, RefreshCw, Wallet, Users, UserCog } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
@@ -7,6 +8,8 @@ import { PageHeader, StatTile, EmptyState } from './moduleAtoms';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import ImportExportToolbar from './ImportExportToolbar';
 import { MoneyInput } from '@/components/ui/money-input';
+import { toast } from 'sonner';
+import { EmployeeSelect } from './hr/hrPickers';
 
 const SCHEMES = [
   { code: 'pcs', label: 'Borongan Pcs', color: 'text-emerald-300' },
@@ -38,7 +41,8 @@ export default function RahazaPayrollProfilesModule({ token }) {
     try {
       const [p, e, pr] = await Promise.all([
         fetch('/api/rahaza/payroll-profiles', { headers }).then(r => r.json()),
-        fetch('/api/rahaza/employees', { headers }).then(r => r.json()),
+        // 2026-11-07 (Tahap 5): dulu tanpa limit → batas bawaan API 50 baris; karyawan ke-51 dst. tidak bisa dipilih
+        fetch('/api/rahaza/employees?active_only=true&limit=500', { headers }).then(r => r.json()),
         fetch('/api/rahaza/processes', { headers }).then(r => r.json()),
       ]);
       setProfiles(Array.isArray(p) ? p : []);
@@ -54,12 +58,17 @@ export default function RahazaPayrollProfilesModule({ token }) {
   const save = async (body) => {
     setError('');
     const r = await fetch('/api/rahaza/payroll-profiles', { method: 'POST', headers, body: JSON.stringify(body) });
-    if (!r.ok) { setError(`Gagal simpan (HTTP ${r.status})`); return; }
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      setError(typeof d.detail === 'string' ? d.detail : `Gagal simpan (HTTP ${r.status})`);
+      return;
+    }
+    toast.success('Profil gaji disimpan');
     setEditing(null); fetchAll();
   };
 
   const del = async (id) => {
-    if (!window.confirm('Hapus profile payroll ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus profil gaji ini?', danger: true }))) return;
     const r = await fetch(`/api/rahaza/payroll-profiles/${id}`, { method: 'DELETE', headers });
     if (r.ok) fetchAll(); else setError(`Gagal hapus (HTTP ${r.status})`);
   };
@@ -153,6 +162,7 @@ export default function RahazaPayrollProfilesModule({ token }) {
           employees={employees}
           processes={processes}
           isNew={!editing.id}
+          takenIds={profiles.map(p => p.employee_id)}
           onClose={() => setEditing(null)}
           onSave={save}
         />
@@ -161,7 +171,7 @@ export default function RahazaPayrollProfilesModule({ token }) {
   );
 }
 
-function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }) {
+function ProfileEditor({ profile, employees, processes, isNew, takenIds = [], onClose, onSave }) {
   const [state, setState] = useState(profile);
   useEffect(() => setState(profile), [profile]);
   const update = (k, v) => setState(s => ({ ...s, [k]: v }));
@@ -174,7 +184,7 @@ function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }
   const updateProcRate = (i, k, v) => setState(s => ({ ...s, pcs_process_rates: s.pcs_process_rates.map((r, idx) => idx === i ? { ...r, [k]: v } : r) }));
 
   const submit = () => {
-    if (!state.employee_id) { alert('Pilih karyawan dulu'); return; }
+    if (!state.employee_id) { toast.error('Pilih karyawan dulu'); return; }
     onSave({
       employee_id: state.employee_id,
       pay_scheme: state.pay_scheme,
@@ -198,30 +208,30 @@ function ProfileEditor({ profile, employees, processes, isNew, onClose, onSave }
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">Karyawan</label>
-              <SmartNativeSelect value={state.employee_id || ''} onChange={e => update('employee_id', e.target.value)} disabled={!isNew} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground disabled:opacity-60" data-testid="pp-edit-employee">
-                <option value="">— Pilih karyawan —</option>
-                {employees.filter(e => e.active).map(e => <option key={e.id} value={e.id}>{`${e.employee_code} · ${e.name}`}</option>)}
-              </SmartNativeSelect>
+              {/* Tahap 5: karyawan yang sudah punya profil tidak ditawarkan lagi saat "Tambah" (dulu menimpa profilnya diam-diam) */}
+              <EmployeeSelect employees={employees} value={state.employee_id || ''} onChange={v => update('employee_id', v)}
+                disabled={!isNew} exclude={isNew ? takenIds : []} testId="pp-edit-employee"
+                className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground disabled:opacity-60" />
             </div>
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">Skema Gaji</label>
-              <select value={state.pay_scheme} onChange={e => update('pay_scheme', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-scheme">
+              <SmartNativeSelect value={state.pay_scheme} onChange={e => update('pay_scheme', e.target.value)} searchable={false} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-scheme">
                 {SCHEMES.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               <label className="text-xs text-muted-foreground uppercase block mb-1">Tipe Periode</label>
-              <select value={state.period_type} onChange={e => update('period_type', e.target.value)} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground">
+              <SmartNativeSelect value={state.period_type} onChange={e => update('period_type', e.target.value)} searchable={false} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-period">
                 {PERIOD_TYPES.map(p => <option key={p.code} value={p.code}>{p.label}</option>)}
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               {state.period_type === 'weekly' ? (
                 <>
                   <label className="text-xs text-muted-foreground uppercase block mb-1">Hari Mulai Minggu</label>
-                  <select value={state.cutoff_config?.week_start_day ?? 1} onChange={e => updateCutoff('week_start_day', Number(e.target.value))} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground">
-                    {WEEK_DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}
-                  </select>
+                  <SmartNativeSelect value={String(state.cutoff_config?.week_start_day ?? 1)} onChange={e => updateCutoff('week_start_day', Number(e.target.value))} searchable={false} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-weekday">
+                    {WEEK_DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
+                  </SmartNativeSelect>
                 </>
               ) : (
                 <>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Target, CheckCircle2, Clock, Star, Award, ChevronRight,
   AlertCircle, Loader2, Send, BookOpen, BarChart3, RefreshCw,
@@ -109,7 +110,7 @@ export default function KPIPortalModule({ token }) {
     const questions = formData?.questions_by_type?.[activeForm.eval_type] || [];
     const unanswered = questions.filter(q => !answers[q.question_id]);
     if (unanswered.length > 0) {
-      if (!window.confirm(`Masih ada ${unanswered.length} pertanyaan yang belum dijawab. Lanjutkan submit?`)) return;
+      if (!(await confirmDialog({ title: `Masih ada ${unanswered.length} pertanyaan yang belum dijawab. Tetap kirim?` }))) return;
     }
     setSubmitting(true);
     try {

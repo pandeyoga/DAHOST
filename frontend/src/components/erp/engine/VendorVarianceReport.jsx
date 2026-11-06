@@ -185,11 +185,11 @@ export default function VendorVarianceReport({ token, user }) {
               {/* Variance Type */}
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tipe Variance</label>
-                <select value={form.variance_type} onChange={(e) => setForm({ ...form, variance_type: e.target.value })}
-                  className="w-full px-3 py-2 border border-border rounded-lg">
-                  <option value="OVERPRODUCTION">Overproduction (Produksi Lebih)</option>
-                  <option value="UNDERPRODUCTION">Underproduction (Produksi Kurang)</option>
-                </select>
+                <SmartNativeSelect value={form.variance_type} onChange={(e) => setForm({ ...form, variance_type: e.target.value })}
+                  className="w-full" data-testid="vendor-variance-type">
+                  <option value="OVERPRODUCTION">Produksi lebih</option>
+                  <option value="UNDERPRODUCTION">Produksi kurang</option>
+                </SmartNativeSelect>
               </div>
 
               {/* Reason */}

@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -140,7 +141,7 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
       const [adjRes, statsRes, empsRes, periodsRes] = await Promise.all([
         fetchAPI('/salary-adjustments', {}, token),
         fetchAPI('/salary-adjustments/stats/summary', {}, token),
-        fetchAPI('/employees?limit=500', {}, token),
+        fetchAPI('/employees?active_only=true&limit=500', {}, token),
         fetch(`${API}/api/dewi/kpi/periods`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       const adjs = adjRes.ok ? await adjRes.json() : [];
@@ -150,7 +151,9 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
 
       setAdjustments(Array.isArray(adjs) ? adjs : []);
       setStats(st);
-      setEmployees(Array.isArray(emps) ? emps : []);
+      // Tahap 5 (2026-11-07): API karyawan membalas {items: [...]} — dulu dibaca sebagai array → daftar
+      // karyawan di "Buat Usulan Manual" SELALU kosong dan usulan manual tidak bisa dibuat.
+      setEmployees(Array.isArray(emps) ? emps : (emps?.items || []));
       setKpiPeriods(Array.isArray(periods) ? periods.filter(p => p.status === 'finalized') : []);
     } catch (e) {
       toast.error('Gagal memuat data: ' + e.message);
@@ -616,20 +619,18 @@ function CreateManualDialog({ open, onClose, token, employees, onSuccess }) {
         <div className="space-y-3">
           <div>
             <Label htmlFor="emp-select">Karyawan *</Label>
-            <Select value={employeeId} onValueChange={setEmployeeId}>
-              <SelectTrigger id="emp-select" data-testid="create-adj-employee-select">
-                <SelectValue placeholder="Pilih karyawan…" />
-              </SelectTrigger>
-              <SelectContent className="max-h-[300px]">
-                {employees
-                  .filter((e) => e.active !== false)
-                  .map((e) => (
-                    <SelectItem key={e.id} value={e.id}>
-                      {e.employee_code} — {e.name} {e.manager_name ? `(Atasan: ${e.manager_name})` : '(Tanpa Atasan)'}
-                    </SelectItem>
-                  ))}
-              </SelectContent>
-            </Select>
+            <SmartNativeSelect id="emp-select" value={employeeId} onChange={(ev) => setEmployeeId(ev.target.value)}
+              searchable={true} searchPlaceholder="Cari kode atau nama..." data-testid="create-adj-employee-select"
+              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+              <option value="">Pilih karyawan…</option>
+              {employees
+                .filter((e) => e.active !== false)
+                .map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {`${e.employee_code} · ${e.name} ${e.manager_name ? `(atasan: ${e.manager_name})` : '(tanpa atasan)'}`}
+                  </option>
+                ))}
+            </SmartNativeSelect>
             {selectedEmp && !selectedEmp.manager_id && (
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
                 <AlertCircle className="w-3 h-3" />

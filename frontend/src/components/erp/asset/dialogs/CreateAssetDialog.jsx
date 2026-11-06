@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { apicall } from '../utils';
@@ -78,11 +79,12 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
         <div className="grid grid-cols-2 gap-3 py-2">
           <div className="col-span-2">
             <label className="text-xs font-medium text-muted-foreground">Tautkan ke Aset Tetap Keuangan</label>
-            <select value={fixedAssetId} onChange={e => pickFinance(e.target.value)} data-testid="asset-finance-link"
-              className="mt-1 w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm">
+            {/* 2026-11-07 (audit form Tahap 5): pilihan aplikasi yang bisa dicari (dulu <select> polos) */}
+            <SmartNativeSelect value={fixedAssetId} onChange={e => pickFinance(e.target.value)} data-testid="asset-finance-link"
+              className="mt-1 h-9 w-full" searchPlaceholder="Cari kode atau nama aset…">
               <option value="">— Belum ditaut (catatan operasional saja) —</option>
-              {finAssets.map(f => <option key={f.id} value={f.id}>{f.code} · {f.name} · nilai buku Rp {Number(f.book_value || 0).toLocaleString('id-ID')}</option>)}
-            </select>
+              {finAssets.map(f => <option key={f.id} value={f.id}>{`${f.code} · ${f.name} · nilai buku Rp ${Number(f.book_value || 0).toLocaleString('id-ID')}`}</option>)}
+            </SmartNativeSelect>
             <p className="text-[11px] text-muted-foreground mt-1">Harga, penyusutan & nilai buku diambil dari registri Keuangan. Aset baru didaftarkan dulu di Keuangan › Aset Tetap (atau lewat penerimaan barang).</p>
           </div>
           <div className="col-span-2">

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
 import { Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Package, Sparkles, FileText, Send, ScanLine, Scissors, ExternalLink, Info } from 'lucide-react';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -669,7 +670,7 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
                     <SmartNativeSelect value={createLoc} onChange={e => setCreateLoc(e.target.value)}
                       className="h-9 px-2 text-sm w-full" data-testid="mi-create-location-select">
                       <option value="">— Tentukan per baris nanti —</option>
-                      {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                      {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
                     </SmartNativeSelect>
                   </div>
                 </div>
@@ -709,7 +710,7 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
                                 className="h-8 px-2 text-xs w-full" data-testid={`mi-manual-material-${idx}`}>
                                 <option value="">— Pilih material —</option>
                                 {issuableMaterials.map(m => (
-                                  <option key={m.id} value={m.id}>{m.code} · {m.name}</option>
+                                  <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
                                 ))}
                               </SmartNativeSelect>
                             </td>
@@ -733,7 +734,7 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
                                 onChange={e => setManualRow(idx, { location_id: e.target.value })}
                                 className="h-8 px-2 text-xs" data-testid={`mi-manual-location-${idx}`}>
                                 <option value="">— Pilih —</option>
-                                {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                                {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
                               </SmartNativeSelect>
                             </td>
                             <td className="px-3 py-2 text-right">
@@ -938,7 +939,7 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
                         {detail.status === 'draft' ? (
                           <SmartNativeSelect value={it.location_id || ''} onChange={e => updateDetailItemLocation(it.id, e.target.value)} className="h-8 px-2 text-xs" data-testid={`mi-item-location-${it.material_code}`}>
                             <option value="">— Pilih —</option>
-                            {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                            {locations.map(l => <option key={l.id} value={l.id}>{`${l.code}${l.name ? ` · ${l.name}` : ''}`}</option>)}
                           </SmartNativeSelect>
                         ) : (
                           <span className="text-xs text-muted-foreground">{it.location_code || '—'}</span>

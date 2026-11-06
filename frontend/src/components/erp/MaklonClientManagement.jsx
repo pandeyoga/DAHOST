@@ -124,7 +124,7 @@ export default function MaklonClientManagement({ token }) {
                   <div className="flex items-center gap-2 mt-2">
                     <span className="text-xs text-foreground/60"><strong className="text-foreground">Rp {(c.standard_rate_per_pcs || 0).toLocaleString('id-ID')}</strong>/pcs</span>
                     <span className="text-xs text-foreground/40">•</span>
-                    <span className="text-xs text-foreground/40">{c.payment_terms || 'net_30'}</span>
+                    <span className="text-xs text-foreground/40">{({ net_7: 'Termin 7 hari', net_14: 'Termin 14 hari', net_30: 'Termin 30 hari', net_60: 'Termin 60 hari' })[c.payment_terms || 'net_30'] || c.payment_terms}</span>
                   </div>
                   {(c.product_specialization || []).length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
@@ -397,8 +397,8 @@ function ClientDialog({ data, headers, onClose, onSuccess }) {
             <div className="space-y-1 col-span-2"><Label>Alamat</Label><Input value={form.address} onChange={e => set('address', e.target.value)} /></div>
             <div className="space-y-1"><Label>Kota</Label><Input value={form.city} onChange={e => set('city', e.target.value)} /></div>
             <div className="space-y-1"><Label>Rate Standar (Rp/pcs)</Label><MoneyInput value={form.standard_rate_per_pcs} onChange={e => set('standard_rate_per_pcs', e.target.value)} /></div>
-            <div className="space-y-1"><Label>Payment Terms</Label><Select value={form.payment_terms} onValueChange={v => set('payment_terms', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="net_7">Net 7</SelectItem><SelectItem value="net_14">Net 14</SelectItem><SelectItem value="net_30">Net 30</SelectItem><SelectItem value="net_60">Net 60</SelectItem></SelectContent></Select></div>
-            <div className="space-y-1"><Label>Quality Standard</Label><Select value={form.quality_standard} onValueChange={v => set('quality_standard', v)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">Standard</SelectItem><SelectItem value="premium">Premium</SelectItem><SelectItem value="luxury">Luxury</SelectItem></SelectContent></Select></div>
+            <div className="space-y-1"><Label>Termin pembayaran</Label><Select value={form.payment_terms} onValueChange={v => set('payment_terms', v)}><SelectTrigger data-testid="client-form-payment-terms"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="net_7">7 hari</SelectItem><SelectItem value="net_14">14 hari</SelectItem><SelectItem value="net_30">30 hari</SelectItem><SelectItem value="net_60">60 hari</SelectItem></SelectContent></Select></div>
+            <div className="space-y-1"><Label>Standar kualitas</Label><Select value={form.quality_standard} onValueChange={v => set('quality_standard', v)}><SelectTrigger data-testid="client-form-quality"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="standard">Standar</SelectItem><SelectItem value="premium">Premium</SelectItem><SelectItem value="luxury">Mewah</SelectItem></SelectContent></Select></div>
           </div>
           <div className="space-y-1"><Label>Spesialisasi Produk</Label><div className="flex flex-wrap gap-1.5 pt-1">{PRODUCT_SPECIALIZATIONS.map(s => <button key={s} onClick={() => toggleSpec(s)} className={`text-xs px-2.5 py-1 rounded-full border transition-all ${form.product_specialization.includes(s) ? 'bg-[hsl(var(--primary)/0.2)] border-[hsl(var(--primary)/0.35)]  text-[hsl(var(--primary))] ' : 'bg-foreground/5 border-foreground/10 text-foreground/60 hover:border-foreground/25'}`}>{s}</button>)}</div></div>
           <div className="space-y-1"><Label>Catatan</Label><Textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} /></div>
@@ -424,8 +424,8 @@ function ViewClientDialog({ client, onClose }) {
           <InfoRow label="Alamat" value={client.address} />
           <InfoRow label="Kota" value={client.city} />
           <InfoRow label="Rate Standar" value={`Rp ${(client.standard_rate_per_pcs || 0).toLocaleString('id-ID')}/pcs`} />
-          <InfoRow label="Payment Terms" value={client.payment_terms} />
-          <InfoRow label="Quality Standard" value={client.quality_standard} />
+          <InfoRow label="Termin pembayaran" value={({ net_7: '7 hari', net_14: '14 hari', net_30: '30 hari', net_60: '60 hari' })[client.payment_terms] || client.payment_terms} />
+          <InfoRow label="Standar kualitas" value={({ standard: 'Standar', premium: 'Premium', luxury: 'Mewah' })[client.quality_standard] || client.quality_standard} />
           <InfoRow label="Rating" value={`${client.rating || 0}/5`} />
           <InfoRow label="Status" value={<span className={`px-2 py-0.5 rounded text-xs ${client.status === 'active' ? 'bg-[hsl(var(--success)/0.15)]  text-[hsl(var(--success))] ' : 'bg-[hsl(var(--destructive)/0.15)]  text-[hsl(var(--destructive))] '}`}>{client.status === 'active' ? 'Aktif' : 'Non-Aktif'}</span>} />
           {(client.product_specialization || []).length > 0 && <InfoRow label="Spesialisasi" value={(client.product_specialization || []).join(', ')} />}

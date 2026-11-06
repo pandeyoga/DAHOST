@@ -11,6 +11,11 @@ import { toast } from 'sonner';
 import { FileText, Upload, Trash2, FileCheck, AlertTriangle, Loader2, Download, Calendar } from 'lucide-react';
 import { IconButton } from '../IconButton';
 import { withFileAuth } from '@/lib/fileUrl';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+
+const API = process.env.REACT_APP_BACKEND_URL || '';
+// berkas unggahan disimpan relatif (`/api/files/...`, sama dengan Data Karyawan › Dokumen) — dibuka lewat
+// asal yang sama (caddy meneruskan /api); tautan luar (https://...) dibuka apa adanya.
 
 const DOC_TYPE_LABEL = {
   ktp: 'KTP',
@@ -35,6 +40,11 @@ export default function MyDocumentsModule({ token }) {
   const [uploading, setUploading] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [formData, setFormData] = useState({ title: '', doc_type: 'other', description: '', file_url: '', file_name: '', expiry_date: '' });
+  // Tahap 5 (2026-11-07): formulir "Upload Dokumen" dulu TIDAK punya pemilih berkas — hanya kotak URL & nama
+  // berkas yang diketik, jadi karyawan tidak bisa mengunggah KTP/ijazah dari HP. Kini berkas diunggah lewat
+  // `/api/upload` yang sama dengan Data Karyawan › Dokumen (ditautkan ke karyawannya, terlihat juga oleh HR).
+  const [fileBusy, setFileBusy] = useState(false);
+  const [myEmployeeId, setMyEmployeeId] = useState('');
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
 
@@ -54,10 +64,37 @@ export default function MyDocumentsModule({ token }) {
   }, [headers]);
 
   useEffect(() => { fetchDocuments(); }, [fetchDocuments]);
+  useEffect(() => {
+    fetch(`${API}/api/portal-saya/me/employee`, { headers })
+      .then(r => (r.ok ? r.json() : null)).then(d => setMyEmployeeId(d?.id || '')).catch(() => setMyEmployeeId(''));
+  }, [headers]);
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { toast.error('Ukuran berkas maksimal 10 MB'); return; }
+    setFileBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`${API}/api/upload?entity_type=employee&entity_id=${encodeURIComponent(myEmployeeId)}`, {
+        method: 'POST', headers: { Authorization: headers.Authorization }, body: fd,
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.storage_path) throw new Error(typeof d.detail === 'string' ? d.detail : 'Berkas gagal diunggah');
+      setFormData(f => ({ ...f, file_url: `/api/files/${d.storage_path}`, file_name: d.original_filename || file.name,
+        title: f.title || file.name.replace(/\.[^.]+$/, '') }));
+      toast.success('Berkas terunggah');
+    } catch (e) { toast.error(e.message); }
+    finally { setFileBusy(false); }
+  };
 
   const handleUpload = async () => {
     if (!formData.title) {
       toast.error('Judul dokumen harus diisi');
+      return;
+    }
+    if (!formData.file_url) {
+      toast.error('Pilih berkas atau isi tautan dokumen');
       return;
     }
     setUploading(true);
@@ -80,7 +117,7 @@ export default function MyDocumentsModule({ token }) {
   };
 
   const handleDelete = async (docId) => {
-    if (!confirm('Hapus dokumen ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus dokumen ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/portal-saya/documents/${docId}`, {
         method: 'DELETE',
@@ -259,12 +296,24 @@ export default function MyDocumentsModule({ token }) {
               <Textarea placeholder="Catatan tambahan..." value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} rows={2} />
             </div>
             <div>
-              <Label>URL File (Opsional)</Label>
-              <Input placeholder="https://..." value={formData.file_url} onChange={e => setFormData({ ...formData, file_url: e.target.value })} />
+              <Label>Berkas *</Label>
+              <div className="flex items-center gap-2 mt-1">
+                <label className="inline-flex">
+                  <input type="file" className="hidden" accept="image/*,application/pdf" data-testid="mydoc-file"
+                    onChange={e => { handleFile(e.target.files?.[0]); e.target.value = ''; }} />
+                  <Button type="button" variant="outline" disabled={fileBusy}
+                    onClick={ev => ev.currentTarget.parentElement.querySelector('input').click()}>
+                    {fileBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                    {formData.file_name ? 'Ganti berkas' : 'Pilih berkas'}
+                  </Button>
+                </label>
+                <span className="text-xs text-muted-foreground truncate" data-testid="mydoc-file-name">{formData.file_name || 'Foto atau PDF, maks 10 MB'}</span>
+              </div>
             </div>
             <div>
-              <Label>Nama File (Opsional)</Label>
-              <Input placeholder="dokumen.pdf" value={formData.file_name} onChange={e => setFormData({ ...formData, file_name: e.target.value })} />
+              <Label>Atau tautan dokumen (opsional)</Label>
+              <Input placeholder="https://..." value={formData.file_url.startsWith('/api/') ? '' : formData.file_url}
+                onChange={e => setFormData({ ...formData, file_url: e.target.value, file_name: formData.file_url.startsWith('/api/') ? '' : formData.file_name })} />
             </div>
             <div>
               <Label>Tanggal Kadaluarsa (Opsional)</Label>

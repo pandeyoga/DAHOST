@@ -14,6 +14,7 @@ import { formatRupiah } from '@/lib/format';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
 import { todayWIB, lastMonthPeriodWIB } from '../../lib/waktu';
 import { MoneyInput } from '@/components/ui/money-input';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 // 2026-11-02 (K22): BPJS dibayar per LEMBAGA (karyawan + iuran perusahaan yang sudah dijurnal).
 const BPJS_AGENCIES = [['kes', 'BPJS Kesehatan'], ['tk', 'BPJS Ketenagakerjaan']];
@@ -223,7 +224,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
   };
 
   const voidPayment = async (run) => {
-    if (!window.confirm(`Batalkan pembayaran ${run.run_number}? Journal Entry pembayaran akan di-void.`)) return;
+    if (!(await confirmDialog({ title: `Batalkan pembayaran ${run.run_number}?`, body: 'Jurnal pembayaran gaji akan dibatalkan.', confirmLabel: 'Batalkan pembayaran', cancelLabel: 'Kembali', danger: true }))) return;
     try {
       const r = await fetch(`/api/rahaza/payroll-runs/${run.id}/void-payment`, {
         method: 'POST', headers, body: JSON.stringify({ reason: 'Void oleh admin' }),
@@ -261,7 +262,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
   };
 
   const voidObligation = async (run, type, agency = '') => {
-    if (!window.confirm(`Batalkan pembayaran ${type === 'bpjs' ? agency.toUpperCase() : 'PPh21'} ${run.run_number}? Jurnal pembayarannya di-void.`)) return;
+    if (!(await confirmDialog({ title: `Batalkan pembayaran ${type === 'bpjs' ? agency.toUpperCase() : 'PPh21'} ${run.run_number}?`, body: 'Jurnal pembayarannya akan dibatalkan.', confirmLabel: 'Batalkan pembayaran', cancelLabel: 'Kembali', danger: true }))) return;
     const r = await fetch(`/api/rahaza/payroll-runs/${run.id}/void-obligation-payment`, {
       method: 'POST', headers, body: JSON.stringify({ type, agency, reason: 'Void oleh pengguna' }),
     });
@@ -288,7 +289,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
   };
 
   const delRun = async (id) => {
-    if (!window.confirm('Hapus run ini? (hanya bisa jika masih draft)')) return;
+    if (!(await confirmDialog({ title: 'Hapus proses gaji ini?', body: 'Hanya bisa selama masih draf.', confirmLabel: 'Hapus', danger: true }))) return;
     const r = await fetch(`/api/rahaza/payroll-runs/${id}`, { method: 'DELETE', headers });
     if (r.ok) refresh(); else setError(`Gagal hapus (HTTP ${r.status})`);
   };
@@ -567,24 +568,19 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
             )}
             <div>
               <Label className="text-xs">Tanggal Pembayaran</Label>
-              <input type="date" className="mt-1 w-full h-9 rounded border border-border bg-background px-3 text-sm"
+              <GlassInput type="date" className="mt-1 h-9 text-sm"
                 value={payForm.payment_date}
                 onChange={e => setPayForm(f => ({ ...f, payment_date: e.target.value }))}
                 data-testid="pay-date" />
             </div>
             <div>
               <Label className="text-xs">Rekening / Kas</Label>
-              <Select value={payForm.bank_account_code}
-                onValueChange={v => setPayForm(f => ({ ...f, bank_account_code: v }))}>
-                <SelectTrigger className="mt-1 h-9 text-sm" data-testid="pay-bank-select">
-                  <SelectValue placeholder={cashLoaded ? (cashAccounts.length ? 'Pilih rekening kas/bank' : 'Tidak ada rekening kas/bank aktif') : 'Memuat rekening…'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {cashAccounts.map(a => (
-                    <SelectItem key={a.id || a.gl_account_code} value={a.gl_account_code}>{a.name} ({a.gl_account_code})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Tahap 5: pemilih rekening yang sama dengan form bayar SDM lain (bisa dicari), nilai = kode akun GL */}
+              <div className="mt-1">
+                <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} valueKey="gl_account_code"
+                  value={payForm.bank_account_code} testId="pay-bank-select"
+                  onChange={v => setPayForm(f => ({ ...f, bank_account_code: v }))} />
+              </div>
             </div>
             <div>
               <Label className="text-xs">Metode</Label>
@@ -647,7 +643,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Tanggal Pembayaran</Label>
-              <input type="date" className="mt-1 w-full h-9 rounded border border-border bg-background px-3 text-sm"
+              <GlassInput type="date" className="mt-1 h-9 text-sm"
                 value={oblForm.payment_date} onChange={e => setOblForm(f => ({ ...f, payment_date: e.target.value }))}
                 data-testid="obligation-date" />
             </div>

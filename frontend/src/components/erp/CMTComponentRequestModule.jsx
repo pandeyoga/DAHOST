@@ -82,6 +82,46 @@ export default function CMTComponentRequestModule({ token }) {
   const [reqCode, setReqCode] = useState('');
   const [materials, setMaterials] = useState([]);
   const [poOptions, setPoOptions] = useState([]);
+  // 2026-11-07 (Tahap 5): vendor CMT, ukuran & warna DARI MASTER (dulu diketik bebas — `cmt_partner_id`
+  // selalu kosong sehingga penyaring "per vendor" dan rekap vendor tidak pernah cocok).
+  const [vendors, setVendors] = useState([]);
+  const [sizeMaster, setSizeMaster] = useState([]);
+  const [colorMaster, setColorMaster] = useState([]);
+  const [modelVariants, setModelVariants] = useState([]);
+  useEffect(() => {
+    if (!showForm) return;
+    const j = (r) => (r.ok ? r.json() : []);
+    fetch(`${API}/api/garments`, { headers: h }).then(j)
+      .then(d => setVendors((Array.isArray(d) ? d : []).filter(v => v.status !== 'inactive')))
+      .catch(() => setVendors([]));
+    fetch(`${API}/api/rahaza/sizes`, { headers: h }).then(j)
+      .then(d => setSizeMaster((Array.isArray(d) ? d : (d?.items || [])).filter(x => x.active !== false)))
+      .catch(() => setSizeMaster([]));
+    fetch(`${API}/api/rahaza/colors`, { headers: h }).then(j)
+      .then(d => setColorMaster((Array.isArray(d) ? d : (d?.items || [])).filter(x => x.active !== false)))
+      .catch(() => setColorMaster([]));
+  }, [showForm]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!showForm || !form.model_id) { setModelVariants([]); return; }
+    let alive = true;
+    fetch(`${API}/api/rahaza/models/${form.model_id}/variants`, { headers: h })
+      .then(r => (r.ok ? r.json() : {})).then(d => { if (alive) setModelVariants(Array.isArray(d) ? d : (d?.variants || [])); })
+      .catch(() => { if (alive) setModelVariants([]); });
+    return () => { alive = false; };
+  }, [showForm, form.model_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Ukuran & warna = milik varian produk terpilih; tanpa produk (atau produk belum punya varian) = master.
+  const sizeOpts = useMemo(() => {
+    const fromVar = [...new Set(modelVariants.map(v => v.size_code).filter(Boolean))];
+    return fromVar.length ? fromVar : sizeMaster.map(x => x.code).filter(Boolean);
+  }, [modelVariants, sizeMaster]);
+  const colorOpts = useMemo(() => {
+    const fromVar = [...new Set(modelVariants.map(v => v.color_name).filter(Boolean))];
+    return fromVar.length ? fromVar : colorMaster.map(x => x.name).filter(Boolean);
+  }, [modelVariants, colorMaster]);
+  // PO mengikuti vendor CMT terpilih (PO milik vendor itu + PO yang belum ditentukan vendornya).
+  const poChoices = useMemo(() => (form.cmt_partner_id
+    ? poOptions.filter(po => !po.vendor_id || po.vendor_id === form.cmt_partner_id)
+    : poOptions), [poOptions, form.cmt_partner_id]);
   useEffect(() => {
     if (!showForm) return;
     const cat = form.request_type === 'accessory' ? 'aksesoris' : 'bahan';
@@ -169,7 +209,7 @@ export default function CMTComponentRequestModule({ token }) {
   };
 
   const handleSave = async () => {
-    if (!form.cmt_partner_name?.trim()) return toast.error('Nama CMT partner wajib diisi');
+    if (!form.cmt_partner_id && !form.cmt_partner_name?.trim()) return toast.error('Pilih vendor CMT dari master dulu');
     const validItems = form.items.filter(it => it.material_id && Number(it.qty) > 0);
     if (validItems.length === 0) return toast.error('Minimal 1 baris dengan barang dari Master Material dan qty > 0');
 
@@ -469,18 +509,31 @@ export default function CMTComponentRequestModule({ token }) {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label>CMT Partner <span className="text-[hsl(var(--destructive))] ">*</span></Label>
-                <Input className="mt-1" value={form.cmt_partner_name}
-                  onChange={e => f('cmt_partner_name', e.target.value)}
-                  placeholder="Nama CMT partner / vendor"
-                  data-testid="cmt-form-partner" />
+                <Label>Vendor CMT <span className="text-[hsl(var(--destructive))] ">*</span></Label>
+                <SmartNativeSelect className="mt-1 w-full" value={form.cmt_partner_id} aria-label="Vendor CMT"
+                  data-testid="cmt-form-partner"
+                  onChange={e => {
+                    const v = vendors.find(x => x.id === e.target.value);
+                    setForm(p => {
+                      const po = poOptions.find(x => x.id === p.po_id);
+                      const keepPo = !po || !po.vendor_id || !v || po.vendor_id === v.id;
+                      return { ...p, cmt_partner_id: e.target.value, cmt_partner_name: v?.garment_name || v?.name || '',
+                               po_id: keepPo ? p.po_id : '', po_number: keepPo ? p.po_number : '' };
+                    });
+                  }}>
+                  <option value="">— Pilih vendor CMT (master) —</option>
+                  {form.cmt_partner_name && !form.cmt_partner_id && (
+                    <option value="" disabled>{`${form.cmt_partner_name} (lama, belum tertaut master)`}</option>
+                  )}
+                  {vendors.map(v => <option key={v.id} value={v.id}>{`${v.garment_code ? `${v.garment_code} · ` : ''}${v.garment_name || v.name}`}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
                 <Label>PO produksi</Label>
                 <SmartNativeSelect className="mt-1 w-full" value={form.po_id} aria-label="PO produksi" data-testid="cmt-form-po"
                   onChange={e => { const po = poOptions.find(x => x.id === e.target.value); setForm(p => ({ ...p, po_id: e.target.value, po_number: po?.po_number || '' })); }}>
                   <option value="">— Pilih PO (menentukan akun biaya) —</option>
-                  {poOptions.map(po => <option key={po.id} value={po.id}>{po.po_number} · {po.customer_name || ''}</option>)}
+                  {poChoices.map(po => <option key={po.id} value={po.id}>{`${po.po_number} · ${po.business_type === 'internal' ? 'Internal' : 'Maklon'}${po.customer_name ? ` · ${po.customer_name}` : ''}`}</option>)}
                 </SmartNativeSelect>
               </div>
             </div>
@@ -517,16 +570,26 @@ export default function CMTComponentRequestModule({ token }) {
               <div className="space-y-2">
                 {form.items.map((it, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-start" data-testid={`cmt-form-row-${idx}`}>
-                    <SmartNativeSelect className="col-span-3" value={it.material_id || ''}
+                    {/* 2026-11-07: col-span harus di pembungkus (wrapperClassName) — di className ia jatuh ke tombol
+                        sehingga pilihan menyempit jadi 1/12 lebar ("C.", "X.") */}
+                    <SmartNativeSelect className="w-full" wrapperClassName="col-span-3 min-w-0" value={it.material_id || ''}
                       onChange={e => pickMaterial(idx, e.target.value)} aria-label="Barang dari master"
                       data-testid={`cmt-form-row-${idx}-type`}>
                       <option value="">{form.request_type === 'accessory' ? '— Pilih aksesoris (master) —' : '— Pilih bahan (master) —'}</option>
                       {materials.map(m => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
                     </SmartNativeSelect>
-                    <Input className="col-span-2" placeholder="Size (S/M/L)"
-                      value={it.size} onChange={e => updateItem(idx, 'size', e.target.value)} />
-                    <Input className="col-span-2" placeholder="Warna"
-                      value={it.color} onChange={e => updateItem(idx, 'color', e.target.value)} />
+                    <SmartNativeSelect className="w-full" wrapperClassName="col-span-2 min-w-0" value={it.size || ''} aria-label="Ukuran"
+                      onChange={e => updateItem(idx, 'size', e.target.value)} data-testid={`cmt-form-row-${idx}-size`}>
+                      <option value="">— Ukuran —</option>
+                      {it.size && !sizeOpts.includes(it.size) && <option value={it.size}>{it.size}</option>}
+                      {sizeOpts.map(x => <option key={x} value={x}>{x}</option>)}
+                    </SmartNativeSelect>
+                    <SmartNativeSelect className="w-full" wrapperClassName="col-span-2 min-w-0" value={it.color || ''} aria-label="Warna"
+                      onChange={e => updateItem(idx, 'color', e.target.value)} data-testid={`cmt-form-row-${idx}-color`}>
+                      <option value="">— Warna —</option>
+                      {it.color && !colorOpts.includes(it.color) && <option value={it.color}>{it.color}</option>}
+                      {colorOpts.map(x => <option key={x} value={x}>{x}</option>)}
+                    </SmartNativeSelect>
                     <Input className="col-span-2" type="number" min="0" placeholder="Qty"
                       value={it.qty} onChange={e => updateItem(idx, 'qty', e.target.value)} />
                     {/* satuan mengikuti master material (tidak diketik) */}

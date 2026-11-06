@@ -524,11 +524,18 @@ async def sales_dashboard(request: Request):
     return out
 
 
+CASH_ACCOUNT_FIELDS = {"_id": 0, "id": 1, "code": 1, "name": 1, "type": 1, "bank_name": 1, "gl_account_code": 1}
+
+
 @router.get("/cash-accounts")
 async def cash_accounts(request: Request):
+    """Rekening kas/bank aktif untuk form nota (tunai, terima bayar, refund retur).
+
+    2026-11-07 (audit form Tahap 5): ikut kode rekening & kode akun buku besarnya — pilihan di layar berlabel
+    "nama · kode akun" (dulu hanya nama, sehingga "Bank BCA – …" yang mirip sulit dibedakan)."""
     await require_auth(request)
     db = get_db()
-    rows = await db.rahaza_cash_accounts.find({"active": {"$ne": False}}, {"_id": 0, "id": 1, "name": 1, "type": 1, "bank_name": 1}).to_list(200)
+    rows = await db.rahaza_cash_accounts.find({"active": {"$ne": False}}, CASH_ACCOUNT_FIELDS).sort("code", 1).to_list(200)
     return serialize_doc(rows)
 
 

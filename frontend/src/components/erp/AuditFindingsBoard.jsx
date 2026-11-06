@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { ClipboardCheck, CircleCheck, CircleDashed, Clock3 } from 'lucide-react';
 
 // Papan Temuan Audit 2026-09-23 — status 30 temuan (Finance · Produksi/Maklon · R&D)
@@ -48,12 +49,12 @@ export default function AuditFindingsBoard() {
       </div>
       <div className="h-2 rounded bg-muted overflow-hidden"><div className="h-2 bg-emerald-500 transition-all" style={{ width: `${pct}%` }} /></div>
       <div className="flex flex-wrap gap-2 text-sm">
-        <select value={portal} onChange={e => setPortal(e.target.value)} className="border rounded px-2 py-1 bg-background" data-testid="audit-filter-portal">
+        <SmartNativeSelect value={portal} onChange={e => setPortal(e.target.value)} className="w-40 border rounded px-2 py-1 bg-background" data-testid="audit-filter-portal">
           {['Semua', ...Object.keys(data.by_portal || {})].map(p => <option key={p} value={p}>{p}{p !== 'Semua' ? ` (${data.by_portal[p]})` : ''}</option>)}
-        </select>
-        <select value={status} onChange={e => setStatus(e.target.value)} className="border rounded px-2 py-1 bg-background" data-testid="audit-filter-status">
+        </SmartNativeSelect>
+        <SmartNativeSelect value={status} onChange={e => setStatus(e.target.value)} className="w-40 border rounded px-2 py-1 bg-background" data-testid="audit-filter-status">
           {['Semua', 'selesai', 'diterima', 'terbuka'].map(s => <option key={s} value={s}>{s === 'Semua' ? 'Semua status' : STATUS_META[s].label}</option>)}
-        </select>
+        </SmartNativeSelect>
       </div>
       <div className="overflow-x-auto rounded-xl border border-[var(--glass-border)]">
         <table className="w-full text-sm" data-testid="audit-findings-table">

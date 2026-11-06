@@ -8,17 +8,18 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB } from '@/lib/waktu';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmployeeSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const STATUS_CFG = {
-  pending:   { label: 'Pending',   color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300',   icon: Clock },
+  pending:   { label: 'Menunggu',  color: 'bg-amber-100 dark:bg-amber-500/20 text-amber-600 dark:text-amber-300',   icon: Clock },
   approved:  { label: 'Disetujui', color: 'bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-300', icon: CheckCircle2 },
   rejected:  { label: 'Ditolak',   color: 'bg-red-100 dark:bg-red-500/20 text-red-600 dark:text-red-300',       icon: XCircle },
   cancelled: { label: 'Dibatalkan',color: 'bg-muted dark:bg-slate-500/20 text-foreground/70',   icon: X },
@@ -79,7 +80,7 @@ export default function RahazaOvertimeModule({ token, user }) {
   };
 
   const handleCancel = async (id) => {
-    if (!window.confirm('Batalkan request lembur ini?')) return;
+    if (!(await confirmDialog({ title: 'Batalkan pengajuan lembur ini?', confirmLabel: 'Batalkan pengajuan', cancelLabel: 'Kembali', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/rahaza/overtime/${id}`, { headers });
       toast.success('Request dibatalkan');
@@ -115,7 +116,7 @@ export default function RahazaOvertimeModule({ token, user }) {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="grid grid-cols-5 w-full max-w-md">
-          <TabsTrigger value="pending" className="text-xs">Pending</TabsTrigger>
+          <TabsTrigger value="pending" className="text-xs">Menunggu</TabsTrigger>
           <TabsTrigger value="approved" className="text-xs">Disetujui</TabsTrigger>
           <TabsTrigger value="rejected" className="text-xs">Ditolak</TabsTrigger>
           <TabsTrigger value="cancelled" className="text-xs">Dibatal</TabsTrigger>
@@ -246,6 +247,7 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
   const submit = async (e) => {
     e.preventDefault();
     if (isApprover && !form.employee_id) { toast.error('Pilih karyawan'); return; }
+    if (!(Number(hours) > 0)) { toast.error('Isi jam mulai dan selesai'); return; }
     if (!form.reason?.trim()) { toast.error('Alasan wajib diisi'); return; }
     setSaving(true);
     await onSave({ ...form, hours: parseFloat(hours) });
@@ -260,17 +262,14 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
           {isApprover && (
             <div className="space-y-1">
               <Label>Karyawan *</Label>
-              <Select value={form.employee_id} onValueChange={v => setForm(f => ({ ...f, employee_id: v }))}>
-                <SelectTrigger><SelectValue placeholder="Pilih karyawan..." /></SelectTrigger>
-                <SelectContent>
-                  {employees.slice(0, 100).map(e => <SelectItem key={e.id} value={e.id}>{`${e.employee_code} — ${e.name}`}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              {/* Tahap 5 (2026-11-07): dulu Select tanpa kotak cari & hanya 100 karyawan pertama */}
+              <EmployeeSelect employees={employees} value={form.employee_id}
+                onChange={v => setForm(f => ({ ...f, employee_id: v }))} testId="overtime-employee" />
             </div>
           )}
           <div className="space-y-1">
             <Label>Tanggal *</Label>
-            <Input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required />
+            <Input type="date" value={form.date} onChange={e => setForm(f => ({ ...f, date: e.target.value }))} required data-testid="overtime-date" />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="space-y-1">
@@ -290,7 +289,7 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
           <p className="text-xs text-muted-foreground">Pengali upah lembur mengikuti Pengaturan Payroll.</p>
           <div className="space-y-1">
             <Label>Alasan *</Label>
-            <Textarea value={form.reason} rows={3}
+            <Textarea value={form.reason} rows={3} data-testid="overtime-reason"
               onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
               placeholder="Contoh: Menyelesaikan batch produksi urgent untuk client A" required />
           </div>
@@ -326,7 +325,7 @@ function RejectDialog({ request, onReject, onClose }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button variant="destructive" onClick={() => onReject(reason || 'Tidak disebutkan')}>
+          <Button variant="destructive" disabled={!reason.trim()} onClick={() => onReject(reason.trim())} data-testid="overtime-reject-confirm">
             <X className="w-4 h-4 mr-1" /> Tolak
           </Button>
         </DialogFooter>

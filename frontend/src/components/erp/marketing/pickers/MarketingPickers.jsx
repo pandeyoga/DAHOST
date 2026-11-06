@@ -253,6 +253,27 @@ export function MarketingHostSelect({
  * SKU / HPP / harga jual dari MASTER — inilah yang menghentikan HPP diketik
  * manual (sumber "biaya sample Rp 0" pada laporan).
  */
+/** Warna & ukuran satu item katalog (= satu varian FG) — dari master, bukan diketik. */
+function withVariantLists(i) {
+  const color = (i.fg_color || '').trim();
+  const size = (i.fg_size || '').trim();
+  return {
+    ...i,
+    colors: Array.isArray(i.colors) && i.colors.length ? i.colors : (color ? [color] : []),
+    sizes: Array.isArray(i.sizes) && i.sizes.length ? i.sizes : (size ? [size] : []),
+  };
+}
+
+/** Label pilihan produk: SKU · nama · warna · ukuran (bukan hanya nama model). */
+export function catalogItemLabel(i) {
+  const name = String(i.name || '');
+  const variant = [i.fg_color, i.fg_size].filter(Boolean).join(' · ');
+  // nama lama hasil impor kadang sudah memuat "[Warna · Ukuran]" — jangan diulang
+  const color = String(i.fg_color || '').toLowerCase();
+  const already = color && name.toLowerCase().includes(color);
+  return [i.sku, name, already ? '' : variant].filter(Boolean).join(' · ');
+}
+
 export function CatalogItemSelect({
   token, accountId, value, onChange, label = 'Produk (dari katalog toko)',
   required = true, testId = 'catalog-item-select', className = '',
@@ -272,11 +293,14 @@ export function CatalogItemSelect({
         const list = cats.data?.catalogs || cats.data?.data || [];
         const all = [];
         for (const c of list) {
+          // 2026-11-07 (Tahap 5) — server membaca `limit` (bawaan 100), bukan `page_size`:
+          // katalog berisi >100 item (mis. 197 item di satu toko) dulu terpotong diam-diam, sehingga
+          // separuh produk tidak bisa dipilih di Kirim Sample / Retur / Ulasan / Live.
           const r = await axios.get(`${API}/api/marketing/catalogs/${c.id}/items`, {
-            headers: authHeader(token), params: { page_size: 200 },
+            headers: authHeader(token), params: { limit: 2000 },
           });
           const its = r.data?.items || r.data?.data || [];
-          all.push(...its.map((i) => ({ ...i, catalog_name: c.name })));
+          all.push(...its.map((i) => withVariantLists({ ...i, catalog_name: c.name })));
         }
         if (alive) setItems(all);
       } catch (e) {
@@ -307,8 +331,7 @@ export function CatalogItemSelect({
         <SelectContent className="max-h-72">
           {items.map((i) => (
             <SelectItem key={i.id} value={i.id}>
-              <span className="font-mono text-[11px] text-muted-foreground mr-1.5">{i.sku}</span>
-              {i.name}
+              {catalogItemLabel(i)}
             </SelectItem>
           ))}
         </SelectContent>

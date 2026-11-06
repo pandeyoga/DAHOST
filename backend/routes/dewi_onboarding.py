@@ -180,10 +180,14 @@ async def create_checklist(
     employee_name = body.get("employee_name", "")
     
     # get employee details if not provided
-    if employee_id and not employee_name:
-        emp = await db.rahaza_employees.find_one({"employee_id": employee_id})
-        if emp:
-            employee_name = emp.get("name", employee_id)
+    emp = None
+    if employee_id:
+        # 2026-11-07 (Tahap 5): kunci karyawan = `id` (dulu dicari lewat `employee_id` yang tidak ada → nama kosong)
+        emp = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0})
+        if not emp:
+            raise HTTPException(400, "Karyawan tidak ditemukan.")
+    if emp and not employee_name:
+        employee_name = emp.get("name", employee_id)
     
     # get template tasks or use default
     template_id = body.get("template_id", "")
@@ -214,8 +218,8 @@ async def create_checklist(
         "checklist_id": sid(),
         "employee_id": employee_id,
         "employee_name": employee_name,
-        "employee_dept": body.get("employee_dept", ""),
-        "employee_position": body.get("employee_position", ""),
+        "employee_dept": body.get("employee_dept") or (emp or {}).get("department") or "",
+        "employee_position": body.get("employee_position") or (emp or {}).get("job_title") or "",
         "template_id": template_id,
         "start_date": start_date,
         "target_completion": body.get("target_completion", (start_date + timedelta(days=30)).isoformat()),
@@ -426,6 +430,9 @@ async def seed_onboarding(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
+    # 2026-11-07 (Tahap 5): data contoh dulu menghapus semua template & checklist onboarding tanpa tanya
+    from core.demo_seed_guard import ensure_empty_for_demo
+    await ensure_empty_for_demo(db, ["dewi_onboarding_templates", "dewi_onboarding_checklists"], "Onboarding")
     await db.dewi_onboarding_templates.delete_many({})
     await db.dewi_onboarding_checklists.delete_many({})
     

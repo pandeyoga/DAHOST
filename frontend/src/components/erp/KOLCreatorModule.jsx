@@ -149,13 +149,13 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium mb-1.5">Tipe Kreator *</label>
-              <select data-testid="creator-type-select" value={form.creator_type}
+              <SmartNativeSelect data-testid="creator-type-select" value={form.creator_type}
                 onChange={e => set('creator_type', e.target.value)}
                 className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
                 <option value="new">Kreator New (tanpa akun portal)</option>
                 <option value="kontrak">Kreator Kontrak (dapat insentif)</option>
                 <option value="continue">Kreator Continue (dapat insentif)</option>
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1.5">Domisili (Kota/Kab.)</label>
@@ -600,15 +600,15 @@ export default function KOLCreatorModule({ token }) {
                 placeholder="Cari creator..."
               />
             </div>
-            <select
+            <SmartNativeSelect
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
-              className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
+              className="w-40 bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
             >
               <option value="">Semua Status</option>
               <option value="active">Aktif</option>
               <option value="inactive">Nonaktif</option>
-            </select>
+            </SmartNativeSelect>
           </div>
 
           {filteredCreators.length === 0 ? (

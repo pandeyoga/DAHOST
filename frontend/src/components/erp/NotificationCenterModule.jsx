@@ -1,4 +1,5 @@
 import { confirmDialog } from '@/components/ui/confirm-dialog';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Bell, RefreshCw, Send, Trash2, RotateCw, AlertTriangle, Mail,
@@ -203,7 +204,7 @@ function ProviderConfigTab({ headers }) {
                 tidak pernah bisa dipakai walau host & port sudah benar. */}
             <div className="space-y-1.5">
               <Label className="text-xs">Keamanan Koneksi</Label>
-              <select
+              <SmartNativeSelect
                 value={cfg.smtp_security || 'starttls'}
                 onChange={e => setCfg(p => ({ ...p, smtp_security: e.target.value }))}
                 className="w-full h-8 text-xs rounded-md border border-border bg-[var(--card-surface)] px-2"
@@ -212,7 +213,7 @@ function ProviderConfigTab({ headers }) {
                 <option value="starttls">STARTTLS — port 587 (umum: Gmail, Zoho, Outlook)</option>
                 <option value="ssl">SSL/TLS — port 465</option>
                 <option value="none">Tanpa enkripsi — relay/SMTP internal</option>
-              </select>
+              </SmartNativeSelect>
               <div className="text-[11px] text-foreground/50">
                 Username &amp; password boleh dikosongkan bila server mengizinkan relay tanpa autentikasi.
               </div>

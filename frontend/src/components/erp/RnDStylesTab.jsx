@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import {
   Plus, Search, Pencil, Trash2, X, Check, Eye, Layers,
@@ -14,10 +16,10 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 
 const STATUS_BADGE = {
   draft:                 { label: 'Draft',                color: '#94a3b8', bg: '#94a3b820' },
-  active:                { label: 'Active',               color: '#10b981', bg: '#10b98120' },
+  active:                { label: 'Aktif',                color: '#10b981', bg: '#10b98120' },
   pending_owner_review:  { label: 'Menunggu Review Owner',color: '#f59e0b', bg: '#f59e0b20' },
   approved_for_launch:   { label: 'Disetujui Owner',      color: '#3b82f6', bg: '#3b82f620' },
-  archived:              { label: 'Archived',             color: '#6b7280', bg: '#6b728020' },
+  archived:              { label: 'Diarsipkan',           color: '#6b7280', bg: '#6b728020' },
 };
 
 // Status keputusan — hanya boleh berpindah lewat tombol Ajukan/Setujui/Tolak
@@ -96,6 +98,17 @@ export default function RnDStylesTab({ token, user }) {
   useEffect(() => {
     if (isOwner) fetchPendingCount();
   }, [isOwner]);
+
+  // 2026-11-07 (Tahap 5): kategori style DARI MASTER Kategori Produk. Dulu diketik bebas ("T-Shirt") —
+  // saat style dipromosikan jadi Model DA, teks yang tidak sama persis dengan nama master membuat model
+  // lahir TANPA kategori (kode model & prefix SKU tidak bisa dibuat dari kategori).
+  const [categories, setCategories] = useState([]);
+  useEffect(() => {
+    if (!showForm || categories.length) return;
+    apiFetch('/rahaza/product-categories')
+      .then(d => setCategories((Array.isArray(d) ? d : (d?.categories || [])).filter(c => c.active !== false)))
+      .catch(() => setCategories([]));
+  }, [showForm]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchStyles = async () => {
     setLoading(true);
@@ -207,7 +220,7 @@ export default function RnDStylesTab({ token, user }) {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Yakin ingin menghapus style ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus style ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await apiFetch(`/dewi/rnd/styles/${id}`, { method: 'DELETE' });
       toast.success('Style berhasil dihapus');
@@ -260,7 +273,11 @@ export default function RnDStylesTab({ token, user }) {
   // RND-01: promosi style approved_for_launch → Model DA (POST /styles/{id}/promote-to-production)
   const [promotingId, setPromotingId] = useState(null);
   const handlePromote = async (style) => {
-    const ok = window.confirm(`Promosikan ${style.style_code} — ${style.style_name} menjadi Model DA di Portal Produksi?\nKode produk = ${style.style_code} (ubah di Master Produk bila perlu).`);
+    const ok = await confirmDialog({
+      title: `Promosikan ${style.style_code} — ${style.style_name} menjadi Model DA?`,
+      body: `Model baru muncul di Portal Produksi dengan kode produk ${style.style_code} (ubah di Master Produk bila perlu).`,
+      confirmLabel: 'Promosikan',
+    });
     if (!ok) return;
     setPromotingId(style.id);
     try {
@@ -312,19 +329,19 @@ export default function RnDStylesTab({ token, user }) {
             className="w-full pl-10 pr-4 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
           />
         </div>
-        <select
+        <SmartNativeSelect
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          className="w-48" wrapperClassName="w-48"
           data-testid="filter-status-select"
         >
-          <option value="">Semua Status</option>
+          <option value="">Semua status</option>
           <option value="draft">Draft</option>
-          <option value="active">Active</option>
-          <option value="pending_owner_review">Menunggu Review</option>
-          <option value="approved_for_launch">Disetujui Owner</option>
-          <option value="archived">Archived</option>
-        </select>
+          <option value="active">Aktif</option>
+          <option value="pending_owner_review">Menunggu review</option>
+          <option value="approved_for_launch">Disetujui owner</option>
+          <option value="archived">Diarsipkan</option>
+        </SmartNativeSelect>
         <button
           onClick={openCreate}
           className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg font-medium hover:opacity-90 transition-opacity"
@@ -500,8 +517,14 @@ export default function RnDStylesTab({ token, user }) {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Kategori</label>
-                  <input type="text" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" placeholder="T-Shirt" />
+                  <SmartNativeSelect value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}
+                    className="w-full" data-testid="style-category-select">
+                    <option value="">— Pilih kategori produk —</option>
+                    {form.category && !categories.some(c => c.name === form.category) && (
+                      <option value={form.category}>{`${form.category} (belum ada di master)`}</option>
+                    )}
+                    {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Buyer</label>
@@ -537,13 +560,12 @@ export default function RnDStylesTab({ token, user }) {
                       </p>
                     </div>
                   ) : (
-                    <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
-                      className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                      data-testid="style-status-select">
+                    <SmartNativeSelect value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}
+                      className="w-full" data-testid="style-status-select">
                       <option value="draft">Draft</option>
-                      <option value="active">Active</option>
-                      <option value="archived">Archived</option>
-                    </select>
+                      <option value="active">Aktif</option>
+                      <option value="archived">Diarsipkan</option>
+                    </SmartNativeSelect>
                   )}
                 </div>
               </div>
