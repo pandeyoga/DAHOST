@@ -37,9 +37,233 @@ _log = logging.getLogger(__name__)
 class IssueError(ValueError):
     """Kesalahan yang layak ditampilkan ke user (bukan bug)."""
 
-    def __init__(self, message: str, *, status: int = 400):
+    def __init__(self, message: str, *, status: int = 400, code: str = "", data: dict | None = None):
         super().__init__(message)
         self.status = status
+        self.code = code          # 2026-11-06 (Tahap 2): mis. "over_issue" → layar meminta alasan
+        self.data = data or {}
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — AKUN BEBAN PER DIVISI PEMOHON / PER PO (keputusan owner)
+# ═════════════════════════════════════════════════════════════════════════════
+# Dulu setiap pengeluaran aksesoris dijurnal Dr WIP 1-1403, termasuk ATK kantor dan bahan promosi.
+# Sekarang tujuan biaya (cost target) menentukan PERAN profil posting `inventory_issue`
+# (diubah Finance di Pengaturan Keuangan › Pemetaan akun otomatis — tidak ada kode akun di sini):
+#   * terikat PO  → jenis PO: maklon = biaya bahan pesanan maklon (K42), internal = WIP;
+#   * sampel R&D  → peran sampel R&D;
+#   * selain itu  → divisi pemohon (daftar tunggal di bawah, dipakai layar lewat /api/acc/divisions).
+COST_WIP = "wip"
+COST_MAKLON = "maklon"
+COST_OFFICE = "kantor"
+COST_MARKETING = "pemasaran"
+COST_OTHER = "lainnya"
+COST_RND = "sampel_rnd"
+
+# SATU daftar divisi pemohon (dulu tersalin di AccessoryModule.jsx & dewi_accessories_stock.py).
+DIVISIONS = (
+    {"value": "Produksi", "cost_target": COST_WIP},
+    {"value": "Cutting", "cost_target": COST_WIP},
+    {"value": "CMT", "cost_target": COST_WIP},
+    {"value": "Gudang", "cost_target": COST_OFFICE},
+    {"value": "Kantor", "cost_target": COST_OFFICE},
+    {"value": "SDM", "cost_target": COST_OFFICE},
+    {"value": "QC", "cost_target": COST_WIP},
+    {"value": "Packing", "cost_target": COST_WIP},
+    {"value": "Marketing", "cost_target": COST_MARKETING},
+    {"value": "Lainnya", "cost_target": COST_OTHER},
+)
+DIVISION_NAMES = tuple(d["value"] for d in DIVISIONS)
+
+# Peran profil posting per tujuan biaya. Bentuk {event: {tujuan: peran}} supaya dibaca registri
+# keterikatan akun (`core.coa_bindings.PROFILE_ROLE_TABLES`) tanpa disalin.
+PROFILE_ROLES = {
+    "inventory_issue": {
+        COST_WIP: "debit_wip",
+        COST_MAKLON: "debit_maklon_material",
+        COST_OFFICE: "debit_accessory_office",
+        COST_MARKETING: "debit_accessory_marketing",
+        COST_OTHER: "debit_accessory_other",
+        COST_RND: "debit_accessory_rnd_sample",
+    },
+}
+COST_TARGET_LABELS = {
+    COST_WIP: "Barang dalam proses (produksi)",
+    COST_MAKLON: "Biaya bahan pesanan maklon",
+    COST_OFFICE: "Beban ATK & perlengkapan",
+    COST_MARKETING: "Beban pemasaran",
+    COST_OTHER: "Beban umum",
+    COST_RND: "Beban sampel R&D",
+}
+VENDOR_REQUEST_TYPES = ("vendor_additional", "vendor_replacement")
+# Pemilik barang "stok DA" & status MI yang tidak dihitung — definisi milik mesin Material Issue
+from core.material_issue_engine import MAKLON_DA_OWNERSHIP as DA_OWNERSHIP  # noqa: E402
+from core.material_issue_engine import _MI_NOT_COUNTED  # noqa: E402
+
+
+def normalize_division(divisi) -> str:
+    """Nama divisi kanonik dari daftar tunggal ('' bila tidak dikenal)."""
+    key = str(divisi or "").strip().lower()
+    return next((d for d in DIVISION_NAMES if d.lower() == key), "")
+
+
+def division_cost_target(divisi) -> str:
+    name = normalize_division(divisi)
+    return next((d["cost_target"] for d in DIVISIONS if d["value"] == name), "")
+
+
+def debit_role(cost_target: str) -> str:
+    """Peran profil `inventory_issue` untuk satu tujuan biaya (bawaan: WIP, perilaku lama)."""
+    roles = PROFILE_ROLES["inventory_issue"]
+    return roles.get(cost_target or COST_WIP) or roles[COST_WIP]
+
+
+async def resolve_cost_target(db, *, divisi: str = "", po_id: str = "",
+                              request_type: str = "") -> dict:
+    """Tujuan biaya satu pengeluaran → {cost_target, divisi, po_id, po_number, business_type}.
+
+    Urutan: PO (jenis PO menang atas divisi) → sampel R&D → tambahan/pengganti vendor tanpa PO (WIP,
+    barangnya untuk produksi CMT) → divisi pemohon. Divisi tidak dikenal ⇒ IssueError (akun tak bisa
+    ditentukan; lebih baik ditanyakan daripada diam-diam dibebankan ke WIP)."""
+    out = {"divisi": normalize_division(divisi), "po_id": "", "po_number": "", "business_type": ""}
+    if po_id:
+        po = await db.production_pos.find_one({"id": po_id}, {"_id": 0, "id": 1, "po_number": 1,
+                                                              "business_type": 1})
+        if not po:
+            raise IssueError("PO produksi yang terkait permintaan ini tidak ditemukan.", status=404)
+        bt = (po.get("business_type") or "internal").strip().lower()
+        out.update(po_id=po["id"], po_number=po.get("po_number") or "", business_type=bt,
+                   cost_target=COST_MAKLON if bt == "maklon" else COST_WIP)
+        return out
+    if request_type == "rnd_sample":
+        return {**out, "cost_target": COST_RND}
+    if request_type in VENDOR_REQUEST_TYPES:
+        return {**out, "cost_target": COST_WIP}
+    target = division_cost_target(divisi)
+    if not target:
+        raise IssueError("Pilih divisi pemohon dulu — divisi menentukan akun beban pemakaian aksesoris. "
+                         f"Pilihan: {', '.join(DIVISION_NAMES)}.")
+    return {**out, "cost_target": target}
+
+
+# ── satu kebutuhan per PO: kebutuhan vs yang sudah keluar (jalur permintaan + Kirim Material CMT) ──
+def _f(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+async def po_need_by_material(db, po: dict) -> dict:
+    """{material_id: qty} kebutuhan aksesoris MILIK DA untuk satu PO (`po_accessories`, satuan dasar).
+
+    PO maklon: hanya baris milik DA — baris disediakan klien (atau tanpa keterangan pemilik) bukan
+    stok DA, jadi kebutuhannya 0 di sini."""
+    maklon = (po.get("business_type") or "") == "maklon"
+    need: dict = {}
+    async for r in db.po_accessories.find({"po_id": po.get("id")}, {"_id": 0}):
+        mid = r.get("accessory_id")
+        if not mid:
+            continue
+        if maklon and (r.get("ownership") or "") not in DA_OWNERSHIP:
+            continue
+        need[mid] = need.get(mid, 0.0) + _f(r.get("qty_needed"))
+    return need
+
+
+async def request_issued_for_po(db, po_id: str) -> dict:
+    """{material_id: qty} aksesoris yang SUDAH keluar untuk PO lewat jalur permintaan / Keluar manual.
+
+    Sumber: baris kartu stok `movement_type='issue'` ber-`po_id` (sejak Tahap 2) + permintaan lama
+    ber-PO yang sudah menyerahkan barang sebelum baris kartu stok membawa `po_id`."""
+    out: dict = {}
+    if not po_id:
+        return out
+    async for mv in db.rahaza_material_movements.find(
+            {"po_id": po_id, "movement_type": "issue"}, {"_id": 0, "material_id": 1, "qty": 1, "qty_signed": 1}):
+        q = abs(_f(mv.get("qty_signed") if mv.get("qty_signed") is not None else mv.get("qty")))
+        out[mv.get("material_id")] = out.get(mv.get("material_id"), 0.0) + q
+    async for req in db.dewi_accessory_requests.find(
+            {"po_id": po_id, "stock_issued": True, "issue_linked_po": {"$ne": True}},
+            {"_id": 0, "stock_issue_results": 1}):
+        for r in req.get("stock_issue_results") or []:
+            out[r.get("material_id")] = out.get(r.get("material_id"), 0.0) + _f(r.get("qty"))
+    return out
+
+
+async def mi_issued_for_po(db, po_id: str) -> dict:
+    """{material_id: qty} yang sudah keluar untuk PO lewat dokumen Material Issue (Kirim Material CMT)."""
+    out: dict = {}
+    if not po_id:
+        return out
+    async for mi in db.rahaza_material_issues.find(
+            {"production_po_id": po_id, "status": {"$nin": list(_MI_NOT_COUNTED)}}, {"_id": 0, "items": 1}):
+        for it in mi.get("items") or []:
+            out[it.get("material_id")] = out.get(it.get("material_id"), 0.0) + _f(it.get("qty_issued"))
+    return out
+
+
+async def request_credit_for_po(db, po_id: str) -> dict:
+    """{material_id: qty} pengeluaran lewat permintaan untuk PO INTERNAL yang belum diperhitungkan
+    Kirim Material CMT. Yang sudah diperhitungkan dicatat per surat jalan
+    (`vendor_shipments.accessory_request_offsets`), jadi tidak dipakai dua kali."""
+    issued = await request_issued_for_po(db, po_id)
+    if not issued:
+        return {}
+    used: dict = {}
+    async for s in db.vendor_shipments.find({"po_id": po_id}, {"_id": 0, "accessory_request_offsets": 1}):
+        for o in s.get("accessory_request_offsets") or []:
+            used[o.get("material_id")] = used.get(o.get("material_id"), 0.0) + _f(o.get("qty"))
+    return {mid: round(q - used.get(mid, 0.0), 4) for mid, q in issued.items()
+            if q - used.get(mid, 0.0) > 1e-9}
+
+
+async def po_issued_by_material(db, po_id: str) -> dict:
+    """Total keluar per material untuk satu PO = jalur permintaan + Material Issue."""
+    out = await mi_issued_for_po(db, po_id)
+    for mid, q in (await request_issued_for_po(db, po_id)).items():
+        out[mid] = out.get(mid, 0.0) + q
+    return out
+
+
+def over_issue_lines(rows: list, need: dict, issued: dict) -> list:
+    """Fungsi murni: baris yang membuat total keluar melebihi kebutuhan PO.
+
+    `rows` = [{material, qty}] hasil `check_availability`. Return [{material_id, code, name, need,
+    issued, qty, over}] — kosong bila semua masih dalam kebutuhan."""
+    out, running = [], dict(issued)
+    for r in rows:
+        mid = r["material"]["id"]
+        before = _f(running.get(mid))
+        after = before + _f(r["qty"])
+        running[mid] = after
+        n = _f(need.get(mid))
+        if after > n + 1e-6:
+            out.append({"material_id": mid, "code": r["material"].get("code", ""),
+                        "name": r["material"].get("name", ""), "need": round(n, 4),
+                        "issued": round(before, 4), "qty": round(_f(r["qty"]), 4),
+                        "over": round(after - max(n, before), 4)})
+    return out
+
+
+async def guard_po_over_issue(db, target: dict, rows: list, reason: str = "") -> list:
+    """Aturan owner (lebih dari kebutuhan boleh, WAJIB beralasan): pengeluaran ber-PO yang membuat
+    total keluar untuk PO itu (jalur permintaan + Kirim Material CMT) melebihi kebutuhan PO ditolak
+    tanpa alasan. Return baris kelebihan (untuk disimpan bersama alasannya)."""
+    po_id = (target or {}).get("po_id")
+    if not po_id:
+        return []
+    po = await db.production_pos.find_one({"id": po_id}, {"_id": 0, "id": 1, "business_type": 1})
+    lines = over_issue_lines(rows, await po_need_by_material(db, po or {"id": po_id}),
+                             await po_issued_by_material(db, po_id))
+    if lines and not str(reason or "").strip():
+        detail = "; ".join(f"{ln['code'] or ln['name']}: kebutuhan PO {ln['need']:g}, sudah keluar "
+                           f"{ln['issued']:g}, diminta {ln['qty']:g}" for ln in lines)
+        raise IssueError(
+            f"Pengeluaran melebihi kebutuhan PO {target.get('po_number') or ''} — {detail}. "
+            "Isi alasan kelebihan supaya bisa diteruskan.",
+            code="over_issue", data={"lines": lines, "po_number": target.get("po_number") or ""})
+    return lines
 
 
 async def resolve_material(db, *, acc_id: str = "", code: str = "") -> dict | None:
@@ -97,8 +321,14 @@ async def check_availability(db, items: list[dict]) -> list[dict]:
 
 async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
                           input_unit: str = "base", notes: str = "",
-                          ref_type: str = "manual", ref_id: str = "") -> dict:
-    """Keluarkan stok aksesoris (bernilai + berjurnal). Melempar `IssueError` bila tidak valid."""
+                          ref_type: str = "manual", ref_id: str = "",
+                          target: dict | None = None, over_issue_reason: str = "",
+                          guard_po: bool = False) -> dict:
+    """Keluarkan stok aksesoris (bernilai + berjurnal). Melempar `IssueError` bila tidak valid.
+
+    2026-11-06 (Tahap 2): `target` = hasil `resolve_cost_target` (tujuan biaya + PO/divisi). Dibawa ke
+    baris kartu stok supaya jurnal memakai akun yang benar dan Kirim Material CMT tahu apa yang sudah
+    keluar untuk PO yang sama. Tanpa `target` → WIP (perilaku lama)."""
     from routes.dewi_accessories_stock import _log_movement  # lazy: hindari impor siklik
     from routes.rahaza_posting import post_accessory_issue  # lazy: modul berat
 
@@ -134,14 +364,26 @@ async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
     if current < qty_base:
         raise IssueError(f"Stok tidak cukup. Stok yang bisa dipakai: {current:g} "
                          f"(stok di lokasi karantina tidak ikut).")
+    if guard_po and (target or {}).get("po_id"):
+        # satu kebutuhan per PO: kelebihan dari kebutuhan PO wajib beralasan (sebelum stok dipotong)
+        await guard_po_over_issue(db, target, [{"material": item, "qty": qty_base}], over_issue_reason)
 
     loc_id = await _get_accessory_location_id(db)
     await _add_stock(db, acc_id, loc_id, -qty_base)
 
     unit_cost = accessory_valuation.resolve_unit_cost(item)
+    tgt = dict(target or {})
+    cost_target = tgt.get("cost_target") or COST_WIP
+    extra = {"cost_target": cost_target}
+    for k in ("divisi", "po_id", "po_number"):
+        if tgt.get(k):
+            extra[k] = tgt[k]
+    if over_issue_reason:
+        extra["over_issue_reason"] = over_issue_reason
     mv = await _log_movement(
         db, user, material_id=acc_id, mv_type="issue", qty=-qty_base,
         related_type=ref_type, related_ref=ref_id, notes=notes, unit_cost=unit_cost,
+        extra=extra,
     )
     je = {"posted": False,
           "error": "Harga satuan belum diisi — jurnal pemakaian tidak dibuat."}
@@ -170,5 +412,7 @@ async def issue_accessory(db, user: dict, *, acc_id: str, qty: float,
         "unit_cost": round(unit_cost, 4),
         "value": round(qty_base * unit_cost, 2),
         "stock_value": round(new_qty * unit_cost, 2),
+        "movement_id": (mv or {}).get("id", ""),
+        "cost_target": cost_target,
         "je": je,
     }

@@ -228,7 +228,6 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
     date: todayWIB(),
     start_time: '17:00',
     end_time: '19:00',
-    rate_multiplier: 1.5,
     reason: '',
   });
   const [saving, setSaving] = useState(false);
@@ -287,17 +286,8 @@ function OvertimeDialog({ employees, isApprover, currentUser, onSave, onClose })
               <Input value={`${hours} jam`} readOnly className="bg-muted/50" />
             </div>
           </div>
-          <div className="space-y-1">
-            <Label>Tarif Lembur</Label>
-            <Select value={String(form.rate_multiplier)} onValueChange={v => setForm(f => ({ ...f, rate_multiplier: Number(v) }))}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="1.5">1.5× (Lembur hari kerja)</SelectItem>
-                <SelectItem value="2">2× (Hari libur)</SelectItem>
-                <SelectItem value="3">3× (Hari libur nasional jam ke-8+)</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {/* Tahap 2 (2026-11-06): pengali lembur dari Pengaturan Payroll, tidak dipilih di formulir */}
+          <p className="text-xs text-muted-foreground">Pengali upah lembur mengikuti Pengaturan Payroll.</p>
           <div className="space-y-1">
             <Label>Alasan *</Label>
             <Textarea value={form.reason} rows={3}

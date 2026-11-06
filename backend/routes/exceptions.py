@@ -612,6 +612,55 @@ async def delete_return(ret_id: str, request: Request):
     return {'success': True}
 
 # ─── PRODUCTION VARIANCES (OVERPRODUCTION/UNDERPRODUCTION) ──────────────────
+async def system_variance_items(db, job_id: str, variance_type: str, picked_ids=None) -> list:
+    """Baris variance dari BUKU KUANTITAS job (2026-11-06, Tahap 2).
+
+    variance = |diproduksi − dipesan| per baris job, hanya baris yang arahnya sesuai jenis laporan
+    (lebih untuk OVERPRODUCTION, kurang untuk UNDERPRODUCTION). `picked_ids` kosong = semua baris."""
+    job_items = await db.production_job_items.find({'job_id': job_id}, {'_id': 0}).to_list(500)
+    by_id = {ji.get('id'): ji for ji in job_items}
+    picked = [str(x) for x in (picked_ids or []) if x] or list(by_id)
+    unknown = [x for x in picked if x not in by_id]
+    if unknown:
+        raise HTTPException(400, 'Baris job yang dipilih tidak ditemukan di job ini.')
+    out = []
+    for jid in picked:
+        ji = by_id[jid]
+        ordered = int(ji.get('ordered_qty') or 0)
+        produced = int(ji.get('produced_qty') or 0)
+        diff = produced - ordered
+        if (variance_type == 'OVERPRODUCTION' and diff <= 0) or (variance_type == 'UNDERPRODUCTION' and diff >= 0):
+            continue
+        out.append({'job_item_id': jid, 'product_name': ji.get('product_name', ''), 'sku': ji.get('sku', ''),
+                    'size': ji.get('size', ''), 'color': ji.get('color', ''), 'ordered_qty': ordered,
+                    'produced_qty': produced, 'variance_qty': abs(diff)})
+    if not out:
+        arah = 'lebih' if variance_type == 'OVERPRODUCTION' else 'kurang'
+        raise HTTPException(400, f'Menurut catatan produksi job ini tidak ada baris yang produksinya {arah} '
+                                 'dari pesanan — laporan variance tidak dibuat.')
+    return out
+
+
+async def variance_gl_value(db, variance: dict) -> dict:
+    """Nilai GL variance = qty variance SISTEM × HPP rata-rata (WAC) barang jadi SKU itu.
+
+    2026-11-06 (Tahap 2): dulu harga dibaca dari `rahaza_models.cost_per_unit` (tidak pernah diisi
+    → nilai selalu 0) atau diketik di badan permintaan. WAC = nilai yang dipakai persediaan FG di
+    buku besar, jadi jurnalnya konsisten dengan stok. Return {value, items, missing}."""
+    from core import fg_cost_layers as fcl
+    total, rows, missing = 0.0, [], []
+    for it in variance.get('items') or []:
+        qty = abs(int(it.get('variance_qty', 0) or 0))
+        sku = (it.get('sku') or '').strip()
+        mat = await db.rahaza_materials.find_one({'type': 'fg', 'code': sku}, {'_id': 0, 'id': 1}) if sku else None
+        uc = float((await fcl.wac_state(db, mat['id']))['unit_cost']) if mat else 0.0
+        if qty and uc <= 0:
+            missing.append(sku or it.get('product_name') or '-')
+        rows.append({**it, 'unit_cost': round(uc, 4), 'value': round(qty * uc, 2)})
+        total += qty * uc
+    return {'value': round(total, 2), 'items': rows, 'missing': missing}
+
+
 @router.post("/production-variances")
 async def create_variance(request: Request):
     """Vendor reports overproduction or underproduction for a job/item"""
@@ -641,7 +690,11 @@ async def create_variance(request: Request):
     variance_type = body.get('variance_type')  # 'OVERPRODUCTION' or 'UNDERPRODUCTION'
     if variance_type not in ['OVERPRODUCTION', 'UNDERPRODUCTION']:
         raise HTTPException(400, 'variance_type must be OVERPRODUCTION or UNDERPRODUCTION')
-    
+    # 2026-11-06 (Tahap 2): qty variance dari SISTEM (dipesan vs diproduksi di buku kuantitas job),
+    # bukan angka ketikan. Pelapor hanya memilih baris job; angka yang diketik diabaikan.
+    items = await system_variance_items(db, job_id, variance_type,
+                                        [i.get('job_item_id') for i in (body.get('items') or [])])
+
     # Create variance record
     variance = {
         'id': new_id(),
@@ -655,8 +708,9 @@ async def create_variance(request: Request):
         'business_type': job.get('business_type', 'internal'),
         'reason': body.get('reason', ''),
         'notes': body.get('notes', ''),
-        'items': body.get('items', []),  # Array of {job_item_id, product_name, sku, ordered_qty, produced_qty, variance_qty}
-        'total_variance_qty': sum(int(item.get('variance_qty', 0) or 0) for item in body.get('items', [])),
+        'items': items,  # {job_item_id, product_name, sku, size, color, ordered_qty, produced_qty, variance_qty}
+        'total_variance_qty': sum(int(item.get('variance_qty', 0) or 0) for item in items),
+        'qty_source': 'system',
         'reported_by': user['name'],
         'status': 'Reported',  # Reported, Acknowledged, Resolved
         'created_at': now(),
@@ -848,30 +902,36 @@ async def post_variance_to_gl(vid: str, request: Request):
     if not variance:
         raise HTTPException(404, 'Variance not found')
 
-    variance_value = float(variance.get('variance_value', 0))
-    if variance_value == 0:
-        items = variance.get('items', [])
-        total_value = 0
-        for item in items:
-            var_qty = int(item.get('variance_qty', 0) or 0)
-            product_sku = item.get('sku')
-            unit_cost = 0
-            if product_sku:
-                product = await db.rahaza_models.find_one({'code': product_sku}, {'_id': 0})
-                if product:
-                    unit_cost = float(product.get('cost_per_unit', 0) or product.get('price', 0) or 0)
-            unit_cost = float(body.get('unit_cost', unit_cost))
-            total_value += abs(var_qty) * unit_cost
-
-        variance_value = round(total_value)
+    # 2026-11-06 (Tahap 2): nilai dihitung SISTEM (qty buku produksi × WAC FG), tidak bisa diketik
+    # (`unit_cost` di badan permintaan diabaikan). Variance PO maklon tidak dibukukan: barang jadi
+    # maklon milik klien, di luar neraca DA (K14).
+    if (variance.get('business_type') or 'internal') != 'internal':
+        raise HTTPException(400, 'Variance PO maklon tidak dibukukan ke buku besar — barang jadi maklon milik '
+                                 'klien, bukan persediaan DA.')
+    variance_value = float(variance.get('variance_value', 0) or 0)
+    if not variance.get('gl_je_id'):
+        if variance.get('qty_source') != 'system' and variance.get('job_id'):
+            # laporan lama (qty ketikan) → qty dihitung ulang dari buku produksi job
+            sys_items = await system_variance_items(db, variance['job_id'], variance.get('variance_type'),
+                                                    [i.get('job_item_id') for i in variance.get('items') or []])
+            variance['items'] = sys_items
+            variance['total_variance_qty'] = sum(int(i.get('variance_qty') or 0) for i in sys_items)
+        val = await variance_gl_value(db, variance)
+        if val['missing']:
+            raise HTTPException(400, 'HPP rata-rata barang jadi belum ada untuk: ' + ', '.join(val['missing'][:5])
+                                     + '. Nilai variance tidak bisa dihitung — terima barang jadinya dulu supaya '
+                                       'HPP-nya terbentuk.')
+        variance_value = val['value']
         await db.production_variances.update_one(
             {'id': vid},
-            {'$set': {'variance_value': variance_value, 'updated_at': now()}}
+            {'$set': {'variance_value': variance_value, 'items': val['items'], 'qty_source': 'system',
+                      'total_variance_qty': variance.get('total_variance_qty', 0),
+                      'value_basis': 'wac', 'updated_at': now()}}
         )
         variance['variance_value'] = variance_value
 
     if variance_value <= 0:
-        raise HTTPException(400, 'Variance value harus > 0. Set unit_cost jika belum ada.')
+        raise HTTPException(400, 'Nilai variance 0 — tidak ada yang dibukukan.')
 
     posting_result = None
     try:

@@ -378,17 +378,19 @@ class TestLwopLintasPeriode:
             "from_date": "2026-10-28", "to_date": "2026-11-05", "duration_days": 9, "duration_working_days": 7}]
 
     def _lwop(self, slip):
-        rows = [d for d in slip["deductions"] if d.get("type") == "lwop"]
+        # 2026-11-06 (Tahap 2): cuti tanpa gaji kini satu aturan dengan alpa → baris 'absence'
+        rows = [d for d in slip["deductions"] if d.get("type") == "absence"]
         return rows[0] if rows else None
 
     def test_hanya_hari_di_periode_yang_dipotong(self, db):
         self._seed(db)
         okt = self._lwop(run(shared._compute_payslip_for_employee(db, PROFILE, "2026-10-01", "2026-10-31", EMP_A)))
         nov = self._lwop(run(shared._compute_payslip_for_employee(db, PROFILE, "2026-11-01", "2026-11-30", EMP_A)))
-        assert okt["days"] == 3 and nov["days"] == 4          # dulu 7 + 7
-        # pembagi = hari kerja periode: Okt 2026 = 22, Nov 2026 = 21
-        assert okt["daily_rate"] == round(3_000_000 / 22) and okt["amount"] == okt["daily_rate"] * 3
-        assert nov["daily_rate"] == round(3_000_000 / 21) and nov["amount"] == nov["daily_rate"] * 4
+        # Tahap 2: 6 hari kerja/minggu → 28–31 Okt (Rab–Sab) = 4 hari, 2–5 Nov = 4 hari (dulu Senin–Jumat 3 + 4)
+        assert okt["days"] == 4 and nov["days"] == 4
+        # pembagi = hari kerja periode (6 hari/minggu): Okt 2026 = 27, Nov 2026 = 25
+        assert okt["divisor"] == 27 and okt["amount"] == round(3_000_000 * 4 / 27)
+        assert nov["divisor"] == 25 and nov["amount"] == round(3_000_000 * 4 / 25)
 
     def test_libur_dan_setengah_hari(self):
         leaves = [{"from_date": "2026-11-02", "to_date": "2026-11-06"},
@@ -525,7 +527,10 @@ class TestSaldoCutiTidakMinus:
         self._seed(db, 15)
         with pytest.raises(HTTPException) as ei:
             run(leave_mod.approve_leave("lv1", login("hr")))
-        assert ei.value.status_code == 400 and "Sisa: 12 hari" in ei.value.detail and "diminta: 15 hari" in ei.value.detail
+        # Tahap 2 (2026-11-06): durasi = hari KERJA (6 hari/minggu) — 1–15 Des 2026 memuat 2 hari Minggu → 13 hari.
+        from core import workdays
+        n = len(workdays.working_days_between(f"{_year()}-12-01", f"{_year()}-12-15", workdays.off_weekdays_for(6), set()))
+        assert ei.value.status_code == 400 and "Sisa: 12 hari" in ei.value.detail and f"diminta: {n} hari" in ei.value.detail
         assert db.rahaza_leave_requests.docs[0]["status"] == "pending_approval"
         assert db.rahaza_leave_balances.docs == []
 

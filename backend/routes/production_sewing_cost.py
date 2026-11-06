@@ -247,13 +247,15 @@ async def get_po_sewing(po_id: str, request: Request):
     qty_total = sum(r["qty"] for r in rows)
     sewing_total = round(sum(r["line_total"] for r in rows), 2)
     hpp_total = round(sum(r["hpp_preview"]["unit_cost"] * r["qty"] for r in rows), 2)
+    lock = await cmt_rate_lock(db, po_id)
     return {
         "ok": True,
         "po": {"id": po["id"], "po_number": po.get("po_number"), "status": po.get("status"),
                "vendor_name": po.get("vendor_name") or "Produksi Internal",
                "business_type": po.get("business_type") or "",
                "customer_name": po.get("customer_name") or "",
-               "notes": po.get("notes") or ""},
+               "notes": po.get("notes") or "",
+               "rate_locked": bool(lock), "rate_lock": lock},
         "items": rows,
         "totals": {
             "qty": qty_total, "sewing_total": sewing_total,
@@ -266,6 +268,25 @@ async def get_po_sewing(po_id: str, request: Request):
     }
 
 
+# 2026-11-06 (Tahap 2): tarif jahit SPK boleh diubah SAMPAI tagihan CMT (`dewi_cmt_payments`) untuk
+# SPK itu terbentuk; sesudahnya dikunci — tagihan, lapisan HPP FG, dan HPP per potong membaca angka
+# yang sama, jadi mengubahnya diam-diam membuat ketiganya berselisih.
+CMT_BILL_VOID_STATUSES = ("cancelled", "void", "voided", "rejected", "batal")
+
+
+async def cmt_rate_lock(db, po_id: str) -> dict | None:
+    """Tagihan CMT aktif pertama untuk SPK ini (None = tarif masih boleh diubah)."""
+    bill = await db.dewi_cmt_payments.find_one(
+        {"po_id": po_id, "status": {"$nin": list(CMT_BILL_VOID_STATUSES)}},
+        {"_id": 0, "id": 1, "payment_number": 1, "invoice_number": 1, "status": 1})
+    if not bill:
+        return None
+    ref = bill.get("payment_number") or bill.get("invoice_number") or bill.get("id")
+    return {"bill_id": bill.get("id"), "bill_ref": ref, "status": bill.get("status"),
+            "message": (f"Tarif jahit SPK ini terkunci karena tagihan CMT {ref} sudah dibuat. "
+                        "Ubah lewat koreksi tagihan CMT di Keuangan.")}
+
+
 @router.put("/pos/{po_id}")
 async def set_po_sewing(po_id: str, body: RatesIn, request: Request):
     await require_auth(request)
@@ -275,6 +296,9 @@ async def set_po_sewing(po_id: str, body: RatesIn, request: Request):
     po = await db.production_pos.find_one({"id": po_id}, {"_id": 0})
     if not po:
         raise HTTPException(404, "SPK/PO produksi tidak ditemukan")
+    lock = await cmt_rate_lock(db, po_id)
+    if lock:
+        raise HTTPException(409, lock["message"])
     items = await db.po_items.find({"po_id": po_id}, {"_id": 0}).to_list(2000)
     by_id = {i["id"]: i for i in items}
     actor = user.get("name") or user.get("email") or "system"

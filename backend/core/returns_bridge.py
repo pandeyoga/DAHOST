@@ -580,6 +580,49 @@ async def _unit_cost_for(db, mid: str) -> float:
     return round(unit_cost, 2)
 
 
+def _as_dt(v):
+    """ISO string / datetime → datetime aware (UTC). None bila tidak terbaca."""
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    try:
+        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+async def scan_out_cost(db, material_id: str, before=None) -> dict | None:
+    """HPP yang TERCATAT saat barang ini di-scan keluar (2026-11-06, Tahap 2).
+
+    Scan keluar tidak ditautkan ke nomor pesanan (K15), jadi acuannya = baris scan keluar AKTIF
+    terakhir SKU ini yang terjadi sebelum/saat retur diterima. None bila tidak ada (cadangan WAC)."""
+    from core import scan_out as so
+    ref_at = _as_dt(before)
+    rows = await db[so.LINES].find(
+        {"material_id": material_id, "kind": so.KIND_SCAN, "status": "active", "unit_cost": {"$gt": 0}},
+        {"_id": 0}).sort("scanned_at", -1).to_list(500)
+    for r in rows:
+        at = _as_dt(r.get("scanned_at"))
+        if ref_at is not None and (at is None or at > ref_at):
+            continue
+        qty = max(1, _int(r.get("qty"), 1))
+        comps = {k: round(float((r.get("components") or {}).get(k) or 0) / qty, 4)
+                 for k in ("material", "labor", "overhead")}
+        return {"unit_cost": round(float(r["unit_cost"]), 4), "components": comps,
+                "line_id": r.get("id"), "sheet_number": r.get("sheet_number"), "scanned_at": r.get("scanned_at")}
+    return None
+
+
+async def _return_cost_basis(db, wh_ret: dict, mid: str, actor: dict) -> dict:
+    """Biaya retur fisik: HPP saat scan keluar (keputusan Tahap 2); cadangan = WAC hari keputusan."""
+    from core import fg_cost_layers as fcl
+    so_cost = await scan_out_cost(db, mid, before=wh_ret.get("received_at") or wh_ret.get("created_at"))
+    if so_cost:
+        return {**so_cost, "basis": "scan_out"}
+    state = await fcl.wac_state(db, mid, actor=actor)
+    return {"unit_cost": state["unit_cost"], "components": state["components"], "basis": "wac"}
+
+
 async def _value_damaged(db, wh_ret: dict, mid: str, qty: int, actor: dict,
                          disposed: bool = False) -> dict:
     """Retur rusak → karantina (nilai 0): reklas HPP menjadi Kerugian Retur Rusak (Iter 122).
@@ -589,13 +632,15 @@ async def _value_damaged(db, wh_ret: dict, mid: str, qty: int, actor: dict,
     senilai WAC), barang TIDAK masuk stok. Pemanggil: `routes/dewi_wh_returns.resolve_return`
     untuk aksi "Dibuang / Dispose" (hasilnya `loss_*`, sehingga Balik Keputusan ikut
     membuat jurnal pembaliknya)."""
-    from core import fg_cost_layers as fcl
     from routes.rahaza_posting import post_return_damaged_loss
     out = {"loss_unit_cost": 0.0, "loss_amount": 0.0, "loss_je_id": None,
            "loss_je_number": None, "loss_post_error": None, "loss_basis": "wac",
            "loss_kind": "disposed" if disposed else "damaged"}
     try:
-        unit_cost = (await fcl.wac_state(db, mid, actor=actor))["unit_cost"]   # WAC 4 desimal; jurnal dibulatkan per total
+        # 2026-11-06 (Tahap 2): nilai = HPP yang dijurnal saat barang di-scan keluar (cadangan WAC).
+        basis = await _return_cost_basis(db, wh_ret, mid, actor)
+        unit_cost = basis["unit_cost"]   # 4 desimal; jurnal dibulatkan per total
+        out["loss_basis"] = basis["basis"]
         out["loss_unit_cost"] = unit_cost
         out["loss_amount"] = round(unit_cost * qty, 2)
         je = await post_return_damaged_loss(db, wh_ret, qty, unit_cost, actor or {}, disposed=disposed)
@@ -620,15 +665,21 @@ async def _value_restock(db, wh_ret: dict, mid: str, qty: int, actor: dict) -> d
     out = {"hpp_unit_cost": 0.0, "hpp_layer_id": None, "cogs_je_id": None,
            "cogs_je_number": None, "cogs_post_error": None, "hpp_basis": "wac"}
     try:
-        state = await fcl.wac_state(db, mid, actor=actor)
-        unit_cost = state["unit_cost"]   # biaya masuk = WAC persis → WAC tidak bergeser
+        # 2026-11-06 (Tahap 2): biaya masuk = HPP yang dijurnal saat barang di-scan keluar, supaya
+        # jurnal balik HPP menutup PERSIS nilai keluarnya (cadangan: WAC hari keputusan).
+        basis = await _return_cost_basis(db, wh_ret, mid, actor)
+        unit_cost = basis["unit_cost"]
         out["hpp_unit_cost"] = unit_cost
+        out["hpp_basis"] = basis["basis"]
+        if basis.get("line_id"):
+            out["hpp_scan_line_id"] = basis["line_id"]
+            out["hpp_scan_sheet"] = basis.get("sheet_number")
         ref = {"type": "wh_return_restock", "id": wh_ret["id"],
                "return_code": wh_ret.get("return_code", ""),
                "marketing_return_id": wh_ret.get("source_marketing_return_id")}
         if unit_cost > 0:
             layer = await fcl.push_layer(db, material_id=mid, qty=qty, ref=ref, actor=actor,
-                                         unit_cost=unit_cost, components=state["components"],
+                                         unit_cost=unit_cost, components=basis["components"],
                                          breakdown={"source": "marketplace_return", "unit_cost": unit_cost})
             out["hpp_layer_id"] = (layer or {}).get("id")
         je = await post_marketplace_return_restock(db, wh_ret, qty, unit_cost, actor or {})

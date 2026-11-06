@@ -290,29 +290,30 @@ def _ot_env(db, ot_rate=0, scheme="monthly", base=3_460_000):
 
 class TestLembur:
     def test_cadangan_1_per_173_tanpa_hitung_dobel(self, env):
-        # 3.460.000/173 = 20.000/jam. 05-10 pengajuan 3j: 1×1,5+2×2 = 5,5 (absensi 3j hari itu DILEWATI);
-        # 06-10 absensi 2j: 1,5+2 = 3,5 ; 11-10 pengajuan 4j × 2 (hari libur) = 8 → 17 × 20.000 = 340.000
+        # 3.460.000/173 = 20.000/jam. 05-10 pengajuan 3j (absensi 3j hari itu = jam yang SAMA): 1×1,5+2×2 = 5,5;
+        # 2026-11-06 (Tahap 2): 06-10 absensi 2j TANPA pengajuan → tidak dibayar; 11-10 (Minggu = hari istirahat,
+        # 6 hari kerja) pengajuan 4j: 4 × 2 = 8 (pengali pengajuan diabaikan) → 13,5 × 20.000 = 270.000
         prof = _ot_env(env.db)
         s = run(shared._compute_payslip_for_employee(env.db, prof, "2026-10-01", "2026-10-31", {"id": "emp-a", "name": "Ani"}))
         assert s["overtime_basis"] == "upah_tetap_div_173" and s["overtime_base_hourly"] == 20_000
-        assert s["overtime_amount"] == 340_000 and s["source_refs"]["overtime_attendance_hours_skipped"] == 3
-        assert s["gross_pay"] == 3_460_000 + 340_000 and s["overtime_warning"] is None
+        assert s["overtime_amount"] == 270_000 and s["source_refs"]["overtime_unapproved_hours"] == 2
+        assert s["gross_pay"] == 3_460_000 + 270_000 and s["overtime_warning"] is None
 
     def test_tarif_profil_dipakai_dan_tidak_dobel(self, env):
-        # tarif profil 25.000: jam ternormalisasi 3 (05-10) + 2 (06-10) + 4×2/1,5=5,333 (11-10) = 10,333 → 258.333
-        # (dulu absensi 3j 05-10 ikut dijumlah → 13,333 jam = 333.333)
+        # 2026-11-06 (Tahap 2): tarif profil 25.000 = Rp per jam lembur pertama → upah sejam 25.000/1,5;
+        # faktor per hari sama dengan uji di atas (5,5 + 8 = 13,5) → 13,5 × 16.666,67 = 225.000
         prof = _ot_env(env.db, ot_rate=25_000)
         s = run(shared._compute_payslip_for_employee(env.db, prof, "2026-10-01", "2026-10-31", {"id": "emp-a", "name": "Ani"}))
-        assert s["overtime_basis"] == "profile" and s["overtime_amount"] == 258_333
+        assert s["overtime_basis"] == "profile" and s["overtime_amount"] == 225_000
 
     def test_pengali_bisa_diatur(self, env):
         env.db.rahaza_payroll_settings.docs.append({"key": "overtime", "basis": "upah_tetap_div_173", "divisor": 173,
                                                     "first_hour_multiplier": 2, "next_hours_multiplier": 3})
         prof = _ot_env(env.db)
         env.db.rahaza_overtime_requests.docs.pop()   # sisakan 05-10 (3j) + absensi 06-10 (2j)
-        # 05-10: 2 + 2×3 = 8 ; 06-10: 2 + 3 = 5 → 13 × 20.000 = 260.000
+        # 05-10: 2 + 2×3 = 8 ; 06-10 tanpa pengajuan tidak dibayar (Tahap 2) → 8 × 20.000 = 160.000
         s = run(shared._compute_payslip_for_employee(env.db, prof, "2026-10-01", "2026-10-31", {"id": "emp-a", "name": "Ani"}))
-        assert s["overtime_amount"] == 260_000
+        assert s["overtime_amount"] == 160_000
 
     def test_peringatan_tarif_nol_di_run(self, env, monkeypatch):
         env.db.rahaza_payroll_settings.docs.append({"key": "overtime", "basis": "manual"})
@@ -325,7 +326,7 @@ class TestLembur:
             return "PR-OT"
         monkeypatch.setattr(runs, "_generate_run_number", runno)
         out = run(runs.create_run(FakeRequest({"period_from": "2026-10-01", "period_to": "2026-10-31"})))
-        assert [w["type"] for w in out["warnings"]] == ["overtime_rate_zero"]
+        assert "overtime_rate_zero" in [w["type"] for w in out["warnings"]]   # Tahap 2: + peringatan lain
         assert "warnings" in _src("frontend", "src", "components", "erp", "RahazaPayrollRunModule.jsx")
 
 

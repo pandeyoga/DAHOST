@@ -52,6 +52,8 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   const [cancelReason, setCancelReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  // 2026-11-06 (Tahap 2): ubah harga baris PO yang sudah keluar dari draf — Keuangan saja, alasan wajib
+  const [priceEdit, setPriceEdit] = useState(null);   // { item, value, reason }
   // SESI #19 — kebijakan penomoran PO Pembelian (Otomatis/Manual) dari Administrasi
   // Sistem → Penomoran Dokumen. PO adalah komitmen UANG: nomor bebas tidak bisa
   // diurutkan maupun dicari di arsip, jadi mode manual pun wajib mengikuti pola.
@@ -127,7 +129,11 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
       });
       if (!r.ok) return null;
       const d = await r.json();
-      const best = d?.best || null;
+      // 2026-11-06 (Tahap 2): pemasok tanpa daftar harga → harga PO TERAKHIR barang ini sebagai saran
+      const last = d?.last_po && Number(d.last_po.price) > 0
+        ? { ...d.last_po, supplier_name: `PO terakhir ${d.last_po.po_number || ''}`.trim(), from_last_po: true }
+        : null;
+      const best = d?.best || last;
       setPriceHint(prev => ({ ...prev, [itemId]: best }));
       return best;
     } catch { return null; }
@@ -284,6 +290,26 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   const openSubmitModal = (po) => {
     setSelectedPO(po);
     setSubmitModal(true);
+  };
+
+  const savePriceEdit = async () => {
+    if (!priceEdit || !selectedPO) return;
+    if (!String(priceEdit.reason || '').trim()) { toast.error('Alasan perubahan harga wajib diisi.'); return; }
+    setSaving(true);
+    try {
+      const r = await fetch(`/api/rahaza/purchase-orders/${selectedPO.id}/items/${priceEdit.item.id}/price`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ unit_cost_input: Number(priceEdit.value) || 0, reason: priceEdit.reason.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : `Gagal mengubah harga (HTTP ${r.status})`);
+      toast.success(`Harga ${priceEdit.item.material_name || priceEdit.item.description || 'baris'} diubah`);
+      setPriceEdit(null);
+      await openDetail(selectedPO);
+      fetchList();
+    } catch (e) {
+      toast.error(e.message);
+    } finally { setSaving(false); }
   };
 
   // 2026-08-07 — pesan galat dari SERVER harus DITAMPILKAN.
@@ -888,7 +914,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                             if ((uomMap[item.material_id]?.units || []).some(u => u.unit === hint.uom)) {
                               updateItem(item.id, 'uom', hint.uom);
                             }
-                            toast.success(`Harga diisi dari daftar harga ${hint.supplier_name}`);
+                            toast.success(hint.from_last_po ? `Harga diisi dari ${hint.supplier_name}` : `Harga diisi dari daftar harga ${hint.supplier_name}`);
                           }}
                           className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.18)]"
                           data-testid={`po-form-item-price-hint-${idx}`}
@@ -1134,6 +1160,13 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                                 (Rp {Number(it.unit_cost_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / {it.uom})
                               </div>
                             )}
+                            {selectedPO.can_edit_price && (
+                              <Button variant="link" size="sm" className="h-auto p-0 text-[11px]"
+                                onClick={() => setPriceEdit({ item: it, value: Number(it.unit_cost_input || it.unit_cost || 0), reason: '' })}
+                                data-testid={`po-detail-price-edit-${idx}`}>
+                                Ubah harga
+                              </Button>
+                            )}
                           </td>
                           <td className="py-2 text-right font-mono">
                             Rp {Number(it.subtotal ?? (it.qty_ordered * it.unit_cost)).toLocaleString('id-ID', { maximumFractionDigits: 0 })}
@@ -1153,6 +1186,24 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 </table>
               </div>
             </div>
+
+            {/* 2026-11-06 (Tahap 2): jejak perubahan harga baris PO (Keuangan, dengan alasan) */}
+            {(selectedPO.price_changes?.length || 0) > 0 && (
+              <div data-testid="po-detail-price-changes">
+                <h3 className="font-semibold mb-2">Perubahan harga ({selectedPO.price_changes.length})</h3>
+                <ul className="space-y-1 text-xs">
+                  {selectedPO.price_changes.map((c) => (
+                    <li key={c.id} className="text-muted-foreground">
+                      <span className="text-foreground">{c.description || 'Baris PO'}</span>
+                      {' · '}Rp {Number(c.old_unit_cost_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
+                      {' → '}Rp {Number(c.new_unit_cost_input || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 })}
+                      {c.uom ? ` / ${c.uom}` : ''} · {c.by_name} · {c.at ? new Date(c.at).toLocaleString('id-ID') : ''}
+                      {' · '}Alasan: {c.reason}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             {/* P1.C: GR Audit Trail (Goods Receipts linked to this PO) */}
             {(selectedPO._grs?.length || 0) > 0 && (
@@ -1227,6 +1278,40 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                 )}
               </div>
               <Button variant="secondary" onClick={() => setDetailModal(false)}>Tutup</Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* 2026-11-06 (Tahap 2): ubah harga satu baris PO — formulir pendek Keuangan */}
+      {priceEdit && selectedPO && (
+        <Modal onClose={() => setPriceEdit(null)} title="Ubah harga baris PO">
+          <div className="space-y-3" data-testid="po-price-edit-modal">
+            <p className="text-sm">
+              <strong>{priceEdit.item.material_name || priceEdit.item.description || 'Baris PO'}</strong> di {selectedPO.po_number}.
+              Harga baru berlaku untuk barang yang belum diterima; selisih dengan barang yang sudah diterima
+              diselesaikan lewat faktur pemasok (masuk HPP).
+            </p>
+            <div>
+              <label className="block text-xs font-medium mb-1" htmlFor="po-price-edit-value">
+                Harga per {priceEdit.item.uom || priceEdit.item.base_uom || 'satuan'} (Rp)
+              </label>
+              <MoneyInput glass id="po-price-edit-value" value={priceEdit.value}
+                onChange={e => setPriceEdit(p => ({ ...p, value: e.target.value }))}
+                className="text-right" data-testid="po-price-edit-value" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium mb-1" htmlFor="po-price-edit-reason">Alasan (wajib)</label>
+              <GlassInput id="po-price-edit-reason" value={priceEdit.reason}
+                onChange={e => setPriceEdit(p => ({ ...p, reason: e.target.value }))}
+                placeholder="mis. harga naik sesuai penawaran baru" data-testid="po-price-edit-reason" />
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="secondary" onClick={() => setPriceEdit(null)}>Batal</Button>
+              <Button onClick={savePriceEdit} disabled={saving || !String(priceEdit.reason || '').trim()}
+                data-testid="po-price-edit-save">
+                {saving ? 'Menyimpan...' : 'Simpan harga'}
+              </Button>
             </div>
           </div>
         </Modal>

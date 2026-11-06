@@ -91,11 +91,23 @@ def test_allocate_dan_deliver_ditolak_untuk_peran_di_luar_aksesoris(req_db, user
 
 
 @pytest.mark.parametrize("user", [ADMIN_ACC, MANAGER])
-def test_allocate_dan_deliver_boleh_untuk_tim_aksesoris_dan_manajemen(req_db, user):
+def test_allocate_dan_deliver_boleh_untuk_tim_aksesoris_dan_manajemen(req_db, user, monkeypatch):
     req_db.dewi_accessory_requests.docs = [_req("r1", "submitted")]
+    req_db.rahaza_materials.docs = [{"id": "m1", "code": "ACC-1", "name": "Kancing", "type": "accessory",
+                                     "active": True, "unit": "pcs", "unit_cost": 100.0}]
+
+    async def usable(db_, mid):
+        return 10.0
+
+    async def issue(db_, user_, **kw):     # 2026-11-06 (Tahap 2): sampel R&D kini memotong stok
+        return {"material_id": kw["acc_id"], "material_code": "ACC-1", "material_name": "Kancing",
+                "qty_issued": kw["qty"], "unit": "pcs", "unit_cost": 100.0, "value": 100.0 * kw["qty"],
+                "je": {"posted": True, "je_number": "JE-1"}}
+    monkeypatch.setattr(accessory_issue, "_usable_qty", usable)
+    monkeypatch.setattr(accessory_issue, "issue_accessory", issue)
     assert run(req_mod.allocate_request("r1", {}, user))["ok"] is True
-    out = run(req_mod.deliver_request("r1", {}, user))   # rnd_sample: tanpa potong stok
-    assert out["ok"] is True and out["stock_issued"] is False
+    out = run(req_mod.deliver_request("r1", {}, user))
+    assert out["ok"] is True and out["stock_issued"] is True
     assert req_db.dewi_accessory_requests.docs[0]["status"] == "delivered"
 
 
@@ -335,7 +347,8 @@ def test_terima_aksesoris_memakai_qty_bernilai(monkeypatch):
     db = _wac_db()
 
     async def auth(_req):
-        return ADMIN_ACC
+        # 2026-11-06 (Tahap 2): hanya Keuangan yang boleh mengetik harga penerimaan
+        return {"id": "u-fin", "name": "Keuangan", "role": "accounting"}
 
     async def add(*a, **k):
         return None

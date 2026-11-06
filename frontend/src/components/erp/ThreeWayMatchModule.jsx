@@ -467,7 +467,7 @@ function SourceCard({ icon: Icon, label, count, detail, color }) {
 }
 
 // ─── Main Module ──────────────────────────────────────────────────────────
-export default function ThreeWayMatchModule({ token }) {
+export default function ThreeWayMatchModule({ token, onNavigate }) {
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -523,8 +523,10 @@ export default function ThreeWayMatchModule({ token }) {
         icon={Scale}
         actions={
           <div className="flex items-center gap-2">
+            {/* 2026-11-06 (Tahap 2): faktur dibuat di Faktur Supplier — satu-satunya layar yang mencatat
+                qty & harga faktur pemasok yang sebenarnya, ongkir, dan potongan. Dialog lama hanya cadangan. */}
             <Button
-              onClick={() => setShowCreateAP(true)}
+              onClick={() => (onNavigate ? onNavigate('proc-ap-invoices') : setShowCreateAP(true))}
               className="bg-violet-600 hover:bg-violet-500 text-foreground text-xs h-8"
               data-testid="create-ap-from-gr-btn"
             >
@@ -612,7 +614,14 @@ export default function ThreeWayMatchModule({ token }) {
                     data-testid={`3way-row-${r.po_id}`}
                     onClick={() => setSelectedPoId(r.po_id)}
                   >
-                    <td className="py-2 px-2 font-mono text-violet-600 dark:text-violet-300">{r.po_number}</td>
+                    <td className="py-2 px-2 font-mono text-violet-600 dark:text-violet-300">
+                      {r.po_number}
+                      {/* 2026-11-06 (Tahap 2): PO batal tetap tampil — barang/faktur atasnya tetap dicocokkan */}
+                      {r.po_status === 'cancelled' && (
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground"
+                          data-testid={`3way-cancelled-${r.po_id}`}>Dibatalkan</span>
+                      )}
+                    </td>
                     <td className="py-2 px-2 text-foreground truncate max-w-[200px]" title={r.vendor_name}>{r.vendor_name}</td>
                     <td className="py-2 px-2 text-muted-foreground">{fmtDate(r.po_date)}</td>
                     <td className="py-2 px-2 text-right text-blue-600 dark:text-blue-300">{fmtRp(r.total_ordered_value)}</td>

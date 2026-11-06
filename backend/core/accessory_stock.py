@@ -13,6 +13,7 @@ Modul ini menggantikan 4 helper terduplikasi (`_get_accessory_location_id`, `_st
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -23,6 +24,28 @@ import logging
 logger = logging.getLogger(__name__)
 
 ACC_LOC_CODE = "ZNA-AKSESORIS"
+_ID_LIKE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def category_view(mat: dict, cats: dict | None = None) -> tuple:
+    """(nama kategori untuk layar, id kategori master) — 2026-11-06 (Tahap 2).
+
+    Sinkronisasi master (`core.master_sync`) menyimpan `category` = ID kategori master, sehingga
+    kolom Kategori menampilkan UUID. Nama diambil dari `category_name` / master; teks bebas lama
+    tetap tampil apa adanya; ID tanpa padanan tidak pernah ditampilkan."""
+    cats = cats or {}
+    raw = str((mat or {}).get("category") or "").strip()
+    cid = (mat or {}).get("category_id") or (raw if raw in cats else "")
+    name = ((mat or {}).get("category_name") or (cats.get(cid) or {}).get("name") or "").strip()
+    if not name and raw and raw != cid and not _ID_LIKE.match(raw):
+        name = raw
+    return name, cid or ""
+
+
+async def category_map(db) -> dict:
+    """{id: {id, code, name}} master kategori material (untuk `category_view`)."""
+    return {c["id"]: c async for c in db.rahaza_material_categories.find(
+        {}, {"_id": 0, "id": 1, "code": 1, "name": 1})}
 
 
 def _now():

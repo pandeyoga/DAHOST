@@ -315,8 +315,20 @@ async def parse_fill_workbook(db, data: bytes) -> dict:
                        "salaries": len(extra["salaries"]), "new_variants": len(extra["new_variants"])}}
 
 
-async def apply_materials(db, mats: list[dict], user: dict | None) -> int:
-    """Sheet MATERIAL → harga/isi kemasan master. pcs_per_base = isi pcs per kemasan dasar (roll/pack), harga tetap per kemasan."""
+async def apply_materials(db, mats: list[dict], user: dict | None, *, revaluation_reason: str = "",
+                          report: dict | None = None) -> int:
+    """Sheet MATERIAL → harga/isi kemasan master. pcs_per_base = isi pcs per kemasan dasar (roll/pack), harga tetap per kemasan.
+
+    2026-11-06 (Tahap 2): HARGA tidak lagi ditimpa langsung. Barang tanpa stok → harga awal (riwayat ber-
+    `material_id`, sumber "opening"); barang berstok → revaluasi berjurnal `accessory_valuation.set_unit_cost`
+    HANYA bila `revaluation_reason` diisi, selain itu harganya dilewati dan dilaporkan di `report`."""
+    from core import stock_service
+    from core.accessory_valuation import _record_history, set_unit_cost
+    rep = report if report is not None else {}
+    rep.setdefault("price_opening", [])
+    rep.setdefault("price_revalued", [])
+    rep.setdefault("price_skipped", [])
+    reason = str(revaluation_reason or "").strip()
     n_mat = 0
     for m in mats:
         patch = {"updated_at": _now()}
@@ -334,16 +346,42 @@ async def apply_materials(db, mats: list[dict], user: dict | None) -> int:
                           + ([{"code": m["buy_unit"], "name": m["buy_unit"].upper(), "factor": m["pack_size"], "is_base": False, "level": 1}] if m["buy_unit"] != m["base_unit"] else [])})
         if m.get("min_stock") is not None:
             patch["min_stock"] = m["min_stock"]
+        # 2026-11-06 (Tahap 2): harga dipisah dari patch master — lihat docstring (stok = buku besar)
+        cost_patch = {k: patch.pop(k) for k in ("unit_cost", "cost_method", "cost_source", "price_updated_at") if k in patch}
         await db.rahaza_materials.update_one({"code": m["code"]}, {"$set": patch})
-        if m.get("unit_cost") is not None and abs(float(m["unit_cost"]) - float(m.get("unit_cost_before") or 0)) > 1e-9:
-            await db.rahaza_material_cost_history.insert_one({"id": str(uuid.uuid4()), "material_code": m["code"], "unit_cost": m["unit_cost"], "before": m["unit_cost_before"],
-                                                              "source": "template_harga_owner", "by": (user or {}).get("name", "system"), "at": _now()})
+        new_cost = cost_patch.get("unit_cost")
+        mat = await db.rahaza_materials.find_one({"code": m["code"]}, {"_id": 0}) if new_cost is not None else None
+        if mat and abs(float(new_cost) - float(m.get("unit_cost_before") or 0)) > 1e-9:
+            onhand = float(await stock_service.get_onhand(mat["id"], db=db) or 0)
+            if abs(onhand) <= 1e-9:
+                await db.rahaza_materials.update_one({"id": mat["id"]}, {"$set": cost_patch})
+                await _record_history(db, material_id=mat["id"], old_cost=float(m.get("unit_cost_before") or 0),
+                                      new_cost=float(new_cost), qty_before=0, qty_in=0, cost_in=float(new_cost),
+                                      source="opening", actor=user,
+                                      notes="Harga awal dari template Harga·Satuan·Rekening (stok masih kosong)")
+                rep["price_opening"].append(m["code"])
+            elif reason:
+                res = await set_unit_cost(db, mat["id"], float(new_cost), actor=user,
+                                          notes=f"{reason} · template Harga·Satuan·Rekening")
+                if res.get("ok"):
+                    rep["price_revalued"].append({"code": m["code"], "reval_number": (res.get("revaluation") or {}).get("reval_number"),
+                                                  "delta_value": (res.get("revaluation") or {}).get("delta_value")})
+                else:
+                    rep["price_skipped"].append({"code": m["code"], "stock_qty": round(onhand, 4), "reason": res.get("error")})
+            else:
+                rep["price_skipped"].append({"code": m["code"], "stock_qty": round(onhand, 4),
+                                             "reason": "barang sudah punya stok — harga hanya bisa diubah lewat revaluasi "
+                                                       "berjurnal; isi alasan revaluasi lalu terapkan ulang"})
         n_mat += 1
     return n_mat
 
 
-async def apply_fill(db, parsed: dict, user: dict | None, scope: str = "all") -> dict:
-    """scope='bom' → hanya sheet BOM_AKSESORIS yang diterapkan (sheet lain hanya dicatat di Laporan Sisa)."""
+async def apply_fill(db, parsed: dict, user: dict | None, scope: str = "all", *, revaluation_reason: str = "",
+                     price_report: dict | None = None) -> dict:
+    """scope='bom' → hanya sheet BOM_AKSESORIS yang diterapkan (sheet lain hanya dicatat di Laporan Sisa).
+
+    2026-11-06 (Tahap 2): `revaluation_reason` = alasan revaluasi berjurnal untuk harga barang berstok;
+    hasil per barang (harga awal / direvaluasi / dilewati) dikembalikan di `price_report`."""
     from core.master_sync import _sync_units
     from core.bom_fill import apply_bom_groups, flag_hpp_validation
     if scope == "bom":
@@ -354,7 +392,9 @@ async def apply_fill(db, parsed: dict, user: dict | None, scope: str = "all") ->
         flags = await flag_hpp_validation(db)
         return {"scope": "bom", "materials_updated": 0, "accounts_updated": 0, "stores_updated": 0, "models_weight_updated": 0,
                 "sku_prices_updated": 0, "sku_deactivated": 0, "opening_stock_rows": 0, "salaries_updated": 0, **bom_res, "units_added": rep.get("units_added"), **hpp, **flags}
-    n_mat = await apply_materials(db, parsed["materials"], user)
+    price_rep = price_report if price_report is not None else {}
+    n_mat = await apply_materials(db, parsed["materials"], user, revaluation_reason=revaluation_reason,
+                                  report=price_rep)
     for a in parsed["accounts"]:
         p = {"account_number": a["account_number"], "holder_name": a["holder_name"], "updated_at": _now()}
         if a.get("bank_name"):
@@ -384,7 +424,8 @@ async def apply_fill(db, parsed: dict, user: dict | None, scope: str = "all") ->
     hpp = await recalc_standard_costs(db, user)
     flags = await flag_hpp_validation(db)
     return {"scope": "all", "materials_updated": n_mat, "accounts_updated": len(parsed["accounts"]), "stores_updated": len(parsed["stores"]),
-            "models_weight_updated": len(parsed.get("models") or []), **bom_res, **extra, "units_added": rep.get("units_added"), **hpp, **flags}
+            "models_weight_updated": len(parsed.get("models") or []), **bom_res, **extra, "units_added": rep.get("units_added"), **hpp, **flags,
+            "price_report": price_rep}
 
 
 async def apply_bom_lines(db, rows: list, user: dict | None) -> dict:

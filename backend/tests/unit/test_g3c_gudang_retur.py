@@ -203,6 +203,12 @@ def test_gr_without_po_requires_price_and_document_reject_not_quarantined(monkey
         run(wh.update_receiving("GR1", Req({"status": "received"})))
     assert e.value.status_code == 400 and "Harga satuan wajib" in e.value.detail
     assert db.warehouse_receiving.docs[0]["status"] == "draft"
+    # 2026-11-06 (Tahap 2, keputusan owner): harga GR tanpa PO hanya diisi Keuangan
+    fin = {"id": "u-fin", "name": "Keuangan", "role": "accounting"}
+
+    async def fin_auth(_r):
+        return fin
+    monkeypatch.setattr(wh, "require_auth", fin_auth)
     out = run(wh.update_receiving("GR1", Req({"status": "received", "items": [{**item, "unit_price": 60000}]})))
     assert cap["q_in"]["qty"] == 6                               # hanya alasan FISIK ke karantina
     assert cap["q_in"]["unit_cost"] == 60000                     # harga GR = bawaan lepas reject / retur

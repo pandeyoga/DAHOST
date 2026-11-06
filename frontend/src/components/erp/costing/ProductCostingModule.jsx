@@ -11,8 +11,9 @@
  * jual ditetapkan.
  *
  * Di layar ini HPP/pcs dihitung dari data yang sudah ada:
- *   bahan (BOM × harga pembelian, sadar satuan) + upah CMT + upah cutting/internal
- *   [+ overhead OPSIONAL]
+ *   bahan (BOM × harga pembelian, sadar satuan) + upah CMT
+ * 2026-11-06 (Tahap 2, keputusan owner): upah cutting/internal dan overhead TIDAK masuk HPP —
+ * keduanya tetap beban bulanan; upah internal ditampilkan sebagai informasi "tidak masuk HPP".
  * lalu bisa DITERAPKAN ke master produk, FG per ukuran, dan item katalog.
  *
  * Aturan jujur: setiap angka menyebut ASALNYA, dan setiap kekurangan tampil
@@ -86,7 +87,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
   const [search, setSearch] = useState('');
   const [onlyGaps, setOnlyGaps] = useState(false);
   const [targetMargin, setTargetMargin] = useState('');
-  const [includeOverhead, setIncludeOverhead] = useState(false);
+  const [includeOverhead] = useState(false);   // Tahap 2: overhead tidak masuk HPP (saklar dihapus)
   const [detail, setDetail] = useState(null);         // hasil GET /models/{id}
   const [detailBusy, setDetailBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -196,12 +197,6 @@ export default function ProductCostingModule({ token, onNavigate }) {
         <span>%</span>
       </label>
       <label className="flex items-center gap-2 text-sm text-foreground/80 cursor-pointer">
-        <input type="checkbox" checked={includeOverhead}
-          onChange={e => setIncludeOverhead(e.target.checked)}
-          data-testid="costing-toggle-overhead" />
-        Ikutkan overhead {settings ? `(${fmtRp(settings.overhead_rate_per_pcs)}/pcs)` : ''}
-      </label>
-      <label className="flex items-center gap-2 text-sm text-foreground/80 cursor-pointer">
         <input type="checkbox" checked={onlyGaps} onChange={e => setOnlyGaps(e.target.checked)}
           data-testid="costing-filter-gaps" />
         Hanya yang masih ada kekurangan
@@ -213,7 +208,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
     <PageLayout
       testId="product-costing-page"
       title="HPP per potong & per model"
-      subtitle="HPP/pcs = BOM × harga beli rata-rata + upah CMT + upah cutting/internal."
+      subtitle="HPP/pcs = BOM × harga beli rata-rata + upah CMT. Upah internal dan overhead tidak masuk HPP."
       actions={<>
         <Button variant="outline" onClick={() => setShowSettings(true)} data-testid="costing-open-settings">
           <Settings2 className="w-4 h-4" />Setelan upah &amp; margin
@@ -279,7 +274,7 @@ export default function ProductCostingModule({ token, onNavigate }) {
                 <th className="text-center">Ukuran ber-BOM</th>
                 <th className="text-right">Bahan/pcs</th>
                 <th className="text-right">Upah CMT</th>
-                <th className="text-right">Upah internal</th>
+                <th className="text-right">Upah internal (tidak masuk HPP)</th>
                 <th className="text-right">HPP/pcs</th>
                 <th className="text-right">Harga jual</th>
                 <th className="text-right">Margin</th>
@@ -488,7 +483,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
           </div>
 
           <div className="space-y-2">
-            <p className={heading}><Lock className="w-3.5 h-3.5 text-[hsl(var(--primary))]" /> Upah cutting / internal per pcs</p>
+            <p className={heading}><Lock className="w-3.5 h-3.5 text-[hsl(var(--primary))]" /> Upah cutting / internal per pcs — tidak masuk HPP</p>
             <MoneyInput unstyled value={internal}
               onChange={e => setInternal(e.target.value)} placeholder="kosong = ikut data produksi"
               className={inputCls} data-testid="costing-input-internal" />
@@ -510,8 +505,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
               <div>HPP rata-rata: <strong className="text-foreground tabular-nums">{fmtRp(detail.hpp_model_avg)}</strong>/pcs</div>
               <div>Target margin {fmtPct(detail.target_margin_pct)} ⇒ usulan harga jual{' '}
                 <strong className="text-[hsl(var(--primary))] tabular-nums">{fmtRp(detail.suggested_price_model)}</strong></div>
-              <div>Overhead: {detail.overhead.included
-                ? `ikut ${fmtRp(detail.overhead.rate)}/pcs` : 'tidak diikutkan'}</div>
+              <div>Upah internal dan overhead: tidak masuk HPP (beban bulanan)</div>
               <div>HPP tersimpan sekarang: {fmtRp(m.hpp_current)}{' '}
                 <span className="text-xs">({hppSource(m.hpp_source_current)})</span></div>
             </div>
@@ -568,8 +562,7 @@ function CostDetail({ detail, token, onClose, onApply, onReload, onGoto }) {
                   <>
                     <span>Bahan <strong>{fmtRp(s.material_cost)}</strong></span>
                     <span>CMT <strong>{fmtRp(s.cmt_cost)}</strong></span>
-                    <span>Internal <strong>{fmtRp(s.internal_labor_cost)}</strong></span>
-                    {s.overhead_cost > 0 && <span>Overhead <strong>{fmtRp(s.overhead_cost)}</strong></span>}
+                    <span className="text-muted-foreground">Upah internal {fmtRp(s.internal_labor_cost)} (tidak masuk HPP)</span>
                     <span className="text-[hsl(var(--primary))]">HPP <strong>{fmtRp(s.hpp_unit)}</strong>/pcs</span>
                     <span>Usulan jual <strong>{fmtRp(s.suggested_price)}</strong></span>
                     {s.margin_known
@@ -787,7 +780,7 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <label className="block">
-              <span className="text-xs font-medium text-foreground/80">Overhead per pcs</span>
+              <span className="text-xs font-medium text-foreground/80">Overhead per pcs (tidak masuk HPP)</span>
               <MoneyInput unstyled value={settings.overhead_rate_per_pcs}
                 onChange={e => setSettings({ ...settings, overhead_rate_per_pcs: e.target.value })}
                 className={`${inputCls} mt-1`} data-testid="costing-setting-overhead" />
@@ -806,13 +799,9 @@ function CostingSettingsModal({ token, onClose, onSaved }) {
             </label>
           </div>
 
-          <label className="flex items-center gap-2 text-sm text-foreground cursor-pointer">
-            <input type="checkbox" checked={!!settings.include_overhead_in_product_hpp}
-              onChange={e => setSettings({ ...settings, include_overhead_in_product_hpp: e.target.checked })}
-              data-testid="costing-setting-include-overhead" />
-            Ikutkan overhead ke HPP produk secara bawaan
-            <span className="text-xs text-muted-foreground">(keputusan pemilik: bawaannya tidak diikutkan)</span>
-          </label>
+          <p className="text-sm text-muted-foreground" data-testid="costing-setting-include-overhead">
+            Upah internal dan overhead pabrik tidak masuk HPP produk (keputusan pemilik 6 Nov 2026); keduanya tetap beban bulanan.
+          </p>
 
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={onClose} data-testid="costing-settings-cancel">Batal</Button>

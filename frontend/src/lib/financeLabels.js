@@ -19,6 +19,11 @@ export const JOURNAL_SOURCE_LABELS = {
   direct_sale: 'Nota penjualan',
   maklon_ar_invoice: 'Faktur maklon',
   maklon_advance_payment: 'Uang muka maklon',
+  // 2026-11-06 (Tahap 2): piutang maklon terjadwal
+  maklon_revenue: 'Pendapatan maklon (kiriman)',
+  maklon_payment: 'Pembayaran klien maklon',
+  maklon_advance_apply: 'Uang muka maklon dipakai',
+  maklon_reclass: 'Reklasifikasi akun maklon',
   bank_transfer: 'Transfer antar rekening',
   bank_recon: 'Rekonsiliasi bank',
   payroll_finalize: 'Gaji',
@@ -53,6 +58,7 @@ export function journalSourceLabel(code) {
 /** Status dokumen keuangan → label + nada warna StatusBadge. */
 export const FIN_STATUS = {
   draft:        { label: 'Draf',              tone: 'muted' },
+  scheduled:    { label: 'Terjadwal',         tone: 'info' },
   sent:         { label: 'Terbit',            tone: 'info' },
   issued:       { label: 'Terbit',            tone: 'info' },
   approved:     { label: 'Disetujui',         tone: 'info' },

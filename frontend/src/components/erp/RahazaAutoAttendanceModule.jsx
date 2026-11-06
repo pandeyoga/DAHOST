@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB } from '@/lib/waktu';
+import FingerprintImportPanel from './hr/FingerprintImportPanel';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -115,6 +116,10 @@ function ConfigTab({ headers }) {
         require_selfie: form.require_selfie !== false,
         require_geofence: form.require_geofence !== false,
         face_match_threshold: form.face_match_threshold,
+        // Tahap 2 (2026-11-06): kesegaran & akurasi GPS saat tombol ditekan, jendela absen pulang lewat tengah malam
+        gps_max_age_s: form.gps_max_age_s,
+        gps_max_accuracy_m: form.gps_max_accuracy_m,
+        clock_out_window_hours: form.clock_out_window_hours,
       }, { headers });
       setMsg({ type: 'success', text: 'Konfigurasi berhasil disimpan.' });
       await load();
@@ -210,6 +215,30 @@ function ConfigTab({ headers }) {
               <span className="block text-xs text-muted-foreground">Absen di luar radius ditolak, bukan sekadar &quot;menunggu approval&quot;.</span>
             </span>
           </label>
+        </div>
+
+        <div className="border-t pt-4 grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="cfg-gps-rules">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-gps-age">Umur maksimum lokasi (detik)</label>
+            <input id="cfg-gps-age" data-testid="cfg-gps-age" type="number" min={10} max={600}
+              value={form.gps_max_age_s ?? 60} onChange={e => setField({ gps_max_age_s: parseInt(e.target.value, 10) })}
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
+            <span className="text-[11px] text-muted-foreground">Lokasi dibaca saat tombol ditekan; lebih tua dari ini ditolak.</span>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-gps-acc">Akurasi GPS terburuk (meter)</label>
+            <input id="cfg-gps-acc" data-testid="cfg-gps-acc" type="number" min={10} max={2000}
+              value={form.gps_max_accuracy_m ?? 100} onChange={e => setField({ gps_max_accuracy_m: parseInt(e.target.value, 10) })}
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
+            <span className="text-[11px] text-muted-foreground">Bacaan yang kurang akurat diminta Coba lagi.</span>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1" htmlFor="cfg-out-window">Jendela absen pulang (jam)</label>
+            <input id="cfg-out-window" data-testid="cfg-out-window" type="number" min={0} max={24} step="0.5"
+              value={form.clock_out_window_hours ?? 6} onChange={e => setField({ clock_out_window_hours: parseFloat(e.target.value) })}
+              className="w-full border rounded-lg px-3 py-2 text-sm bg-background" />
+            <span className="text-[11px] text-muted-foreground">Absen pulang lewat tengah malam masih menutup absen kemarin selama ini sesudah jam pulang shift.</span>
+          </div>
         </div>
 
         <div className="bg-blue-50 border border-blue-200 text-blue-700 text-xs px-3 py-2 rounded-lg">
@@ -418,7 +447,9 @@ function DeviceTab({ headers }) {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-semibold">Device Fingerprint Fisik (ZKTeco/Fingerspot)</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Konfigurasi mesin absen fingerprint untuk sinkronisasi data</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Sinkron langsung hanya bisa bila server menjangkau mesin di jaringan kantor. Bila tidak, pakai unggah file ekspor di bawah.
+          </p>
         </div>
         <button onClick={() => setShowForm(!showForm)}
           className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-2 rounded-xl text-sm font-medium transition-colors">
@@ -472,6 +503,9 @@ function DeviceTab({ headers }) {
           </div>
         </div>
       )}
+
+      {/* Tahap 2 (2026-11-06): jalur utama — unggah file ekspor mesin */}
+      <FingerprintImportPanel headers={headers} />
 
       {/* Device List */}
       {loading ? (

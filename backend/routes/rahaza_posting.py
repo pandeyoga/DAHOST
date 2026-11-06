@@ -649,6 +649,8 @@ CASH_CATEGORY_BY_SOURCE = {
     "bank_recon_adjustment": "bank_recon", "bank_recon": "bank_recon",
     "sales_refund": "sales_refund", "credit_note": "sales_refund",
     "maklon_advance_payment": "maklon", "maklon_ar_invoice": "maklon", "cmt_ap_invoice": "cmt_payment",
+    # 2026-11-06 (Tahap 2, paket maklon): penerimaan klien maklon terhadap piutang terjadwal
+    "maklon_payment": "maklon",
 }
 CASH_CATEGORY_LABELS = {
     "ar_payment": "Penerimaan pelanggan", "ap_payment": "Pembayaran pemasok", "expense": "Pengeluaran / biaya",
@@ -811,6 +813,12 @@ async def post_fg_wac_adjustment(db, *, material_id: str, amount: float, source_
     code = mat.get("code") or material_id
     if d.get("rule") == "reverse_receipt":
         memo = (f"Selisih WAC FG {code} — penerimaan dibatalkan saat stok {float(d.get('qty_after') or 0):g} pcs")
+    elif d.get("rule") == "zero_cost_at_wac":     # 2026-11-06 (Tahap 2): satu aturan stok tanpa biaya
+        memo = (f"Koreksi nilai FG {code} — {float(d.get('qty_in') or 0):g} pcs masuk tanpa biaya dinilai "
+                f"WAC {float(d.get('wac_before') or 0):,.2f}")
+    elif d.get("rule") == "reset_unvalued":
+        memo = (f"Koreksi nilai FG {code} — {float(d.get('qty_before') or 0):g} pcs stok tanpa biaya dinilai "
+                f"biaya masuk {float(d.get('cost_in') or 0):,.2f}")
     else:
         memo = (f"Selisih WAC FG {code} — stok minus {float(d.get('qty_before') or 0):g} pcs × "
                 f"(biaya masuk {float(d.get('cost_in') or 0):,.2f} − WAC lama {float(d.get('wac_before') or 0):,.2f})")
@@ -824,6 +832,41 @@ async def post_fg_wac_adjustment(db, *, material_id: str, amount: float, source_
         lines = [{"account_code": adj_code, "debit": amt, "credit": 0, "description": desc},
                  {"account_code": fg_code, "debit": 0, "credit": amt, "description": desc}]
     return await _create_posted_je(db, today_wib(), memo[:200], "fg_wac_adjust", source_ref, lines, user or {})
+
+
+async def post_material_wac_adjustment(db, *, material: dict, amount: float, source_ref: str,
+                                       detail: Optional[dict] = None, user: Optional[dict] = None) -> dict:
+    """2026-11-06 (Tahap 2, paket gudang) — cermin `post_fg_wac_adjustment` untuk BAHAN/AKSESORIS.
+
+    Lahir dari `core.accessory_valuation.apply_receipt_cost` saat barang masuk ke stok MINUS:
+    qty yang keluar saat minus sudah dinilai HPP lama, padahal biaya nyatanya = harga masuk ini ⇒
+    selisih = qty_lama × (harga_masuk − HPP_lama). `amount` > 0 ⇒ Dr persediaan / Cr selisih
+    persediaan; < 0 ⇒ sebaliknya. Akun dari profil `inventory_adjust` (persediaan per jenis +
+    `adjustment_expense`) — tanpa kode akun tertanam. Idempoten per `source_ref`."""
+    amount = round(float(amount or 0), 2)
+    if abs(amount) < 0.01:
+        return {"ok": False, "skipped": True, "error": "Selisih rata-rata 0 — tidak ada jurnal."}
+    existing = await _find_existing_je(db, "material_wac_adjust", source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
+    mapping = await get_mapping(db, "inventory_adjust")
+    inv_code, inv_err = inventory_account(mapping, "inventory_adjust", inventory_kind(material))
+    adj_code = mapping.get("adjustment_expense")
+    if not inv_code or not adj_code:
+        return {"ok": False, "error": inv_err or "Mapping 'inventory_adjust.adjustment_expense' belum diisi."}
+    d = detail or {}
+    code = (material or {}).get("code") or (material or {}).get("id") or ""
+    memo = (f"Selisih HPP rata-rata {code} — stok minus {float(d.get('qty_before') or 0):g} × "
+            f"(harga masuk {float(d.get('cost_in') or 0):,.2f} − HPP lama {float(d.get('old_unit_cost') or 0):,.2f})")
+    desc = f"{memo}{' · ' + str(d.get('notes')) if d.get('notes') else ''}"[:200]
+    amt = abs(amount)
+    if amount > 0:
+        lines = [{"account_code": inv_code, "debit": amt, "credit": 0, "description": desc},
+                 {"account_code": adj_code, "debit": 0, "credit": amt, "description": desc}]
+    else:
+        lines = [{"account_code": adj_code, "debit": amt, "credit": 0, "description": desc},
+                 {"account_code": inv_code, "debit": 0, "credit": amt, "description": desc}]
+    return await _create_posted_je(db, today_wib(), memo[:200], "material_wac_adjust", source_ref, lines, user or {})
 
 
 # ───────────────────────── FG KELUAR NON-PENJUALAN (2026-11-02, owner No.26a) ───────
@@ -1050,6 +1093,12 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
 
     memo = f"AP Invoice {invoice.get('invoice_number')} · {invoice.get('vendor_name') or ''}".strip()
     desc = f"AP {invoice.get('invoice_number')}"
+    # 2026-11-06 (Tahap 2, keputusan owner): faktur dari GR → selisih harga, PPN non-PKP, ongkir/potongan
+    # MASUK HPP bahan (bagian yang barangnya masih ada); hanya sisanya ke 5-1900. Lihat core/purchase_costing.
+    if invoice.get("source") == "gr" or invoice.get("gr_ids"):
+        return await _post_ap_invoice_from_gr(db, invoice, user, mapping=mapping, ap_code=ap_code,
+                                              grni_code=exp_default, tax_code=tax_code, total=total,
+                                              subtotal=subtotal, tax=tax, je_date=je_date, memo=memo, desc=desc)
     lines = [
         {"account_code": exp_default, "debit": subtotal, "credit": 0, "description": desc},
         {"account_code": ap_code, "debit": 0, "credit": total, "description": desc},
@@ -1095,6 +1144,129 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
     if result.get("ok"):
         await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {"gl_ap_account_code": ap_code}})
     return result
+
+
+async def _post_ap_invoice_from_gr(db, invoice: dict, user: dict, *, mapping: dict, ap_code: str, grni_code: str,
+                                   tax_code: Optional[str], total: float, subtotal: float, tax: float,
+                                   je_date: date, memo: str, desc: str) -> dict:
+    """2026-11-06 (Tahap 2): jurnal tagihan dari GR — selisih harga MASUK HPP bahan.
+
+    Dr GRNI (nilai GR) + Dr/Cr persediaan per jenis (selisih yang barangnya masih ada; HPP rata-rata
+    disesuaikan lewat `core.purchase_costing`) + Dr/Cr 5-1900 (selisih yang barangnya sudah terpakai,
+    baris tanpa master, barang jadi) [+ Dr PPN Masukan bila PKP] / Cr Hutang. Non-PKP: PPN pemasok ikut
+    menjadi bagian harga beli (dibagi per baris menurut nilai, seperti ongkir & potongan).
+    Revaluasi diterapkan DULU dan jurnal memakai perubahan nilai stok yang nyata; jurnal gagal ⇒
+    revaluasi dikembalikan. Klaim atomik di faktur mencegah posting ganda menggandakan revaluasi."""
+    from core import purchase_costing as pc
+    from core.tax_status import TREAT_CAPITALIZE, get_tax_profile, input_tax_treatment
+    inv_id = invoice.get("id")
+    source_ref = f"ap:{inv_id}"
+    treatment = invoice.get("input_tax_treatment") or input_tax_treatment(await get_tax_profile(db))
+    capitalize = treatment == TREAT_CAPITALIZE
+
+    async def _fail(msg: str) -> dict:
+        res = {"ok": False, "error": msg}
+        await _save_source_posting_result(db, "rahaza_ap_invoices", inv_id, res)
+        return res
+
+    if tax > 0 and not capitalize and not tax_code:
+        return await _fail("Mapping 'ap_invoice.debit_tax_input' (PPN Masukan) belum diisi.")
+    grni = invoice.get("gl_grni_amount")
+    grni = round(float(grni), 2) if grni is not None else round(subtotal - float(invoice.get("gl_price_variance") or 0), 2)
+    diff_total = round(total - grni - (0.0 if capitalize else tax), 2)
+    ppv_code = mapping.get("debit_price_variance")
+    per, _rest = pc.invoice_material_diffs(invoice, capitalized_tax=tax if capitalize else 0.0)
+    if (abs(diff_total) >= 0.005 or any(abs(s["diff"]) >= 0.005 for s in per.values())) and not ppv_code:
+        return await _fail("PPN supplier (non-PKP) perlu akun selisih harga beli: isi mapping 'ap_invoice.debit_price_variance'."
+                           if capitalize and tax > 0 else
+                           "Harga tagihan ≠ harga GR tetapi mapping 'ap_invoice.debit_price_variance' belum diisi.")
+    inv_map = await get_mapping(db, "inventory_receive")
+    material_diffs = {m: s for m, s in per.items() if abs(s["diff"]) >= 0.005}
+    for mid in material_diffs:   # akun persediaan dicek SEBELUM HPP disentuh
+        mat = await db.rahaza_materials.find_one({"id": mid}, {"_id": 0}) or {}
+        kind = inventory_kind(mat) if mat else "bahan"
+        if mat and kind != "fg":
+            code, err = inventory_account(inv_map, "inventory_receive", kind)
+            if not code:
+                return await _fail(err)
+
+    applied = {"lines": [], "inventory_by_kind": {}, "to_ppv": diff_total}
+    if material_diffs:
+        if not await pc.claim_invoice_hpp(db, inv_id):
+            return {"ok": False, "error": "Selisih harga faktur ini sedang/sudah diterapkan proses lain — muat ulang."}
+        applied = await pc.apply_invoice_hpp(db, invoice, capitalized_tax=tax if capitalize else 0.0, actor=user)
+
+    lines = [{"account_code": grni_code, "debit": grni, "credit": 0, "description": desc},
+             {"account_code": ap_code, "debit": 0, "credit": total, "description": desc}]
+    to_inv = 0.0
+    for kind, amt in applied["inventory_by_kind"].items():
+        code, _err = inventory_account(inv_map, "inventory_receive", kind)
+        a = round(abs(amt), 2)
+        to_inv = round(to_inv + amt, 2)
+        lines.append({"account_code": code, "debit": a if amt > 0 else 0, "credit": a if amt < 0 else 0,
+                      "description": f"{desc} - Selisih harga faktur masuk HPP ({INVENTORY_KIND_LABELS.get(kind, kind)})"})
+    ppv = round(diff_total - to_inv, 2)
+    if abs(ppv) >= 0.005:
+        lines.append({"account_code": ppv_code, "debit": ppv if ppv > 0 else 0, "credit": -ppv if ppv < 0 else 0,
+                      "description": f"{desc} - Selisih harga beli (barang sudah terpakai / tanpa master)"})
+    if tax > 0 and not capitalize:
+        lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"{desc} - PPN Masukan"})
+
+    result = await _create_posted_je(db, je_date, memo, "ap_invoice", source_ref, lines, user)
+    if material_diffs:
+        if result.get("ok") and not result.get("already_posted"):
+            await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {"hpp_adjustment": {
+                "status": "applied", "at": _now(), "je_id": result.get("je_id"), "je_number": result.get("je_number"),
+                "lines": applied["lines"], "inventory_by_kind": applied["inventory_by_kind"],
+                "to_inventory": to_inv, "to_ppv": ppv}}})
+        else:
+            # jurnal gagal (atau sudah dibuat proses lain) ⇒ revaluasi milik percobaan ini dikembalikan
+            await pc.revert_invoice_hpp(db, applied["lines"], actor=user,
+                                        notes=f"Posting faktur {invoice.get('invoice_number') or ''} gagal — revaluasi dibatalkan")
+            await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {"hpp_adjustment": {
+                "status": "failed", "at": _now(), "error": result.get("error") or "jurnal sudah ada"}}})
+    await _save_source_posting_result(db, "rahaza_ap_invoices", inv_id, result)
+    if result.get("ok"):
+        await db.rahaza_ap_invoices.update_one({"id": inv_id}, {"$set": {
+            "gl_ap_account_code": ap_code, "gl_hpp_inventory": to_inv, "gl_ppv_posted": ppv}})
+    return result
+
+
+async def post_inventory_value_gap(db, *, material_id: str, amount: float, source_ref: str, memo: str,
+                                   user: dict, counter: str = "adjustment") -> dict:
+    """2026-11-06 (Tahap 2): koreksi NILAI persediaan bahan/aksesoris tanpa mutasi qty (stok = buku besar).
+
+    `amount` > 0 ⇒ Dr persediaan (per jenis, profil `inventory_adjust`) / Cr lawan; < 0 ⇒ sebaliknya.
+    counter='adjustment' → `inventory_adjust.adjustment_expense` (5-1950): stok bernilai 0 / minus yang
+    dinilai ulang harga beli (rumus sama dengan FG, `post_fg_wac_adjustment`).
+    counter='ppv' → `ap_invoice.debit_price_variance` (5-1900): selisih harga faktur yang dibatalkan
+    sementara barangnya sudah terpakai. Idempoten per `source_ref`."""
+    amount = round(float(amount or 0), 2)
+    if abs(amount) < 0.01:
+        return {"ok": True, "skipped": True, "reason": "selisih nilai 0 — tidak ada jurnal"}
+    existing = await _find_existing_je(db, "inventory_value_gap", source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing["je_number"], "already_posted": True}
+    mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0}) if material_id else None
+    mapping = await get_mapping(db, "inventory_adjust")
+    inv_code, inv_err = inventory_account(mapping, "inventory_adjust", inventory_kind(mat))
+    if counter == "ppv":
+        ctr = (await get_mapping(db, "ap_invoice")).get("debit_price_variance")
+        ctr_err = "Mapping 'ap_invoice.debit_price_variance' belum diisi."
+    else:
+        ctr = mapping.get("adjustment_expense")
+        ctr_err = "Mapping 'inventory_adjust.adjustment_expense' belum diisi."
+    if not inv_code or not ctr:
+        return {"ok": False, "error": inv_err or ctr_err}
+    desc = memo[:200]
+    a = abs(amount)
+    if amount > 0:
+        lines = [{"account_code": inv_code, "debit": a, "credit": 0, "description": desc},
+                 {"account_code": ctr, "debit": 0, "credit": a, "description": desc}]
+    else:
+        lines = [{"account_code": ctr, "debit": a, "credit": 0, "description": desc},
+                 {"account_code": inv_code, "debit": 0, "credit": a, "description": desc}]
+    return await _create_posted_je(db, today_wib(), desc, "inventory_value_gap", source_ref, lines, user or {})
 
 
 async def post_ap_payment(db, invoice: dict, amount: float, cash_account_id: Optional[str], payment_date: str, user: dict, movement_id: Optional[str] = None, discount_taken: float = 0) -> dict:
@@ -1216,7 +1388,15 @@ async def void_ar_invoice_posting(db, invoice_id: str, user: dict, reason: str =
 
 
 async def void_ap_invoice_posting(db, invoice_id: str, user: dict, reason: str = ""):
-    return await _void_je_by_source(db, "ap_invoice", f"ap:{invoice_id}", user, reason)
+    res = await _void_je_by_source(db, "ap_invoice", f"ap:{invoice_id}", user, reason)
+    # 2026-11-06 (Tahap 2): jurnal faktur dari GR yang di-void ikut menghapus selisih yang dulu masuk
+    # persediaan ⇒ HPP stok dibalik (bagian yang barangnya sudah terpakai dijurnal ke 5-1900).
+    if res.get("ok") and res.get("voided"):
+        inv = await db.rahaza_ap_invoices.find_one({"id": invoice_id}, {"_id": 0}) or {}
+        if (inv.get("hpp_adjustment") or {}).get("status") == "applied":
+            from core import purchase_costing as pc
+            res["hpp_reversal"] = await pc.reverse_invoice_hpp(db, inv, user)
+    return res
 
 
 # ───────────────────────── F3 STUBS ───────────────────────────────────────────
@@ -1716,14 +1896,22 @@ async def post_accessory_issue(db, mv: dict, user: dict) -> dict:
                 "already_posted": True}
 
     mapping = await get_mapping(db, "inventory_issue")
-    wip_code = mapping.get("debit_wip")
+    # 2026-11-06 (Tahap 2): akun debit mengikuti TUJUAN BIAYA baris kartu stok (divisi pemohon / jenis
+    # PO / sampel R&D) lewat peran profil `inventory_issue` — tabel peran di core.accessory_issue.
+    # Baris lama tanpa `cost_target` tetap WIP (perilaku sebelumnya).
+    from core.accessory_issue import COST_TARGET_LABELS, COST_WIP, debit_role
+    target = mv.get("cost_target") or COST_WIP
+    role = debit_role(target)
+    wip_code = mapping.get(role)
     mat = await db.rahaza_materials.find_one({"id": mv.get("material_id")}, {"_id": 0}) \
         if mv.get("material_id") else None
     # 2026-11-02 (K13): pemakaian aksesoris mengkredit Persediaan Aksesoris (1-1402), bukan 1-1401
     inv_code, inv_err = inventory_account(mapping, "inventory_issue",
                                           inventory_kind(mat or mv.get("material") or {"type": "accessory"}))
     if not wip_code or not inv_code:
-        result = {"ok": False, "error": inv_err or "Mapping 'inventory_issue' belum lengkap."}
+        result = {"ok": False, "error": inv_err or (
+            f"Mapping 'inventory_issue.{role}' ({COST_TARGET_LABELS.get(target, target)}) belum diisi — "
+            "lengkapi di Profil Posting.")}
         await _save_source_posting_result(db, "rahaza_material_movements", mv_id, result)
         return result
 
@@ -1744,6 +1932,11 @@ async def post_accessory_issue(db, mv: dict, user: dict) -> dict:
     except Exception:
         je_date = today_wib()
     memo = f"Pemakaian Aksesoris · {mv.get('material_name') or mv.get('material_id')} · {qty}"
+    # 2026-11-06 (Tahap 2): jejak tujuan biaya di memo (PO / divisi)
+    if mv.get("po_number"):
+        memo += f" · PO {mv['po_number']}"
+    elif mv.get("divisi"):
+        memo += f" · {mv['divisi']}"
     lines = [
         {"account_code": wip_code, "debit": total, "credit": 0, "description": memo},
         {"account_code": inv_code, "debit": 0, "credit": total, "description": memo},
@@ -1968,11 +2161,14 @@ async def post_cogs_shipment(db, shipment: dict, user: dict) -> dict:
     #   1. fifo_batch: lapisan HPP batch yang benar-benar dimakan saat barang keluar (fg_cogs di item)
     #   2. hpp_snapshot: snapshot HPP per WO (jalur lama), hanya bila tidak ada lapisan biaya.
     items = shipment.get("items") or []
-    fifo = await _fifo_rows_to_components(db, [
+    fifo_rows = [
         {"sku": it.get("sku_code") or it.get("sku"), "qty_shipped": it.get("qty"), "fg_cogs": it.get("fg_cogs"),
          "fg_cogs_layers": it.get("fg_cogs_layers"), "fg_cogs_uncosted_qty": it.get("fg_cogs_uncosted_qty")}
-        for it in items])
+        for it in items]
+    fifo = await _fifo_rows_to_components(db, fifo_rows)
     basis = (fifo.get("basis") or "fifo_batch") if fifo["total"] > 0 else "hpp_snapshot"  # No.26a: 'wac'
+    if basis == "hpp_snapshot" and issued_via_wac(fifo_rows):
+        basis = "wac"      # 2026-11-06 (Tahap 2): satu aturan stok tanpa biaya — tanpa perkiraan
     total_material = total_labor = total_overhead = 0.0
     if basis != "hpp_snapshot":
         total_material, total_labor, total_overhead = fifo["material"], fifo["labor"], fifo["overhead"]
@@ -3032,7 +3228,19 @@ async def _fifo_rows_to_components(db, rows: list) -> dict:
     # Σ debit komponen = kredit 1-1404 (dulu dibulatkan terpisah → bisa beda 1 sen)
     out["total"] = round(out["material"] + out["labor"] + out["overhead"], 2)
     out["basis"] = "mixed" if len(seen) > 1 else (next(iter(seen)) if seen else "")
+    out["issued_via_wac"] = issued_via_wac(rows)
     return out
+
+
+def issued_via_wac(rows: list) -> bool:
+    """2026-11-06 (Tahap 2) — SATU aturan stok FG tanpa biaya untuk semua jalur jual.
+
+    Barang yang keluar lewat `fcl.issue_wac` (baris membawa jejak `fg_cogs_layers` atau
+    `fg_cogs_uncosted_qty`) SUDAH dinilai WAC — termasuk "WAC 0 ⇒ tanpa nilai". Untuk baris itu
+    jurnal HPP tidak boleh jatuh ke perkiraan snapshot HPP SPK: mengkredit 1-1404 dengan perkiraan
+    sementara stok keluar Rp 0 membuat GL ≠ Σ stok × WAC (nota langsung & fulfillment sudah begitu;
+    dispatch buyer & pengiriman lama dulu tidak). Snapshot hanya untuk baris lama tanpa jejak WAC."""
+    return any((r.get("fg_cogs_layers") or int(r.get("fg_cogs_uncosted_qty") or 0) > 0) for r in (rows or []))
 
 
 async def post_cogs_on_buyer_dispatch(db, shipment: dict, dispatch_items: list,
@@ -3080,6 +3288,8 @@ async def post_cogs_on_buyer_dispatch(db, shipment: dict, dispatch_items: list,
     fifo = await _fifo_cogs_for_dispatch(db, dispatch_items)
     # 2026-11-02 (No.26a): nilai keluar kini WAC (`basis='wac'`); 'fifo_batch' = baris lama
     basis = (fifo.get("basis") or "fifo_batch") if fifo["total"] > 0 else "hpp_snapshot"
+    if basis == "hpp_snapshot" and fifo.get("issued_via_wac"):
+        basis = "wac"      # 2026-11-06 (Tahap 2): satu aturan stok tanpa biaya — tanpa perkiraan
     total_material = 0.0
     total_labor = 0.0
     total_overhead = 0.0
@@ -3152,4 +3362,35 @@ async def post_cogs_on_buyer_dispatch(db, shipment: dict, dispatch_items: list,
                           "batch masuknya dilengkapi.")
     await _save_source_posting_result(db, "buyer_shipments", shipment["id"], result, prefix=f"cogs_seq{dispatch_seq}")
     return result
+
+
+# ───────────────────────── SISA WIP PER PO → SELISIH PRODUKSI (2026-11-06, Tahap 2) ───────
+async def post_po_wip_variance(db, *, po: dict, residual: float, seq: int, user: dict,
+                               reason: str = "") -> dict:
+    """Tutup sisa WIP satu PO produksi (aktual keluar − standar dikredit) ke akun selisih produksi.
+
+    Sisa dihitung `core.po_wip.po_wip_position` dari buku besar. Akun dari profil posting
+    `production_po_wip_variance` (`debit_variance` bawaan 5-1960 Selisih Produksi, `credit_wip`
+    bawaan 1-1403) — tanpa kode akun tertanam. Sisa > 0 ⇒ Dr selisih / Cr WIP; sisa < 0 ⇒
+    kebalikannya. Idempoten per `po_wip_var:<po_id>:<seq>`."""
+    from core.po_wip import PROFILE, SOURCE_MODULE, variance_lines
+    source_ref = f"po_wip_var:{po.get('id')}:{int(seq)}"
+    existing = await _find_existing_je(db, SOURCE_MODULE, source_ref)
+    if existing:
+        return {"ok": True, "je_id": existing["id"], "je_number": existing.get("je_number"),
+                "already_posted": True}
+    mapping = await get_mapping(db, PROFILE)
+    var_code, wip_code = mapping.get("debit_variance"), mapping.get("credit_wip")
+    if not var_code or not wip_code:
+        return {"ok": False, "reason": "mapping_incomplete",
+                "error": f"Pemetaan akun '{PROFILE}' belum lengkap (akun selisih produksi / WIP)."}
+    memo = (f"Selisih produksi PO {po.get('po_number') or po.get('id')} — sisa WIP "
+            f"{'aktual > standar' if residual > 0 else 'standar > aktual'}"
+            + (f" ({reason})" if reason else ""))[:200]
+    lines = variance_lines(residual, var_code, wip_code, memo)
+    if not lines:
+        return {"ok": False, "skipped": True, "error": "Sisa WIP 0 — tidak ada jurnal."}
+    res = await _create_posted_je(db, today_wib(), memo, SOURCE_MODULE, source_ref, lines, user or {})
+    res["amount"] = round(float(residual), 2)
+    return res
 

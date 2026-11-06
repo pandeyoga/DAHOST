@@ -716,17 +716,10 @@ async def create_item_from_fg(db, catalog: dict, fg_material_id: str,
         fg.get('category') or ''
     doc['category'] = doc['category_name']
     doc['weight_gram'] = float(fg.get('weight_gram') or master.get('weight_gram') or 0)
-    # HPP: master adalah KEBENARAN (urutan `hpp` R&D → `base_hpp` manual → 0) dan
-    # sumbernya ikut dilaporkan supaya layar tidak menampilkan angka tanpa asal.
-    if master:
-        doc['hpp'] = float(master.get('hpp') or 0)
-        doc['hpp_source'] = master.get('hpp_source') or 'none'
-    elif fg.get('hpp') is not None and float(fg.get('hpp') or 0) > 0:
-        doc['hpp'] = float(fg.get('hpp') or 0)
-        doc['hpp_source'] = fg.get('hpp_source') or 'rnd'
-    else:
-        doc['hpp'] = 0.0
-        doc['hpp_source'] = 'none'
+    # HPP + sumbernya. 2026-11-06 (Tahap 2): urutan yang SAMA dengan tombol segarkan
+    # (`core.catalog_margin.resolve_catalog_hpp`: WAC aktual → HPP standar FG → model → 0);
+    # dulu tambah-dari-FG mendahulukan rata-rata model sehingga HPP per warna hilang.
+    doc['hpp'], doc['hpp_source'] = _cmargin.resolve_catalog_hpp(fg, model)
     doc['hpp_updated_at'] = _now()
     doc['retail_price_master'] = float(master.get('retail_price_master') or 0)
     # F4.3 — foto MASTER ikut terbawa (D13). Marketing tidak lagi memulai dari nol foto.
@@ -848,17 +841,13 @@ async def _resolve_rnd_hpp(db, item: dict):
         if not model and (fg or {}).get('model_id'):
             model = await db.rahaza_models.find_one({'id': fg['model_id']}, {'_id': 0})
 
-    if fg and (fg.get('hpp_source') or '') == 'bom' and float(fg.get('hpp') or 0) > 0:
-        return float(fg['hpp']), 'bom', 'rahaza_materials'
-    if model:
-        hpp, src = _pm.resolve_hpp(model)
-        if hpp:
-            return hpp, src, 'rahaza_models'
-    if fg and fg.get('hpp') is not None and float(fg.get('hpp') or 0) > 0:
-        return float(fg['hpp']), (fg.get('hpp_source') or 'rnd'), 'rahaza_materials'
-    if model or fg:
-        return 0.0, 'none', 'rahaza_models' if model else 'rahaza_materials'
-    return None, 'no_source', 'no_source'
+    # 2026-11-06 (Tahap 2): SATU urutan untuk tambah-dari-FG DAN segarkan
+    # (`core.catalog_margin.resolve_catalog_hpp`: WAC aktual → HPP standar FG → model → 0).
+    if not (model or fg):
+        return None, 'no_source', 'no_source'
+    hpp, src = _cmargin.resolve_catalog_hpp(fg, model)
+    fg_used = bool(fg) and bool(_cmargin.effective_fg_cost(fg)['source'])
+    return hpp, src, ('rahaza_materials' if fg_used or not model else 'rahaza_models')
 
 
 @router.post('/{catalog_id}/items/{item_id}/refresh-hpp')

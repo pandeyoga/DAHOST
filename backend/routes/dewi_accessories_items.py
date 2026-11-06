@@ -4,6 +4,7 @@ Items CRUD (SSOT: rahaza_materials)
 """
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+import re
 import uuid
 import logging
 from datetime import datetime, timezone
@@ -110,7 +111,47 @@ async def _enrich_movement(db, mv: dict) -> dict:
             mv["related_loan"] = loan
     return mv
 
-def _material_to_acc_item(mat: dict, stock_qty: float = 0.0) -> dict:
+# 2026-11-06 (Tahap 2): nama kategori untuk layar — satu definisi di core.accessory_stock
+from core.accessory_stock import (  # noqa: E402
+    category_map as _category_map,
+    category_view as _category_view,
+)
+
+
+def _cat_fields(cat: dict) -> dict:
+    return {"category": cat["id"], "category_id": cat["id"], "category_code": cat.get("code", ""),
+            "category_name": cat.get("name", "")}
+
+
+async def _category_patch(db, body: dict, existing: dict | None = None) -> dict:
+    """Field kategori dari isian form: `category_id` (pilihan master) atau `category` (teks/ID/kode
+    lama). Kategori master → id + kode + nama; teks bebas tak dikenal → disimpan sebagai teks (lama)."""
+    patch: dict = {}
+    if "sub_category" in body:
+        patch["sub_category"] = (body.get("sub_category") or "").strip()
+    if "category_id" not in body and "category" not in body:
+        return patch
+    val = str(body.get("category_id") or body.get("category") or "").strip()
+    if existing is not None and "category_id" not in body:
+        shown, _cid = _category_view(existing, await _category_map(db))
+        if val == shown:
+            return patch            # form lama mengirim ulang nama yang ditampilkan — tidak berubah
+    if not val:
+        return patch
+    cat = (await db.rahaza_material_categories.find_one({"id": val}, {"_id": 0})
+           or await db.rahaza_material_categories.find_one({"code": val.upper()}, {"_id": 0})
+           or await db.rahaza_material_categories.find_one(
+               {"name": {"$regex": f"^{re.escape(val)}$", "$options": "i"}}, {"_id": 0}))
+    if cat:
+        patch.update(_cat_fields(cat))
+    elif "category_id" in body:
+        raise HTTPException(400, "Kategori yang dipilih tidak ada di master kategori material.")
+    else:
+        patch.update(category=val, category_name=val)
+    return patch
+
+
+def _material_to_acc_item(mat: dict, stock_qty: float = 0.0, cats: dict | None = None) -> dict:
     # Pack conversion for display
     pack_size = mat.get("pack_size", 1)
     if pack_size <= 0:
@@ -119,6 +160,7 @@ def _material_to_acc_item(mat: dict, stock_qty: float = 0.0) -> dict:
     display_in_packs = mat.get("display_in_packs", False)
     _min_stock = float(mat.get("min_stock") or 0)
     _unit_cost = float(mat.get("unit_cost") or mat.get("hpp") or 0)
+    _cat_name, _cat_id = _category_view(mat, cats)
 
     return {
         "id": mat.get("id", ""),
@@ -127,7 +169,10 @@ def _material_to_acc_item(mat: dict, stock_qty: float = 0.0) -> dict:
         "description": mat.get("description", ""),
         "unit": mat.get("unit", "pcs"),
         "color": mat.get("color", ""),
-        "category": mat.get("category", ""),
+        # 2026-11-06 (Tahap 2): NAMA kategori (dulu ID master mentah); id terpisah untuk form & filter
+        "category": _cat_name,
+        "category_id": _cat_id,
+        "sub_category": mat.get("sub_category", "") or "",
         "min_stock": mat.get("min_stock", 0),
         "max_stock": mat.get("max_stock", 0),
         "stock_qty": stock_qty,
@@ -163,16 +208,22 @@ async def list_items(request: Request):
     db = get_db()
     sp = request.query_params
     query: dict = {"type": "accessory", "active": True}
+    conds = []
     if sp.get("search"):
-        import re
         rx = re.compile(re.escape(sp["search"]), re.IGNORECASE)
-        query["$or"] = [{"name": rx}, {"code": rx}, {"category": rx}]
+        conds.append({"$or": [{"name": rx}, {"code": rx}, {"category": rx}, {"category_name": rx},
+                              {"sub_category": rx}]})
     if sp.get("category"):
-        query["category"] = sp["category"]
+        # 2026-11-06 (Tahap 2): filter boleh id master, nama kategori, atau teks lama
+        v = sp["category"]
+        conds.append({"$or": [{"category": v}, {"category_id": v}, {"category_name": v}]})
+    if conds:
+        query["$and"] = conds
 
     mats = await db.rahaza_materials.find(query, {"_id": 0}).sort("name", 1).to_list(2000)
     stock_map = await _all_accessory_stock(db)
-    items = [_material_to_acc_item(m, stock_map.get(m["id"], 0.0)) for m in mats]
+    cats = await _category_map(db)
+    items = [_material_to_acc_item(m, stock_map.get(m["id"], 0.0), cats) for m in mats]
     return serialize_doc(items)
 
 
@@ -202,13 +253,19 @@ async def create_item(request: Request):
     except uom.UomError as e:
         raise HTTPException(400, f"Satuan tidak valid: {e}")
 
+    # 2026-11-06 (Tahap 2): kategori dari master kategori material (pilihan form); teks lama tetap diterima
+    cat_patch = await _category_patch(db, body)
+    if "category" not in cat_patch:
+        acc_cat = await db.rahaza_material_categories.find_one({"code": "ACCESSORY"}, {"_id": 0})
+        cat_patch.update(_cat_fields(acc_cat) if acc_cat else {"category": "Umum"})
     doc = {
         "id": _id(),
         "code": code,
         "name": name,
         "type": "accessory",
         "unit": unit,
-        "category": (body.get("category") or "Umum"),
+        "category": cat_patch.pop("category", "Umum"),
+        **cat_patch,
         "description": body.get("description", ""),
         "min_stock": float(body.get("min_stock") or 0),
         # FASE G+: harga satuan wajib agar selisih opname bisa dinilai & posting ke keuangan
@@ -237,10 +294,13 @@ async def update_item(item_id: str, request: Request):
         raise HTTPException(404, "Aksesoris tidak ditemukan")
 
     upd: dict = {}
-    allowed = ("name", "category", "description", "supplier", "notes")
+    allowed = ("name", "description", "supplier", "notes")
     for k in allowed:
         if k in body:
             upd[k] = body[k]
+    # 2026-11-06 (Tahap 2): kategori lewat master (form mengirim ulang NAMA yang ditampilkan → tidak
+    # menimpa ID kategori master dengan teks)
+    upd.update(await _category_patch(db, body, existing))
     if "code" in body and body["code"]:
         upd["code"] = str(body["code"]).strip().upper()
     if "unit" in body and body["unit"]:
@@ -270,6 +330,12 @@ async def update_item(item_id: str, request: Request):
     # supaya PATCH parsial (mis. hanya ubah nama) tidak menyentuh `uoms`.
     if any(k in body for k in ("uoms", "unit", "base_uom", "pack_unit", "pack_size",
                                "display_in_packs", "purchase_uom", "issue_uom", "display_uom")):
+        # 2026-11-06 (Tahap 2 Pengadaan): satuan dasar dikunci selama PO/GR/daftar harga/karantina terbuka
+        from core import procurement_guards
+        _nb = upd.get("unit") or body.get("base_uom") or uom.base_uom_of(existing)
+        _docs = await procurement_guards.check_base_unit_change(db, existing, _nb)
+        if _docs:
+            raise HTTPException(409, procurement_guards.open_documents_message(existing, uom.normalize_code(_nb), _docs))
         try:
             upd.update(uom.apply_payload({**body, **({"unit": upd["unit"]} if "unit" in upd else {})},
                                          existing))
@@ -282,7 +348,7 @@ async def update_item(item_id: str, request: Request):
     await db.rahaza_materials.update_one({"id": item_id}, {"$set": upd})
     result = await db.rahaza_materials.find_one({"id": item_id}, {"_id": 0})
     qty = await _stock_qty(db, item_id)
-    return serialize_doc(_material_to_acc_item(result, qty))
+    return serialize_doc(_material_to_acc_item(result, qty, await _category_map(db)))
 
 
 @router.delete("/items/{item_id}")

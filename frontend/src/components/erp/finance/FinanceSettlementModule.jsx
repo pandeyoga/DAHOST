@@ -226,7 +226,8 @@ export default function FinanceSettlementModule({ view = 'settlements' }) {
       if (account_id && account_id !== hint) d = await previewCall(file, account_id);
       applyImport(d, account_id);
       if (!account_id) toast.warning(`Toko belum dipilih — laporan terdeteksi ${guess || 'tanpa platform'}; pilih toko yang benar sebelum menyimpan.`);
-      toast.success(d.mapping_source === 'saved'
+      if ((d.warnings || []).length) toast.warning(d.warnings[0]);
+      else toast.success(d.mapping_source === 'saved'
         ? 'Format laporan dikenali — pemetaan tersimpan dipakai. Periksa sekilas lalu simpan.'
         : `${Object.keys(d.mapping || {}).length} field terisi dari tebakan otomatis — periksa pemetaan kolom lalu simpan.`);
     } catch (e) {

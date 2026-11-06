@@ -34,7 +34,11 @@ router = APIRouter(prefix='/api/hr/inbox', tags=['HR-Inbox'])
 # ─────────────────────────────────────────────────────────────────────────────
 # Allowed request types & validation
 # ─────────────────────────────────────────────────────────────────────────────
-ALLOWED_TYPES = ('leave', 'overtime', 'salary_adjustment', 'resignation', 'attendance', 'expense_claim', 'travel_request')
+ALLOWED_TYPES = ('leave', 'overtime', 'salary_adjustment', 'resignation', 'attendance', 'expense_claim', 'travel_request',
+                 'attendance_correction')
+# Tahap 2 (2026-11-06): cuti tingkat 1 (atasan) DAN tingkat 2 (HR) tampil di kotak masuk; dulu hanya tingkat 1
+# dan persetujuannya melompati tingkat 2.
+LEAVE_PENDING = ['pending_approval', 'pending_hr_approval']
 
 
 def _to_iso(dt):
@@ -82,11 +86,13 @@ async def _fetch_leaves(db, type_filter: Optional[str], limit: int) -> List[Dict
     if type_filter and type_filter != 'leave':
         return []
     rows = await db.rahaza_leave_requests.find(
-        {'status': 'pending_approval'}, {'_id': 0}
+        {'status': {'$in': LEAVE_PENDING}}, {'_id': 0}
     ).sort('created_at', -1).limit(limit).to_list(length=limit)
 
     if not rows:
         return []
+    from core.leave_engine import leave_kind, suggest_pay_decision
+    from utils.leave_types import is_paid
 
     emp_ids = list({r.get('employee_id') for r in rows if r.get('employee_id')})
     lt_ids  = list({r.get('leave_type_id') for r in rows if r.get('leave_type_id')})
@@ -124,8 +130,11 @@ async def _fetch_leaves(db, type_filter: Optional[str], limit: int) -> List[Dict
                 'leave_type': lt.get('name'),
                 'leave_type_code': lt.get('code'),
                 'total_days': total_days,
-                'is_paid': lt.get('paid', False),
-                'request_type': lt.get('request_type') or r.get('request_type'),
+                'is_paid': is_paid(lt),
+                'request_type': leave_kind(r, lt),
+                'leave_kind': leave_kind(r, lt),
+                'approval_level': f"{r.get('current_approval_level') or 1}/{r.get('approval_level_required') or 1}",
+                'pay_decision_suggestion': suggest_pay_decision(r, lt),
                 'from_date': r.get('from_date'),
                 'to_date': r.get('to_date'),
                 'half_day': r.get('half_day') or r.get('is_half_day'),
@@ -308,11 +317,21 @@ async def _fetch_attendance(db, type_filter: Optional[str], limit: int) -> List[
                 'geo_distance_m': r.get('geo_distance_m'),
                 'note': r.get('note') or r.get('reason'),
                 'attendance_type': r.get('attendance_type') or r.get('type'),
-                'photo_url': r.get('clock_in_photo_url') or r.get('photo_url'),
+                # Tahap 2: selfie disimpan di photo_selfie_url / photo_selfie_out_url (dulu dibaca nama lain → kosong)
+                'photo_url': r.get('photo_selfie_url') or r.get('clock_in_photo_url') or r.get('photo_url'),
+                'photo_out_url': r.get('photo_selfie_out_url'),
             },
             'raw': serialize_doc(r),
         })
     return items
+
+
+async def _fetch_corrections(db, type_filter: Optional[str], limit: int) -> List[Dict[str, Any]]:
+    """Pengajuan koreksi absen dari Portal Saya (Tahap 2, 2026-11-06)."""
+    if type_filter and type_filter != 'attendance_correction':
+        return []
+    from routes.rahaza_attendance_corrections import inbox_items
+    return await inbox_items(db, limit)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -340,8 +359,9 @@ async def list_inbox(
     salary_adj  = await _fetch_salary_adjustments(db, type_filter, limit_per_type)
     resignation = await _fetch_resignations(db, type_filter, limit_per_type)
     attendance  = await _fetch_attendance(db, type_filter, limit_per_type)
+    corrections = await _fetch_corrections(db, type_filter, limit_per_type)
 
-    all_items = leaves + overtime + salary_adj + resignation + attendance
+    all_items = leaves + overtime + salary_adj + resignation + attendance + corrections
     # Sort by submitted_at desc, fallback created_at
     all_items.sort(key=lambda x: (x.get('submitted_at') or x.get('created_at') or ''), reverse=True)
 
@@ -353,6 +373,7 @@ async def list_inbox(
             'salary_adjustment': len(salary_adj),
             'resignation': len(resignation),
             'attendance': len(attendance),
+            'attendance_correction': len(corrections),
         },
         'items': all_items,
     }
@@ -363,14 +384,15 @@ async def inbox_summary(user: dict = Depends(require_auth)):
     """Count of pending approvals per category (for badge/notification)."""
     _require_approver_role(user)
     db = get_db()
-    leaves_c = await db.rahaza_leave_requests.count_documents({'status': 'pending_approval'})
+    leaves_c = await db.rahaza_leave_requests.count_documents({'status': {'$in': LEAVE_PENDING}})
     overtime_c = await db.rahaza_overtime_requests.count_documents({'status': 'pending'})
     sal_c = await db.rahaza_salary_adjustments.count_documents(
         {'status': {'$in': ['draft', 'pending_manager', 'pending_hr']}}
     )
     resig_c = await db.rahaza_employees.count_documents({'resignation_status': 'submitted'})
     att_c = await db.rahaza_attendance_events.count_documents({'approval_status': 'pending'})
-    total = leaves_c + overtime_c + sal_c + resig_c + att_c
+    corr_c = await db.rahaza_attendance_corrections.count_documents({'status': 'pending'})
+    total = leaves_c + overtime_c + sal_c + resig_c + att_c + corr_c
     return {
         'total_pending': total,
         'leave': leaves_c,
@@ -378,6 +400,7 @@ async def inbox_summary(user: dict = Depends(require_auth)):
         'salary_adjustment': sal_c,
         'resignation': resig_c,
         'attendance': att_c,
+        'attendance_correction': corr_c,
     }
 
 
@@ -387,6 +410,7 @@ async def inbox_summary(user: dict = Depends(require_auth)):
 class ActionPayload(BaseModel):
     note: Optional[str] = None
     reason: Optional[str] = None
+    pay_decision: Optional[str] = None   # cuti: 'paid' | 'unpaid' (dipilih HR, Tahap 2)
 
 
 def _tolak_ajuan_sendiri(doc: dict, user: dict, what: str) -> None:
@@ -438,45 +462,22 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
     actor_name = user.get('name', '')
 
     if req_type == 'leave':
-        leave = await db.rahaza_leave_requests.find_one({'id': req_id})
-        if not leave:
-            raise HTTPException(404, 'Leave request tidak ditemukan')
-        if leave.get('status') != 'pending_approval':
-            raise HTTPException(400, f"Leave status saat ini: {leave.get('status')}. Harus pending_approval.")
-        await db.rahaza_leave_requests.update_one(
-            {'id': req_id},
-            {'$set': {
-                'status': 'approved',
-                'approved_by': actor_id,
-                'approved_by_name': actor_name,
-                'approved_at': now,
-                'approval_note': note,
-            }}
-        )
+        # Tahap 2 (2026-11-06): SATU mesin persetujuan (saldo hari kerja, absensi per hari kerja, tingkat 2,
+        # keputusan bayar HR). Dulu jalur ini hanya mengganti status — saldo & absensi tidak tersentuh.
+        from core.leave_engine import approve_leave_request
+        res = await approve_leave_request(db, req_id, user, pay_decision=(payload.pay_decision if payload else None),
+                                          notes=note, via='kotak_masuk')
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
-                           f'Approve cuti {req_id} via HR Inbox')
-        await _kabari_pemohon('leave', leave, approved=True, note=note)
-        return {'ok': True, 'type': 'leave', 'id': req_id, 'new_status': 'approved'}
+                           f'Approve cuti {req_id} via HR Inbox' + ('' if res['final'] else ' (tingkat 1)'))
+        return {'ok': True, 'type': 'leave', 'id': req_id,
+                'new_status': (res.get('leave') or {}).get('status', 'approved')}
 
     if req_type == 'overtime':
-        ot = await db.rahaza_overtime_requests.find_one({'id': req_id})
-        if not ot:
-            raise HTTPException(404, 'Overtime request tidak ditemukan')
-        if ot.get('status') != 'pending':
-            raise HTTPException(400, f"OT status saat ini: {ot.get('status')}. Harus pending.")
-        await db.rahaza_overtime_requests.update_one(
-            {'id': req_id},
-            {'$set': {
-                'status': 'approved',
-                'approved_by': actor_id,
-                'approved_by_name': actor_name,
-                'approved_at': now,
-                'approval_note': note,
-            }}
-        )
+        # Tahap 2: fungsi persetujuan lembur yang sama dengan layar Lembur (K25: bukan lembur sendiri).
+        from routes.rahaza_overtime import approve_overtime_request
+        await approve_overtime_request(db, req_id, user, note)
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve lembur {req_id} via HR Inbox')
-        await _kabari_pemohon('overtime', ot, approved=True, note=note)
         return {'ok': True, 'type': 'overtime', 'id': req_id, 'new_status': 'approved'}
 
     if req_type == 'salary_adjustment':
@@ -499,6 +500,12 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
             raise HTTPException(400, f'Status sudah {cur_status}, tidak bisa di-approve.')
         if note:
             upd['approval_note'] = note
+        if new_status == 'approved':
+            # 2026-11-06 (Tahap 2): dulu persetujuan di sini TIDAK pernah sampai ke payroll. Sekarang memakai
+            # fungsi yang sama dengan layar Penyesuaian: versi tarif baru di Profil Gaji mulai effective_date.
+            from routes.rahaza_payroll_profiles import apply_salary_adjustment_to_profile
+            applied = await apply_salary_adjustment_to_profile(db, adj, user)
+            upd.update(applied_at=now, applied_effective_from=applied.get('effective_from'))
         await db.rahaza_salary_adjustments.update_one({'id': req_id}, {'$set': upd})
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve penyesuaian gaji {req_id} → {new_status} via HR Inbox')
@@ -529,23 +536,19 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
             raise HTTPException(404, 'Record absen tidak ditemukan')
         if ev.get('approval_status') != 'pending':
             raise HTTPException(400, f"Status absen saat ini: {ev.get('approval_status')}. Harus pending.")
-        await db.rahaza_attendance_events.update_one(
-            {'id': req_id},
-            {'$set': {
-                'approval_status': 'approved',
-                'approval_by': actor_id,
-                'approval_by_name': actor_name,
-                'approval_notes': note,
-                'approval_at': now,
-                'status': 'hadir',
-                'updated_by': actor_id,
-                'updated_by_name': actor_name,
-                'updated_at': now,
-            }}
-        )
+        # Tahap 2: keputusan selfie lewat fungsi yang sama dengan layar Approval Absen (jejak + kunci payroll)
+        from routes.rahaza_auto_attendance_approvals import decide_selfie
+        await decide_selfie(db, req_id, user, approve=True, notes=note)
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve absen {req_id} via HR Inbox')
         return {'ok': True, 'type': 'attendance', 'id': req_id, 'new_status': 'approved'}
+
+    if req_type == 'attendance_correction':
+        from routes.rahaza_attendance_corrections import decide_correction
+        out = await decide_correction(db, req_id, user, approve=True, note=note)
+        await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
+                           f'Setujui koreksi absen {req_id} via HR Inbox')
+        return {'ok': True, 'type': 'attendance_correction', 'id': req_id, 'new_status': out.get('status')}
 
     if req_type == 'expense_claim':
         claim = await db.rahaza_expense_claims.find_one({'id': req_id})
@@ -614,40 +617,17 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
     actor_name = user.get('name', '')
 
     if req_type == 'leave':
-        leave = await db.rahaza_leave_requests.find_one({'id': req_id})
-        if not leave:
-            raise HTTPException(404, 'Leave request tidak ditemukan')
-        await db.rahaza_leave_requests.update_one(
-            {'id': req_id},
-            {'$set': {
-                'status': 'rejected',
-                'rejected_by': actor_id,
-                'rejected_by_name': actor_name,
-                'rejected_at': now,
-                'reject_reason': reason,
-            }}
-        )
+        from core.leave_engine import reject_leave_request
+        await reject_leave_request(db, req_id, user, reason, via='kotak_masuk')
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject cuti {req_id}: {reason}')
-        await _kabari_pemohon('leave', leave, approved=False, note=reason)
         return {'ok': True, 'type': 'leave', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'overtime':
-        ot = await db.rahaza_overtime_requests.find_one({'id': req_id})
-        if not ot:
-            raise HTTPException(404, 'Overtime request tidak ditemukan')
-        await db.rahaza_overtime_requests.update_one(
-            {'id': req_id},
-            {'$set': {
-                'status': 'rejected',
-                'rejected_by': actor_id,
-                'rejected_at': now,
-                'rejected_reason': reason,
-            }}
-        )
+        from routes.rahaza_overtime import reject_overtime_request
+        await reject_overtime_request(db, req_id, user, reason)
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject lembur {req_id}: {reason}')
-        await _kabari_pemohon('overtime', ot, approved=False, note=reason)
         return {'ok': True, 'type': 'overtime', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'salary_adjustment':
@@ -689,23 +669,18 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         ev = await db.rahaza_attendance_events.find_one({'id': req_id})
         if not ev:
             raise HTTPException(404, 'Record absen tidak ditemukan')
-        await db.rahaza_attendance_events.update_one(
-            {'id': req_id},
-            {'$set': {
-                'approval_status': 'rejected',
-                'approval_by': actor_id,
-                'approval_by_name': actor_name,
-                'approval_notes': reason,
-                'approval_at': now,
-                'status': 'alfa',
-                'updated_by': actor_id,
-                'updated_by_name': actor_name,
-                'updated_at': now,
-            }}
-        )
+        from routes.rahaza_auto_attendance_approvals import decide_selfie
+        await decide_selfie(db, req_id, user, approve=False, notes=reason)
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject absen {req_id}: {reason}')
         return {'ok': True, 'type': 'attendance', 'id': req_id, 'new_status': 'rejected'}
+
+    if req_type == 'attendance_correction':
+        from routes.rahaza_attendance_corrections import decide_correction
+        await decide_correction(db, req_id, user, approve=False, note=reason)
+        await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
+                           f'Tolak koreksi absen {req_id}: {reason}')
+        return {'ok': True, 'type': 'attendance_correction', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'expense_claim':
         claim = await db.rahaza_expense_claims.find_one({'id': req_id})

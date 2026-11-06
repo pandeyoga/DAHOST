@@ -52,18 +52,12 @@ export default function VendorVarianceReport({ token, user }) {
         color: ji.color,
         ordered_qty: ji.ordered_qty || 0,
         produced_qty: ji.produced_qty || 0,
-        variance_qty: 0
+        // 2026-11-06 (Tahap 2): variance dari catatan produksi (sistem), tidak diketik.
+        diff: (ji.produced_qty || 0) - (ji.ordered_qty || 0),
+        variance_qty: Math.abs((ji.produced_qty || 0) - (ji.ordered_qty || 0)),
       }));
       setForm(prev => ({ ...prev, items }));
     } catch (e) { console.error(e); }
-  };
-
-  const updateItemVariance = (index, value) => {
-    setForm(prev => {
-      const items = [...prev.items];
-      items[index].variance_qty = parseInt(value) || 0;
-      return { ...prev, items };
-    });
   };
 
   const submit = async () => {
@@ -71,13 +65,15 @@ export default function VendorVarianceReport({ token, user }) {
       toast.error('Job, Tipe Variance, dan Alasan wajib diisi');
       return;
     }
-    const itemsWithVariance = form.items.filter(i => i.variance_qty > 0);
+    const over = form.variance_type === 'OVERPRODUCTION';
+    const itemsWithVariance = form.items.filter(i => (over ? i.diff > 0 : i.diff < 0));
     if (itemsWithVariance.length === 0) {
-      toast.error('Harap input variance qty untuk minimal 1 item');
+      toast.error(over ? 'Menurut catatan produksi tidak ada baris yang produksinya lebih dari pesanan.'
+        : 'Menurut catatan produksi tidak ada baris yang produksinya kurang dari pesanan.');
       return;
     }
     try {
-      await apiPost('/production-variances', { ...form, items: itemsWithVariance });
+      await apiPost('/production-variances', { ...form, items: itemsWithVariance.map(i => ({ job_item_id: i.job_item_id })) });
       toast.success('Laporan variance berhasil disimpan');
       setShowModal(false);
       fetchAll();
@@ -215,12 +211,12 @@ export default function VendorVarianceReport({ token, user }) {
               {/* Items Table */}
               {form.items.length > 0 && (
                 <div>
-                  <label className="block text-sm font-medium text-foreground/90 mb-2">Item Produksi - Input Variance Qty</label>
+                  <label className="block text-sm font-medium text-foreground/90 mb-2">Item produksi — selisih dihitung dari catatan produksi</label>
                   <div className="border border-border rounded-lg overflow-hidden">
                     <table className="w-full">
                       <thead className="bg-muted/40">
                         <tr>
-                          {['Produk', 'SKU', 'Size', 'Color', 'Dipesan', 'Diproduksi', 'Variance Qty'].map(h => (
+                          {['Produk', 'SKU', 'Size', 'Color', 'Dipesan', 'Diproduksi', 'Selisih'].map(h => (
                             <th key={h} className="px-3 py-2 text-left text-xs font-semibold text-foreground/90">{h}</th>
                           ))}
                         </tr>
@@ -234,11 +230,7 @@ export default function VendorVarianceReport({ token, user }) {
                             <td className="px-3 py-2 text-sm">{item.color}</td>
                             <td className="px-3 py-2 text-sm">{item.ordered_qty}</td>
                             <td className="px-3 py-2 text-sm">{item.produced_qty}</td>
-                            <td className="px-3 py-2">
-                              <input type="number" min="0" value={item.variance_qty}
-                                onChange={(e) => updateItemVariance(idx, e.target.value)}
-                                className="w-24 px-2 py-1 border border-border rounded text-sm" />
-                            </td>
+                            <td className="px-3 py-2 text-sm tabular-nums">{item.diff > 0 ? `+${item.diff}` : item.diff}</td>
                           </tr>
                         ))}
                       </tbody>

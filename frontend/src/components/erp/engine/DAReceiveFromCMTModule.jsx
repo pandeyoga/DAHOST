@@ -31,6 +31,7 @@ import Modal from './Modal';
 import StaffEntryBadge from './StaffEntryBadge';
 import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
 import { apiGet, apiPost, apiPut, apiFetch } from '../../../lib/api';
+import { postWithOverQtyReason } from '../../../lib/overQty';
 import { MoneyInput } from '../../ui/money-input';
 import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -257,7 +258,7 @@ export default function DAReceiveFromCMTModule() {
   const completeQc = async (receipt) => {
     setFinishing(p => ({ ...p, [receipt.id]: true }));
     try {
-      const res = await apiPost(`/prod/cmt-receipts/${receipt.id}/complete-qc`, {});
+      const res = await postWithOverQtyReason(`/prod/cmt-receipts/${receipt.id}/complete-qc`, {});
       const led = res?.qty_ledger;
       toast.success(completeQcSummary(receipt, res), { duration: 9000 });
       if (led?.errors?.length) toast.warning(led.errors[0], { duration: 9000 });

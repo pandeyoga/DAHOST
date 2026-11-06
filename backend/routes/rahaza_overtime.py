@@ -7,7 +7,7 @@ Collection:
   rahaza_overtime_requests
     - id, employee_id, date (YYYY-MM-DD), start_time, end_time, hours
     - reason, status (pending | approved | rejected | cancelled)
-    - rate_multiplier (e.g., 1.5 for weekday OT, 2.0 for weekend/holiday)
+    - rate_multiplier — Tahap 2 (2026-11-06): dari Pengaturan Payroll (jam pertama), BUKAN isian karyawan
     - approved_by, approved_at, rejected_reason
 """
 import uuid
@@ -138,13 +138,35 @@ async def summary(
     return {"ok": True, "by_employee": by_employee, "total_records": len(docs)}
 
 
+MAX_OVERTIME_HOURS = 12
+
+
+async def overtime_multiplier(db) -> float:
+    """Pengali lembur dari Pengaturan Payroll (`rahaza_payroll_settings` key 'overtime', jam pertama).
+    Tahap 2 (2026-11-06): dulu karyawan mengisi pengalinya sendiri di formulir pengajuan."""
+    from routes.rahaza_payroll_settings import get_overtime_settings
+    cfg = await get_overtime_settings(db)
+    try:
+        return float(cfg.get("first_hour_multiplier") or 1.5)
+    except (TypeError, ValueError):
+        return 1.5
+
+
 @router.post("")
 async def create_request(request: Request):
     """Employee submits overtime request."""
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
+    return await create_overtime_request(db, user, body)
 
+
+async def create_overtime_request(db, user: dict, body: dict) -> dict:
+    """SATU jalur pengajuan lembur (juga dipakai Portal Saya `/api/portal/overtime`).
+
+    Tahap 2 (2026-11-06): karyawan mengisi TANGGAL, JUMLAH JAM, dan ALASAN saja. Jam mulai/selesai opsional
+    (jam dihitung darinya bila jumlah jam kosong). Pengali TIDAK diterima dari formulir — diambil dari
+    Pengaturan Payroll."""
     # Determine employee_id: from body (admin on behalf of) or user.employee_id (self)
     # BUG-4: identitas dari SSOT, bukan JWT mentah (lihat catatan di list_overtime).
     from utils.employee_identity import is_hr, resolve_my_employee
@@ -156,19 +178,29 @@ async def create_request(request: Request):
             "Akun Anda belum ditautkan ke data karyawan. Minta Admin HR menautkan "
             "lewat menu Data Karyawan → Tautkan Akun.")
 
-    if not is_hr(user) and employee_id != (_mine or {}).get("id"):
+    hr = is_hr(user)
+    if not hr and employee_id != (_mine or {}).get("id"):
         raise HTTPException(403, "Tidak boleh submit lembur untuk karyawan lain.")
 
-    date_str = body.get("date")
+    date_str = str(body.get("date") or "").strip()[:10]
     if not date_str:
-        raise HTTPException(400, "date wajib (YYYY-MM-DD).")
-    start_time = body.get("start_time") or "17:00"
-    end_time = body.get("end_time") or "19:00"
+        raise HTTPException(400, "Tanggal lembur wajib diisi.")
+    reason = (body.get("reason") or "").strip()
+    if not reason and not hr:
+        raise HTTPException(400, "Alasan lembur wajib diisi.")
+    start_time = (body.get("start_time") or "").strip() or None
+    end_time = (body.get("end_time") or "").strip() or None
     hours = body.get("hours")
-    if hours is None:
-        hours = _calc_hours(start_time, end_time)
+    if hours in (None, ""):
+        hours = _calc_hours(start_time or "17:00", end_time or "19:00") if (start_time or end_time) or hr else 0
+    try:
+        hours = round(float(hours), 2)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Jumlah jam lembur harus berupa angka.")
     if hours <= 0:
-        raise HTTPException(400, "Durasi lembur tidak valid.")
+        raise HTTPException(400, "Jumlah jam lembur wajib diisi (lebih dari 0).")
+    if hours > MAX_OVERTIME_HOURS:
+        raise HTTPException(400, f"Jumlah jam lembur maksimal {MAX_OVERTIME_HOURS} jam per hari.")
 
     # Duplicate check: same employee + date + start_time
     existing = await db.rahaza_overtime_requests.find_one({
@@ -177,7 +209,7 @@ async def create_request(request: Request):
         "status": {"$in": ["pending", "approved"]},
     })
     if existing:
-        raise HTTPException(409, "Request lembur dengan tanggal & jam mulai yang sama sudah ada.")
+        raise HTTPException(409, "Pengajuan lembur untuk tanggal (dan jam mulai) yang sama sudah ada.")
 
     doc = {
         "id": _uid(),
@@ -185,9 +217,10 @@ async def create_request(request: Request):
         "date": date_str,
         "start_time": start_time,
         "end_time": end_time,
-        "hours": float(hours),
-        "rate_multiplier": float(body.get("rate_multiplier") or 1.5),
-        "reason": body.get("reason") or "",
+        "hours": hours,
+        "rate_multiplier": await overtime_multiplier(db),
+        "rate_multiplier_source": "pengaturan_payroll",
+        "reason": reason,
         "status": "pending",
         "submitted_by": user["id"],
         "submitted_by_name": user.get("name", ""),
@@ -291,15 +324,25 @@ async def notify_overtime_decision(db, ot: dict, *, approved: bool, reason: str 
         return None
 
 
-@router.put("/{ot_id}/approve")
-async def approve_request(ot_id: str, request: Request):
-    user = await _require_approver(request)
-    db = get_db()
+async def ensure_not_own_overtime(db, doc: dict, user: dict) -> None:
+    """K25 (keputusan owner 2026-11-02): pengaju ≠ penyetuju. Lembur milik karyawan yang tertaut ke akun
+    penyetuju, atau yang diajukan akun penyetuju sendiri, harus diputus orang lain."""
+    from utils.employee_identity import resolve_my_employee
+    mine = await resolve_my_employee(db, user)
+    own = doc.get("submitted_by") == user.get("id") or (mine and mine.get("id") == doc.get("employee_id"))
+    if own:
+        raise HTTPException(403, "Pemisahan tugas: Anda tidak boleh memutus pengajuan lembur milik/ajuan Anda "
+                                 "sendiri. Minta penyetuju lain.")
+
+
+async def approve_overtime_request(db, ot_id: str, user: dict, note: str = "") -> dict:
+    """SATU fungsi persetujuan lembur (layar Lembur & Kotak Masuk SDM)."""
     doc = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "Overtime request tidak ditemukan.")
     if doc.get("status") != "pending":
         raise HTTPException(400, f"Hanya request pending yang bisa di-approve (current: {doc.get('status')}).")
+    await ensure_not_own_overtime(db, doc, user)
 
     await db.rahaza_overtime_requests.update_one(
         {"id": ot_id},
@@ -308,11 +351,44 @@ async def approve_request(ot_id: str, request: Request):
             "approved_by": user["id"],
             "approved_by_name": user.get("name", ""),
             "approved_at": _now(),
+            "approval_note": note or "",
             "updated_at": _now(),
         }}
     )
     out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
     await notify_overtime_decision(db, out or doc, approved=True)  # 2026-11-02
+    return out or doc
+
+
+async def reject_overtime_request(db, ot_id: str, user: dict, reason: str) -> dict:
+    doc = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Overtime request tidak ditemukan.")
+    if doc.get("status") != "pending":
+        raise HTTPException(400, "Hanya request pending yang bisa di-reject.")
+    await ensure_not_own_overtime(db, doc, user)
+    await db.rahaza_overtime_requests.update_one(
+        {"id": ot_id},
+        {"$set": {
+            "status": "rejected",
+            "rejected_reason": reason,
+            "rejected_by": user["id"],
+            "approved_by": user["id"],
+            "approved_by_name": user.get("name", ""),
+            "approved_at": _now(),
+            "updated_at": _now(),
+        }}
+    )
+    out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
+    await notify_overtime_decision(db, out or doc, approved=False, reason=reason)  # 2026-11-02
+    return out or doc
+
+
+@router.put("/{ot_id}/approve")
+async def approve_request(ot_id: str, request: Request):
+    user = await _require_approver(request)
+    db = get_db()
+    out = await approve_overtime_request(db, ot_id, user)
     return {"ok": True, "overtime": _s(out)}
 
 
@@ -322,26 +398,7 @@ async def reject_request(ot_id: str, request: Request):
     db = get_db()
     body = await request.json()
     reason = body.get("reason") or "Tidak disebutkan"
-
-    doc = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(404, "Overtime request tidak ditemukan.")
-    if doc.get("status") != "pending":
-        raise HTTPException(400, "Hanya request pending yang bisa di-reject.")
-
-    await db.rahaza_overtime_requests.update_one(
-        {"id": ot_id},
-        {"$set": {
-            "status": "rejected",
-            "rejected_reason": reason,
-            "approved_by": user["id"],
-            "approved_by_name": user.get("name", ""),
-            "approved_at": _now(),
-            "updated_at": _now(),
-        }}
-    )
-    out = await db.rahaza_overtime_requests.find_one({"id": ot_id}, {"_id": 0})
-    await notify_overtime_decision(db, out or doc, approved=False, reason=reason)  # 2026-11-02
+    out = await reject_overtime_request(db, ot_id, user, reason)
     return {"ok": True, "overtime": _s(out)}
 
 

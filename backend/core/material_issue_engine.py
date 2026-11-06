@@ -381,6 +381,10 @@ async def issue_for_vendor_shipment(db, shipment: dict, ship_items: list,
         {"vendor_shipment_id": shipment["id"], "status": {"$ne": "rejected"}}, {"_id": 0})
     if existing:
         return {"ok": True, "already": True, "mi": existing}
+    # 2026-11-06 (Tahap 2): surat jalan yang seluruh kebutuhannya sudah tertutup permintaan aksesoris
+    sdoc = await db.vendor_shipments.find_one({"id": shipment["id"]}, {"_id": 0, "material_issue_skipped": 1})
+    if (sdoc or {}).get("material_issue_skipped"):
+        return {"ok": True, "already": True, "skipped": True, "mi": None}
 
     lines = [{"po_item_id": it.get("po_item_id"), "qty": it.get("qty_sent")}
              for it in ship_items if it.get("po_item_id")]
@@ -436,6 +440,33 @@ async def issue_for_vendor_shipment(db, shipment: dict, ship_items: list,
     if neg_notes:
         notes = list(notes) + neg_notes
 
+    # 2026-11-06 (Tahap 2) — SATU KELUAR PER KEBUTUHAN PO: aksesoris yang sudah dikeluarkan untuk PO
+    # ini lewat permintaan aksesoris / Keluar manual ber-PO dikurangkan dari kiriman ini (dulu
+    # dikeluarkan lagi: butuh 100 → keluar 140). Bagian yang dipakai dicatat di surat jalan supaya
+    # tidak dikurangkan dua kali oleh surat jalan berikutnya.
+    offsets: list = []
+    po_id = shipment.get("po_id")
+    if po_id:
+        from core.accessory_issue import request_credit_for_po
+        credit = await request_credit_for_po(db, po_id)
+        for it in items:
+            c = _f(credit.get(it["material_id"]))
+            if c <= 1e-9:
+                continue
+            off = round(min(c, _f(it["qty_required"])), 4)
+            it["qty_required"] = round(_f(it["qty_required"]) - off, 4)
+            it["offset_request_qty"] = off
+            credit[it["material_id"]] = c - off
+            offsets.append({"material_id": it["material_id"], "qty": off})
+        if offsets:
+            notes = list(notes) + [f"{len(offsets)} aksesoris dikurangi karena sudah keluar lewat permintaan aksesoris PO ini"]
+        items = [it for it in items if _f(it["qty_required"]) > 1e-9]
+        if not items:
+            await db.vendor_shipments.update_one({"id": shipment["id"]}, {"$set": {
+                "accessory_request_offsets": offsets, "material_issue_skipped": True}})
+            return {"ok": True, "already": False, "skipped": True, "mi": None, "bom_notes": notes,
+                    "total_pcs": total_pcs, "material_lines": 0, "request_offsets": offsets}
+
     mi = {
         "id": _uid(),
         "mi_number": await _gen_mi_number(db),
@@ -465,7 +496,8 @@ async def issue_for_vendor_shipment(db, shipment: dict, ship_items: list,
     await db.vendor_shipments.update_one(
         {"id": shipment["id"]},
         {"$set": {"material_issue_id": mi["id"],
-                  "material_issue_number": mi["mi_number"]}})
+                  "material_issue_number": mi["mi_number"],
+                  **({"accessory_request_offsets": offsets} if offsets else {})}})
     return {"ok": True, "already": False, "mi": fresh,
             "mi_number": mi["mi_number"], "bom_notes": notes,
             "negative_stock_lines": fresh.get("negative_stock_lines") or [],
@@ -536,11 +568,10 @@ async def issue_for_maklon_shipment(db, shipment: dict, ship_items: list, user: 
     pcs_total = 0.0
     async for si in db.vendor_shipment_items.find({"shipment_id": {"$in": sids}}, {"_id": 0, "qty_sent": 1}):
         pcs_total += _f(si.get("qty_sent"))
-    issued: dict = {}
-    async for old in db.rahaza_material_issues.find(
-            {"production_po_id": po_id, "status": {"$nin": list(_MI_NOT_COUNTED)}}, {"_id": 0, "items": 1}):
-        for it in old.get("items") or []:
-            issued[it.get("material_id")] = issued.get(it.get("material_id"), 0.0) + _f(it.get("qty_issued"))
+    # 2026-11-06 (Tahap 2): "sudah keluar" = MI PO ini + pengeluaran lewat permintaan aksesoris /
+    # Keluar manual ber-PO yang sama (dulu hanya MI → permintaan untuk PO yang sama dikeluarkan lagi).
+    from core.accessory_issue import po_issued_by_material
+    issued = await po_issued_by_material(db, po_id)
 
     need, notes = maklon_da_need(bom.get("materials") or [], pcs_total, issued)
     mats = {}

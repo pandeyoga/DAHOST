@@ -298,8 +298,20 @@ async def list_ar(request: Request, status: Optional[str] = None, customer_id: O
     cmap = {c["id"]: c for c in cs}
     for r in rows:
         c = cmap.get(r.get("customer_id")) or {}
-        r["customer_name"] = c.get("name")
+        # 2026-11-06 (Tahap 2): piutang maklon memakai klien maklon (bukan master pelanggan) — nama
+        # yang tersimpan di dokumen dipertahankan (dulu jadi kosong).
+        r["customer_name"] = c.get("name") or r.get("customer_name")
     return serialize_doc(rows)
+
+
+# 2026-11-06 (Tahap 2): piutang maklon TERJADWAL (`schedule_mode='v2'`) — pendapatan dibukukan otomatis
+# per kiriman ke klien (core.maklon_ledger), jadi tidak ada "terbitkan/posting" manual di sini.
+MAKLON_SCHEDULE_MSG = ("Piutang maklon terjadwal: pendapatan dicatat otomatis setiap barang dikirim ke klien — "
+                       "tidak perlu diterbitkan atau diposting manual.")
+
+
+def _is_maklon_schedule(inv: dict) -> bool:
+    return (inv or {}).get("schedule_mode") == "v2"
 
 
 # 2026-11-02 (D2, butir 15): pendapatan toko marketplace hanya masuk buku lewat PENCAIRAN
@@ -402,6 +414,8 @@ async def change_ar_status(iid: str, request: Request):
     inv = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
+    if _is_maklon_schedule(inv):
+        raise HTTPException(400, MAKLON_SCHEDULE_MSG)
     old_status = inv.get("status")
     if new_status == "sent":
         new_status = "issued"   # kanonik (H-01)
@@ -436,6 +450,8 @@ async def send_ar_invoice(iid: str, request: Request):
     inv = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
+    if _is_maklon_schedule(inv):
+        raise HTTPException(400, MAKLON_SCHEDULE_MSG)
     if inv.get("status") not in ("draft", "sent", "issued"):
         raise HTTPException(400, f"Hanya draft/issued yang bisa di-send. Status: {inv.get('status')}")
     if inv.get("status") == "draft":
@@ -461,6 +477,8 @@ async def retry_post_ar(iid: str, request: Request):
     inv = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     if not inv:
         raise HTTPException(404, "Invoice tidak ditemukan.")
+    if _is_maklon_schedule(inv):
+        raise HTTPException(400, MAKLON_SCHEDULE_MSG)
     result = await post_ar_invoice(db, inv, user)
     out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
     out["_posting_result"] = result
@@ -480,6 +498,20 @@ async def record_ar_payment(iid: str, request: Request):
         raise HTTPException(404, "Invoice tidak ditemukan.")
     account_id = body.get("account_id")
     await _reject_unknown_cash_account(db, account_id)  # sebelum piutang berkurang
+    if _is_maklon_schedule(inv):
+        # 2026-11-06 (Tahap 2): pembayaran klien maklon — tutup piutang yang sudah jatuh, sisanya uang
+        # muka (otomatis dipakai saat barang dikirim). Satu mesin dengan layar Piutang klien maklon.
+        from core import maklon_ledger
+        try:
+            pay = await maklon_ledger.record_client_payment(
+                db, iid, amount=amount, cash_account_id=account_id, payment_date=body.get("date"),
+                notes=body.get("notes") or "", user=user)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        out = await db.rahaza_ar_invoices.find_one({"id": iid}, {"_id": 0})
+        out["_posting_result"] = {"ok": True, "je_number": pay.get("gl_je_number")}
+        out["_payment_id"] = pay["id"]
+        return serialize_doc(out)
     # ── R10 concurrency hardening (TOCTOU-safe): state-check + overpay guard live
     # INSIDE the filter; paid/balance/status recomputed atomically via aggregation
     # pipeline. Prevents lost-update & overpay under parallel requests (CC3).

@@ -100,7 +100,7 @@ export default function CuttingDashboard({ token, onNavigate }) {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         <KPI label="Kain Terpakai" value={fmtPerUnit(d?.by_unit, 'consumed')} icon={Layers}
              sub="per satuan kain, tanpa order batal" testid="cutting-kpi-consumed" />
-        <KPI label="Sisa / Waste" value={fmtPerUnit(d?.by_unit, 'waste')} icon={Trash2} tone="rose"
+        <KPI label="Limbah" value={fmtPerUnit(d?.by_unit, 'waste')} icon={Trash2} tone="rose"
              sub="tercatat saat input progres" testid="cutting-kpi-waste" />
         <KPI label="Master Potongan" value={fmtNum(d?.output_material_count)} icon={Scissors} tone="emerald"
              sub="item material hasil cutting" testid="cutting-kpi-panels" />

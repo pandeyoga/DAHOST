@@ -124,12 +124,36 @@ def decorate(row: dict, fg_cost: dict = None) -> dict:
         row["margin_status"] = UNKNOWN
         row["margin_reason"] = ("Belum bisa diukur: " + "; ".join(reasons) + ".")
     else:
-        margin = harga_jual - hpp
-        row["margin"] = round(margin, 2)
-        row["margin_pct"] = round(margin / harga_jual * 100, 1)
+        # 2026-11-06 (Tahap 2): satu rumus margin (atas harga jual) — `core.margin`
+        from core import margin as _margin
+        m = _margin.margin_of(harga_jual, hpp, nd=1)
+        row["margin"] = m["margin"]
+        row["margin_pct"] = m["margin_pct"]
         row["margin_status"] = OK
         row["margin_reason"] = ""
     return row
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — SATU urutan HPP item katalog (tambah dari FG = segarkan)
+# ══════════════════════════════════════════════════════════════════════════════
+def resolve_catalog_hpp(fg: dict | None, model: dict | None) -> tuple:
+    """(hpp, source) untuk cache `hpp` item katalog — dipakai "Tambah dari FG", "Segarkan HPP",
+    dan "Segarkan dari master" (dulu tambah mendahulukan model, segarkan mendahulukan FG 'bom').
+
+    Urutan: WAC aktual FG → HPP standar FG (HPP per potong per warna/ukuran yang diterapkan) →
+    HPP model (rata-rata / R&D / manual, hanya bila FG belum punya angka) → 0."""
+    eff = effective_fg_cost(fg)
+    if eff["source"] == SRC_WAC:
+        return eff["hpp"], "wac"
+    if eff["source"] == SRC_ESTIMATE:
+        return eff["hpp"], (fg or {}).get("hpp_source") or "fg"
+    if model:
+        from core import product_master as _pm
+        hpp, src = _pm.resolve_hpp(model)
+        if hpp:
+            return float(hpp), src
+    return 0.0, "none"
 
 
 def summarize(rows: list) -> dict:

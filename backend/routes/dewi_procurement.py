@@ -670,7 +670,15 @@ async def submit_request(req_id: str, request: Request):
         raise HTTPException(400, "Hanya request draft yang bisa disubmit.")
     if req["requested_by"] != user["id"] and (user.get("role") or "").lower() not in SUPER_APPROVER_ROLES:
         raise HTTPException(403, "Tidak diizinkan.")
+    return await submit_pr_doc(db, req, user)
 
+
+async def submit_pr_doc(db, req: dict, user: dict) -> dict:
+    """Transisi draft → submitted untuk SATU PR (validasi status/hak di pemanggil).
+
+    2026-11-06 (Tahap 2): diekstrak dari endpoint /submit supaya PR yang lahir otomatis dari
+    Request Pembelian Aksesoris & kekurangan aksesoris PO memakai transisi yang SAMA persis."""
+    req_id = req["id"]
     # Rantai persetujuan DIBEKUKAN di sini — bukan dihitung ulang setiap kali
     # dibaca. Kalau owner mengubah ambang nilai besok, PR yang sudah berjalan
     # tidak boleh tiba-tiba berpindah jalur atau kehilangan tahap yang sudah

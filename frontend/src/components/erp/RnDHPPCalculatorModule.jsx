@@ -46,7 +46,7 @@ const emptyForm = {
   cmt_cost_per_pcs: 0, cmt_cost_source: 'manual', cmt_cost_ref: '',
   cutting_cost_per_pcs: 0,
   packaging_cost_per_pcs: 0,
-  overhead_pct: 10,
+  overhead_pct: 0,   // 2026-11-06 (Tahap 2): overhead tidak masuk HPP — bawaan 0
   margin_pct: 30,
   use_bom: false,
   notes: '', status: 'draft',
@@ -56,7 +56,7 @@ const PREVIEW_INIT = {
   fabric_cost: 0, accessories_total: 0, material_cost: 0, cmt_cost: 0, cutting_cost: 0,
   packaging_cost: 0, direct_cost: 0, overhead_value: 0,
   hpp_total: 0, selling_price_proposal: 0,
-  margin_pct: 30, overhead_pct: 10,
+  margin_pct: 30, overhead_pct: 0,
 };
 
 let lineSeq = 0;
@@ -189,7 +189,7 @@ export default function RnDHPPCalculatorModule({ token }) {
       cmt_cost_ref: rec.cmt_cost_ref || '',
       cutting_cost_per_pcs: rec.cutting_cost_per_pcs || 0,
       packaging_cost_per_pcs: rec.packaging_cost_per_pcs || 0,
-      overhead_pct: rec.overhead_pct ?? 10,
+      overhead_pct: rec.overhead_pct ?? 0,
       margin_pct: rec.margin_pct ?? 30,
       use_bom: !!rec.use_bom,
       notes: rec.notes || '',
@@ -325,7 +325,8 @@ export default function RnDHPPCalculatorModule({ token }) {
         : `${API}/api/dewi/rnd/hpp-calculator`;
       const res = await fetch(url, { method, headers: hdr, body: JSON.stringify(payload) });
       if (!res.ok) { toast.error(await readErr(res, 'Gagal menyimpan HPP'), { duration: 8000 }); return; }
-      toast.success(editing ? 'HPP diperbarui' : 'HPP disimpan');
+      // 2026-11-06 (Tahap 2): HPP R&D disimpan di dokumen R&D saja — tidak lagi menimpa master/FG/katalog.
+      toast.success(`${editing ? 'HPP diperbarui' : 'HPP disimpan'} di dokumen R&D. HPP produk ditetapkan lewat HPP per potong.`);
       setShowForm(false);
       loadRecords();
     } catch { toast.error('Gagal menyimpan HPP'); }
@@ -860,7 +861,7 @@ export default function RnDHPPCalculatorModule({ token }) {
                   )}
                 </div>
                 <div>
-                  <Label className="text-xs">Biaya Cutting (Rp)</Label>
+                  <Label className="text-xs">Biaya cutting (Rp) — tidak masuk HPP</Label>
                   <MoneyInput className="mt-1" value={form.cutting_cost_per_pcs}
                     onChange={e => f('cutting_cost_per_pcs', Number(e.target.value))} />
                 </div>
@@ -879,10 +880,10 @@ export default function RnDHPPCalculatorModule({ token }) {
               </h3>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <Label className="text-xs">Overhead (%)</Label>
+                  <Label className="text-xs">Overhead (%) — tidak masuk HPP</Label>
                   <Input className="mt-1" type="number" step="0.5" value={form.overhead_pct}
                     onChange={e => f('overhead_pct', Number(e.target.value))} />
-                  <div className="text-xs text-foreground/40 mt-1">dari total direct cost</div>
+                  <div className="text-xs text-foreground/40 mt-1">informasi saja; overhead pabrik tetap beban bulanan</div>
                 </div>
                 <div>
                   <Label className="text-xs">Target Margin (%)</Label>
@@ -930,7 +931,6 @@ export default function RnDHPPCalculatorModule({ token }) {
                   )}
                   {[
                     { label: 'Ongkos CMT',    val: preview.cmt_cost },
-                    { label: 'Biaya Cutting', val: preview.cutting_cost },
                     { label: 'Packaging',     val: preview.packaging_cost },
                   ].map(row => (
                     <div key={row.label} className="flex items-center justify-between">
@@ -941,11 +941,15 @@ export default function RnDHPPCalculatorModule({ token }) {
 
                   <div className="border-t border-foreground/10 pt-2.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-foreground/70 font-medium">Direct Cost</span>
+                      <span className="text-foreground/70 font-medium">Biaya langsung (masuk HPP)</span>
                       <span className="font-mono font-semibold text-foreground">{fmt(preview.direct_cost)}</span>
                     </div>
                     <div className="flex items-center justify-between mt-1.5">
-                      <span className="text-foreground/60">Overhead ({preview.overhead_pct}%)</span>
+                      <span className="text-foreground/60">Biaya cutting — tidak masuk HPP</span>
+                      <span className="font-mono text-foreground/70">{fmt(preview.cutting_cost)}</span>
+                    </div>
+                    <div className="flex items-center justify-between mt-1.5">
+                      <span className="text-foreground/60">Overhead ({preview.overhead_pct}%) — tidak masuk HPP</span>
                       <span className="font-mono text-foreground/70">{fmt(preview.overhead_value)}</span>
                     </div>
                   </div>

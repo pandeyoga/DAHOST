@@ -97,8 +97,16 @@ async def get_my_attendance_status(request: Request, employee_id: Optional[str] 
         if pending_permit is None and is_permit_pending(s):
             pending_permit = s
 
+    # Tahap 2 (2026-11-06): shift lewat tengah malam — record KEMARIN yang masih boleh ditutup tampil sebagai
+    # "absen pulang shift kemarin"; jam server ditampilkan supaya karyawan tahu jam yang akan dicatat.
+    open_prev = None
+    if not (rec and rec.get("clock_in")):
+        from core.attendance_rules import previous_day_open_record
+        open_prev = await previous_day_open_record(db, emp)
     return serialize_doc({
         "today": rec,
+        "open_previous": open_prev,
+        "server_time": _now(),
         "employee": emp,
         "linked": True,
         "has_webauthn": has_webauthn,
@@ -186,6 +194,21 @@ async def update_auto_config(request: Request):
             if not (lo <= v <= hi):
                 raise HTTPException(400, f"{canon} di luar rentang wajar ({lo}..{hi}).")
             updates[canon] = v
+
+    # Tahap 2 (2026-11-06): kesegaran/akurasi GPS & jendela absen pulang lewat tengah malam
+    for key, label, lo, hi, cast in (
+            ("gps_max_age_s", "Umur maksimum lokasi (detik)", 10, 600, int),
+            ("gps_max_accuracy_m", "Akurasi GPS terburuk (meter)", 10, 2000, int),
+            ("clock_out_window_hours", "Jendela absen pulang (jam)", 0, 24, float)):
+        raw = pick(key)
+        if raw is not None:
+            try:
+                v = cast(raw)
+            except (TypeError, ValueError):
+                raise HTTPException(400, f"{label} harus berupa angka.")
+            if not (lo <= v <= hi):
+                raise HTTPException(400, f"{label} harus antara {lo} dan {hi}.")
+            updates[key] = v
 
     if body.get("require_selfie") is not None:
         updates["require_selfie"] = bool(body["require_selfie"])

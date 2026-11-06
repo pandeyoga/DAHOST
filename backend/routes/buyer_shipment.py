@@ -196,6 +196,57 @@ async def _sync_maklon_mirrors(db, po_ids, user: dict) -> None:
         logger.exception('sinkron cermin maklon gagal untuk PO %s', pids)
 
 
+async def _declared_main_by_item(db, po_item_ids: list) -> dict:
+    """Σ qty DEKLARASI kirim CMT→DA (bukan kiriman balik rework) per item PO."""
+    ids = [p for p in dict.fromkeys(po_item_ids or []) if p]
+    if not ids:
+        return {}
+    from core import dispatch_capacity as dcap
+    rows = await db.buyer_shipment_items.find({'po_item_id': {'$in': ids}}, {'_id': 0}).to_list(20000)
+    sids = list({r.get('shipment_id') for r in rows if r.get('shipment_id')})
+    da = set()
+    async for s in db.buyer_shipments.find({'id': {'$in': sids}, 'receiver_type': RECEIVER_DA}, {'_id': 0, 'id': 1}):
+        da.add(s['id'])
+    kinds = await dcap._job_kinds(db, [r.get('job_id') for r in rows])
+    out: dict = {}
+    for r in rows:
+        if r.get('shipment_id') not in da or (kinds.get(r.get('job_id')) or {}).get('rework'):
+            continue
+        out[r['po_item_id']] = out.get(r['po_item_id'], 0) + int(r.get('qty_shipped') or 0)
+    return out
+
+
+async def _over_qty_rows(db, items_data: list, receiver_type: str, job_id) -> list:
+    """2026-11-06 (Tahap 2): baris kiriman yang MELEBIHI pesanan.
+    Deklarasi CMT→DA: batas = qty pesan − sudah dideklarasikan (kiriman balik rework tidak dihitung).
+    Kirim ke klien: batas = qty pesan − sudah dikirim ke klien (SSOT dispatch_capacity)."""
+    from core import dispatch_capacity as dcap
+    req: dict = {}
+    for it in items_data or []:
+        q = int(it.get('qty_shipped', 0) or 0)
+        if q > 0 and it.get('po_item_id'):
+            req[it['po_item_id']] = req.get(it['po_item_id'], 0) + q
+    if not req:
+        return []
+    if receiver_type == RECEIVER_DA:
+        jids = [job_id] + [it.get('job_id') for it in items_data or []]
+        kinds = await dcap._job_kinds(db, [j for j in jids if j])
+        if any((k or {}).get('rework') for k in kinds.values()):
+            return []                       # kiriman balik hasil rework — bukan produksi baru
+        already = await _declared_main_by_item(db, list(req))
+    else:
+        qmap = await dcap.po_item_quantities(db, list(req))
+        already = {k: int(v.get('dispatched', 0) or 0) for k, v in qmap.items()}
+    rows = []
+    async for pi in db.po_items.find({'id': {'$in': list(req)}}, {'_id': 0}):
+        rows.append({'po_item_id': pi['id'], 'po_id': pi.get('po_id'),
+                     'label': ' '.join(x for x in (pi.get('sku') or pi.get('product_name') or '', pi.get('size') or '') if x),
+                     'limit': max(0, int(pi.get('qty', 0) or 0) - already.get(pi['id'], 0)),
+                     'qty': req[pi['id']]})
+    from core import over_qty
+    return over_qty.over_lines(rows)
+
+
 async def _po_ids_of_items(db, items: list) -> list:
     pids = [it.get('po_id') for it in items if it.get('po_id')]
     poi = [it.get('po_item_id') for it in items if it.get('po_item_id') and not it.get('po_id')]
@@ -808,6 +859,9 @@ async def create_buyer_shipment(request: Request):
     po_res = await _resolve_pos_for_items(db, items_data, body.get('po_id'), receiver_type)
     po = po_res['primary_po']                 # single PO (or None when consolidated)
     po_ids = po_res['po_ids']
+    # 2026-11-06 (Tahap 2): PO yang sudah ditutup terkunci — tidak ada kiriman/deklarasi baru.
+    from core.po_lock import assert_pos_open
+    await assert_pos_open(db, po_ids, 'kiriman' if receiver_type == RECEIVER_BUYER else 'deklarasi kirim CMT')
     # PO INTERNAL tidak lewat CMT ⇒ tidak ada cmt_receipts; sumber kirimnya adalah
     # hasil produksi job internal (pagar C-1 di bawah) + stok FG gudang.
     internal_dispatch = bool(po_ids) and all(
@@ -913,6 +967,16 @@ async def create_buyer_shipment(request: Request):
         if int(item.get('qty_shipped', 0) or 0) < 0:
             raise HTTPException(400, 'qty_shipped tidak boleh negatif')
 
+    # ─── 2026-11-06 (Tahap 2, keputusan owner): LEBIH QTY boleh, ALASAN wajib ─────────────
+    # Deklarasi CMT→DA melebihi pesanan, atau kirim ke klien melebihi pesanan ⇒ 428 sampai
+    # alasan diisi. Serah terima PO internal ke gudang bukan kiriman ke klien (tidak dicek).
+    from core import over_qty as _oq
+    _over_step = 'deklarasi_cmt' if receiver_type == RECEIVER_DA else 'kirim_klien'
+    _over_rows = [] if (receiver_type == RECEIVER_BUYER and internal_dispatch) else \
+        await _over_qty_rows(db, items_data, receiver_type, body.get('job_id'))
+    _over_reason = _oq.require_reason(_over_rows, body.get('over_qty_reason'), _over_step)
+    _over_by_item = {r['po_item_id']: r for r in _over_rows}
+
 
     job_id = body.get('job_id')
     if master_shipment is None and job_id:
@@ -1015,8 +1079,16 @@ async def create_buyer_shipment(request: Request):
             'ordered_qty': int(item.get('ordered_qty', 0) or 0) or int((po_item or {}).get('qty', 0) or 0),
             'qty_shipped': int(item.get('qty_shipped', 0) or 0), 'created_at': now()
         }
+        if si['po_item_id'] in _over_by_item:
+            si.update({'over_qty': _over_by_item[si['po_item_id']]['over'], 'over_qty_reason': _over_reason,
+                       'over_qty_by': user.get('name', ''), 'over_qty_at': now()})
         await db.buyer_shipment_items.insert_one(si)
         inserted_items.append(si)
+    # kejadian lebih qty disimpan di PO (riwayat PO 360)
+    for _pid in {r.get('po_id') for r in _over_rows if r.get('po_id')}:
+        await _oq.record(db, _pid, _over_step, [r for r in _over_rows if r.get('po_id') == _pid], _over_reason,
+                         user, ref={'shipment_id': shipment_id, 'shipment_number': master_shipment.get('shipment_number'),
+                                    'dispatch_seq': dispatch_seq})
     # 2026-11-02 (K17 butir 5): status DIHITUNG dari angka nyata (dulu tidak pernah
     # "Fully Shipped" walau 100/100 — w3 S7).
     from core import dispatch_capacity as _dcap
@@ -1246,11 +1318,32 @@ async def force_edit_buyer_shipment_item(item_id: str, request: Request):
         'old_qty': old_qty, 'new_qty': new_qty, 'reason': reason,
         'edited_by': user['name'], 'edited_by_id': user['id'], 'edited_at': now()
     }
+    # 2026-11-06 (Tahap 2): koreksi NAIK di atas pesanan = kelebihan qty kirim ke klien. Alasan
+    # koreksi (wajib) dipakai sebagai alasan kelebihan dan disimpan di PO (riwayat PO 360).
+    _over_set, _over_rows = {}, []
+    if po_item_id and _is_buyer and new_qty > old_qty:
+        from core import dispatch_capacity as _dcap2
+        from core import over_qty as _oq
+        _pi = await db.po_items.find_one({'id': po_item_id}, {'_id': 0}) or {}
+        _qv = (await _dcap2.po_item_quantities(db, [po_item_id])).get(po_item_id) or {}
+        _others = int(_qv.get('dispatched', 0)) - _dcap2.item_dispatched(item)
+        _over_rows = _oq.over_lines([{'po_item_id': po_item_id, 'po_id': _pi.get('po_id'),
+                                      'label': ' '.join(x for x in (_pi.get('sku') or '', _pi.get('size') or '') if x),
+                                      'limit': max(0, int(_pi.get('qty', 0) or 0) - _others), 'qty': new_qty}])
+        if _over_rows:
+            _oq.require_reason(_over_rows, reason, 'kirim_klien')
+            _over_set = {'over_qty': _over_rows[0]['over'], 'over_qty_reason': reason,
+                         'over_qty_by': user['name'], 'over_qty_at': now()}
     await db.buyer_shipment_items.update_one(
         {'id': item_id},
-        {'$set': {'qty_shipped': new_qty, 'edited_by': user['name'], 'edited_at': now(), 'updated_at': now()},
+        {'$set': {'qty_shipped': new_qty, 'edited_by': user['name'], 'edited_at': now(), 'updated_at': now(),
+                  **_over_set},
          '$push': {'edit_history': edit_entry}}
     )
+    if _over_rows and _over_rows[0].get('po_id'):
+        await _oq.record(db, _over_rows[0]['po_id'], 'kirim_klien', _over_rows, reason, user,
+                         ref={'shipment_id': item.get('shipment_id'), 'shipment_item_id': item_id,
+                              'koreksi': f'{old_qty} → {new_qty}'})
 
     # ─── GAP E — mutasi stok FG harus MENGIKUTI koreksi qty dikirim ───────
     # Kalau tidak, force-edit membuat stok FG bercabang dari dokumen (bug yang

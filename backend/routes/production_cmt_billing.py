@@ -30,6 +30,7 @@ from auth import require_auth, serialize_doc
 from core import cmt_vendor_master
 from routes.production_rbac import deny_klien
 from core.pagination import _paginate_params, _paginated_envelope
+from core.maklon_ledger import cmt_bill_blocked, cmt_bill_payable
 
 router = APIRouter(prefix="/api/production/cmt-billing", tags=["production-cmt-billing"], dependencies=[Depends(deny_external_dep)])
 # status yang dianggap masih menjadi kewajiban (outstanding)
@@ -81,6 +82,10 @@ def _enrich(p: dict, domain: str, entry: dict | None = None) -> dict:
         'paid_amount': float(p.get('paid_amount') or 0),
         'outstanding_amount': float(p.get('outstanding_amount') if p.get('outstanding_amount') is not None
                                     else _amount(p) - float(p.get('paid_amount') or 0)),
+        # 2026-11-06 (Tahap 2): "bisa dibayar Rp X dari Rp Y" — nilai lolos QC − dibayar − tertahan
+        'blocked_amount': cmt_bill_blocked(p),
+        'payable_amount': cmt_bill_payable(p),
+        'ap_schedule_id': p.get('ap_schedule_id'),
         # keputusan owner 3a — badge "diinput staf DA" pada tagihan CMT.
         **(entry or {'progress_entry_source': 'none', 'staff_entered_progress_qty': 0,
                      'staff_entered_by': [], 'declaration_entered_by_staff': False,
@@ -325,6 +330,26 @@ async def cmt_billing_vendors(request: Request):
     return {'vendors': vendors, 'total': len(vendors), 'scope': scope}
 
 
+@router.get("/schedules")
+async def list_cmt_ap_schedules(request: Request):
+    """2026-11-06 (Tahap 2): JADWAL hutang CMT per (PO maklon, vendor) — qty × upah CMT sejak PO
+    dikonfirmasi, plus nilai lolos QC (matang), dibayar, tertahan (selisih), bisa dibayar.
+    WAJIB berada sebelum ``/{payment_id}``."""
+    user = await require_auth(request)
+    deny_klien(user)
+    db = get_db()
+    sp = request.query_params
+    q: dict = {'status': {'$ne': 'cancelled'}}
+    if sp.get('po_id'):
+        q['po_id'] = sp['po_id']
+    if sp.get('partner_id'):
+        q['vendor_id'] = await cmt_vendor_master.canonical_id(db, sp['partner_id']) or sp['partner_id']
+    rows = await db.dewi_cmt_ap_schedules.find(q, {'_id': 0}).sort('updated_at', -1).to_list(2000)
+    tot = {k: round(sum(float(r.get(k) or 0) for r in rows), 2)
+           for k in ('scheduled_amount', 'matured_amount', 'paid_amount', 'blocked_amount', 'payable_amount')}
+    return {'items': serialize_doc(rows), 'total': len(rows), 'totals': tot}
+
+
 @router.get("/{payment_id}")
 async def get_cmt_billing(payment_id: str, request: Request):
     """Detail 1 tagihan + rincian per baris + info jurnal GL."""
@@ -350,4 +375,6 @@ async def get_cmt_billing(payment_id: str, request: Request):
     if p.get('source_receipt_id'):
         receipt = await db.cmt_receipts.find_one({'id': p['source_receipt_id']}, {'_id': 0})
 
-    return {'bill': row, 'journal': je, 'receipt': serialize_doc(receipt) if receipt else None}
+    schedule = await db.dewi_cmt_ap_schedules.find_one({'id': p.get('ap_schedule_id')}, {'_id': 0})         if p.get('ap_schedule_id') else None
+    return {'bill': row, 'journal': je, 'receipt': serialize_doc(receipt) if receipt else None,
+            'schedule': serialize_doc(schedule) if schedule else None}

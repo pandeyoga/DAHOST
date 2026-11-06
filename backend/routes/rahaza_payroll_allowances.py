@@ -32,7 +32,8 @@ router = APIRouter(prefix="/api/rahaza", tags=["rahaza-payroll-allowances"])
 
 @router.get("/payroll-allowances")
 async def list_allowances(request: Request):
-    await require_auth(request)
+    # 2026-11-06 (Tahap 2): daftar template tunjangan (nominal per karyawan) hanya untuk peran payroll.
+    await _require_hr(request)
     db = get_db()
     docs = await db.da_payroll_allowances.find({}, {"_id": 0}).sort("created_at", 1).to_list(500)
     return {"ok": True, "allowances": [serialize_doc(d) for d in docs]}

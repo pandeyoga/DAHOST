@@ -28,6 +28,105 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rahaza", tags=["rahaza-payroll-profiles"])
 
+
+# ═══ VERSI TARIF PROFIL GAJI (Tahap 2, 2026-11-06) ════════════════════════════
+# Kenaikan gaji yang disetujui (layar Penyesuaian maupun Kotak Masuk HR) membuat VERSI tarif baru dengan
+# tanggal berlaku (`rate_versions`). Mesin hitung memakai versi yang berlaku per hari kerja (prorata bila
+# kenaikan mulai di tengah periode). `base_rate`/`overtime_rate` di atas = tarif yang berlaku HARI INI
+# (dibaca modul lain: kasbon, HPP, livehost) dan disinkronkan otomatis saat profil dibuka.
+
+def _versions_with_initial(profile: dict) -> list:
+    from routes.rahaza_payroll_rules import profile_versions
+    vers = [dict(v) for v in profile_versions(profile)]
+    if not profile.get("rate_versions"):
+        vers[0].update(version=1, source="awal")
+    return vers
+
+
+def _current_rates(profile: dict, versions: list) -> dict:
+    from routes.rahaza_payroll_rules import version_on
+    cur = version_on({**profile, "rate_versions": versions}, today_wib())
+    return {"base_rate": float(cur.get("base_rate") or 0), "overtime_rate": float(cur.get("overtime_rate") or 0)}
+
+
+def _put_version(versions: list, new: dict) -> list:
+    """Sisipkan versi; versi lain dengan tanggal berlaku SAMA diganti. Nomor versi berurutan."""
+    eff = new.get("effective_from")
+    out = [v for v in versions if v.get("effective_from") != eff]
+    out.append(new)
+    out.sort(key=lambda v: str(v.get("effective_from") or ""))
+    for i, v in enumerate(out, 1):
+        v["version"] = i
+    return out
+
+
+async def sync_profile_current_rate(db, profile: dict) -> dict:
+    """Profil dengan versi tarif: samakan `base_rate`/`overtime_rate` dengan versi yang berlaku hari ini."""
+    if not profile.get("rate_versions"):
+        return profile
+    cur = _current_rates(profile, profile["rate_versions"])
+    if (abs(cur["base_rate"] - float(profile.get("base_rate") or 0)) > 0.001
+            or abs(cur["overtime_rate"] - float(profile.get("overtime_rate") or 0)) > 0.001):
+        await db.rahaza_payroll_profiles.update_one({"id": profile["id"]}, {"$set": {**cur, "updated_at": _now()}})
+        profile = {**profile, **cur}
+    return profile
+
+
+async def apply_salary_adjustment_to_profile(db, adj: dict, user: dict) -> dict:
+    """Kenaikan gaji DISETUJUI → versi tarif baru di Profil Gaji aktif, berlaku mulai `effective_date`
+    (kosong = hari ini, WIB). Idempoten per `adjustment_id`. Return {profile_id, effective_from, warning}."""
+    from routes.rahaza_payroll_shared import parse_ymd
+    profile = await db.rahaza_payroll_profiles.find_one(
+        {"employee_id": adj.get("employee_id"), "active": True}, {"_id": 0})
+    if not profile:
+        raise HTTPException(404, "Profil gaji aktif belum ada untuk karyawan ini — buat Profil Gaji dulu.")
+    versions = _versions_with_initial(profile)
+    if any(v.get("adjustment_id") == adj.get("id") for v in versions):
+        return {"profile_id": profile["id"], "effective_from": adj.get("effective_date"), "already_applied": True}
+    proposed = float(adj.get("proposed_base") or adj.get("new_value") or 0)
+    if proposed <= 0:
+        raise HTTPException(400, "Usulan gaji baru kosong — tidak bisa diterapkan ke Profil Gaji.")
+    eff = parse_ymd(adj.get("effective_date"), field="tanggal berlaku")
+    from routes.rahaza_payroll_rules import version_on
+    prev = version_on({**profile, "rate_versions": versions}, eff)
+    new = {"effective_from": eff.isoformat(), "base_rate": proposed,
+           "overtime_rate": float(prev.get("overtime_rate") or 0), "source": "penyesuaian_gaji",
+           "adjustment_id": adj.get("id"), "created_at": _now(), "created_by": user.get("id"),
+           "created_by_name": user.get("name", "")}
+    versions = _put_version(versions, new)
+    await db.rahaza_payroll_profiles.update_one({"id": profile["id"]}, {"$set": {
+        "rate_versions": versions, **_current_rates(profile, versions),
+        "updated_at": _now(), "updated_by": user.get("id"), "updated_by_name": user.get("name", "")}})
+    warning = None
+    final = await db.rahaza_payslips.find_one(
+        {"employee_id": adj.get("employee_id"), "period_to": {"$gte": eff.isoformat()}}, {"_id": 0, "run_id": 1})
+    if final and await db.rahaza_payroll_runs.count_documents({"id": final.get("run_id"), "status": "finalized"}):
+        warning = ("Kenaikan berlaku surut: run gaji final yang sudah mencakup tanggal berlaku tidak berubah — "
+                   "bayar selisihnya lewat penyesuaian pendapatan di run berikutnya.")
+    return {"profile_id": profile["id"], "effective_from": eff.isoformat(), "warning": warning}
+
+
+def _manual_rate_edit(existing: dict, doc: dict, effective_from) -> dict:
+    """Ubah tarif lewat form Profil Gaji. Profil tanpa versi: perilaku lama (tarif diganti). Profil bervesi:
+    dengan `effective_from` → versi baru mulai tanggal itu; tanpa → versi yang berlaku hari ini dikoreksi."""
+    if not existing.get("rate_versions") and not effective_from:
+        return doc
+    versions = _versions_with_initial(existing)
+    if effective_from:
+        from routes.rahaza_payroll_shared import parse_ymd
+        eff = parse_ymd(effective_from, field="tanggal berlaku").isoformat()
+        versions = _put_version(versions, {"effective_from": eff, "base_rate": doc["base_rate"],
+                                           "overtime_rate": doc["overtime_rate"], "source": "profil_gaji",
+                                           "created_at": _now()})
+    else:
+        from routes.rahaza_payroll_rules import version_on
+        cur = version_on({**existing, "rate_versions": versions}, today_wib())
+        for v in versions:
+            if v is cur or (v.get("effective_from") == cur.get("effective_from")):
+                v.update(base_rate=doc["base_rate"], overtime_rate=doc["overtime_rate"])
+    return {**doc, "rate_versions": versions, **_current_rates(existing, versions)}
+
+
 @router.get("/payroll-profiles")
 async def list_profiles(request: Request, employee_id: Optional[str] = None, active_only: bool = True):
     # Tahap 1 (2026-11-06): daftar Profil Gaji memuat gaji semua karyawan → hanya HR & manajemen.
@@ -40,6 +139,7 @@ async def list_profiles(request: Request, employee_id: Optional[str] = None, act
     if employee_id:
         q["employee_id"] = employee_id
     rows = await db.rahaza_payroll_profiles.find(q, {"_id": 0}).to_list(500)
+    rows = [await sync_profile_current_rate(db, r) for r in rows]   # Tahap 2: versi tarif berlaku hari ini
     # Enrich with employee info
     emp_ids = list({r.get("employee_id") for r in rows if r.get("employee_id")})
     emps = await db.rahaza_employees.find({"id": {"$in": emp_ids}}, {"_id": 0}).to_list(500) if emp_ids else []
@@ -59,6 +159,7 @@ async def get_profile(employee_id: str, request: Request):
     row = await db.rahaza_payroll_profiles.find_one({"employee_id": employee_id, "active": True}, {"_id": 0})
     if not row:
         raise HTTPException(404, "Profile payroll belum dibuat untuk pegawai ini.")
+    row = await sync_profile_current_rate(db, row)
     emp = await db.rahaza_employees.find_one({"id": employee_id}, {"_id": 0}) or {}
     row["employee_code"] = emp.get("employee_code")
     row["employee_name"] = emp.get("name")
@@ -120,6 +221,8 @@ async def upsert_profile(request: Request):
         raise HTTPException(404, f"Pegawai dengan id={emp_id} tidak ditemukan.")
     doc = _normalize_profile(body)
     existing = await db.rahaza_payroll_profiles.find_one({"employee_id": emp_id, "active": True}, {"_id": 0})
+    if existing:
+        doc = _manual_rate_edit(existing, doc, body.get("effective_from"))
     now = _now()
     doc.update({
         "active": True,
@@ -152,7 +255,7 @@ async def update_profile(pid: str, request: Request):
         raise HTTPException(404, "Profile tidak ditemukan.")
     body = await request.json()
     body["employee_id"] = existing["employee_id"]  # cannot change
-    doc = _normalize_profile(body)
+    doc = _manual_rate_edit(existing, _normalize_profile(body), body.get("effective_from"))
     doc.update({
         "updated_at": _now(),
         "updated_by": user["id"],

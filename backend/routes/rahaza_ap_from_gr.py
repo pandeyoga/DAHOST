@@ -210,6 +210,14 @@ async def grs_available_for_invoice(
         billable = pr.gr_billable_lines(gr)
         if not billable:
             continue
+        # 2026-11-06 (Tahap 2): nama & satuan baris supaya Keuangan bisa mengetik qty/harga FAKTUR per baris
+        by_line = {pr.line_id_of(li): li for li in items}
+        for b in billable:
+            li = by_line.get(b['gr_item_id']) or {}
+            b['material_name'] = li.get('material_name') or li.get('product_name') or li.get('sku') or ''
+            if b['type'] == 'late':
+                b['material_name'] = f"{b['material_name']} — penerimaan susulan"
+            b['unit'] = li.get('base_uom') or li.get('unit') or ''
         receivable_amount = sum(b['amount'] for b in billable)
         out.append({
             'id': gr['id'],
@@ -294,6 +302,41 @@ class CreateAPFromGRPayload(BaseModel):
     notes: Optional[str] = None
     payment_terms: Optional[str] = None
     supplier_faktur_number: Optional[str] = None             # nomor faktur pajak / invoice supplier
+    # 2026-11-06 (Tahap 2): ongkos kirim & potongan di faktur pemasok — dibagi ke baris menurut nilai
+    # dan ikut masuk HPP bahan saat faktur dijurnal (core.purchase_costing).
+    freight_amount: Optional[float] = Field(default=0.0, ge=0)
+    invoice_discount: Optional[float] = Field(default=0.0, ge=0)
+
+
+# 2026-11-06 (Tahap 2): dua faktur dari GR yang sama pada saat bersamaan dulu sama-sama membaca baris
+# "belum ditagih" lalu sama-sama menandainya → GR tertagih dua kali. GR kini DIKLAIM atomik selama faktur
+# disusun (pola kunci disposisi karantina); klaim basi (proses mati) dilepas sesudah batas waktu ini.
+INVOICE_CLAIM_STALE_MIN = 10
+
+
+async def _claim_grs(db, gr_ids: list, token: str) -> list:
+    from datetime import timedelta
+    now = _now()
+    claimed = []
+    for gid in sorted(set(gr_ids)):
+        res = await db.warehouse_receiving.update_one(
+            {'id': gid, '$or': [{'invoicing_lock': None},
+                                {'invoicing_lock_at': {'$lt': now - timedelta(minutes=INVOICE_CLAIM_STALE_MIN)}}]},
+            {'$set': {'invoicing_lock': token, 'invoicing_lock_at': now}})
+        if not res.matched_count:
+            await _release_grs(db, claimed, token)
+            if not await db.warehouse_receiving.find_one({'id': gid}, {'_id': 0, 'id': 1}):
+                raise HTTPException(404, f'GR tidak ditemukan: {[gid]}')
+            raise HTTPException(409, 'Penerimaan ini sedang dibuatkan faktur oleh pengguna lain. Tunggu sebentar '
+                                     'lalu muat ulang daftar "siap ditagih".')
+        claimed.append(gid)
+    return claimed
+
+
+async def _release_grs(db, gr_ids: list, token: str) -> None:
+    for gid in gr_ids:
+        await db.warehouse_receiving.update_one({'id': gid, 'invoicing_lock': token},
+                                                {'$set': {'invoicing_lock': None, 'invoicing_lock_at': None}})
 
 
 @router.post('/ap-invoices/from-gr', status_code=201)
@@ -308,11 +351,23 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
     4. Create AP Invoice in `rahaza_ap_invoices` with status='draft', linkages to PO + GR(s).
     5. Mark all GRs with ap_invoice_id, ap_invoice_number, invoiced_at.
 
+    2026-11-06 (Tahap 2): GR diklaim atomik selama faktur disusun; harga/qty override = angka faktur
+    pemasok yang sebenarnya (Keuangan), ongkir & potongan faktur ikut disimpan.
+
     Returns the new AP invoice doc.
     """
     user = await _require_finance(request)
     db = get_db()
+    token = _uid()
+    claimed = await _claim_grs(db, payload.gr_ids, token)
+    try:
+        return await _create_ap_invoice_from_gr_locked(db, payload, user)
+    finally:
+        await _release_grs(db, claimed, token)
 
+
+async def _create_ap_invoice_from_gr_locked(db, payload: CreateAPFromGRPayload, user: dict):
+    """Isi `create_ap_invoice_from_gr` — dipanggil SETELAH semua GR-nya diklaim (dibaca ulang di sini)."""
     grs = await db.warehouse_receiving.find(
         {'id': {'$in': payload.gr_ids}}, {'_id': 0}
     ).to_list(length=len(payload.gr_ids))
@@ -424,12 +479,19 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
         raise HTTPException(400, 'Tidak ada item yang bisa di-invoice (semua sudah di-invoice / quantity 0).')
 
     subtotal = sum(it['amount'] for it in inv_items)
-    # B-10: selisih harga tagihan vs GR tidak boleh mengendap di GRNI → dijurnal sebagai PPV
+    # B-10: selisih harga tagihan vs GR tidak boleh mengendap di GRNI. 2026-11-06 (Tahap 2): selisih itu
+    # (plus ongkir − potongan, dan PPN non-PKP) masuk HPP bahan saat dijurnal — sisa yang barangnya sudah
+    # terpakai ke 5-1900 (core.purchase_costing). `gl_price_variance` = selisih harga baris saja.
     grni_amount = round(sum(it['gr_amount'] for it in inv_items), 2)
     price_variance = round(subtotal - grni_amount, 2)
+    freight = round(float(payload.freight_amount or 0), 2)
+    discount = round(float(payload.invoice_discount or 0), 2)
+    if discount - subtotal > 0.005:
+        raise HTTPException(400, 'Potongan faktur tidak boleh melebihi nilai barang.')
     tax_pct = float(payload.tax_pct or 0)
-    tax_amount = round(subtotal * tax_pct / 100, 2)
-    total = round(subtotal + tax_amount, 2)
+    # DPP PPN = nilai barang − potongan; ongkir dicatat terpisah tanpa PPN (lihat catatan Tahap 2)
+    tax_amount = round((subtotal - discount) * tax_pct / 100, 2)
+    total = round(subtotal - discount + freight + tax_amount, 2)
     # 2026-11-03 (saklar PKP): non-PKP → PPN supplier tidak dapat dikreditkan = bagian harga beli.
     from core.tax_status import get_tax_profile, input_tax_treatment
     treatment = input_tax_treatment(await get_tax_profile(db))
@@ -486,6 +548,8 @@ async def create_ap_invoice_from_gr(payload: CreateAPFromGRPayload, request: Req
         'due_date': due_date,
         'items': inv_items,
         'subtotal': round(subtotal, 2),
+        'freight_amount': freight,
+        'invoice_discount': discount,
         'tax_pct': tax_pct,
         'tax_amount': tax_amount,
         'input_tax_treatment': treatment,
@@ -628,6 +692,38 @@ async def release_gr_for_cancelled_invoice(db, inv: Dict[str, Any]) -> List[str]
 # ─────────────────────────────────────────────────────────────────────────────
 # 3-way Match Dashboard
 # ─────────────────────────────────────────────────────────────────────────────
+def invoice_line_belongs(li: Dict[str, Any], gr_ids: set, po_item_ids: set, single_po: bool) -> bool:
+    """Baris faktur milik PO ini? (murni) — lewat GR-nya, atau baris PO-nya; baris lama tanpa keduanya
+    dianggap milik PO ini hanya bila fakturnya menagih SATU PO."""
+    if li.get('gr_id'):
+        return li['gr_id'] in gr_ids
+    if li.get('po_item_id'):
+        return li['po_item_id'] in po_item_ids
+    return single_po
+
+
+def invoice_share_for_po(inv: Dict[str, Any], gr_ids: set, po_item_ids: set) -> Dict[str, float]:
+    """Porsi satu faktur yang milik satu PO (murni, 2026-11-06 Tahap 2) — {subtotal, qty, ratio}.
+
+    `subtotal` = nilai baris barang milik PO ini (dasar pencocokan dengan nilai terima); `ratio` = porsi
+    nilai baris itu dari seluruh baris faktur, dipakai membagi total ber-PPN/ongkir & pembayaran."""
+    single = len(inv.get('po_ids') or []) <= 1
+    items = inv.get('items') or []
+    if not items:
+        sub = inv.get('subtotal')
+        if sub is None:
+            sub = float(inv.get('total', 0) or 0) - float(inv.get('tax_amount', 0) or 0)
+        return {'subtotal': float(sub or 0) if single else 0.0, 'qty': 0.0, 'ratio': 1.0 if single else 0.0}
+    sub_all = sum(float(li.get('amount', 0) or 0) for li in items)
+    mine = [li for li in items if invoice_line_belongs(li, gr_ids, po_item_ids, single)]
+    sub_mine = sum(float(li.get('amount', 0) or 0) for li in mine)
+    if sub_all > 0:
+        ratio = sub_mine / sub_all
+    else:
+        ratio = (len(mine) / len(items)) if items else 0.0
+    return {'subtotal': sub_mine, 'qty': sum(float(li.get('qty', 0) or 0) for li in mine), 'ratio': ratio}
+
+
 @router.get('/3way-match')
 async def three_way_match_dashboard(
     request: Request,
@@ -649,8 +745,10 @@ async def three_way_match_dashboard(
     await _require_finance_view(request)
     db = get_db()
 
+    # 2026-11-06 (Tahap 2): PO yang DIBATALKAN tetap tampil (dengan statusnya) — barang yang sudah
+    # diterima/ditagih atas PO itu tetap harus bisa dicocokkan; dulu PO batal hilang dari rekonsiliasi.
     po_query: Dict[str, Any] = {
-        'status': {'$in': ['approved', 'partially_received', 'fully_received']}
+        'status': {'$in': ['approved', 'partially_received', 'fully_received', 'cancelled']}
     }
     if vendor_name:
         po_query['vendor_name'] = {'$regex': vendor_name, '$options': 'i'}
@@ -705,16 +803,19 @@ async def three_way_match_dashboard(
         total_invoiced_value = 0.0      # tax-inclusive (for display)
         total_invoiced_subtotal = 0.0   # pre-tax (matching basis vs goods value)
         total_paid = 0.0
+        gr_ids_of_po = {g['id'] for g in grs} | {
+            g['id'] for g in await db.warehouse_receiving.find({'po_id': po_id}, {'_id': 0, 'id': 1}).to_list(1000)}
+        po_item_ids = {it.get('id') for it in items if it.get('id')}
         for inv in invoices:
+            # 2026-11-06 (Tahap 2): satu faktur bisa menagih beberapa PO — dulu SELURUH nilainya dihitung
+            # di setiap PO. Sekarang hanya baris milik PO ini (lewat GR / baris PO-nya); total ber-PPN,
+            # ongkir, dan pembayaran dibagi menurut porsi nilai baris itu.
+            share = invoice_share_for_po(inv, gr_ids_of_po, po_item_ids)
             inv_total = float(inv.get('total', 0) or 0)
-            total_invoiced_value += inv_total
-            inv_subtotal = inv.get('subtotal')
-            if inv_subtotal is None:
-                inv_subtotal = inv_total - float(inv.get('tax_amount', 0) or 0)
-            total_invoiced_subtotal += float(inv_subtotal or 0)
-            total_paid += float(inv.get('paid_amount', 0) or 0)
-            for li in (inv.get('items') or []):
-                total_invoiced_qty += float(li.get('qty', 0) or 0)
+            total_invoiced_value += inv_total * share['ratio']
+            total_invoiced_subtotal += share['subtotal']
+            total_paid += float(inv.get('paid_amount', 0) or 0) * share['ratio']
+            total_invoiced_qty += share['qty']
 
         # Variance — compare pre-tax invoice value against goods received value
         # (PPN/tax is not part of the goods value, so it must be excluded here).
@@ -868,8 +969,14 @@ async def three_way_match_detail(po_id: str, request: Request):
             if key:
                 line_map[key]['returned_qty'] += float(ln.get('qty') or 0)
 
+    gr_ids_of_po = {g['id'] for g in grs}
+    po_item_ids = {it.get('id') for it in po_items if it.get('id')}
     for inv in invoices:
+        single = len(inv.get('po_ids') or []) <= 1
         for li in (inv.get('items') or []):
+            # 2026-11-06 (Tahap 2): faktur multi-PO — baris PO lain (material sama) tidak ikut terhitung
+            if not invoice_line_belongs(li, gr_ids_of_po, po_item_ids, single):
+                continue
             key = _resolve_line(li)
             if not key:
                 continue

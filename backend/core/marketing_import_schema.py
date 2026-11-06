@@ -78,10 +78,24 @@ class Field:
     # dengan PERINGATAN (untuk field keterangan seperti kurir/kanal, supaya
     # nama kurir baru tidak pernah menghapus omzet satu pesanan).
     value_map_fallback: str = ""
+    # 2026-11-06 (Tahap 2) — nilai platform yang membawa TANGGAL di dalam teksnya,
+    # mis. "Pesanan diterima, namun Pembeli masih dapat mengajukan pengembalian
+    # hingga 2026-10-12." Kamus biasa harus memuat satu entri per tanggal; di sini
+    # cukup AWALAN teksnya: (awalan, nilai kanonik).
+    value_prefix_map: Tuple[Tuple[str, str], ...] = ()
+    # Label Indonesia untuk tiap nilai kanonik — layar pemetaan nilai tidak boleh
+    # menampilkan kode program (`delivered`, `jnt`) ke staf.
+    choice_labels: Tuple[Tuple[str, str], ...] = ()
 
     @property
     def value_map_pairs(self) -> Tuple[Tuple[str, str], ...]:
         return self.value_map
+
+    def choice_label(self, value: str) -> str:
+        for k, lbl in self.choice_labels:
+            if k == value:
+                return lbl
+        return str(value or "").replace("_", " ").capitalize()
 
 
 @dataclass(frozen=True)
@@ -293,7 +307,11 @@ ORDERS = SourceType(
         Field("status", "Status Pesanan", "enum", False,
               ("status", "order status", "status pesanan"),
               ("new", "paid", "packed", "shipped", "delivered", "completed",
-               "cancelled", "returned"), example="paid"),
+               "cancelled", "returned"), example="paid",
+              choice_labels=(("new", "Belum dibayar"), ("paid", "Dibayar, perlu dikirim"),
+                             ("packed", "Sedang dikemas"), ("shipped", "Dalam pengiriman"),
+                             ("delivered", "Sudah diterima pembeli"), ("completed", "Selesai"),
+                             ("cancelled", "Dibatalkan"), ("returned", "Dikembalikan / refund"))),
         Field("courier", "Kurir", "enum", False, ("kurir", "jasa kirim", "shipping provider"),
               COURIERS),
         Field("tracking_number", "No. Resi", "str", False, ("resi", "no resi", "tracking")),
@@ -331,6 +349,30 @@ _ORDER_STATUS_MAP = (
     ("Belum Bayar", "new"), ("Menunggu Konfirmasi", "new"),
     ("Dalam Proses", "paid"), ("Pengembalian Dana", "returned"),
     ("Pesanan Selesai", "completed"),
+    # ── 2026-11-06 (Tahap 2) — ekspor Shopee "Order.all" ──────────────────────
+    # "Sedang Dikirim" = masih di jalan; "Telah Dikirim" = paket sudah sampai di
+    # pembeli tetapi pesanan belum diselesaikan ⇒ `delivered`, bukan `shipped`.
+    ("Telah Dikirim", "delivered"),
+)
+# Status yang memuat tanggal di dalam teksnya (dicocokkan lewat awalan).
+_ORDER_STATUS_PREFIX = (
+    ("Pesanan diterima, namun", "delivered"),
+)
+_ORDER_STATUS_LABELS = (
+    ("new", "Belum dibayar"), ("paid", "Dibayar, perlu dikirim"),
+    ("packed", "Sedang dikemas"), ("shipped", "Dalam pengiriman"),
+    ("delivered", "Sudah diterima pembeli"), ("completed", "Selesai"),
+    ("cancelled", "Dibatalkan"), ("returned", "Dikembalikan / refund"),
+)
+_COURIER_LABELS = (
+    ("jnt", "J&T"), ("spx", "SPX / Shopee Express"), ("sicepat", "SiCepat"),
+    ("jne", "JNE"), ("anteraja", "AnterAja"), ("ninja", "Ninja Xpress"),
+    ("grab", "GrabExpress"), ("gojek", "GoSend"), ("lainnya", "Kurir lain"),
+)
+_ORDER_CHANNEL_LABELS = (
+    ("live", "Live"), ("video", "Video"), ("product_card", "Kartu produk"),
+    ("search", "Pencarian"), ("ads", "Iklan"), ("affiliate", "Afiliasi"),
+    ("campaign", "Kampanye"), ("other", "Lainnya"),
 )
 
 # Kamus kurir: nama kurir baru TIDAK boleh menghapus omzet ⇒ fallback `lainnya`
@@ -426,6 +468,9 @@ MARKETPLACE_ORDERS = SourceType(
         "product_category_raw", "quantity", "qty_returned", "sku_unit_original_price",
         "sku_subtotal_before_discount", "sku_platform_discount", "sku_seller_discount",
         "sku_subtotal_after_discount", "is_preorder",
+        # 2026-11-06 (Tahap 2) — ekspor Shopee Order.all: "Harga Setelah Diskon"
+        # adalah harga SATUAN dan "Total Diskon" adalah diskon PER BARIS SKU.
+        "sku_unit_deal_price", "total_discount",
     ),
     per_order_money=(
         "order_amount", "shipping_fee_after_discount", "original_shipping_fee",
@@ -433,8 +478,9 @@ MARKETPLACE_ORDERS = SourceType(
         "distance_shipping_fee", "distance_fee", "order_refund_amount",
         "payment_platform_discount", "buyer_service_fee", "handling_fee",
         "shipping_insurance", "item_insurance",
-        # ekspor Shopee (sesi #34)
-        "total_payment", "total_discount", "voucher_seller", "voucher_platform",
+        # ekspor Shopee (sesi #34). `total_discount` DIPINDAH ke item_fields
+        # (2026-11-06): nilainya berbeda per baris SKU, jadi bukan uang per pesanan.
+        "total_payment", "voucher_seller", "voucher_platform",
         "coin_cashback", "buyer_paid_shipping", "shipping_fee_estimate",
         "shipping_rebate_estimate", "return_shipping_fee",
     ),
@@ -448,7 +494,9 @@ MARKETPLACE_ORDERS = SourceType(
               ("new", "paid", "packed", "shipped", "delivered", "completed",
                "cancelled", "returned"),
               example="Perlu dikirim", value_map=_ORDER_STATUS_MAP, keep_raw=True,
-              note="Kamus status tertulis; nilai tak dikenal menolak baris"),
+              value_prefix_map=_ORDER_STATUS_PREFIX, choice_labels=_ORDER_STATUS_LABELS,
+              note="Kamus status tertulis; nilai tak dikenal menolak baris — "
+                   "artinya bisa dipilih sendiri di langkah pemetaan"),
         Field("substatus_raw", "Sub-status", "str", False, ("order substatus",)),
         Field("return_type_raw", "Jenis Pembatalan/Pengembalian", "str", False,
               ("cancelation return type", "cancellation return type",
@@ -471,14 +519,24 @@ MARKETPLACE_ORDERS = SourceType(
               ("sku quantity of return", "qty return", "returned quantity")),
         Field("sku_unit_original_price", "Harga Satuan Asli", "money", False,
               ("sku unit original price", "harga awal")),
+        # 2026-11-06 (Tahap 2) — DULU "Subtotal Pesanan" dipetakan ke subtotal
+        # SEBELUM diskon dan "Harga Setelah Diskon" (harga SATUAN) ke subtotal
+        # SESUDAH diskon ⇒ omzet pesanan berisi >1 barang terhitung harga 1 barang
+        # (~15% omzet hilang pada berkas contoh). Di ekspor Shopee, "Subtotal
+        # Pesanan" = harga setelah diskon × jumlah; subtotal sebelum diskon tidak
+        # ada kolomnya dan dihitung dari harga satuan asli × jumlah.
         Field("sku_subtotal_before_discount", "Subtotal Sebelum Diskon", "money", False,
-              ("sku subtotal before discount", "subtotal pesanan")),
+              ("sku subtotal before discount",),
+              note="Ekspor Shopee tidak punya kolom ini — dihitung dari Harga Awal × Jumlah"),
         Field("sku_platform_discount", "Diskon Platform (SKU)", "money", False,
               ("sku platform discount", "diskon dari shopee")),
         Field("sku_seller_discount", "Diskon Penjual (SKU)", "money", False,
               ("sku seller discount", "diskon dari penjual")),
+        Field("sku_unit_deal_price", "Harga Satuan Setelah Diskon", "money", False,
+              ("harga setelah diskon", "sku unit deal price"),
+              note="Harga SATUAN — bukan subtotal baris"),
         Field("sku_subtotal_after_discount", "Subtotal Setelah Diskon", "money", False,
-              ("sku subtotal after discount", "harga setelah diskon"),
+              ("sku subtotal after discount", "subtotal pesanan"),
               note="Dasar OMZET PRODUK — dijumlah per pesanan"),
         Field("is_preorder", "Normal / Pre-order", "bool", False,
               ("normal or pre order", "normal or pre-order"),
@@ -506,7 +564,8 @@ MARKETPLACE_ORDERS = SourceType(
         Field("shipping_insurance", "Asuransi Kirim", "money", False, ("shipping insurance",)),
         Field("item_insurance", "Asuransi Barang", "money", False, ("item insurance",)),
         # ── uang per pesanan khas ekspor Shopee (sesi #34, dari berkas asli) ──
-        Field("total_discount", "Total Diskon", "money", False, ("total diskon",)),
+        Field("total_discount", "Total Diskon (per baris SKU)", "money", False, ("total diskon",),
+              note="Diskon penjual + diskon platform untuk baris SKU ini"),
         Field("voucher_seller", "Voucher Ditanggung Penjual", "money", False,
               ("voucher ditanggung penjual",)),
         Field("voucher_platform", "Voucher Ditanggung Platform", "money", False,
@@ -547,7 +606,7 @@ MARKETPLACE_ORDERS = SourceType(
         Field("courier", "Kurir", "enum", False,
               ("shipping provider name", "kurir", "jasa kirim", "opsi pengiriman"), COURIERS,
               example="J&T Express", value_map=_COURIER_MAP, keep_raw=True,
-              value_map_fallback="lainnya"),
+              value_map_fallback="lainnya", choice_labels=_COURIER_LABELS),
         Field("package_id", "ID Paket", "str", False, ("package id",)),
         Field("weight_kg", "Berat (kg)", "num", False,
               ("weight kg", "weight(kg)", "berat", "total berat")),
@@ -563,7 +622,7 @@ MARKETPLACE_ORDERS = SourceType(
               ("live", "video", "product_card", "search", "ads", "affiliate",
                "campaign", "other"),
               example="LIVE", value_map=_ORDER_CHANNEL_MAP, keep_raw=True,
-              value_map_fallback="other",
+              value_map_fallback="other", choice_labels=_ORDER_CHANNEL_LABELS,
               note="Dasar pecahan trafik di rekap harian"),
         Field("creator_handle", "Akun Kreator", "str", False, ("creator handle",),
               note="Dasar atribusi kreator & komisi afiliasi"),
@@ -597,6 +656,26 @@ MARKETPLACE_ORDERS = SourceType(
         Field("account_id", "Akun", "str", True, derived=True),
     ),
 )
+
+# 2026-11-06 (Tahap 2) — PEMETAAN YANG SUDAH TERBUKTI SALAH.
+# "Ingat pemetaan saya" menyimpan pasangan kolom→field yang pernah dikonfirmasi.
+# Pasangan di bawah ini dulu dipasang oleh kamus sinonim yang keliru; kalau
+# ingatannya dipakai apa adanya, setiap impor berikutnya mengulang omzet ~15%
+# terlalu rendah. Pasangan ini DIBUANG dari ingatan (dan dari draf, lewat migrasi
+# `scripts/migrations/2026_11_06_impor_pesanan_subtotal.py`), lalu kolomnya
+# dipetakan ulang oleh kamus yang benar.
+# Kunci: jenis impor → {(header dinormalkan, field lama yang salah)}.
+RETIRED_MAPPINGS: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "marketplace_orders": (
+        ("harga setelah diskon", "sku_subtotal_after_discount"),
+        ("subtotal pesanan", "sku_subtotal_before_discount"),
+    ),
+}
+
+
+def is_retired_mapping(source_type: str, header_norm: str, field: str) -> bool:
+    return (header_norm, field) in RETIRED_MAPPINGS.get(source_type, ())
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2b. F3 — STATUS PENGIRIMAN / PEMBATALAN (Ekspor B & C) — HANYA MEMPERBARUI
@@ -642,6 +721,7 @@ MARKETPLACE_FULFILLMENT = SourceType(
               ("new", "paid", "packed", "shipped", "delivered", "completed",
                "cancelled", "returned"),
               example="Dikirim", value_map=_ORDER_STATUS_MAP, keep_raw=True,
+              value_prefix_map=_ORDER_STATUS_PREFIX, choice_labels=_ORDER_STATUS_LABELS,
               note="Kamus status tertulis; nilai tak dikenal menolak baris"),
         Field("substatus_raw", "Sub-status", "str", False, ("order substatus",)),
         Field("return_type_raw", "Jenis Pembatalan/Pengembalian", "str", False,
@@ -665,7 +745,7 @@ MARKETPLACE_FULFILLMENT = SourceType(
         Field("courier", "Kurir", "enum", False,
               ("shipping provider name", "kurir", "jasa kirim"), COURIERS,
               example="J&T Express", value_map=_COURIER_MAP, keep_raw=True,
-              value_map_fallback="lainnya"),
+              value_map_fallback="lainnya", choice_labels=_COURIER_LABELS),
         # per-SKU (opsional): kalau ada, `items[].qty_returned` ikut diperbarui
         Field("platform_sku_id", "SKU ID Platform", "str", False,
               ("sku id", "id sku", "sku"),

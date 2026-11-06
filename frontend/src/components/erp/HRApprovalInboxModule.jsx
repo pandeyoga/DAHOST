@@ -56,7 +56,10 @@ const TYPE_META = {
   salary_adjustment: { label: 'Penyesuaian Gaji',  icon: DollarSign,    color: 'emerald', bgClass: 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border-emerald-400 dark:border-emerald-400/30' },
   resignation:       { label: 'Resignasi',         icon: UserMinus,     color: 'red',     bgClass: 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-300 border-red-400 dark:border-red-400/30' },
   attendance:        { label: 'Approval Absensi',  icon: CalendarCheck, color: 'blue',    bgClass: 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-400/30' },
+  // Tahap 2 (2026-11-06): pengajuan koreksi absen dari Portal Saya
+  attendance_correction: { label: 'Koreksi Absen', icon: CalendarCheck, color: 'warning', bgClass: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)]' },
 };
+const KIND_LABEL = { cuti: 'Cuti', izin: 'Izin', sakit: 'Sakit' };
 
 function TypeBadge({ type }) {
   const m = TYPE_META[type] || { label: type, bgClass: 'bg-foreground/10 text-foreground/70 border-foreground/20' };
@@ -159,9 +162,31 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
                   {meta.geo_distance_m != null && (
                     <Row label="Jarak ke Kantor" value={`${meta.geo_distance_m} m`} />
                   )}
-                  {meta.photo_url && (
-                    <Row label="Foto" value={<a className="text-blue-600 dark:text-blue-300 underline" href={`${API}${meta.photo_url}`} target="_blank" rel="noreferrer">Lihat foto</a>} />
+                  {/* Tahap 2: foto selfie TAMPIL saat diperiksa (dulu hanya tautan, dan sering kosong) */}
+                  {(meta.photo_url || meta.photo_out_url) && (
+                    <div className="grid grid-cols-2 gap-2 pt-1" data-testid="hr-inbox-selfie">
+                      {[['Selfie masuk', meta.photo_url], ['Selfie pulang', meta.photo_out_url]].filter(([, u]) => u).map(([lbl, u]) => (
+                        <a key={lbl} href={`${API}${u}`} target="_blank" rel="noreferrer" title={lbl}>
+                          <img src={`${API}${u}`} alt={lbl} className="w-full aspect-[3/4] object-cover rounded-[var(--radius-md)] border border-[var(--glass-border)]" />
+                          <span className="text-[11px] text-muted-foreground">{lbl}</span>
+                        </a>
+                      ))}
+                    </div>
                   )}
+                </>
+              )}
+              {item.type === 'leave' && meta.attachment_url && (
+                <Row label="Lampiran" value={<a className="text-primary underline" href={`${API}${meta.attachment_url}`} target="_blank" rel="noreferrer">Buka lampiran</a>} />
+              )}
+              {item.type === 'leave' && meta.pay_decision_suggestion && (
+                <Row label="Usulan bayar" value={`${meta.pay_decision_suggestion.decision === 'paid' ? 'Dibayar' : 'Tidak dibayar'} — ${meta.pay_decision_suggestion.reason}`} multiline />
+              )}
+              {item.type === 'attendance_correction' && (
+                <>
+                  <Row label="Tanggal" value={meta.date || '—'} />
+                  <Row label="Diminta" value={[meta.requested?.clock_in && `masuk ${meta.requested.clock_in}`, meta.requested?.clock_out && `pulang ${meta.requested.clock_out}`, meta.requested?.status && `status ${meta.requested.status}`].filter(Boolean).join(', ') || '—'} />
+                  {meta.locked && <Row label="Catatan" value="Tanggal ini sudah digaji — bila disetujui, selisihnya jadi penyesuaian di gaji berikutnya." multiline />}
+                  {meta.attachment_url && <Row label="Lampiran" value={<a className="text-primary underline" href={`${API}${meta.attachment_url}`} target="_blank" rel="noreferrer">Buka lampiran</a>} />}
                 </>
               )}
               <Row label="Alasan" value={item.reason || raw.reason || '—'} multiline />
@@ -257,12 +282,17 @@ function RejectDialog({ open, item, onClose, onConfirm }) {
 function ApproveDialog({ open, item, onClose, onConfirm }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  // Tahap 2: cuti/izin/sakit — HR memilih dibayar/tidak (bawaan = usulan sistem)
+  const [pay, setPay] = useState('paid');
   useEffect(() => { if (!open) setNote(''); }, [open]);
+  useEffect(() => { setPay(item?.meta?.pay_decision_suggestion?.decision || 'paid'); }, [item]);
   if (!item) return null;
+  const isLeave = item.type === 'leave';
+  const finalStep = isLeave && !(item.meta?.approval_level === '1/2');
   const submit = async () => {
     setBusy(true);
     try {
-      await onConfirm(item, note.trim() || null);
+      await onConfirm(item, note.trim() || null, finalStep ? { pay_decision: pay } : {});
       onClose();
     } finally { setBusy(false); }
   };
@@ -279,6 +309,29 @@ function ApproveDialog({ open, item, onClose, onConfirm }) {
             <span className="text-foreground">{item.title}</span> dari{' '}
             <span className="text-foreground">{item.requester_name || '—'}</span>
           </div>
+          {isLeave && (
+            <div className="space-y-1.5" data-testid="hr-inbox-pay-decision">
+              <p className="text-xs text-foreground/70">
+                {KIND_LABEL[item.meta?.leave_kind] || 'Cuti'} · {item.reason || 'tanpa alasan'}
+              </p>
+              {item.meta?.attachment_url && (
+                <a className="text-xs text-primary underline" href={`${API}${item.meta.attachment_url}`} target="_blank" rel="noreferrer">Buka lampiran</a>
+              )}
+              {finalStep ? (
+                <>
+                  <div className="flex gap-2">
+                    <Button type="button" size="sm" variant={pay === 'paid' ? 'default' : 'outline'} onClick={() => setPay('paid')}
+                      data-testid="hr-inbox-pay-paid">Dibayar</Button>
+                    <Button type="button" size="sm" variant={pay === 'unpaid' ? 'default' : 'outline'} onClick={() => setPay('unpaid')}
+                      data-testid="hr-inbox-pay-unpaid">Tidak dibayar</Button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">Usulan sistem: {item.meta?.pay_decision_suggestion?.reason}</p>
+                </>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">Persetujuan tingkat 1 — diteruskan ke HR.</p>
+              )}
+            </div>
+          )}
           <div className="space-y-1.5">
             <label className="text-xs text-foreground/70">Catatan (opsional)</label>
             <Textarea
@@ -414,12 +467,12 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
     return list;
   }, [items, tab, search]);
 
-  const doApprove = async (item, note) => {
+  const doApprove = async (item, note, extra = {}) => {
     try {
       const r = await fetch(`${API}/api/hr/inbox/${item.type}/${item.id}/approve`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ note: note || undefined }),
+        body: JSON.stringify({ note: note || undefined, ...extra }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.detail || 'Gagal approve');
@@ -500,6 +553,7 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
               <TabsTrigger value="salary_adjustment" data-testid="hr-inbox-tab-salary">Gaji ({counts.salary_adjustment || 0})</TabsTrigger>
               <TabsTrigger value="resignation" data-testid="hr-inbox-tab-resignation">Resignasi ({counts.resignation || 0})</TabsTrigger>
               <TabsTrigger value="attendance" data-testid="hr-inbox-tab-attendance">Absensi ({counts.attendance || 0})</TabsTrigger>
+              <TabsTrigger value="attendance_correction" data-testid="hr-inbox-tab-correction">Koreksi absen ({counts.attendance_correction || 0})</TabsTrigger>
             </TabsList>
           </Tabs>
           <div className="flex items-center bg-foreground/5 border border-foreground/10 rounded-md px-3 min-w-[220px]">

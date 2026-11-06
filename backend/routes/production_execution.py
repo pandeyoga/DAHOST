@@ -707,7 +707,8 @@ async def create_job(request: Request):
         inserted_items.append(ji)
     if po_id:
         current_po = await db.production_pos.find_one({'id': po_id})
-        if current_po and current_po.get('status') not in ['Completed', 'Closed']:
+        # 2026-11-06 (Tahap 2): PO 'Closed Short' juga tertutup — status tidak dikembalikan ke In Production
+        if current_po and current_po.get('status') not in ['Completed', 'Closed', 'Closed Short']:
             await db.production_pos.update_one({'id': po_id}, {'$set': {'status': 'In Production', 'updated_at': now()}})
     await log_activity(user['id'], user['name'], 'Create', 'Production Job', f"Created job {job_number}")
     result = serialize_doc(job)

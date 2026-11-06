@@ -367,6 +367,11 @@ async def propagate_master_changes(db, model: dict, *, refresh_name: bool = Fals
         return {'fg': 0, 'items': 0}
     fields = master_display_fields(model)
     now = _now()
+    # 2026-11-06 (Tahap 2): HPP TIDAK ikut diturunkan. Dulu satu suntingan master menimpa HPP
+    # SEMUA FG & item katalog dengan rata-rata model — HPP per warna/ukuran hasil "Terapkan HPP
+    # per Potong" hilang. HPP model hanya MENGISI yang masih kosong (FG/item baru tanpa angka);
+    # HPP standar ditulis lewat `core.product_costing.apply_model_cost` saja.
+    hpp_fields = {k: fields.pop(k) for k in ('hpp', 'hpp_source')}
 
     fg_patch = {k: v for k, v in fields.items() if k != 'retail_price_master'}
     fg_patch['updated_at'] = now
@@ -383,6 +388,12 @@ async def propagate_master_changes(db, model: dict, *, refresh_name: bool = Fals
         item_q['$or'].extend([{'fg_material_id': {'$in': fg_ids}},
                               {'material_id': {'$in': fg_ids}}])
     res_items = await db.marketing_catalog_items.update_many(item_q, {'$set': item_patch})
+    if float(hpp_fields.get('hpp') or 0) > 0:
+        empty = {'$or': [{'hpp': {'$exists': False}}, {'hpp': None}, {'hpp': {'$lte': 0}}]}
+        fill = {**hpp_fields, 'hpp_updated_at': now}
+        await db.rahaza_materials.update_many(
+            {'$and': [{'type': 'fg', 'model_id': model['id']}, empty]}, {'$set': fill})
+        await db.marketing_catalog_items.update_many({'$and': [item_q, empty]}, {'$set': fill})
 
     if refresh_name and model.get('name'):
         # nama item = nama tampilan FG (nama model + varian) supaya tidak menghapus

@@ -159,9 +159,13 @@ async def get_dashboard(request: Request):
     # justru menyesatkan. Koleksinya di-drop di FASE 10. Penggantinya: "Perlu Diserahkan"
     # (permintaan yang sudah disetujui tapi barangnya belum keluar) — angka yang benar-benar
     # butuh tindakan Admin Aksesoris hari ini.
-    ready_to_deliver = await db.dewi_accessory_requests.count_documents(
-        {"request_type": "internal_issuance", "status": "allocated"})
+    # 2026-11-06 (Tahap 2): semua jenis permintaan kini memotong stok saat diserahkan → semua dihitung
+    ready_to_deliver = await db.dewi_accessory_requests.count_documents({"status": "allocated"})
     pending_pr = await db.acc_purchase_requests.count_documents({"status": {"$in": ["Draft", "Submitted"]}})
+    # PR yang sudah diteruskan ke Pengadaan tetap "pending" sampai barangnya diterima (PR pengadaan selesai)
+    from core.accessory_procurement import ORIGIN_ACC_PR, PR_COLL, PR_DEAD
+    pending_pr += await db[PR_COLL].count_documents(
+        {"origin": ORIGIN_ACC_PR, "status": {"$nin": list(PR_DEAD) + ["completed"]}})
     # 2026-11-06 (Tahap 1): opname aksesoris berjalan di mesin opname tunggal (K9). Dulu dibaca
     # dari `wh_opname_sessions2` (arsip baca-saja) sehingga kartu ini selalu kosong.
     active_opname = await _active_accessory_opname(db)

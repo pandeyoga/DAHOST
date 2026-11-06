@@ -503,6 +503,9 @@ async def create_permak(data: PermakCreate, request: Request):
         raise HTTPException(422, "source harus 'reject' atau 'good'")
     if data.permak_type not in PERMAK_TYPES:
         raise HTTPException(422, f"permak_type harus salah satu {PERMAK_TYPES}")
+    # 2026-11-06 (Tahap 2): PO yang sudah ditutup terkunci — tidak ada permak baru.
+    from core.po_lock import assert_po_open
+    await assert_po_open(db, data.po_id, 'permak')
     meta = await _enrich_from_po_item(db, data.po_id, data.po_item_id)
 
     # ── Tautkan ke baris penerimaan (sumber reject) ──────────────────────────

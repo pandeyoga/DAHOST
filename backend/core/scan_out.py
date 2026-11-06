@@ -18,6 +18,9 @@ KONTRAK bersama paket opname (K9) — koleksi `wh_scan_out_sheets`:
 Opname suatu lokasi tidak boleh disetujui selama ada lembar `status != 'closed'` untuk
 lokasi & tanggal itu (lihat :func:`sheets_still_open`). Status antara `closing` dipakai
 sesaat ketika Tutup Hari berjalan — pembaca kontrak cukup memeriksa `!= 'closed'`.
+2026-11-06 (Tahap 2): kontrak ditambah — baris `wh_scan_out_lines` berstatus `failed` / `pending`
+(antrean kirim ulang, lihat :func:`retry_queue`) di lokasi itu dengan `date` ≤ tanggal hitung juga
+menahan approve opname, karena stoknya belum pasti terpotong.
 
 Aturan yang dipegang:
   1. Satu lembar per (tanggal WIB, lokasi); dibuat otomatis saat scan pertama hari itu.
@@ -729,6 +732,128 @@ async def void_line(db, line_id: str, *, user: Optional[dict], reason: str = "",
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — ANTREAN SCAN GAGAL DI SERVER (per lembar / petugas)
+# ══════════════════════════════════════════════════════════════════════════════
+# Dulu antrean "Kirim ulang" hanya hidup di memori layar: muat ulang / ganti HP = hilang, dan
+# baris gagal di server (status `failed`) tidak terlihat siapa pun. Baris gagal SUDAH tersimpan
+# di `wh_scan_out_lines`; sekarang itulah antreannya — dibaca per lembar & petugas, dikirim ulang
+# memakai id barisnya (bukan ingatan layar), atau dibatalkan dengan membalik langkah yang sudah
+# terjadi. Baris gagal TIDAK lagi dipindah ke lembar baru saat Tutup Hari (dulu setiap tutup
+# melahirkan lembar terbuka baru berisi baris gagal itu ⇒ opname lokasi terkunci selamanya).
+FAILED_STATUSES = ("failed", "pending")
+
+
+def _is_stuck(line: dict) -> bool:
+    """Baris gagal, atau `pending` yang klaim prosesnya sudah putus (> CLAIM_STALE_SECONDS)."""
+    st = line.get("status")
+    if st == "failed":
+        return True
+    if st != "pending":
+        return False
+    at = _aware(line.get("claim_at"))
+    return not isinstance(at, datetime) or at < _now() - timedelta(seconds=CLAIM_STALE_SECONDS)
+
+
+async def retry_queue(db, *, location_id: Optional[str] = None, operator_id: Optional[str] = None,
+                      sheet_id: Optional[str] = None) -> list:
+    """Baris scan yang gagal/terputus (antrean kirim ulang di server), lintas tanggal."""
+    q: dict = {"status": {"$in": list(FAILED_STATUSES)}}
+    if location_id:
+        q["location_id"] = location_id
+    if operator_id:
+        q["operator_id"] = operator_id
+    if sheet_id:
+        q["sheet_id"] = sheet_id
+    rows = await db[LINES].find(q, {"_id": 0}).sort("scanned_at", 1).to_list(500)
+    return [public_line(r) for r in rows if _is_stuck(r)]
+
+
+async def retry_line(db, line_id: str, *, user: Optional[dict] = None,
+                     may_retry_others: bool = False) -> dict:
+    """Kirim ulang SATU baris dari antrean server (langkah yang sudah jalan tidak diulang)."""
+    actor = _actor(user)
+    line = await db[LINES].find_one({"id": line_id}, {"_id": 0})
+    if not line:
+        raise ScanOutError(404, "Baris scan tidak ditemukan.")
+    if not may_retry_others and line.get("operator_id") and line.get("operator_id") != actor.get("id"):
+        raise ScanOutError(403, "Baris ini di-scan petugas lain — minta SPV/Admin Gudang mengirim ulang.")
+    if line.get("status") not in FAILED_STATUSES:
+        return {"result": "accepted", "duplicate": True, "line": public_line(line)}
+    return await _resume(db, line, actor)
+
+
+async def discard_failed_line(db, line_id: str, *, user: Optional[dict], reason: str = "",
+                              may_void_others: bool = False) -> dict:
+    """Batalkan baris GAGAL: langkah yang sempat terjadi dibalik (stok kembali / nilai WAC kembali),
+    lalu baris berstatus `voided`. Dipakai bila kode itu memang salah scan atau gagal terus."""
+    from core import fg_cost_layers as fcl
+    actor = _actor(user)
+    line = await db[LINES].find_one({"id": line_id}, {"_id": 0})
+    if not line:
+        raise ScanOutError(404, "Baris scan tidak ditemukan.")
+    if line.get("status") == "voided":
+        return {"ok": True, "already_voided": True, "line": public_line(line)}
+    if not _is_stuck(line):
+        raise ScanOutError(409, "Hanya baris yang gagal diproses yang bisa dibatalkan di sini.")
+    if not may_void_others and line.get("operator_id") and line.get("operator_id") != actor.get("id"):
+        raise ScanOutError(403, "Baris ini di-scan petugas lain — minta SPV/Admin Gudang membatalkannya.")
+    if not await _claim(db, line, line["status"], "voiding"):
+        raise ScanOutError(409, "Baris ini sedang diproses perangkat lain — coba lagi sebentar.")
+    out = line.get("kind") != KIND_CANCEL
+    try:
+        if out:
+            if await _ledger_of(db, REF_SCAN, line_id):
+                await _stock_step(db, line, ref_type=REF_SCAN_VOID, out=False, actor=actor)
+            cons = await db[fcl.CONSUMPTIONS].find_one({"ref.type": REF_SCAN, "ref.line_id": line_id}, {"_id": 0})
+            done = await db[fcl.LAYERS].find_one({"batch.source": REF_SCAN_VOID, "batch.receipt_id": line_id},
+                                                 {"_id": 0, "id": 1})
+            if cons and not done:
+                await fcl.push_layer(db, material_id=line["material_id"], qty=int(line["qty"]),
+                                     unit_cost=_f(cons.get("unit_cost")), components=cons.get("components") or None,
+                                     ref={"type": REF_SCAN_VOID, "receipt_id": line_id,
+                                          "receipt_code": line.get("sheet_number")}, actor=actor)
+        else:
+            if await _ledger_of(db, REF_CANCEL, line_id):
+                await _stock_step(db, line, ref_type=REF_CANCEL_VOID, out=True, actor=actor)
+            layer = await db[fcl.LAYERS].find_one({"batch.source": REF_CANCEL, "batch.receipt_id": line_id},
+                                                  {"_id": 0})
+            if layer and not line.get("void_wac_done"):
+                await fcl.reverse_receipt(db, material_id=line["material_id"], qty=int(line["qty"]),
+                                          unit_cost=_f((line.get("value_frozen") or {}).get("unit_cost")),
+                                          ref={"type": REF_CANCEL_VOID, "id": line_id}, actor=actor)
+                await db[LINES].update_one({"id": line_id}, {"$set": {"void_wac_done": True}})
+    except Exception as e:  # noqa: BLE001
+        logger.exception("[scan-out] pembatalan baris gagal %s gagal", line_id)
+        await db[LINES].update_one({"id": line_id}, {"$set": {"status": "failed", "claim_at": None,
+                                                              "error": str(e)[:300]}})
+        raise ScanOutError(500, f"Pembatalan gagal: {e}. Ulangi — langkah yang sudah jalan tidak diulang.")
+    await db[LINES].update_one({"id": line_id}, {"$set": {
+        "status": "voided", "claim_at": None, "error": None,
+        "void_reason": (reason or "").strip()[:200] or "scan gagal dibatalkan",
+        "voided_by": actor.get("name"), "voided_by_id": actor.get("id"), "voided_at": _now()}})
+    return {"ok": True, "line": public_line(await db[LINES].find_one({"id": line_id}, {"_id": 0}))}
+
+
+async def _retry_stuck_on_sheet(db, sheet_id: str, actor: dict) -> int:
+    """Sebelum Tutup Hari: coba proses ulang baris gagal lembar ini (best-effort). Return sisa gagal."""
+    left = 0
+    for ln in await db[LINES].find({"sheet_id": sheet_id, "status": {"$in": list(FAILED_STATUSES)}},
+                                   {"_id": 0}).to_list(1000):
+        if not _is_stuck(ln):
+            continue
+        try:
+            if await _claim(db, ln, ln["status"], "pending"):
+                cur = await db[LINES].find_one({"id": ln["id"]}, {"_id": 0})
+                await _process(db, cur, actor)
+                continue
+        except Exception:  # noqa: BLE001 — tetap gagal: kembali ke antrean, tutup hari jalan terus
+            await db[LINES].update_one({"id": ln["id"], "status": "pending"},
+                                       {"$set": {"status": "failed", "claim_at": None}})
+        left += 1
+    return left
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # TUTUP HARI — satu jurnal HPP per lembar
 # ══════════════════════════════════════════════════════════════════════════════
 async def post_sheet_cogs(db, sheet: dict, totals: dict, user: dict) -> dict:
@@ -775,6 +900,9 @@ async def close_sheet(db, sheet_id: str, *, user: Optional[dict] = None, auto: b
             if cur.get("status") == "closed":
                 return {"ok": True, "already_closed": True, "sheet": cur}
             raise ScanOutError(409, "Lembar ini sedang ditutup oleh proses lain — tunggu sebentar lalu muat ulang.")
+    # 2026-11-06 (Tahap 2): baris gagal lembar ini dicoba ulang dulu supaya ikut jurnal hari ini;
+    # yang tetap gagal TINGGAL di lembar ini sebagai antrean kirim ulang (tidak dipindah).
+    still_failed = await _retry_stuck_on_sheet(db, sheet_id, actor)
     # kunci baris aktif: sesudah ini batal baris ditolak dan scan baru masuk lembar berikutnya
     await db[LINES].update_many({"sheet_id": sheet_id, "status": "active", "locked": {"$ne": True}},
                                 {"$set": {"locked": True, "lock_id": token}})
@@ -802,17 +930,24 @@ async def close_sheet(db, sheet_id: str, *, user: Optional[dict] = None, auto: b
            "closed_by_id": None if auto else actor.get("id"), "post_error": None, "closing_token": None}
     await db[SHEETS].update_one({"id": sheet_id}, {"$set": upd})
     sheet.update(upd)
-    # baris yang lolos masuk saat penutupan (tidak terkunci) → lembar berikutnya
+    # baris yang lolos masuk saat penutupan (tidak terkunci) → lembar berikutnya.
+    # 2026-11-06 (Tahap 2): baris GAGAL tidak ikut dipindah (dulu tiap tutup melahirkan lembar
+    # terbuka baru berisi baris gagal ⇒ opname lokasi terkunci selamanya). Baris gagal tetap di
+    # antrean server; begitu berhasil dikirim ulang, ia pindah ke lembar terbuka berikutnya.
     loc = {"id": sheet["location_id"], "code": sheet.get("location_code"), "name": sheet.get("location_name")}
-    strays = await db[LINES].find({"sheet_id": sheet_id, "locked": {"$ne": True},
-                                   "status": {"$in": ["pending", "active", "failed"]}}, {"_id": 0}).to_list(1000)
+    strays = [ln for ln in await db[LINES].find(
+        {"sheet_id": sheet_id, "locked": {"$ne": True}, "status": {"$in": ["pending", "active"]}},
+        {"_id": 0}).to_list(1000) if not _is_stuck(ln)]
     for ln in strays:
         await _rehome_if_closed(db, ln, loc, actor)
+    if still_failed:
+        await db[SHEETS].update_one({"id": sheet_id}, {"$set": {"failed_lines": still_failed}})
+        sheet["failed_lines"] = still_failed
     try:
         await resolve_for_source(db, source_id=sheet_id)
     except Exception:  # noqa: BLE001
         logger.warning("[scan-out] penutupan notifikasi lembar %s gagal", sheet_id, exc_info=True)
-    return {"ok": True, "sheet": sheet, "je": je, "moved_lines": len(strays)}
+    return {"ok": True, "sheet": sheet, "je": je, "moved_lines": len(strays), "failed_lines": still_failed}
 
 
 async def auto_close(db, *, up_to: Optional[str] = None, before: Optional[str] = None) -> dict:

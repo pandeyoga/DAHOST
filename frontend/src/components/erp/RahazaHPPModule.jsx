@@ -31,7 +31,8 @@ const STATUS_ID = {
   packing: { label: 'Packing', tone: 'info' }, 'partial delivered': { label: 'Terkirim sebagian', tone: 'warning' },
   completed: { label: 'Selesai', tone: 'success' }, done: { label: 'Selesai', tone: 'success' },
   finished: { label: 'Selesai', tone: 'success' }, invoiced: { label: 'Sudah ditagih', tone: 'success' },
-  closed: { label: 'Ditutup', tone: 'muted' }, cancelled: { label: 'Dibatalkan', tone: 'muted' },
+  closed: { label: 'Ditutup', tone: 'muted' }, 'closed short': { label: 'Ditutup (kurang)', tone: 'muted' },
+  cancelled: { label: 'Dibatalkan', tone: 'muted' },
   canceled: { label: 'Dibatalkan', tone: 'muted' },
 };
 function JobStatus({ status }) {
@@ -44,6 +45,7 @@ const TABS = [
   { key: 'internal-wo', label: 'Work order internal', icon: Package },
   { key: 'maklon', label: 'Maklon', icon: BarChart3 },
   { key: 'client-analysis', label: 'Per klien', icon: Building2 },
+  { key: 'po-wip', label: 'Sisa WIP per PO', icon: Calculator },
 ];
 
 /**
@@ -60,7 +62,7 @@ export default function RahazaHPPModule({ token }) {
   const page = {
     testId: 'rahaza-hpp-page',
     title: 'HPP aktual',
-    subtitle: 'HPP dari data nyata: bahan keluar + upah produksi + overhead, dibandingkan estimasi.',
+    subtitle: 'HPP dari data nyata: bahan keluar + upah CMT. Upah internal dan overhead tidak masuk HPP.',
     chips: (
       <div className="contents" data-testid="hpp-tabs">
         <FilterChips value={activeTab} onChange={setActiveTab} testId="hpp-actual-tab" ariaLabel="Jenis HPP" hideWhenEmpty={false} options={TABS} />
@@ -70,6 +72,7 @@ export default function RahazaHPPModule({ token }) {
 
   if (activeTab === 'maklon') return <MaklonActualTab token={token} headers={headers} page={page} />;
   if (activeTab === 'client-analysis') return <ClientAnalysisTab token={token} headers={headers} page={page} />;
+  if (activeTab === 'po-wip') return <PoWipTab headers={headers} page={page} />;
   return <InternalWOTab token={token} headers={headers} page={page} />;
 }
 
@@ -100,7 +103,14 @@ const MATERIAL_COLS = [
   { key: 'type', label: 'Jenis', muted: true, render: (m) => (m.type ? categoryLabel(m.type) : '—') },
   { key: 'qty', label: 'Qty', right: true, render: (m) => `${Number(m.qty || 0).toLocaleString('id-ID')} ${m.unit || ''}` },
   { key: 'unit_cost', label: 'Harga satuan', right: true, render: (m) => fmt(m.unit_cost) },
+  { key: 'source', label: 'Asal harga', muted: true, render: (m) => m.cost_source_label || '—' },
   { key: 'amount', label: 'Jumlah', right: true, render: (m) => fmt(m.amount) },
+];
+const CMT_COLS = [
+  { key: 'sku', label: 'SKU', render: (c) => c.sku || '—' },
+  { key: 'qty', label: 'Qty jadi', right: true, render: (c) => `${Number(c.qty || 0).toLocaleString('id-ID')} pcs` },
+  { key: 'rate', label: 'Tarif jahit SPK', right: true, render: (c) => (c.rate > 0 ? fmt(c.rate) : 'belum diisi') },
+  { key: 'amount', label: 'Jumlah', right: true, render: (c) => fmt(c.amount) },
 ];
 const LABOR_COLS = [
   { key: 'op', label: 'Operator', render: (l) => l.operator_name || '—' },
@@ -206,11 +216,19 @@ function InternalWOTab({ headers, page }) {
           <HppComparisonInline estimated={null} actual={hpp.total_cost} />
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <Figure label="Bahan" value={fmt(hpp.material_cost)} testId="hpp-material-cost" />
-            <Figure label="Upah" value={fmt(hpp.labor_cost)} testId="hpp-labor-cost" />
-            <Figure label="Overhead" value={fmt(hpp.overhead_cost)} />
+            <Figure label="Upah CMT" value={fmt(hpp.cmt_cost ?? hpp.labor_cost)} testId="hpp-labor-cost" />
             <Figure label="Total biaya" value={fmt(hpp.total_cost)} />
             <Figure label="HPP per pcs" value={fmt(hpp.hpp_unit)} testId="hpp-unit-actual" strong />
+            <Figure label="Upah internal (tidak masuk HPP)" value={fmt(hpp.internal_labor_cost || 0)} />
           </div>
+          {(hpp.gaps || []).length > 0 && (
+            <div className="space-y-1" data-testid="hpp-gaps">
+              <p className="text-sm font-semibold text-foreground">Yang belum lengkap</p>
+              {hpp.gaps.map((g, i) => (
+                <p key={i} className="text-sm text-muted-foreground"><StatusBadge tone="warning" label="Perlu dilengkapi" /> {g}</p>
+              ))}
+            </div>
+          )}
           <div className="space-y-2">
             <p className="text-sm font-semibold text-foreground">Rincian bahan ({hpp.material_breakdown?.length || 0})</p>
             {(!hpp.material_breakdown || hpp.material_breakdown.length === 0) ? (
@@ -220,7 +238,15 @@ function InternalWOTab({ headers, page }) {
             )}
           </div>
           <div className="space-y-2">
-            <p className="text-sm font-semibold text-foreground">Rincian upah ({hpp.labor_breakdown?.length || 0})</p>
+            <p className="text-sm font-semibold text-foreground">Rincian upah CMT ({hpp.cmt_breakdown?.length || 0})</p>
+            {(!hpp.cmt_breakdown || hpp.cmt_breakdown.length === 0) ? (
+              <p className="text-sm text-muted-foreground">Job ini belum punya barang jadi atau tarif jahit SPK.</p>
+            ) : (
+              <BreakdownTable columns={CMT_COLS} rows={hpp.cmt_breakdown} />
+            )}
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-foreground">Rincian upah internal — tidak masuk HPP ({hpp.labor_breakdown?.length || 0})</p>
             {(!hpp.labor_breakdown || hpp.labor_breakdown.length === 0) ? (
               <p className="text-sm text-muted-foreground">Job ini belum punya hasil produksi bertanda; angka upah di atas memakai total agregat.</p>
             ) : (
@@ -248,7 +274,7 @@ function InternalWOTab({ headers, page }) {
       </>}
       summary={settings && (
         <p className="text-sm text-muted-foreground" data-testid="hpp-settings-summary">
-          Pengaturan biaya: overhead {fmt(settings.overhead_rate_per_pcs || 0)}/pcs · bahan bawaan {fmt(readNumber(settings, FIELD.defaultMaterialCostPerKg))}/kg ·
+          Pengaturan biaya: overhead {fmt(settings.overhead_rate_per_pcs || 0)}/pcs (tidak masuk HPP) · harga bawaan bila harga bahan belum ada (dilabeli estimasi) {fmt(readNumber(settings, FIELD.defaultMaterialCostPerKg))}/kg ·
           aksesori bawaan {fmt(settings.default_accessory_cost_per_unit || 0)}/unit · upah cadangan {fmt(settings.labor_rate_fallback_per_pcs || 0)}/pcs
         </p>
       )}
@@ -391,8 +417,8 @@ function MaklonActualTab({ headers, page }) {
         <HppComparisonInline estimated={hpp.estimated_hpp_total} actual={hpp.total_cost_actual} />
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatTile label="Bahan" value={fmt(hpp.material_cost_actual)} testId="maklon-hpp-material" />
-          <StatTile label="Upah" value={fmt(hpp.labor_cost_actual)} testId="maklon-hpp-labor" />
-          <StatTile label="Overhead" value={fmt(hpp.overhead_cost_actual)} />
+          <StatTile label="Upah internal (tidak masuk HPP)" value={fmt(hpp.labor_cost_actual)} testId="maklon-hpp-labor" />
+          <StatTile label="Overhead (tidak masuk HPP)" value={fmt(hpp.overhead_cost_actual)} />
           <StatTile label="HPP per pcs" value={fmt(hpp.hpp_unit_actual)} accent="primary" testId="maklon-hpp-unit" />
         </div>
       </>}
@@ -585,6 +611,104 @@ function ClientAnalysisTab({ headers, page }) {
             ? <EmptyState icon={Building2} title="Tidak ada data untuk klien ini" description="Pilih klien lain atau periksa order maklon klien ini." />
             : <EmptyState icon={Building2} title="Pilih klien maklon" description="Ringkasan order, pendapatan, margin, dan HPP klien tampil di sini." />}
         </GlassCard>
+      )}
+    </PageLayout>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TAB 4: Sisa WIP per PO (2026-11-06, Tahap 2) — bahan aktual vs standar BOM yang dikredit lapisan FG.
+// Sisa PO yang sudah ditutup dipindah ke Selisih Produksi otomatis saat PO ditutup; PO lama bisa
+// ditutup Keuangan di sini. Rincian per sumber dibuka di halaman (DetailPanel), konfirmasi di dialog.
+// ══════════════════════════════════════════════════════════════════════════════
+const WIP_COLS = [
+  { key: 'label', label: 'Sumber', render: (g) => g.label },
+  { key: 'debit', label: 'Masuk WIP', right: true, render: (g) => fmt(g.debit) },
+  { key: 'credit', label: 'Keluar WIP', right: true, render: (g) => fmt(g.credit) },
+  { key: 'net', label: 'Bersih', right: true, render: (g) => fmt(g.net) },
+];
+const WIP_ROW_COLS = (open) => [
+  { key: 'po', label: 'PO', render: (r) => (
+    <Button variant="link" size="sm" className="h-auto p-0" onClick={() => open(r)} data-testid={`po-wip-${r.po_number}`}>{r.po_number || r.po_id}</Button>
+  ) },
+  { key: 'status', label: 'Status', muted: true, render: (r) => <JobStatus status={r.status} /> },
+  { key: 'residual', label: 'Sisa WIP', right: true, render: (r) => fmt(r.residual) },
+];
+
+function PoWipTab({ headers, page }) {
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch('/api/costing/po-wip', { headers });
+      const d = r.ok ? await r.json() : { items: [] };
+      setRows(d.items || []);
+      setTotal(d.total_residual || 0);
+    } finally {
+      setLoading(false);
+    }
+  }, [headers]);
+  useEffect(() => { load(); }, [load]);
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch(`/api/costing/po-wip/${confirm.po_id}/clear`, { method: 'POST', headers });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { toast.error(d.detail || `Gagal menutup sisa WIP (HTTP ${r.status})`); return; }
+      toast.success(`Sisa WIP PO ${confirm.po_number} dipindah ke selisih produksi.`);
+      setConfirm(null); setSelected(null);
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const detail = selected && (
+    <DetailPanel testId="po-wip-detail" title={`PO ${selected.po_number || selected.po_id}`}
+      description={`Sisa WIP ${fmt(selected.residual)} — bahan & upah yang masuk WIP dikurangi nilai yang sudah pindah ke barang jadi.`}
+      onClose={() => setSelected(null)}
+      actions={<Button onClick={() => setConfirm(selected)} data-testid="po-wip-clear">Tutup sisa WIP</Button>}>
+      <BreakdownTable columns={WIP_COLS} rows={selected.groups || []} testId="po-wip-groups" />
+    </DetailPanel>
+  );
+
+  return (
+    <PageLayout testId={page.testId} title={page.title} subtitle={page.subtitle} filters={page.chips}
+      tools={<Button variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>}
+      summary={!loading && (
+        <p className="text-sm text-muted-foreground" data-testid="po-wip-summary">
+          {rows.length} PO yang sudah ditutup masih menyisakan WIP, total {fmt(total)}. Saat PO ditutup, sisanya otomatis dipindah ke akun selisih produksi.
+        </p>
+      )}
+      detail={detail}>
+      <GlassCard className="p-0 overflow-hidden">
+        {loading ? (
+          <div className="space-y-2 p-4">{Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-10 rounded-lg" />)}</div>
+        ) : rows.length === 0 ? (
+          <EmptyState icon={Calculator} title="Tidak ada sisa WIP" description="Semua PO produksi yang sudah ditutup sudah bersih dari saldo WIP." />
+        ) : (
+          <BreakdownTable columns={WIP_ROW_COLS(setSelected)} rows={rows} testId="po-wip-table" />
+        )}
+      </GlassCard>
+      {confirm && (
+        <Modal title="Tutup sisa WIP" onClose={() => setConfirm(null)} size="sm">
+          <div className="space-y-4">
+            <p className="text-sm text-foreground">
+              Sisa WIP PO {confirm.po_number} sebesar {fmt(confirm.residual)} dipindah ke akun selisih produksi dengan satu jurnal.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setConfirm(null)}>Batal</Button>
+              <Button onClick={clear} disabled={busy} data-testid="po-wip-confirm">{busy ? 'Menyimpan…' : 'Tutup sisa WIP'}</Button>
+            </div>
+          </div>
+        </Modal>
       )}
     </PageLayout>
   );

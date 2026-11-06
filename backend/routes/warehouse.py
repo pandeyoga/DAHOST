@@ -29,6 +29,9 @@ from core import quarantine  # FASE 6 (INV-8): qty reject GR → lokasi KARANTIN
 from core import fabric_roll_engine  # FASE H-5: roll kain LAHIR dari penerimaan (nomor otomatis)
 from core import accessory_valuation  # 2026-08-21: HPP terbentuk dari HARGA PEMBELIAN (WAC)
 from core.purchase_returns import gr_line_price  # 2026-11-02 (K11): satu definisi harga baris GR
+from core.purchase_returns import is_finance  # 2026-11-06 (Tahap 2): harga GR tanpa PO hanya Keuangan
+from core import procurement_guards as pguard  # 2026-11-06 (Tahap 2): satuan & harga baris GR satu pintu
+from core import purchase_costing  # 2026-11-06 (Tahap 2): jurnal koreksi stok bernilai 0 (butir 7)
 from datetime import datetime, timezone
 import uuid
 import logging
@@ -115,25 +118,18 @@ async def _record_material_movement(db, material_id: str, location_id: str, loca
     return doc
 
 
-async def _fill_prices_from_po(db, po_id, items: list) -> None:
-    """Baris GR ber-PO tanpa harga → harga baris PO (`unit_cost`, satuan dasar). Mengubah `items`."""
-    if not po_id or not any(it.get("material_id") and gr_line_price(it) <= 0 for it in items):
-        return
-    po = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0, "items": 1}) or {}
-    by_item, by_mat = {}, {}
-    for pi in po.get("items") or []:
-        c = float(pi.get("unit_cost") or 0)
-        if c <= 0:
-            continue
-        if pi.get("id"):
-            by_item[pi["id"]] = c
-        if pi.get("material_id"):
-            by_mat.setdefault(pi["material_id"], c)
-    for it in items:
-        if it.get("material_id") and gr_line_price(it) <= 0:
-            c = by_item.get(it.get("po_item_id")) or by_mat.get(it.get("material_id"))
-            if c:
-                it["unit_cost"] = c
+async def _normalize_gr_lines(db, user: dict, po_id, items: list, stored_items: list | None = None) -> list:
+    """2026-11-06 (Tahap 2): aturan baris GR satu pintu (`core.procurement_guards.normalize_gr_items`).
+
+    Baris ber-PO SELALU memakai harga baris PO (dulu harga PO hanya mengisi baris kosong — penerima bisa
+    mengetik harga lain); baris tanpa PO hanya Keuangan yang boleh memberi harga; satuan dikonversi ke
+    satuan dasar. Return label baris yang menunggu harga Keuangan. Mengubah `items`."""
+    po = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0}) if po_id else None
+    try:
+        return await pguard.normalize_gr_items(db, items, po_doc=po or ({"items": []} if po_id else None),
+                                               finance=is_finance(user), stored_items=stored_items)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ── Locations / Bin ───────────────────────────────────────────────────────────
@@ -310,7 +306,9 @@ async def create_receiving(request: Request):
             "asset_category": item.get("asset_category") or None,  # For auto-create fixed asset
         }
         receipt["items"].append(receipt_item)
-    
+
+    # 2026-11-06 (Tahap 2): satuan → satuan dasar; harga dari PO / hanya Keuangan (tanpa PO)
+    receipt.update(pguard.price_status_fields(await _normalize_gr_lines(db, user, po_id, receipt["items"])))
     await db.warehouse_receiving.insert_one(receipt)
     await log_activity(user["id"], user["name"], "create", "warehouse_receiving", f"Created GR {receipt_number}")
     return serialize_doc(receipt)
@@ -349,6 +347,11 @@ async def update_receiving(receipt_id: str, request: Request):
     if "status" in body:
         updates["status"] = body["status"]
     if "items" in body:
+        # 2026-11-06 (Tahap 2): PUT mengganti baris SELURUHNYA — harga penerima tidak boleh ikut masuk.
+        # Baris ber-PO = harga PO; tanpa PO = hanya Keuangan; satuan dikonversi ke satuan dasar.
+        body["items"] = list(body.get("items") or [])
+        updates.update(pguard.price_status_fields(await _normalize_gr_lines(
+            db, user, existing.get("po_id"), body["items"], stored_items=existing.get("items"))))
         updates["items"] = body["items"]
     if "notes" in body:
         updates["notes"] = body["notes"]
@@ -437,21 +440,29 @@ async def update_receiving(receipt_id: str, request: Request):
                     "Pengadaan membuat PO baru.")
 
         # ── HARGA WAJIB (2026-11-02, K11 — owner: penerimaan tanpa PO BOLEH, harga WAJIB) ──
-        # GR dari PO yang barisnya tanpa harga (mis. dibuat dari layar Penerimaan lewat pilih PO)
-        # mengambil harga baris PO. GR TANPA PO wajib berharga: dulu form manual tanpa kolom harga
-        # → persediaan Rp 0 di GL, HPP tidak bergerak, dan faktur yang datang masuk beban umum.
-        await _fill_prices_from_po(db, existing.get("po_id"), items_to_process)
-        if not existing.get("po_id"):
-            no_price = [it.get("sku") or it.get("product_name") or it.get("material_name") or "?"
-                        for it in items_to_process
-                        if it.get("material_id") and float(it.get("received_qty") or 0) > 0
-                        and gr_line_price(it) <= 0]
-            if no_price:
+        # GR TANPA PO wajib berharga: dulu form manual tanpa kolom harga → persediaan Rp 0 di GL, HPP
+        # tidak bergerak, dan faktur yang datang masuk beban umum.
+        # 2026-11-06 (Tahap 2, keputusan owner): baris ber-PO SELALU = harga baris PO (penerima tidak bisa
+        # mengubahnya; harga PO hanya diubah Keuangan). GR tanpa PO: hanya Keuangan yang memberi harga —
+        # selama belum ada, GR "menunggu harga dari Keuangan" dan tidak bisa dikonfirmasi.
+        if "items" not in body:
+            await _normalize_gr_lines(db, user, existing.get("po_id"), items_to_process,
+                                      stored_items=existing.get("items"))
+        no_price = [pguard.line_label(it) for it in items_to_process
+                    if (it.get("material_id") or (it.get("item_type") or "material") == "asset")
+                    and float(it.get("received_qty") or 0) > 0 and gr_line_price(it) <= 0]
+        if no_price:
+            if existing.get("po_id"):
                 raise HTTPException(
                     400,
-                    "Harga satuan wajib diisi untuk penerimaan tanpa PO — baris tanpa harga: "
-                    + ", ".join(no_price[:5]) + ". Harga ini menjadi nilai persediaan, HPP rata-rata, "
-                    "dan dasar tagihan pemasok.")
+                    f"Harga baris PO {existing.get('po_number') or ''} masih 0 untuk: " + ", ".join(no_price[:5])
+                    + f" — penerimaan ini {pguard.PRICE_PENDING_NOTE}. Penerima tidak bisa mengisi harga; "
+                    "Keuangan mengubah harga baris PO lebih dulu (Purchase Order → Ubah harga).")
+            raise HTTPException(
+                400,
+                "Harga satuan wajib diisi Keuangan untuk penerimaan tanpa PO — penerimaan ini "
+                f"{pguard.PRICE_PENDING_NOTE}. Baris tanpa harga: " + ", ".join(no_price[:5])
+                + ". Harga ini menjadi nilai persediaan, HPP rata-rata, dan dasar tagihan pemasok.")
 
         # ── P1.C: Anti over-receive validation ─────────────────────────────
         # Jika GR linked ke PO dan enforce_po_qty=True, validasi bahwa net_qty
@@ -693,6 +704,16 @@ async def update_receiving(receipt_id: str, request: Request):
                                        f"{' · PO ' + str(existing.get('po_number')) if existing.get('po_number') else ''}"),
                             )
                             item["unit_cost_applied"] = res_cost["new_unit_cost"]
+                            # 2026-11-06 (Tahap 2, butir 7): stok lama bernilai 0 (atau minus) ikut dinilai
+                            # harga beli ini → jurnal koreksi supaya nilai stok = buku besar (cara FG).
+                            gap_je = await purchase_costing.post_receipt_wac_gap(
+                                db, material_id=material_id, cost_result=res_cost, qty_in=net_qty,
+                                cost_in=cost_in, source_ref=f"gr:{receipt_id}:{item.get('id') or material_id}",
+                                memo=(f"Nilai ulang stok lama {pname or sku or material_id} oleh harga beli GR "
+                                      f"{existing.get('receipt_number', '')}"), user=user)
+                            if gap_je:
+                                item["wac_gap_je_number"] = gap_je.get("je_number")
+                                item["wac_gap_error"] = gap_je.get("error")
                             logger.info(
                                 f"GR HPP: material_id={material_id} {res_cost['old_unit_cost']} → "
                                 f"{res_cost['new_unit_cost']} (harga beli {cost_in}, qty {net_qty})")
@@ -818,6 +839,7 @@ async def update_receiving(receipt_id: str, request: Request):
             updates["items"] = items_to_process
             updates["received_at"] = existing.get("received_at") or now()
             updates["processing_at"] = None
+            updates.update(pguard.price_status_fields([]))   # dikonfirmasi = semua baris berharga
             await db.warehouse_receiving.update_one({"id": receipt_id}, {"$set": updates})
         except BaseException:
             await db.warehouse_receiving.update_one(
@@ -1084,6 +1106,9 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
         except HTTPException as e:
             # Penerimaan stok tetap jalan; kapitalisasi ditandai gagal supaya Keuangan menindaklanjuti.
             logger.warning(f"Kapitalisasi aset GR {grn.get('receipt_number', '')} gagal: {e.detail}")
+            # 2026-11-06 (Tahap 2): tanda juga ditulis ke baris DI MEMORI — penyimpanan akhir GR menimpa
+            # `items` seluruhnya dengan daftar ini (dulu tanda di DB hilang tertimpa).
+            item.update({"capitalize_error": str(e.detail), "capitalized": False})
             await db.warehouse_receiving.update_one(
                 {"id": receipt_id, "items.id": item.get("id")},
                 {"$set": {"items.$.capitalize_error": str(e.detail), "items.$.capitalized": False}})
@@ -1094,7 +1119,10 @@ async def _capitalize_assets_from_grn(db, receipt_id: str, grn: dict, items: lis
         logger.info(f"✅ Fixed asset created: {asset_code} - {asset_doc['name']} (Rp {total_cost:,.0f}) "
                     f"JE {(posting_result or {}).get('je_number', 'N/A')}")
 
-        # Update GRN item dengan asset_id
+        # Update GRN item dengan asset_id — 2026-11-06 (Tahap 2): juga di baris DI MEMORI, karena
+        # penyimpanan akhir GR (`updates["items"] = items_to_process`) menimpa tulisan posisional ini.
+        item.update({"asset_id": asset_doc["id"], "asset_code": asset_code, "capitalized": True,
+                     "capitalized_at": now(), "capitalize_error": None})
         await db.warehouse_receiving.update_one(
             {"id": receipt_id, "items.id": item.get("id")},
             {"$set": {

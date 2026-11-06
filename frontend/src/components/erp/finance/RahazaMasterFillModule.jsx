@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Download, Upload, CheckCircle2, AlertTriangle, ClipboardList } from 'lucide-react';
-import { GlassCard } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
 import { StatTile } from '../moduleAtoms';
@@ -35,6 +35,20 @@ function ResultCard({ result }) {
       <div>HPP: {result.models_hpp_applied} model dihitung · <span className="text-[hsl(var(--warning))]" data-testid="fill-result-hpp-unvalidated">{result.hpp_unvalidated || 0} model HPP belum tervalidasi</span> (material harga 0 / kemasan tanpa isi) · {result.hpp_validated || 0} tervalidasi{result.variants_created ? <> · <span data-testid="fill-result-variants">{result.variants_created} varian/SKU baru dibuat (sheet VARIAN_BARU)</span></> : null}</div>
       {result.scope !== 'bom' && <div data-testid="fill-result-extra">{result.materials_updated} material · {result.accounts_updated} rekening · {result.stores_updated} toko · {result.sku_prices_updated || 0} harga SKU · <span data-testid="fill-result-deactivated">{result.sku_deactivated || 0} SKU dinonaktifkan (sudah tidak dijual)</span> · {result.opening_stock_rows || 0} stok awal · {result.salaries_updated || 0} gaji · {result.models_weight_updated || 0} berat model</div>}
       {(result.bom_conflicts || []).length > 0 && <div className="text-[hsl(var(--warning))]">Konflik qty (kelompok belakangan menimpa): {result.bom_conflicts.join(' | ')}</div>}
+      {/* 2026-11-06 (Tahap 2): harga barang berstok hanya lewat revaluasi berjurnal (stok = buku besar) */}
+      {result.price_report && (
+        <div data-testid="fill-result-price">
+          Harga: {(result.price_report.price_opening || []).length} harga awal (stok kosong) ·{' '}
+          {(result.price_report.price_revalued || []).length} direvaluasi berjurnal ·{' '}
+          <span className={(result.price_report.price_skipped || []).length ? 'text-[hsl(var(--warning))]' : ''}>
+            {(result.price_report.price_skipped || []).length} dilewati
+          </span>
+          {(result.price_report.price_skipped || []).length > 0 && (
+            <span className="text-muted-foreground"> — barang sudah berstok: {result.price_report.price_skipped.slice(0, 8).map((s) => s.code).join(', ')}
+              {result.price_report.price_skipped.length > 8 ? ', …' : ''}. Isi alasan revaluasi lalu terapkan ulang.</span>
+          )}
+        </div>
+      )}
     </GlassCard>
   );
 }
@@ -51,6 +65,7 @@ export default function RahazaMasterFillModule({ token }) {
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
+  const [revalReason, setRevalReason] = useState('');
   const inputRef = useRef(null);
 
   const doPreview = useCallback(async () => {
@@ -70,7 +85,9 @@ export default function RahazaMasterFillModule({ token }) {
     setBusy(true);
     try {
       const fd = new FormData(); fd.append('file', file);
-      const r = await fetch(`/api/rahaza/master/fill-apply?scope=${scope}`, { method: 'POST', headers: authHeaders(token), body: fd });
+      const qs = new URLSearchParams({ scope });
+      if (scope !== 'bom' && revalReason.trim()) qs.set('revaluation_reason', revalReason.trim());
+      const r = await fetch(`/api/rahaza/master/fill-apply?${qs}`, { method: 'POST', headers: authHeaders(token), body: fd });
       const j = await r.json();
       if (!r.ok) { toast.error(typeof j.detail === 'string' ? j.detail : j.detail?.message || 'Gagal'); return; }
       setResult(j);
@@ -109,7 +126,13 @@ export default function RahazaMasterFillModule({ token }) {
           <Button onClick={() => doApply('bom')} disabled={!preview || busy || !(t.bom_lines > 0)} className="w-full" data-testid="fill-apply">
             <CheckCircle2 className="w-4 h-4" />Terapkan (hanya BOM)</Button>
           <Button size="sm" onClick={() => doApply('all')} variant="outline" disabled={!preview?.ok || busy || !nApply} className="w-full" data-testid="fill-apply-all">
-            <Upload className="w-4 h-4" />Terapkan semua sheet</Button></GlassCard>
+            <Upload className="w-4 h-4" />Terapkan semua sheet</Button>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1" htmlFor="fill-reval-reason">Alasan revaluasi (barang yang sudah berstok)</label>
+            <GlassInput id="fill-reval-reason" value={revalReason} onChange={(e) => setRevalReason(e.target.value)}
+              placeholder="kosongkan = harga barang berstok tidak diubah" className="h-8 text-xs" data-testid="fill-reval-reason" />
+            <p className="text-[11px] text-muted-foreground mt-1">Harga barang tanpa stok langsung jadi harga awal. Harga barang berstok hanya diubah lewat revaluasi berjurnal bila alasan diisi.</p>
+          </div></GlassCard>
         <GlassCard className="p-4 space-y-3"><StepLabel n={4} /><h3 className="font-semibold text-sm">Laporan sisa</h3>
           <Button onClick={dlLaporan} variant="outline" className="w-full" data-testid="fill-download-laporan"><ClipboardList className="w-4 h-4" />Unduh laporan sisa</Button>
           <p className="text-[11px] text-muted-foreground">Kekurangan yang tidak diimpor: model tanpa SKU, kelompok tanpa varian, satuan/kode tak valid, warna tak dikenal, material harga 0, harga jual SKU, berat/toko/rekening/gaji, HPP belum tervalidasi. {file ? 'Memakai berkas yang sedang diunggah.' : 'Tanpa berkas: hanya dari data yang sudah ada di sistem.'}</p></GlassCard>

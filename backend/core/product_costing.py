@@ -18,8 +18,12 @@ ketikan:
 
     HPP/pcs = biaya bahan (BOM × unit_cost hasil pembelian, SADAR SATUAN)
             + upah CMT/jahit per pcs
-            + upah cutting/internal per pcs
-            [+ overhead per pcs — OPSIONAL, default MATI]
+
+2026-11-06 (Tahap 2, keputusan owner): upah internal (cutting dll.) dan overhead pabrik
+TIDAK masuk HPP — keduanya tetap beban bulanan (payroll sudah membukukannya ke 6-2100).
+Upah internal tetap dihitung dan ditampilkan sebagai informasi berlabel "tidak masuk HPP".
+HPP per potong per FG (warna/ukuran) adalah SATU-SATUNYA HPP standar; ia hanya ditulis ke
+FG/model/katalog lewat `apply_model_cost` ("Terapkan").
 
 ATURAN JUJUR (tidak boleh dilanggar)
 ------------------------------------
@@ -48,7 +52,7 @@ import logging
 import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from core import bom_uom
 from core import cut_panel_master
@@ -112,7 +116,9 @@ async def get_settings(db) -> dict:
     doc = await db[SETTINGS_COLL].find_one({"id": SETTINGS_ID}, {"_id": 0}) or {}
     return {
         "overhead_rate_per_pcs": _f(doc.get("overhead_rate_per_pcs")),
-        "include_overhead_in_product_hpp": bool(doc.get("include_overhead_in_product_hpp", False)),
+        # 2026-11-06 (Tahap 2): overhead pabrik tidak masuk HPP (keputusan owner) — selalu False,
+        # apa pun yang pernah tersimpan.
+        "include_overhead_in_product_hpp": False,
         "target_margin_pct": _f(doc.get("target_margin_pct"), DEFAULT_TARGET_MARGIN_PCT),
         "labor_rate_fallback_per_pcs": _f(doc.get("labor_rate_fallback_per_pcs")),
         "process_rates": [r for r in (doc.get("process_rates") or []) if isinstance(r, dict)],
@@ -132,7 +138,8 @@ async def save_settings(db, patch: dict, user: dict | None = None) -> dict:
     if "target_margin_pct" in up and up["target_margin_pct"] >= 100:
         raise ValueError("Target margin harus di bawah 100% (margin dihitung atas harga jual).")
     if "include_overhead_in_product_hpp" in patch:
-        up["include_overhead_in_product_hpp"] = bool(patch.get("include_overhead_in_product_hpp"))
+        # 2026-11-06 (Tahap 2): overhead tidak masuk HPP — saklar lama disimpan mati.
+        up["include_overhead_in_product_hpp"] = False
     if "process_rates" in patch:
         rows = []
         for r in (patch.get("process_rates") or []):
@@ -460,7 +467,71 @@ async def compute_material_cost(db, model_id: str, size_id: str, *, cache: dict 
 # ══════════════════════════════════════════════════════════════════════════════
 # upah CMT / jahit per pcs
 # ══════════════════════════════════════════════════════════════════════════════
-async def resolve_cmt_rate(db, model: dict, *, override: dict | None = None) -> dict:
+# 2026-11-06 (Tahap 2): jendela "SPK terbaru" untuk tarif jahit HPP per potong. Tarif dari 180 hari
+# terakhir dipakai; bila tidak ada SPK dalam jendela itu, dipakai baris SPK terbaru (maks. 20) —
+# tarif lama tidak membuat HPP basi, tetapi model yang jarang diproduksi tetap punya angka.
+CMT_RATE_WINDOW_DAYS = 180
+CMT_RATE_FALLBACK_ROWS = 20
+CMT_RATE_SCAN_ROWS = 500
+CANCELLED_PO_STATUSES = {"cancelled", "rejected", "void", "dibatalkan"}
+
+
+def _as_dt(v):
+    if isinstance(v, datetime):
+        return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+    if isinstance(v, str) and v:
+        try:
+            d = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def po_business_type(po: dict | None) -> str:
+    """Jenis usaha SPK — aturan yang sama dengan layar Biaya Jahit SPK."""
+    p = po or {}
+    return p.get("business_type") or ("internal" if not p.get("vendor_id") else "maklon")
+
+
+def pick_cmt_rate_rows(rows: list, pos: dict, *, business_type: str = "internal", now=None,
+                       window_days: int = CMT_RATE_WINDOW_DAYS,
+                       fallback_rows: int = CMT_RATE_FALLBACK_ROWS) -> dict:
+    """Pilih baris SPK untuk tarif jahit (fungsi murni). `rows` = po_items bertarif model ini,
+    `pos` = {po_id: production_pos}. SPK yang tidak ditemukan, batal/ditolak, atau berbeda jenis
+    usahanya DIKELUARKAN. Tarif = Σ tarif × qty ÷ Σ qty."""
+    now = now or _now()
+    excluded = {"cancelled": 0, "other_business_type": 0, "po_missing": 0}
+    valid = []
+    for r in rows or []:
+        po = pos.get(r.get("po_id"))
+        if not po:
+            excluded["po_missing"] += 1
+            continue
+        if str(po.get("status") or "").strip().lower() in CANCELLED_PO_STATUSES:
+            excluded["cancelled"] += 1
+            continue
+        if po_business_type(po) != business_type:
+            excluded["other_business_type"] += 1
+            continue
+        if _f(r.get("qty")) <= 0:
+            continue
+        valid.append(r)
+    valid.sort(key=lambda r: _as_dt(r.get("created_at")) or datetime.min.replace(tzinfo=timezone.utc),
+               reverse=True)
+    cutoff = now - timedelta(days=window_days)
+    recent = [r for r in valid if (_as_dt(r.get("created_at")) or cutoff) > cutoff]
+    if recent:
+        chosen, basis = recent, f"SPK {window_days} hari terakhir"
+    else:
+        chosen, basis = valid[:fallback_rows], f"{min(len(valid), fallback_rows)} baris SPK terbaru"
+    qty = sum(_f(r.get("qty")) for r in chosen)
+    rate = (sum(_f(r.get("cmt_price_snapshot")) * _f(r.get("qty")) for r in chosen) / qty) if qty else 0.0
+    return {"rows": chosen, "qty": qty, "rate": _r(rate), "basis": basis, "excluded": excluded}
+
+
+async def resolve_cmt_rate(db, model: dict, *, override: dict | None = None,
+                           business_type: str = "internal") -> dict:
     """Upah CMT per pcs + ASAL ANGKANYA + kandidat nyata untuk dipilih pemilik."""
     model_id = model.get("id")
     res = {"rate": 0.0, "source": "none", "note": "", "candidates": [], "gaps": []}
@@ -502,36 +573,39 @@ async def resolve_cmt_rate(db, model: dict, *, override: dict | None = None) -> 
     #    Ini SUMBER UTAMA sejak layar "Biaya Jahit SPK" ada: yang diketik staf
     #    produksi per SKU per pcs, ditimbang qty. `dewi_cmt_jobs` di bawah tetap
     #    dipakai sebagai jalan mundur untuk data lama (koleksi itu diarsipkan).
-    name = (model.get("name") or "").strip()
-    q_or_po = []
+    #    2026-11-06 (Tahap 2): dulu dicocokkan lewat model_id ATAU NAMA, ≤300 baris, tanpa
+    #    saring status (SPK batal ikut) dan tanpa saring jenis usaha (tarif maklon ikut).
+    #    Sekarang: model_id saja · SPK batal/ditolak dikeluarkan · jenis usaha sama (HPP per
+    #    potong = produk internal) · ditimbang qty · SPK terbaru didahulukan (lihat
+    #    `pick_cmt_rate_rows`).
     if model_id:
-        q_or_po.append({"model_id": model_id})
-    if name:
-        q_or_po.append({"product_name": {"$regex": f"^{_rx(name)}$", "$options": "i"}})
-    if q_or_po:
         po_rows = await db.po_items.find(
-            {"$and": [{"$or": q_or_po}, {"cmt_price_snapshot": {"$gt": 0}}]},
-            {"_id": 0, "cmt_price_snapshot": 1, "qty": 1, "po_number": 1, "sku": 1}
-        ).sort("created_at", -1).to_list(300)
-        tot_q_po = sum(_f(r.get("qty")) for r in po_rows)
-        if po_rows and tot_q_po > 0:
-            rate = sum(_f(r.get("cmt_price_snapshot")) * _f(r.get("qty")) for r in po_rows) / tot_q_po
+            {"model_id": model_id, "cmt_price_snapshot": {"$gt": 0}},
+            {"_id": 0, "po_id": 1, "cmt_price_snapshot": 1, "qty": 1, "po_number": 1, "sku": 1,
+             "created_at": 1}
+        ).sort("created_at", -1).to_list(CMT_RATE_SCAN_ROWS)
+        po_ids = list({r.get("po_id") for r in po_rows if r.get("po_id")})
+        pos = {}
+        if po_ids:
+            async for p in db.production_pos.find(
+                    {"id": {"$in": po_ids}},
+                    {"_id": 0, "id": 1, "status": 1, "business_type": 1, "vendor_id": 1}):
+                pos[p["id"]] = p
+        picked = pick_cmt_rate_rows(po_rows, pos, business_type=business_type, now=_now())
+        if picked["rows"] and picked["qty"] > 0:
             res.update({
-                "rate": _r(rate), "source": "spk_actual",
-                "note": (f"Rata-rata tertimbang biaya jahit {len(po_rows)} baris SPK model ini "
-                         f"({int(tot_q_po)} pcs) — diisi di layar Biaya Jahit SPK."),
+                "rate": picked["rate"], "source": "spk_actual",
+                "note": (f"Rata-rata tertimbang biaya jahit {len(picked['rows'])} baris SPK "
+                         f"{business_type} model ini ({int(picked['qty'])} pcs, {picked['basis']}) — "
+                         f"diisi di layar Biaya Jahit SPK."),
+                "basis": picked["basis"], "excluded": picked["excluded"],
             })
             return res
 
-    # 3) rata-rata TERTIMBANG dari job CMT model ini (data lama)
-    q_or = []
+    # 3) rata-rata TERTIMBANG dari job CMT model ini (data lama) — model_id saja (Tahap 2)
     if model_id:
-        q_or.append({"model_id": model_id})
-    if name:
-        q_or.append({"product_model_name": {"$regex": f"^{_rx(name)}$", "$options": "i"}})
-    if q_or:
         rows = await db.dewi_cmt_jobs.find(
-            {"$and": [{"$or": q_or}, {"sewing_rate_per_pcs": {"$gt": 0}}]}, {"_id": 0}).to_list(200)
+            {"model_id": model_id, "sewing_rate_per_pcs": {"$gt": 0}}, {"_id": 0}).to_list(200)
         tot_q = sum(_f(r.get("qty_total")) for r in rows)
         if rows and tot_q > 0:
             rate = sum(_f(r.get("sewing_rate_per_pcs")) * _f(r.get("qty_total")) for r in rows) / tot_q
@@ -662,26 +736,17 @@ def margin_of(price: float, hpp: float) -> dict:
     menguntungkan padahal biayanya belum diketahui sama sekali. Itu justru jenis
     kebohongan yang paling mahal, jadi margin dilaporkan `margin_known=False`
     dan layar menampilkan "—" + alasannya.
+
+    2026-11-06 (Tahap 2): rumusnya kini SATU untuk seluruh aplikasi (`core.margin`).
     """
-    price, hpp = _f(price), _f(hpp)
-    if price <= 0:
-        return {"margin": 0.0, "margin_pct": 0.0, "has_price": False, "margin_known": False}
-    if hpp <= 0:
-        return {"margin": 0.0, "margin_pct": 0.0, "has_price": True, "margin_known": False}
-    m = price - hpp
-    return {"margin": _r(m), "margin_pct": _r(m / price * 100.0), "has_price": True,
-            "margin_known": True}
+    from core import margin as _margin
+    return _margin.margin_of(price, hpp)
 
 
 def suggested_price(hpp: float, target_margin_pct: float) -> float:
-    """Harga jual usulan agar margin (ATAS HARGA JUAL) = target."""
-    hpp = _f(hpp)
-    t = _f(target_margin_pct)
-    if hpp <= 0:
-        return 0.0
-    if t <= 0 or t >= 100:
-        return _r(hpp)
-    return _r(hpp / (1.0 - t / 100.0))
+    """Harga jual usulan agar margin (ATAS HARGA JUAL) = target (`core.margin`)."""
+    from core import margin as _margin
+    return _margin.price_for_margin(hpp, target_margin_pct)
 
 
 async def _sizes_of_model(db, model_id: str) -> list[dict]:
@@ -788,7 +853,8 @@ async def _color_costs(db, model_id: str, size: dict, fg_rows: list[dict], size_
                 f"sendiri — HPP-nya memakai BOM warna {size_mc.get('bom_color') or 'lain'} (perkiraan).",
                 "Buat BOM untuk warna ini", "rnd-bom", size_id=size["size_id"], color=col))
         computable = bool(mc.get("bom_id")) and bool(mc.get("lines")) and not _bad_statuses(mc)
-        unit = _r(_f(mc.get("material_cost")) + cmt_rate + labor_rate + overhead)
+        # 2026-11-06 (Tahap 2): HPP = bahan + upah CMT; upah internal & overhead tidak masuk HPP.
+        unit = _r(_f(mc.get("material_cost")) + cmt_rate)
         out.append({
             "fg_id": f["id"], "code": f.get("code"), "color": col,
             "color_name": f.get("color_name") or f.get("color") or "",
@@ -801,7 +867,7 @@ async def _color_costs(db, model_id: str, size: dict, fg_rows: list[dict], size_
             "bad_line_statuses": _bad_statuses(mc),
             "computable": computable,
             "hpp_unit": unit,
-            "confidence": ("full" if (computable and cmt_rate > 0 and labor_rate > 0)
+            "confidence": ("full" if (computable and cmt_rate > 0)
                            else ("partial" if mc.get("bom_id") else "none")),
             "hpp_current": _r(f.get("hpp")), "hpp_source_current": f.get("hpp_source") or "none",
         })
@@ -823,8 +889,10 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
     settings = settings if settings is not None else await get_settings(db)
     cache = cache if cache is not None else {}
     override = await get_override(db, model_id)
-    use_oh = settings["include_overhead_in_product_hpp"] if include_overhead is None else bool(include_overhead)
-    overhead = _r(settings["overhead_rate_per_pcs"]) if use_oh else 0.0
+    # 2026-11-06 (Tahap 2, keputusan owner): overhead pabrik & upah internal TIDAK masuk HPP.
+    # Parameter `include_overhead` tetap diterima (pemanggil lama) tetapi tidak berpengaruh.
+    use_oh = False
+    overhead = 0.0
     target = _f(target_margin_pct, settings["target_margin_pct"])
 
     cmt = await resolve_cmt_rate(db, model, override=override)
@@ -838,7 +906,8 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
         sizes = [s for s in sizes if s["size_id"] == size_id]
 
     rows = []
-    gaps: list[dict] = list(cmt["gaps"]) + list(labor["gaps"])
+    # upah internal tidak masuk HPP ⇒ kekurangannya bukan kekurangan HPP (tidak dilaporkan sebagai gap)
+    gaps: list[dict] = list(cmt["gaps"])
     for s in sizes:
         mc = await compute_material_cost(db, model_id, s["size_id"], cache=cache)
         fg_rows = await db.rahaza_materials.find(
@@ -850,7 +919,7 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
         # T-04: baris `unlinked`/`uom_unclear` juga membuat HPP tidak bisa dipercaya.
         computable = bool(mc["bom_id"]) and bool(mc["lines"]) and all(
             ln["status"] == "ok" for ln in mc["lines"])
-        hpp = _r(mc["material_cost"] + cmt["rate"] + labor["rate"] + overhead)
+        hpp = _r(mc["material_cost"] + cmt["rate"])          # Tahap 2: tanpa upah internal & overhead
         marg = margin_of(price["best_price"], hpp)
         # 2026-11-02 (F1b) — HPP PER WARNA. Angka per ukuran di atas tetap dihitung
         # seperti dulu (kompatibilitas layar), tetapi tiap FG warna kini memakai BOM
@@ -866,7 +935,9 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
             "material_cost": mc["material_cost"],
             "fabric_cost": mc["fabric_cost"], "accessory_cost": mc["accessory_cost"],
             "other_cost": mc["other_cost"],
-            "cmt_cost": _r(cmt["rate"]), "internal_labor_cost": _r(labor["rate"]),
+            "cmt_cost": _r(cmt["rate"]),
+            # informasi saja — TIDAK masuk HPP (keputusan owner 6 Nov 2026)
+            "internal_labor_cost": _r(labor["rate"]), "internal_labor_in_hpp": False,
             "overhead_cost": overhead,
             "hpp_unit": hpp,
             "lines": mc["lines"], "line_count": mc["line_count"],
@@ -874,7 +945,7 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
             "gaps": mc["gaps"],
             "uom_warnings": mc["uom_warnings"],
             "computable": computable,
-            "confidence": ("full" if (computable and cmt["rate"] > 0 and labor["rate"] > 0)
+            "confidence": ("full" if (computable and cmt["rate"] > 0)
                            else ("partial" if mc["bom_id"] else "none")),
             "fg_variants": [{"id": f["id"], "code": f.get("code"), "name": f.get("name"),
                              "color_name": f.get("color_name") or "",
@@ -954,8 +1025,9 @@ async def compute_model_cost(db, model_id: str, *, size_id: str | None = None,
         "size_count": len(rows),
         "sizes_with_bom": len(computable_rows),
         "cmt": {k: cmt[k] for k in ("rate", "source", "note", "candidates")},
-        "internal_labor": {k: labor[k] for k in ("rate", "source", "note", "processes", "candidates")},
-        "overhead": {"rate": overhead, "included": use_oh,
+        "internal_labor": {**{k: labor[k] for k in ("rate", "source", "note", "processes", "candidates")},
+                           "in_hpp": False, "label": "tidak masuk HPP"},
+        "overhead": {"rate": overhead, "included": use_oh, "in_hpp": False, "label": "tidak masuk HPP",
                      "rate_setting": _r(settings["overhead_rate_per_pcs"])},
         "override": {"cmt_rate_per_pcs": override.get("cmt_rate_per_pcs"),
                      "internal_labor_per_pcs": override.get("internal_labor_per_pcs"),
@@ -1076,8 +1148,9 @@ async def apply_model_cost(db, model_id: str, user: dict, *, size_ids: list[str]
             breakdown = {
                 "material": src["material_cost"], "fabric": src["fabric_cost"],
                 "accessory": src["accessory_cost"], "other": src["other_cost"],
-                "cmt": s["cmt_cost"], "internal_labor": s["internal_labor_cost"],
-                "overhead": s["overhead_cost"], "confidence": src["confidence"],
+                # Tahap 2: upah internal & overhead tidak masuk HPP (0); angka info disimpan terpisah
+                "cmt": s["cmt_cost"], "internal_labor": 0.0, "overhead": 0.0,
+                "internal_labor_info": s["internal_labor_cost"], "confidence": src["confidence"],
                 "unvalued_count": src["unvalued_count"], "bom_id": src["bom_id"],
                 "bom_version": src["bom_version"],
             }
@@ -1143,7 +1216,7 @@ async def apply_model_cost(db, model_id: str, user: dict, *, size_ids: list[str]
         "model_code": d["model"]["code"], "model_name": d["model"]["name"],
         "hpp_model": model_hpp, "applied_sizes": applied, "skipped_sizes": skipped,
         "cmt": d["cmt"]["rate"], "cmt_source": d["cmt"]["source"],
-        "internal_labor": d["internal_labor"]["rate"],
+        "internal_labor": d["internal_labor"]["rate"], "internal_labor_in_hpp": False,
         "internal_labor_source": d["internal_labor"]["source"],
         "overhead": d["overhead"]["rate"], "overhead_included": d["overhead"]["included"],
         "gaps": d["gaps"], "gap_count": d["gap_count"],

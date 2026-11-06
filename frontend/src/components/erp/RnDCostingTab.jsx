@@ -258,7 +258,7 @@ export default function RnDCostingTab({ token }) {
                   <div className="flex gap-6 mt-2 text-sm">
                     <span className="text-foreground/60">Material: <strong className="text-foreground">{fmt(c.total_material_cost)}</strong></span>
                     <span className="text-foreground/60">Tenaga: <strong className="text-foreground">{fmt(c.labor_cost)}</strong></span>
-                    <span className="text-foreground/60">Overhead: <strong className="text-foreground">{fmt(c.overhead_cost)}</strong></span>
+                    <span className="text-foreground/60">Overhead (tidak masuk HPP): <strong className="text-foreground">{fmt(c.overhead_cost)}</strong></span>
                     <span className="text-violet-600 dark:text-violet-400">Total: <strong>{fmt(c.total_cost)}</strong></span>
                   </div>
                 </div>
@@ -376,7 +376,7 @@ export default function RnDCostingTab({ token }) {
                 onChange={e => f('labor_cost', Number(e.target.value))} data-testid="costing-labor-input" />
             </div>
             <div>
-              <Label>Overhead (Rp)</Label>
+              <Label>Overhead (Rp) — tidak masuk HPP</Label>
               <MoneyInput className="mt-1" value={form.overhead_cost}
                 onChange={e => f('overhead_cost', Number(e.target.value))} data-testid="costing-overhead-input" />
             </div>

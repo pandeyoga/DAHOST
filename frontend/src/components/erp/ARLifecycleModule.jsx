@@ -278,6 +278,9 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
   const cell = (r, key) => (r[key] > 0
     ? <span className={key === 'current' ? 'text-foreground' : BUCKET_META[key].text}>{fmtRp(r[key])}</span>
     : <span className="text-foreground/20">—</span>);
+  // 2026-11-06 (Tahap 2): piutang maklon TERJADWAL (PO dikonfirmasi, barang belum dikirim) — belum jatuh
+  // tempo dan di luar saldo piutang; ditampilkan terpisah supaya total umur piutang tetap = buku besar.
+  const hasSched = rows.some((r) => Number(r.scheduled || 0) > 0);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">
@@ -286,6 +289,7 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
             <th className="text-left py-2 px-2">Pelanggan</th>
             {BUCKET_KEYS.map((k) => <th key={k} className="text-right py-2 px-2 whitespace-nowrap">{BUCKET_META[k].label}</th>)}
             <th className="text-right py-2 px-2 border-l border-foreground/10">Total</th>
+            {hasSched && <th className="text-right py-2 px-2 whitespace-nowrap">Terjadwal (belum jatuh tempo)</th>}
             <th className="text-right py-2 px-2">Aksi</th>
           </tr>
         </thead>
@@ -307,6 +311,7 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
               <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap border-l border-foreground/10">
                 <span className="text-foreground font-bold">{fmtRp(r.total)}</span>
               </td>
+              {hasSched && <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{Number(r.scheduled || 0) > 0 ? fmtRp(r.scheduled) : '—'}</td>}
               <td className="py-2 px-2 text-right whitespace-nowrap">
                 <Button variant="link" size="sm" className="h-auto p-0 text-xs"
                   data-testid={`ar360-matrix-statement-${r.customer_id}`}
@@ -324,6 +329,7 @@ function AgingMatrixTable({ rows, totals, selectedId, onPickCustomer }) {
               <td key={k} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">{fmtRp(totals[k])}</td>
             ))}
             <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-base text-foreground border-l border-foreground/10">{fmtRp(totals.total)}</td>
+            {hasSched && <td className="py-2 px-2 text-right tabular-nums whitespace-nowrap text-muted-foreground">{fmtRp(totals.scheduled)}</td>}
             <td></td>
           </tr>
         </tfoot>
@@ -406,7 +412,7 @@ export default function ARLifecycleModule({ token }) {
         {/* 2026-11-04: tombol jalankan M-07 (tandai lewat jatuh tempo) pindah ke Adm. Sistem */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatTile label="Sisa piutang" value={fmtRp(k.total_outstanding)} accent={k.total_outstanding ? 'default' : 'muted'}
-            sub={`${fmtNum(k.count_open_invoices)} faktur · ${fmtNum(k.total_unique_debtors)} pelanggan`} />
+            sub={`${fmtNum(k.count_open_invoices)} faktur · ${fmtNum(k.total_unique_debtors)} pelanggan${k.scheduled_amount ? ` · terjadwal maklon ${fmtRp(k.scheduled_amount)}` : ''}`} />
           <StatTile label="Lewat jatuh tempo" value={fmtRp(k.total_overdue_amount)} accent={k.total_overdue_amount > 0 ? 'danger' : 'muted'}
             sub={`${k.count_overdue_invoices || 0} faktur · ${fmtPct(k.overdue_pct_of_outstanding)} dari sisa`} />
           <StatTile label="Rata-rata terlambat" value={`${fmtNum(k.avg_days_overdue || 0)} hari`} sub="ditimbang nilai faktur yang terlambat" />

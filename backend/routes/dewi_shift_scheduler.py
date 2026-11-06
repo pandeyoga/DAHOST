@@ -153,7 +153,7 @@ async def generate_schedule(request: Request, gen_request: GenerateScheduleReque
         "status": "draft"
     }
     
-    await db["rahaza_schedules"].insert_one(schedule_doc)
+    await db.rahaza_schedules.insert_one(schedule_doc)   # Tahap 2: dibaca core.attendance_rules (jadwal shift)
     
     # Remove MongoDB _id before returning
     schedule_doc.pop("_id", None)
@@ -305,7 +305,7 @@ async def publish_schedule(request: Request, schedule_id: str):
     await require_auth(request)
     db = get_db()
     
-    result = await db["rahaza_schedules"].update_one(
+    result = await db.rahaza_schedules.update_one(
         {"id": schedule_id},
         {"$set": {"status": "published", "published_at": datetime.now(timezone.utc).isoformat()}}
     )

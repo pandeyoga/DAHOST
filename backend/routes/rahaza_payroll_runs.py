@@ -19,6 +19,7 @@ from routes.rahaza_payroll_shared import (
     employee_is_active, find_duplicate_run_conflicts,
     list_payment_cash_accounts, resolve_payment_account, parse_ymd,
     kasbon_deducted_elsewhere,
+    run_warnings, negative_net_slips, carry_manual_adjustments, check_segregation, apply_correction_trail,
 )
 from routes.rahaza_posting import post_payroll_run, payroll_deduction_totals
 from core.roles import FINANCE_ROLES, HR_ROLES
@@ -84,9 +85,16 @@ async def create_run(request: Request):
 
     # 2026-11-02 (P5 butir 2): karyawan NONAKTIF di master SDM tidak ikut digaji walau profil gajinya
     # masih aktif. Dulu run hanya melihat status profil → Tanti (active=False) tetap dibayar 2.700.000.
-    excluded = [{"employee_id": p["employee_id"], "employee_name": (e_map.get(p["employee_id"]) or {}).get("name") or "",
-                 "reason": "karyawan nonaktif"}
-                for p in profiles if e_map.get(p["employee_id"]) and not employee_is_active(e_map[p["employee_id"]])]
+    # 2026-11-06 (Tahap 2): kecuali yang KELUAR di tengah periode (tanggal keluar ≥ awal periode) — ikut run
+    # periode itu dan dibayar prorata; yang belum mulai bekerja / sudah keluar sebelum periode dikecualikan.
+    from routes.rahaza_payroll_rules import payroll_exclusion_reason
+    pf_d, pt_d = _to_date(period_from), _to_date(period_to)
+    excluded = []
+    for p in profiles:
+        e = e_map.get(p["employee_id"])
+        reason = payroll_exclusion_reason(e, pf_d, pt_d) if e else None
+        if reason:
+            excluded.append({"employee_id": p["employee_id"], "employee_name": e.get("name") or "", "reason": reason})
     excluded_ids = {x["employee_id"] for x in excluded}
     profiles = [p for p in profiles if p["employee_id"] not in excluded_ids and p["employee_id"] in e_map]
     if not profiles:
@@ -134,10 +142,9 @@ async def create_run(request: Request):
     total_gross = sum(s["gross_pay"] for s in payslips)
     total_ded = sum(s["deductions_total"] for s in payslips)
     total_net = sum(s["net_pay"] for s in payslips)
-    # 2026-11-02 (K24): peringatan di layar run gaji — lembur disetujui/tercatat tetapi tarif 0.
-    warnings = [{"type": "overtime_rate_zero", "employee_id": s.get("employee_id"),
-                 "employee_name": s.get("employee_name") or "", "message": s["overtime_warning"]}
-                for s in payslips if s.get("overtime_warning")]
+    # 2026-11-02 (K24) + 2026-11-06 (Tahap 2): peringatan di layar run gaji — lembur bertarif 0 / tanpa
+    # pengajuan, hari kerja tanpa catatan absen, gaji bersih minus, PPh21 lebih potong, dll.
+    warnings = run_warnings(payslips)
 
     run_doc = {
         "id": run_id,
@@ -202,6 +209,60 @@ async def get_run(run_id: str, request: Request):
     return serialize_doc({"run": run, "payslips": payslips})
 
 
+async def _json_body(request: Request) -> dict:
+    """Badan JSON opsional (tombol lama mengirim POST tanpa badan)."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+@router.post("/payroll-runs/{run_id}/recalculate")
+async def recalculate_run(run_id: str, request: Request):
+    """Hitung ulang run DRAFT (Tahap 2, 2026-11-06): semua slip dihitung lagi dari absensi, profil gaji,
+    dan pengaturan TERKINI; penyesuaian manual HR (tombol Adj) DIPERTAHANKAN. Karyawan di run tetap sama."""
+    user = await _require_hr(request)
+    db = get_db()
+    run = await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0})
+    if not run:
+        raise HTTPException(404, "Payroll run tidak ditemukan.")
+    if run.get("status") != "draft":
+        raise HTTPException(400, "Hanya run DRAFT yang bisa dihitung ulang.")
+    old_slips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0}).to_list(1000)
+    emp_ids = [s["employee_id"] for s in old_slips if s.get("employee_id")]
+    prof_map = {p["employee_id"]: p for p in await db.rahaza_payroll_profiles.find(
+        {"employee_id": {"$in": emp_ids}, "active": True}, {"_id": 0}).to_list(1000)}
+    e_map = {e["id"]: e for e in await db.rahaza_employees.find({"id": {"$in": emp_ids}}, {"_id": 0}).to_list(1000)}
+    now = _now()
+    new_slips, skipped = [], []
+    for old in old_slips:
+        prof, emp = prof_map.get(old.get("employee_id")), e_map.get(old.get("employee_id"))
+        if not prof or not emp:
+            skipped.append({"employee_id": old.get("employee_id"), "employee_name": old.get("employee_name") or "",
+                            "reason": "profil gaji / data karyawan tidak aktif — slip lama dipertahankan"})
+            new_slips.append(old)
+            continue
+        fresh = await _compute_payslip_for_employee(db, prof, run["period_from"], run["period_to"], emp, run_id=run_id)
+        slip = carry_manual_adjustments(old, fresh)
+        slip.update(run_id=run_id, run_number=run.get("run_number"), updated_at=now, recalculated_at=now)
+        await db.rahaza_payslips.update_one({"id": old["id"]}, {"$set": slip})
+        new_slips.append(slip)
+    totals = {
+        "total_employees": len(new_slips),
+        "total_gross": sum(float(s.get("gross_pay") or 0) for s in new_slips),
+        "total_deductions": sum(float(s.get("deductions_total") or 0) for s in new_slips),
+        "total_net": sum(float(s.get("net_pay") or 0) for s in new_slips),
+        "warnings": run_warnings(new_slips) + [{"type": "recalc_skipped", **x, "message": x["reason"]} for x in skipped],
+        "recalculated_at": now, "recalculated_by": user["id"], "recalculated_by_name": user.get("name", ""),
+        "updated_at": now,
+    }
+    await db.rahaza_payroll_runs.update_one({"id": run_id, "status": "draft"}, {"$set": totals})
+    await log_activity(user["id"], user.get("name", ""), "recalculate", "rahaza.payroll_run",
+                       f"{run.get('run_number')} — {len(new_slips)} slip")
+    return serialize_doc(await db.rahaza_payroll_runs.find_one({"id": run_id}, {"_id": 0}))
+
+
 async def _apply_run_kasbon(db, run: dict, payslips: list, user: dict):
     """Catat potongan kasbon dari slip run yang SUDAH final + jurnalnya (idempoten per run_id).
 
@@ -245,8 +306,17 @@ async def finalize_run(run_id: str, request: Request):
         raise HTTPException(404, "Payroll run tidak ditemukan.")
     if run.get("status") != "draft":
         raise HTTPException(400, f"Run sudah ber-status '{run.get('status')}', tidak bisa finalize.")
+    body = await _json_body(request)
+    # 2026-11-06 (Tahap 2, K25): pembuat run tidak memfinalisasi sendiri (admin/owner boleh dengan alasan).
+    sod = check_segregation(run, user, "finalize", body.get("override_reason") or body.get("reason"))
     # Recalc totals dari payslips (in case deductions diubah)
     payslips = await db.rahaza_payslips.find({"run_id": run_id}, {"_id": 0}).to_list(500)
+    # 2026-11-06 (Tahap 2): gaji bersih minus diblokir — daftar karyawannya disebut.
+    neg = negative_net_slips(payslips)
+    if neg:
+        rows = "; ".join(f"{n['employee_name']} (Rp {n['net_pay']:,.0f})".replace(",", ".") for n in neg)
+        raise HTTPException(400, (f"Finalisasi ditolak: {len(neg)} karyawan bergaji bersih minus — {rows}. "
+                                  "Kurangi potongan lewat tombol Adj atau perbaiki datanya, lalu Hitung ulang."))
     # Tahap 1: satu cicilan kasbon per bulan hanya untuk satu run (run draft lama bisa masih dobel).
     dup_kasbon = await kasbon_deducted_elsewhere(db, run, payslips)
     if dup_kasbon:
@@ -295,15 +365,22 @@ async def finalize_run(run_id: str, request: Request):
             f"Finalisasi DIBATALKAN — jurnal gaji gagal diposting: {err} "
             "Run tetap DRAFT dan potongan kasbon belum dicatat. Perbaiki penyebabnya lalu finalisasi ulang."))
 
-    await db.rahaza_payroll_runs.update_one({"id": run_id, "status": "draft"}, {"$set": {
+    fin_set = {
         **totals,
         "status": "finalized",
         "finalized_at": _now(),
         "finalized_by": user["id"],
         "finalized_by_name": user.get("name", ""),
         "updated_at": _now(),
-    }})
-    await log_activity(user["id"], user.get("name", ""), "finalize", "rahaza.payroll_run", run.get("run_number"))
+    }
+    if sod:
+        fin_set["sod_overrides"] = list(run.get("sod_overrides") or []) + [sod]
+    await db.rahaza_payroll_runs.update_one({"id": run_id, "status": "draft"}, {"$set": fin_set})
+    await log_activity(user["id"], user.get("name", ""), "finalize", "rahaza.payroll_run",
+                       (run.get("run_number") or "") + (f" — pengecualian pemisahan tugas: {sod['reason']}" if sod else ""))
+    # 2026-11-06 (Tahap 2): absensi periode ini kini terkunci (is_attendance_locked); koreksi absen periode
+    # final sebelumnya yang dibawa run ini ditandai sudah dibayar.
+    await apply_correction_trail(db, payslips)
 
     # ── Iter 119 (B-07): potongan kasbon di slip → saldo kasbon berkurang + JE Dr Hutang Gaji / Cr Piutang.
     # Sebelumnya tidak ada yang memanggil ini ⇒ kasbon dipotong lagi di run berikutnya & 2-1200 tersisa.
@@ -399,6 +476,8 @@ async def pay_payroll_run(run_id: str, request: Request):
             f"Penggajian {run.get('run_number')} sudah dibayar "
             f"({run.get('payment_gl_je_number')}). "
             "Gunakan void-payment untuk membatalkan.")
+    # 2026-11-06 (Tahap 2, K25): pembuat run tidak membayar sendiri (admin/owner boleh dengan alasan).
+    sod = check_segregation(run, user, "pay", body.get("override_reason"))
 
     payment_date   = (body.get("payment_date") or str(today_wib()))[:10]
     # L-03: default bank dari profil posting payroll_payment (bukan hard-code)
@@ -433,6 +512,8 @@ async def pay_payroll_run(run_id: str, request: Request):
         "paid_by_name":         user.get("name", ""),
         "updated_at":           _now(),
     }
+    if sod:
+        update["sod_overrides"] = list(run.get("sod_overrides") or []) + [sod]
     await db.rahaza_payroll_runs.update_one({"id": run_id}, {"$set": update})
     await log_activity(user["id"], user.get("name", ""), "pay_payroll", "rahaza.payroll_run",
                        f"{run.get('run_number')} → {bank_code} {payment_date}")
@@ -799,6 +880,9 @@ async def _execute_run_cancel(db, run: dict, user: dict, reason: str) -> dict:
             + ". Run tetap FINAL; jurnal pembalik yang sudah terbentuk dipakai ulang saat diulang."))
     from routes.dewi_kasbon import restore_payroll_deductions_core
     kasbon = await restore_payroll_deductions_core(db, run_id, user, reason=reason)
+    # 2026-11-06 (Tahap 2): koreksi absen yang dibawa run ini dikembalikan → dibawa lagi run berikutnya.
+    await apply_correction_trail(db, await db.rahaza_payslips.find(
+        {"run_id": run_id}, {"_id": 0, "corrections": 1}).to_list(1000), revert=True)
     now = _now()
     cr = dict(run.get("cancel_request") or {})
     if cr:

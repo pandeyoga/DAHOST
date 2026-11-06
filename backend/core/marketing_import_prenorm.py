@@ -326,6 +326,64 @@ def _rows_after(matrix: List[List[Any]], first_cell: str) -> Tuple[List[str], Li
     return [], []
 
 
+def _blocks(matrix: List[List[Any]], first_cells: Tuple[str, ...]) -> List[Tuple[List[str], List[List[Any]]]]:
+    """SEMUA blok (header, baris) yang sel pertama header-nya salah satu `first_cells`.
+
+    2026-11-06 (Tahap 2) — ekspor Statistik Toko versi baru menulis DUA blok yang
+    sama-sama diawali "Tanggal": ringkasan rentang lalu rincian per hari. Versi
+    lama menulis rincian dengan header "Waktu". `_rows_after` hanya mengambil blok
+    pertama, jadi rincian versi baru tidak pernah terbaca dan berkasnya ditolak.
+    """
+    out: List[Tuple[List[str], List[List[Any]]]] = []
+    i, n = 0, len(matrix)
+    while i < n:
+        row = matrix[i]
+        if row and _norm(row[0]) in first_cells:
+            header = [_norm(c) for c in row]
+            body: List[List[Any]] = []
+            j = i + 1
+            while j < n:
+                r = matrix[j]
+                if not r or all(c in (None, "") for c in r):
+                    break
+                body.append(list(r))
+                j += 1
+            out.append((header, body))
+            i = j
+            continue
+        i += 1
+    return out
+
+
+def _is_range_cell(raw: Any) -> bool:
+    """Sel berisi DUA tanggal (rentang ringkasan), mis. ``01-10-2026-31-10-2026``."""
+    s = str(raw or "")
+    return len(re.findall(r"\d{1,2}[-/]\d{1,2}[-/]\d{4}", s)) >= 2 or \
+        len(re.findall(r"\d{4}-\d{2}-\d{2}", s)) >= 2
+
+
+def _summary_and_detail(matrix: List[List[Any]]):
+    """→ ((header, baris) ringkasan, (header, baris) rincian) — keduanya boleh kosong.
+
+    Ringkasan = blok yang baris pertamanya RENTANG tanggal; rincian = blok lain
+    yang barisnya bertanggal tunggal (per hari) atau berjam (per jam).
+    """
+    summary: Tuple[List[str], List[List[Any]]] = ([], [])
+    detail: Tuple[List[str], List[List[Any]]] = ([], [])
+    for head, body in _blocks(matrix, ("tanggal", "waktu")):
+        if not body:
+            continue
+        first = body[0][0] if body[0] else ""
+        if not summary[1] and _is_range_cell(first):
+            summary = (head, body)
+        elif not detail[1] and _date_head(first) and not _is_range_cell(first):
+            detail = (head, body)
+    if not detail[1]:
+        # perilaku lama dipertahankan: blok "Waktu" dipakai apa pun isi sel pertamanya
+        detail = _rows_after(matrix, "waktu")
+    return summary, detail
+
+
 def prenorm_shopee_shop_stats(raw: bytes, filename: str) -> Tuple[List[str], List[Dict[str, Any]]]:
     """XLSX `*.shopee-shop-stats.*` → satu baris KPI per TANGGAL (kanal `shop`)."""
     try:
@@ -347,16 +405,16 @@ def prenorm_shopee_shop_stats(raw: bytes, filename: str) -> Tuple[List[str], Lis
         if not basis:
             continue
         matrix = _sheet_matrix(ws)
-        # ── ringkasan (rentang) ────────────────────────────────────────────────
-        sum_head, sum_body = _rows_after(matrix, "tanggal")
+        # ── ringkasan (rentang) + rincian (per jam untuk ekspor 1 hari, per hari
+        #    untuk rentang). Header rincian bisa "Waktu" (versi lama) atau
+        #    "Tanggal" (versi 2026-11) — dibedakan dari ISI baris, bukan judulnya.
+        (sum_head, sum_body), (det_head, det_body) = _summary_and_detail(matrix)
         rng_from = rng_to = None
         summary: Dict[str, Any] = {}
         if sum_body:
             rng_from, rng_to = _date_range(sum_body[0][0] if sum_body[0] else "")
             summary = {sum_head[i]: sum_body[0][i] if i < len(sum_body[0]) else None
                        for i in range(len(sum_head))}
-        # ── rincian (per jam untuk ekspor 1 hari, per hari untuk rentang) ──────
-        det_head, det_body = _rows_after(matrix, "waktu")
 
         if rng_from and rng_to and rng_from == rng_to:
             # Ekspor 1 hari: pengunjung & klik dari RINGKASAN (menjumlah per jam
@@ -388,6 +446,11 @@ def prenorm_shopee_shop_stats(raw: bytes, filename: str) -> Tuple[List[str], Lis
                         rec["visitors"] = r[vs] if vs < len(r) else None
                     if pc >= 0:
                         rec["product_clicks"] = r[pc] if pc < len(r) else None
+                    # rincian PER HARI (bukan per jam) sah membawa konversi harian
+                    cv = (det_head.index("tingkat konversi pesanan")
+                          if "tingkat konversi pesanan" in det_head else -1)
+                    if cv >= 0 and _date_head(r[0]) and ":" not in str(r[0]):
+                        rec["conversion_rate"] = r[cv] if cv < len(r) else None
         else:
             notes.append(f"sheet '{ws.title}' tidak punya blok tanggal/waktu")
 

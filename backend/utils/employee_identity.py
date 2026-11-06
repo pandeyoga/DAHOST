@@ -178,25 +178,21 @@ async def compute_late_minutes(db, emp: dict, clock_in_utc: datetime,
     if not clock_in_utc:
         return out
 
-    sid = shift_id or (emp or {}).get("shift_id")
-    shift = None
-    if sid:
-        shift = await db.rahaza_shifts.find_one({"id": sid}, {"_id": 0})
+    if clock_in_utc.tzinfo is None:
+        clock_in_utc = clock_in_utc.replace(tzinfo=timezone.utc)
+    local = clock_in_utc.astimezone(WIB)
+
+    # Tahap 2 (2026-11-06): shift yang BERLAKU hari itu — shift record → Jadwal Shift terbit → penugasan shift
+    # → shift bawaan karyawan (core.attendance_rules.resolve_day_shift). Dulu selalu shift bawaan karyawan,
+    # sehingga jadwal di menu Shift tidak berpengaruh pada keterlambatan.
+    from core.attendance_rules import resolve_day_shift
+    shift = await resolve_day_shift(db, emp, local.date().isoformat(), shift_id)
     if not shift:
         # Tanpa shift → tidak bisa menyimpulkan terlambat. Jangan mengarang.
         return out
 
-    start_txt = (shift.get("start_time") or "").strip()
-    if not start_txt or ":" not in start_txt:
-        return out
-    try:
-        hh, mm = (int(x) for x in start_txt.split(":")[:2])
-    except Exception:  # noqa: BLE001
-        return out
-
-    if clock_in_utc.tzinfo is None:
-        clock_in_utc = clock_in_utc.replace(tzinfo=timezone.utc)
-    local = clock_in_utc.astimezone(WIB)
+    start_txt = shift["start_time"]
+    hh, mm = (int(x) for x in start_txt.split(":")[:2])
     scheduled = local.replace(hour=hh, minute=mm, second=0, microsecond=0)
     diff = int((local - scheduled).total_seconds() // 60)
     grace = int(shift.get("grace_minutes") or DEFAULT_GRACE_MINUTES)
@@ -204,6 +200,7 @@ async def compute_late_minutes(db, emp: dict, clock_in_utc: datetime,
     out.update({
         "shift_code": shift.get("code"),
         "shift_start": start_txt,
+        "shift_source": shift.get("source"),
         "grace_minutes": grace,
         "late_minutes": max(0, diff - grace) if diff > grace else 0,
     })

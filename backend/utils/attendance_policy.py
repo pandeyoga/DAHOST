@@ -39,6 +39,9 @@ KONFIGURASI (koleksi `rahaza_office_locations`, dokumen `is_primary: True`)
 | `require_selfie`     | True    | absen tanpa foto ditolak                     |
 | `require_geofence`   | True    | absen di luar radius / tanpa GPS ditolak     |
 | `face_match_threshold`| 0.65   | ambang kemiripan wajah AI                    |
+| `gps_max_age_s`      | 60      | umur maksimum posisi GPS saat tombol ditekan (Tahap 2) |
+| `gps_max_accuracy_m` | 100     | akurasi GPS terburuk yang masih diterima (Tahap 2) |
+| `clock_out_window_hours` | 6   | absen pulang lewat tengah malam: jendela sesudah jam pulang shift |
 
 Semua nilai bisa diubah HR lewat `PUT /api/rahaza/attendance/office-location`.
 """
@@ -72,6 +75,11 @@ MSG_SELFIE_REQUIRED = (
 MSG_GPS_REQUIRED = (
     "Lokasi GPS wajib untuk absen. Aktifkan izin lokasi di browser/HP Anda, "
     "lalu coba lagi."
+)
+DEFAULT_GPS_MAX_AGE_S = 60
+DEFAULT_GPS_MAX_ACCURACY_M = 100
+MSG_GPS_FIX_MISSING = (
+    "Lokasi harus dibaca ulang saat tombol absen ditekan. Muat ulang halaman, lalu tekan Coba lagi."
 )
 
 
@@ -137,6 +145,10 @@ async def get_office(db) -> dict:
         "require_selfie": bool(doc.get("require_selfie", True)),
         "require_geofence": bool(doc.get("require_geofence", True)),
         "face_match_threshold": float(doc.get("face_match_threshold") or DEFAULT_FACE_THRESHOLD),
+        "gps_max_age_s": int(doc.get("gps_max_age_s") or DEFAULT_GPS_MAX_AGE_S),
+        "gps_max_accuracy_m": int(doc.get("gps_max_accuracy_m") or DEFAULT_GPS_MAX_ACCURACY_M),
+        "clock_out_window_hours": float(doc.get("clock_out_window_hours")
+                                        if doc.get("clock_out_window_hours") is not None else 6),
         "configured": doc.get("lat") is not None and doc.get("lng") is not None,
         "updated_at": doc.get("updated_at"),
     }
@@ -174,9 +186,43 @@ def save_selfie(employee_id: str, photo_b64: str, kind: str = "in") -> Optional[
     return storage.put_object(path, blob, "image/jpeg")["url"]
 
 
+def gps_fix_from_body(body: Optional[dict]) -> dict:
+    """Data kesegaran GPS yang dikirim layar absen: waktu posisi dibaca (`gps_at`, ms), waktu tombol ditekan
+    (`gps_sent_at`, ms — jam HP yang sama, jadi selisih jam HP vs server tidak berpengaruh), dan `accuracy` (m)."""
+    b = body or {}
+    return {"gps_at": b.get("gps_at"), "sent_at": b.get("gps_sent_at"), "accuracy": b.get("accuracy")}
+
+
+def check_gps_fix(fix: Optional[dict], office: dict) -> dict:
+    """Tahap 2 (2026-11-06): GPS dibaca SAAT tombol ditekan. Dulu posisi dibaca sekali waktu halaman dibuka
+    lalu dipakai ulang — buka halaman di kantor pagi hari, absen pulang dari rumah tetap lolos.
+    Melempar 400 (pesan berakhir "Coba lagi") bila posisi basi atau kurang akurat."""
+    f = fix or {}
+    try:
+        gps_at, sent_at = float(f.get("gps_at")), float(f.get("sent_at"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, MSG_GPS_FIX_MISSING)
+    max_age = int(office.get("gps_max_age_s") or DEFAULT_GPS_MAX_AGE_S)
+    age_s = (sent_at - gps_at) / 1000.0
+    if age_s > max_age:
+        raise HTTPException(400, f"Lokasi GPS sudah basi (dibaca {int(age_s)} detik lalu, batas {max_age} detik). "
+                                 "Tekan Coba lagi untuk membaca lokasi baru.")
+    max_acc = int(office.get("gps_max_accuracy_m") or DEFAULT_GPS_MAX_ACCURACY_M)
+    try:
+        acc = float(f.get("accuracy"))
+    except (TypeError, ValueError):
+        acc = None
+    if acc is None or acc > max_acc:
+        txt = f"±{int(acc)} m" if acc is not None else "tidak diketahui"
+        raise HTTPException(400, f"Lokasi GPS kurang akurat ({txt}, batas {max_acc} m). Nyalakan GPS/lokasi akurat, "
+                                 "pindah ke dekat jendela atau tempat terbuka, lalu tekan Coba lagi.")
+    return {"age_s": round(max(age_s, 0.0), 1), "accuracy_m": round(acc)}
+
+
 async def enforce_attendance_policy(db, *, photo_b64: Optional[str],
                                     lat, lng, action: str = "masuk",
-                                    selfie_required: Optional[bool] = None) -> dict:
+                                    selfie_required: Optional[bool] = None,
+                                    fix: Optional[dict] = None) -> dict:
     """Tegakkan kebijakan sebelum absen dicatat. Melempar HTTPException bila gagal.
 
     `selfie_required=False` dipakai jalur BIOMETRIK (WebAuthn/fingerprint) yang
@@ -196,23 +242,41 @@ async def enforce_attendance_policy(db, *, photo_b64: Optional[str],
             raise HTTPException(409, MSG_OFFICE_UNSET)
         if lat is None or lng is None:
             raise HTTPException(400, MSG_GPS_REQUIRED)
+        geo = {**geo, **check_gps_fix(fix, office)}
         if geo["status"] == "out_of_range":
             raise HTTPException(
                 403,
                 f"Absen {action} ditolak: Anda berada {geo['distance_m']} m dari "
                 f"{office['name']} (batas {int(geo['radius_m'])} m). "
-                "Absen hanya bisa dilakukan di area kantor.",
+                "Absen hanya bisa dilakukan di area kantor. Bila Anda sudah di kantor, tekan Coba lagi.",
             )
         if geo["status"] == "not_verified":
             raise HTTPException(400, MSG_GPS_REQUIRED)
     return {"office": office, "geo": geo}
 
 
+def leave_status_for_clock_in(existing: Optional[dict]) -> str:
+    """Status yang ditulis saat absen MASUK (Tahap 2, 2026-11-06).
+
+    Dulu absen masuk selalu menimpa status jadi 'hadir', termasuk di hari cuti yang sudah disetujui.
+    · cuti/izin/sakit SETENGAH HARI disetujui → status cutinya tetap (payroll menghitung hadir 0,5);
+    · cuti SEHARI PENUH disetujui → absen masuk ditolak (minta HR membatalkan cutinya dulu);
+    · selain itu → 'hadir'."""
+    r = existing or {}
+    if r.get("leave_request_id"):
+        kind = (r.get("leave_kind") or r.get("status") or "cuti").lower()
+        if r.get("half_day"):
+            return kind
+        raise HTTPException(409, f"Hari ini Anda tercatat {kind} yang sudah disetujui. Bila Anda tetap masuk "
+                                 "kerja, minta HR membatalkan pengajuan itu dulu, lalu absen lagi.")
+    return "hadir"
+
+
 def attendance_counts(rec: Optional[dict]) -> bool:
     """Apakah satu record absensi DIHITUNG oleh pembaca (payroll, rekap jam).
 
     Tahap 1 (2026-11-06, keputusan owner): selfie yang masih `pending` dihitung hadir sampai HR
-    menolaknya. Selfie yang DITOLAK (`approval_status='rejected'`, status jadi 'alfa') bukan
+    menolaknya. Selfie yang DITOLAK (`approval_status='rejected'`, status jadi 'alpa'/'alfa') bukan
     kehadiran: tidak dihitung hadir dan jam kerja/lembur/terlambatnya tidak dipakai — padahal jamnya
     masih tersimpan (penolakan tidak menghapus jam; absen pulang sesudah ditolak tetap mengisi jam).
     Pengecualian: HR kemudian menandainya Hadir lagi secara manual (status 'hadir').

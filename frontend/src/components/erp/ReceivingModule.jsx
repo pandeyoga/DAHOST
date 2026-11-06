@@ -21,6 +21,9 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 // FASE H-5 — rincian gulungan kain diisi DI SINI (pintu masuk kain), nomor roll otomatis.
 import RollLinesEditor from './warehouse/RollLinesEditor';
 import { isRollUnit, acceptedOf, rollLinesState, fmtQty } from './warehouse/rollLines';
+import { toast } from 'sonner';
+// 2026-11-06 (Tahap 2): harga GR tanpa PO hanya diisi Keuangan (cermin core/roles.FINANCE_ROLES)
+import { isCurrentUserFinance } from '../../lib/financeRoles';
 
 const RECEIVING_VIEW_KEY = 'wh_receiving_view';
 const CSV_HEAD = ['No. Penerimaan', 'Supplier / Sumber', 'Jenis', 'No. PO', 'Status',
@@ -102,6 +105,33 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
 
   // M12: memoized headers
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  // 2026-11-06 (Tahap 2): harga baris ber-PO = harga PO (tidak bisa diubah di sini); penerimaan tanpa PO
+  // hanya Keuangan yang memberi harga. Satuan = salah satu satuan barang itu (server mengonversi ke dasar).
+  const finance = isCurrentUserFinance();
+  const [uomMap, setUomMap] = useState({});   // material_id → {base_unit, units[]} dari server
+  const ensureUom = useCallback(async (ids) => {
+    const need = [...new Set((ids || []).filter((id) => id && !uomMap[id]))];
+    if (!need.length) return;
+    try {
+      const r = await fetch(`/api/rahaza/materials/uom-options?material_ids=${need.join(',')}`,
+        { headers: { Authorization: `Bearer ${token}` } });
+      if (r.ok) {
+        const d = await r.json();
+        setUomMap((prev) => ({ ...prev, ...(d?.options || {}) }));
+      }
+    } catch { /* daftar satuan gagal dimuat — pilihan tetap satuan dasar */ }
+  }, [token, uomMap]);
+  const unitOptions = (item) => {
+    const o = uomMap[item.material_id];
+    if (!o) return [{ unit: item.unit || 'pcs', label: item.unit || 'pcs' }];
+    return o.units || [{ unit: o.base_unit, label: o.base_unit }];
+  };
+  const baseUnitOf = (item) => uomMap[item.material_id]?.base_unit || item.unit;
+  const factorOf = (item) => {
+    const o = uomMap[item.material_id];
+    if (!o || !item.unit || item.unit === o.base_unit) return 1;
+    return Number((o.units || []).find((u) => u.unit === item.unit)?.factor_to_base || 1);
+  };
 
   const [form, setForm] = useState({
     source_type: 'supplier', source_ref: '', supplier_name: '',
@@ -196,6 +226,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   // Sprint 1.1: When user picks a material from dropdown, auto-fill name + unit
   const handleMaterialPick = (idx, materialId) => {
     const mat = materials.find(m => m.id === materialId);
+    if (materialId) ensureUom([materialId]);
     setForm(f => ({
       ...f,
       items: f.items.map((it, i) => i === idx ? {
@@ -236,6 +267,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       unit_price:    item.unit_cost || 0,
     }));
 
+    ensureUom(poItems.map(it => it.material_id));
     setForm(f => ({
       ...f,
       po_id: po.id,
@@ -262,8 +294,9 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           + 'Perbaiki angkanya — stok dan gulungan harus menjelaskan penerimaan yang sama.');
         return;
       }
-      // 2026-11-02 (K11): penerimaan TANPA PO boleh, tetapi harga satuan WAJIB
-      if (!form.po_id) {
+      // 2026-11-02 (K11): penerimaan TANPA PO boleh, tetapi harga satuan WAJIB.
+      // 2026-11-06 (Tahap 2): harganya diisi Keuangan — gudang menyimpan dulu, GR "menunggu harga dari Keuangan".
+      if (!form.po_id && finance) {
         const noPrice = (form.items || []).find(it => it.material_id
           && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
         if (noPrice) {
@@ -280,7 +313,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         out.reject_reasons = rej > 0
           ? [{ code: it.reject_reason || 'OTHER', qty: rej, notes: '' }]
           : [];
-        out.rolls = isRollUnit(it.unit)
+        // gulungan selalu dalam satuan dasar — baris bersatuan lain mengisinya sesudah disimpan (detail)
+        out.rolls = isRollUnit(it.unit) && factorOf(it) === 1
           ? (it.rolls || []).filter(l => parseFloat(l.qty) > 0)
             .map(l => ({ qty: parseFloat(l.qty), color_lot: l.color_lot || '', notes: l.notes || '' }))
           : [];
@@ -288,7 +322,13 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       });
       const payload = { ...form, items, location_name: loc?.name || form.location_name };
       const res = await fetch('/api/wms/legacy/receiving', { method: 'POST', headers, body: JSON.stringify(payload) });
-      if (res.ok) { setShowCreate(false); resetForm(); fetchData(); }
+      if (res.ok) {
+        const saved = await res.json().catch(() => ({}));
+        if (saved?.awaiting_finance_price) {
+          toast.info(`Penerimaan ${saved.receipt_number || ''} tersimpan — menunggu harga dari Keuangan sebelum bisa dikonfirmasi.`);
+        }
+        setShowCreate(false); resetForm(); fetchData();
+      }
       else {
         const err = await res.json().catch(() => ({}));
         alert('Error: ' + (err.detail || res.status));
@@ -343,13 +383,14 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             + 'rak mana pun, dan Put-Away tidak bisa menemukannya.');
           return;
         }
-        // 2026-11-02 (K11): GR tanpa PO wajib berharga (backend menolak bila kosong)
-        if (!receipt.po_id) {
-          const noPrice = items.find(it => it.material_id && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
-          if (noPrice) {
-            alert(`Harga satuan wajib diisi untuk penerimaan tanpa PO (${noPrice.sku || noPrice.product_name || 'baris'}).`);
-            return;
-          }
+        // 2026-11-02 (K11): GR tanpa PO wajib berharga (backend menolak bila kosong).
+        // 2026-11-06 (Tahap 2): harga diisi Keuangan; baris ber-PO memakai harga PO.
+        const noPrice = items.find(it => it.material_id && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
+        if (noPrice) {
+          alert(`Penerimaan ini menunggu harga dari Keuangan (${noPrice.sku || noPrice.product_name || 'baris'}).\n\n`
+            + (receipt.po_id ? 'Harga baris PO masih 0 — Keuangan mengubah harga baris PO lebih dulu.'
+              : 'Penerimaan tanpa PO diberi harga oleh Keuangan sebelum bisa dikonfirmasi.'));
+          return;
         }
       }
       const locPick = locations.find(l => l.id === (detailLocationId || receipt.location_id));
@@ -398,6 +439,32 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         alert('Error: ' + (err.detail || res.status));
       }
     } catch (e) { alert('Error: ' + e.message); }
+  };
+
+  // 2026-11-06 (Tahap 2): Keuangan memberi harga penerimaan tanpa PO TANPA harus mengonfirmasinya —
+  // gudang yang menghitung barang tetap bisa mengonfirmasi sesudahnya.
+  const saveDetailPrices = async (receipt) => {
+    try {
+      const items = (detailItems.length ? detailItems : receipt.items || []).map(it => {
+        const rej = parseFloat(it.rejected_qty) || 0;
+        const out = { ...it, unit_price: parseFloat(it.unit_price) || 0 };
+        if ('reject_reason' in out) {
+          out.reject_reasons = rej > 0 ? [{ code: it.reject_reason || 'OTHER', qty: rej, notes: '' }] : [];
+          delete out.reject_reason;
+        }
+        return out;
+      });
+      const res = await fetch(`/api/wms/legacy/receiving/${receipt.id}`, {
+        method: 'PUT', headers, body: JSON.stringify({ items }),
+      });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error(out.detail || `Gagal menyimpan harga (HTTP ${res.status})`); return; }
+      toast.success(out.awaiting_finance_price
+        ? `Harga tersimpan, tetapi masih ada baris tanpa harga: ${(out.price_pending_lines || []).join(', ')}`
+        : `Harga ${receipt.receipt_number} tersimpan — penerimaan siap dikonfirmasi.`);
+      openDetail(out);
+      fetchData();
+    } catch (e) { toast.error(e.message); }
   };
 
   const handleDelete = async (id) => {
@@ -521,7 +588,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
         <Link2 className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
         <p className="text-xs text-[hsl(var(--primary))] ">
-          <strong>Sync Otomatis:</strong> Jika item dipilih dari master material, stok akan otomatis tercatat di modul Inventory (Material Issue / BOM) saat GR di-<em>Confirm Received</em>.
+          <strong>Setiap baris wajib tertaut ke Master Item</strong> — stok tercatat saat penerimaan dikonfirmasi.
+          Harga mengikuti PO dan tidak bisa diubah di sini; penerimaan tanpa PO diberi harga oleh Keuangan.
         </p>
       </div>
 
@@ -627,6 +695,12 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     <td className="px-2.5 py-2 tabular-nums">{r.po_number || '—'}</td>
                     <td className="px-2.5 py-2">
                       <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[r.status] || STATUS_STYLES.draft}`}>{r.status}</span>
+                      {r.awaiting_finance_price && r.status !== 'received' && (
+                        <span className={`ml-1 text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES.inspecting}`}
+                          data-testid={`receipt-price-pending-${r.receipt_number}`}>
+                          menunggu harga dari Keuangan
+                        </span>
+                      )}
                     </td>
                     <td className="px-2.5 py-2 text-right">{r.item_count}</td>
                     <td className="px-2.5 py-2 text-right">{r.expected_total.toLocaleString('id-ID')}</td>
@@ -776,14 +850,15 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     {/* Row 1: Material picker */}
                     <div className="grid grid-cols-2 gap-2">
                       <div>
+                        {/* 2026-11-06 (Tahap 2): tautan Master Item WAJIB — konfirmasi menolak baris tanpa tautan */}
                         <label className="text-[10px] text-[hsl(var(--primary))] font-medium flex items-center gap-1">
-                          <Link2 className="w-3 h-3" /> Pilih dari Master Material (opsional)
+                          <Link2 className="w-3 h-3" /> Master Item (wajib)
                         </label>
                         <Combobox
                           value={item.material_id || ''}
                           onChange={(v) => handleMaterialPick(idx, v)}
                           options={[
-                            { value: '', label: '-- Tanpa link material --' },
+                            { value: '', label: '— pilih barang —' },
                             ...materials.map(m => ({
                               value: m.id,
                               label: `${m.code} — ${m.name}`,
@@ -791,13 +866,18 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                               testId: `item-material-option-${m.code}`,
                             }))
                           ]}
-                          placeholder="-- Tanpa link material --"
+                          placeholder="— pilih barang —"
                           searchPlaceholder="Cari material..."
                           emptyMessage="Material tidak ditemukan"
                           size="sm"
                           className="border-[hsl(var(--primary)/0.25)]"
                           data-testid={`item-material-select-${idx}`}
                         />
+                        {!item.material_id && (
+                          <p className="text-[10px] text-[hsl(var(--warning))] mt-0.5" data-testid={`item-material-hint-${idx}`}>
+                            Pilih barangnya. Baris tanpa Master Item tidak bisa masuk stok dan ditolak saat penerimaan dikonfirmasi.
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label className="text-[10px] text-muted-foreground">Nama produk</label>
@@ -826,13 +906,21 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       </div>
                       <div>
                         <label className="text-[10px] text-muted-foreground">Satuan</label>
+                        {/* 2026-11-06 (Tahap 2): hanya satuan barang ini (kemasan + satuan sedimensi, sumber
+                            server yang sama dengan PO); server mengonversi qty & harga ke satuan dasar. */}
                         <SmartNativeSelect
                           value={item.unit}
                           onChange={e => updateItem(idx, 'unit', e.target.value)}
                           className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-2 h-8 text-xs text-foreground"
+                          data-testid={`item-unit-${idx}`}
                         >
-                          {['pcs','kg','gram','m','set','pair','roll','lbr'].map(u => <option key={u} value={u}>{u}</option>)}
+                          {unitOptions(item).map(u => <option key={u.unit} value={u.unit}>{u.label}</option>)}
                         </SmartNativeSelect>
+                        {factorOf(item) !== 1 && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5" data-testid={`item-unit-convert-${idx}`}>
+                            = {fmtQty((parseFloat(item.received_qty) || 0) * factorOf(item))} {baseUnitOf(item)}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label className="text-[10px] text-muted-foreground">Diharap</label>
@@ -842,14 +930,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         <label className="text-[10px] text-muted-foreground">Diterima</label>
                         <GlassInput type="number" value={item.received_qty} onChange={e => updateItem(idx, 'received_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-received-${idx}`} />
                       </div>
-                      {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP) */}
+                      {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP).
+                          2026-11-06 (Tahap 2): ber-PO = harga PO (terkunci); tanpa PO = hanya Keuangan. */}
                       <div>
-                        <label className={`text-[10px] ${form.po_id ? 'text-muted-foreground' : 'text-[hsl(var(--warning))]  font-semibold'}`}>
-                          Harga/sat (Rp){form.po_id ? '' : ' *'}
+                        <label className={`text-[10px] ${form.po_id || !finance ? 'text-muted-foreground' : 'text-[hsl(var(--warning))]  font-semibold'}`}>
+                          {form.po_id ? 'Harga dari PO' : finance ? `Harga per ${item.unit || 'satuan'} (Rp) *` : 'Harga — diisi Keuangan'}
                         </label>
-                        <GlassInput type="number" min="0" step="any" value={item.unit_price ?? ''}
+                        <GlassInput type="number" min="0" step="any" value={form.po_id || finance ? (item.unit_price ?? '') : ''}
                           onChange={e => updateItem(idx, 'unit_price', e.target.value)}
-                          placeholder={form.po_id ? 'dari PO' : 'wajib'} className="h-8 text-xs"
+                          disabled={!!form.po_id || !finance}
+                          placeholder={form.po_id ? 'dari PO' : finance ? 'wajib' : 'menunggu Keuangan'} className="h-8 text-xs"
                           data-testid={`item-price-${idx}`} />
                       </div>
                       <div className="flex gap-1">
@@ -909,7 +999,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       </p>
                     )}
                     {/* ── FASE H-5: rincian gulungan untuk baris kain/benang ───────── */}
-                    {isRollUnit(item.unit) && (
+                    {/* 2026-11-06 (Tahap 2): gulungan selalu satuan dasar — baris bersatuan kemasan mengisinya di detail */}
+                    {isRollUnit(item.unit) && factorOf(item) === 1 && (
                       <RollLinesEditor
                         lines={item.rolls || []}
                         accepted={acceptedOf(item)}
@@ -1086,11 +1177,12 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                             </SmartNativeSelect>
                           </div>
                         )}
-                        {/* 2026-11-02 (K11): GR tanpa PO — harga satuan wajib sebelum dikonfirmasi */}
-                        {!showDetail.po_id && item.material_id && (
+                        {/* 2026-11-02 (K11): GR tanpa PO — harga satuan wajib sebelum dikonfirmasi.
+                            2026-11-06 (Tahap 2): hanya Keuangan yang mengisinya; ber-PO = harga PO (terkunci). */}
+                        {!showDetail.po_id && item.material_id && finance && (
                           <div className="mt-1.5">
                             <label className="text-[10px] text-[hsl(var(--warning))] font-semibold">
-                              Harga satuan (Rp) * — tanpa PO
+                              Harga per {item.unit} (Rp) * — tanpa PO, diisi Keuangan
                             </label>
                             <GlassInput
                               type="number" min="0" step="any"
@@ -1100,6 +1192,14 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                               data-testid={`gr-detail-price-${idx}`}
                             />
                           </div>
+                        )}
+                        {item.material_id && (showDetail.po_id || !finance) && (
+                          <p className={`mt-1.5 text-[11px] ${priceOf(item) > 0 ? 'text-muted-foreground' : 'text-[hsl(var(--warning))] font-semibold'}`}
+                            data-testid={`gr-detail-price-locked-${idx}`}>
+                            {priceOf(item) > 0
+                              ? `Harga ${showDetail.po_id ? 'dari PO' : 'dari Keuangan'}: Rp ${priceOf(item).toLocaleString('id-ID', { maximumFractionDigits: 2 })} / ${item.unit}`
+                              : 'Menunggu harga dari Keuangan — penerimaan belum bisa dikonfirmasi.'}
+                          </p>
                         )}
                       </div>
                     )}
@@ -1212,6 +1312,12 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                   <Button variant="outline" onClick={() => { setConfirmDelete(showDetail.id); setShowDetail(null); }} className="border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.1)] ">
                     <Trash2 className="w-4 h-4 mr-1" /> Hapus
                   </Button>
+                  {finance && !showDetail.po_id && (
+                    <Button variant="outline" onClick={() => runOnce(() => saveDetailPrices(showDetail))}
+                      disabled={posting} data-testid="gr-detail-save-price">
+                      Simpan harga
+                    </Button>
+                  )}
                   <Button onClick={() => runOnce(() => handleStatusChange(showDetail, 'received'))}
                     disabled={detailTotals.touched <= 0 || posting} aria-busy={posting}
                     className="bg-[hsl(var(--success))] text-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"

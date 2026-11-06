@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { formatRupiah } from '@/lib/format';
 import BuyerCatalogSelect from './pickers/BuyerCatalogSelect';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const CATEGORY_OPTIONS = [
   { value: 'kaos', label: 'Kaos / T-Shirt' },
@@ -62,6 +63,7 @@ export default function MaklonAIQuoteModule({ token }) {
     client_name: '',
     additional_notes: '',
     target_margin_pct: 25,
+    fabric_provided_by: 'client',   // 2026-11-06 (Tahap 2): bahan klien bukan biaya DA
   });
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState(null);
@@ -178,13 +180,13 @@ export default function MaklonAIQuoteModule({ token }) {
           <div>
             <h4 className="text-sm font-semibold mb-2">HPP Breakdown (per pcs)</h4>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              <MiniStat label="Material" value={fmtIDR(res.hpp_breakdown.material)} />
-              <MiniStat label="Labor" value={fmtIDR(res.hpp_breakdown.labor)} />
-              <MiniStat label="Overhead" value={fmtIDR(res.hpp_breakdown.overhead)} />
+              <MiniStat label={res.material_supplied_by === 'client' ? 'Bahan (dari klien, tidak dihitung)' : 'Bahan'} value={fmtIDR(res.hpp_breakdown.material)} />
+              <MiniStat label="Upah CMT" value={fmtIDR(res.hpp_breakdown.labor)} />
+              <MiniStat label="Overhead (tidak masuk HPP)" value={fmtIDR(res.hpp_breakdown.overhead)} />
               <MiniStat label="Finishing" value={fmtIDR(res.hpp_breakdown.finishing)} />
             </div>
             <div className="mt-2 p-2 rounded bg-[var(--glass)] text-xs text-muted-foreground">
-              Margin: <span className="text-foreground font-medium">{fmtIDR(res.margin_amount)}</span> ({res.margin_pct}% over HPP)
+              Margin: <span className="text-foreground font-medium">{fmtIDR(res.margin_amount)}</span> ({res.margin_pct}% dari harga jual)
             </div>
           </div>
         )}
@@ -311,6 +313,15 @@ export default function MaklonAIQuoteModule({ token }) {
                 <div>
                   <Label>Materials</Label>
                   <Input value={form.materials} onChange={(e) => setForm({ ...form, materials: e.target.value })} placeholder="Mis. Cotton combed 30s, gramasi 180gsm" />
+                </div>
+                <div>
+                  <Label>Bahan utama disediakan oleh</Label>
+                  <SmartNativeSelect value={form.fabric_provided_by} searchable={false} data-testid="quote-fabric-provider"
+                    onChange={(e) => setForm({ ...form, fabric_provided_by: e.target.value })}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]">
+                    <option value="client">Klien (tidak dihitung sebagai biaya)</option>
+                    <option value="cv_da">CV. DA (masuk biaya)</option>
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <Label>Finishing</Label>

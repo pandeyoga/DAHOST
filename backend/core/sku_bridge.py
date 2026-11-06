@@ -586,13 +586,21 @@ async def _backfill_orders(db, psid: str, target: dict) -> int:
             'items.$[it].fg_material_id': target.get('fg_material_id'),
             'items.$[it].variant_id': target.get('variant_id'),
             'items.$[it].model_id': target.get('model_id'),
-            'items.$[it].hpp_snapshot': _f(target.get('hpp')) or None,
             'items.$[it].master_link_source': 'sku_bridge',
             'items.$[it].linked_at': _now(),
             'updated_at': _now(),
         }},
         array_filters=[{'it.platform_sku_id': psid}],
     )
+    # 2026-11-06 (Tahap 2, paket HPP): HPP baris pesanan = biaya yang DIBEKUKAN saat pesanan masuk.
+    # Memetakan ulang SKU dulu menimpa snapshot dengan HPP katalog HARI INI (marjin bulan lalu ikut
+    # berubah). Sekarang snapshot hanya diisi bila baris itu belum punya.
+    if _f(target.get('hpp')) > 0:
+        await db[ORDERS].update_many(
+            {'items.platform_sku_id': psid},
+            {'$set': {'items.$[it].hpp_snapshot': _f(target.get('hpp'))}},
+            array_filters=[{'it.platform_sku_id': psid, 'it.hpp_snapshot': None}],
+        )
     return int(res.modified_count or 0)
 
 

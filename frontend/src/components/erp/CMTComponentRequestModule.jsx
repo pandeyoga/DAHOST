@@ -37,7 +37,8 @@ const NEXT_STATUS = {
   ready:    { value: 'delivered', label: 'Tandai Kirim', cls: 'text-[hsl(var(--success))]  hover:bg-[hsl(var(--success)/0.15)] ', Icon: Truck },
 };
 
-const emptyItem = () => ({ component_type: '', size: '', color: '', qty: 1, unit: 'pcs', notes: '' });
+// 2026-11-06 (Tahap 2): barang WAJIB dipilih dari Master Material (komponen = bahan, aksesoris = aksesoris).
+const emptyItem = () => ({ material_id: '', component_type: '', size: '', color: '', qty: 1, unit: 'pcs', notes: '' });
 
 const emptyForm = {
   request_type: 'component',
@@ -45,6 +46,9 @@ const emptyForm = {
   cmt_partner_id: '',
   work_order_code: '',
   work_order_id: '',
+  // 2026-11-06 (Tahap 2): PO menentukan akun biaya saat "Terkirim" (maklon → 5-4100, internal → WIP)
+  po_id: '',
+  po_number: '',
   // F14b — identitas produk dari MASTER (`rahaza_models`), bukan ketikan.
   model_id: '',
   model_code: '',
@@ -76,6 +80,30 @@ export default function CMTComponentRequestModule({ token }) {
     'dewi_cmt_component_requests.request_code', token,
     { TIPE: form.request_type === 'accessory' ? 'REQ-AKS-CMT' : 'REQ-CMP' });
   const [reqCode, setReqCode] = useState('');
+  const [materials, setMaterials] = useState([]);
+  const [poOptions, setPoOptions] = useState([]);
+  useEffect(() => {
+    if (!showForm) return;
+    const cat = form.request_type === 'accessory' ? 'aksesoris' : 'bahan';
+    fetch(`${API}/api/rahaza/materials?type=${cat}`, { headers: h })
+      .then(r => (r.ok ? r.json() : [])).then(d => setMaterials(Array.isArray(d) ? d : (d?.items || [])))
+      .catch(() => setMaterials([]));
+  }, [showForm, form.request_type]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!showForm) return;
+    fetch(`${API}/api/production-pos`, { headers: h })
+      .then(r => (r.ok ? r.json() : [])).then(d => setPoOptions((Array.isArray(d) ? d : (d?.data || []))
+        .filter(p => !['Completed', 'Closed', 'Closed Short'].includes(p.status))))
+      .catch(() => setPoOptions([]));
+  }, [showForm]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pickMaterial = (idx, mid) => {
+    const m = materials.find(x => x.id === mid);
+    setForm(p => {
+      const items = [...p.items];
+      items[idx] = { ...items[idx], material_id: mid, component_type: m?.name || '', unit: m?.unit || items[idx].unit };
+      return { ...p, items };
+    });
+  };
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -126,6 +154,8 @@ export default function CMTComponentRequestModule({ token }) {
       cmt_partner_id: r.cmt_partner_id || '',
       work_order_code: r.work_order_code || '',
       work_order_id: r.work_order_id || '',
+      po_id: r.po_id || '',
+      po_number: r.po_number || '',
       model_id: r.model_id || '',
       model_code: r.model_code || '',
       product_name: r.product_name || '',
@@ -140,12 +170,13 @@ export default function CMTComponentRequestModule({ token }) {
 
   const handleSave = async () => {
     if (!form.cmt_partner_name?.trim()) return toast.error('Nama CMT partner wajib diisi');
-    const validItems = form.items.filter(it => it.component_type?.trim() && Number(it.qty) > 0);
-    if (validItems.length === 0) return toast.error('Minimal 1 item komponen valid');
+    const validItems = form.items.filter(it => it.material_id && Number(it.qty) > 0);
+    if (validItems.length === 0) return toast.error('Minimal 1 baris dengan barang dari Master Material dan qty > 0');
 
     const payload = {
       ...form,
       items: validItems.map(it => ({
+        material_id: it.material_id,
         component_type: it.component_type,
         size: it.size || '',
         color: it.color || '',
@@ -445,11 +476,12 @@ export default function CMTComponentRequestModule({ token }) {
                   data-testid="cmt-form-partner" />
               </div>
               <div>
-                <Label>Work Order</Label>
-                <Input className="mt-1" value={form.work_order_code}
-                  onChange={e => f('work_order_code', e.target.value)}
-                  placeholder="WO-2024-001"
-                  data-testid="cmt-form-wo" />
+                <Label>PO produksi</Label>
+                <SmartNativeSelect className="mt-1 w-full" value={form.po_id} aria-label="PO produksi" data-testid="cmt-form-po"
+                  onChange={e => { const po = poOptions.find(x => x.id === e.target.value); setForm(p => ({ ...p, po_id: e.target.value, po_number: po?.po_number || '' })); }}>
+                  <option value="">— Pilih PO (menentukan akun biaya) —</option>
+                  {poOptions.map(po => <option key={po.id} value={po.id}>{po.po_number} · {po.customer_name || ''}</option>)}
+                </SmartNativeSelect>
               </div>
             </div>
             <div>
@@ -485,30 +517,25 @@ export default function CMTComponentRequestModule({ token }) {
               <div className="space-y-2">
                 {form.items.map((it, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-start" data-testid={`cmt-form-row-${idx}`}>
-                    <Input className="col-span-3"
-                      placeholder={form.request_type === 'accessory' ? 'Kancing/Resleting/Label *' : 'Lengan/Kerah/Saku/Lining *'}
-                      value={it.component_type}
-                      onChange={e => updateItem(idx, 'component_type', e.target.value)}
-                      data-testid={`cmt-form-row-${idx}-type`} />
+                    <SmartNativeSelect className="col-span-3" value={it.material_id || ''}
+                      onChange={e => pickMaterial(idx, e.target.value)} aria-label="Barang dari master"
+                      data-testid={`cmt-form-row-${idx}-type`}>
+                      <option value="">{form.request_type === 'accessory' ? '— Pilih aksesoris (master) —' : '— Pilih bahan (master) —'}</option>
+                      {materials.map(m => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+                    </SmartNativeSelect>
                     <Input className="col-span-2" placeholder="Size (S/M/L)"
                       value={it.size} onChange={e => updateItem(idx, 'size', e.target.value)} />
                     <Input className="col-span-2" placeholder="Warna"
                       value={it.color} onChange={e => updateItem(idx, 'color', e.target.value)} />
                     <Input className="col-span-2" type="number" min="0" placeholder="Qty"
                       value={it.qty} onChange={e => updateItem(idx, 'qty', e.target.value)} />
-                    <SmartNativeSelect className="col-span-2 border border-input bg-background rounded-md px-2 py-2 text-sm text-foreground"
-                      value={it.unit} onChange={e => updateItem(idx, 'unit', e.target.value)}>
-                      <option value="pcs">pcs</option>
-                      <option value="set">set</option>
-                      <option value="meter">meter</option>
-                      <option value="lusin">lusin</option>
-                    </SmartNativeSelect>
-                    <button type="button" onClick={() => removeItemRow(idx)}
-                      disabled={form.items.length <= 1}
-                      className="col-span-1 h-9 rounded-md border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.15)]  disabled:opacity-30 flex items-center justify-center"
+                    {/* satuan mengikuti master material (tidak diketik) */}
+                    <span className="col-span-2 h-9 flex items-center text-sm text-muted-foreground">{it.unit || '—'}</span>
+                    <Button type="button" variant="outline" size="icon" onClick={() => removeItemRow(idx)}
+                      disabled={form.items.length <= 1} title="Hapus baris" aria-label="Hapus baris" className="col-span-1"
                       data-testid={`cmt-form-row-${idx}-remove`}>
                       <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -590,7 +617,7 @@ export default function CMTComponentRequestModule({ token }) {
                 <table className="w-full text-xs">
                   <thead className="bg-foreground/5">
                     <tr>
-                      {['Komponen', 'Size', 'Warna', 'Qty', 'Unit', 'Catatan'].map(h => (
+                      {['Barang', 'Ukuran', 'Warna', 'Qty', 'Satuan', 'Catatan'].map(h => (
                         <th key={h} className="text-left px-3 py-2 text-foreground/50">{h}</th>
                       ))}
                     </tr>
@@ -598,7 +625,7 @@ export default function CMTComponentRequestModule({ token }) {
                   <tbody>
                     {(detail.items || []).map((it, idx) => (
                       <tr key={idx} className="border-t border-foreground/5">
-                        <td className="px-3 py-2 font-medium">{it.component_type}</td>
+                        <td className="px-3 py-2 font-medium">{it.material_code ? `${it.material_code} · ` : ''}{it.material_name || it.component_type}</td>
                         <td className="px-3 py-2">{it.size || '—'}</td>
                         <td className="px-3 py-2">{it.color || '—'}</td>
                         <td className="px-3 py-2">{it.qty}</td>

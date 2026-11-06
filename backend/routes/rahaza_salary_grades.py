@@ -121,12 +121,16 @@ async def audit(request: Request):
         {"_id": 0, "id": 1, "name": 1, "employee_code": 1, "salary_grade_id": 1, "base_rate": 1},
     ).to_list(500)
 
+    # 2026-11-06 (Tahap 2): SATU sumber gaji = Profil Gaji (bukan field gaji di Data Karyawan).
+    prof_rate = {p["employee_id"]: float(p.get("base_rate") or 0) for p in await db.rahaza_payroll_profiles.find(
+        {"employee_id": {"$in": [e["id"] for e in employees]}, "active": True},
+        {"_id": 0, "employee_id": 1, "base_rate": 1}).to_list(1000)}
     violations = []
     for emp in employees:
         g = grade_map.get(emp.get("salary_grade_id"))
         if not g:
             continue
-        rate = float(emp.get("base_rate") or 0)
+        rate = prof_rate.get(emp["id"], float(emp.get("base_rate") or 0))
         if rate < g["min_salary"] or rate > g["max_salary"]:
             violations.append({
                 "employee_code": emp["employee_code"],

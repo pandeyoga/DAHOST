@@ -369,6 +369,9 @@ async def create_vendor_shipment(request: Request):
                 400, f"PO tidak ditemukan di data produksi (po_id={_pid}). "
                      "PO Maklon lama yang dibuat sebelum penyatuan SSOT perlu dimigrasi "
                      "dulu (scripts/migrate_orphan_maklon_pos.py).")
+    # 2026-11-06 (Tahap 2): PO yang sudah ditutup terkunci — tidak ada kiriman material baru.
+    from core.po_lock import assert_pos_open
+    await assert_pos_open(db, _po_ids_seen, 'kiriman material ke CMT')
     for _it in items_data:
         if _it.get('po_item_id') and not await db.po_items.find_one({'id': _it['po_item_id']}, {'_id': 1}):
             raise HTTPException(400, f"Item PO tidak ditemukan (po_item_id={_it['po_item_id']})")

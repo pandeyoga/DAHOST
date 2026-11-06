@@ -27,6 +27,8 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from auth import require_auth, serialize_doc
+from core import catalog_margin as _cm
+from core import margin as _margin
 from database import get_db
 
 router = APIRouter(prefix="/api/rnd/product-viewer", tags=["rnd-product-viewer"])
@@ -132,7 +134,10 @@ async def list_products(request: Request,
         prod = prod_by_sku.get(m.get("code") or "") or \
             prod_by_sku.get(f"model::{m.get('model_id')}") or {}
         lay = layer_by_mat.get(m["id"]) or {}
-        hpp_fifo = round(lay["val"] / lay["qty"], 2) if lay.get("qty") else 0.0
+        # 2026-11-06 (Tahap 2): HPP viewer = WAC aktual FG (bukan rata-rata lapisan FIFO lama), lalu
+        # HPP standar berlabel estimasi — urutan yang sama dengan katalog (`core.catalog_margin`).
+        cost = _cm.effective_fg_cost(m)
+        hpp_fifo = cost["hpp"] if cost["source"] == _cm.SRC_WAC else 0.0
         images = (model.get("images") or [])
         if model.get("image_url"):
             images = [model["image_url"]] + list(images)
@@ -173,10 +178,14 @@ async def list_products(request: Request,
                     "created_by": model.get("created_by") or "",
                     "created_at": model.get("created_at")},
             "hpp": {"master": _f(m.get("hpp")), "source": m.get("hpp_source") or "none",
-                    "fifo_avg": hpp_fifo, "layer_count": lay.get("n", 0),
+                    # `fifo_avg` (nama lama dibaca layar) kini = WAC aktual
+                    "fifo_avg": hpp_fifo, "wac": hpp_fifo, "layer_count": lay.get("n", 0),
+                    "effective": cost["hpp"], "effective_label": cost["label"],
+                    "is_estimate": cost["is_estimate"],
                     "qty_on_layers": int(lay.get("qty", 0))},
             "price": {"selling": sell,
-                      "margin": round(sell - (hpp_fifo or _f(m.get("hpp"))), 2) if sell else 0.0},
+                      "margin": round(sell - (hpp_fifo or _f(m.get("hpp"))), 2) if sell else 0.0,
+                      "margin_pct": _margin.margin_pct(sell, hpp_fifo or _f(m.get("hpp")), nd=1)},
             "stock_qty": int(stock_by_mat.get(m["id"], 0)),
             "marketing_sync": {
                 "synced": bool(mine), "item_count": len(mine),
@@ -227,8 +236,8 @@ async def list_products(request: Request,
             "margin_negative": sum(1 for r in priced if r["price"]["margin"] < 0),
             "margin_thin": sum(1 for r in priced
                                if 0 <= r["price"]["margin"] < 0.15 * r["price"]["selling"]),
-            "margin_avg_pct": (round(sum(r["price"]["margin"] / r["price"]["selling"] * 100
-                                         for r in priced) / len(priced), 1) if priced else 0.0),
+            "margin_avg_pct": (round(sum(r["price"]["margin_pct"] or 0 for r in priced) / len(priced), 1)
+                               if priced else 0.0),
         },
     }
 

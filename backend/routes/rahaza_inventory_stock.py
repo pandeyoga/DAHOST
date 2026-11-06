@@ -285,6 +285,14 @@ async def material_receive(request: Request):
         raise HTTPException(400, "unit_cost harus berupa angka.")
     if cost_in < 0:
         raise HTTPException(400, "unit_cost tidak boleh negatif.")
+    # 2026-11-06 (Tahap 2, keputusan owner): penerimaan manual TANPA PO hanya boleh berharga bila diisi
+    # Keuangan — harga ini menjadi nilai persediaan & HPP rata-rata (sama dengan GR tanpa PO). Peran lain
+    # tetap boleh menerima barang; nilainya memakai HPP master yang ada.
+    if cost_in > 0:
+        from core.purchase_returns import is_finance
+        if not is_finance(user):
+            raise HTTPException(403, "Harga penerimaan manual hanya boleh diisi Keuangan. Kosongkan harga "
+                                     "(barang dinilai HPP yang ada), atau minta Keuangan mencatat penerimaan ini.")
     # Stok SEBELUM barang masuk — dasar rata-rata bergerak (dibaca sebelum `add`, sama dgn GR).
     qty_before_receipt = float(await stock_service.get_onhand(material_id, db=db) or 0)
     await stock_service.add(
@@ -318,6 +326,13 @@ async def material_receive(request: Request):
         ref_type=body.get("ref_type") or "receiving", ref_id=body.get("ref_id") or None,
         notes=body.get("notes") or "",
     )
+    if cost_result is not None:
+        # 2026-11-06 (Tahap 2, butir 7): stok lama bernilai 0 ikut dinilai harga ini → jurnal koreksi
+        from core import purchase_costing
+        cost_result["wac_gap"] = await purchase_costing.post_receipt_wac_gap(
+            db, material_id=material_id, cost_result=cost_result, qty_in=qty, cost_in=cost_in,
+            source_ref=f"mrcv:{mv.get('id')}",
+            memo=f"Nilai ulang stok lama {mat.get('code') or material_id} oleh penerimaan manual", user=user)
     await log_activity(user["id"], user.get("name", ""), f"receive:{qty}", "rahaza.material", material_id)
     posting_result = None
     try:
@@ -348,6 +363,15 @@ async def material_transfer(request: Request):
     # 2026-11-02 (No.18): lokasi tujuan harus ada — jangan membuat baris stok di lokasi fiktif.
     if not await location_resolver.location_exists(db, to_loc):
         raise HTTPException(400, "Lokasi tujuan tidak ditemukan di Struktur Gudang.")
+    # 2026-11-06 (Tahap 2, paket gudang): stok karantina/terblokir dan stok yang ter-reserve
+    # tidak boleh ikut ditransfer (dulu hanya qty fisik yang dicek).
+    from core import stock_transfer
+    try:
+        _blk = await stock_transfer.blocked_ids(db)
+        await stock_transfer.assert_destination(db, to_loc, blocked=_blk)
+        await stock_transfer.assert_movable(db, material_id, from_loc, qty, blocked=_blk)
+    except stock_transfer.TransferError as e:
+        raise HTTPException(400, str(e))
     try:
         await stock_service.move(
             material_id, from_loc, to_loc, qty,

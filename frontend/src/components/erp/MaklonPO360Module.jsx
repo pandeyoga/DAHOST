@@ -130,7 +130,7 @@ function POPickerView({ headers, onPick, onBack, onNavigate }) {
         onNavigate={onNavigate}
         title="Alur Terkait"
         actions={[
-          { module: 'maklon-billing', label: 'Faktur klien', icon: Banknote, hint: 'Daftar faktur & penagihan maklon' },
+          { module: 'maklon-billing', label: 'Piutang klien', icon: Banknote, hint: 'Piutang per PO, faktur cetak & pembayaran klien' },
         ]}
       />
 

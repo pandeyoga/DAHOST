@@ -278,6 +278,14 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
     invoiced_amount = sum(float(inv.get('total_amount', 0) or 0) for inv in invoices_raw if inv.get('status') != 'cancelled')
     paid_amount = sum(float(p.get('amount', 0) or 0) for p in payments_raw if p.get('status') != 'cancelled')
     outstanding_amount = max(0, invoiced_amount - paid_amount)
+    # 2026-11-06 (Tahap 2): piutang TERJADWAL (satu dokumen AR per PO) — tertagih = pendapatan yang
+    # sudah dibukukan per kiriman; dibayar termasuk uang muka. Pembayaran dari riwayat piutang.
+    if (ar_invoice or {}).get('schedule_mode') == 'v2':
+        invoiced_amount = float(ar_invoice.get('billed_total') or 0)
+        paid_amount = float(ar_invoice.get('amount_paid') or 0)
+        outstanding_amount = float(ar_invoice.get('amount_due') or 0)
+        payments = _serialize_list(await db.rahaza_ar_payments.find(
+            {'invoice_id': ar_invoice['id'], 'status': {'$ne': 'voided'}}).sort('date', -1).to_list(500))
 
     hpp_snapshot = {
         'po_total_value': total_value,
@@ -322,6 +330,8 @@ async def maklon_po_360(po_id: str, user: dict = Depends(require_auth)):
         'invoiced_amount': invoiced_amount,
         'paid_amount': paid_amount,
         'outstanding_amount': outstanding_amount,
+        'scheduled_amount': float((ar_invoice or {}).get('scheduled_total') or 0),
+        'advance_balance': float((ar_invoice or {}).get('advance_balance') or 0),
         'deadline': po_data.get('deadline'),
         'sample_pending': sample_pending,
         'sample_approved': sample_approved,
@@ -390,6 +400,23 @@ async def maklon_po_timeline(po_id: str, user: dict = Depends(require_auth)):
     if po.get('completed_at'):
         _push_event(events, 'po.completed', "PO selesai",
                     po.get('completed_at'), icon='trophy')
+
+    # 2026-11-06 (Tahap 2): kelebihan qty (alasan wajib) di setiap langkah — dari SSOT production_pos
+    ssot = await db.production_pos.find_one({'id': po_id}, {'_id': 0, 'over_qty_events': 1, 'confirmed_at': 1,
+                                                            'confirmed_by': 1, 'closed_at': 1, 'closed_by': 1,
+                                                            'status': 1, 'closed_reason': 1}) or {}
+    for ev in ssot.get('over_qty_events') or []:
+        _push_event(events, 'qty.over',
+                    f"{ev.get('step_label') or ev.get('step')}: {ev.get('label') or ''} {ev.get('qty')} pcs "
+                    f"(batas {ev.get('limit')}, lebih {ev.get('over')}) — alasan: {ev.get('reason')}",
+                    ev.get('at'), actor=ev.get('by'), icon='alert-triangle', reason=ev.get('reason'),
+                    step=ev.get('step'), qty=ev.get('qty'), limit=ev.get('limit'), over=ev.get('over'))
+    if ssot.get('confirmed_at') and not po.get('confirmed_at'):
+        _push_event(events, 'po.confirmed', f"PO {po.get('po_number', '')} dikonfirmasi",
+                    ssot.get('confirmed_at'), actor=ssot.get('confirmed_by'), icon='check-circle')
+    if ssot.get('closed_at'):
+        _push_event(events, 'po.closed', f"PO ditutup ({ssot.get('status')})", ssot.get('closed_at'),
+                    actor=ssot.get('closed_by'), reason=ssot.get('closed_reason'), icon='lock')
 
     # Dispatches
     dispatches = await db.dewi_maklon_dispatches.find({'po_id': po_id}).to_list(length=None)

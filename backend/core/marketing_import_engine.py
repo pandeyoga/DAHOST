@@ -156,6 +156,56 @@ def parse_table(raw: bytes, filename: str,
     return headers, rows
 
 
+# ── 2026-11-06 (Tahap 2) — BERKAS YANG DITOLAK PENORMAL TIDAK BOLEH BUNTU ─────
+# Dulu bila penormal (ekspor KPI Seller Center) tidak mengenali bentuk berkas,
+# unggahan berhenti dengan pesan galat dan staf tidak pernah sampai ke langkah
+# pemetaan. Sekarang berkas dibaca APA ADANYA (baris pertama = header) dan
+# disertai peringatan, sehingga kolomnya tetap bisa dipetakan manual. Kolom yang
+# biasanya diisi penormal (kanal, sumber) diberi nilai tetap bila pasti.
+PRENORM_FALLBACK_CONSTANTS: Dict[str, Dict[str, str]] = {
+    "shopee_shop_stats": {"channel": "shop", "source": "shopee_shop_stats"},
+    "shopee_content_kpi": {"source": "shopee_content_kpi"},
+    "shopee_ads_cpc": {},
+}
+
+
+def parse_table_fallback(raw: bytes, filename: str,
+                         st: Optional[SourceType]) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Baca berkas tanpa penormal + kolom bernilai tetap (lihat di atas)."""
+    headers, rows = parse_table(raw, filename, None)
+    consts = PRENORM_FALLBACK_CONSTANTS.get(getattr(st, "prenorm", "") or "", {})
+    for k, v in consts.items():
+        if k not in headers:
+            headers.append(k)
+        for r in rows:
+            r.setdefault(k, v)
+    return headers, rows
+
+
+def parse_table_lenient(raw: bytes, filename: str, st: Optional[SourceType]
+                        ) -> Tuple[List[str], List[Dict[str, Any]], Optional[str]]:
+    """:func:`parse_table`, tetapi penolakan PENORMAL menjadi peringatan.
+
+    → ``(headers, rows, peringatan)``; ``peringatan`` None bila berkas dikenali.
+    Galat baca berkas yang lain (bukan CSV/Excel, rusak) tetap dinaikkan.
+    """
+    try:
+        headers, rows = parse_table(raw, filename, st)
+        return headers, rows, None
+    except ValueError as e:
+        if st is None or not getattr(st, "prenorm", ""):
+            raise
+        reason = str(e)
+    headers, rows = parse_table_fallback(raw, filename, st)
+    if not headers or not rows:
+        raise ValueError(reason)
+    msg = (f"Bentuk berkas ini belum dikenali sebagai ekspor “{st.label}”: {reason} "
+           "Supaya pekerjaan tidak berhenti, isi berkas ditampilkan apa adanya. Petakan "
+           "kolomnya sendiri di bawah; baris judul atau ringkasan yang ikut terbaca akan "
+           "ditolak di pratinjau. Laporkan berkas ini supaya bentuknya bisa dikenali otomatis.")
+    return headers, rows, msg
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. PEMETAAN KOLOM (tanpa AI)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -356,6 +406,8 @@ _DATE_FORMATS = (
     "%d/%m/%Y %H:%M", "%d-%m-%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
     "%d %b %Y", "%d %B %Y", "%b %d, %Y",
 )
+# Penanda "tidak ada nilai" yang lazim di ekspor marketplace.
+_EMPTY_MARKS = ("-", "--", "–", "—")
 _ID_MONTHS = {
     "januari": 1, "februari": 2, "maret": 3, "april": 4, "mei": 5, "juni": 6,
     "juli": 7, "agustus": 8, "september": 9, "oktober": 10, "november": 11,
@@ -380,6 +432,11 @@ def parse_date(raw: Any) -> Tuple[Optional[datetime], Optional[str]]:
 
     s = str(raw).strip()
     if not s:
+        return None, None
+    # 2026-11-06 (Tahap 2) — ekspor Shopee menulis "-" untuk waktu yang belum ada
+    # (mis. "Waktu Pembayaran Dilakukan" pada pesanan batal sebelum dibayar).
+    # Itu berarti KOSONG, bukan tanggal rusak — dulu seluruh pesanan ditolak.
+    if s in _EMPTY_MARKS:
         return None, None
     s = s.replace("Z", "").strip()
     for fmt in _DATE_FORMATS:
@@ -415,14 +472,42 @@ def _norm_choice(s: Any) -> str:
     return re.sub(r"[^a-z0-9]+", "_", str(s or "").strip().lower()).strip("_")
 
 
-def coerce(f: Field, raw: Any) -> Tuple[Any, Optional[str], Optional[str]]:
-    """Konversi satu sel. → ``(nilai, error, warning)``."""
+def value_key(raw: Any) -> str:
+    """Kunci pemetaan NILAI pilihan staf (2026-11-06, Tahap 2).
+
+    Angka di dalam teks disamakan, supaya satu pilihan berlaku untuk semua
+    variasi tanggal: "… hingga 2026-10-12." dan "… hingga 2026-10-19." = satu kunci.
+    """
+    return _norm_choice(re.sub(r"\d+", "0", str(raw or "")))
+
+
+def _prefix_hit(f: Field, s_norm: str) -> Optional[str]:
+    for prefix, canon_v in f.value_prefix_map:
+        p = _norm_choice(prefix)
+        if p and s_norm.startswith(p):
+            return canon_v
+    return None
+
+
+def coerce(f: Field, raw: Any,
+           extra_map: Optional[Dict[str, str]] = None) -> Tuple[Any, Optional[str], Optional[str]]:
+    """Konversi satu sel. → ``(nilai, error, warning)``.
+
+    ``extra_map`` (2026-11-06, Tahap 2) = pemetaan NILAI yang dipilih staf di
+    langkah pemetaan (kunci :func:`value_key` → nilai kanonik). Pilihan manusia
+    menang atas kamus; hanya berlaku untuk field ber-``choices``.
+    """
     if raw is None or (isinstance(raw, str) and raw.strip() == ""):
         if f.required:
             return None, f"{f.label} wajib diisi", None
         return None, None, None
 
     pre_warn: Optional[str] = None
+    if extra_map and f.choices:
+        chosen = extra_map.get(value_key(raw))
+        if chosen in f.choices:
+            # Nilai kanonik pilihan staf; kamus & tebakan dilewati sepenuhnya.
+            return chosen, None, None
     # ── F1 — KAMUS NILAI (value_map): "Perlu dikirim" → paid ─────────────────
     # Ditulis, bukan ditebak. Nilai yang tidak ada di kamus:
     #   · field penting (status)      ⇒ baris DITOLAK, pesan memuat nilai aslinya
@@ -436,6 +521,8 @@ def coerce(f: Field, raw: Any) -> Tuple[Any, Optional[str], Optional[str]]:
             raw = vm[s_norm]
         elif s_norm in canon:
             pass                                   # sudah kanonik (mis. hasil re-impor)
+        elif _prefix_hit(f, s_norm):
+            raw = _prefix_hit(f, s_norm)           # status bertanggal (awalan tertulis)
         else:
             close = difflib.get_close_matches(s_norm, list(vm.keys()), n=1, cutoff=0.88)
             if close:
@@ -450,7 +537,8 @@ def coerce(f: Field, raw: Any) -> Tuple[Any, Optional[str], Optional[str]]:
                 return None, (f"{f.label}: nilai '{raw}' tidak ada di kamus. "
                               f"Nilai yang dikenali: "
                               + ", ".join(sorted({k for k, _ in f.value_map})[:8])
-                              + ". Tambahkan ke kamus dulu — jangan dipaksa masuk."), None
+                              + ". Pilih artinya di langkah pemetaan (bagian "
+                                "“Arti nilai di berkas”) — jangan dipaksa masuk."), None
 
     k = f.kind
     if k in ("str", "list"):
@@ -565,7 +653,24 @@ def format_fingerprint(headers: List[str]) -> str:
     return hashlib.sha1("|".join(norm).encode("utf-8")).hexdigest()
 
 
-def _coerce_row(raw_row: dict, used: Dict[str, str], st: SourceType) -> Tuple[dict, List[str], List[str]]:
+def mapping_value_overrides(mapping: List[dict]) -> Dict[str, Dict[str, str]]:
+    """Pemetaan NILAI pilihan staf yang menempel di entri pemetaan kolom.
+
+    Disimpan DI DALAM ``mapping`` (``{column, field, value_map: {kunci: kanonik}}``)
+    supaya setiap pemakai pemetaan — pratinjau, rencana, commit, unduh galat —
+    otomatis memakai keputusan yang sama tanpa parameter tambahan.
+    """
+    out: Dict[str, Dict[str, str]] = {}
+    for m in mapping or []:
+        vm = m.get("value_map") if isinstance(m, dict) else None
+        if m.get("field") and m.get("method") != "suggest" and isinstance(vm, dict) and vm:
+            out[m["field"]] = {str(k): str(v) for k, v in vm.items() if v}
+    return out
+
+
+def _coerce_row(raw_row: dict, used: Dict[str, str], st: SourceType,
+                overrides: Optional[Dict[str, Dict[str, str]]] = None
+                ) -> Tuple[dict, List[str], List[str]]:
     """Satu baris berkas → (data kanonik, errors, warnings). Tanpa database."""
     data: Dict[str, Any] = {}
     errors: List[str] = []
@@ -575,7 +680,7 @@ def _coerce_row(raw_row: dict, used: Dict[str, str], st: SourceType) -> Tuple[di
         if f is None:
             continue
         raw = raw_row.get(col)
-        val, err, warn = coerce(f, raw)
+        val, err, warn = coerce(f, raw, (overrides or {}).get(fname))
         if err:
             errors.append(err)
         if warn:
@@ -595,15 +700,16 @@ def build_rows(rows: List[dict], mapping: List[dict], st: SourceType,
     menjadi **satu** entri hasil ber-``items[]`` — lihat :func:`build_grouped_rows`.
     """
     used = mapping_dict(mapping)
+    overrides = mapping_value_overrides(mapping)
     if st.is_grouped:
         # Jenis berkelompok: 1 entri = 1 PESANAN, bukan 1 baris berkas. Batas
         # pratinjau per-baris tidak boleh memotong jumlah pesanan, kalau tidak
         # layar melaporkan "500 pesanan" untuk berkas 559 pesanan (dan staf
         # mengira 59 pesanan hilang). Baris sudah dibatasi MAX_ROWS saat dibaca.
-        return build_grouped_rows(rows, used, st, limit=MAX_ROWS)
+        return build_grouped_rows(rows, used, st, limit=MAX_ROWS, overrides=overrides)
     out: List[dict] = []
     for i, raw_row in enumerate(rows[:limit]):
-        data, errors, warnings = _coerce_row(raw_row, used, st)
+        data, errors, warnings = _coerce_row(raw_row, used, st, overrides)
         # field wajib yang tidak terpetakan sama sekali
         for f in st.required_fields:
             if f.name not in data and f.label not in " ".join(errors):
@@ -621,7 +727,8 @@ def build_rows(rows: List[dict], mapping: List[dict], st: SourceType,
 
 
 def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
-                       limit: int = MAX_PREVIEW_ROWS) -> List[dict]:
+                       limit: int = MAX_PREVIEW_ROWS,
+                       overrides: Optional[Dict[str, Dict[str, str]]] = None) -> List[dict]:
     """Kelompokkan baris per ``st.group_by`` ⇒ 1 entri = 1 dokumen ber-``items[]``.
 
     KENAPA (SSOT_KONTRAK_DATA §2): ekspor memberi 1 baris per SKU. Kalau setiap
@@ -643,7 +750,7 @@ def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
     header_required = [f for f in st.required_fields if f.name not in st.item_fields]
 
     for i, raw_row in enumerate(rows):
-        data, errors, warnings = _coerce_row(raw_row, used, st)
+        data, errors, warnings = _coerce_row(raw_row, used, st, overrides)
         key = tuple(str(data.get(g)) if data.get(g) is not None else "" for g in st.group_by)
         if any(k == "" for k in key):
             orphan.append({
@@ -720,6 +827,94 @@ def build_grouped_rows(rows: List[dict], used: Dict[str, str], st: SourceType,
             "status": "error" if errors else ("warning" if warnings else "valid"),
         })
     out.sort(key=lambda r: r["row_id"])
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4b. ARTI NILAI DI BERKAS (2026-11-06, Tahap 2)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Kolom pilihan (status, kurir, kanal) dulu hanya bisa dipetakan KOLOMNYA. Nilai
+# yang tidak ada di kamus — mis. "Telah Dikirim" — menolak seluruh pesanan, dan
+# satu-satunya jalan keluar adalah meminta programmer menambah kamus. Laporan di
+# bawah memperlihatkan setiap nilai berbeda di berkas beserta artinya menurut
+# kamus, supaya staf bisa MEMILIH arti nilai yang belum dikenal (disimpan di
+# entri pemetaan kolomnya, lihat :func:`mapping_value_overrides`).
+VALUE_REPORT_MAX = 40
+_VALUE_SCAN_MAX = 500
+
+
+def _auto_meaning(f: Field, raw: Any) -> Tuple[Optional[str], str]:
+    """(nilai kanonik, dasar) menurut kamus/tebakan mesin — TANPA pilihan staf."""
+    val, err, warn = coerce(f, raw)
+    if err or val is None:
+        return None, "tidak_dikenal"
+    s_norm = _norm_choice(raw)
+    if f.value_map:
+        if s_norm in {_norm_choice(k) for k, _ in f.value_map}:
+            return val, "kamus"
+        if s_norm in {_norm_choice(c) for c in f.choices}:
+            return val, "baku"
+        if _prefix_hit(f, s_norm):
+            return val, "awalan"
+        if f.value_map_fallback and val == f.value_map_fallback and warn and "kamus" in warn:
+            return val, "cadangan"
+        return val, "mirip"
+    return val, ("baku" if s_norm in {_norm_choice(c) for c in f.choices} else "mirip")
+
+
+def value_report(rows: List[dict], mapping: List[dict], st: SourceType,
+                 max_values: int = VALUE_REPORT_MAX) -> List[dict]:
+    """Nilai berbeda per kolom PILIHAN yang terpetakan + artinya. Tanpa database."""
+    used = mapping_dict(mapping)
+    overrides = mapping_value_overrides(mapping)
+    out: List[dict] = []
+    for col, fname in used.items():
+        f = st.field(fname)
+        if f is None or f.kind != "enum" or not f.choices:
+            continue
+        groups: Dict[str, dict] = {}
+        scan_truncated = False
+        for r in rows:
+            raw = r.get(col)
+            if raw is None or str(raw).strip() == "":
+                continue
+            k = value_key(raw)
+            g = groups.get(k)
+            if g is None:
+                if len(groups) >= _VALUE_SCAN_MAX:
+                    scan_truncated = True
+                    continue
+                g = groups[k] = {"key": k, "raw": str(raw).strip(), "count": 0, "_v": set()}
+            g["count"] += 1
+            if len(g["_v"]) < 100:
+                g["_v"].add(str(raw).strip())
+        chosen_map = overrides.get(fname, {})
+        vals = []
+        for g in groups.values():
+            auto, how = _auto_meaning(f, g["raw"])
+            chosen = chosen_map.get(g["key"])
+            chosen = chosen if chosen in f.choices else None
+            vals.append({
+                "key": g["key"], "raw": g["raw"], "count": g["count"],
+                "variants": len(g["_v"]),
+                "auto": auto, "auto_label": f.choice_label(auto) if auto else "",
+                "auto_how": how,
+                "chosen": chosen, "chosen_label": f.choice_label(chosen) if chosen else "",
+            })
+        # nilai yang belum punya arti di atas, lalu yang paling sering muncul
+        vals.sort(key=lambda v: (v["auto"] is not None or v["chosen"] is not None, -v["count"]))
+        unknown = [v for v in vals if v["auto"] is None and not v["chosen"]]
+        out.append({
+            "field": fname, "label": f.label, "column": col, "required": f.required,
+            "fallback": f.value_map_fallback,
+            "fallback_label": f.choice_label(f.value_map_fallback) if f.value_map_fallback else "",
+            "choices": [{"value": c, "label": f.choice_label(c)} for c in f.choices],
+            "values": vals[:max_values],
+            "distinct": len(vals),
+            "unknown": len(unknown),
+            "unknown_rows": sum(v["count"] for v in unknown),
+            "truncated": scan_truncated or len(vals) > max_values,
+        })
     return out
 
 

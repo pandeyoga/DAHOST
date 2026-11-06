@@ -51,6 +51,154 @@ FIELD_PRIORITY = ["affiliate_commission", "ads_deduction", "net_payout", "refund
 
 MAX_UNMAPPED = 30
 
+# 2026-11-06 (Tahap 2) — laporan Penghasilan Shopee versi .xlsx (lihat di bawah).
+# Grup kolom yang hanya INFORMASI, bukan komponen dana yang dilepas.
+INFO_GROUP_TOKENS = ["buyer info", "informasi pembeli", "informasi referensi",
+                     "rincian pengembalian"]
+# Diskon yang dibiayai PLATFORM tidak boleh masuk "diskon penjual".
+PLATFORM_FUNDED_TOKENS = ["dari shopee", "ditanggung shopee", "disponsori shopee",
+                          "dari platform", "ditanggung platform"]
+# Nama kolom versi .xlsx yang belum tercakup kata kunci di atas.
+FIELD_KEYWORDS["seller_discount"] += ["voucher disponsor oleh penjual",
+                                      "cashback koin disponsori penjual",
+                                      "co fund disponsor oleh penjual",
+                                      "co fund disponsori penjual"]
+FIELD_KEYWORDS["ads_deduction"] += ["isi saldo otomatis"]
+FIELD_KEYWORDS["platform_service_fee"] += ["biaya kampanye", "biaya gratis ongkir xtra"]
+FIELD_KEYWORDS["other_deductions"] += ["premi", "fbs fee"]
+
+
+# ── 2026-11-06 (Tahap 2) — laporan Penghasilan Shopee "sudah dilepas" (.xlsx) ──
+# Bentuk nyata: sheet pertama "Summary" (ringkasan vertikal, bukan tabel), data
+# per pesanan di sheet "Penghasilan" dengan TIGA baris kepala (grup kolom, sub-grup,
+# lalu nama kolom sebenarnya), dan setiap pesanan muncul DUA kali: baris "Order"
+# (angka pesanan) dan baris "Sku" (pecahan per produk yang jumlahnya SAMA dengan
+# baris Order). Dulu hanya sheet pertama yang dibaca ⇒ tidak ada kolom uang ⇒ buntu.
+HEADER_SCAN_ROWS = 12
+ROW_KIND_HEADER = "lihat berdasarkan"      # kolom penanda baris Order / Sku
+ROW_KIND_KEEP = "order"
+MAX_ROWS = 20000
+
+
+def _header_score(cells: List[Any]) -> int:
+    """Berapa sel di satu baris yang tampak seperti nama kolom laporan pencairan."""
+    kws = [k for ks in FIELD_KEYWORDS.values() for k in ks] + DATE_KEYWORDS + PERIOD_KEYWORDS + ID_KEYWORDS
+    score = 0
+    for c in cells:
+        if c is None or isinstance(c, (int, float)):
+            continue
+        n = _norm_header(c)
+        if n and _match(n, kws):
+            score += 1
+    return score
+
+
+def _unique_headers(cells: List[Any]) -> List[str]:
+    out: List[str] = []
+    seen: Dict[str, int] = {}
+    for i, c in enumerate(cells):
+        h = str(c).strip() if c not in (None, "") else f"kolom_{i + 1}"
+        if h in seen:
+            seen[h] += 1
+            h = f"{h} ({seen[h]})"
+        else:
+            seen[h] = 1
+        out.append(h)
+    return out
+
+
+def _read_workbook(raw: bytes, read_only: bool) -> Tuple[str, List[str], List[dict], Dict[str, str]]:
+    """Sheet + baris kepala yang PALING mirip laporan pencairan → (sheet, header, baris)."""
+    import io
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=read_only, data_only=True)
+    best: Tuple[int, str, int, List[List[Any]]] = (0, "", -1, [])   # (skor, sheet, baris kepala, matriks)
+    try:
+        for ws in wb.worksheets:
+            if read_only:
+                try:
+                    ws.reset_dimensions()
+                except Exception:  # noqa: BLE001 — tidak semua versi punya
+                    pass
+            matrix: List[List[Any]] = []
+            for values in ws.iter_rows(values_only=True):
+                matrix.append(list(values or []))
+                if len(matrix) > MAX_ROWS:
+                    break
+            for i, row in enumerate(matrix[:HEADER_SCAN_ROWS]):
+                s = _header_score(row)
+                if s > best[0]:
+                    best = (s, ws.title, i, matrix)
+    finally:
+        try:
+            wb.close()
+        except Exception:  # noqa: BLE001
+            pass
+    score, sheet, hidx, matrix = best
+    if hidx < 0:
+        return "", [], [], {}
+    header = _unique_headers(matrix[hidx])
+    while header and header[-1].startswith("kolom_"):
+        header.pop()
+    groups = _column_groups(matrix[:hidx], header)
+    rows: List[dict] = []
+    for values in matrix[hidx + 1:]:
+        if not values or all(v in (None, "") for v in values):
+            continue
+        rows.append({header[j]: (values[j] if j < len(values) else None) for j in range(len(header))})
+    return sheet, header, rows, groups
+
+
+def _column_groups(above: List[List[Any]], header: List[str]) -> Dict[str, str]:
+    """Judul GRUP kolom dari baris-baris di atas baris kepala (sel gabungan Excel
+    hanya berisi nilai di kolom pertamanya, jadi diisi ke kanan)."""
+    out: Dict[str, List[str]] = {h: [] for h in header}
+    for row in above:
+        cur = ""
+        for j, h in enumerate(header):
+            v = row[j] if j < len(row) else None
+            if v not in (None, ""):
+                cur = str(v).strip()
+            if cur:
+                out[h].append(cur)
+    return {h: " / ".join(g) for h, g in out.items() if g}
+
+
+def read_report_table(raw: bytes, filename: str) -> Tuple[List[str], List[dict], List[str], Dict[str, str]]:
+    """Berkas laporan → (header, baris, catatan, grup kolom). Excel: SEMUA sheet diperiksa."""
+    notes: List[str] = []
+    groups: Dict[str, str] = {}
+    name = (filename or "").lower()
+    if name.endswith((".xlsx", ".xlsm", ".xls")):
+        sheet, headers, rows, groups = _read_workbook(raw, read_only=True)
+        if len(headers) <= 1:
+            # ekspor yang menulis 1 sel per <row> (lihat marketing_import_engine)
+            sheet, headers, rows, groups = _read_workbook(raw, read_only=False)
+        if sheet:
+            notes.append(f"Data dibaca dari sheet “{sheet}”.")
+        else:
+            # tidak ada baris yang mirip kepala laporan: baca seperti dulu (sheet
+            # aktif, baris pertama = kepala) supaya kolom angkanya tetap bisa
+            # diarahkan manual — bukan buntu.
+            headers, rows = parse_table(raw, filename)
+            groups = {}
+    else:
+        headers, rows = parse_table(raw, filename)
+
+    # Baris "Order" vs "Sku": angka baris Sku adalah PECAHAN baris Order-nya.
+    kind_col = next((h for h in headers if _norm_header(h) == ROW_KIND_HEADER), None)
+    if kind_col:
+        kinds = [_norm_header(r.get(kind_col)) for r in rows]
+        if ROW_KIND_KEEP in kinds:
+            kept = [r for r, k in zip(rows, kinds) if k == ROW_KIND_KEEP]
+            skipped = len(rows) - len(kept)
+            if skipped:
+                notes.append(f"{skipped} baris rincian per produk (Sku) dilewati — angkanya "
+                             "sudah termasuk di baris pesanan (Order), kalau ikut dijumlah "
+                             "nilainya menjadi dua kali.")
+            rows = kept
+    return headers, rows, notes, groups
+
 
 def _is_id_column(norm: str) -> bool:
     return bool(ID_TOKENS & set(norm.split()))
@@ -66,10 +214,12 @@ def _is_numeric_column(rows: List[dict], col: str) -> bool:
         v = r.get(col)
         if v in (None, ""):
             continue
-        seen += 1
-        n, _ = parse_number(v)
-        if n is None:
+        n, err = parse_number(v)
+        if err:
             return False
+        if n is None:
+            continue                   # "-" = kosong (2026-11-06), bukan teks
+        seen += 1
     return seen > 0
 
 
@@ -119,7 +269,7 @@ def compute_values(mapping: Dict[str, List[str]], column_totals: Dict[str, float
 
 def parse_settlement_report(raw: bytes, filename: str,
                             saved_mapping: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
-    headers, rows = parse_table(raw, filename)
+    headers, rows, notes, groups = read_report_table(raw, filename)
     if not headers:
         raise ValueError("Baris header tidak ditemukan di berkas")
     if not rows:
@@ -129,6 +279,7 @@ def parse_settlement_report(raw: bytes, filename: str,
     used: set = set()
     date_col = period_col = id_col = None
     numeric_cols: List[str] = []
+    info_cols: List[str] = []
 
     for h in headers:
         norm = _norm_header(h)
@@ -144,11 +295,25 @@ def parse_settlement_report(raw: bytes, filename: str,
             continue
         if not _is_numeric_column(rows, h):
             continue
+        # 2026-11-06 (Tahap 2) — kolom di bawah grup INFORMASI (data pembeli,
+        # referensi pengembalian) tidak termasuk perhitungan dana dilepas.
+        # Contoh nyata: "Pengembalian Dana ke Pembeli" di grup "Informasi
+        # Referensi" mengulang angka "Jumlah Pengembalian Dana ke Pembeli" ⇒ refund
+        # terhitung dua kali bila ikut dipetakan.
+        grp = _norm_header(groups.get(h, ""))
+        if grp and any(_norm_header(t) in grp for t in INFO_GROUP_TOKENS):
+            info_cols.append(h)
+            continue
         numeric_cols.append(h)
         for field in FIELD_PRIORITY:
+            if field == "seller_discount" and any(_norm_header(t) in norm for t in PLATFORM_FUNDED_TOKENS):
+                continue           # diskon yang DIBIAYAI platform bukan potongan penjual
             if _match(norm, FIELD_KEYWORDS[field]):
                 mapping[field].append(h); used.add(h)
                 break
+    if info_cols:
+        notes.append(f"{len(info_cols)} kolom informasi (data pembeli / referensi) tidak ikut "
+                     "dihitung: " + ", ".join(info_cols[:6]) + (" …" if len(info_cols) > 6 else ""))
 
     # Kolom "ads"/"iklan" mudah bertabrakan dengan komisi afiliasi — afiliasi menang.
     for h in list(mapping["ads_deduction"]):
@@ -195,6 +360,9 @@ def parse_settlement_report(raw: bytes, filename: str,
         "meta_columns": {"settlement_date": date_col, "period": period_col, "settlement_id": id_col},
         "unmapped_numeric_columns": unmapped,
         "headers": headers,
+        # 2026-11-06 (Tahap 2) — keterangan cara berkas dibaca (sheet, baris dilewati)
+        "notes": notes,
+        "warnings": [],
     }
 
 

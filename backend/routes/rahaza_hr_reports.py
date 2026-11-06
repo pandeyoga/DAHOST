@@ -48,7 +48,7 @@ async def _require_hr_admin(request: Request):
 
 
 _PRESENT = ("hadir", "present")
-_ABSENT = ("alfa", "alpha", "absent", "absen")
+_ABSENT = ("alpa", "alfa", "alpha", "absent", "absen")   # Tahap 2: kontrak payroll 'alpa'; data lama 'alfa' tetap
 
 
 def _status_key(status) -> Optional[str]:
@@ -91,6 +91,34 @@ async def _attendance_counts(db, emp_ids: list, from_date: str, to_date: str) ->
             day = by_date.setdefault(key.get("date"), {})
             day[col] = day.get(col, 0) + int(g.get("n") or 0)
     return by_emp, by_date
+
+
+async def _present_on_working_days(db, emp_ids: list, work_days: list) -> dict:
+    """Hari HADIR per karyawan yang jatuh di HARI KERJA (Tahap 2, 2026-11-06).
+
+    Hadir = status hadir (selfie ditolak berstatus alpa, jadi tidak ikut) + 0,5 untuk cuti/izin/sakit setengah
+    hari (kontrak payroll `half_day`). Dipakai persentase kehadiran = hadir ÷ hari kerja; dulu dibagi hari
+    KALENDER sehingga karyawan yang hadir penuh tampak 80-an persen."""
+    if not emp_ids or not work_days:
+        return {}
+    out: dict = {}
+    async for g in db.rahaza_attendance_events.aggregate([
+            {"$match": {"employee_id": {"$in": emp_ids}, "date": {"$in": list(work_days)}}},
+            {"$group": {"_id": {"employee_id": "$employee_id", "status": "$status"},
+                        "n": {"$sum": 1}, "half": {"$sum": {"$cond": ["$half_day", 1, 0]}}}}]):
+        key = g.get("_id") or {}
+        col = _status_key(key.get("status"))
+        eid = key.get("employee_id")
+        if col == "hadir":
+            out[eid] = out.get(eid, 0) + int(g.get("n") or 0)
+        elif col in ("izin", "sakit", "cuti"):
+            out[eid] = out.get(eid, 0) + 0.5 * int(g.get("half") or 0)
+    return out
+
+
+async def _work_days(db, d_from: date, d_to: date) -> list:
+    from core.workdays import working_days
+    return [d.isoformat() for d in await working_days(db, d_from, d_to)]
 
 
 # ── Attendance Summary Report ──────────────────────────────────────────────────
@@ -148,9 +176,12 @@ async def get_attendance_summary(
     d_from = date.fromisoformat(from_date)
     d_to = date.fromisoformat(to_date)
     total_days = (d_to - d_from).days + 1
+    work_days = await _work_days(db, d_from, d_to)   # Tahap 2: pembagi % kehadiran = hari kerja
+    working_days_n = len(work_days)
 
     # Tahap 1: hitungan per karyawan & per hari dari `$group` (dulu record mentah terpotong 500).
     counts_by_emp, counts_by_date = await _attendance_counts(db, emp_ids, from_date, to_date)
+    present_by_emp = await _present_on_working_days(db, emp_ids, work_days)
 
     # Build summary per employee
     summary = []
@@ -163,6 +194,7 @@ async def get_attendance_summary(
 
         recorded_days = int(c.get("recorded", 0))
         missing_days = total_days - recorded_days
+        present = float(present_by_emp.get(eid, 0))
         
         summary.append({
             "employee_id": eid,
@@ -172,10 +204,13 @@ async def get_attendance_summary(
             "location_name": emp.get("location_name"),
             "shift_name": emp.get("shift_name"),
             "total_days": total_days,
+            "working_days": working_days_n,
+            "present_days": present,
             "recorded_days": recorded_days,
             "missing_days": missing_days,
             **stats,
-            "attendance_rate": round((stats["hadir"] / total_days * 100), 1) if total_days > 0 else 0,
+            "alpha": stats["alfa"],   # nama kolom lama ekspor Excel
+            "attendance_rate": round(min(present / working_days_n * 100, 100.0), 1) if working_days_n > 0 else 0,
         })
     
     # Aggregates
@@ -219,6 +254,7 @@ async def get_attendance_summary(
             "total_terlambat": total_terlambat,
             "avg_attendance_rate": avg_attendance_rate,
             "present_pct": avg_attendance_rate,
+            "working_days": working_days_n,
         },
         "chart_data": chart_data,
         "period": {"from": from_date, "to": to_date},
@@ -599,7 +635,8 @@ async def export_attendance_excel(
         ws.append([])
         
         # Column headers
-        headers = ["Employee Code", "Employee Name", "Department", "Total Days", "Hadir", "Izin", "Sakit", "Cuti", "Alpha", "Terlambat", "Attendance Rate (%)"]
+        headers = ["Employee Code", "Employee Name", "Department", "Total Days", "Hari Kerja", "Hadir", "Izin", "Sakit",
+                   "Cuti", "Alpha", "Terlambat", "Attendance Rate (%)"]
         ws.append(headers)
         
         # Data rows
@@ -609,11 +646,12 @@ async def export_attendance_excel(
                 row.get("employee_name"),
                 row.get("department_name"),
                 row.get("total_days"),
+                row.get("working_days"),
                 row.get("hadir"),
                 row.get("izin"),
                 row.get("sakit"),
                 row.get("cuti"),
-                row.get("alpha"),
+                row.get("alfa"),
                 row.get("terlambat"),
                 row.get("attendance_rate"),
             ])
@@ -854,6 +892,9 @@ async def validate_attendance_for_payroll(
     
     # Tahap 1: hitungan dari `$group` (dulu record mentah `to_list(500)` → peringatan "hari kosong" palsu).
     counts_by_emp, _ = await _attendance_counts(db, emp_ids, period_from, period_to)
+    work_days = await _work_days(db, d_from, d_to)   # Tahap 2: % kehadiran dibagi hari kerja
+    working_days_n = len(work_days)
+    present_by_emp = await _present_on_working_days(db, emp_ids, work_days)
 
     # Build warnings and stats
     warnings = []
@@ -867,6 +908,8 @@ async def validate_attendance_for_payroll(
 
         # Calculate attendance breakdown
         hadir_count = int(c.get("hadir", 0))
+        present = float(present_by_emp.get(eid, 0))
+        rate = round(min(present / working_days_n * 100, 100.0), 1) if working_days_n > 0 else 0
         
         # Build stat
         stat = {
@@ -877,7 +920,9 @@ async def validate_attendance_for_payroll(
             "recorded_days": recorded_days,
             "missing_days": missing_days,
             "hadir_count": hadir_count,
-            "attendance_rate": round((hadir_count / total_days * 100), 1) if total_days > 0 else 0,
+            "working_days": working_days_n,
+            "present_days": present,
+            "attendance_rate": rate,
         }
         attendance_stats.append(stat)
         
@@ -888,12 +933,13 @@ async def validate_attendance_for_payroll(
                 "severity": "high" if missing_days >= (total_days * 0.3) else "medium",
                 "warning_message": f"{missing_days} hari belum ada record attendance ({round((missing_days/total_days)*100, 1)}% dari periode)",
             })
-        elif hadir_count < (total_days * 0.5):
-            # Warning jika kehadiran <50% meskipun ada record
+        elif working_days_n and present < (working_days_n * 0.5):
+            # Warning jika kehadiran <50% hari kerja meskipun ada record
             warnings.append({
                 **stat,
                 "severity": "medium",
-                "warning_message": f"Tingkat kehadiran rendah: {stat['attendance_rate']}% (hadir {hadir_count}/{total_days} hari)",
+                "warning_message": (f"Tingkat kehadiran rendah: {stat['attendance_rate']}% "
+                                    f"(hadir {present:g}/{working_days_n} hari kerja)"),
             })
     
     # Sort warnings by severity

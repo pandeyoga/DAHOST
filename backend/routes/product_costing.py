@@ -215,3 +215,56 @@ async def apply_all(request: Request):
             "applied_count": len(applied), "skipped_count": len(skipped),
             "fg_updated": sum(a["fg_updated"] for a in applied),
             "catalog_items_updated": sum(a["catalog_items_updated"] for a in applied)}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2026-11-06 (Tahap 2) — SISA WIP PER PO (aktual vs standar) — lihat `core.po_wip`
+# ══════════════════════════════════════════════════════════════════════════════
+async def _require_finance_write(request: Request) -> dict:
+    """Menutup sisa WIP = membuat jurnal ⇒ hanya Keuangan/admin."""
+    from core.roles import FINANCE_ROLES
+    user = await _read_user(request)
+    role = (user.get("role") or "").lower()
+    perms = user.get("_permissions") or []
+    if role in FINANCE_ROLES or "*" in perms or "finance.manage" in perms:
+        return user
+    raise HTTPException(403, "Hanya Keuangan yang boleh menutup sisa WIP PO.")
+
+
+@router.get("/po-wip")
+async def po_wip_open(request: Request, limit: int = 100):
+    """PO produksi internal yang sudah ditutup tetapi masih menyisakan saldo WIP."""
+    await _read_user(request)
+    from core import po_wip
+    rows = await po_wip.open_residuals(get_db(), limit=max(1, min(int(limit or 100), 300)))
+    return {"items": serialize_doc(rows), "count": len(rows),
+            "total_residual": round(sum(r.get("residual") or 0 for r in rows), 2)}
+
+
+@router.get("/po-wip/{po_id}")
+async def po_wip_detail(po_id: str, request: Request):
+    await _read_user(request)
+    from core import po_wip
+    out = await po_wip.po_wip_position(get_db(), po_id)
+    if not out.get("ok"):
+        raise HTTPException(404, out.get("error") or "PO tidak ditemukan.")
+    return serialize_doc(out)
+
+
+@router.post("/po-wip/{po_id}/clear")
+async def po_wip_clear(po_id: str, request: Request):
+    """Tutup sisa WIP satu PO yang SUDAH ditutup ke akun selisih produksi (jurnal)."""
+    user = await _require_finance_write(request)
+    from core import po_wip
+    db = get_db()
+    pos = await po_wip.po_wip_position(db, po_id)
+    if not pos.get("ok"):
+        raise HTTPException(404, pos.get("error") or "PO tidak ditemukan.")
+    if not pos.get("closed"):
+        raise HTTPException(400, "PO ini belum ditutup — sisa WIP ditutup otomatis saat PO ditutup.")
+    out = await po_wip.clear_po_wip(db, po_id, user, reason="ditutup Keuangan")
+    if not out.get("ok"):
+        raise HTTPException(400, (out.get("posting") or {}).get("error") or out.get("error")
+                            or "Sisa WIP gagal ditutup.")
+    await log_activity(user["id"], user.get("name", ""), "clear", "costing.po_wip", po_id)
+    return serialize_doc(out)

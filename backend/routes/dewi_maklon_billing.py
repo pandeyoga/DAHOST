@@ -168,126 +168,13 @@ async def _recalc_invoice(db, invoice_id: str) -> dict:
     return update
 
 
-async def _billable_preview(db, mirror: dict) -> dict:
-    from routes.production_maklon_bridge import billable_lines_for_po
-    bill = await billable_lines_for_po(db, mirror['id'])
-    return {
-        'id': mirror['id'], 'source': 'engine_ar', 'po_number': mirror.get('po_number'),
-        'order_code': mirror.get('po_number'), 'client_id': mirror.get('client_id'),
-        'client_name': mirror.get('client_name'), 'status': mirror.get('status'),
-        'ar_invoice_number': mirror.get('ar_invoice_number'),
-        'total_ordered': bill['total_ordered'], 'total_received': bill['total_received'],
-        'subtotal': bill['subtotal'], 'line_count': len(bill['lines']), 'lines': bill['lines'],
-        'billable': bool(bill['lines']),
-    }
-
-
-async def _generate_from_engine_ar(db, mirror: dict, payload: 'InvoiceGenerateIn', user: dict) -> dict:
-    """PO engine (mirror production_pos): TERBITKAN AR otomatis yang sudah ada — bukan
-    membuat dokumen/nomor kedua. Nomor = nomor AR; qty = yang diterima klien × harga jasa."""
-    from routes.production_maklon_bridge import billable_lines_for_po, try_sync_maklon_finance
-    po_id = mirror['id']
-    if mirror.get('status') in ('draft', 'cancelled'):
-        raise HTTPException(400, f"PO berstatus {mirror.get('status')} tidak bisa diinvoice")
-    existing = await db.dewi_maklon_invoices.find_one(
-        {'order_id': po_id, 'status': {'$ne': 'cancelled'}}, {'_id': 0, 'invoice_number': 1})
-    if existing:
-        raise HTTPException(400, f'PO sudah memiliki invoice {existing.get("invoice_number")}')
-    ar = None
-    if mirror.get('ar_invoice_id'):
-        ar = await db.rahaza_ar_invoices.find_one(
-            {'id': mirror['ar_invoice_id'], 'source_module': 'maklon_po'}, {'_id': 0})
-    if not ar:
-        await try_sync_maklon_finance(db, po_id, user)
-        m2 = await db.dewi_maklon_pos.find_one({'id': po_id}, {'_id': 0, 'ar_invoice_id': 1}) or {}
-        if m2.get('ar_invoice_id'):
-            ar = await db.rahaza_ar_invoices.find_one({'id': m2['ar_invoice_id']}, {'_id': 0})
-    if not ar:
-        raise HTTPException(400, 'AR otomatis belum terbentuk — PO harus sudah Confirmed')
-    # AR 'issued' TANPA dokumen layar aktif = yatim (cancel lama tidak sempat mengembalikan
-    # AR ke draft). Selama belum dibayar & belum diposting GL, terbitkan ulang saja.
-    ar_status = ar.get('status') or 'draft'
-    orphan_issued = (ar_status == 'issued' and not ar.get('gl_posted_at')
-                     and float(ar.get('amount_paid') or 0) <= 0)
-    if ar_status != 'draft' and not orphan_issued:
-        raise HTTPException(400, f"AR {ar.get('invoice_number')} sudah berstatus {ar_status}")
-    if (payload.invoice_number or '').strip() and payload.invoice_number.strip() != ar.get('invoice_number'):
-        raise HTTPException(400, f"Nomor invoice PO ini mengikuti AR otomatis {ar.get('invoice_number')} — "
-                                 'kosongkan kolom nomor.')
-    bill = await billable_lines_for_po(db, po_id)
-    if not bill['lines']:
-        raise HTTPException(400, 'Belum ada qty yang dikirim/diterima klien — tidak ada yang bisa ditagih')
-
-    from core.tax_status import faktur_fields, get_tax_profile, output_tax, wants_output_tax
-    tax_profile = await get_tax_profile(db)
-    apply_tax = wants_output_tax(tax_profile, payload.tax_pct, payload.kena_ppn)
-    term_default = await get_config_value(db, 'maklon_payment_terms_default', 'net_30') or 'net_30'
-    term = payload.payment_terms or term_default
-    issue = payload.issue_date or wib_date_str()
-    try:
-        issue_d = date.fromisoformat(issue)
-    except ValueError:
-        raise HTTPException(400, 'issue_date tidak valid (YYYY-MM-DD)')
-    due_d = issue_d + timedelta(days=_payment_term_days(term))
-    now = datetime.now(timezone.utc)
-    subtotal = bill['subtotal']
-    tinfo = output_tax(tax_profile, subtotal, apply=apply_tax)
-    tax_pct, tax_amount = tinfo['tax_pct'], float(tinfo['tax_amount'])
-    total = round(subtotal + tax_amount, 2)
-    tax_meta = {k: tinfo[k] for k in ('kena_ppn', 'ppn_rate', 'dpp_nilai_lain', 'kode_transaksi')}
-    tax_meta.update(faktur_fields(payload.dict()) if tinfo['kena_ppn'] else {'faktur_number': '', 'faktur_date': ''})
-
-    await db.rahaza_ar_invoices.update_one({'id': ar['id']}, {'$set': {
-        'lines': bill['lines'], 'subtotal': subtotal, 'tax_pct': tax_pct, 'tax_amount': tax_amount, **tax_meta,
-        'discount_amount': 0.0, 'total_amount': total, 'amount_paid': 0.0, 'amount_due': total,
-        'invoice_date': issue_d.isoformat(), 'due_date': due_d.isoformat(), 'payment_terms': term,
-        'status': 'issued', 'issued_at': now, 'issued_by': user.get('name', ''),
-        'billing_basis': 'received_qty_x_selling_price',
-        'notes': (payload.notes or ar.get('notes') or ''), 'updated_at': now}})
-    doc = {
-        'id': ar['id'], 'invoice_number': ar['invoice_number'], 'ar_invoice_id': ar['id'],
-        'source': 'engine_ar', 'order_id': po_id, 'order_code': mirror.get('po_number'),
-        'po_id': po_id, 'po_number': mirror.get('po_number'),
-        'client_id': mirror.get('client_id'), 'client_name': mirror.get('client_name'),
-        'issue_date': issue_d.isoformat(), 'due_date': due_d.isoformat(), 'payment_terms': term,
-        'tax_pct': tax_pct, 'discount_amount': 0.0, **tax_meta,
-        'lines': [{'description': ln['description'], 'qty': ln['qty'], 'unit': 'pcs',
-                   'unit_price': ln['unit_price'], 'line_total': ln['line_total'],
-                   'item_id': ln['item_id'], 'sku': ln['sku'], 'qty_ordered': ln['qty_ordered']}
-                  for ln in bill['lines']],
-        'subtotal': subtotal, 'tax_amount': 0.0, 'total_amount': 0.0, 'paid_amount': 0.0,
-        'balance_amount': 0.0, 'status': 'issued', 'notes': payload.notes,
-        'created_at': now, 'updated_at': now, 'created_by': user.get('name', 'System'),
-    }
-    # Idempoten: dokumen cancelled lama dgn id/nomor sama (sisa cancel versi lama) tidak boleh
-    # membuat unique index `invoice_number` menolak penerbitan ulang (iter 105 DuplicateKeyError).
-    await db.dewi_maklon_invoices.delete_many({
-        'status': 'cancelled',
-        '$or': [{'id': ar['id']}, {'invoice_number': ar['invoice_number']}]})
-    await db.dewi_maklon_invoices.replace_one({'id': ar['id']}, doc, upsert=True)
-    await db.dewi_maklon_pos.update_one({'id': po_id}, {'$set': {
-        'status': 'invoiced', 'ar_invoice_id': ar['id'], 'ar_invoice_number': ar['invoice_number'],
-        'updated_at': now}})
-    await _recalc_invoice(db, doc['id'])
-    # C-06: penerbitan invoice maklon WAJIB masuk GL (Dr AR / Cr Pendapatan / Cr PPN) — non-fatal.
-    from routes.dewi_maklon_finance import post_maklon_ar_invoice
-    po_fresh = await db.dewi_maklon_pos.find_one({'id': po_id}, {'_id': 0}) or mirror
-    await post_maklon_ar_invoice(db, po_fresh, user)
-    await _notify_client_invoice(db, doc, mirror.get('po_number'))
-    return _clean(await db.dewi_maklon_invoices.find_one({'id': doc['id']}))
-
-
-async def _notify_client_invoice(db, doc: dict, order_code: str):
-    try:
-        from routes.dewi_notifications import queue_for_client
-        body = (f"Invoice baru {doc.get('invoice_number')} untuk order {order_code} telah diterbitkan. "
-                f"Total Rp {int(doc.get('total_amount') or 0):,}, jatuh tempo {doc.get('due_date')}.").replace(',', '.')
-        await queue_for_client(db, client_id=doc.get('client_id'),
-                               subject=f"Invoice baru — {doc.get('invoice_number')}", body=body,
-                               event_type='invoice_issued', source_ref=doc['id'],
-                               meta={'invoice_number': doc.get('invoice_number'), 'total': doc.get('total_amount')})
-    except Exception:
-        logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
+# 2026-11-06 (Tahap 2, keputusan owner): PO maklon engine TIDAK lagi punya langkah "terbitkan
+# faktur" yang membukukan pendapatan sekaligus. Pendapatan lahir per kiriman ke klien dan piutangnya
+# dikelola per PO (lihat bagian PIUTANG KLIEN di bawah + core.maklon_ledger). `_billable_preview` dan
+# `_generate_from_engine_ar` (satu faktur per PO, dibukukan saat diterbitkan) DIHAPUS.
+ENGINE_INVOICE_GONE = ("PO maklon tidak perlu diterbitkan fakturnya lagi: piutang klien terjadwal sejak PO "
+                       "dikonfirmasi dan pendapatan dicatat otomatis setiap barang dikirim ke klien. Cetak faktur "
+                       "per kiriman atau per PO dari menu Piutang klien maklon.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # INVOICE ROUTES
@@ -332,7 +219,7 @@ async def list_eligible_for_invoice(user: dict = Depends(require_auth)):
         if po['id'] in invoiced:
             continue
         if po.get('mirror_of') == 'production_pos':
-            out.append(await _billable_preview(db, po))
+            continue   # 2026-11-06 (Tahap 2): PO engine ditagih otomatis per kiriman (Piutang klien)
         else:
             legacy = po_to_legacy_order(po)
             qty = int(legacy.get('qty_ordered', 0) or 0)
@@ -394,7 +281,7 @@ async def generate_invoice(payload: InvoiceGenerateIn, user: dict = Depends(requ
         raise HTTPException(404, 'Order tidak ditemukan')
     is_po = rec.get('_collection') == 'dewi_maklon_pos'
     if is_po and rec.get('mirror_of') == 'production_pos':
-        return await _generate_from_engine_ar(db, rec, payload, user)
+        raise HTTPException(400, ENGINE_INVOICE_GONE)
     # Normalize to legacy order shape for the rest of the flow
     order = po_to_legacy_order(rec) if is_po else rec
     order_id_canonical = order.get('id')
@@ -597,6 +484,12 @@ async def record_payment(payload: PaymentIn, user: dict = Depends(require_auth))
     db = get_db()
     inv = await db.dewi_maklon_invoices.find_one({'id': payload.invoice_id})
     if not inv:
+        # 2026-11-06 (Tahap 2): id piutang terjadwal PO maklon → pembayaran dicatat ke piutang itu
+        ar = await db.rahaza_ar_invoices.find_one({'id': payload.invoice_id, 'schedule_mode': 'v2'}, {'_id': 0})
+        if ar:
+            _require_payment_role(user)
+            return await _schedule_payment(db, ar, payload.amount, payload.cash_account_id, payload.payment_date,
+                                           payload.notes or '', payload.reference_no or '', user)
         raise HTTPException(404, 'Invoice tidak ditemukan')
     if inv.get('status') == 'cancelled':
         raise HTTPException(400, 'Invoice dibatalkan')
@@ -698,8 +591,12 @@ async def get_hpp(order_id: str, user: dict = Depends(require_auth)):
          'category': 'labor', 'qty': cmt_qty or qty_ordered, 'unit': 'pcs',
          'unit_cost': round(a['cmt_cost'] / cmt_qty, 2) if cmt_qty else round(rate_plan, 2),
          'total': a['cmt_cost'] if cmt_qty else round(a['cmt_cost_plan'], 2), 'source': 'dewi_cmt_payments'},
-        {'name': 'Aksesoris milik DA (Material Issue)', 'category': 'packaging', 'qty': 1, 'unit': 'lot',
-         'unit_cost': a['accessory_cost'], 'total': a['accessory_cost'], 'source': 'rahaza_material_issues'},
+        # 2026-11-06 (Tahap 2): aksesoris dibagi per pcs yang DIKIRIM ke CMT; HPP hanya memuat bagian
+        # pcs lolos QC (dulu Σ aksesoris semua pcs dibagi pcs lolos ⇒ HPP per pcs membengkak).
+        {'name': 'Aksesoris milik DA (bagian pcs lolos QC)', 'category': 'packaging',
+         'qty': a['qty_basis'] or 1, 'unit': 'pcs',
+         'unit_cost': a.get('accessory_cost_per_pcs', a['accessory_cost']),
+         'total': a.get('accessory_cost_absorbed', a['accessory_cost']), 'source': 'rahaza_material_issues'},
         {'name': 'Permak / perbaikan', 'category': 'other', 'qty': 1, 'unit': 'lot',
          'unit_cost': a['permak_cost'], 'total': a['permak_cost'], 'source': 'dewi_cmt_permak'},
     ]
@@ -714,13 +611,15 @@ async def get_hpp(order_id: str, user: dict = Depends(require_auth)):
         'order_id': order_id, 'source': 'actual', 'po_number': a['po_number'],
         'qty_ordered': a['qty_ordered'], 'qty_basis': basis,
         'components': components, 'direct_cost': direct,
-        # overhead belum diputuskan owner → 0 (tidak ditebak)
+        'accessory_cost_unabsorbed': a.get('accessory_cost_unabsorbed', 0.0),
+        # keputusan owner 6 Nov 2026: TIDAK ada overhead di HPP (tenaga & overhead pabrik = beban bulanan)
         'overhead_pct': 0.0, 'overhead_amount': 0.0,
         'total_hpp': direct, 'hpp_per_pcs': hpp_pcs,
         'profit_margin_pct': profit_pct,
-        'suggested_price_per_pcs': round(hpp_pcs * (1 + profit_pct / 100), 2),
+        # margin = (harga − HPP) ÷ harga ⇒ harga saran = HPP ÷ (1 − margin)
+        'suggested_price_per_pcs': (round(hpp_pcs / (1 - profit_pct / 100), 2) if profit_pct < 100 else 0.0),
         'current_price_per_pcs': round(price, 2),
-        'actual_margin_pct': round((price - hpp_pcs) / hpp_pcs * 100, 2) if hpp_pcs > 0 else 0,
+        'actual_margin_pct': round((price - hpp_pcs) / price * 100, 2) if price > 0 else 0,
         'revenue': a['revenue'], 'margin': a['margin'], 'margin_pct': a['margin_pct'],
         'actual': a, 'gaps': a['gaps'],
         'notes': (manual or {}).get('notes', ''),
@@ -740,9 +639,10 @@ async def upsert_hpp(payload: HPPIn, user: dict = Depends(require_auth)):
     is_po = rec.get('_collection') == 'dewi_maklon_pos'
     order = po_to_legacy_order(rec) if is_po else rec
 
-    overhead_default = float(await get_config_value(db, 'hpp_overhead_pct', 15.0) or 0)
+    # 2026-11-06 (Tahap 2, keputusan owner): TIDAK ada overhead di HPP. Dulu bawaan 15% ditambahkan
+    # ke setiap HPP maklon ketikan; nilai overhead kiriman layar diabaikan.
+    overhead_pct = 0.0
     profit_default = float(await get_config_value(db, 'hpp_profit_margin_pct', 20.0) or 0)
-    overhead_pct = payload.overhead_pct if payload.overhead_pct is not None else overhead_default
     profit_pct = payload.profit_margin_pct if payload.profit_margin_pct is not None else profit_default
 
     components = []
@@ -756,9 +656,10 @@ async def upsert_hpp(payload: HPPIn, user: dict = Depends(require_auth)):
     qty_ordered = int(order.get('qty_ordered', 0) or 0) or 1
     total_hpp = round(direct_cost + overhead_amount, 2)
     hpp_per_pcs = round(total_hpp / qty_ordered, 2)
-    suggested_price = round(hpp_per_pcs * (1 + profit_pct / 100), 2)
+    # margin = (harga − HPP) ÷ harga (keputusan owner, berlaku di semua layar)
+    suggested_price = round(hpp_per_pcs / (1 - profit_pct / 100), 2) if profit_pct < 100 else 0.0
     current_price = float(order.get('price_per_pcs', 0) or 0)
-    actual_margin_pct = round(((current_price - hpp_per_pcs) / hpp_per_pcs) * 100, 2) if hpp_per_pcs > 0 else 0
+    actual_margin_pct = round(((current_price - hpp_per_pcs) / current_price) * 100, 2) if current_price > 0 else 0
 
     now = datetime.now(timezone.utc)
     doc = {
@@ -935,3 +836,274 @@ async def aging_report(user: dict = Depends(require_auth)):
              'days_overdue': r['days_overdue'], 'bucket': 'over_90' if r['bucket'] == '90_plus' else r['bucket'],
              'due_date_valid': r['due_date_valid']} for r in res['rows']]
     return {'buckets': buckets, 'rows': rows, 'total': res['total'], 'data_quality': res['data_quality']}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PIUTANG KLIEN MAKLON PER PO (2026-11-06, Tahap 2 — keputusan owner)
+# ══════════════════════════════════════════════════════════════════════════════
+# Layar "Invoice Klien" menjadi tampilan piutang PER PO: nilai terjadwal (qty pesan × harga jasa),
+# tertagih (pendapatan per kiriman), dibayar, sisa, uang muka; faktur hanya DOKUMEN CETAK (per
+# kiriman atau per PO); pembayaran dicatat terhadap piutang PO. Sumber data tetap satu:
+# `rahaza_ar_invoices` (source_module='maklon_po') — lihat core.maklon_ledger.
+_PAY_ROLES = tuple(dict.fromkeys(FINANCE_ROLES + ('admin_maklon', 'manager')))
+
+
+def _require_payment_role(user: dict) -> None:
+    if (user.get('role') or '').lower() not in _PAY_ROLES:
+        raise HTTPException(403, 'Hanya Keuangan / admin maklon yang boleh mencatat pembayaran klien.')
+
+
+class ReceivablePaymentIn(BaseModel):
+    amount: float = Field(..., gt=0)
+    cash_account_id: str
+    payment_date: Optional[str] = None
+    reference_no: Optional[str] = None
+    notes: Optional[str] = None
+
+
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _receivable_row(ar: dict) -> dict:
+    """Satu baris daftar piutang per PO (dokumen terjadwal v2 maupun faktur lama)."""
+    v2 = ar.get('schedule_mode') == 'v2'
+    total = _num(ar.get('total_amount') if ar.get('total_amount') is not None else ar.get('total'))
+    paid = _num(ar.get('amount_paid') if ar.get('amount_paid') is not None else ar.get('paid_amount'))
+    due = _num(ar.get('amount_due') if ar.get('amount_due') is not None else ar.get('balance'))
+    legacy_billed = total if (ar.get('status') or 'draft') not in ('draft', 'cancelled') else 0.0
+    return {
+        'id': ar['id'], 'invoice_number': ar.get('invoice_number'), 'mode': 'terjadwal' if v2 else 'lama',
+        'po_id': ar.get('linked_maklon_po_id'), 'po_number': ar.get('linked_maklon_po_number'),
+        'client_id': ar.get('customer_id'), 'client_name': ar.get('customer_name'),
+        'status': ar.get('status') or 'draft', 'po_status': ar.get('po_status'),
+        'scheduled_total': _num(ar.get('scheduled_total')) if v2 else total,
+        'billed_total': _num(ar.get('billed_total')) if v2 else legacy_billed,
+        'paid_total': paid, 'amount_due': due,
+        'advance_balance': _num(ar.get('advance_balance')) if v2 else 0.0,
+        'scheduled_remaining': _num(ar.get('scheduled_remaining')) if v2 else 0.0,
+        'outstanding_total': _num(ar.get('outstanding_total')) if v2 else round(total - paid, 2),
+        'due_date': ar.get('due_date'), 'issue_date': ar.get('issue_date') or ar.get('invoice_date'),
+        'kena_ppn': bool(ar.get('kena_ppn')), 'post_error': ar.get('post_error'),
+        'held_count': len(ar.get('revenue_held') or []),
+    }
+
+
+RECEIVABLE_GROUPS = {
+    'terjadwal': lambda r: r['status'] == 'scheduled',
+    'belum_lunas': lambda r: r['amount_due'] > 0.005,
+    'lunas': lambda r: r['status'] == 'paid',
+    'dibatalkan': lambda r: r['status'] == 'cancelled',
+}
+
+
+@router.get('/receivables')
+async def list_receivables(status: Optional[str] = None, client_id: Optional[str] = None,
+                           search: Optional[str] = None, user: dict = Depends(require_auth)):
+    db = get_db()
+    q: dict = {'source_module': 'maklon_po'}
+    if client_id:
+        q['customer_id'] = client_id
+    docs = await db.rahaza_ar_invoices.find(q, {'_id': 0}).sort('created_at', -1).to_list(2000)
+    rows = [r for r in (_receivable_row(d) for d in docs) if r['status'] != 'draft' or r['mode'] == 'terjadwal']
+    if search:
+        s = search.strip().lower()
+        rows = [r for r in rows if s in (r.get('po_number') or '').lower()
+                or s in (r.get('client_name') or '').lower() or s in (r.get('invoice_number') or '').lower()]
+    counts = {k: sum(1 for r in rows if f(r)) for k, f in RECEIVABLE_GROUPS.items()}
+    if status in RECEIVABLE_GROUPS:
+        rows = [r for r in rows if RECEIVABLE_GROUPS[status](r)]
+    live = [r for r in rows if r['status'] != 'cancelled']
+    summary = {
+        'scheduled_remaining': round(sum(r['scheduled_remaining'] for r in live), 2),
+        'amount_due': round(sum(r['amount_due'] for r in live), 2),
+        'advance_balance': round(sum(r['advance_balance'] for r in live), 2),
+        'overdue': round(sum(r['amount_due'] for r in live if r['status'] == 'overdue'), 2),
+        'count': len(rows),
+    }
+    return {'items': rows, 'counts': counts, 'summary': summary}
+
+
+def dispatch_groups(ar: dict) -> list:
+    """Kiriman yang sudah ditagih (neto per surat jalan + urutan kirim), dengan alokasi bayar FIFO."""
+    groups: dict = {}
+    for p in ar.get('revenue_postings') or []:
+        key = (p.get('shipment_id'), p.get('dispatch_seq'))
+        g = groups.setdefault(key, {'shipment_id': key[0], 'dispatch_seq': key[1],
+                                    'shipment_number': p.get('shipment_number', ''), 'date': None,
+                                    'subtotal': 0.0, 'tax': 0.0, 'total': 0.0, 'journals': [], 'lines': {}})
+        sign = -1 if p.get('reverse') else 1
+        g['subtotal'] = round(g['subtotal'] + sign * _num(p.get('subtotal')), 2)
+        g['tax'] = round(g['tax'] + sign * _num(p.get('tax')), 2)
+        g['total'] = round(g['subtotal'] + g['tax'], 2)
+        if not p.get('reverse') and (not g['date'] or str(p.get('date')) < str(g['date'])):
+            g['date'] = p.get('date')
+        g['journals'].append({'je_number': p.get('je_number'), 'reverse': bool(p.get('reverse')),
+                              'total': p.get('total'), 'date': p.get('date')})
+        for ln in p.get('lines') or []:
+            x = g['lines'].setdefault(ln.get('po_item_id'), {
+                'po_item_id': ln.get('po_item_id'), 'sku': ln.get('sku'), 'size': ln.get('size'),
+                'qty': 0, 'amount': 0.0, 'unit_price': ln.get('unit_price')})
+            x['qty'] += int(ln.get('qty') or 0)
+            x['amount'] = round(x['amount'] + _num(ln.get('amount')), 2)
+    out = sorted(groups.values(),
+                 key=lambda g: (str(g['date'] or ''), str(g['shipment_number']), g['dispatch_seq'] or 0))
+    left = _num(ar.get('ar_credit'))
+    for i, g in enumerate(out, start=1):
+        g['seq_no'] = i
+        g['lines'] = [ln for ln in g['lines'].values() if ln['qty']]
+        g['paid'] = round(min(max(left, 0.0), max(g['total'], 0.0)), 2)
+        left -= g['paid']
+        g['balance'] = round(g['total'] - g['paid'], 2)
+    return [g for g in out if g['total'] or g['lines']]
+
+
+@router.get('/receivables/{ar_id}')
+async def get_receivable(ar_id: str, user: dict = Depends(require_auth)):
+    db = get_db()
+    ar = await db.rahaza_ar_invoices.find_one({'id': ar_id, 'source_module': 'maklon_po'}, {'_id': 0})
+    if not ar:
+        raise HTTPException(404, 'Piutang tidak ditemukan')
+    pays = await db.rahaza_ar_payments.find({'invoice_id': ar_id}, {'_id': 0}).sort('created_at', 1).to_list(500)
+    legacy_pays = await db.dewi_maklon_payments.find({'invoice_id': ar_id}, {'_id': 0}).to_list(500)
+    acc_ids = list({p.get('account_id') for p in pays if p.get('account_id')})
+    accs = {}
+    async for a in db.rahaza_cash_accounts.find({'id': {'$in': acc_ids}}, {'_id': 0, 'id': 1, 'name': 1}):
+        accs[a['id']] = a.get('name')
+    po = await db.production_pos.find_one({'id': ar.get('linked_maklon_po_id')},
+                                          {'_id': 0, 'over_qty_events': 1, 'status': 1}) or {}
+    payments = [{'id': p['id'], 'date': p.get('date'), 'amount': p.get('amount'),
+                 'ar_portion': p.get('ar_portion', p.get('amount')), 'advance_portion': p.get('advance_portion', 0),
+                 'account_name': accs.get(p.get('account_id')) or '', 'reference_no': p.get('reference_no', ''),
+                 'notes': p.get('notes', ''), 'status': p.get('status', 'posted'),
+                 'je_number': p.get('gl_je_number'), 'source': 'piutang'} for p in pays]
+    payments += [{'id': p['id'], 'date': p.get('payment_date'), 'amount': p.get('amount'),
+                  'ar_portion': p.get('amount'), 'advance_portion': 0, 'account_name': '',
+                  'reference_no': p.get('reference_no', ''), 'notes': p.get('notes', ''), 'status': 'posted',
+                  'je_number': p.get('gl_je_number'), 'source': 'faktur_lama'} for p in legacy_pays]
+    from auth import serialize_doc
+    return serialize_doc({
+        **_receivable_row(ar),
+        'payment_terms': ar.get('payment_terms'), 'lines': ar.get('lines') or [],
+        'dispatches': dispatch_groups(ar), 'payments': payments,
+        'advance_postings': ar.get('advance_postings') or [], 'held': ar.get('revenue_held') or [],
+        'over_qty_events': [e for e in po.get('over_qty_events') or []
+                            if e.get('step') in ('kirim_klien', 'tagihan')],
+        'scheduled_subtotal': ar.get('scheduled_subtotal'), 'scheduled_tax': ar.get('scheduled_tax'),
+        'billed_subtotal': ar.get('billed_subtotal'), 'billed_tax': ar.get('billed_tax'),
+        'ar_account_code': ar.get('gl_ar_account_code'), 'revenue_account_code': ar.get('revenue_account_code'),
+    })
+
+
+@router.post('/receivables/{ar_id}/sync')
+async def sync_receivable(ar_id: str, user: dict = Depends(require_auth)):
+    """Hitung ulang piutang PO dari kiriman & pembayaran (idempoten)."""
+    _require_payment_role(user)
+    db = get_db()
+    ar = await db.rahaza_ar_invoices.find_one({'id': ar_id, 'schedule_mode': 'v2'}, {'_id': 0})
+    if not ar:
+        raise HTTPException(404, 'Piutang terjadwal tidak ditemukan')
+    from core import maklon_ledger
+    return await maklon_ledger.sync_ar_schedule(db, ar['linked_maklon_po_id'], user)
+
+
+async def _schedule_payment(db, ar: dict, amount, cash_account_id, payment_date, notes, reference_no, user):
+    from core import maklon_ledger
+    try:
+        doc = await maklon_ledger.record_client_payment(
+            db, ar['id'], amount=amount, cash_account_id=cash_account_id, payment_date=payment_date,
+            notes=notes, reference_no=reference_no, user=user)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    from auth import log_activity
+    await log_activity(user.get('id', ''), user.get('name', ''), 'Pembayaran Klien', 'Maklon Finance',
+                       f"Pembayaran PO {ar.get('linked_maklon_po_number')} Rp {float(amount):,.0f} "
+                       f"(piutang Rp {doc['ar_portion']:,.0f}, uang muka Rp {doc['advance_portion']:,.0f})")
+    return {'message': 'Pembayaran dicatat', 'id': doc['id'], 'gl_je_number': doc.get('gl_je_number'),
+            'ar_portion': doc['ar_portion'], 'advance_portion': doc['advance_portion']}
+
+
+@router.post('/receivables/{ar_id}/payments')
+async def pay_receivable(ar_id: str, payload: ReceivablePaymentIn, user: dict = Depends(require_auth)):
+    _require_payment_role(user)
+    db = get_db()
+    ar = await db.rahaza_ar_invoices.find_one({'id': ar_id, 'schedule_mode': 'v2'}, {'_id': 0})
+    if not ar:
+        raise HTTPException(404, 'Piutang terjadwal tidak ditemukan')
+    return await _schedule_payment(db, ar, payload.amount, payload.cash_account_id, payload.payment_date,
+                                   payload.notes or '', payload.reference_no or '', user)
+
+
+@router.post('/receivables/{ar_id}/payments/{payment_id}/void', dependencies=only(*FINANCE_ROLES))
+async def void_receivable_payment(ar_id: str, payment_id: str, user: dict = Depends(require_auth)):
+    db = get_db()
+    from core import maklon_ledger
+    try:
+        return await maklon_ledger.void_client_payment(db, ar_id, payment_id, user, reason='Dibatalkan Keuangan')
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+def invoice_doc_for(ar: dict, shipment_id: Optional[str] = None, dispatch_seq: Optional[int] = None) -> dict:
+    """Isi faktur CETAK (murni): per kiriman (shipment_id + dispatch_seq) atau seluruh PO."""
+    term = ar.get('payment_terms') or 'net_30'
+    if shipment_id:
+        g = next((x for x in dispatch_groups(ar) if x['shipment_id'] == shipment_id
+                  and (dispatch_seq is None or int(x['dispatch_seq'] or 0) == int(dispatch_seq))), None)
+        if not g:
+            raise HTTPException(404, 'Kiriman ini belum ditagih')
+        d = date.fromisoformat(str(g['date'])[:10]) if g.get('date') else today_wib()
+        return {
+            'invoice_number': f"{ar.get('invoice_number')}/{g['seq_no']}", 'issue_date': d.isoformat(),
+            'due_date': (d + timedelta(days=_payment_term_days(term))).isoformat(), 'payment_terms': term,
+            'status': 'lunas' if g['balance'] <= 0.005 else 'belum lunas',
+            'lines': [{'description': f"Jasa maklon {ln.get('sku') or ''} {ln.get('size') or ''}".strip(),
+                       'sku': ln.get('sku'), 'qty': ln['qty'], 'unit': 'pcs', 'unit_price': ln.get('unit_price'),
+                       'line_total': ln['amount']} for ln in g['lines']],
+            'subtotal': g['subtotal'], 'tax_pct': ar.get('tax_pct') or 0, 'tax_amount': g['tax'],
+            'total_amount': g['total'], 'paid_amount': g['paid'], 'balance_amount': g['balance'],
+            'notes': (f"PO {ar.get('linked_maklon_po_number')} · surat jalan {g['shipment_number']} "
+                      f"kirim ke-{g['dispatch_seq']}"),
+            '_filename': f"Faktur_{ar.get('invoice_number')}_{g['seq_no']}.pdf"}
+    return {
+        'invoice_number': ar.get('invoice_number'), 'issue_date': ar.get('issue_date') or ar.get('invoice_date'),
+        'due_date': ar.get('due_date'), 'payment_terms': term,
+        'status': {'scheduled': 'terjadwal', 'paid': 'lunas', 'overdue': 'lewat jatuh tempo'}.get(
+            ar.get('status'), 'belum lunas'),
+        'lines': [{'description': ln.get('description'), 'sku': ln.get('sku'),
+                   'qty': ln.get('qty_scheduled', ln.get('qty')), 'unit': 'pcs',
+                   'unit_price': ln.get('unit_price'), 'line_total': ln.get('subtotal')}
+                  for ln in ar.get('lines') or []],
+        'subtotal': ar.get('scheduled_subtotal', ar.get('subtotal')), 'tax_pct': ar.get('tax_pct') or 0,
+        'tax_amount': ar.get('scheduled_tax', ar.get('tax_amount')),
+        'total_amount': ar.get('scheduled_total', ar.get('total_amount')),
+        'paid_amount': ar.get('amount_paid'),
+        'balance_amount': ar.get('outstanding_total', ar.get('amount_due')),
+        'notes': (f"PO {ar.get('linked_maklon_po_number')} · sudah dikirim & ditagih "
+                  + f"Rp {_num(ar.get('billed_total')):,.0f}".replace(',', '.')),
+        '_filename': f"Faktur_{ar.get('invoice_number')}.pdf"}
+
+
+@router.get('/receivables/{ar_id}/invoice.pdf')
+async def receivable_invoice_pdf(ar_id: str, shipment_id: Optional[str] = None,
+                                 dispatch_seq: Optional[int] = None, user: dict = Depends(require_auth)):
+    """Faktur CETAK — dokumen saja, tidak menulis apa pun dan tidak membuat jurnal."""
+    from fastapi.responses import Response
+    from utils.invoice_pdf import build_invoice_pdf
+    from utils.pdf_common import get_company_profile, get_doc_settings
+    db = get_db()
+    ar = await db.rahaza_ar_invoices.find_one({'id': ar_id, 'source_module': 'maklon_po'}, {'_id': 0})
+    if not ar:
+        raise HTTPException(404, 'Piutang tidak ditemukan')
+    inv = invoice_doc_for(ar, shipment_id, dispatch_seq)
+    fname = inv.pop('_filename')
+    cl = await db.dewi_maklon_clients.find_one({'id': ar.get('customer_id')}, {'_id': 0}) or {'name': ar.get('customer_name')}
+    co = await db.company_settings.find_one({}, {'_id': 0}) or {}
+    _ds = await get_doc_settings(db, 'invoice-maklon')
+    pdf = build_invoice_pdf(invoice=inv, client=cl, company=co, template=(_ds or {}).get('_template'),
+                            profile=await get_company_profile(db))
+    return Response(content=pdf, media_type='application/pdf',
+                    headers={'Content-Disposition': f'inline; filename="{fname}"'})

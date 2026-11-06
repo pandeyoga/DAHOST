@@ -135,7 +135,19 @@ async def _po_flags(db, user, pos: list):
         po["stage_labels_source"] = "server"
         if role in ("superadmin", "admin", "owner"):
             po["can_submit"] = po.get("status") in ("draft", "rejected")
+        # 2026-11-06 (Tahap 2): harga baris PO yang sudah keluar dari draf hanya diubah Keuangan
+        po["can_edit_price"] = po.get("status") in PRICE_LOCKED_STATUSES and _is_finance(u)
     return pos
+
+
+# 2026-11-06 (Tahap 2, keputusan owner): selama draf/ditolak Pengadaan bebas mengetik harga hasil
+# negosiasi (PUT). Begitu PO diajukan, harga baris hanya diubah Keuangan — dengan alasan & jejak.
+PRICE_LOCKED_STATUSES = ("pending_approval", "approved", "partially_received", "fully_received")
+
+
+def _is_finance(user: dict) -> bool:
+    from core.purchase_returns import is_finance  # SSOT peran Keuangan (core.roles.FINANCE_ROLES)
+    return is_finance(user)
 
 
 PO_DOCNUM_KEY = "rahaza_purchase_orders.po_number"
@@ -557,6 +569,101 @@ async def update_po(po_id: str, request: Request):
     await log_activity(user["id"], user.get("name", ""), "update", "rahaza.po", po["po_number"])
     out = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0})
     await _enrich_po(db, out)
+    return serialize_doc(out)
+
+
+async def _require_po_finance(request: Request) -> dict:
+    """Gerbang Keuangan untuk harga PO (peran SSOT `core.roles.FINANCE_ROLES` + izin fin.ap.manage)."""
+    user = await require_auth(request)
+    if not _is_finance(user):
+        raise HTTPException(403, "Harga baris PO yang sudah diajukan hanya bisa diubah Keuangan.")
+    return user
+
+
+@router.post("/purchase-orders/{po_id}/items/{item_id}/price")
+async def change_po_line_price(po_id: str, item_id: str, request: Request):
+    """2026-11-06 (Tahap 2): Keuangan mengubah harga SATU baris PO yang sudah keluar dari draf.
+
+    Body: {unit_cost_input (per satuan beli PO) | unit_cost (per satuan dasar), reason (wajib)}.
+    Harga baru berlaku untuk qty yang BELUM diterima (GR draf/inspeksi ikut diperbarui; GR yang dikonfirmasi
+    selalu memakai harga PO saat itu). Qty yang sudah diterima tetap bernilai harga lama — selisihnya dengan
+    faktur pemasok masuk HPP saat faktur dijurnal (`core.purchase_costing`). Setiap perubahan tercatat di
+    `price_changes` PO (siapa, kapan, harga lama → baru, alasan) dan log aktivitas."""
+    user = await _require_po_finance(request)
+    db = get_db()
+    body = await request.json()
+    reason = str(body.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(400, "Alasan perubahan harga wajib diisi (mis. hasil negosiasi ulang, salah ketik).")
+    po = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    if not po:
+        raise HTTPException(404, "PO tidak ditemukan.")
+    if po.get("status") in ("draft", "rejected"):
+        raise HTTPException(400, "PO masih draf — ubah harganya lewat Edit PO (Pengadaan).")
+    if po.get("status") not in PRICE_LOCKED_STATUSES:
+        raise HTTPException(400, f"PO berstatus {po.get('status')} — harganya tidak bisa diubah lagi.")
+    items = list(po.get("items") or [])
+    idx = next((i for i, it in enumerate(items) if it.get("id") == item_id), None)
+    if idx is None:
+        raise HTTPException(404, "Baris PO tidak ditemukan.")
+    it = dict(items[idx])
+    factor = float(it.get("uom_factor") or 1) or 1.0
+    try:
+        if body.get("unit_cost_input") not in (None, ""):
+            new_input = float(body["unit_cost_input"])
+            new_base = new_input / factor
+        else:
+            new_base = float(body.get("unit_cost"))
+            new_input = new_base * factor
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Harga baru harus berupa angka.")
+    if new_base < 0:
+        raise HTTPException(400, "Harga tidak boleh negatif.")
+    old_base = float(it.get("unit_cost") or 0)
+    if abs(new_base - old_base) < 1e-9:
+        raise HTTPException(400, "Harga baru sama dengan harga sekarang.")
+    it.update({"unit_cost": round(new_base, 6), "unit_cost_input": round(new_input, 4),
+               "subtotal": round(float(it.get("qty_ordered") or 0) * new_base, 2)})
+    items[idx] = it
+    change = {"id": _uid(), "po_item_id": item_id,
+              "material_id": it.get("material_id"), "description": it.get("description") or "",
+              "old_unit_cost": round(old_base, 6), "new_unit_cost": round(new_base, 6),
+              "old_unit_cost_input": round(old_base * factor, 4), "new_unit_cost_input": round(new_input, 4),
+              "uom": it.get("uom") or it.get("base_uom") or "", "reason": reason,
+              "qty_received_at_change": round(float(it.get("qty_received") or 0), 4),
+              "by_id": user.get("id"), "by_name": user.get("name", ""), "by_role": user.get("role", ""),
+              "at": _now()}
+    total_value = round(sum(float(i.get("qty_ordered") or 0) * float(i.get("unit_cost") or 0) for i in items), 2)
+    res = await db.rahaza_purchase_orders.update_one(
+        {"id": po_id, "status": po.get("status")},
+        {"$set": {"items": items, "total_value": total_value, "updated_at": _now()},
+         "$push": {"price_changes": change}})
+    if not res.matched_count:
+        raise HTTPException(409, "PO sedang diubah pengguna lain — muat ulang lalu ulangi.")
+    # GR yang belum dikonfirmasi menampilkan harga PO terbaru (saat konfirmasi harga PO dibaca ulang)
+    async for gr in db.warehouse_receiving.find({"po_id": po_id, "status": {"$in": ["draft", "inspecting"]}},
+                                                {"_id": 0, "id": 1, "items": 1}):
+        g_items = gr.get("items") or []
+        touched = False
+        for li in g_items:
+            if li.get("po_item_id") == item_id:
+                li["unit_cost"] = round(new_base, 6)
+                li["unit_price"] = round(new_base, 6)
+                touched = True
+        if touched:
+            from core.purchase_returns import gr_line_price
+            pending = [li.get("sku") or li.get("material_name") or li.get("product_name") or "?" for li in g_items
+                       if (li.get("material_id") or li.get("item_type") == "asset") and gr_line_price(li) <= 0]
+            await db.warehouse_receiving.update_one({"id": gr["id"], "status": {"$in": ["draft", "inspecting"]}},
+                                                    {"$set": {"items": g_items, "updated_at": _now(),
+                                                              "awaiting_finance_price": bool(pending),
+                                                              "price_pending_lines": pending[:20]}})
+    await log_activity(user["id"], user.get("name", ""), "change_price", "rahaza.po",
+                       f"{po.get('po_number')} · {it.get('description') or it.get('material_id')} "
+                       f"{old_base:g} → {new_base:g} · {reason}")
+    out = await db.rahaza_purchase_orders.find_one({"id": po_id}, {"_id": 0})
+    await _enrich_po(db, out)
+    await _po_flags(db, user, [out])
     return serialize_doc(out)
 
 
@@ -1100,6 +1207,10 @@ async def create_gr_from_po(po_id: str, request: Request):
         "created_at": _now(),
         "updated_at": _now(),
     }
+    # 2026-11-06 (Tahap 2): baris PO tanpa harga → GR "menunggu harga dari Keuangan" (harga PO diubah Keuangan)
+    from core.procurement_guards import price_status_fields
+    receipt.update(price_status_fields([g["sku"] or g["material_name"] for g in gr_items
+                                        if g.get("material_id") and float(g.get("unit_cost") or 0) <= 0]))
     await db.warehouse_receiving.insert_one(receipt)
     await log_activity(
         user["id"], user.get("name", ""),

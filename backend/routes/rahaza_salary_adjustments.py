@@ -249,24 +249,11 @@ async def approve_by_hr(adj_id: str, request: Request):
     if doc.get("status") not in ("pending_manager", "pending_hr"):
         raise HTTPException(400, f"Status harus 'pending_manager' atau 'pending_hr', saat ini: '{doc.get('status')}'")
     
-    # Apply to payroll profile
-    profile = await db.rahaza_payroll_profiles.find_one(
-        {"employee_id": doc["employee_id"], "active": True}, {"_id": 0}
-    )
-    
-    if profile:
-        await db.rahaza_payroll_profiles.update_one(
-            {"id": profile["id"]},
-            {"$set": {
-                "base_rate": doc["proposed_base"],
-                "updated_at": _now(),
-                "updated_by": user["id"],
-                "updated_by_name": user.get("name", ""),
-            }}
-        )
-    else:
-        raise HTTPException(404, "Payroll profile tidak ditemukan untuk employee ini.")
-    
+    # Apply to payroll profile — 2026-11-06 (Tahap 2): versi tarif baru BERLAKU MULAI `effective_date`
+    # (dulu tarif langsung ditimpa dan tanggal berlaku diabaikan). Satu fungsi dengan Kotak Masuk HR.
+    from routes.rahaza_payroll_profiles import apply_salary_adjustment_to_profile
+    applied = await apply_salary_adjustment_to_profile(db, doc, user)
+
     # Update adjustment status
     await db.rahaza_salary_adjustments.update_one(
         {"id": adj_id},
@@ -277,6 +264,7 @@ async def approve_by_hr(adj_id: str, request: Request):
             "hr_approved_by_name": user.get("name", ""),
             "hr_notes": body.get("notes") or "",
             "applied_at": _now(),
+            "applied_effective_from": applied.get("effective_from"),
             "updated_at": _now(),
         }}
     )
@@ -290,7 +278,9 @@ async def approve_by_hr(adj_id: str, request: Request):
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to send notification: {e}")
     
-    return {"ok": True, "message": f"Approved oleh HR. Raise {doc.get('raise_pct')}% telah diterapkan ke payroll profile."}
+    return {"ok": True, "warning": applied.get("warning"),
+            "message": (f"Disetujui HR. Kenaikan {doc.get('raise_pct')}% masuk Profil Gaji, "
+                        f"berlaku mulai {applied.get('effective_from')}.")}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

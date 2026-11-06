@@ -18,19 +18,15 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
-import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
 const DEPARTMENTS = ['Produksi', 'QC', 'Gudang/WMS', 'HRD', 'Finance/Accounting', 'Marketing', 'IT', 'Administrasi', 'Manajemen', 'Lainnya'];
 const JOB_TITLES = ['Operator Cutting', 'Operator CMT-Sewing', 'Operator QC', 'Operator Finishing', 'Operator Packing', 'Operator Washer', 'Operator Sontek', 'Supervisor', 'Staff Gudang', 'Staff Admin', 'Manager', 'Lainnya'];
-const WAGE_SCHEMES = [
-  { value: 'borongan_pcs', label: 'Borongan (per pcs)' },
-  { value: 'borongan_jam', label: 'Borongan (per jam)' },
-  { value: 'mingguan',     label: 'Gaji Mingguan' },
-  { value: 'bulanan',      label: 'Gaji Bulanan' },
-];
+// 2026-11-06 (Tahap 2): skema & tarif gaji TIDAK lagi diisi di sini — satu sumber = Profil Gaji (Penggajian).
+// Layar ini hanya menampilkannya (baca saja).
+const PAY_SCHEME_LABEL = { monthly: 'Bulanan', weekly: 'Mingguan', hourly: 'Borongan per jam', pcs: 'Borongan per pcs' };
 const CONTRACT_TYPES = [
   { value: 'PKWT',   label: 'PKWT (Kontrak Terbatas)' },
   { value: 'PKWTT',  label: 'PKWTT (Kontrak Tidak Terbatas)' },
@@ -62,7 +58,7 @@ const DOC_CATEGORIES = ['Kontrak Kerja', 'KTP', 'NPWP', 'Ijazah', 'SKCK', 'Serti
 const defaultEmployee = {
   employee_code: '', name: '', department: 'Produksi', job_title: 'Operator CMT-Sewing',
   location_id: '', phone: '', email: '', contract_type: 'PKWT', contract_start_date: '',
-  contract_end_date: '', wage_scheme: 'borongan_pcs', base_rate: 0,
+  contract_end_date: '', join_date: '', resign_date: '',
   manager_id: '',
   gender: 'L', birth_date: '', birth_place: '', marital_status: 'single', religion: 'Islam',
   nationality: 'Indonesia', ktp_address: '', current_address: '',
@@ -425,7 +421,21 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
   const [saving, setSaving] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [tab, setTab] = useState('dasar');
+  const [salaryProfile, setSalaryProfile] = useState(null);
   const isEdit = !!form.id;
+
+  // Profil Gaji (baca saja) — 2026-11-06 (Tahap 2). Peran tanpa akses payroll melihat "—".
+  useEffect(() => {
+    if (!form.id) return undefined;
+    let active = true;
+    (async () => {
+      try {
+        const { data } = await axios.get(`${API}/api/rahaza/payroll-profiles?employee_id=${form.id}`, { headers });
+        if (active) setSalaryProfile(Array.isArray(data) && data.length ? data[0] : false);
+      } catch { if (active) setSalaryProfile(false); }
+    })();
+    return () => { active = false; };
+  }, [form.id, headers]);
 
   const loadDocs = useCallback(async () => {
     if (!form.id) return;
@@ -454,8 +464,13 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
     e.preventDefault();
     if (!form.employee_code || !form.name) { toast.error('Kode dan nama wajib diisi'); return; }
     if (form.ktp_number && form.ktp_number.length !== 16) { toast.error('NIK KTP harus 16 digit'); return; }
-    if (form.npwp_number && form.npwp_number.replace(/[^0-9]/g, '').length !== 15) { toast.error('NPWP harus 15 digit'); return; }
-    setSaving(true); await onSave(form); setSaving(false);
+    // 2026-11-06 (Tahap 2): NPWP 15 digit (lama) atau 16 digit (NIK = NPWP sejak 2024) diterima.
+    if (form.npwp_number && ![15, 16].includes(form.npwp_number.replace(/[^0-9]/g, '').length)) { toast.error('NPWP harus 15 atau 16 digit'); return; }
+    if (form.join_date && form.resign_date && form.resign_date < form.join_date) { toast.error('Tanggal keluar tidak boleh sebelum tanggal masuk'); return; }
+    const payload = { ...form };
+    delete payload.base_rate;      // gaji hanya di Profil Gaji
+    delete payload.wage_scheme;
+    setSaving(true); await onSave(payload); setSaving(false);
   };
 
   const uploadFile = async (file, onUrl, category = '') => {
@@ -580,11 +595,18 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                 <Field label="Tgl Berakhir Kontrak" help="Wajib untuk PKWT/Magang">
                   <Input type="date" value={form.contract_end_date || ''} onChange={set('contract_end_date')} />
                 </Field>
-                <Field label="Skema Gaji *">
-                  <Sel value={form.wage_scheme} onChange={set('wage_scheme')} options={WAGE_SCHEMES} />
+                <Field label="Tanggal masuk kerja" help="Dipakai payroll untuk gaji prorata di bulan pertama">
+                  <Input type="date" value={(form.join_date || '').slice(0, 10)} onChange={set('join_date')} data-testid="emp-join-date" />
                 </Field>
-                <Field label="Rate / Base (Rp)" help="Borongan pcs=Rp/pcs, jam=Rp/jam, mingguan/bulanan=total">
-                  <MoneyInput value={form.base_rate} onChange={e => setForm(f => ({ ...f, base_rate: Number(e.target.value) }))} />
+                <Field label="Tanggal keluar" help="Diisi saat karyawan berhenti — gaji bulan terakhir prorata">
+                  <Input type="date" value={(form.resign_date || '').slice(0, 10)} onChange={set('resign_date')} data-testid="emp-resign-date" />
+                </Field>
+                <Field label="Gaji" help="Diatur di Penggajian › Profil Gaji (satu sumber gaji)">
+                  <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="emp-salary-readonly">
+                    {salaryProfile
+                      ? `${PAY_SCHEME_LABEL[salaryProfile.pay_scheme] || salaryProfile.pay_scheme} · Rp ${Number(salaryProfile.base_rate || 0).toLocaleString('id-ID')}`
+                      : (isEdit && salaryProfile === false ? 'Belum ada Profil Gaji' : '—')}
+                  </div>
                 </Field>
               </div>
             </TabsContent>
@@ -673,7 +695,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, token, on
                     <div className="text-[10px] text-red-700 dark:text-red-400 mt-1">NIK harus tepat 16 digit ({form.ktp_number.length}/16)</div>
                   )}
                 </Field>
-                <Field label="NPWP (15 digit)" help="Opsional jika karyawan sudah terdaftar">
+                <Field label="NPWP (15 atau 16 digit)" help="Sejak 2024 NIK 16 digit berlaku sebagai NPWP">
                   <Input value={form.npwp_number} onChange={set('npwp_number')} placeholder="xx.xxx.xxx.x-xxx.xxx" />
                 </Field>
                 <Field label="PTKP (Status Pajak)" help="Menentukan Penghasilan Tidak Kena Pajak untuk PPh21">

@@ -377,6 +377,39 @@ async def send_purchase_return(rid: str, request: Request):
     # 2026-11-06 (Tahap 1): dua draf yang dibuat bersamaan tidak boleh lolos melebihi qty GR
     await _check_return_limit(db, await _gr_or_400(db, rtp["gr_id"]), rtp["lines"], exclude_rid=rid)
     actor = _actor(user)
+    # 2026-11-06 (Tahap 2): item karantina dikunci (kunci disposisi yang sama dengan Lepas/Scrap) selama stok,
+    # qty bernilai, dan jurnal ditulis — dulu dua proses bersamaan bisa mengeluarkan sisa yang sama dua kali.
+    tokens = await _claim_quarantine_lines(db, rtp["lines"], actor)
+    try:
+        return await _send_purchase_return_locked(db, user, actor, rid, body, settlement, destroy_da)
+    finally:
+        await _release_quarantine_lines(db, tokens)
+
+
+async def _claim_quarantine_lines(db, lines: list, actor: dict) -> list:
+    """Kunci disposisi semua item karantina yang dirujuk baris retur (atomik; 409 bila dipegang lain)."""
+    tokens: list = []
+    for qid in sorted({ln.get("quarantine_item_id") for ln in lines
+                       if ln.get("source") == "quarantine" and ln.get("quarantine_item_id")}):
+        try:
+            tokens.append((qid, await quarantine.claim_item(db, qid, actor)))
+        except quarantine.ItemBusy as e:
+            await _release_quarantine_lines(db, tokens)
+            raise HTTPException(409, str(e))
+    return tokens
+
+
+async def _release_quarantine_lines(db, tokens: list) -> None:
+    for qid, tok in tokens:
+        await quarantine.release_item_claim(db, qid, tok)
+
+
+async def _send_purchase_return_locked(db, user: dict, actor: dict, rid: str, body: dict, settlement: str,
+                                       destroy_da: bool) -> dict:
+    """Isi `send_purchase_return` — dijalankan sambil memegang kunci item karantina (dibaca ulang di sini)."""
+    rtp = await _rtp_or_404(db, rid)
+    if rtp.get("status") != "draft":
+        raise HTTPException(400, f"Retur {rtp.get('rtp_number')} sudah {pr.STATUS_LABELS.get(rtp.get('status'))}.")
     # validasi SEMUA baris dulu — tidak ada baris yang keluar bila satu baris tidak cukup
     for ln in rtp["lines"]:
         q = _f(ln["qty"])
@@ -497,9 +530,15 @@ async def receive_replacement(rid: str, request: Request):
                                                source="rtp_replacement", ref_id=rid, ref_number=rtp["rtp_number"],
                                                user=user, apply_wac=False))
             gr = await _gr_or_400(db, rtp["gr_id"])
-        await accessory_valuation.apply_receipt_cost(
+        wac_res = await accessory_valuation.apply_receipt_cost(
             db, ln["material_id"], qty, price, qty_before=qty_before, actor=actor,
             notes=f"Pengganti Retur Pembelian {rtp['rtp_number']}")
+        # 2026-11-06 (Tahap 2, butir 7): stok lama bernilai 0 ikut dinilai harga ini → jurnal koreksi
+        from core import purchase_costing
+        await purchase_costing.post_receipt_wac_gap(
+            db, material_id=ln["material_id"], cost_result=wac_res, qty_in=qty, cost_in=price,
+            source_ref=f"rtp:{rid}:{ln['material_id']}",
+            memo=f"Nilai ulang stok lama {ln.get('material_code') or ''} oleh pengganti {rtp['rtp_number']}", user=user)
     await db[pr.RTP_COLL].update_one({"id": rid}, {
         "$set": {"status": "settled", "settled_at": _now(), "replacement_location_id": loc, "updated_at": _now()},
         "$push": {"history": _history("receive_replacement", user, body.get("notes") or "")}})
@@ -647,7 +686,7 @@ async def issue_debit_note(request: Request):
     if rtp.get("status") != want:
         raise HTTPException(400, f"Retur {rtp.get('rtp_number')} berstatus {pr.STATUS_LABELS.get(rtp.get('status'))} — "
                                  + ("barang belum dikirim/diproses." if want == "awaiting_settlement" else "sudah diproses."))
-    gr = await _gr_or_400(db, rtp["gr_id"])
+    await _gr_or_400(db, rtp["gr_id"])
     dn_date = _date(body.get("date"))
     kinds = {ln.get("kind") or "bahan" for ln in rtp["lines"]}
     disc = None
@@ -663,10 +702,26 @@ async def issue_debit_note(request: Request):
             if not to_loc or not await location_resolver.location_exists(db, to_loc):
                 raise HTTPException(400, "to_location_id wajib — barang karantina yang diterima disimpan di mana?")
     await _check_roles(db, {"supplier_claim", "grni", "ap", "price_variance"}, kinds)
+    actor = _actor(user)
+    # 2026-11-06 (Tahap 2): "diterima dengan diskon" melepas item karantina → kunci disposisi yang sama
+    tokens = await _claim_quarantine_lines(db, rtp["lines"], actor) if st == "accept_discount" else []
+    try:
+        return await _issue_debit_note_locked(db, user, actor, body, rtp["id"], want, dn_date, disc, to_loc)
+    finally:
+        await _release_quarantine_lines(db, tokens)
 
+
+async def _issue_debit_note_locked(db, user: dict, actor: dict, body: dict, rid: str, want: str, dn_date,
+                                   disc, to_loc) -> dict:
+    """Isi `issue_debit_note` — dijalankan sambil memegang kunci item karantina (retur dibaca ulang)."""
+    from core import purchase_costing
+    rtp = await _rtp_or_404(db, rid)
+    st = rtp.get("settlement")
+    if rtp.get("status") != want:
+        raise HTTPException(409, f"Retur {rtp.get('rtp_number')} baru saja diproses pengguna lain — muat ulang.")
+    gr = await _gr_or_400(db, rtp["gr_id"])
     dn_id = pr._uid()
     dn_number = await gen_prefixed_number(db, pr.DN_COLL, "dn_number", f"ND-{_now():%Y%m}-", 4)
-    actor = _actor(user)
     je_lines, dn_lines, lates = [], [], []
     ap_amount = grni_amount = info_amount = 0.0
     ap_code = None
@@ -723,11 +778,18 @@ async def issue_debit_note(request: Request):
         cut = round(vq * (H - disc), 2)
         absorbed = False
         if cut > 0:
-            res = await accessory_valuation.apply_value_change(
-                db, ln["material_id"], -cut, actor=actor, notes=f"Potongan harga {dn_number}")
-            absorbed = bool(res.get("applied"))
+            # 2026-11-06 (Tahap 2): stok = buku besar. Dulu SELURUH potongan dikreditkan ke persediaan begitu
+            # masih ada 1 unit bernilai, padahal HPP dibatasi ≥ 0 dan barang yang sudah terpakai tidak lagi
+            # di stok ⇒ nilai stok turun lebih sedikit dari kredit buku besar. Sekarang hanya bagian yang
+            # barangnya masih ada, sebesar perubahan nilai stok yang NYATA, ke persediaan; sisanya 5-1900.
+            ab = await purchase_costing.absorb_value_change(
+                db, ln["material_id"], -cut,
+                ratio=purchase_costing.on_hand_ratio(vq, await quarantine.valued_onhand(db, ln["material_id"])),
+                actor=actor, notes=f"Potongan harga {dn_number}", source="accept_discount")
+            absorbed = abs(ab["to_inventory"]) >= 0.005
             je_lines += pr.plan_discount_valued(vq, H, disc, billed=billed, absorbed=absorbed,
-                                                kind=ln.get("kind") or "bahan", desc=desc)
+                                                kind=ln.get("kind") or "bahan", desc=desc,
+                                                inventory_amount=-ab["to_inventory"])
             if not billed:
                 await pr.add_billing_deduction(db, gr_id=gr["id"], line_id=pr.line_id_of(line), qty=0.0, amount=cut,
                                                source="accept_discount", ref_id=dn_id, ref_number=dn_number)

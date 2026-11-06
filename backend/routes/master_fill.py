@@ -104,8 +104,12 @@ async def fill_preview(request: Request, file: UploadFile = File(...)):
 
 
 @router.post("/fill-apply")
-async def fill_apply(request: Request, file: UploadFile = File(...), scope: str = "all"):
-    """scope=bom → hanya sheet BOM_AKSESORIS diterapkan; kesalahan sheet lain tidak menghalangi."""
+async def fill_apply(request: Request, file: UploadFile = File(...), scope: str = "all",
+                     revaluation_reason: str = ""):
+    """scope=bom → hanya sheet BOM_AKSESORIS diterapkan; kesalahan sheet lain tidak menghalangi.
+
+    2026-11-06 (Tahap 2): harga barang yang SUDAH berstok hanya diubah lewat revaluasi berjurnal dan
+    hanya bila `revaluation_reason` diisi; barang tanpa stok menerima harga awal. Hasilnya di `price_report`."""
     user = await _require_fin(request)
     db = get_db()
     data = await _read(file)
@@ -113,17 +117,19 @@ async def fill_apply(request: Request, file: UploadFile = File(...), scope: str 
     if scope != "bom" and not parsed["ok"]:
         raise HTTPException(400, {"message": "Berkas belum lolos pemeriksaan.", "errors": parsed["errors"]})
     var_res = {"variants_created": 0, "variants_created_skus": []}
+    price_report: dict = {}
     pack_mats = [m for m in parsed["materials"] if m.get("pcs_per_base")] if scope != "bom" else []
     if parsed.get("new_variants") or pack_mats:
         if parsed.get("new_variants"):
             from core.gap_workbook import apply_new_variants
             var_res = await apply_new_variants(db, parsed["new_variants"], user)
         if pack_mats:  # isi kemasan dulu → baris BOM 'pcs' material itu lolos pada parse ulang
-            await mf.apply_materials(db, pack_mats, user)
+            await mf.apply_materials(db, pack_mats, user, revaluation_reason=revaluation_reason, report=price_report)
         parsed = await mf.parse_fill_workbook(db, data)  # kelompok BOM model yang baru punya varian / kemasan kini ikut diterapkan
         done = {m["code"] for m in pack_mats}
         parsed["materials"] = [m for m in parsed["materials"] if m["code"] not in done]
-    res = await mf.apply_fill(db, parsed, user, scope="bom" if scope == "bom" else "all")
+    res = await mf.apply_fill(db, parsed, user, scope="bom" if scope == "bom" else "all",
+                              revaluation_reason=revaluation_reason, price_report=price_report)
     res["materials_updated"] = (res.get("materials_updated") or 0) + len(pack_mats)
     res.update(var_res)
     await log_activity(user["id"], user.get("name", ""), "fill_apply", "master", f"scope={res['scope']} " + str(res)[:280])

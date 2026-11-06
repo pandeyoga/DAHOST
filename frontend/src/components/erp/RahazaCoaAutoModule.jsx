@@ -21,6 +21,7 @@ const ENTITY_LABEL = {
   customer: { label: 'Pelanggan — piutang', who: 'pelanggan' },
   channel: { label: 'Toko online — piutang', who: 'toko online' },
   maklon_client: { label: 'Klien maklon — piutang', who: 'klien maklon' },
+  maklon_revenue: { label: 'Klien maklon — akun pendapatan', who: 'klien maklon' },
   bank: { label: 'Bank / rekening kas', who: 'rekening kas/bank' },
   store_revenue: { label: 'Toko online — akun pendapatan per toko' },
 };

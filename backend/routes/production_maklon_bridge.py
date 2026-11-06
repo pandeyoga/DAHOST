@@ -16,7 +16,6 @@ from auth import require_auth, check_role, log_activity, serialize_doc
 from core.helpers import new_id, now
 from core import cmt_vendor_master
 from routes.production_rbac import PROD_ADMIN_ROLES, deny_klien
-from utils.waktu import today_wib
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["maklon-finance-bridge"])
@@ -75,7 +74,8 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
     ar_doc = None
     if (existing or {}).get('ar_invoice_id'):
         ar_doc = await db.rahaza_ar_invoices.find_one(
-            {'id': existing['ar_invoice_id'], 'source_module': 'maklon_po'}, {'_id': 0, 'status': 1})
+            {'id': existing['ar_invoice_id'], 'source_module': 'maklon_po'},
+            {'_id': 0, 'status': 1, 'schedule_mode': 1})
     if not ar_doc:
         # invoice legacy (dewi_maklon_invoices tanpa tautan AR) juga berarti "sudah ditagih"
         legacy_inv = await db.dewi_maklon_invoices.find_one(
@@ -93,8 +93,9 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
         # vendor CMT (BIAYA, dasar AP), `selling_price_snapshot` = harga jasa ke klien
         # (PENDAPATAN, dasar AR). Dulu AR memakai cmt_price ⇒ margin maklon selalu 0 (audit M-06).
         cmt_rate = float(pi.get('cmt_price_snapshot', 0) or 0)
-        sell = float(pi.get('selling_price_snapshot', 0) or 0)
-        rate = sell if sell > 0 else cmt_rate
+        # 2026-11-06 (Tahap 2, keputusan owner): harga jasa WAJIB — tidak pernah lagi jatuh ke upah CMT
+        # (dulu harga 0 diam-diam ditagih seharga upah CMT ⇒ margin 0). Konfirmasi PO menolak harga 0.
+        rate = float(pi.get('selling_price_snapshot', 0) or 0)
         subtotal = round(rate * qty, 2)
         cmt_cost = round(cmt_rate * qty, 2)
         total_qty += qty
@@ -113,7 +114,7 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
             'qty_dispatched': int(dispatched_by_item.get(pi['id'], 0) or 0),
             'cmt_rate_per_pcs': cmt_rate,
             'selling_price_per_pcs': rate,
-            'price_basis': 'selling' if sell > 0 else 'cmt_fallback',
+            'price_basis': 'selling' if rate > 0 else 'belum_diisi',
             'subtotal': subtotal,
             'cmt_cost': cmt_cost,
             'product_description': pi.get('product_name', ''),
@@ -141,9 +142,11 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
     except Exception:  # noqa: BLE001
         logger.exception('biaya nyata maklon gagal dihitung (PO %s)', po_id)
         actual = None
-    # Invoice yang sudah TERBIT (bukan draft) menang atas status produksi — layar finance
+    # Invoice LAMA yang sudah TERBIT (bukan draft) menang atas status produksi — layar finance
     # harus tetap melihat "Ditagih" walau PO baru saja ditutup (audit M-03/M-10).
-    if ar_doc and (ar_doc.get('status') or 'draft') not in ('draft', 'cancelled') \
+    # 2026-11-06 (Tahap 2): piutang terjadwal (`schedule_mode=v2`) bukan "invoice terbit".
+    if ar_doc and ar_doc.get('schedule_mode') != 'v2' \
+            and (ar_doc.get('status') or 'draft') not in ('draft', 'cancelled') \
             and mirror_status != 'cancelled':
         mirror_status = 'invoiced'
 
@@ -196,54 +199,32 @@ async def sync_po_to_maklon_finance(db, po_id: str, user: dict) -> dict:
             'created_by': user.get('id', ''), 'created_by_name': user.get('name', ''),
         })
 
-    # Draft AR Invoice — sekali saja, begitu PO confirmed (mirror != draft)
+    # 2026-11-06 (Tahap 2, keputusan owner): PO dikonfirmasi ⇒ PIUTANG KLIEN TERJADWAL (qty pesan ×
+    # harga jasa) + HUTANG CMT TERJADWAL. Tanpa jurnal saat konfirmasi; pendapatan dibukukan per
+    # kiriman ke klien dan uang muka dipakai otomatis (core.maklon_ledger — satu dokumen AR per PO).
     ar_invoice_id = (existing or {}).get('ar_invoice_id')
     ar_invoice_number = (existing or {}).get('ar_invoice_number')
     ar_created = False
-    if mirror_status != 'draft' and not ar_invoice_id:
-        from routes.dewi_maklon_pos import _next_ar_invoice_number
-        ar_invoice_number = await _next_ar_invoice_number(db)
-        ar_invoice_id = new_id()
-        lines = [{
-            'line_id': new_id(),
-            'description': f"Jasa Maklon — {it['artikel']} {it['color']} {it['size']} (Seri {it['seri_no']})".strip(),
-            'qty': it['qty'],
-            'unit_price': it['selling_price_per_pcs'],
-            'subtotal': it['subtotal'],
-            'item_id': it['item_id'],
-        } for it in items]
-        await db.rahaza_ar_invoices.insert_one({
-            'id': ar_invoice_id,
-            'invoice_number': ar_invoice_number,
-            'source_module': 'maklon_po',
-            'linked_maklon_po_id': po_id,
-            'linked_maklon_po_number': po.get('po_number', ''),
-            'customer_id': po.get('buyer_id'),
-            'customer_name': po.get('customer_name', ''),
-            'invoice_date': today_wib().isoformat(),
-            'due_date': None,
-            'lines': lines,
-            'subtotal': total_value,
-            'tax_pct': 0.0, 'tax_amount': 0.0, 'discount_amount': 0.0,
-            'total_amount': total_value,
-            'amount_paid': 0.0, 'amount_due': total_value,
-            'status': 'draft',
-            'payment_terms': mirror_fields['payment_terms'],
-            'notes': f"Auto-generated dari PO Produksi Maklon {po.get('po_number', '')}",
-            'gl_posted_at': None, 'gl_je_id': None, 'post_error': None,
-            'created_at': now(), 'updated_at': now(),
-            'created_by': user.get('id', ''),
-        })
-        await db.dewi_maklon_pos.update_one({'id': po_id}, {'$set': {
-            'ar_invoice_id': ar_invoice_id, 'ar_invoice_number': ar_invoice_number, 'updated_at': now(),
-        }})
-        ar_created = True
+    schedule = None
+    if mirror_status != 'draft':
+        from core import maklon_ledger
+        schedule = await maklon_ledger.sync_ar_schedule(db, po_id, user)
+        if schedule.get('ar_id') and schedule.get('ar_id') != ar_invoice_id:
+            ar_created = not ar_invoice_id
+            ar_invoice_id, ar_invoice_number = schedule['ar_id'], schedule.get('ar_invoice_number')
+            await db.dewi_maklon_pos.update_one({'id': po_id}, {'$set': {
+                'ar_invoice_id': ar_invoice_id, 'ar_invoice_number': ar_invoice_number, 'updated_at': now(),
+            }})
+        try:
+            await maklon_ledger.refresh_ap_schedules(db, po_id, user)
+        except Exception:  # noqa: BLE001 — jadwal hutang pelengkap; tidak mematahkan sinkron piutang
+            logger.exception('jadwal hutang CMT PO %s gagal disegarkan', po_id)
 
     return {
         'ok': True, 'po_id': po_id, 'po_number': po.get('po_number', ''),
         'mirror_status': mirror_status, 'total_value': total_value,
         'ar_invoice_id': ar_invoice_id, 'ar_invoice_number': ar_invoice_number,
-        'ar_created': ar_created,
+        'ar_created': ar_created, 'schedule': schedule,
     }
 
 
@@ -517,6 +498,12 @@ async def mature_ap_from_cmt_receipt(db, receipt_id: str, user: dict) -> dict:
         logger.info("[maklon-bridge] AP CMT %s bernilai 0 (dibatasi produksi) — tidak diposting", payment_code)
     except Exception as e:  # noqa: BLE001
         logger.error("[maklon-bridge] posting AP CMT %s gagal: %s", payment_code, e)
+    # 2026-11-06 (Tahap 2): tagihan lolos QC ditempelkan ke JADWAL HUTANG CMT PO (maklon).
+    try:
+        from core.maklon_ledger import refresh_ap_schedules
+        await refresh_ap_schedules(db, doc['po_id'], user)
+    except Exception:  # noqa: BLE001
+        logger.exception('[maklon-bridge] jadwal hutang CMT PO %s gagal disegarkan', doc.get('po_id'))
     try:
         await log_activity(
             user.get('id', ''), user.get('name', 'system'),
@@ -583,13 +570,11 @@ async def compute_po_fulfillment(db, po_id: str) -> dict:
 
     Returns dict with totals + per-item maps (used by auto-close + credit note).
     """
-    po_items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).to_list(None)
+    po_items = await db.po_items.find({'po_id': po_id}, {'_id': 0}).sort('created_at', 1).to_list(None)
     item_ids = [i['id'] for i in po_items]
     ordered_by_item = {i['id']: int(i.get('qty', 0) or 0) for i in po_items}
-    # Harga jasa ke KLIEN (selling); `cmt_price_snapshot` adalah upah vendor, bukan harga tagihan.
-    rate_by_item = {
-        i['id']: float(i.get('selling_price_snapshot', 0) or 0) or float(i.get('cmt_price_snapshot', 0) or 0)
-        for i in po_items}
+    # Harga jasa ke KLIEN (selling). 2026-11-06 (Tahap 2): TANPA cadangan upah CMT — harga 0 tetap 0.
+    rate_by_item = {i['id']: float(i.get('selling_price_snapshot', 0) or 0) for i in po_items}
     total_ordered = sum(ordered_by_item.values())
 
     # 2026-11-02 (K17 butir 1): angka kirim/terima dari SSOT `core.dispatch_capacity`
@@ -615,8 +600,25 @@ async def compute_po_fulfillment(db, po_id: str) -> dict:
         for poi in item_ids
     } if is_internal else received_by_item
     total_fulfilled = sum(fulfilled_by_item.values())
-    qty_short = max(0, total_ordered - total_fulfilled)
+    # 2026-11-06 (Tahap 2, keputusan owner): kekurangan dihitung PER BARIS/UKURAN. Dulu Σ pesan − Σ
+    # terpenuhi ⇒ kelebihan ukuran L menutupi kekurangan ukuran S dan PO tertutup "penuh".
+    lines = []
+    for pi in po_items:
+        o = ordered_by_item.get(pi['id'], 0)
+        ful = int(fulfilled_by_item.get(pi['id'], 0) or 0)
+        q = qmap.get(pi['id']) or {}
+        lines.append({
+            'po_item_id': pi['id'], 'sku': pi.get('sku', ''), 'product_name': pi.get('product_name', ''),
+            'size': pi.get('size', ''), 'color': pi.get('color', ''), 'ordered': o, 'fulfilled': ful,
+            'dispatched': int(q.get('dispatched', 0) or 0), 'accepted': int(q.get('accepted_total', 0) or 0),
+            'short': max(0, o - ful), 'over': max(0, ful - o),
+            'lines_unrecorded': int(q.get('lines_unrecorded', 0) or 0),
+            'buyer_short_open': int(q.get('buyer_short_open', 0) or 0),
+            'unit_price': rate_by_item.get(pi['id'], 0.0),
+        })
+    qty_short = sum(ln['short'] for ln in lines)
     qty_short_pct = round(qty_short / total_ordered * 100, 2) if total_ordered > 0 else 0.0
+    every_line_full = bool(lines) and total_ordered > 0 and all(ln['short'] == 0 for ln in lines)
     return {
         'po_id': po_id,
         'basis': 'accepted' if is_internal else 'buyer_received',
@@ -631,11 +633,13 @@ async def compute_po_fulfillment(db, po_id: str) -> dict:
         'buyer_short_open': buyer_short_open,
         'qty_short': qty_short,
         'qty_short_pct': qty_short_pct,
-        'is_full': total_ordered > 0 and total_fulfilled >= total_ordered,
+        'lines': lines,
+        'short_lines': [ln for ln in lines if ln['short'] > 0],
+        'is_full': every_line_full,
         # 2026-11-02 (K17 butir 3): "selesai" hanya bila SEMUA baris SJ buyer sudah
         # dicatat qty diterimanya (null ≠ diterima) dan tidak ada selisih terbuka.
-        'is_fully_confirmed': (total_ordered > 0 and total_fulfilled >= total_ordered
-                               and lines_unrecorded == 0 and buyer_short_open == 0),
+        # 2026-11-06 (Tahap 2): dan SETIAP baris/ukuran terpenuhi (bukan hanya totalnya).
+        'is_fully_confirmed': (every_line_full and lines_unrecorded == 0 and buyer_short_open == 0),
         'ordered_by_item': ordered_by_item,
         'received_by_item': received_by_item,
         'rate_by_item': rate_by_item,
@@ -688,10 +692,11 @@ async def maklon_actual_costs(db, po_id: str) -> dict:
             if str(p.get('status') or '').lower() not in ('cancelled', 'void', 'voided')]
     cmt_cost = round(sum(float(p.get('subtotal', p.get('net_amount', 0)) or 0) for p in pays), 2)
     cmt_pcs = sum(int(p.get('total_pcs', 0) or 0) for p in pays)
-    acc_cost, mi_numbers = 0.0, []
+    acc_cost, mi_numbers, mi_pcs = 0.0, [], 0
     async for mi in db.rahaza_material_issues.find(
             {'production_po_id': po_id, 'status': {'$nin': ['rejected', 'draft', 'cancelled']}}, {'_id': 0}):
         mi_numbers.append(mi.get('mi_number'))
+        mi_pcs += int(mi.get('qty_wo_pcs') or 0)
         for it in mi.get('items') or []:
             acc_cost += float(it.get('qty_issued') or 0) * float(it.get('unit_cost_applied') or 0)
     acc_cost = round(acc_cost, 2)
@@ -705,6 +710,17 @@ async def maklon_actual_costs(db, po_id: str) -> dict:
     from core import dispatch_capacity as dcap
     q = dcap.sum_quantities((await dcap.po_item_quantities(db, [i['id'] for i in items])).values())
     basis_pcs = q['accepted_total'] or cmt_pcs
+    # 2026-11-06 (Tahap 2): aksesoris DA dikeluarkan untuk SEMUA pcs yang dikirim ke CMT. Dulu
+    # Σ aksesoris dibagi pcs LOLOS QC saja ⇒ HPP per pcs membengkak bila ada reject. Sekarang
+    # aksesoris per pcs = Σ aksesoris ÷ pcs yang dikirim; HPP memuat bagian pcs lolos QC saja,
+    # sisanya (aksesoris pcs reject/hilang) dilaporkan terpisah dan tetap ikut di margin.
+    sent_pcs = mi_pcs
+    if not sent_pcs:
+        sent_pcs = sum(int(x.get('qty_sent') or 0) for x in await db.vendor_shipment_items.find(
+            {'po_item_id': {'$in': [i['id'] for i in items]}}, {'_id': 0, 'qty_sent': 1}).to_list(20000)) if items else 0
+    acc_per_pcs = round(acc_cost / sent_pcs, 4) if sent_pcs else (round(acc_cost / basis_pcs, 4) if basis_pcs else 0.0)
+    acc_absorbed = round(min(acc_cost, acc_per_pcs * basis_pcs), 2)
+    hpp_basis_cost = round(cmt_cost + acc_absorbed + permak_cost, 2)
     gaps = []
     if not pays:
         gaps.append('belum ada tagihan CMT (biaya jahit lahir saat Terima FG dari CMT selesai QC)')
@@ -722,8 +738,11 @@ async def maklon_actual_costs(db, po_id: str) -> dict:
         'qty_ordered': qty_ordered, 'qty_basis': basis_pcs, 'qty_billed_cmt': cmt_pcs,
         'cmt_cost': cmt_cost, 'cmt_cost_plan': cmt_rate_plan,
         'accessory_cost': acc_cost, 'material_issues': mi_numbers,
-        'permak_cost': permak_cost, 'total_cost': total_cost,
-        'hpp_per_pcs': round(total_cost / basis_pcs, 2) if basis_pcs else 0.0,
+        'accessory_pcs_sent': sent_pcs, 'accessory_cost_per_pcs': acc_per_pcs,
+        'accessory_cost_absorbed': acc_absorbed,
+        'accessory_cost_unabsorbed': round(acc_cost - acc_absorbed, 2),
+        'permak_cost': permak_cost, 'total_cost': total_cost, 'hpp_basis_cost': hpp_basis_cost,
+        'hpp_per_pcs': round(hpp_basis_cost / basis_pcs, 2) if basis_pcs else 0.0,
         'revenue': round(revenue, 2), 'qty_billable': bill.get('total_received', 0),
         'margin': round(revenue - total_cost, 2),
         'margin_pct': round((revenue - total_cost) / revenue * 100, 2) if revenue else 0.0,
@@ -809,6 +828,15 @@ async def finalize_ar_on_short_close(db, po: dict, user: dict, fulfillment: dict
     if mirror and mirror.get('ar_invoice_id'):
         ar = await db.rahaza_ar_invoices.find_one({'id': mirror['ar_invoice_id']}, {'_id': 0})
     ar_status = (ar or {}).get('status')
+    # 2026-11-06 (Tahap 2): piutang TERJADWAL hanya menagih yang sudah dikirim (pendapatan per
+    # kiriman) ⇒ qty yang tidak terpenuhi cukup DIHAPUS dari jadwal (sinkron setelah status PO
+    # ditutup) — TIDAK ada nota kredit, jadi tidak mungkin nota kredit ganda.
+    if ar is not None and ar.get('schedule_mode') == 'v2':
+        from core import maklon_ledger
+        sched = await maklon_ledger.sync_ar_schedule(db, po['id'], user)
+        return {'credit_note_created': False, 'schedule_adjusted': True, 'ar_status': sched.get('status'),
+                'short_amount': short_amount, 'short_breakdown': breakdown,
+                'scheduled_total': sched.get('scheduled_total')}
     ar_issued = ar is not None and ar_status not in (None, 'draft')
 
     # ── Path 1: AR already issued → credit note draft (idempotent by po_id) ──

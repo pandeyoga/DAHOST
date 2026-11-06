@@ -315,13 +315,13 @@ export default function MaklonBuyerCatalogModule({ token }) {
                   </div>
                   <div className="flex items-center gap-2 text-xs flex-wrap">
                     <span className="text-foreground/60">
-                      CMT: <strong className="text-[hsl(var(--warning))]">{fmtRp(it.default_cmt_price)}</strong>
+                      Upah CMT: <strong className="text-[hsl(var(--warning))]">{fmtRp(it.default_cmt_price)}</strong>
                     </span>
                     {it.default_selling_price > 0 && (
                       <>
                         <span className="text-foreground/30">•</span>
                         <span className="text-foreground/60">
-                          Jual: <strong className="text-[hsl(var(--success))]">{fmtRp(it.default_selling_price)}</strong>
+                          Jasa: <strong className="text-[hsl(var(--success))]">{fmtRp(it.default_selling_price)}</strong>
                         </span>
                       </>
                     )}
@@ -732,17 +732,17 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
           </div>
 
           <div>
-            <Label className="text-xs">Harga CMT Default (Rp) *</Label>
+            <Label className="text-xs">Upah jahit CMT (bawaan) *</Label>
             <MoneyInput
               value={form.default_cmt_price}
               onChange={(e) => setForm({ ...form, default_cmt_price: e.target.value })}
               className="h-9"
               data-testid="bc-form-default-cmt-price"
             />
-            <p className="text-[10px] text-foreground/40 mt-1">Bisa di-override saat buat PO.</p>
+            <p className="text-[10px] text-foreground/40 mt-1">Bisa diubah saat membuat PO.</p>
           </div>
           <div>
-            <Label className="text-xs">Harga Jual Default (Rp)</Label>
+            <Label className="text-xs">Harga jasa ke klien (bawaan)</Label>
             <MoneyInput
               value={form.default_selling_price}
               onChange={(e) => setForm({ ...form, default_selling_price: e.target.value })}

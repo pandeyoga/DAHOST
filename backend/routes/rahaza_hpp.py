@@ -1,6 +1,10 @@
 """
 PT Rahaza — HPP / Costing (Fase 9)
 
+2026-11-06 (Tahap 2, keputusan owner): HPP per Work Order = (bahan + upah CMT) / qty_completed.
+Upah internal (payroll) & overhead tetap beban bulanan — hanya ditampilkan sebagai informasi.
+Uraian lama di bawah dipertahankan sebagai riwayat:
+
 HPP per Work Order = (material_cost + labor_cost + overhead_cost) / qty_completed
   - material_cost: total biaya material yg di-issue ke WO (dari material_issue confirmed × unit_cost)
                    jika material tidak punya unit_cost, pakai default_yarn_cost_per_kg dari settings
@@ -93,22 +97,104 @@ def mi_item_net_qty(item: dict) -> float:
     return max(0.0, round(gross - float(item.get("qty_returned") or 0), 4))
 
 
-def mi_item_unit_cost(item: dict, mat: dict, default_kg: float, default_acc: float) -> float:
-    """Harga satuan bahan satu baris MI untuk HPP.
+COST_SOURCE_LABEL = {
+    "issue": "biaya saat keluar",
+    "master": "harga master",
+    "default_estimate": "estimasi (harga bawaan pengaturan)",
+    "missing": "harga belum ada",
+}
+
+
+def mi_item_cost_info(item: dict, mat: dict, default_kg: float, default_acc: float) -> tuple:
+    """(harga satuan, sumber) bahan satu baris MI untuk HPP.
 
     Tahap 1 (6 Nov 2026): biaya SAAT KELUAR (`unit_cost_applied` baris MI, sama dengan jurnal
     pengeluaran bahan) yang dipakai — dulu harga master HARI INI, sehingga HPP job lama ikut
     berubah tiap harga bahan naik/turun. Harga master hanya untuk baris lama yang belum
-    menyimpan biaya saat keluar; harga bawaan pengaturan hanya bila master pun kosong."""
+    menyimpan biaya saat keluar; harga bawaan pengaturan hanya bila master pun kosong.
+
+    Tahap 2 (6 Nov 2026): harga bawaan pengaturan tidak lagi dipakai DIAM-DIAM — sumbernya
+    `default_estimate` (dilabeli estimasi); tanpa bawaan pun ⇒ `missing` ("harga belum ada")."""
     unit_cost = float((item or {}).get("unit_cost_applied") or 0)
-    if unit_cost <= 0:
-        unit_cost = float((mat or {}).get("unit_cost") or 0)
-    if unit_cost <= 0:
-        # FASE 12 / BUG-B2: dulu `mat.get("type") == "yarn"` saja ⇒ material
-        # `fabric`/`kain`/`benang`/`interlining` tanpa unit_cost memakai default
-        # AKSESORIS (per unit), bukan default bahan (per kg) ⇒ HPP salah diam-diam.
-        unit_cost = default_kg if material_fields.is_kglike_material(mat or {}) else default_acc
-    return unit_cost
+    if unit_cost > 0:
+        return unit_cost, "issue"
+    unit_cost = float((mat or {}).get("unit_cost") or 0)
+    if unit_cost > 0:
+        return unit_cost, "master"
+    # FASE 12 / BUG-B2: dulu `mat.get("type") == "yarn"` saja ⇒ material
+    # `fabric`/`kain`/`benang`/`interlining` tanpa unit_cost memakai default
+    # AKSESORIS (per unit), bukan default bahan (per kg) ⇒ HPP salah diam-diam.
+    unit_cost = float(default_kg if material_fields.is_kglike_material(mat or {}) else default_acc)
+    return (unit_cost, "default_estimate") if unit_cost > 0 else (0.0, "missing")
+
+
+def mi_item_unit_cost(item: dict, mat: dict, default_kg: float, default_acc: float) -> float:
+    """Harga satuan saja (pemanggil lama) — lihat `mi_item_cost_info`."""
+    return mi_item_cost_info(item, mat, default_kg, default_acc)[0]
+
+
+def job_mi_filter(job_id: str, vendor_shipment_id: str | None = None) -> dict:
+    """MI yang membebani satu job. 2026-11-06 (Tahap 2): bahan yang keluar lewat Kirim Material
+    CMT lahir SEBELUM job ada (`job_id` kosong) tetapi menyimpan `vendor_shipment_id`; job CMT
+    menunjuk surat jalan yang sama (1 job : 1 surat jalan) ⇒ ikut dihitung."""
+    ors = [{"job_id": job_id}, {"work_order_id": job_id}]
+    if vendor_shipment_id:
+        ors.append({"vendor_shipment_id": vendor_shipment_id})
+    return {"$or": ors, "status": "issued"}
+
+
+async def mi_material_cost(db, mi_rows: list, default_kg: float, default_acc: float) -> dict:
+    """Biaya bahan dari MI: Σ (keluar − diretur) × harga (lihat `mi_item_cost_info`) + kekurangan."""
+    mat_ids = list({i.get("material_id") for mi in mi_rows for i in (mi.get("items") or []) if i.get("material_id")})
+    mat_map = {}
+    if mat_ids:
+        async for d in db.rahaza_materials.find({"id": {"$in": mat_ids}}, {"_id": 0}):
+            mat_map[d["id"]] = d
+    total, estimated, rows, gaps = 0.0, 0.0, [], []
+    for mi in mi_rows:
+        for item in (mi.get("items") or []):
+            mat = mat_map.get(item.get("material_id")) or {}
+            unit_cost, src = mi_item_cost_info(item, mat, default_kg, default_acc)
+            # 2026-11-02 (K10): pemakaian = keluar − diretur (Retur Material mengisi `qty_returned`)
+            qty = mi_item_net_qty(item)
+            amount = qty * unit_cost
+            total += amount
+            name = mat.get("name") or item.get("material_name") or item.get("material_id")
+            if src == "default_estimate":
+                estimated += amount
+                gaps.append(f"{name}: harga belum ada — dipakai harga bawaan pengaturan (estimasi)")
+            elif src == "missing" and qty > 0:
+                gaps.append(f"{name}: harga belum ada — biaya bahan baris ini Rp 0")
+            rows.append({
+                "material_id": item.get("material_id"), "material_name": name,
+                "type": mat.get("type") or item.get("type"),
+                "qty": qty, "qty_returned": float(item.get("qty_returned") or 0),
+                "unit": item.get("unit") or mat.get("unit"),
+                "unit_cost": unit_cost, "amount": round(amount),
+                "cost_source": src, "cost_source_label": COST_SOURCE_LABEL[src],
+                "mi_number": mi.get("mi_number") or "", "mi_source": mi.get("source") or "",
+            })
+    return {"material_cost": total, "estimated_cost": estimated, "breakdown": rows, "gaps": gaps}
+
+
+async def job_cmt_wage(db, job_id: str) -> dict:
+    """Upah CMT satu job = Σ qty jadi × tarif jahit SPK (`po_items.cmt_price_snapshot`).
+    2026-11-06 (Tahap 2): dulu HPP aktual job tidak memuat upah CMT sama sekali."""
+    items = await db.production_job_items.find({"job_id": job_id}, {"_id": 0}).to_list(2000)
+    pi_ids = list({i.get("po_item_id") for i in items if i.get("po_item_id")})
+    rates = {}
+    if pi_ids:
+        async for p in db.po_items.find({"id": {"$in": pi_ids}}, {"_id": 0, "id": 1, "cmt_price_snapshot": 1}):
+            rates[p["id"]] = float(p.get("cmt_price_snapshot") or 0)
+    total, rows, gaps = 0.0, [], []
+    for i in items:
+        qty = float(i.get("produced_qty") or 0)
+        rate = rates.get(i.get("po_item_id"), 0.0)
+        if qty > 0 and rate <= 0:
+            gaps.append(f"{i.get('sku') or i.get('product_name') or 'item'}: tarif jahit SPK belum diisi")
+        total += qty * rate
+        rows.append({"sku": i.get("sku") or "", "qty": qty, "rate": rate, "amount": round(qty * rate)})
+    return {"cmt_cost": total, "breakdown": rows, "gaps": gaps}
 
 
 async def _compute_hpp(db, wo_id: str):
@@ -123,30 +209,14 @@ async def _compute_hpp(db, wo_id: str):
     labor_fallback = float(settings.get("labor_rate_fallback_per_pcs") or 0)
 
     # ── 1) Material cost from confirmed material_issues for this WO
-    mi_rows = await db.rahaza_material_issues.find({"$or": [{"work_order_id": wo_id}, {"job_id": wo_id}], "status": "issued"}, {"_id": 0}).to_list(500)  # T-03: MI internal ter-anchor job_id
-    material_cost = 0
-    material_breakdown = []
-    # Batch prefetch all materials referenced across MI items
-    all_mat_ids = list({item.get("material_id") for mi in mi_rows for item in (mi.get("items") or []) if item.get("material_id")})
-    mat_map = {}
-    if all_mat_ids:
-        async for d in db.rahaza_materials.find({"id": {"$in": all_mat_ids}}, {"_id": 0}):
-            mat_map[d["id"]] = d
-    for mi in mi_rows:
-        for item in (mi.get("items") or []):
-            mat = mat_map.get(item.get("material_id")) or {}
-            unit_cost = mi_item_unit_cost(item, mat, default_yarn, default_acc)
-            # 2026-11-02 (K10): pemakaian = keluar − diretur (Retur Material mengisi `qty_returned` baris MI;
-            # status MI tetap 'issued'). Dulu bahan yang sudah kembali ke gudang tetap dibebankan ke HPP.
-            qty = mi_item_net_qty(item)
-            amount = qty * unit_cost
-            material_cost += amount
-            material_breakdown.append({
-                "material_id": item.get("material_id"), "material_name": mat.get("name") or item.get("material_name"),
-                "type": mat.get("type") or item.get("type"),
-                "qty": qty, "unit": item.get("unit") or mat.get("unit"),
-                "unit_cost": unit_cost, "amount": round(amount),
-            })
+    # T-03: MI internal ter-anchor job_id. Tahap 2: + MI Kirim Material CMT (vendor_shipment_id job).
+    job_doc = await db.production_jobs.find_one({"id": wo_id}, {"_id": 0, "vendor_shipment_id": 1}) or {}
+    mi_rows = await db.rahaza_material_issues.find(
+        job_mi_filter(wo_id, job_doc.get("vendor_shipment_id")), {"_id": 0}).to_list(500)
+    mat_res = await mi_material_cost(db, mi_rows, default_yarn, default_acc)
+    material_cost = mat_res["material_cost"]
+    material_breakdown = mat_res["breakdown"]
+    cmt = await job_cmt_wage(db, wo_id)
 
     # ── 2) Labor cost: sum of output events × rate for this WO
     wip = await db.rahaza_wip_events.find({"$or": [{"work_order_id": wo_id}, {"job_id": wo_id}], "event_type": {"$in": ["output", "complete"]}}, {"_id": 0}).to_list(500)  # T-03
@@ -209,9 +279,11 @@ async def _compute_hpp(db, wo_id: str):
 
     # ── 3) Overhead: overhead_rate × qty_completed (completed = output di proses final, simplifikasi pakai qty order)
     qty_completed = int(wo.get("qty_completed") or 0) or int(wo.get("qty") or 0)
-    overhead_cost = qty_completed * overhead_rate
+    overhead_info = qty_completed * overhead_rate
 
-    total_cost = material_cost + labor_cost + overhead_cost
+    # 2026-11-06 (Tahap 2, keputusan owner): HPP = bahan + upah CMT. Upah internal (payroll) &
+    # overhead tetap beban bulanan — dihitung sebagai INFORMASI, tidak masuk total.
+    total_cost = material_cost + cmt["cmt_cost"]
     hpp_unit = total_cost / qty_completed if qty_completed > 0 else 0
 
     return {
@@ -223,14 +295,19 @@ async def _compute_hpp(db, wo_id: str):
         "qty_completed": qty_completed,
         "total_output_events": total_output,
         "material_cost": round(material_cost),
-        "labor_cost": round(labor_cost),
-        "overhead_cost": round(overhead_cost),
+        "material_cost_estimated": round(mat_res["estimated_cost"]),
+        "cmt_cost": round(cmt["cmt_cost"]),
+        "labor_cost": round(cmt["cmt_cost"]),          # nama lama: kini = upah CMT (yang masuk HPP)
+        "internal_labor_cost": round(labor_cost), "internal_labor_in_hpp": False,
+        "overhead_cost": 0, "overhead_info": round(overhead_info), "overhead_in_hpp": False,
         "total_cost": round(total_cost),
         "hpp_unit": round(hpp_unit),
         "material_breakdown": material_breakdown,
+        "cmt_breakdown": cmt["breakdown"],
         "labor_breakdown": labor_breakdown,
         "labor_breakdown_by_process": labor_breakdown_by_process,
         "overhead_rate_per_pcs": overhead_rate,
+        "gaps": mat_res["gaps"] + cmt["gaps"],
         "computed_at": _now().isoformat(),
     }
 
@@ -464,7 +541,8 @@ async def hpp_for_maklon_order(order_id: str, request: Request):
     overhead_cost = qty_completed * overhead_rate
     
     # ── 4) Total & HPP unit ──
-    total_cost_actual = material_cost + labor_cost + overhead_cost
+    # 2026-11-06 (Tahap 2): upah internal & overhead tidak masuk HPP (informasi saja).
+    total_cost_actual = material_cost
     hpp_unit_actual = total_cost_actual / qty_completed if qty_completed > 0 else 0
     
     # ── 5) Estimasi & selisih ──
@@ -484,10 +562,10 @@ async def hpp_for_maklon_order(order_id: str, request: Request):
         "qty_ordered": qty_ordered,
         "qty_completed": qty_completed,
         
-        # Actual
+        # Actual (Tahap 2: upah internal & overhead = informasi, tidak masuk total)
         "material_cost_actual": round(material_cost),
-        "labor_cost_actual": round(labor_cost),
-        "overhead_cost_actual": round(overhead_cost),
+        "labor_cost_actual": round(labor_cost), "labor_in_hpp": False,
+        "overhead_cost_actual": round(overhead_cost), "overhead_in_hpp": False,
         "total_cost_actual": round(total_cost_actual),
         "hpp_unit_actual": round(hpp_unit_actual),
         

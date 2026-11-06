@@ -49,7 +49,6 @@ import routes.rahaza_payroll_runs as runs  # noqa: E402
 import routes.rahaza_petty_cash as pc  # noqa: E402
 import routes.rahaza_posting as rp  # noqa: E402
 import routes.rahaza_posting_profiles as pp  # noqa: E402
-import utils.counters as counters  # noqa: E402
 
 run = asyncio.run
 
@@ -404,45 +403,38 @@ class TestPdfSlipDraft:
 
 
 # ── Butir 9 ─────────────────────────────────────────────────────────────────────
+# 2026-11-06 (Tahap 2): /trigger (jalur run kedua yang membuat run hantu) DIHAPUS — run gaji hanya lewat
+# POST /api/rahaza/payroll-runs (yang sudah punya cek run ganda). Dasbor kini membaca run sungguhan.
 @pytest.fixture
 def trig(monkeypatch):
     db = FakeDB()
-    db.rahaza_payroll_profiles.docs = [{"employee_id": e, "pay_scheme": "monthly", "active": True}
-                                       for e in ("emp-a", "emp-b", "emp-t")]
     db.rahaza_employees.docs = [{"id": "emp-a", "name": "Ani"}, {"id": "emp-b", "name": "Budi"},
                                 {"id": "emp-t", "name": "Tanti", "active": False}]
+    db.rahaza_payroll_profiles.docs = [{"employee_id": "emp-a", "pay_scheme": "monthly", "active": True}]
 
     async def auth_ok(request):
         return dict(HR)
-
-    async def runno(dbx, *a, **k):
-        return "PAY-202610-001"
-    monkeypatch.setattr(pa, "require_auth", auth_ok)
+    monkeypatch.setattr(pa, "_require_hr", auth_ok)
     monkeypatch.setattr(pa, "get_db", lambda: db)
-    monkeypatch.setattr(counters, "gen_prefixed_number", runno)
     return db
 
 
 class TestTriggerRunGanda:
-    def _body(self, f="2026-10-01", t="2026-10-31"):
-        return pa.TriggerBody(period_from=f, period_to=t)
+    def test_jalur_run_kedua_dihapus(self):
+        assert not hasattr(pa, "trigger_payroll_run") and not hasattr(pa, "set_schedule")
+        paths = {r.path for r in pa.router.routes}
+        assert not any(p.endswith(("/trigger", "/schedule", "/attendance-sync")) for p in paths)
 
-    def test_ditolak_bila_karyawan_sudah_digaji_di_run_lain(self, trig):
-        trig.rahaza_payroll_runs.docs.append({"id": "rx", "run_number": "PR-X", "status": "finalized",
-                                              "period_from": "2026-10-01", "period_to": "2026-10-31"})
-        trig.rahaza_payslips.docs.append({"run_id": "rx", "employee_id": "emp-a", "employee_name": "Ani",
-                                          "pay_scheme": "monthly"})
-        e = _err(pa.trigger_payroll_run(self._body("2026-10-15", "2026-11-14"), FakeRequest()))
-        assert e.status_code == 409 and "PR-X" in e.detail
-        assert len(trig.rahaza_payroll_runs.docs) == 1
-
-    def test_boleh_bila_run_lama_dibatalkan_dan_nonaktif_dikecualikan(self, trig):
-        trig.rahaza_payroll_runs.docs.append({"id": "rx", "run_number": "PR-X", "status": "cancelled",
-                                              "period_from": "2026-10-01", "period_to": "2026-10-31"})
-        trig.rahaza_payslips.docs.append({"run_id": "rx", "employee_id": "emp-a", "pay_scheme": "monthly"})
-        out = run(pa.trigger_payroll_run(self._body(), FakeRequest()))
-        assert out["status"] == "created" and out["employee_count"] == 2
-
-    def test_tanggal_salah_ditolak(self, trig):
-        assert _err(pa.trigger_payroll_run(self._body("2026-10-31", "2026-10-01"), FakeRequest())).status_code == 400
-        assert _err(pa.trigger_payroll_run(self._body("31/10/2026", "2026-11-01"), FakeRequest())).status_code == 400
+    def test_dasbor_membaca_run_sungguhan(self, trig):
+        from utils.waktu import wib_year
+        y = wib_year()
+        trig.rahaza_payroll_runs.docs = [
+            {"id": "r1", "run_number": "PR-1", "status": "finalized", "payment_status": "paid",
+             "period_from": f"{y}-01-01", "period_to": f"{y}-01-31", "total_net": 5_000_000, "created_at": "2"},
+            {"id": "r2", "run_number": "PR-2", "status": "draft", "period_from": f"{y}-02-01",
+             "period_to": f"{y}-02-28", "total_net": 1_000_000, "created_at": "3"}]
+        out = run(pa.payroll_dashboard(FakeRequest()))
+        assert out["total_disbursed_ytd"] == 5_000_000 and out["run_summary"]["draft"]["count"] == 1
+        assert out["latest_run"]["run_number"] == "PR-2"
+        assert out["employee_profile_coverage"]["with_payroll_profile"] == 1
+        assert out["employee_profile_coverage"]["total_active_employees"] == 2

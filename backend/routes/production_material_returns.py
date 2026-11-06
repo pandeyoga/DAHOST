@@ -150,35 +150,55 @@ async def _resolve_mi(db, material_issue_id: str = "", vendor_shipment_id: str =
     return mi
 
 
+def _returned_all(it: dict) -> float:
+    """Qty baris MI yang sudah kembali dalam kondisi APA PUN (baik + rusak/sisa tak masuk stok)."""
+    return float(it.get("qty_returned") or 0) + float(it.get("qty_returned_nonstock") or 0)
+
+
 def mi_returnable(mi: dict) -> dict:
-    """{material_id: qty yang masih bisa diretur} = dikeluarkan − sudah diretur (fungsi murni)."""
+    """{material_id: qty yang masih bisa diretur} = dikeluarkan − sudah diretur (fungsi murni).
+
+    2026-11-06 (Tahap 2): retur rusak/sisa (tidak masuk stok) ikut mengurangi batas — dulu hanya
+    retur baik yang dicatat, sehingga barang yang sama bisa "diretur" berulang kali."""
     out: dict = {}
     for it in mi.get("items") or []:
         mid = it.get("material_id")
         if not mid:
             continue
-        out[mid] = out.get(mid, 0.0) + float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0)
+        out[mid] = out.get(mid, 0.0) + float(it.get("qty_issued") or 0) - _returned_all(it)
     return {k: round(v, 4) for k, v in out.items()}
 
 
-def mi_after_return(mi: dict, returned: dict) -> dict:
-    """Baris MI + `return_status` setelah retur `returned` {material_id: qty baik} (fungsi murni).
+def mi_after_return(mi: dict, returned: dict, nonstock: dict | None = None) -> dict:
+    """Baris MI + `return_status` setelah retur (fungsi murni).
+
+    `returned` {material_id: qty baik → `qty_returned`, dibaca HPP sebagai pengurang pemakaian};
+    `nonstock` {material_id: qty rusak/sisa → `qty_returned_nonstock`, TIDAK mengurangi pemakaian
+    karena nilainya tetap terpakai, tetapi ikut menghabiskan batas retur} — 2026-11-06 (Tahap 2).
     Status dokumen MI TETAP 'issued' (dibaca HPP & gerbang produksi); retur dicatat per baris."""
     left = dict(returned)
+    left_ns = dict(nonstock or {})
     items = []
     for it in mi.get("items") or []:
         it = dict(it)
         mid = it.get("material_id")
-        cap = max(0.0, float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0))
+        cap = max(0.0, float(it.get("qty_issued") or 0) - _returned_all(it))
         take = min(cap, left.get(mid, 0.0))
         if take > 0:
             it["qty_returned"] = round(float(it.get("qty_returned") or 0) + take, 4)
             left[mid] = round(left[mid] - take, 4)
+            cap = round(cap - take, 4)
+        take_ns = min(max(0.0, cap), left_ns.get(mid, 0.0))
+        if take_ns > 0:
+            it["qty_returned_nonstock"] = round(float(it.get("qty_returned_nonstock") or 0) + take_ns, 4)
+            left_ns[mid] = round(left_ns[mid] - take_ns, 4)
         items.append(it)
     issued = sum(float(i.get("qty_issued") or 0) for i in items)
     ret = sum(float(i.get("qty_returned") or 0) for i in items)
-    status = "full" if issued > 0 and ret >= issued - 1e-6 else ("partial" if ret > 1e-9 else None)
-    return {"items": items, "return_status": status, "qty_returned_total": round(ret, 4)}
+    ret_all = sum(_returned_all(i) for i in items)
+    status = "full" if issued > 0 and ret_all >= issued - 1e-6 else ("partial" if ret_all > 1e-9 else None)
+    return {"items": items, "return_status": status, "qty_returned_total": round(ret, 4),
+            "qty_returned_nonstock_total": round(ret_all - ret, 4)}
 
 
 def deduct_pending(can: dict, pending_docs) -> dict:
@@ -264,7 +284,7 @@ async def get_return_source(request: Request, material_issue_id: str = "", vendo
                       "unit": m.get("unit") or it.get("unit") or "pcs",
                       "qty_issued": round(sum(float(x.get("qty_issued") or 0) for x in mi["items"]
                                               if x.get("material_id") == mid), 4),
-                      "qty_returned": round(sum(float(x.get("qty_returned") or 0) for x in mi["items"]
+                      "qty_returned": round(sum(_returned_all(x) for x in mi["items"]
                                                 if x.get("material_id") == mid), 4),
                       "returnable": max(0.0, can.get(mid, 0.0))})
     return _ok({"material_issue_id": mi["id"], "mi_number": mi.get("mi_number"),
@@ -547,6 +567,7 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
     added: list = []
     try:
         je_lines, good_by_mat, no_gl = [], {}, []
+        other_by_mat: dict = {}   # 2026-11-06 (Tahap 2): rusak/sisa ikut mengurangi batas retur MI
         for item in items:
             mat_id = item.get("material_id")
             qty = float(item.get("qty_returned", 0))
@@ -554,6 +575,8 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
             if not mat_id or qty <= 0:
                 continue
             ic = issue_cost.get(mat_id) or {}
+            if condition != "good":
+                other_by_mat[mat_id] = other_by_mat.get(mat_id, 0.0) + qty
             if condition == "good" and loc_id:
                 good_by_mat[mat_id] = good_by_mat.get(mat_id, 0.0) + qty
                 if ic.get("no_gl"):
@@ -625,11 +648,12 @@ async def receive_return(request: Request, return_id: str, body: ActionModel):
                 posting = {"ok": False, "error": str(e)}
         # ── status MI ikut diperbarui (qty_returned per baris + return_status partial/full) ──
         mi_update = None
-        if mi and good_by_mat:
-            mi_update = mi_after_return(mi, good_by_mat)
+        if mi and (good_by_mat or other_by_mat):
+            mi_update = mi_after_return(mi, good_by_mat, other_by_mat)
             await db.rahaza_material_issues.update_one({"id": mi["id"]}, {"$set": {
                 "items": mi_update["items"], "return_status": mi_update["return_status"],
-                "qty_returned_total": mi_update["qty_returned_total"], "updated_at": now}})
+                "qty_returned_total": mi_update["qty_returned_total"],
+                "qty_returned_nonstock_total": mi_update["qty_returned_nonstock_total"], "updated_at": now}})
         await db.production_material_returns.update_one(
             {"id": rid},
             {"$set": {
