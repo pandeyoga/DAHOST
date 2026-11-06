@@ -472,7 +472,8 @@ async def exit_cost_of(db, *, material_id: str, shipment_item_id: str, sku: str 
     """
     rows = []
     if material_id and shipment_item_id:
-        rows = await db.fg_cost_consumptions.find(
+        from core.fg_cost_layers import CONSUMPTIONS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+        rows = await db[CONSUMPTIONS].find(
             {"material_id": material_id, "ref.shipment_item_id": shipment_item_id},
             {"_id": 0}).to_list(500)
     out = summarize_exit_consumptions(rows)
@@ -522,7 +523,7 @@ async def apply_rework_outcome(db, permak: dict, *, qty_fixed: int, qty_scrap: i
     if not is_return_to_cmt:
         q_item = None
         if permak.get("source_receipt_line_id"):
-            q_item = await db.wh_quarantine_items.find_one(
+            q_item = await db[qmod.QUARANTINE_COLL].find_one(  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
                 {"source.receipt_line_id": permak["source_receipt_line_id"],
                  "status": "open"}, {"_id": 0})
         if q_item:
@@ -534,7 +535,7 @@ async def apply_rework_outcome(db, permak: dict, *, qty_fixed: int, qty_scrap: i
                                               to_location_id=fg_loc, actor=actor,
                                               notes=f"Permak {permak.get('permak_number')} berhasil")
                     out["stock_released"] = qty_fixed
-                    q_item = await db.wh_quarantine_items.find_one(
+                    q_item = await db[qmod.QUARANTINE_COLL].find_one(
                         {"id": q_item["id"]}, {"_id": 0})
                 except Exception as e:  # noqa: BLE001
                     logger.exception("release karantina gagal")
@@ -856,7 +857,9 @@ async def recompute_group_target(db, po_item_id: str) -> dict:
     claimed = sum(_i(ln.get("qty_claimed_by_cmt")) or _i(ln.get("qty_shipped_by_cmt"))
                   or (_i(ln.get("qty_actual")) + _i(ln.get("reject_qty"))) for ln in rows)
 
-    shorts = await db.cmt_short_shipments.find({"po_item_id": po_item_id}, {"_id": 0}).to_list(None)
+    # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    from core.short_shipment import CMT_SHORT
+    shorts = await db[CMT_SHORT].find({"po_item_id": po_item_id}, {"_id": 0}).to_list(None)
     short_open = sum(max(0, _i(s.get("qty_short")) - _i(s.get("qty_resolved")))
                      for s in shorts if s.get("status") == "open")
     short_resolved = sum(_i(s.get("qty_resolved")) for s in shorts if s.get("status") != "cancelled")

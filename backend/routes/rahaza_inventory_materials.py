@@ -134,7 +134,7 @@ async def create_material(request: Request):
     code = (body.get("code") or "").strip().upper()
     name = (body.get("name") or "").strip()
     t    = (body.get("type") or "").strip().lower()
-    unit = (body.get("unit") or "").strip().lower()
+    unit = uom.canonical_unit(body.get("unit"))  # 2026-11-06 (pola P8): rol/pak → roll/pack
     if not code or not name:
         raise HTTPException(400, "code & name wajib diisi.")
     if t not in MATERIAL_TYPES:
@@ -211,6 +211,8 @@ async def update_material(mid: str, request: Request):
         body["code"] = body["code"].strip().upper()
     if "type" in body and body["type"] not in MATERIAL_TYPES:
         raise HTTPException(400, f"type harus: {MATERIAL_TYPES}")
+    if "unit" in body:
+        body["unit"] = uom.canonical_unit(body["unit"])  # 2026-11-06 (pola P8): rol/pak → roll/pack
     if "unit" in body and body["unit"] not in MATERIAL_UNITS:
         raise HTTPException(400, f"unit harus: {MATERIAL_UNITS}")
     if "min_stock_qty" in body:
@@ -318,8 +320,9 @@ async def _ensure_material_categories(db):
             "order_seq": c["order_seq"], "active": True,
             "created_at": _now(), "updated_at": _now(),
         } for c in DEFAULT_MATERIAL_CATEGORIES]
-        if docs:
-            await db.rahaza_material_categories.insert_many(docs)
+        # 2026-11-06 (pola P8): `_id` tetap per kode — dua permintaan bersamaan tidak menggandakan benih
+        from core.reference_dedup import seed_once
+        await seed_once(db, "rahaza_material_categories", docs)
 
 
 @router.get("/material-categories")
@@ -343,6 +346,8 @@ async def create_material_category(request: Request):
     code = (body.get("code") or name).strip().upper().replace(" ", "_")
     if await db.rahaza_material_categories.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kategori '{code}' sudah ada.")
+    from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8): nama setara juga ditolak
+    await assert_unique_ref(db, "rahaza_material_categories", name=name, label="Kategori material")
     doc = {
         "id": _uid(), "code": code, "name": name,
         "order_seq": int(body.get("order_seq") or 50),
@@ -361,6 +366,9 @@ async def update_material_category(cid: str, request: Request):
     upd = {"updated_at": _now()}
     if "name" in body:
         upd["name"] = (body["name"] or "").strip()
+        from core.reference_dedup import assert_unique_ref  # 2026-11-06 (pola P8)
+        await assert_unique_ref(db, "rahaza_material_categories", name=upd["name"], label="Kategori material",
+                                exclude_id=cid)
     if "order_seq" in body:
         upd["order_seq"] = int(body.get("order_seq") or 50)
     if "active" in body:

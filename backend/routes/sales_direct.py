@@ -56,6 +56,25 @@ async def _require_write(request: Request):
 
 
 # ── MASTER PELANGGAN (SSOT rahaza_customers) ─────────────────────────────────
+# Field yang boleh diubah lewat PUT /customers/{id} (dan impor Excel Data Transfer).
+CUSTOMER_EDIT_FIELDS = ("name", "company_type", "npwp", "phone", "email", "address",
+                        "payment_terms", "notes", "active")
+
+
+def new_customer_doc(code: str, name: str, body: dict, user: dict) -> dict:
+    """Bentuk dokumen pelanggan baru — 2026-11-06 (T4): satu sumber untuk form & impor Excel."""
+    return {
+        "id": _uid(), "code": code, "name": name,
+        "company_type": body.get("company_type") or "personal",
+        "npwp": (body.get("npwp") or "").strip(), "phone": (body.get("phone") or "").strip(),
+        "email": (body.get("email") or "").strip(), "address": body.get("address") or "",
+        "payment_terms": body.get("payment_terms") or "cash",
+        "credit_limit": _num(body.get("credit_limit"), "credit_limit"),
+        "notes": body.get("notes") or "", "active": body.get("active", True) is not False,
+        "created_at": _now(), "updated_at": _now(), "created_by": user.get("id"),
+    }
+
+
 @router.get("/customers")
 async def list_customers(request: Request, include_inactive: bool = False):
     await require_auth(request)
@@ -78,16 +97,7 @@ async def create_customer(request: Request):
     code = await issue_number(db, "rahaza_customers.code", requested=code)
     if await db.rahaza_customers.find_one({"code": code, "active": True}):
         raise HTTPException(409, f"Kode '{code}' sudah terpakai.")
-    doc = {
-        "id": _uid(), "code": code, "name": name,
-        "company_type": body.get("company_type") or "personal",
-        "npwp": (body.get("npwp") or "").strip(), "phone": (body.get("phone") or "").strip(),
-        "email": (body.get("email") or "").strip(), "address": body.get("address") or "",
-        "payment_terms": body.get("payment_terms") or "cash",
-        "credit_limit": _num(body.get("credit_limit"), "credit_limit"),
-        "notes": body.get("notes") or "", "active": True,
-        "created_at": _now(), "updated_at": _now(), "created_by": user.get("id"),
-    }
+    doc = new_customer_doc(code, name, body, user)
     await db.rahaza_customers.insert_one(doc)
     try:
         from routes.coa_auto import ensure_subledger_for_entity
@@ -103,8 +113,7 @@ async def update_customer(cid: str, request: Request):
     user = await _require_write(request)
     db = get_db()
     body = await request.json()
-    upd = {k: body[k] for k in ("name", "company_type", "npwp", "phone", "email", "address",
-                                "payment_terms", "notes", "active") if k in body}
+    upd = {k: body[k] for k in CUSTOMER_EDIT_FIELDS if k in body}
     if "credit_limit" in body:
         upd["credit_limit"] = _num(body.get("credit_limit"), "credit_limit")
     upd["updated_at"] = _now()
@@ -145,9 +154,16 @@ async def fg_stock(request: Request, q: Optional[str] = None):
         return []
     from core.catalog_margin import FG_COST_PROJECTION, effective_fg_cost
     mats = await db.rahaza_materials.find({"id": {"$in": ids}}, {**FG_COST_PROJECTION, "code": 1, "sku": 1, "name": 1}).to_list(20000)
-    cats = await db.marketing_catalog_items.find({"fg_product_id": {"$in": ids}},
-                                                 {"_id": 0, "fg_product_id": 1, "selling_price": 1, "price": 1}).to_list(20000)
-    price_map = {c["fg_product_id"]: float(c.get("selling_price") or c.get("price") or 0) for c in cats}
+    # 2026-11-06 (pola P3): item katalog menautkan barang jadi lewat `fg_material_id` dan menyimpan
+    # harga di `harga_jual`/`price` — dulu dibaca `fg_product_id`/`selling_price` (tak pernah ditulis)
+    # sehingga harga bawaan nota selalu 0.
+    cats = await db.marketing_catalog_items.find({"fg_material_id": {"$in": ids}},
+                                                 {"_id": 0, "fg_material_id": 1, "harga_jual": 1, "price": 1}).to_list(20000)
+    price_map: dict = {}
+    for c in cats:
+        p = float(c.get("harga_jual") or c.get("price") or 0)
+        if p > 0:
+            price_map.setdefault(c["fg_material_id"], p)
     out = []
     ql = (q or "").lower()
     for m in mats:
@@ -262,11 +278,21 @@ async def _apply_ar_payment(db, inv_id: str, amount: float, cash_account_id: str
         "id": movement_id, "account_id": cash_account_id, "account_name": acc.get("name"), "direction": "in",
         "amount": round(amount), "category": "ar_payment", "ref_id": inv_id, "ref_label": updated.get("invoice_number"),
         "date": pay_date, "notes": notes, "timestamp": _now(), "created_by": user["id"], "created_by_name": user.get("name", "")})
+    # 2026-11-06 (pola P8): dokumen pembayaran `rahaza_ar_payments` ditulis lewat helper yang SAMA dengan
+    # Keuangan › Piutang (`record_ar_payment`). Dulu jalur penjualan langsung melewatinya, sehingga
+    # riwayat pembayaran & kuitansi invoice tidak memuat pembayaran nota penjualan langsung.
+    from routes.rahaza_finance import _record_payment_doc
+    payment_id = await _record_payment_doc(db, "rahaza_ar_payments", updated, amount, cash_account_id, movement_id,
+                                           pay_date, notes, user)
     if not updated.get("gl_je_id"):
         await post_ar_invoice(db, updated, user)
         updated = await db.rahaza_ar_invoices.find_one({"id": inv_id}, {"_id": 0})
     posting = await post_ar_payment(db, updated, amount, cash_account_id, pay_date, user, movement_id=movement_id)
-    return {"invoice": await db.rahaza_ar_invoices.find_one({"id": inv_id}, {"_id": 0}), "movement_id": movement_id, "posting": posting}
+    await db.rahaza_ar_payments.update_one({"id": payment_id}, {"$set": {
+        "gl_je_id": (posting or {}).get("je_id"), "gl_je_number": (posting or {}).get("je_number"),
+        "post_error": None if (posting or {}).get("ok") else (posting or {}).get("error")}})
+    return {"invoice": await db.rahaza_ar_invoices.find_one({"id": inv_id}, {"_id": 0}), "movement_id": movement_id,
+            "payment_id": payment_id, "posting": posting}
 
 
 async def _post_cogs(db, note: dict, issued_rows: list, user: dict) -> dict:
@@ -729,16 +755,14 @@ async def create_return(sid: str, request: Request):
     inv = await db.rahaza_ar_invoices.find_one({"id": note.get("ar_invoice_id")}, {"_id": 0}) or {}
     m_cn, m_ar = await get_mapping(db, "credit_note"), await get_mapping(db, "ar_invoice")
     ar_code = await _ar_account_for_invoice(db, inv, m_cn.get("credit_ar") or m_ar.get("debit_ar"))
-    rev_code, tax_code = m_cn.get("debit_revenue") or m_ar.get("credit_revenue"), m_ar.get("credit_tax_output")
-    cn_post = {"ok": False, "error": "Mapping credit_note/ar_invoice belum lengkap."}
-    if ar_code and rev_code and total > 0:
-        lines = [{"account_code": rev_code, "debit": subtotal, "credit": 0, "description": f"CN {cn['cn_number']} retur {note['note_number']}"}]
-        if tax > 0 and tax_code:
-            lines.append({"account_code": tax_code, "debit": tax, "credit": 0, "description": f"CN {cn['cn_number']} PPN keluaran dibalik"})
-        elif tax > 0:
-            lines[0]["debit"] = total
-        lines.append({"account_code": ar_code, "debit": 0, "credit": total, "description": f"CN {cn['cn_number']} piutang {note.get('customer_name')}"})
-        cn_post = await _create_posted_je(db, date.fromisoformat(ret_date), f"Credit Note {cn['cn_number']} - retur {note['note_number']}", "credit_note", f"cn:{cn['id']}", lines, user)
+    # 2026-11-06 (pola P8): jurnal nota kredit lewat mesin yang SAMA dengan retur marketplace (`post_credit_note`:
+    # Dr Retur Penjualan DPP + Dr PPN Keluaran / Cr Piutang, idempoten `cn:<id>`). Dulu dirakit sendiri
+    # di sini: bila PPN ada tetapi akun PPN keluaran belum dipetakan, SELURUH nilai (termasuk PPN)
+    # dibukukan diam-diam ke Retur Penjualan — mesin bersama menolak dengan pesan yang jelas.
+    from routes.rahaza_posting import post_credit_note
+    cn_post = {"ok": False, "error": "Nilai nota kredit 0."}
+    if total > 0:
+        cn_post = await post_credit_note(db, cn, user)
         await db.rahaza_credit_notes.update_one({"id": cn["id"]}, {"$set": {"gl_je_id": cn_post.get("je_id"), "gl_je_number": cn_post.get("je_number"), "gl_posted_at": _now(), "post_error": cn_post.get("error")}})
 
     # 3) terapkan ke invoice: kurangi sisa tagihan; kelebihan = kredit pelanggan (refund tunai bila diminta)

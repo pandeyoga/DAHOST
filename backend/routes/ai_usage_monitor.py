@@ -25,6 +25,7 @@ from ai_cost_tracker import (
     DEFAULT_DAILY_BUDGET_USD,
     DEFAULT_MONTHLY_BUDGET_USD,
     DEFAULT_PER_FEATURE_DAILY_USD,
+    USAGE_LOGS,  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
 )
 from database import get_db
 from utils.waktu import today_wib
@@ -85,7 +86,7 @@ async def today_status(request: Request):
     daily_budget = float(settings.get("daily_budget_usd") or DEFAULT_DAILY_BUDGET_USD)
 
     # Total today
-    overall = await db.rahaza_ai_usage_logs.aggregate([
+    overall = await db[USAGE_LOGS].aggregate([
         {"$match": {"date": today}},
         {"$group": {
             "_id": None,
@@ -103,7 +104,7 @@ async def today_status(request: Request):
     cost = round(stats.get("cost_usd", 0), 4)
 
     # Top features today
-    top_features = await db.rahaza_ai_usage_logs.aggregate([
+    top_features = await db[USAGE_LOGS].aggregate([
         {"$match": {"date": today}},
         {"$group": {
             "_id": "$feature",
@@ -128,7 +129,7 @@ async def today_status(request: Request):
     # karena panggilan yang gagal sebelum ke Anthropic tidak pernah dicatat.
     status = await ai_status(db)
     since_24h = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    recent_errors = await db.rahaza_ai_usage_logs.aggregate([
+    recent_errors = await db[USAGE_LOGS].aggregate([
         {"$match": {"success": False, "created_at": {"$gte": since_24h}}},
         {"$group": {"_id": {"$ifNull": ["$error_code", "lainnya"]}, "n": {"$sum": 1},
                     "last_at": {"$max": "$created_at"}, "message": {"$last": "$error"}}},

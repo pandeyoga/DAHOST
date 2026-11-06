@@ -469,7 +469,12 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
 
   const handleDelete = async (id) => {
     try {
-      await fetch(`/api/wms/legacy/receiving/${id}`, { method: 'DELETE', headers });
+      const r = await fetch(`/api/wms/legacy/receiving/${id}`, { method: 'DELETE', headers });
+      // 2026-11-06 (pola P6): dulu penolakan server (bukan peran gudang, sudah diproses) diam saja
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(typeof d.detail === 'string' ? d.detail : 'Gagal menghapus penerimaan');
+      }
       setConfirmDelete(null); fetchData();
     } catch (e) { alert('Error: ' + e.message); }
   };

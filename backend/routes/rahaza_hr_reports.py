@@ -116,6 +116,12 @@ async def _present_on_working_days(db, emp_ids: list, work_days: list) -> dict:
     return out
 
 
+async def _shift_names(db) -> dict:
+    """{shift_id: nama shift} dari master `rahaza_shifts` (karyawan hanya menyimpan shift_id/kode)."""
+    return {s["id"]: s.get("name") or s.get("code") or ""
+            async for s in db.rahaza_shifts.find({}, {"_id": 0, "id": 1, "name": 1, "code": 1})}
+
+
 async def _work_days(db, d_from: date, d_to: date) -> list:
     from core.workdays import working_days
     return [d.isoformat() for d in await working_days(db, d_from, d_to)]
@@ -153,7 +159,7 @@ async def get_attendance_summary(
     # Build employee filter
     emp_query = {"active": True}
     if department_id:
-        emp_query["department_id"] = department_id
+        emp_query["department"] = department_id  # 2026-11-06 (pola P3): master karyawan menyimpan NAMA departemen di `department`
     if location_id:
         emp_query["location_id"] = location_id
     if shift_id:
@@ -172,6 +178,7 @@ async def get_attendance_summary(
             "period": {"from": from_date, "to": to_date},
         }
     
+    shift_names = await _shift_names(db)  # 2026-11-06 (pola P3): nama shift dari master
     # Calculate working days in period
     d_from = date.fromisoformat(from_date)
     d_to = date.fromisoformat(to_date)
@@ -200,9 +207,9 @@ async def get_attendance_summary(
             "employee_id": eid,
             "employee_code": emp.get("employee_code"),
             "employee_name": emp.get("name"),
-            "department_name": emp.get("department_name"),
+            "department_name": emp.get("department"),  # 2026-11-06 (pola P3)
             "location_name": emp.get("location_name"),
-            "shift_name": emp.get("shift_name"),
+            "shift_name": shift_names.get(emp.get("shift_id")) or emp.get("shift_code"),
             "total_days": total_days,
             "working_days": working_days_n,
             "present_days": present,
@@ -292,7 +299,7 @@ async def get_overtime_summary(
     # Build employee filter
     emp_query = {"active": True}
     if department_id:
-        emp_query["department_id"] = department_id
+        emp_query["department"] = department_id  # 2026-11-06 (pola P3): master karyawan menyimpan NAMA departemen di `department`
     if location_id:
         emp_query["location_id"] = location_id
     if shift_id:
@@ -320,7 +327,10 @@ async def get_overtime_summary(
         "date": {"$gte": from_date, "$lte": to_date},
         "overtime_hours": {"$exists": True, "$gt": 0},
     }
-    overtime_events = await db.rahaza_attendance_events.find(att_query, {"_id": 0}).to_list(500)
+    # 2026-11-06 (pola P7): semua record lembur periode (dulu to_list(500) — 25 karyawan × 26 hari = 650/bulan,
+    # jadi total jam lembur bulanan/triwulan terpotong diam-diam).
+    overtime_events = [r async for r in db.rahaza_attendance_events.find(
+        att_query, {"_id": 0, "employee_id": 1, "date": 1, "overtime_hours": 1, "status": 1, "approval_status": 1})]
     # Tahap 1: selfie yang ditolak HR tidak membawa jam lembur (sama dengan mesin hitung payroll).
     from utils.attendance_policy import attendance_counts
     overtime_events = [ot for ot in overtime_events if attendance_counts(ot)]
@@ -347,7 +357,7 @@ async def get_overtime_summary(
                 "employee_id": eid,
                 "employee_code": emp.get("employee_code"),
                 "employee_name": emp.get("name"),
-                "department_name": emp.get("department_name"),
+                "department_name": emp.get("department"),  # 2026-11-06 (pola P3)
                 "location_name": emp.get("location_name"),
                 "total_ot_hours": round(total_ot_hours, 2),
                 "ot_days": ot_days,
@@ -443,7 +453,7 @@ async def get_payroll_summary(
         emp_ids_filtered = []
         emp_query = {"active": True}
         if department_id:
-            emp_query["department_id"] = department_id
+            emp_query["department"] = department_id  # 2026-11-06 (pola P3): master karyawan menyimpan NAMA departemen di `department`
         if location_id:
             emp_query["location_id"] = location_id
         if shift_id:
@@ -472,7 +482,7 @@ async def get_payroll_summary(
             "employee_id": p.get("employee_id"),
             "employee_code": emp.get("employee_code"),
             "employee_name": emp.get("name"),
-            "department_name": emp.get("department_name"),
+            "department_name": emp.get("department"),  # 2026-11-06 (pola P3)
             "gross_salary": gross,
             "total_deductions": ded,
             "net_salary": net,
@@ -536,7 +546,7 @@ async def get_turnover_report(
     # Build employee filter
     emp_query = {}
     if department_id:
-        emp_query["department_id"] = department_id
+        emp_query["department"] = department_id  # 2026-11-06 (pola P3): master karyawan menyimpan NAMA departemen di `department`
     
     # New hires (join_date in period)
     hire_query = {
@@ -545,13 +555,20 @@ async def get_turnover_report(
     }
     new_hires = await db.rahaza_employees.find(hire_query, {"_id": 0}).to_list(500)
     
-    # Resignations (resign_date in period)
+    # Resignations — 2026-11-06 (pola P3): tanggal keluar ditulis DUA jalur: form karyawan (`resign_date`)
+    # dan pintu Resignasi (`resignation_date`). Dulu hanya `resign_date` → resignasi resmi tak terhitung.
+    rng = {"$gte": from_date, "$lte": to_date}
     resign_query = {
         **emp_query,
-        "resign_date": {"$gte": from_date, "$lte": to_date},
+        "$or": [{"resign_date": rng}, {"resign_date": {"$in": [None, ""]}, "resignation_date": rng}],
         "active": False,
     }
     resignations = await db.rahaza_employees.find(resign_query, {"_id": 0}).to_list(500)
+    for emp in resignations:
+        emp["resign_date"] = emp.get("resign_date") or emp.get("resignation_date")
+        emp["department_name"] = emp.get("department")
+    for emp in new_hires:
+        emp["department_name"] = emp.get("department")
     
     # Active employees at period start (for turnover rate calculation)
     # Simplified: count all active employees (approx)

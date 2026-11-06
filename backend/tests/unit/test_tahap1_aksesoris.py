@@ -227,7 +227,9 @@ def _body(resp):
     return json.loads(resp.body) if hasattr(resp, "body") else resp
 
 
-@pytest.mark.parametrize("unit,saved", [("gross", "gross"), ("pak", "pak"), ("roll", "rol"), ("Buah", "pcs")])
+# 2026-11-06 (pola P8): ejaan resmi = data master material ("roll"/"pack"); dulu "roll" → "rol".
+@pytest.mark.parametrize("unit,saved", [("gross", "gross"), ("pak", "pack"), ("roll", "roll"), ("rol", "roll"),
+                                        ("Buah", "pcs")])
 def test_satuan_sah_tersimpan(items_db, unit, saved):
     out = _body(run(items_mod.create_item(FakeRequest({"code": "ACC-U1", "name": "Kancing", "unit": unit}))))
     assert out["unit"] == saved

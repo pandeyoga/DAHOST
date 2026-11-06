@@ -128,7 +128,9 @@ async def _backfill_subledgers(db, report: dict, user):
             continue
         tf = cfg.get("target_field") or "gl_account_code"
         n = 0
-        async for ent in db[cfg["collection"]].find({"active": {"$ne": False}}, {"_id": 0}):
+        # 2026-11-06 (pola P3): pemasok & vendor CMT menandai nonaktif dengan `is_active`, bukan `active`
+        async for ent in db[cfg["collection"]].find({"active": {"$ne": False}, "is_active": {"$ne": False}},
+                                                    {"_id": 0}):
             cur = (ent.get(tf) or "").strip() if isinstance(ent.get(tf), str) else ent.get(tf)
             # 2026-11-02 (S2-H): selain field KOSONG, pulihkan juga rujukan ke akun yang HILANG (dulu toko
             # tetap menunjuk sub-ledger yang terhapus → pencairan ditolak, T12/STARTUP). Dilaporkan, tidak diam.

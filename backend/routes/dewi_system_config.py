@@ -26,7 +26,9 @@ router = APIRouter(prefix='/api/dewi/system/config', tags=['Dewi-System-Config']
 # 2026-11-03 (saklar PKP): kunci yang PENSIUN — tidak dibaca kode lagi & disembunyikan dari daftar.
 # `maklon_tax_pct` (PPN invoice maklon 11%) digantikan Status Pajak perusahaan (core.tax_status):
 # non-PKP tidak memungut PPN, PKP = 12% × DPP 11/12. Dokumen lama di DB dibiarkan (tidak dihapus).
-RETIRED_KEYS = {'maklon_tax_pct'}
+# 2026-11-06 (pola P5): `hpp_overhead_pct` (15%) PENSIUN — keputusan owner: overhead pabrik tidak masuk HPP, dan
+# tidak ada kode yang membacanya; setelan yang tampil hanya menyesatkan.
+RETIRED_KEYS = {'maklon_tax_pct', 'hpp_overhead_pct'}
 
 DEFAULT_CONFIGS = [
     # 2026-09-24 — gate GDG-2 (progress produksi internal wajib MI issued) bisa dimatikan.
@@ -114,16 +116,7 @@ DEFAULT_CONFIGS = [
         'is_secret': False,
     },
 
-    # HPP cost components (configurable, used for HPP calculation)
-    {
-        'key': 'hpp_overhead_pct',
-        'value': 15.0,
-        'category': 'hpp',
-        'label': 'HPP Overhead (%)',
-        'description': 'Persentase overhead pabrik dari biaya langsung (material + upah)',
-        'data_type': 'number',
-        'is_secret': False,
-    },
+    # HPP (2026-11-06: `hpp_overhead_pct` dicabut — overhead tidak masuk HPP, lihat RETIRED_KEYS)
     {
         'key': 'hpp_profit_margin_pct',
         'value': 20.0,

@@ -18,6 +18,7 @@ from auth import require_auth, log_activity
 from routes.shared import require_perm  # T-01 2.3
 from core import catalog_stock as _cstock   # F7: SSOT satu rumus stok jual
 from core import product_master as _pm      # F3–F6: SSOT kategori/HPP/harga resmi
+from core import product_status as _pstatus  # status produk SKU: Stop tidak diusulkan restock
 
 router = APIRouter(prefix='/api/marketing/catalogs', tags=['Marketing-Catalog-mgmt'])
 
@@ -59,23 +60,8 @@ def _stock_status(qty: float, threshold: float) -> str:
         return 'in_stock'
 
 async def _refresh_catalog_stats(db, catalog_id: str):
-    items = await db.marketing_catalog_items.find(
-        {'catalog_id': catalog_id, 'is_active': True},
-        {'_id': 0, 'stock_quantity': 1, 'stock_status': 1}
-    ).to_list(500)
-    total_stock = sum(float(i.get('stock_quantity', 0)) for i in items)
-    low = sum(1 for i in items if i.get('stock_status') == 'low_stock')
-    out = sum(1 for i in items if i.get('stock_status') == 'out_of_stock')
-    await db.marketing_catalogs.update_one(
-        {'id': catalog_id},
-        {'$set': {
-            'item_count': len(items),
-            'total_stock': total_stock,
-            'low_stock_count': low,
-            'out_of_stock_count': out,
-            'updated_at': _now(),
-        }}
-    )
+    # 2026-11-06 (pola P7): satu rumus di core.catalog_stock (dulu to_list(500) → katalog besar terpotong)
+    await _cstock.refresh_catalog_stats(db, catalog_id)
 
 
 # Pydantic models
@@ -302,6 +288,21 @@ async def stock_dashboard(
     total = sum(counts.values())
 
     # ── 4. daftar "perlu restock": 20 item dengan stok live terendah ────────────
+    # Status produk Stop (keputusan owner 6 Nov 2026): SKU yang tidak lagi direncanakan cutting TIDAK
+    # diusulkan restock. Angka stok di atas tetap jujur (ikut dihitung); alasannya dikembalikan.
+    low_sku = {i: (links.get(f'g{i}') or {}).get('fg_code') or '' for _a, i, _st in low_groups}
+    stopped = await _pstatus.stop_skus(db, low_sku.values())
+    excluded_n, excluded_skus = 0, set()
+    if stopped:
+        kept = []
+        for row in low_groups:
+            sku = low_sku.get(row[1])
+            if sku and sku in stopped:
+                excluded_n += int(groups[row[1]].get('n') or 0)
+                excluded_skus.add(sku)
+            else:
+                kept.append(row)
+        low_groups = kept
     low_groups.sort(key=lambda x: x[0])
     low_items: list = []
     seen: set = set()
@@ -347,6 +348,8 @@ async def stock_dashboard(
             'live_source': 'core.catalog_stock (K-6a/K-7a)',
         },
         'low_stock_items': [_s(i) for i in low_items],
+        'restock_excluded': {'count': excluded_n, 'skus': sorted(excluded_skus)[:20],
+                             'reason': _pstatus.STOP_REASON},
         'platform_breakdown': list(platform_summary.values()),
         'last_sync': _s(last_sync) if last_sync else None,
     }

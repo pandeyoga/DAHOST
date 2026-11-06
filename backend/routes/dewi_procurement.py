@@ -777,10 +777,14 @@ async def approve_request(req_id: str, request: Request):
     }
     if next_status == "approved":
         update_fields["approved_at"] = _now()
-    await db.dewi_procurement_requests.update_one(
-        {"id": req_id},
+    # 2026-11-06 (pola P9): status & tahap aktif di filter — klik ganda / setuju-tolak bersamaan tidak
+    # lagi mencatat tahap yang sama dua kali atau menimpa keputusan lain.
+    res = await db.dewi_procurement_requests.update_one(
+        {"id": req_id, "status": req["status"], "current_approver_stage": req.get("current_approver_stage")},
         {"$set": update_fields, "$push": {"approval_steps": step}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Permintaan ini baru saja diproses pengguna lain — muat ulang daftar.")
     # Notifikasi ke Communication Hub (best-effort)
     pr_after = {**req, **update_fields}
     await _notify_procurement_event(
@@ -854,13 +858,15 @@ async def reject_request(req_id: str, request: Request):
         "override_reasons": list(ev["override_reasons"]),
         "timestamp": _now().isoformat(),
     }
-    await db.dewi_procurement_requests.update_one(
-        {"id": req_id},
+    res = await db.dewi_procurement_requests.update_one(
+        {"id": req_id, "status": req["status"]},   # 2026-11-06 (pola P9)
         {"$set": {"status": "rejected", "rejected_at": _now(), "rejection_reason": reason,
                   "current_approver_stage": None, "current_approver_role": None,
                   "updated_at": _now()},
          "$push": {"approval_steps": step}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Permintaan ini baru saja diproses pengguna lain — muat ulang daftar.")
     # Notifikasi ke Communication Hub (best-effort)
     pr_after = {**req, "status": "rejected", "rejection_reason": reason}
     await _notify_procurement_event(
@@ -892,10 +898,12 @@ async def cancel_request(req_id: str, request: Request):
         raise HTTPException(400, "Hanya request draft/submitted yang bisa dibatalkan.")
     if req["requested_by"] != user["id"] and user.get("role") not in ("superadmin", "admin"):
         raise HTTPException(403, "Tidak diizinkan.")
-    await db.dewi_procurement_requests.update_one(
-        {"id": req_id},
+    res = await db.dewi_procurement_requests.update_one(
+        {"id": req_id, "status": {"$in": ["draft", "submitted"]}},   # 2026-11-06 (pola P9)
         {"$set": {"status": "cancelled", "updated_at": _now()}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Permintaan ini baru saja diproses pengguna lain — muat ulang daftar.")
     return {"ok": True}
 
 
@@ -910,10 +918,14 @@ async def complete_request(req_id: str, request: Request):
         raise HTTPException(400, "Request harus berstatus approved atau in_procurement.")
     body = await request.json()
     linked_asset_ids = body.get("linked_asset_ids", [])
-    await db.dewi_procurement_requests.update_one(
-        {"id": req_id},
+    from core import doc_lock
+    res = await db.dewi_procurement_requests.update_one(
+        {"id": req_id, "status": {"$in": ["approved", "in_procurement"]},   # 2026-11-06 (pola P9)
+         **doc_lock.lock_free("po_lock")},
         {"$set": {"status": "completed", "linked_asset_ids": linked_asset_ids, "updated_at": _now()}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Permintaan ini baru saja diproses pengguna lain — muat ulang daftar.")
     return {"ok": True}
 
 
@@ -1067,7 +1079,19 @@ async def create_po_from_pr(req_id: str, request: Request):
     """
     user = await require_auth(request)
     db = get_db()
+    # 2026-11-06 (pola P9): PR DIKUNCI selama PO disusun. Dulu klik ganda sama-sama lolos cek
+    # `linked_po_id` kosong → DUA PO terbit untuk satu PR (PR hanya menaut yang terakhir).
+    from core import doc_lock
+    token = await doc_lock.claim(db, "dewi_procurement_requests", req_id, field="po_lock", actor=user,
+                                 not_found="PR tidak ditemukan.",
+                                 busy="PO untuk PR ini sedang dibuat pengguna lain. Muat ulang daftar PR.")
+    try:
+        return await _create_po_from_pr_locked(db, req_id, request, user)
+    finally:
+        await doc_lock.release(db, "dewi_procurement_requests", req_id, token, field="po_lock")
 
+
+async def _create_po_from_pr_locked(db, req_id: str, request: Request, user: dict):
     pr = await db.dewi_procurement_requests.find_one({"id": req_id})
     if not pr:
         raise HTTPException(404, "PR tidak ditemukan.")

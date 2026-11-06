@@ -206,6 +206,21 @@ async def execute_dispatch(dispatch_id: str, request: Request, body: dict = {}):
         raise HTTPException(400, "Hanya draft yang dapat di-dispatch")
     if not item.get("lines"):
         raise HTTPException(400, "Minimal 1 item diperlukan")
+    # 2026-11-06 (pola P9): klaim atomik draft → dispatching SEBELUM SJ & pending scan-out dibuat. Dulu
+    # klik ganda menerbitkan dua SJ-CMT dan dua set pending keluar (stok bisa terpotong dua kali).
+    _claim = await db.wh_cmt_dispatches.update_one(
+        {"id": dispatch_id, "status": "draft"}, {"$set": {"status": "dispatching", "updated_at": _now()}})
+    if not _claim.matched_count:
+        raise HTTPException(409, "Pengiriman ini sedang/sudah diproses pengguna lain — muat ulang.")
+    try:
+        return await _execute_dispatch_claimed(db, dispatch_id, item, body, user)
+    except BaseException:
+        await db.wh_cmt_dispatches.update_one({"id": dispatch_id, "status": "dispatching"},
+                                              {"$set": {"status": "draft"}})
+        raise
+
+
+async def _execute_dispatch_claimed(db, dispatch_id: str, item: dict, body: dict, user: dict):
 
     # Auto-create Surat Jalan CMT
     from routes.wms_delivery_notes import _next_sj_number
@@ -242,7 +257,7 @@ async def execute_dispatch(dispatch_id: str, request: Request, body: dict = {}):
         "updated_by": user.get("name", user["id"]),
     }
     await db.wh_delivery_notes.insert_one(sj_doc)
-    await db.wh_cmt_dispatches.update_one({"id": dispatch_id}, {"$set": {
+    await db.wh_cmt_dispatches.update_one({"id": dispatch_id, "status": "dispatching"}, {"$set": {
         "status": "dispatched",
         "sj_id": sj_id,
         "sj_number": sj_number,
@@ -332,8 +347,11 @@ async def cancel_dispatch(dispatch_id: str, request: Request, body: dict = {}):
         raise HTTPException(404, "Dispatch tidak ditemukan")
     if item["status"] in ("fully_returned",):
         raise HTTPException(400, "Tidak dapat membatalkan yang sudah selesai")
-    await db.wh_cmt_dispatches.update_one({"id": dispatch_id}, {"$set": {
+    # 2026-11-06 (pola P9): status di filter — tidak menimpa kiriman yang sedang/baru saja diproses.
+    _res = await db.wh_cmt_dispatches.update_one({"id": dispatch_id, "status": item["status"]}, {"$set": {
         "status": "cancelled", "cancel_reason": body.get("reason", ""),
         "updated_at": _now(), "updated_by": user.get("name", user["id"]),
     }})
+    if not _res.matched_count:
+        raise HTTPException(409, "Pengiriman ini baru saja diproses pengguna lain — muat ulang.")
     return {"ok": True}

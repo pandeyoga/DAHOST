@@ -158,7 +158,8 @@ async def base_unit_open_documents(db, material_id: str, limit: int = 50) -> lis
             {"_id": 0, "id": 1, "supplier_id": 1, "supplier_name": 1, "uom": 1}):
         out.append({"type": "price_list", "type_label": "Daftar harga pemasok", "id": pl.get("id"),
                     "number": pl.get("supplier_name") or pl.get("supplier_id") or "", "status": "aktif"})
-    async for qi in db.wh_quarantine_items.find(
+    from core.quarantine import QUARANTINE_COLL  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    async for qi in db[QUARANTINE_COLL].find(
             {"material_id": material_id, "status": "open"}, {"_id": 0, "id": 1, "remaining_qty": 1}):
         out.append({"type": "quarantine", "type_label": "Karantina QC", "id": qi.get("id"),
                     "number": f"sisa {_f(qi.get('remaining_qty')):g}", "status": "terbuka"})

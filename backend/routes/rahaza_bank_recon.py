@@ -216,7 +216,19 @@ async def post_bank_adjustment(adjustment_id: str, request: Request):
     """
     user = await _require_fin(request)
     db = get_db()
-    
+    # 2026-11-06 (pola P9): penyesuaian DIKUNCI selama diposting. Jurnalnya idempoten, tetapi mutasi kas
+    # internal tidak — dulu klik ganda mencatat mutasi kas dua kali (saldo kas ≠ buku besar).
+    from core import doc_lock
+    token = await doc_lock.claim(db, "rahaza_bank_recon_adjustments", adjustment_id, field="post_lock",
+                                 actor=user, not_found="Adjustment not found",
+                                 busy="Penyesuaian bank ini sedang diposting pengguna lain — muat ulang.")
+    try:
+        return await _post_bank_adjustment_locked(db, adjustment_id, user)
+    finally:
+        await doc_lock.release(db, "rahaza_bank_recon_adjustments", adjustment_id, token, field="post_lock")
+
+
+async def _post_bank_adjustment_locked(db, adjustment_id: str, user: dict):
     adjustment = await db.rahaza_bank_recon_adjustments.find_one({"id": adjustment_id}, {"_id": 0})
     if not adjustment:
         raise HTTPException(404, "Adjustment not found")

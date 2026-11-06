@@ -202,7 +202,8 @@ async def list_catalog(request: Request, account_id: Optional[str] = Query(None)
         query['account_id'] = account_id
     if is_active is not None:
         query['is_active'] = is_active
-    items = await db.marketing_catalog_items.find(query, CREATOR_CATALOG_FIELDS).sort('name', 1).to_list(2000)
+    # 2026-11-06 (pola P7): semua item (dulu to_list(2000); katalog VPS kini 2.010 item)
+    items = [i async for i in db.marketing_catalog_items.find(query, CREATOR_CATALOG_FIELDS).sort('name', 1)]
     return serialize_doc(await shape_creator_catalog(db, items))
 
 

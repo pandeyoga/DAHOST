@@ -46,8 +46,10 @@ export default function VendorProductionJobs({ user }) {
     setForm(f => ({ ...f, vendor_shipment_id: shipmentId }));
     if (shipmentId && !ship?.items?.length) {
       try {
-        const data = await apiGet(`/vendor-shipment-items?shipment_id=${shipmentId}`);
-        if (Array.isArray(data)) setSelectedShipment(prev => prev ? { ...prev, items: data } : ship);
+        // 2026-11-06 (pola P1): rute `/vendor-shipment-items` tidak pernah ada (404 tertelan) —
+        // item pengiriman ada di detail GET /vendor-shipments/{id} → `items`.
+        const data = await apiGet(`/vendor-shipments/${shipmentId}`);
+        if (Array.isArray(data?.items)) setSelectedShipment(prev => prev ? { ...prev, items: data.items } : ship);
       } catch (e) { /* ignore */ }
     }
   };

@@ -330,7 +330,7 @@ export const PORTALS_GUIDE = [
         path: 'Master Data › Kalender Produksi',
         description: 'Hari libur & pengecualian untuk APS.',
         bullets: [
-          'Seed Libur Nasional 2026 (1-klik 20 hari)',
+          'Isi libur nasional & cuti bersama per tahun (2026–2027, sesuai SKB 3 Menteri)',
           'Tipe entri: Libur (merah), Pengecualian (kuning), Catatan (biru)',
           'Kalkulator hari kerja per periode',
         ],
@@ -913,7 +913,7 @@ export const SCENARIOS = [
     ],
     steps: [
       { portal: 'produksi', title: 'Seed Libur Nasional', menu: 'Master Data › Kalender Produksi',
-        detail: 'Klik "Seed Libur Nasional 2026" → 20 hari otomatis masuk.' },
+        detail: 'Buka bulan di tahun yang diinginkan, klik "Isi libur nasional <tahun>" → libur nasional & cuti bersama SKB 3 Menteri tahun itu masuk. Tanggal kalender keagamaan bertanda "Perkiraan, cek SKB".' },
       { portal: 'produksi', title: 'Cek APS Gantt', menu: 'Monitoring › APS',
         detail: 'Tanggal 1 Mei berwarna merah, tooltip "Hari Buruh Internasional".' },
       { portal: 'produksi', title: 'Auto-Schedule', menu: 'APS › Auto-Schedule',

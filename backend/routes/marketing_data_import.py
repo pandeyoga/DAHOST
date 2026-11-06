@@ -3177,6 +3177,24 @@ async def result_csv(session_id: str, request: Request,
 
 @router.post("/sessions/{session_id}/commit")
 async def commit(session_id: str, request: Request, body: Optional[CommitIn] = None):
+    """2026-11-06 (pola P9): sesi DIKUNCI selama di-commit (kunci yang sama dengan rollback).
+
+    Dulu "Commit" ganda sama-sama lolos cek `status != committed` lalu sama-sama menulis baris impor →
+    pesanan/omzet tercatat dua kali; commit dan rollback juga bisa berjalan bersamaan."""
+    from core import doc_lock
+    await require_auth(request)
+    db = get_db()
+    token = await doc_lock.claim(db, SESSIONS, session_id, field="commit_lock", actor=_user(request),
+                                 not_found="Sesi impor tidak ditemukan",
+                                 busy="Sesi impor ini sedang di-commit / dibatalkan pengguna lain. Tunggu "
+                                      "sebentar lalu muat ulang.")
+    try:
+        return await _commit_locked(session_id, request, body)
+    finally:
+        await doc_lock.release(db, SESSIONS, session_id, token, field="commit_lock")
+
+
+async def _commit_locked(session_id: str, request: Request, body: Optional[CommitIn] = None):
     await require_auth(request)
     user = _user(request)
     db = get_db()
@@ -3592,6 +3610,22 @@ async def _before_returns_rollback(db, session_id: str, ids: list, user: dict) -
 
 @router.post("/sessions/{session_id}/rollback")
 async def rollback(session_id: str, request: Request):
+    """Pintu rollback — 2026-11-06 (pola P9): kunci yang sama dengan commit; rollback ganda tidak
+    memulihkan status pesanan dua kali."""
+    from core import doc_lock
+    await require_auth(request)
+    db = get_db()
+    token = await doc_lock.claim(db, SESSIONS, session_id, field="commit_lock", actor=_user(request),
+                                 not_found="Sesi impor tidak ditemukan",
+                                 busy="Sesi impor ini sedang di-commit / dibatalkan pengguna lain. Tunggu "
+                                      "sebentar lalu muat ulang.")
+    try:
+        return await _rollback_locked(session_id, request)
+    finally:
+        await doc_lock.release(db, SESSIONS, session_id, token, field="commit_lock")
+
+
+async def _rollback_locked(session_id: str, request: Request):
     """Batalkan impor.
 
     Dua bentuk, karena ada dua bentuk impor:

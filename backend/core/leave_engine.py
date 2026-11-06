@@ -327,10 +327,14 @@ async def reject_leave_request(db, leave_id: str, user: dict, reason: str, *, vi
                                  f"(status sekarang: {leave.get('status')}).")
     await ensure_not_own_leave(db, leave, user)
     now = _now()
-    await db.rahaza_leave_requests.update_one({"id": leave_id}, {"$set": {
+    # 2026-11-06 (pola P9): status lama di filter — dulu "tolak" bisa menimpa cuti yang baru saja disetujui
+    # (hari cuti sudah tertulis di absensi & saldo terpotong, status tampak ditolak).
+    res = await db.rahaza_leave_requests.update_one({"id": leave_id, "status": leave.get("status")}, {"$set": {
         "status": "rejected", "rejected_at": now, "rejected_by": user.get("id"),
         "rejected_by_name": user.get("name", ""), "rejected_reason": reason, "reject_reason": reason,
         "rejected_via": via, "updated_at": now}})
+    if getattr(res, "matched_count", 1) == 0:
+        raise HTTPException(409, "Pengajuan ini baru saja diputuskan orang lain. Muat ulang halaman.")
     await _close_approval_requests(db, leave_id, "rejected")
     from routes.rahaza_leave import notify_leave_decision
     await notify_leave_decision(db, leave, approved=False, reason=reason)

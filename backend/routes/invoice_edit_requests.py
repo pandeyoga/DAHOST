@@ -230,7 +230,20 @@ async def approve_request(req_id: str, request: Request):
     except Exception:
         body = {}
     approval_notes = (body or {}).get("approval_notes") or ""
+    # 2026-11-06 (pola P9): permintaan DIKUNCI selama perubahannya diterapkan. Dulu Setuju ganda membatalkan
+    # & memposting ulang jurnal faktur dua kali dan riwayat perubahan tercatat ganda; Tolak bisa menimpa
+    # permintaan yang perubahannya sudah diterapkan ke faktur.
+    from core import doc_lock
+    token = await doc_lock.claim(db, "invoice_edit_requests", req_id, field="decide_lock", actor=user,
+                                 not_found="Request tidak ditemukan.",
+                                 busy="Permintaan ini sedang diputuskan pengguna lain — muat ulang.")
+    try:
+        return await _approve_request_locked(db, req_id, approval_notes, user)
+    finally:
+        await doc_lock.release(db, "invoice_edit_requests", req_id, token, field="decide_lock")
 
+
+async def _approve_request_locked(db, req_id: str, approval_notes: str, user: dict):
     req = await db.invoice_edit_requests.find_one({"id": req_id}, {"_id": 0})
     if not req:
         raise HTTPException(404, "Request tidak ditemukan.")
@@ -331,8 +344,9 @@ async def reject_request(req_id: str, request: Request):
         raise HTTPException(400, f"Request sudah {req.get('status')}, tidak bisa di-reject lagi.")
 
     now = _now()
-    await db.invoice_edit_requests.update_one(
-        {"id": req_id},
+    from core import doc_lock
+    res = await db.invoice_edit_requests.update_one(
+        {"id": req_id, "status": "Pending", **doc_lock.lock_free("decide_lock")},   # 2026-11-06 (pola P9)
         {"$set": {
             "status": "Rejected",
             "approval_notes": approval_notes,
@@ -342,6 +356,7 @@ async def reject_request(req_id: str, request: Request):
             "updated_at": now,
         }},
     )
+    doc_lock.require_matched(res, "Permintaan ini sedang/baru saja diputuskan pengguna lain — muat ulang.")
     await log_activity(user.get("id"), user.get("name", ""), "reject",
                        "invoice-edit-requests", f"Reject edit invoice {req.get('invoice_number')}")
     updated = await db.invoice_edit_requests.find_one({"id": req_id}, {"_id": 0})

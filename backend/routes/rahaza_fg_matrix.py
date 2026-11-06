@@ -124,16 +124,18 @@ async def get_fg_matrix(
     db = get_db()
     
     # Fetch all active FG materials
-    mats = await db.rahaza_materials.find(
-        {"type": "fg", "active": True}, {"_id": 0}
-    ).to_list(2000)
+    # 2026-11-06 (pola P7): dulu `to_list(2000)` FG (kini 1.243) dan stok SEMUA material `find({}).to_list(5000)`
+    # (kain/aksesoris/potongan ikut; baris per lokasi) — total matriks terpotong diam-diam begitu data lewat batas.
+    # Kini semua FG aktif dibaca, dan stok hanya baris milik FG itu.
+    mats = [m async for m in db.rahaza_materials.find({"type": "fg", "active": True}, {"_id": 0})]
     
     # Fetch stock map: material_id -> { qty, reserved }
     # (INV-2/3) reserved kanonik = stock-row reserved_quantity SAJA. Reservasi manual FG kini
     # juga menaikkan reserved_quantity via stock_service → tidak perlu jumlahkan collection lagi.
-    stock_rows = await db.rahaza_material_stock.find({}, {"_id": 0}).to_list(5000)
+    fg_ids = [m["id"] for m in mats if m.get("id")]
     stock_map = {}
-    for s in stock_rows:
+    async for s in db.rahaza_material_stock.find(
+            {"material_id": {"$in": fg_ids}}, {"_id": 0}):
         mid = s.get("material_id")
         if not mid:
             continue
@@ -249,7 +251,8 @@ async def get_fg_models(request: Request):
     """Lightweight list of unique FG model keys (for filter dropdown)."""
     await require_auth(request)
     db = get_db()
-    mats = await db.rahaza_materials.find({"type": "fg", "active": True}, {"_id": 0, "code": 1, "name": 1}).to_list(2000)
+    # 2026-11-06 (pola P7): semua FG aktif (dulu to_list(2000))
+    mats = [m async for m in db.rahaza_materials.find({"type": "fg", "active": True}, {"_id": 0, "code": 1, "name": 1})]
     model_set = set()
     for m in mats:
         model_key, _, _ = _parse_size_color_from_code(m.get("code", ""), m.get("name", ""))
@@ -389,8 +392,16 @@ async def release_fg(reservation_id: str, request: Request):
     res = await db.rahaza_fg_reservations.find_one({"id": reservation_id}, {"_id": 0})
     if not res:
         raise HTTPException(404, "Reservation not found")
+    if res.get("status") == "releasing":   # 2026-11-06 (pola P9): sedang dilepas permintaan lain
+        raise HTTPException(409, "Reservasi ini sedang dilepas pengguna lain — muat ulang.")
     if res.get("status") != "active":
         raise HTTPException(400, f"Cannot release reservation with status: {res.get('status')}")
+    # 2026-11-06 (pola P9): reservasi DIKLAIM atomik (active → releasing) sebelum stok dilepas. Dulu
+    # klik ganda melepas `reserved_quantity` dua kali — yang kedua memakan cadangan reservasi LAIN.
+    _claim = await db.rahaza_fg_reservations.update_one(
+        {"id": reservation_id, "status": "active"}, {"$set": {"status": "releasing", "updated_at": _now()}})
+    if not _claim.matched_count:
+        raise HTTPException(409, "Reservasi ini sedang/sudah dilepas pengguna lain — muat ulang.")
     
     # (INV-2/3) Lepas reservasi pada stok KANONIK (reserved_quantity) lintas baris.
     #
@@ -416,6 +427,8 @@ async def release_fg(reservation_id: str, request: Request):
             db=db,
         )
     except Exception as e:  # noqa: BLE001
+        await db.rahaza_fg_reservations.update_one(   # 2026-11-06 (pola P9): klaim dilepas
+            {"id": reservation_id, "status": "releasing"}, {"$set": {"status": "active"}})
         logger.exception(
             "[fg-matrix] GAGAL melepas reservasi stok — reservasi %s TIDAK ditandai "
             "released supaya tidak jadi reservasi hantu. material=%s qty=%s",
@@ -439,7 +452,7 @@ async def release_fg(reservation_id: str, request: Request):
         extra = {"release_shortfall": kurang, "release_released": terlepas}
 
     await db.rahaza_fg_reservations.update_one(
-        {"id": reservation_id},
+        {"id": reservation_id, "status": "releasing"},
         {"$set": {"status": "released", "released_at": _now(), "released_by": user.get("name", ""),
                   "updated_at": _now(), **extra}}
     )

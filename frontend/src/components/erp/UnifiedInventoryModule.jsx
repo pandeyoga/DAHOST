@@ -151,6 +151,8 @@ function StockAdjustmentDialog({ material, onClose, headers, onSuccess }) {
         headers,
         body: JSON.stringify({
           material_id: material.material_id,
+          // 2026-11-06 (pola P8): lokasi baris stok — server memakai mesin penyesuaian bersama
+          location_id: material.location_id || null,
           adjustment_type: adjustmentType,
           qty_delta: signedDelta,
           reason: reason.trim(),

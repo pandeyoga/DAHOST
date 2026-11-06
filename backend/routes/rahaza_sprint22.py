@@ -67,6 +67,41 @@ async def _require_supervisor(request: Request):
 # BULK MI GENERATOR
 # ────────────────────────────────────────────────────────────────────────────
 
+def _bom_material_ids(wo_ids: list, wo_map: dict, bom_by_key: dict) -> set:
+    """material_id dari BOM (snapshot WO atau BOM aktif) semua WO dalam batch."""
+    out = set()
+    for wid in wo_ids:
+        wo = wo_map.get(wid) or {}
+        items = wo.get("bom_snapshot") or []
+        if not items:
+            bom = bom_by_key.get((wo.get("model_id"), wo.get("size_id"))) or {}
+            items = bom.get("materials") or bom.get("items") or []
+        out.update(bi.get("material_id") for bi in items if bi.get("material_id"))
+    return out
+
+
+async def _stock_and_materials(db, material_ids) -> tuple:
+    """(stok tersedia per material, master material) untuk material yang DIBUTUHKAN saja.
+
+    2026-11-06 (pola P7): dulu `rahaza_material_stock.find({}).to_list(500)` dan
+    `rahaza_materials.find({active}).to_list(500)` — dengan 3.186 material aktif (data VPS) dan baris stok per
+    lokasi, material di luar 500 pertama terbaca stok 0 (MI dilewati "stok tidak cukup") dan MI ditulis dengan
+    kode/nama "?"."""
+    ids = [m for m in set(material_ids or ()) if m]
+    stock_avail: dict = {}
+    mat_map: dict = {}
+    if not ids:
+        return stock_avail, mat_map
+    async for s in db.rahaza_material_stock.find(
+            {"material_id": {"$in": ids}}, {"_id": 0, "material_id": 1, "qty": 1, "total_qty": 1, "quantity": 1}):
+        mid = s.get("material_id")
+        stock_avail[mid] = stock_avail.get(mid, 0.0) + read_qty(s)
+    async for m in db.rahaza_materials.find(
+            {"id": {"$in": ids}}, {"_id": 0, "id": 1, "code": 1, "name": 1, "unit": 1}):
+        mat_map[m["id"]] = m
+    return stock_avail, mat_map
+
+
 @router.post("/bulk-mi/preview")
 async def preview_bulk_mi(request: Request):
     """
@@ -85,17 +120,6 @@ async def preview_bulk_mi(request: Request):
     # Fetch WOs
     wos = await load_wos(db, ids=wo_ids, limit=500)
     wo_map = {w["id"]: w for w in wos}
-
-    # Fetch current stock summary (material_id → total qty)
-    stock_docs = await db.rahaza_material_stock.find({}, {"_id": 0, "material_id": 1, "qty": 1, "total_qty": 1, "quantity": 1}).to_list(500)
-    stock_avail: dict = {}
-    for s in stock_docs:
-        mid = s.get("material_id")
-        stock_avail[mid] = stock_avail.get(mid, 0.0) + read_qty(s)
-
-    # Fetch all materials for name lookup
-    all_mats = await db.rahaza_materials.find({"active": True}, {"_id": 0, "id": 1, "code": 1, "name": 1, "unit": 1}).to_list(500)
-    mat_map = {m["id"]: m for m in all_mats}
 
     # Batch prefetch existing draft/pending MIs for all WO ids
     existing_mi_map = {}
@@ -120,6 +144,9 @@ async def preview_bulk_mi(request: Request):
                 "model_id": {"$in": m_ids}, "size_id": {"$in": s_ids}, "active": True
             }, {"_id": 0}):
                 bom_by_key[(b.get("model_id"), b.get("size_id"))] = b
+
+    # Stok & nama HANYA untuk material BOM yang dipakai (pola P7, 2026-11-06 — lihat _stock_and_materials)
+    stock_avail, mat_map = await _stock_and_materials(db, _bom_material_ids(wo_ids, wo_map, bom_by_key))
 
     results = []
     for wo_id in wo_ids:
@@ -217,14 +244,6 @@ async def generate_bulk_mi(request: Request):
     wos = await load_wos(db, ids=wo_ids, limit=500)
     wo_map = {w["id"]: w for w in wos}
 
-    stock_docs = await db.rahaza_material_stock.find({}, {"_id": 0, "material_id": 1, "qty": 1, "total_qty": 1, "quantity": 1}).to_list(500)
-    stock_avail: dict = {}
-    for s in stock_docs:
-        mid = s.get("material_id")
-        stock_avail[mid] = stock_avail.get(mid, 0.0) + read_qty(s)
-
-    mat_map = {m["id"]: m for m in await db.rahaza_materials.find({"active": True}, {"_id": 0, "id": 1, "code": 1, "name": 1, "unit": 1}).to_list(500)}
-
     # Batch prefetch: existing MIs and BOMs (eliminate N+1)
     existing_mi_map2 = {}
     if wo_ids:
@@ -247,6 +266,8 @@ async def generate_bulk_mi(request: Request):
                 "model_id": {"$in": m_ids2}, "size_id": {"$in": s_ids2}, "active": True
             }, {"_id": 0}):
                 bom_by_key2[(b.get("model_id"), b.get("size_id"))] = b
+
+    stock_avail, mat_map = await _stock_and_materials(db, _bom_material_ids(wo_ids, wo_map, bom_by_key2))
 
     created = []
     skipped = []

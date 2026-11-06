@@ -790,6 +790,14 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
                 </div>
               )}
 
+              {/* 2026-11-06: SKU berstatus produk Stop tidak diusulkan restock — alasannya disebut */}
+              {dashboard.restock_excluded?.count > 0 && (
+                <p className="text-xs text-muted-foreground" data-testid="restock-excluded-stop">
+                  Tidak diusulkan restock: {dashboard.restock_excluded.count} item. {dashboard.restock_excluded.reason}.
+                  {(dashboard.restock_excluded.skus || []).length > 0 && ` SKU: ${dashboard.restock_excluded.skus.join(', ')}.`}
+                </p>
+              )}
+
               {(!dashboard.low_stock_items || dashboard.low_stock_items.length === 0) && (
                 <div className="text-center py-10 text-emerald-600 dark:text-emerald-400">
                   <CheckCircle2 className="w-10 h-10 mx-auto mb-2 opacity-60" />

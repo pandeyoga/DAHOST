@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field, field_validator
 from database import get_db
 from auth import require_auth, require_demo_seed_allowed
 from utils.helpers import _uid, _now, _clean
+from utils.employee_identity import job_title_of
 
 
 router = APIRouter(prefix="/api/dewi/hris/performance", tags=["dewi-hris-performance"])
@@ -356,7 +357,7 @@ async def create_assignment(payload: AssignmentIn, user: dict = Depends(require_
         "employee_nik": emp.get("nik"),
         "employee_name": emp.get("name"),
         "department": emp.get("department"),
-        "position": emp.get("position"),
+        "position": job_title_of(emp),  # 2026-11-06 (pola P3)
         "manager_id": manager.get("id") if manager else None,
         "manager_name": manager.get("name") if manager else None,
         "kpis": enriched_kpis,

@@ -13,6 +13,7 @@ import { toast } from '../ui/sonner';
 import Modal from './Modal';
 import ConfirmDialog from './ConfirmDialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { apiPost, apiPut, apiDelete } from '@/lib/api';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -146,11 +147,9 @@ export default function RnDPatternModule({ token }) {
     if (!form.pattern_code) return toast.error('Isi kode pola');
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
     try {
-      const method = editing ? 'PUT' : 'POST';
-      const url = editing
-        ? `${API}/api/dewi/rnd/patterns/${editing}`
-        : `${API}/api/dewi/rnd/patterns`;
-      await fetch(url, { method, headers: h, body: JSON.stringify(form) });
+      // 2026-11-06 (pola P6): helper lib/api melempar bila server menolak → pesan sukses hanya bila benar tersimpan
+      if (editing) await apiPut(`/api/dewi/rnd/patterns/${editing}`, form);
+      else await apiPost('/api/dewi/rnd/patterns', form);
       toast.success(editing ? 'Pola diperbarui' : 'Pola ditambahkan');
       setShowForm(false);
       loadPatterns();
@@ -159,7 +158,7 @@ export default function RnDPatternModule({ token }) {
 
   const handleApprove = async (id) => {
     try {
-      await fetch(`${API}/api/dewi/rnd/patterns/${id}/approve`, { method: 'POST', headers: h });
+      await apiPost(`/api/dewi/rnd/patterns/${id}/approve`, {});  // 2026-11-06 (pola P6): lihat handleSave
       toast.success('Pola disetujui');
       loadPatterns();
     } catch { toast.error('Gagal approve'); }
@@ -167,7 +166,7 @@ export default function RnDPatternModule({ token }) {
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/rnd/patterns/${delId}`, { method: 'DELETE', headers: h });
+      await apiDelete(`/api/dewi/rnd/patterns/${delId}`);  // 2026-11-06 (pola P6): lihat handleSave
       toast.success('Pola dihapus');
       setDelId(null);
       loadPatterns();

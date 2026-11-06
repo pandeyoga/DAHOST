@@ -60,19 +60,23 @@ export default function Composer({
       if (!res.ok) throw new Error('Upload gagal');
       const uploadData = await res.json();
 
+      // 2026-11-06 (pola P1): server menyimpan lampiran dari field datar message_type/file_url/
+      // file_name/file_size (channel_messages.py). Dulu dikirim `attachments: [...]` yang diabaikan,
+      // sehingga pesan hanya berisi teks "📎 nama" tanpa tautan berkas.
       const body = {
         content: `📎 ${uploadData.file_name}`,
-        attachments: [{
-          file_url: uploadData.file_url,
-          file_name: uploadData.file_name,
-          file_size: uploadData.file_size,
-          content_type: uploadData.content_type,
-        }],
+        message_type: 'file',
+        file_url: uploadData.file_url,
+        file_name: uploadData.file_name,
+        file_size: uploadData.file_size,
       };
       const msg = await apicall('POST', `/api/comm/channels/${activeView.id}/messages`, token, body);
       if (msg.id) {
         onMessageSent(msg);
         toast.success(`File ${uploadData.file_name} berhasil dikirim`);
+      } else {
+        // 2026-11-06 (pola P6): apicall hub tidak melempar saat ditolak — dulu diam
+        toast.error(typeof msg.detail === 'string' ? msg.detail : 'Gagal mengirim file');
       }
     } catch {
       toast.error('Gagal upload file');

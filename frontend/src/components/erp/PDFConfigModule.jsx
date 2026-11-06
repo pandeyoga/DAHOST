@@ -147,7 +147,8 @@ export default function PDFConfigModule({ token }) {
   const handleDelete = async (id) => {
     if (!window.confirm('Hapus preset PDF ini?')) return;
     try {
-      await fetch(`/api/pdf-export-configs/${id}`, { method: 'DELETE', headers });
+      const r = await fetch(`/api/pdf-export-configs/${id}`, { method: 'DELETE', headers });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);  // 2026-11-06 (pola P6): dulu penolakan server diam saja
       fetchConfigs();
     } catch (e) {
       alert('Error: ' + e.message);
@@ -156,10 +157,11 @@ export default function PDFConfigModule({ token }) {
 
   const handleSetDefault = async (cfg) => {
     try {
-      await fetch(`/api/pdf-export-configs/${cfg.id}`, {
+      const r = await fetch(`/api/pdf-export-configs/${cfg.id}`, {
         method: 'PUT', headers,
         body: JSON.stringify({ is_default: !cfg.is_default })
       });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || `HTTP ${r.status}`);  // 2026-11-06 (pola P6): dulu penolakan server diam saja
       fetchConfigs();
     } catch (e) {
       alert('Error: ' + e.message);

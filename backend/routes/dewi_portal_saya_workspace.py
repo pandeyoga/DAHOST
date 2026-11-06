@@ -471,18 +471,27 @@ async def combined_calendar(
 
     # 3. Leave requests
     if emp_id:
+        # 2026-11-06 (pola P4): status "menunggu" yang ditulis mesin cuti = PENDING_STATUSES
+        # (pending_approval / pending_hr_approval); dulu disaring 'pending' (tak pernah ditulis) →
+        # cuti yang belum disetujui tidak tampil di kalender. Nama jenis cuti diambil dari master
+        # (pengajuan hanya menyimpan leave_type_id — pola P3).
+        from core.leave_engine import PENDING_STATUSES
         leaves = await db.rahaza_leave_requests.find(
             {"employee_id": emp_id,
-             "status": {"$in": ["approved", "pending"]},
+             "status": {"$in": ["approved", *PENDING_STATUSES]},
              "from_date": {"$lte": to},
              "to_date": {"$gte": from_}},
             {"_id": 0}
         ).to_list(50)
+        lt_ids = list({lv.get("leave_type_id") for lv in leaves if lv.get("leave_type_id")})
+        lt_names = {t["id"]: t.get("name") for t in await db.rahaza_leave_types.find(
+            {"id": {"$in": lt_ids}}, {"_id": 0, "id": 1, "name": 1}).to_list(len(lt_ids) + 1)} if lt_ids else {}
         for lv in leaves:
             color = "#22c55e" if lv.get("status") == "approved" else "#f59e0b"
+            label = "disetujui" if lv.get("status") == "approved" else "menunggu persetujuan"
             events.append({
                 "id": lv["id"],
-                "title": f"{lv.get('leave_type_name', 'Cuti')}: {lv.get('status', '')}",
+                "title": f"{lt_names.get(lv.get('leave_type_id')) or lv.get('leave_type_name') or 'Cuti'}: {label}",
                 "date": lv.get("from_date", ""),
                 "end_date": lv.get("to_date", lv.get("from_date", "")),
                 "color": color,

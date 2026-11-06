@@ -692,7 +692,20 @@ async def confirm_maklon_po(po_id: str, user: dict = Depends(require_auth)):
     if _no_price:
         raise HTTPException(400, 'Harga jasa ke klien belum diisi untuk: ' + ', '.join(map(str, _no_price[:8]))
                                  + '. Harga jasa wajib — tidak memakai upah CMT.')
+    # 2026-11-06 (pola P9): klaim atomik draft → confirming. Dulu klik ganda membuat DUA draf piutang
+    # (rahaza_ar_invoices) dan dua set nomor WO untuk satu PO.
+    _claim = await db.dewi_maklon_pos.update_one({'id': po_id, 'status': 'draft'},
+                                                 {'$set': {'status': 'confirming', 'updated_at': _now()}})
+    if not _claim.matched_count:
+        raise HTTPException(409, 'PO ini sedang/sudah dikonfirmasi pengguna lain — muat ulang.')
+    try:
+        return await _confirm_maklon_po_claimed(db, po_id, po, user)
+    except BaseException:
+        await db.dewi_maklon_pos.update_one({'id': po_id, 'status': 'confirming'}, {'$set': {'status': 'draft'}})
+        raise
 
+
+async def _confirm_maklon_po_claimed(db, po_id: str, po: dict, user: dict):
     wo_results = []
     for idx, item in enumerate(po.get('items', []), start=1):
         wo_number = await _next_wo_number_maklon(db, po['po_number'], idx)
@@ -755,7 +768,7 @@ async def confirm_maklon_po(po_id: str, user: dict = Depends(require_auth)):
 
     # Update PO status
     await db.dewi_maklon_pos.update_one(
-        {'id': po_id},
+        {'id': po_id, 'status': 'confirming'},
         {'$set': {
             'status': 'confirmed',
             'ar_invoice_id': ar_invoice_id,
@@ -796,7 +809,7 @@ async def cancel_maklon_po(po_id: str, user: dict = Depends(require_auth)):
         raise HTTPException(400, 'PO sudah ada dispatch terkonfirmasi, tidak bisa di-cancel')
 
     await db.dewi_maklon_pos.update_one(
-        {'id': po_id},
+        {'id': po_id, 'status': {'$nin': ['confirming', 'cancelled']}},   # 2026-11-06 (pola P9)
         {'$set': {'status': 'cancelled', 'updated_at': _now()}}
     )
     # FASE 4 (E10 DELETE): engine rahaza_work_orders diarsip — tidak ada WO utk di-cancel.
@@ -918,9 +931,10 @@ async def confirm_dispatch(dispatch_id: str, user: dict = Depends(require_auth))
 
     po_id = dispatch['po_id']
 
-    # Update dispatch status
-    await db.dewi_maklon_dispatches.update_one(
-        {'id': dispatch_id},
+    # Update dispatch status — 2026-11-06 (pola P9): status lama di filter. Dulu klik ganda menambah
+    # `qty_dispatched` baris PO dua kali ($inc) untuk satu kiriman.
+    _res = await db.dewi_maklon_dispatches.update_one(
+        {'id': dispatch_id, 'status': {'$in': ['draft', 'packed']}},
         {'$set': {
             'status': 'dispatched',
             'dispatched_at': _now(),
@@ -928,6 +942,8 @@ async def confirm_dispatch(dispatch_id: str, user: dict = Depends(require_auth))
             'updated_at': _now(),
         }}
     )
+    if not _res.matched_count:
+        raise HTTPException(409, 'Dispatch ini baru saja dikonfirmasi / dibatalkan pengguna lain — muat ulang.')
 
     # Update qty_dispatched per item in PO
     for di in dispatch.get('items', []):
@@ -975,10 +991,12 @@ async def cancel_dispatch(dispatch_id: str, user: dict = Depends(require_auth)):
     if dispatch.get('status') not in ('draft', 'packed'):
         raise HTTPException(400, 'Dispatch yang sudah dikirim tidak bisa di-cancel')
 
-    await db.dewi_maklon_dispatches.update_one(
-        {'id': dispatch_id},
+    _res = await db.dewi_maklon_dispatches.update_one(
+        {'id': dispatch_id, 'status': {'$in': ['draft', 'packed']}},   # 2026-11-06 (pola P9)
         {'$set': {'status': 'cancelled', 'updated_at': _now(), 'cancelled_by': user.get('id')}}
     )
+    if not _res.matched_count:
+        raise HTTPException(409, 'Dispatch ini baru saja dikonfirmasi pengguna lain — muat ulang.')
     return {'status': 'cancelled'}
 
 

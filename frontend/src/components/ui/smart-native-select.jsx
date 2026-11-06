@@ -1,6 +1,6 @@
 import * as React from "react"
-import { createPortal } from "react-dom"
-import { ChevronDown, Search, X } from "lucide-react"
+import * as PopoverPrimitive from "@radix-ui/react-popover"
+import { ChevronDown, Search } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 /**
@@ -25,15 +25,20 @@ import { cn } from "@/lib/utils"
  * - Search box appears automatically when options >= searchThreshold (default 8),
  *   or force via searchable={true}. Small enums stay simple (searchable={false} or few opts).
  *
- * TESTABILITY / A11Y (2026-07-25): karena ini BUKAN <select> native, dropdown-nya
- * dulu tidak bisa dikemudikan otomatis (opsi = <button> tanpa penanda) sehingga
- * beberapa alur UI tak pernah bisa diuji agent. Sekarang, bila caller mengirim
- * `data-testid="x"`, komponen mengekspos:
+ * TESTABILITY / A11Y (2026-07-25): bila caller mengirim `data-testid="x"`, komponen mengekspos:
  *     x            → root
  *     x-trigger    → tombol pembuka (role=combobox, aria-expanded, data-value)
- *     x-list       → panel opsi (role=listbox)
+ *     x-panel      → panel
+ *     x-list       → daftar opsi (role=listbox)
  *     x-option-<v> → tiap opsi (role=option, aria-selected, data-value)
- * Pola pakai di test: klik `x-trigger`, lalu klik `x-option-<value>`.
+ *
+ * 2026-11-07 — BUG BESAR "pilihan tidak bisa diklik / tidak bisa dicari" (keluhan owner: supplier di form PO,
+ * model & warna di Order Cutting, dan banyak form lain). Panel dulu dirender lewat createPortal ke <body>.
+ * Di dalam Dialog/Sheet Radix (modal) seluruh <body> diberi `pointer-events: none` dan fokus dikunci di dalam
+ * jendela, sehingga opsi TIDAK BISA DIKLIK dan kotak cari TIDAK BISA DIKETIK (terbukti dengan Playwright:
+ * 14 opsi supplier tampil, klik timeout). Panel kini memakai Popover Radix — lapisan Radix yang sama dengan
+ * Dialog — sehingga opsi bisa diklik dan dicari di dalam jendela mana pun, posisinya tetap menghindari tepi
+ * layar (membuka ke atas bila ruang bawah sempit), dan API/testid TIDAK berubah.
  */
 function nodeText(node) {
   if (node == null || node === false || node === true) return ""
@@ -80,38 +85,7 @@ export default function SmartNativeSelect({
 
   const [open, setOpen] = React.useState(false)
   const [query, setQuery] = React.useState("")
-  const rootRef = React.useRef(null)
-  const panelRef = React.useRef(null)
   const inputRef = React.useRef(null)
-  // 2026-09-24 — panel opsi dirender lewat PORTAL (position: fixed) supaya tidak
-  // terpotong container ber-overflow (modal, tabel) dan membuka KE ATAS bila
-  // ruang di bawah tidak cukup. Keluhan owner: baris terbawah di Detail MI tidak
-  // bisa memilih lokasi karena daftarnya tersembunyi di bawah tepi modal.
-  const [pos, setPos] = React.useState(null)
-  const PANEL_H = 300
-  const place = React.useCallback(() => {
-    const el = rootRef.current
-    if (!el) return
-    const r = el.getBoundingClientRect()
-    const below = window.innerHeight - r.bottom
-    const up = below < PANEL_H && r.top > below
-    setPos({
-      left: r.left, width: r.width,
-      top: up ? undefined : r.bottom + 4,
-      bottom: up ? window.innerHeight - r.top + 4 : undefined,
-      maxList: Math.max(120, Math.min(240, (up ? r.top : below) - 60)),
-    })
-  }, [])
-  React.useLayoutEffect(() => {
-    if (!open) return
-    place()
-    window.addEventListener("resize", place)
-    window.addEventListener("scroll", place, true)
-    return () => {
-      window.removeEventListener("resize", place)
-      window.removeEventListener("scroll", place, true)
-    }
-  }, [open, place])
 
   const selected = React.useMemo(
     () => options.find((o) => o.value === String(value)),
@@ -128,27 +102,15 @@ export default function SmartNativeSelect({
     return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
   }, [options, query])
 
-  React.useEffect(() => {
-    if (!open) return
-    const handler = (e) => {
-      if (rootRef.current && !rootRef.current.contains(e.target)
-          && !(panelRef.current && panelRef.current.contains(e.target))) {
-        setOpen(false)
-        setQuery("")
-      }
-    }
-    document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
-  }, [open])
-
-  React.useEffect(() => {
-    if (open && enabled) requestAnimationFrame(() => inputRef.current?.focus())
-  }, [open, enabled])
+  const setOpenSafe = (o) => {
+    if (disabled && o) return
+    setOpen(o)
+    if (!o) setQuery("")
+  }
 
   const emit = (v) => {
     onChange?.({ target: { value: v, name } })
-    setOpen(false)
-    setQuery("")
+    setOpenSafe(false)
   }
 
   // Mirror the caller's width so filter-bar selects (w-40, w-32, ...) don't stretch,
@@ -157,85 +119,104 @@ export default function SmartNativeSelect({
   const wrapperWidth = wrapperClassName || (widthMatch ? widthMatch[0] : "w-full")
 
   return (
-    <div ref={rootRef} className={cn("relative", wrapperWidth)} data-testid={dataTestId} id={id}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => !disabled && setOpen((o) => !o)}
-        role="combobox"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        data-testid={dataTestId ? `${dataTestId}-trigger` : undefined}
-        data-value={String(value ?? "")}
-        className={cn(
-          "flex w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 py-2 text-left text-sm text-foreground shadow-sm transition-colors",
-          disabled ? "cursor-not-allowed opacity-50" : "hover:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
-          open && "ring-1 ring-ring",
-          className
-        )}
-        {...rest}
-      >
-        {/* 2026-11-04 (galeri Keuangan): pilihan bernilai kosong yang BERARTI ("Semua toko", "Semua status") tampil
-            seperti pilihan biasa — dulu abu seperti placeholder, sehingga dua pilihan bersebelahan terlihat beda.
-            Abu hanya untuk placeholder sungguhan (prop `placeholder`, atau label "— …" / "Pilih …"). */}
-        <span className={cn("truncate", (!selected || (selected.value === "" && (placeholder || /^\s*([—–-]|pilih\b)/i.test(selected.label))))
-          ? "text-muted-foreground" : "text-foreground")}>
-          {selected ? selected.label : ph}
-        </span>
-        <ChevronDown className={cn("h-4 w-4 flex-shrink-0 opacity-50 transition-transform", open && "rotate-180")} />
-      </button>
-
-      {open && pos && createPortal(
-        <div ref={panelRef}
-          onPointerDown={(e) => e.stopPropagation()}
-          style={{ position: "fixed", left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, zIndex: 9999 }}
-          className="overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg"
-          data-testid={dataTestId ? `${dataTestId}-panel` : undefined}>
-          {enabled && (
-            <div className="flex items-center gap-2 border-b border-border/60 bg-popover px-2 py-1.5">
-              <Search className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
-              <input
-                ref={inputRef}
-                type="text"
-                value={query}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder={searchPlaceholder}
-                data-testid="select-search-input"
-                onChange={(e) => setQuery(e.target.value)}
-                className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
-              />
-            </div>
-          )}
-          <div className="overflow-y-auto p-1" style={{ maxHeight: pos.maxList }} role="listbox"
-            data-testid={dataTestId ? `${dataTestId}-list` : "select-option-list"}>
-            {filtered.length === 0 ? (
-              <div className="px-2 py-3 text-center text-sm text-muted-foreground">Tidak ada hasil</div>
-            ) : (
-              filtered.map((o, i) => (
-                <button
-                  key={`${o.value}-${i}`}
-                  type="button"
-                  disabled={o.disabled}
-                  onClick={() => !o.disabled && emit(o.value)}
-                  role="option"
-                  aria-selected={o.value === String(value)}
-                  data-value={o.value}
-                  data-testid={dataTestId ? `${dataTestId}-option-${o.value}` : undefined}
-                  className={cn(
-                    "flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors",
-                    o.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-accent-foreground",
-                    o.value === String(value) && "bg-accent/60 font-medium"
-                  )}
-                >
-                  <span className="truncate">{o.label}</span>
-                </button>
-              ))
+    <div className={cn("relative", wrapperWidth)} data-testid={dataTestId} id={id}>
+      <PopoverPrimitive.Root open={open} onOpenChange={setOpenSafe} modal={false}>
+        <PopoverPrimitive.Trigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            role="combobox"
+            aria-expanded={open}
+            aria-haspopup="listbox"
+            data-testid={dataTestId ? `${dataTestId}-trigger` : undefined}
+            data-value={String(value ?? "")}
+            className={cn(
+              "flex w-full items-center justify-between gap-2 rounded-md border border-input bg-card px-3 py-2 text-left text-sm text-foreground shadow-sm transition-colors",
+              disabled ? "cursor-not-allowed opacity-50" : "hover:border-ring focus:outline-none focus:ring-1 focus:ring-ring",
+              open && "ring-1 ring-ring",
+              className
             )}
-          </div>
-        </div>,
-        document.body
-      )}
+            {...rest}
+          >
+            {/* 2026-11-04 (galeri Keuangan): pilihan bernilai kosong yang BERARTI ("Semua toko", "Semua status") tampil
+                seperti pilihan biasa — dulu abu seperti placeholder, sehingga dua pilihan bersebelahan terlihat beda.
+                Abu hanya untuk placeholder sungguhan (prop `placeholder`, atau label "— …" / "Pilih …"). */}
+            <span className={cn("truncate", (!selected || (selected.value === "" && (placeholder || /^\s*([—–-]|pilih\b)/i.test(selected.label))))
+              ? "text-muted-foreground" : "text-foreground")}>
+              {selected ? selected.label : ph}
+            </span>
+            <ChevronDown className={cn("h-4 w-4 flex-shrink-0 opacity-50 transition-transform", open && "rotate-180")} />
+          </button>
+        </PopoverPrimitive.Trigger>
+        <PopoverPrimitive.Portal>
+          <PopoverPrimitive.Content
+            side="bottom"
+            align="start"
+            sideOffset={4}
+            collisionPadding={8}
+            onOpenAutoFocus={(e) => {
+              // fokus ke kotak cari (bukan opsi pertama); tanpa kotak cari fokus tetap di tombol
+              e.preventDefault()
+              if (enabled) requestAnimationFrame(() => inputRef.current?.focus())
+            }}
+            style={{ width: "var(--radix-popover-trigger-width)", minWidth: 160 }}
+            className="z-[9999] overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-lg outline-none"
+            data-testid={dataTestId ? `${dataTestId}-panel` : undefined}
+          >
+            {enabled && (
+              <div className="flex items-center gap-2 border-b border-border/60 bg-popover px-2 py-1.5">
+                <Search className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={query}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={searchPlaceholder}
+                  data-testid="select-search-input"
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    // Enter memilih hasil pertama yang bisa dipilih (cepat untuk daftar panjang)
+                    if (e.key === "Enter") {
+                      e.preventDefault()
+                      const first = filtered.find((o) => !o.disabled)
+                      if (first) emit(first.value)
+                    }
+                  }}
+                  className="w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+                />
+              </div>
+            )}
+            <div className="overflow-y-auto p-1" role="listbox"
+              style={{ maxHeight: "min(240px, calc(var(--radix-popover-content-available-height, 300px) - 48px))" }}
+              data-testid={dataTestId ? `${dataTestId}-list` : "select-option-list"}>
+              {filtered.length === 0 ? (
+                <div className="px-2 py-3 text-center text-sm text-muted-foreground">Tidak ada hasil</div>
+              ) : (
+                filtered.map((o, i) => (
+                  <button
+                    key={`${o.value}-${i}`}
+                    type="button"
+                    disabled={o.disabled}
+                    onClick={() => !o.disabled && emit(o.value)}
+                    role="option"
+                    aria-selected={o.value === String(value)}
+                    data-value={o.value}
+                    data-testid={dataTestId ? `${dataTestId}-option-${o.value}` : undefined}
+                    className={cn(
+                      "flex w-full items-center rounded-sm px-2 py-1.5 text-left text-sm transition-colors",
+                      o.disabled ? "cursor-not-allowed opacity-50" : "hover:bg-accent hover:text-accent-foreground",
+                      o.value === String(value) && "bg-accent/60 font-medium"
+                    )}
+                  >
+                    <span className="truncate">{o.label}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          </PopoverPrimitive.Content>
+        </PopoverPrimitive.Portal>
+      </PopoverPrimitive.Root>
     </div>
   )
 }

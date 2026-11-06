@@ -1062,14 +1062,16 @@ async def post_ap_invoice(db, invoice: dict, user: dict) -> dict:
 
     # ── Phase 6: per-supplier AP subledger override ──────────────────────────
     # Arahkan sisi Hutang (Cr AP) ke akun subledger milik supplier bila Auto-COA
-    # aktif & supplier dikenal (match by vendor_code/vendor_name di rahaza_vendors).
+    # aktif & supplier dikenal di master `rahaza_suppliers`.
+    # 2026-11-06 (pola P2/P3): faktur dari GR menyimpan `supplier_id`/`supplier_code` (bukan
+    # `vendor_id`) — dulu hanya `vendor_id` yang dicari, di koleksi `rahaza_vendors` yang tidak ada.
     # NON-FATAL + fallback ke akun kontrol (ap_code).
     try:
         from routes.coa_auto import resolve_subledger_account
         sub_ap = await resolve_subledger_account(
             db, "supplier",
-            entity_id=invoice.get("vendor_id"),
-            entity_code=invoice.get("vendor_code"),
+            entity_id=invoice.get("supplier_id") or invoice.get("vendor_id"),
+            entity_code=invoice.get("supplier_code") or invoice.get("vendor_code"),
             entity_name=invoice.get("vendor_name"),
             user=user,
         )

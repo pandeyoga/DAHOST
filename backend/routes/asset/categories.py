@@ -4,6 +4,7 @@ from fastapi import Request, HTTPException
 from database import get_db
 from auth import require_auth
 from ._helpers import router, _now, _ser, _uid, _ensure_default_categories
+from core.reference_dedup import assert_unique_ref
 
 
 @router.get("/categories")
@@ -11,7 +12,8 @@ async def list_categories(request: Request):
     await require_auth(request)
     db = get_db()
     await _ensure_default_categories(db)
-    cats = await db.dewi_asset_categories.find({}, {"_id": 0}).sort("name", 1).to_list(100)
+    # 2026-11-06 (pola P8): kategori kembar yang sudah digabung (nonaktif) tidak ditawarkan lagi
+    cats = await db.dewi_asset_categories.find({"active": {"$ne": False}}, {"_id": 0}).sort("name", 1).to_list(100)
     return [_ser(c) for c in cats]
 
 
@@ -33,10 +35,16 @@ async def create_category(request: Request):
     name = (body.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "Nama kategori wajib diisi.")
+    code = (body.get("code") or name[:2].upper()).strip().upper()
+    # 2026-11-06 (pola P8): dulu tanpa cek apa pun — nama/kode yang sama bisa dibuat berkali-kali
+    await assert_unique_ref(db, "dewi_asset_categories", name=name, label="Kategori aset")
+    if await db.dewi_asset_categories.find_one({"code": code, "active": {"$ne": False}}, {"_id": 0, "id": 1}):
+        raise HTTPException(409, f"Kode kategori aset '{code}' sudah dipakai. Gunakan kode lain.")
     doc = {
         "id": _uid(),
         "name": name,
-        "code": (body.get("code") or name[:2].upper()).upper(),
+        "code": code,
+        "active": True,
         "useful_life_years": int(body.get("useful_life_years") or 5),
         "depr_method": body.get("depr_method", "straight_line"),
         "coa_asset_account": (body.get("coa_asset_account") or "").strip(),
@@ -54,6 +62,8 @@ async def update_category(cat_id: str, request: Request):
     body = await request.json()
     update = {}
     if "name" in body:
+        await assert_unique_ref(db, "dewi_asset_categories", name=body["name"], label="Kategori aset",
+                                exclude_id=cat_id)  # 2026-11-06 (pola P8)
         update["name"] = body["name"]
     if "code" in body:
         update["code"] = body["code"].upper()

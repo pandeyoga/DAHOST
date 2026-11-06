@@ -657,6 +657,9 @@ export default function CMTComponentRequestModule({ token }) {
                   {detail.delivery_order_number && ` · DO: ${detail.delivery_order_number}`}
                 </div>
               )}
+              {detail.status_note && (
+                <div>Catatan perubahan status terakhir: <strong>{detail.status_note}</strong></div>
+              )}
             </div>
             {detail.rejection_reason && (
               <div className="px-3 py-2 rounded-lg bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  text-[hsl(var(--destructive))] ">

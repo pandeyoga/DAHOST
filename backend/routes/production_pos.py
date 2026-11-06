@@ -268,7 +268,7 @@ async def create_po(request: Request):
 
 
 async def create_po_internal(db, body: dict, user: dict, *,
-                             number_issued: bool = False) -> dict:
+                             number_issued: bool = False, opening: bool = False) -> dict:
     """FASE 3 — SATU jalur pembuatan PO produksi (internal & maklon).
 
     Diekstrak dari handler `POST /api/production-pos` supaya Portal MAKLON bisa
@@ -276,6 +276,10 @@ async def create_po_internal(db, body: dict, user: dict, *,
     bukan menulis PO asli ke collection mirror `dewi_maklon_pos`.
     Pelajaran audit 2026-07-31: dua penulis PO = dua sumber kebenaran = 10 PO yatim
     dengan status produksi palsu.
+
+    `opening=True` (2026-11-06, T6 impor PO berjalan saat cutoff): PO saldo awal — potongannya sudah
+    di CMT sebelum cutoff, jadi kebutuhan bahan/aksesoris BOM TIDAK diledakkan lagi (tidak ada
+    yang perlu dikirim/dibeli untuk qty itu). Konfirmasi & jadwal piutang/hutang tetap jalur biasa.
 
     `number_issued=True` (FASE G): nomornya SUDAH diterbitkan oleh jenis dokumen
     ASALNYA — dipakai jalur cermin PO Maklon yang nomornya lahir dari
@@ -349,6 +353,9 @@ async def create_po_internal(db, body: dict, user: dict, *,
     }
     if initial_status == 'Confirmed':
         po.update({'confirmed_at': now(), 'confirmed_by': user.get('name', '')})
+    if opening:
+        # kunci impor saldo awal ikut tersimpan SAAT insert (indeks unik `opening_import.key`)
+        po['opening_import'] = dict(body.get('opening_import') or {})
     await db.production_pos.insert_one(po)
     inserted_items = []
     for idx, item in enumerate(items_data):
@@ -389,7 +396,7 @@ async def create_po_internal(db, body: dict, user: dict, *,
         inserted_items.append(po_item)
     # ── Fase 3 (ACC-1): auto-explode aksesoris dari BOM utk PO internal ──
     accessories_explode = None
-    if business_type == 'internal':
+    if business_type == 'internal' and not opening:
         try:
             from routes.production_internal_adapter import explode_po_accessories_from_bom
             accessories_explode = await explode_po_accessories_from_bom(db, po_id)
@@ -400,7 +407,7 @@ async def create_po_internal(db, body: dict, user: dict, *,
     #    supaya ikut tercetak di Surat Jalan. Sebelum ini PO maklon tidak pernah
     #    meledakkan BOM sama sekali (template hanya jadi katalog mati).
     maklon_bom_explode = None
-    if business_type == 'maklon':
+    if business_type == 'maklon' and not opening:
         try:
             from routes.dewi_maklon_bom_templates import explode_maklon_bom_for_po
             maklon_bom_explode = await explode_maklon_bom_for_po(db, po_id, user=user)
@@ -1050,6 +1057,19 @@ async def quick_complete_po(po_id: str, request: Request):
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
+    # 2026-11-06 (pola P9): PO DIKUNCI (kunci yang sama dengan "Buat Job") — dulu klik ganda menjalankan
+    # seluruh alur dua kali bersamaan: shipment, job, progres, dan kiriman buyer ganda.
+    from core import doc_lock
+    token = await doc_lock.claim(db, 'production_pos', po_id, field='job_lock', actor=user,
+                                 not_found='PO tidak ditemukan',
+                                 busy='PO ini sedang diproses (Quick Complete / Buat Job) pengguna lain — muat ulang.')
+    try:
+        return await _quick_complete_po_locked(db, po_id, body, user)
+    finally:
+        await doc_lock.release(db, 'production_pos', po_id, token, field='job_lock')
+
+
+async def _quick_complete_po_locked(db, po_id: str, body: dict, user: dict):
     skip_buyer_shipment = body.get('skip_buyer_shipment', False)
 
     po = await db.production_pos.find_one({'id': po_id})
@@ -1348,7 +1368,11 @@ async def transition_po_status(po_id: str, request: Request):
         # qty per baris yang sama dengan tombol Tutup PO / Tutup kurang.
         await _close_po_checked(db, po, body, user, short_endpoint=False)
         return serialize_doc(await db.production_pos.find_one({'id': po_id}, {'_id': 0}))
-    await db.production_pos.update_one({'id': po_id}, {'$set': update_data})
+    # 2026-11-06 (pola P9): status lama di filter — klik ganda Konfirmasi / dua transisi bersamaan tidak
+    # lagi menjalankan sinkron piutang-hutang maklon dua kali atau saling menimpa status.
+    _res = await db.production_pos.update_one({'id': po_id, 'status': po.get('status')}, {'$set': update_data})
+    if not _res.matched_count:
+        raise HTTPException(409, f"PO {po.get('po_number') or ''} baru saja diubah pengguna lain — muat ulang.")
     # ── Fase 2 Maklon: resync mirror finance saat status PO maklon berubah ──
     if po.get('business_type') == 'maklon':
         from routes.production_maklon_bridge import try_sync_maklon_finance

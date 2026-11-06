@@ -132,10 +132,12 @@ async def close_period(period_code: str, request: Request):
         raise HTTPException(400, err)
     # check draft journals in this period: warn but allow
     drafts = await db.rahaza_journal_entries.count_documents({"date": {"$regex": f"^{period_code}"}, "status": "draft"})
-    await db.rahaza_periods.update_one(
-        {"period_code": period_code},
+    res = await db.rahaza_periods.update_one(
+        {"period_code": period_code, "status": per["status"]},   # 2026-11-06 (pola P9)
         {"$set": {"status": "closed", "closed_at": _now(), "closed_by": user["id"], "closed_by_name": user.get("name", "")}},
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Status periode ini baru saja diubah pengguna lain — muat ulang halaman.")
     await log_activity(user["id"], user.get("name", ""), "close_period", "periods", period_code)
     return {"ok": True, "period_code": period_code, "status": "closed", "draft_journals_left": drafts}
 
@@ -151,10 +153,14 @@ async def reopen_period(period_code: str, request: Request):
         raise HTTPException(423, "Periode terkunci (locked) dan tidak bisa di-reopen.")
     if per["status"] != "closed":
         raise HTTPException(400, f"Hanya periode closed yang bisa reopen. Status sekarang: {per['status']}")
-    await db.rahaza_periods.update_one(
-        {"period_code": period_code},
+    # 2026-11-06 (pola P9): hanya dari 'closed' — dulu "buka" yang membaca status lama bisa membuka lagi
+    # periode yang baru saja DIKUNCI (kunci final audit jebol).
+    res = await db.rahaza_periods.update_one(
+        {"period_code": period_code, "status": "closed"},
         {"$set": {"status": "open", "closed_at": None, "closed_by": None}},
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Status periode ini baru saja diubah pengguna lain — muat ulang halaman.")
     await log_activity(user["id"], user.get("name", ""), "reopen_period", "periods", period_code)
     return {"ok": True, "period_code": period_code, "status": "open"}
 
@@ -179,9 +185,11 @@ async def lock_period(period_code: str, request: Request):
     err = period_not_ended_error(period_code, today_wib(), "Kunci (lock) periode")
     if err:
         raise HTTPException(400, err)
-    await db.rahaza_periods.update_one(
-        {"period_code": period_code},
+    res = await db.rahaza_periods.update_one(
+        {"period_code": period_code, "status": "closed"},   # 2026-11-06 (pola P9)
         {"$set": {"status": "locked", "locked_at": _now(), "locked_by": user["id"], "locked_by_name": user.get("name", "")}},
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Status periode ini baru saja diubah pengguna lain — muat ulang halaman.")
     await log_activity(user["id"], user.get("name", ""), "lock_period", "periods", period_code)
     return {"ok": True, "period_code": period_code, "status": "locked"}

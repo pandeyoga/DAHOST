@@ -82,8 +82,13 @@ async def post_maklon_ar_invoice(db, po: dict, user: dict) -> dict:
     tax_code = mapping.get('credit_tax_output')
     if not ar_code or not rev_code or (tax_amount > 0 and not tax_code):
         return {'ok': False, 'error': "Mapping 'maklon_ar_invoice' belum lengkap (debit_ar/credit_revenue_maklon/credit_tax_output)."}
+    # 2026-11-06 (pola P2): id klien maklon dicari di master klien maklon (Auto Akun `maklon_client`,
+    # 1-1305-<klien>) — dulu dicari sebagai pelanggan `rahaza_customers` sehingga tidak pernah ketemu dan
+    # piutang jatuh ke akun kontrol. Pelanggan biasa tetap lewat `_resolve_ar_code`.
     from routes.rahaza_posting import _resolve_ar_code
-    ar_code = await _resolve_ar_code(db, ar_code, po.get('client_id') or ar_doc.get('customer_id'), None, user)
+    from core.maklon_ledger import client_accounts
+    client_ar = (await client_accounts(db, po.get('client_id'), user)).get('ar') if po.get('client_id') else None
+    ar_code = client_ar or await _resolve_ar_code(db, ar_code, ar_doc.get('customer_id'), None, user)
 
     lines = [
         {
@@ -599,8 +604,23 @@ async def list_cmt_disbursements(payment_id: str, user: dict = Depends(require_a
 
 @router.post('/cmt-payments/{payment_id}/pay')
 async def pay_cmt_payment(payment_id: str, payload: CmtPayIn, user: dict = Depends(require_auth)):
-    """Bayar tagihan CMT dari rekening kas/bank. AP CMT diposting dulu bila belum; jurnal bayar otomatis."""
+    """Bayar tagihan CMT dari rekening kas/bank. AP CMT diposting dulu bila belum; jurnal bayar otomatis.
+
+    2026-11-06 (pola P9): tagihan DIKUNCI selama pembayaran dicatat. Dulu klik ganda sama-sama membaca
+    `paid_amount` lama → dua mutasi kas + dua jurnal bayar, sedangkan `paid_amount` hanya naik sekali."""
+    from core import doc_lock
     db = get_db()
+    token = await doc_lock.claim(
+        db, 'dewi_cmt_payments', payment_id, field='pay_lock', actor=user,
+        not_found='Tagihan CMT tidak ditemukan',
+        busy='Tagihan CMT ini sedang dibayar pengguna lain. Muat ulang lalu periksa sisa tagihannya.')
+    try:
+        return await _pay_cmt_payment_locked(db, payment_id, payload, user)
+    finally:
+        await doc_lock.release(db, 'dewi_cmt_payments', payment_id, token, field='pay_lock')
+
+
+async def _pay_cmt_payment_locked(db, payment_id: str, payload: CmtPayIn, user: dict):
     payment = await db.dewi_cmt_payments.find_one({'id': payment_id}, {'_id': 0})
     if not payment:
         raise HTTPException(404, 'Tagihan CMT tidak ditemukan')
@@ -734,7 +754,21 @@ async def resolve_cmt_variance(payment_id: str, payload: CmtVarianceResolveIn, u
 
 @router.post('/cmt-payments/{payment_id}/disbursements/{did}/void')
 async def void_cmt_disbursement(payment_id: str, did: str, user: dict = Depends(require_auth)):
+    # 2026-11-06 (pola P9): kunci tagihan yang SAMA dengan pembayaran — dulu void ganda mengurangi
+    # `paid_amount` dua kali (jurnal & mutasi kas hanya sekali), dan void bisa menimpa bayar yang berjalan.
+    from core import doc_lock
     db = get_db()
+    token = await doc_lock.claim(
+        db, 'dewi_cmt_payments', payment_id, field='pay_lock', actor=user,
+        not_found='Pembayaran tidak ditemukan',
+        busy='Tagihan CMT ini sedang diproses pengguna lain. Muat ulang lalu periksa daftar pembayarannya.')
+    try:
+        return await _void_cmt_disbursement_locked(db, payment_id, did, user)
+    finally:
+        await doc_lock.release(db, 'dewi_cmt_payments', payment_id, token, field='pay_lock')
+
+
+async def _void_cmt_disbursement_locked(db, payment_id: str, did: str, user: dict):
     d = await db.dewi_cmt_disbursements.find_one({'id': did, 'payment_id': payment_id, 'status': {'$ne': 'voided'}}, {'_id': 0})
     if not d:
         raise HTTPException(404, 'Pembayaran tidak ditemukan')

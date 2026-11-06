@@ -120,8 +120,9 @@ async def creator_get_catalog(request: Request, account_id: Optional[str] = Quer
     # kreator SELALU melihat katalog kosong dan tidak pernah bisa meminta barang.
     # Sekarang sumbernya satu, dan HARGA HPP TIDAK PERNAH DIKIRIM ke portal
     # kreator (keputusan pemilik: kreator hanya boleh melihat harga jual).
-    catalog = await db.marketing_catalog_items.find(
-        query, CREATOR_CATALOG_FIELDS).sort([('name', 1), ('product_name', 1)]).to_list(2000)
+    # 2026-11-06 (pola P7): semua item toko kreator (dulu to_list(2000); katalog VPS kini 2.010 item)
+    catalog = [c async for c in db.marketing_catalog_items.find(
+        query, CREATOR_CATALOG_FIELDS).sort([('name', 1), ('product_name', 1)])]
     return serialize_doc(await shape_creator_catalog(db, catalog))
 
 

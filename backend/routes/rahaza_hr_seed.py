@@ -318,11 +318,14 @@ async def run_seed(request: Request):
     # ─── 7) Sample Attendance (last 7 working days) ─────────────────────
     result["attendance"] = {"created": 0, "skipped": 0}
     today = today_wib()
-    # Build last 7 working days (skip weekends)
+    # Build last 7 working days — 2026-11-06 (pola P5): hari libur mingguan dari `core.workdays`
+    # (6 hari kerja), bukan `weekday() < 5`.
+    from core import workdays as _wd
+    _off = (await _wd.get_work_calendar(db))["off_weekdays"]
     working_days = []
     d = today - timedelta(days=1)  # start from yesterday
     while len(working_days) < 7:
-        if d.weekday() < 5:  # Mon-Fri
+        if d.weekday() not in _off:
             working_days.append(d)
         d -= timedelta(days=1)
 

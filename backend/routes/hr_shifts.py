@@ -81,7 +81,8 @@ class ShiftCreateModel(BaseModel):
     start_time: str              # HH:MM
     end_time: str                # HH:MM
     break_duration_minutes: int = 60
-    days_active: List[str] = Field(default_factory=lambda: ["Mon","Tue","Wed","Thu","Fri"])
+    # 2026-11-06 (pola P5): bawaan 6 hari kerja (keputusan owner, `core.workdays`), dulu Senin–Jumat
+    days_active: List[str] = Field(default_factory=lambda: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"])
     is_overnight: bool = False
     is_default: bool = False
     color: str = "#64748b"

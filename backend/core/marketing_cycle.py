@@ -510,6 +510,26 @@ async def _auto_kol_fee(db, account_id: str, period: str) -> Dict[str, Any]:
             'detail': detail}
 
 
+def month_share(date_from, date_to) -> float:
+    """Porsi BULAN KALENDER yang ditutup rentang [date_from, date_to] (inklusif).
+
+    2026-11-06 (pola P5): gaji bulanan host dulu diprorata `hari ÷ 30` — Februari (28 hari) hanya terbebani
+    93%, periode 7 hari di bulan 31 hari terbebani 7/30. Kini tiap bulan dihitung `hari di bulan itu ÷ jumlah
+    hari bulan itu`, jadi satu bulan kalender penuh = 1,0 tepat."""
+    a = datetime.strptime(str(date_from)[:10], '%Y-%m-%d').date()
+    b = datetime.strptime(str(date_to)[:10], '%Y-%m-%d').date()
+    if b < a:
+        return 0.0
+    share, cur = 0.0, a
+    while cur <= b:
+        dim = calendar.monthrange(cur.year, cur.month)[1]
+        month_end = cur.replace(day=dim)
+        last = min(b, month_end)
+        share += ((last - cur).days + 1) / dim
+        cur = last + timedelta(days=1)
+    return share
+
+
 async def _auto_livehost(db, account_id: str, period: str) -> Dict[str, Any]:
     """Biaya Live Host = **GAJI BULANAN** dari master HR (sesi #34).
 
@@ -533,6 +553,7 @@ async def _auto_livehost(db, account_id: str, period: str) -> Dict[str, Any]:
         days = calendar.monthrange(y, m)[1]
         end = datetime(y, m, days)
     lo, hi = start.strftime('%Y-%m-%d'), end.strftime('%Y-%m-%d')
+    share = month_share(lo, hi)   # pola P5: porsi bulan kalender, bukan hari ÷ 30
 
     shifts = await db.marketing_livehost_shifts.find(
         {'date': {'$gte': lo, '$lte': hi + 'T23:59:59'}},
@@ -561,7 +582,7 @@ async def _auto_livehost(db, account_id: str, period: str) -> Dict[str, Any]:
         salary = _num(info.get('salary'))
         if salary <= 0:
             unlinked += 1
-        charged = _r(salary / max(1, len(accs)) * min(1.0, days / 30.0))
+        charged = _r(salary / max(1, len(accs)) * share)
         total += charged
         detail.append({'host_id': h['id'], 'host_name': h.get('name', ''),
                        'monthly_salary': _r(salary),

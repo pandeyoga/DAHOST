@@ -56,6 +56,10 @@ BUYER_RESOLUTIONS = {
 STATUS_OPEN, STATUS_RESOLVED, STATUS_CANCELLED = "open", "resolved", "cancelled"
 
 
+class AlreadyDecided(ValueError):
+    """2026-11-06 (pola P9): dokumen selisih sudah diputuskan permintaan lain (klik ganda) → HTTP 409."""
+
+
 def _now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -439,12 +443,15 @@ async def cancel_cmt_short(db, short_id: str, *, actor: dict | None = None,
     if not s or s.get("status") == STATUS_CANCELLED:
         return s
     open_qty = max(0, _i(s.get("qty_short")) - _i(s.get("qty_resolved")))
-    await db[CMT_SHORT].update_one({"id": short_id}, {
+    # 2026-11-06 (pola P9): status lama di filter — pembatalan ganda tidak mengurangi buku kuantitas dua kali.
+    res = await db[CMT_SHORT].update_one({"id": short_id, "status": s.get("status")}, {
         "$set": {"status": STATUS_CANCELLED, "resolution": "salah_input_dikoreksi",
                  "resolution_notes": reason, "resolved_at": _now(),
                  "resolved_by": (actor or {}).get("name", "sistem"), "updated_at": _now()},
         "$push": {"history": {"at": _now(), "by": (actor or {}).get("name", "sistem"),
                               "action": "cancel", "qty": open_qty, "reason": reason}}})
+    if not res.matched_count:
+        return await db[CMT_SHORT].find_one({"id": short_id}, {"_id": 0})
     await _ledger_inc(db, s.get("job_item_id"), {"qty_short_open": -open_qty})
     if s.get("receipt_line_id"):
         await db.cmt_receipt_lines.update_one(
@@ -476,7 +483,9 @@ async def resolve_cmt_short_manual(db, short_id: str, *, resolution: str, notes:
         return await cancel_cmt_short(db, short_id, actor=actor,
                                       reason=notes or "dikoreksi manual")
     open_qty = max(0, _i(s.get("qty_short")) - _i(s.get("qty_resolved")))
-    await db[CMT_SHORT].update_one({"id": short_id}, {
+    # 2026-11-06 (pola P9): hanya yang MASIH terbuka — dulu penyelesaian ganda menambah `qty_resolved` &
+    # buku kuantitas dua kali dan mengirim kabar ke vendor dua kali.
+    res = await db[CMT_SHORT].update_one({"id": short_id, "status": STATUS_OPEN}, {
         "$inc": {"qty_resolved": open_qty},
         "$set": {"status": STATUS_RESOLVED, "resolution": resolution,
                  "resolution_notes": notes, "resolved_at": _now(),
@@ -484,6 +493,8 @@ async def resolve_cmt_short_manual(db, short_id: str, *, resolution: str, notes:
         "$push": {"history": {"at": _now(), "by": (actor or {}).get("name", "sistem"),
                               "action": "resolve_manual", "qty": open_qty,
                               "resolution": resolution, "reason": notes}}})
+    if not res.matched_count:
+        raise AlreadyDecided(f"selisih {s.get('short_number')} baru saja diselesaikan pengguna lain — muat ulang")
     await _ledger_inc(db, s.get("job_item_id"),
                       {"qty_short_open": -open_qty, "qty_short_resolved": open_qty})
     if s.get("receipt_line_id"):

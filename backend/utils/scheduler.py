@@ -326,6 +326,9 @@ async def job_kpi_deadline_reminders():
         )
 
 
+_WEEKDAY_NAMES = ('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday')
+
+
 async def job_auto_create_tasks_from_templates():
     """
     Auto-create task dari marketing_task_templates berdasarkan recurrence config.
@@ -362,13 +365,21 @@ async def job_auto_create_tasks_from_templates():
 
             # Decide if we should create today
             should_create = False
-            if recurrence == 'daily':
+            if cfg.get('auto_create') is False:
+                # 2026-11-06 (pola P1): sakelar "Buat otomatis" di layar Template Tugas dulu diabaikan
+                pass
+            elif recurrence == 'daily':
                 should_create = True
             elif recurrence == 'weekly':
-                target_day = int(cfg.get('day_of_week', 0))
-                should_create = (weekday == target_day)
+                # 2026-11-06 (pola P1): layar Template Tugas menyimpan `days_of_week: ['monday', ...]`;
+                # dulu hanya `day_of_week` (angka) yang dibaca → template mingguan selalu jatuh ke Senin.
+                names = cfg.get('days_of_week')
+                if isinstance(names, list) and names:
+                    should_create = _WEEKDAY_NAMES[weekday] in {str(n).lower() for n in names}
+                else:
+                    should_create = (weekday == int(cfg.get('day_of_week') or 0))
             elif recurrence == 'monthly':
-                target_day = int(cfg.get('day_of_month', 1))
+                target_day = int(cfg.get('day_of_month') or 1)
                 should_create = (day_of_month == target_day)
 
             if not should_create:

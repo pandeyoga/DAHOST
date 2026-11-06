@@ -62,8 +62,9 @@ async def search_employees(db, query: str, limit: int = 5) -> List[Dict[str, Any
             "subtitle": f"{e.get('job_title', '')} - {e.get('department', '')}",
             "metadata": {
                 "code": e.get("employee_code"),
-                "status": e.get("status", "active"),
-                "hire_date": e.get("hire_date"),
+                # 2026-11-06 (pola P3): field kanonik `active` & `join_date` (dulu status/hire_date → kosong)
+                "status": "active" if e.get("active", True) is not False else "inactive",
+                "hire_date": e.get("join_date") or e.get("joined_at"),
             },
             "url": f"/portal/hr?module=hr-dashboard&employee={e.get('employee_code')}"
         } for e in employees]

@@ -311,7 +311,8 @@ async def parse_fill_workbook(db, data: bytes) -> dict:
                        "bom_models": len({b["model_id"] for b in bom["bom_groups"]}), "bom_groups": len(bom["bom_groups"]),
                        "bom_skipped": len(bom["bom_issues"]), "bom_models_in_file": len({i.get("model_code") for i in bom["bom_issues"] if i.get("model_code")} | {b["model_code"] for b in bom["bom_groups"]}),
                        "skipped": len(warnings), "models": len(model_rows),
-                       "sku_prices": len(extra["sku_prices"]), "sku_deactivate": len(extra["sku_deactivate"]), "stock_rows": len(extra["stock_fg"]) + len(extra["stock_mat"]),
+                       "sku_prices": len(extra["sku_prices"]), "sku_deactivate": len(extra["sku_deactivate"]), "sku_status": len(extra["sku_status"]),
+                       "stock_rows": len(extra["stock_fg"]) + len(extra["stock_mat"]),
                        "salaries": len(extra["salaries"]), "new_variants": len(extra["new_variants"])}}
 
 

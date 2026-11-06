@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { GlassCard } from '@/components/ui/glass';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { apiGet, apiPost, apiDelete } from '../../../lib/api';
+import { apiGet, apiPost, apiDelete, getToken } from '../../../lib/api';
 
 function getFileIcon(ext) {
   if (['jpg','jpeg','png','webp','gif'].includes(ext)) return <FileImage className="w-4 h-4 text-[hsl(var(--primary))]" />;
@@ -13,6 +13,14 @@ function getFileIcon(ext) {
   if (['zip','rar'].includes(ext)) return <Archive className="w-4 h-4 text-[hsl(var(--warning))]" />;
   return <File className="w-4 h-4 text-muted-foreground" />;
 }
+
+// 2026-11-06 (pola P1): bentuk lampiran dari server = `attachments` (file_storage.py):
+// original_filename, storage_path, created_at. Dulu layar membaca original_name / file_ext /
+// uploaded_at / public_path yang tidak pernah ada → nama kosong & tombol unduh mati.
+const attName = (a) => a.original_filename || a.original_name || '';
+const attExt = (a) => (attName(a).split('.').pop() || '').toLowerCase();
+const attUrl = (a) => (a.storage_path
+  ? `/api/files/${a.storage_path}?auth=${encodeURIComponent(getToken() || '')}` : undefined);
 
 function formatSize(bytes) {
   if (bytes < 1024) return bytes + ' B';
@@ -43,10 +51,11 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
     setUploading(true);
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('entity_type', entityType);
-    formData.append('entity_id', entityId);
     try {
-      const data = await apiPost('/upload', formData);
+      // 2026-11-06 (pola P1): server membaca entity_type/entity_id dari QUERY, bukan isian form —
+      // dulu lampiran tersimpan tanpa tautan dokumen sehingga tidak pernah muncul di daftar.
+      const qs = `entity_type=${encodeURIComponent(entityType)}&entity_id=${encodeURIComponent(entityId)}`;
+      const data = await apiPost(`/upload?${qs}`, formData);
       setAttachments(prev => [...prev, data]);
     } catch (e) {
       toast.error('Unggah gagal: ' + e.message);
@@ -69,9 +78,10 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
   };
 
   const handleDelete = async (att) => {
-    if (!(await confirmDialog({ title: `Hapus file "${att.original_name}"?`, confirmLabel: 'Hapus', danger: true }))) return;
+    if (!(await confirmDialog({ title: `Hapus file "${attName(att)}"?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
-      await apiDelete(`/upload?id=${att.id}`);
+      // 2026-11-06 (pola P1): rute hapus = DELETE /api/attachments/{id} (dulu /upload?id= → 405)
+      await apiDelete(`/attachments/${att.id}`);
       setAttachments(prev => prev.filter(a => a.id !== att.id));
     } catch (e) {
       toast.error(e.message || 'Gagal menghapus');
@@ -124,13 +134,13 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
         <div className="space-y-1.5">
           {attachments.map(att => (
             <div key={att.id} className="flex items-center gap-2 p-2 bg-card border border-border rounded-lg">
-              {getFileIcon(att.file_ext)}
+              {getFileIcon(attExt(att))}
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-medium text-foreground/90 truncate">{att.original_name}</p>
-                <p className="text-xs text-muted-foreground/70">{formatSize(att.size)} • {new Date(att.uploaded_at).toLocaleDateString('id-ID')} • {att.uploaded_by}</p>
+                <p className="text-xs font-medium text-foreground/90 truncate">{attName(att)}</p>
+                <p className="text-xs text-muted-foreground/70">{formatSize(att.size)} • {new Date(att.created_at || att.uploaded_at).toLocaleDateString('id-ID')} • {att.uploaded_by}</p>
               </div>
               <a
-                href={att.public_path}
+                href={attUrl(att)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1 rounded hover:bg-[hsl(var(--primary)/0.1)] text-[hsl(var(--primary))]"

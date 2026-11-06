@@ -279,14 +279,16 @@ async def get_comparison_dashboard(
     ).to_list(500)
     accounts_map = {a["id"]: a for a in accounts_list}
 
-    all_sales = await db.marketing_sales_data.find(
+    # 2026-11-06 (pola P7): semua baris periode (dulu to_list(500) — 5 toko × 1 tahun = 1.825 baris; omzet &
+    # pesanan toko terakhir terpotong diam-diam). Urut tanggal supaya "rating terakhir" memang yang terakhir.
+    all_sales = [s async for s in db.marketing_sales_data.find(
         {
             "account_id": {"$in": account_ids},
             "date": {"$gte": date_from, "$lte": date_to},
             "revenue_type": "total"
         },
         {"_id": 0}
-    ).to_list(500)
+    ).sort("date", 1)]
 
     # Group sales by account_id in memory
     from collections import defaultdict as _defaultdict

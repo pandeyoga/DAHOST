@@ -69,18 +69,13 @@ export default function RahazaHRReportsModule({ token }) {
   useEffect(() => {
     const fetchMasterData = async () => {
       try {
-        const [deptRes, locRes, shiftRes, empRes, payrollRes] = await Promise.all([
-          fetch(`${API_BASE}/api/rahaza/locations`, { headers: { Authorization: `Bearer ${token}` } }),
+        const [locRes, shiftRes, empRes, payrollRes] = await Promise.all([
           fetch(`${API_BASE}/api/rahaza/locations`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${API_BASE}/api/rahaza/shifts`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${API_BASE}/api/rahaza/employees?limit=500`, { headers: { Authorization: `Bearer ${token}` } }),
           fetch(`${API_BASE}/api/rahaza/payroll-runs`, { headers: { Authorization: `Bearer ${token}` } }),
         ]);
 
-        if (deptRes.ok) {
-          const data = await deptRes.json();
-          setDepartments(Array.isArray(data) ? data : data.items || []);
-        }
         if (locRes.ok) {
           const data = await locRes.json();
           setLocations(Array.isArray(data) ? data : data.items || []);
@@ -91,7 +86,11 @@ export default function RahazaHRReportsModule({ token }) {
         }
         if (empRes.ok) {
           const data = await empRes.json();
-          setEmployees((Array.isArray(data) ? data : data.items || []).filter(e => e.active));
+          const emps = Array.isArray(data) ? data : data.items || [];
+          setEmployees(emps.filter(e => e.active));
+          // 2026-11-06 (pola P3): departemen = nama di master karyawan (dulu daftar ini diisi LOKASI)
+          const names = [...new Set(emps.map(e => (e.department || '').trim()).filter(Boolean))].sort();
+          setDepartments(names.map(n => ({ id: n, name: n })));
         }
         if (payrollRes.ok) {
           const data = await payrollRes.json();

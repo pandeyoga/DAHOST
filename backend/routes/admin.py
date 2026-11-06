@@ -276,6 +276,11 @@ async def create_role(request: Request):
     existing = await db.roles.find_one({'name': name})
     if existing:
         raise HTTPException(400, f"Role '{name}' sudah ada.")
+    # 2026-11-06 (pola P8): "operator cuting" / "Operator Cuting" / "operator_cuting" = satu peran
+    from core.reference_dedup import find_duplicate_ref
+    same = await find_duplicate_ref(db, 'roles', name=name)
+    if same:
+        raise HTTPException(400, f"Role '{same.get('name')}' sudah ada (nama setara dengan '{name}').")
     perms = validate_keys(body.get('permissions'))
     role = {'id': new_id(), 'name': name, 'description': body.get('description', ''),
             'portals': [str(p) for p in (body.get('portals') or [])],
@@ -314,6 +319,9 @@ async def update_role(role_id: str, request: Request):
         if not nm:
             raise HTTPException(400, 'Nama role wajib diisi.')
         clash = await db.roles.find_one({'name': nm, 'id': {'$ne': role_id}}, {'_id': 0, 'id': 1})
+        if not clash:  # 2026-11-06 (pola P8): nama setara juga bentrok
+            from core.reference_dedup import find_duplicate_ref
+            clash = await find_duplicate_ref(db, 'roles', name=nm, exclude_id=role_id)
         if clash:
             raise HTTPException(400, f"Role '{nm}' sudah ada.")
         _set['name'] = nm

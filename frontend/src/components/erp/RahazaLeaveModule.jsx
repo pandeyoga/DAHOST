@@ -18,6 +18,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { toast } from 'sonner';
+import { withFileAuth } from '@/lib/fileUrl';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -95,7 +96,7 @@ function DocumentUpload({ value, onChange, required, docNote, token }) {
         <div className="flex items-center gap-2 p-2 rounded bg-foreground/5 border border-foreground/10">
           <FileText size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
           <span className="text-xs text-emerald-600 dark:text-emerald-400 truncate flex-1">{value.filename}</span>
-          <a href={`${API}${value.url}`} target="_blank" rel="noreferrer" className="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0">Lihat</a>
+          <a href={withFileAuth(`${API}${value.url}`)} target="_blank" rel="noreferrer" className="text-xs text-blue-600 dark:text-blue-400 hover:underline shrink-0">Lihat</a>
           <button onClick={() => onChange(null)} className="text-red-700 dark:text-red-400 hover:text-red-600 dark:text-red-300 shrink-0"><X size={12} /></button>
         </div>
       ) : (
@@ -289,7 +290,9 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
     try {
       const r = await fetch(`${API}/api/rahaza/leaves/bulk-approve`, {
         method: 'POST', headers, body: JSON.stringify({}) });
-      const d = await r.json();
+      const d = await r.json().catch(() => ({}));
+      // 2026-11-06 (pola P6): dulu penolakan server (bukan approver, dsb.) tampil sebagai sukses
+      if (!r.ok) { toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal menyetujui sekaligus'); return; }
       toast.success(d.message || `${d.approved} request disetujui`);
       load();
     } catch { toast.error('Gagal bulk approve'); }
@@ -705,7 +708,7 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
               {selectedLeave.attachment_url && (
                 <div className="flex justify-between items-center">
                   <span className="text-muted-foreground">Dokumen</span>
-                  <a href={`${API}${selectedLeave.attachment_url}`} target="_blank" rel="noreferrer"
+                  <a href={withFileAuth(`${API}${selectedLeave.attachment_url}`)} target="_blank" rel="noreferrer"
                     className="text-blue-600 dark:text-blue-400 hover:underline text-xs flex items-center gap-1">
                     <Paperclip size={12} /> {selectedLeave.attachment_filename || 'Lihat Dokumen'}
                   </a>
@@ -737,7 +740,7 @@ export default function RahazaLeaveModule({ token, onNavigate }) {
               <div>
                 <p className="text-xs text-muted-foreground">Lampiran</p>
                 {approveModal.attachment_url ? (
-                  <a href={`${API}${approveModal.attachment_url}`} target="_blank" rel="noreferrer"
+                  <a href={withFileAuth(`${API}${approveModal.attachment_url}`)} target="_blank" rel="noreferrer"
                     className="text-primary underline" data-testid="approve-attachment">
                     <Paperclip size={12} className="inline mr-1" />{approveModal.attachment_filename || 'Buka lampiran'}
                   </a>

@@ -351,6 +351,10 @@ async def set_status(request_id: str, body: dict, user: dict = Depends(require_a
             raise HTTPException(400, f'Transisi tidak diijinkan: {cur} → {new_status}')
 
     upd = {'status': new_status, 'updated_at': now_utc()}
+    # 2026-11-06 (pola P1): isian "Catatan" di popup ubah status dulu dikirim layar tetapi tidak disimpan
+    note = str((body or {}).get('notes') or '').strip()
+    if note:
+        upd['status_note'] = note[:1000]
     if new_status == 'cutting':
         upd['cutting_started_by'] = user.get('name', '')
         upd['cutting_started_at'] = now_utc()

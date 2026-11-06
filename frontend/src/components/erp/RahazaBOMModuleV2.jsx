@@ -24,7 +24,8 @@ import { readField, readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.
    - Matrix view, multi-version (create/edit/activate), preview kebutuhan, copy-to-sizes
 ────────────────────────────────────────────────────────────────────────────── */
 
-const UNIT_OPTIONS = ['kg', 'gram', 'm', 'yard', 'pcs', 'lusin', 'set', 'pair', 'rol', 'karton', 'pak'];
+// 2026-11-06 (pola P8): ejaan satuan sama dengan master material (roll/pack, bukan rol/pak)
+const UNIT_OPTIONS = ['kg', 'gram', 'm', 'yard', 'pcs', 'lusin', 'set', 'pair', 'roll', 'karton', 'pack'];
 // 3 kategori bisnis; komponen BOM hanya Bahan & Aksesoris (FG bukan komponen).
 const TYPE_OPTIONS = [
   { value: 'bahan', label: 'Bahan' },

@@ -25,11 +25,13 @@ MATERIAL_TYPES = ["yarn", "accessory", "fg", "packaging", "fabric", "other"]
 # atas volume nyata, tetap aman untuk memori) — untuk daftar panjang, gunakan
 # parameter `?page=` yang sudah didukung endpoint (paginasi server-side).
 MASTER_FETCH_LIMIT = 20000
+# 2026-11-06 (pola P8): "roll"/"pack" = ejaan data (master material, impor Excel, master satuan).
+# "rol"/"gulung"/"pak" tetap diterima lewat `core.uom.canonical_unit`, lalu disimpan sebagai roll/pack.
 MATERIAL_UNITS = [
     "m", "cm", "yard", "inch",
     "kg", "gram", "ton",
     "pcs", "lusin", "kodi", "gross", "helai", "set", "pair",
-    "rol", "gulung", "bal", "karton", "pak", "sak",
+    "roll", "bal", "karton", "pack", "sak",
     "liter", "ml",
 ]
 

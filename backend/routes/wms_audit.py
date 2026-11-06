@@ -73,7 +73,8 @@ async def _k9_rows(db, *, operator=None, position_barcode=None, rack_id=None, bu
     df, dt = _parse_iso(date_from), _parse_iso(date_to)
     if df or dt:
         q["approved_at"] = {**({"$gte": df} if df else {}), **({"$lte": dt} if dt else {})}
-    sessions = await db.wh_opname3_sessions.find(q, {"_id": 0, "snapshot": 0, "lines": 0}) \
+    from core.opname_engine import SESS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    sessions = await db[SESS].find(q, {"_id": 0, "snapshot": 0, "lines": 0}) \
         .sort("approved_at", -1).to_list(500)
     rows = [r for s in sessions for r in k9_adjustment_rows(s)]
     if operator:

@@ -86,7 +86,12 @@ async def create_asset(request: Request):
                "useful_life_years": 5, "depr_method": "straight_line"}
 
     useful_life_months = int(body.get("useful_life_months") or (cat["useful_life_years"] * 12))
-    residual_value = float(body.get("residual_value") or purchase_cost * 0.05)
+    # 2026-11-06 (pola P5): dulu `body.residual_value or 5%` — nilai sisa 0 yang DIISI pengguna diam-diam jadi 5%.
+    # Kini: isian (termasuk 0) dipakai; tertaut registri Keuangan (K18) → nilai sisa dari sana; selain itu 5%.
+    _rv = body.get("residual_value")
+    if _rv in (None, "") and fa is not None and fa.get("residual_value") is not None:
+        _rv = fa.get("residual_value")
+    residual_value = float(_rv) if _rv not in (None, "") else purchase_cost * 0.05
     depr_method = body.get("depr_method") or cat.get("depr_method", "straight_line")
 
     asset_number = await _gen_asset_number(db, cat["code"],

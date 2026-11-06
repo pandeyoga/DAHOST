@@ -98,7 +98,9 @@ async def list_variants(
     q = {}
     if style_id:
         q['style_id'] = style_id
-    docs = await db.dewi_rnd_variants.find(q, {'_id': 0}).sort('created_at', -1).to_list(500)
+    # 2026-11-06 (pola P7): semua varian (dulu to_list(500) — data VPS 921 varian RnD; layar Varian tanpa
+    # penyaring gaya diam-diam hanya menampilkan 500 terbaru).
+    docs = [d async for d in db.dewi_rnd_variants.find(q, {'_id': 0}).sort('created_at', -1)]
     return [serialize(d) for d in docs]
 
 

@@ -51,8 +51,13 @@ def calculate_duration(
 ) -> int:
     """
     Hitung jumlah hari cuti (inklusif).
-    exclude_weekends=True: skip Sabtu & Minggu.
+    exclude_weekends=True: lewati hari libur mingguan bawaan `core.workdays` (6 hari kerja → Minggu).
+
+    2026-11-06 (pola P5): dulu `weekday() < 5` (Sabtu ikut dilewati). Fungsi ini tidak dipakai jalur mana pun;
+    hitungan cuti yang berlaku = `core.leave_engine.leave_period_info` (setelan + Kalender Produksi).
     """
+    from core.workdays import DEFAULT_WORK_DAYS_PER_WEEK, off_weekdays_for
+    off = off_weekdays_for(DEFAULT_WORK_DAYS_PER_WEEK)
     try:
         d1 = datetime.strptime(from_date, "%Y-%m-%d").date()
         d2 = datetime.strptime(to_date, "%Y-%m-%d").date()
@@ -63,7 +68,7 @@ def calculate_duration(
     total = 0
     curr = d1
     while curr <= d2:
-        if not exclude_weekends or curr.weekday() < 5:
+        if not exclude_weekends or curr.weekday() not in off:
             total += 1
         curr += timedelta(days=1)
     return total

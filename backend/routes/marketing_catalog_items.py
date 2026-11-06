@@ -184,23 +184,8 @@ async def _apply_fg_stock_sync(db, item: dict) -> dict:
 
 
 async def _refresh_catalog_stats(db, catalog_id: str):
-    items = await db.marketing_catalog_items.find(
-        {'catalog_id': catalog_id, 'is_active': True},
-        {'_id': 0, 'stock_quantity': 1, 'stock_status': 1}
-    ).to_list(500)
-    total_stock = sum(float(i.get('stock_quantity', 0)) for i in items)
-    low = sum(1 for i in items if i.get('stock_status') == 'low_stock')
-    out = sum(1 for i in items if i.get('stock_status') == 'out_of_stock')
-    await db.marketing_catalogs.update_one(
-        {'id': catalog_id},
-        {'$set': {
-            'item_count': len(items),
-            'total_stock': total_stock,
-            'low_stock_count': low,
-            'out_of_stock_count': out,
-            'updated_at': _now(),
-        }}
-    )
+    # 2026-11-06 (pola P7): satu rumus di core.catalog_stock (dulu to_list(500) → katalog besar terpotong)
+    await _cstock.refresh_catalog_stats(db, catalog_id)
 
 
 # Pydantic models

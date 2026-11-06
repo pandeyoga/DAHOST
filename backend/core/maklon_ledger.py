@@ -368,7 +368,7 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
     Dokumen invoice LAMA yang sudah terbit (alur sebelum 6 Nov 2026) dibiarkan di alur lamanya
     (`legacy=True`) supaya tidak ada pendapatan ganda. Draft lama dikonversi."""
     from core import dispatch_capacity as dcap
-    from core.tax_status import get_tax_profile, effective_pct
+    from core.tax_status import get_tax_profile, effective_pct, PPN_RATE  # pola P5: tarif dari SSOT pajak
     user = user or {'id': 'system', 'name': 'sistem'}
     po = await db.production_pos.find_one({'id': po_id}, {'_id': 0})
     if not po or po.get('business_type') != 'maklon':
@@ -444,7 +444,7 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
     upd = {
         'lines': lines, 'revenue_lines': ar['revenue_lines'], 'revenue_postings': ar['revenue_postings'],
         'revenue_held': rec['revenue_held'], 'advance_postings': ar['advance_postings'],
-        'kena_ppn': kena, 'ppn_rate': 12.0 if kena else 0.0, 'tax_pct': effective_pct() if kena else 0.0,
+        'kena_ppn': kena, 'ppn_rate': PPN_RATE if kena else 0.0, 'tax_pct': effective_pct() if kena else 0.0,
         'scheduled_subtotal': sched_sub, 'scheduled_tax': sched_tax, 'scheduled_total': sched_total,
         'billed_subtotal': a['billed_subtotal'], 'billed_tax': a['billed_tax'], 'billed_total': a['billed_total'],
         # kolom kanonik AR = yang SUDAH menjadi piutang (pendapatan dibukukan), supaya laporan penjualan,
@@ -474,7 +474,28 @@ async def sync_ar_schedule(db, po_id: str, user: dict | None = None) -> dict:
 async def record_client_payment(db, ar_id: str, *, amount: float, cash_account_id: str, payment_date: str | None,
                                 notes: str = '', reference_no: str = '', user: dict) -> dict:
     """Catat pembayaran klien terhadap piutang PO: tutup piutang yang sudah jatuh dulu, sisanya uang muka.
-    Melempar ValueError (pesan untuk pengguna) bila ditolak."""
+    Melempar ValueError (pesan untuk pengguna) bila ditolak.
+
+    2026-11-06 (pola P9): piutang DIKUNCI selama pembayaran dicatat. Dulu klik ganda sama-sama membaca
+    sisa tagihan lama → dua pembayaran lolos batas, bagian piutang dihitung dari angka basi (piutang
+    terkredit dua kali). Yang kalah mendapat 409."""
+    from core import doc_lock
+    if not await db.rahaza_ar_invoices.find_one({'id': ar_id}, {'_id': 0, 'id': 1}):
+        raise ValueError('Piutang maklon tidak ditemukan.')
+    token = await doc_lock.claim(db, 'rahaza_ar_invoices', ar_id, field='pay_lock', actor=user,
+                                 busy='Pembayaran untuk piutang PO ini sedang dicatat pengguna lain. Muat ulang '
+                                      'lalu periksa sisa tagihannya.')
+    try:
+        return await _record_client_payment_locked(
+            db, ar_id, amount=amount, cash_account_id=cash_account_id, payment_date=payment_date,
+            notes=notes, reference_no=reference_no, user=user)
+    finally:
+        await doc_lock.release(db, 'rahaza_ar_invoices', ar_id, token, field='pay_lock')
+
+
+async def _record_client_payment_locked(db, ar_id: str, *, amount: float, cash_account_id: str,
+                                        payment_date: str | None, notes: str = '', reference_no: str = '',
+                                        user: dict) -> dict:
     from routes.dewi_maklon_finance import maklon_advance_account, post_maklon_client_payment
     from routes.rahaza_posting_profiles import get_mapping
     from utils.waktu import today_wib

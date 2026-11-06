@@ -595,13 +595,14 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
             headers,
           });
           const gd = await gr.json().catch(() => ({}));
-          toast.success(
-            gr.ok
-              ? `${isEdit ? 'Artikel diperbarui' : 'Artikel dibuat'} · ${gd.total || 0} varian SKU siap`
-              : (isEdit ? 'Artikel berhasil diperbarui' : 'Artikel berhasil dibuat')
-          );
+          if (gr.ok) {
+            toast.success(`${isEdit ? 'Artikel diperbarui' : 'Artikel dibuat'} · ${gd.total || 0} varian SKU siap`);
+          } else {
+            // 2026-11-06 (pola P6): artikel tersimpan tetapi varian SKU gagal dibuat — dulu hanya "berhasil"
+            toast.warning(`${isEdit ? 'Artikel diperbarui' : 'Artikel dibuat'}, tetapi varian SKU gagal dibuat: ${gd.detail || gr.status}. Buat varian dari detail artikel.`);
+          }
         } catch (_e) {
-          toast.success(isEdit ? 'Artikel berhasil diperbarui' : 'Artikel berhasil dibuat');
+          toast.warning(`${isEdit ? 'Artikel diperbarui' : 'Artikel dibuat'}, tetapi varian SKU gagal dibuat. Buat varian dari detail artikel.`);
         }
       } else {
         toast.success(isEdit ? 'Artikel berhasil diperbarui' : 'Artikel berhasil dibuat');

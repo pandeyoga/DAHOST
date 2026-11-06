@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState, Notice } from './moduleAtoms';
+import ImportExportToolbar from './ImportExportToolbar';
 
 const MONTHS = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
 const DAYS_SHORT = ['Min','Sen','Sel','Rab','Kam','Jum','Sab'];
@@ -101,18 +102,23 @@ export default function RahazaProductionCalendarModule({ token }) {
     if (res.ok) setWorkdayResult(await res.json());
   };
 
+  // 2026-11-06 (pola P5): preset per tahun (tahun yang sedang dilihat). Dulu selalu menulis daftar 2026
+  // yang tanggalnya salah; tahun tanpa data kini dijelaskan di layar, bukan diam-diam kosong.
   const seedNational = async () => {
     setSeeding(true);
     try {
-      const res = await fetch('/api/rahaza/production-calendar/seed-national', { method: 'POST', headers: hdrs });
+      const res = await fetch(`/api/rahaza/production-calendar/seed-national?year=${year}`, { method: 'POST', headers: hdrs });
+      const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        const d = await res.json();
-        setMsg({ type: 'success', text: `${d.seeded} hari libur nasional 2026 ditambahkan` });
+        const extra = d.perkiraan ? ` ${d.perkiraan} tanggal mengikuti kalender keagamaan (perkiraan, cek SKB).` : '';
+        setMsg({ type: 'success', text: `${d.seeded} hari libur nasional & cuti bersama ${year} ditambahkan, ${d.skipped} sudah ada.${extra}` });
         await load();
+      } else {
+        setMsg({ type: 'error', text: d.detail || `Gagal mengisi libur nasional ${year}` });
       }
     } finally {
       setSeeding(false);
-      setTimeout(() => setMsg(null), 4000);
+      setTimeout(() => setMsg(null), 8000);
     }
   };
 
@@ -125,10 +131,11 @@ export default function RahazaProductionCalendarModule({ token }) {
           <p className="text-sm text-foreground/50 mt-0.5">Hari libur nasional & pengecualian produksi</p>
         </div>
         <div className="flex gap-2">
+          <ImportExportToolbar collectionKey="holidays" label="Kalender Libur" onImported={load} size="default" />
           <Button variant="outline" onClick={seedNational} disabled={seeding}
             data-testid="seed-national-btn">
             <RefreshCw className={seeding ? 'animate-spin' : ''} />
-            {seeding ? 'Memuat...' : 'Isi libur nasional 2026'}
+            {seeding ? 'Memuat...' : `Isi libur nasional ${year}`}
           </Button>
           <Button onClick={() => setShowForm(v => !v)}
             data-testid="new-entry-btn">
@@ -317,9 +324,11 @@ export default function RahazaProductionCalendarModule({ token }) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-foreground truncate">{e.name}</p>
-                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] border ${TYPE_BADGE[e.type]}`}>{TYPE_LABEL[e.type]}</span>
+                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] border ${TYPE_BADGE[e.type]}`}>{e.kind === 'cuti_bersama' ? 'Cuti bersama' : TYPE_LABEL[e.type]}</span>
+                      {e.perkiraan && <p className="text-[10px] text-[hsl(var(--warning))]">Perkiraan, cek SKB</p>}
                     </div>
-                    {e.created_by !== 'system' && (
+                    {/* cuti bersama bersifat fakultatif bagi swasta → boleh dihapus bila pabrik tetap bekerja */}
+                    {(e.created_by !== 'system' || e.kind === 'cuti_bersama') && (
                       <Button variant="ghost" size="icon-sm" onClick={() => handleDelete(e.id)}
                         className="shrink-0 text-foreground/30 hover:text-[hsl(var(--destructive))] hover:bg-[hsl(var(--destructive)/0.15)]"
                         data-testid={`del-entry-${e.id}`} title="Hapus" aria-label="Hapus">

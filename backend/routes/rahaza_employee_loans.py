@@ -176,7 +176,19 @@ async def manual_loan_repayment(loan_id: str, request: Request):
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
-    
+    # 2026-11-06 (pola P9): pinjaman DIKUNCI selama angsuran dicatat — dulu klik ganda membaca saldo lama
+    # bersama-sama (dua bukti angsuran, saldo hanya berkurang sekali karena ditimpa).
+    from core import doc_lock
+    token = await doc_lock.claim(db, "rahaza_employee_loans", loan_id, field="repay_lock", actor=user,
+                                 not_found="Loan tidak ditemukan",
+                                 busy="Angsuran pinjaman ini sedang dicatat pengguna lain — muat ulang.")
+    try:
+        return await _manual_loan_repayment_locked(db, loan_id, body, user)
+    finally:
+        await doc_lock.release(db, "rahaza_employee_loans", loan_id, token, field="repay_lock")
+
+
+async def _manual_loan_repayment_locked(db, loan_id: str, body: dict, user: dict):
     loan = await db.rahaza_employee_loans.find_one({"id": loan_id}, {"_id": 0})
     if not loan:
         raise HTTPException(404, "Loan tidak ditemukan")
@@ -258,13 +270,30 @@ async def deduct_loan_from_payroll(loan_id: str, request: Request):
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
-    
+    # 2026-11-06 (pola P9): kunci yang sama dengan angsuran manual + satu potongan per run payroll.
+    from core import doc_lock
+    token = await doc_lock.claim(db, "rahaza_employee_loans", loan_id, field="repay_lock", actor=user,
+                                 not_found="Loan tidak ditemukan",
+                                 busy="Angsuran pinjaman ini sedang dicatat pengguna lain — muat ulang.")
+    try:
+        return await _deduct_loan_from_payroll_locked(db, loan_id, body, user)
+    finally:
+        await doc_lock.release(db, "rahaza_employee_loans", loan_id, token, field="repay_lock")
+
+
+async def _deduct_loan_from_payroll_locked(db, loan_id: str, body: dict, user: dict):
     loan = await db.rahaza_employee_loans.find_one({"id": loan_id}, {"_id": 0})
     if not loan:
         raise HTTPException(404, "Loan tidak ditemukan")
     
     if loan.get("status") != "active":
         return {"ok": False, "message": f"Loan status {loan.get('status')}, skip deduction"}
+    # 2026-11-06 (pola P9): run payroll yang sama dikirim ulang (klik ganda / ulang proses) tidak
+    # memotong cicilan kedua kalinya.
+    if body.get("payroll_run_id") and await db.rahaza_employee_loan_repayments.find_one(
+            {"loan_id": loan_id, "payroll_run_id": body.get("payroll_run_id")}, {"_id": 0, "id": 1}):
+        return {"ok": True, "already": True,
+                "message": "Cicilan pinjaman ini sudah dipotong pada run payroll tersebut."}
     
     deduction_amount = float(body.get("deduction_amount", 0))
     outstanding = float(loan.get("outstanding_balance", 0))

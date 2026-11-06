@@ -60,6 +60,10 @@ async def create_grade(request: Request):
         raise HTTPException(400, "grade_code wajib.")
     if await db.rahaza_salary_grades.find_one({"grade_code": code}):
         raise HTTPException(409, f"Grade '{code}' sudah ada.")
+    if body.get("grade_name"):  # 2026-11-06 (pola P8)
+        from core.reference_dedup import assert_unique_ref
+        await assert_unique_ref(db, "rahaza_salary_grades", name=body.get("grade_name"), name_field="grade_name",
+                                label="Grade gaji")
     doc = {
         "id": _uid(),
         "grade_code": code,

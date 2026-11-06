@@ -67,7 +67,7 @@ _SCR_GL = {"module": "fin-gl", "tab": "ledger", "label": "Buku Besar"}
 ENTITY_SCREENS = {
     "vendor_partners": {"module": "vendor-admin", "label": "Vendor CMT"},
     "dewi_cmt_partners": {"module": "vendor-admin", "label": "Vendor CMT (lama)"},
-    "rahaza_vendors": {"module": "proc-suppliers", "label": "Master Pemasok"},
+    "rahaza_suppliers": {"module": "proc-suppliers", "label": "Master Pemasok"},  # 2026-11-06 (pola P2)
     "rahaza_customers": {"module": "sales-customers", "label": "Pelanggan"},
     "dewi_maklon_clients": {"module": "maklon-clients", "label": "Klien Maklon"},
 }
@@ -373,11 +373,15 @@ def _ent_name(d: dict) -> str:
 
 async def _auto_settings(db) -> dict:
     """Setelan Auto Akun TANPA menulis (get_auto_settings menyemai dokumen bila belum ada)."""
-    from routes.coa_auto import DEFAULT_ENTITY_TYPES
+    from routes.coa_auto import CODE_OWNED_META, DEFAULT_ENTITY_TYPES
     doc = await db.rahaza_coa_auto_settings.find_one({"id": "default"}, {"_id": 0}) or {}
     et = {k: dict(v) for k, v in DEFAULT_ENTITY_TYPES.items()}
     for k, v in (doc.get("entity_types") or {}).items():
         et[k] = {**et.get(k, {}), **(v or {})}
+        # 2026-11-06 (pola P2): koleksi/field tujuan milik program — nilai tersimpan lama tidak menang
+        for meta in CODE_OWNED_META:
+            if meta in (DEFAULT_ENTITY_TYPES.get(k) or {}):
+                et[k][meta] = DEFAULT_ENTITY_TYPES[k][meta]
     return et
 
 
@@ -473,7 +477,9 @@ async def collect_bindings(db, codes=None, *, accounts: list | None = None) -> d
         seen_src.add((coll, tf))
         q = {tf: {"$in": sorted(want)}} if want else {tf: {"$nin": [None, ""]}}
         async for e in db[coll].find(q, {"_id": 0}):
-            act = e.get("active", True) is not False and (e.get("status") or "active") not in ("inactive", "deleted")
+            # 2026-11-06 (pola P3): pemasok/vendor CMT memakai `is_active`
+            act = (e.get("active", True) is not False and e.get("is_active", True) is not False
+                   and (e.get("status") or "active") not in ("inactive", "deleted"))
             add(e.get(tf), "entitas", f"{lbl}: {_ent_name(e)}", f"{coll}.{tf}", active=act,
                 screen=ENTITY_SCREENS.get(coll), ref_id=e.get("id"), detail="" if act else "relasi nonaktif")
 

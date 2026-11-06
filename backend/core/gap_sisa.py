@@ -11,7 +11,8 @@ import openpyxl
 
 from core.bom_fill import CATEGORIES, _SPLIT_RE, _variants_label, clean, load_model_variants
 
-VARIAN_BARU_COLS = ["kode_model", "nama_model", "warna", "kode_warna", "ukuran", "harga_jual", "keterangan", "kode_warna_tersedia", "ukuran_tersedia"]
+VARIAN_BARU_COLS = ["kode_model", "nama_model", "warna", "kode_warna", "ukuran", "harga_jual", "keterangan", "kode_warna_tersedia", "ukuran_tersedia",
+                    "status_produk"]  # opsional, PALING KANAN (posisi kolom lama tetap) — label atau kode, lihat core/product_status
 SISA_BOM_EXTRA = ["masalah", "tindakan"]
 
 TINDAKAN = {

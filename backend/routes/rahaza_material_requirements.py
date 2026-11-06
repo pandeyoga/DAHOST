@@ -109,7 +109,8 @@ async def issued_for_po(db, po_id: str) -> dict:
                 continue
             net = float(it.get("qty_issued") or 0) - float(it.get("qty_returned") or 0)
             out[mid] = out.get(mid, 0.0) + net
-    async for co in db.cutting_orders.find(
+    from core.cutting_material_issue import ORDERS as _CUT_ORDERS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    async for co in db[_CUT_ORDERS].find(
             {"po_id": po_id, "status": {"$ne": "cancelled"}},
             {"_id": 0, "input_material_id": 1, "consumed_input_qty": 1}):
         mid = co.get("input_material_id")

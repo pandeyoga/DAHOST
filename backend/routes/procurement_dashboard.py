@@ -99,14 +99,14 @@ async def procurement_overview(request: Request):
                                        {"inspection_id": None}]})
 
     # ── AP ──────────────────────────────────────────────────────────────────
-    ap_unpaid = await _count(db, "rahaza_ap_invoices",
-                             {"status": {"$in": ["draft", "posted", "approved", "unpaid",
-                                                 "partially_paid"]}})
-    ap_agg = await db.rahaza_ap_invoices.aggregate([
-        {"$match": {"status": {"$nin": ["paid", "cancelled", "void"]}}},
-        {"$group": {"_id": None, "value": {"$sum": "$total_amount"}}},
-    ]).to_list(1)
-    ap_outstanding = round((ap_agg[0]["value"] if ap_agg else 0) or 0, 2)
+    # 2026-11-06 (pola P8): hutang supplier = rumus yang SAMA dengan Keuangan › Hutang (`core.payables`): faktur
+    # terbit/sebagian/jatuh tempo, nilai = SISA (total − dibayar). Dulu dihitung sendiri: status
+    # "posted/approved/unpaid/partially_paid" tidak pernah ada (hanya draf yang terhitung), dan nilainya
+    # Σ total termasuk draf tanpa mengurangi pembayaran sebagian.
+    from core.payables import open_payable_rows
+    ap_rows = await open_payable_rows(db, include_cmt=False)
+    ap_unpaid = len(ap_rows)
+    ap_outstanding = round(sum(r["balance"] for r in ap_rows), 2)
 
     # ── Supplier ────────────────────────────────────────────────────────────
     sup_total = await _count(db, "rahaza_suppliers", {})

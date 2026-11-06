@@ -188,11 +188,7 @@ async def create_building(data: BuildingIn, request: Request):
     code = data.code.upper().strip()
     if await db.wh_buildings.find_one({"code": code}):
         raise HTTPException(400, f"Kode gedung '{code}' sudah ada")
-    building = {
-        "id": _uid(), "code": code, "name": data.name,
-        "address": data.address or "", "description": data.description or "",
-        "active": True, "created_at": _now(), "created_by": user.get("email", "system"),
-    }
+    building = building_doc(data, user)
     await db.wh_buildings.insert_one(building)
     await log_activity(user["id"], user.get("name",""), "create", "wh_building", f"Building: {code}")
     return serialize_doc({"message": "Gedung ditambahkan", "building": building})
@@ -268,13 +264,7 @@ async def create_zone(data: ZoneIn, request: Request):
     code = data.code.upper().strip()
     if await db.wh_zones.find_one({"building_id": data.building_id, "code": code}):
         raise HTTPException(400, f"Kode zona '{code}' sudah ada di gedung ini")
-    zone = {
-        "id": _uid(), "building_id": data.building_id, "building_code": building["code"],
-        "building_name": building["name"], "code": code, "name": data.name,
-        "zone_type": data.zone_type, "description": data.description or "",
-        **(await _zone_location(db, data.location_id)),
-        "active": True, "created_at": _now(), "created_by": user.get("email", "system"),
-    }
+    zone = zone_doc(building, data, await _zone_location(db, data.location_id), user)
     await db.wh_zones.insert_one(zone)
     await log_activity(user["id"], user.get("name",""), "create", "wh_zone", f"Zone: {building['code']}-{code}")
     return serialize_doc({"message": "Zona ditambahkan", "zone": zone})
@@ -323,34 +313,113 @@ async def _generate_positions(db, rack: dict):
     positions = []
     for shelf in range(1, num_shelves + 1):
         for slot in range(1, slots_per_shelf + 1):
-            barcode = bin_code(prefix, shelf, slot)
-            label = f"Shelf {shelf}, Slot {slot}"
-            pos = {
-                "id": _uid(),
-                "rack_id": rack["id"],
-                "zone_id": rack["zone_id"],
-                "building_id": rack["building_id"],
-                "building_code": bldg_code,
-                "zone_code": zone_code,
-                "rack_code": rack_code,
-                "shelf_no": shelf,
-                "slot_no": slot,
-                "barcode": barcode,
-                "label": label,
-                "status": "empty",  # empty | occupied | reserved
-                "material_id": None,
-                "material_code": None,
-                "material_name": None,
-                "qty": 0,
-                "unit": None,
-                "lot_number": None,
-                "notes": "",
-                "last_updated": _now(),
-            }
-            positions.append(pos)
+            positions.append(_position_doc(rack, prefix, shelf, slot, bldg_code, zone_code, rack_code))
     if positions:
         await db.wh_positions.insert_many(positions)
     return len(positions)
+
+
+def _position_doc(rack: dict, prefix: str, shelf: int, slot: int,
+                  bldg_code: str, zone_code: str, rack_code: str) -> dict:
+    return {
+        "id": _uid(),
+        "rack_id": rack["id"],
+        "zone_id": rack["zone_id"],
+        "building_id": rack["building_id"],
+        "building_code": bldg_code,
+        "zone_code": zone_code,
+        "rack_code": rack_code,
+        "shelf_no": shelf,
+        "slot_no": slot,
+        "barcode": bin_code(prefix, shelf, slot),
+        "label": f"Shelf {shelf}, Slot {slot}",
+        "status": "empty",  # empty | occupied | reserved
+        "material_id": None,
+        "material_code": None,
+        "material_name": None,
+        "qty": 0,
+        "unit": None,
+        "lot_number": None,
+        "notes": "",
+        "last_updated": _now(),
+    }
+
+
+async def add_missing_positions(db, rack_id: str) -> int:
+    """Tambah posisi (bin) yang belum ada untuk ukuran rak SEKARANG; posisi lama tidak dihapus (stok aman).
+
+    2026-11-06 (T4): dipisah dari PUT /racks supaya impor Excel Data Transfer memakai jalur yang sama.
+    2026-11-06 (pola P7): daftar posisi lama dulu `to_list(500)` — rak > 500 bin (mis. 10 susun × 60 slot)
+    terpotong sehingga posisi yang SUDAH ada dibuat ulang (kode bin kembar). Sekarang dibaca penuh.
+    """
+    rack = await db.wh_racks.find_one({"id": rack_id}, {"_id": 0})
+    if not rack:
+        return 0
+    existing = set()
+    async for p in db.wh_positions.find({"rack_id": rack_id}, {"_id": 0, "shelf_no": 1, "slot_no": 1}):
+        existing.add((p.get("shelf_no"), p.get("slot_no")))
+    # 2026-11-02: posisi baru memakai awalan pendek (≤ 18 karakter) yang sama dengan generator rak baru
+    prefix = await assign_bin_prefix(db, rack)
+    if prefix != rack.get("bin_prefix"):
+        await db.wh_racks.update_one({"id": rack_id}, {"$set": {"bin_prefix": prefix}})
+    new_positions = [
+        _position_doc(rack, prefix, shelf, slot, rack.get("building_code", "WH"), rack.get("zone_code", "Z"),
+                      rack["code"])
+        for shelf in range(1, int(rack["num_shelves"]) + 1)
+        for slot in range(1, int(rack["slots_per_shelf"]) + 1)
+        if (shelf, slot) not in existing
+    ]
+    if new_positions:
+        await db.wh_positions.insert_many(new_positions)
+    return len(new_positions)
+
+
+def building_doc(data: "BuildingIn", user: dict) -> dict:
+    """Bentuk dokumen gedung baru — 2026-11-06 (T4): satu sumber untuk form & impor Excel."""
+    return {
+        "id": _uid(), "code": data.code.upper().strip(), "name": data.name,
+        "address": data.address or "", "description": data.description or "",
+        "active": True, "created_at": _now(), "created_by": user.get("email", "system"),
+    }
+
+
+def zone_doc(building: dict, data: "ZoneIn", location_fields: dict, user: dict) -> dict:
+    """Bentuk dokumen zona baru (dengan tautan lokasi K9) — 2026-11-06 (T4): form & impor Excel."""
+    return {
+        "id": _uid(), "building_id": building["id"], "building_code": building["code"],
+        "building_name": building["name"], "code": data.code.upper().strip(), "name": data.name,
+        "zone_type": data.zone_type, "description": data.description or "",
+        **location_fields,
+        "active": True, "created_at": _now(), "created_by": user.get("email", "system"),
+    }
+
+
+async def insert_rack(db, zone: dict, building: dict, data: "RackIn", user: dict, *,
+                      taken: Optional[set] = None) -> tuple:
+    """Simpan rak baru + buat semua posisinya. Return (rak, jumlah posisi).
+    2026-11-06 (T4): dipisah dari POST /racks supaya impor Excel Data Transfer memakai jalur yang sama."""
+    rack = {
+        "id": _uid(),
+        "zone_id": zone["id"],
+        "zone_code": zone["code"],
+        "zone_name": zone["name"],
+        "building_id": zone["building_id"],
+        "building_code": building["code"],
+        "building_name": building["name"],
+        "code": data.code.upper().strip(),
+        "name": data.name,
+        "num_shelves": data.num_shelves,
+        "slots_per_shelf": data.slots_per_shelf,
+        "capacity_per_slot": data.capacity_per_slot,
+        "capacity_unit": data.capacity_unit or "",
+        "description": data.description or "",
+        "active": True,
+        "created_at": _now(),
+        "created_by": user.get("email", "system"),
+    }
+    rack["bin_prefix"] = await assign_bin_prefix(db, rack, taken=taken)   # 2026-11-02: kode bin ≤ 18 karakter
+    await db.wh_racks.insert_one(rack)
+    return rack, await _generate_positions(db, rack)
 
 
 @router.get("/racks")
@@ -388,31 +457,7 @@ async def create_rack(data: RackIn, request: Request):
     if await db.wh_racks.find_one({"zone_id": data.zone_id, "code": code}):
         raise HTTPException(400, f"Kode rak '{code}' sudah ada di zona ini")
 
-    rack = {
-        "id": _uid(),
-        "zone_id": data.zone_id,
-        "zone_code": zone["code"],
-        "zone_name": zone["name"],
-        "building_id": zone["building_id"],
-        "building_code": building["code"],
-        "building_name": building["name"],
-        "code": code,
-        "name": data.name,
-        "num_shelves": data.num_shelves,
-        "slots_per_shelf": data.slots_per_shelf,
-        "capacity_per_slot": data.capacity_per_slot,
-        "capacity_unit": data.capacity_unit or "",
-        "description": data.description or "",
-        "active": True,
-        "created_at": _now(),
-        "created_by": user.get("email", "system"),
-    }
-    rack["bin_prefix"] = await assign_bin_prefix(db, rack)   # 2026-11-02: kode bin ≤ 18 karakter
-
-    await db.wh_racks.insert_one(rack)
-
-    # Auto-generate positions
-    pos_count = await _generate_positions(db, rack)
+    rack, pos_count = await insert_rack(db, zone, building, data, user)
 
     await log_activity(user["id"], user.get("name",""), "create", "wh_rack",
                        f"Rack {building['code']}-{zone['code']}-{code} ({pos_count} positions)")
@@ -446,37 +491,7 @@ async def update_rack(rack_id: str, data: RackIn, request: Request):
         "description": data.description or "", "updated_at": _now(),
     }})
 
-    added = 0
-    if structure_changed:
-        # Only add new positions (don't remove existing to preserve stock data)
-        # For new shelves/slots that don't exist yet, add them
-        existing_positions = {(p["shelf_no"], p["slot_no"]) for p in
-                              await db.wh_positions.find({"rack_id": rack_id}, {"_id": 0, "shelf_no": 1, "slot_no": 1}).to_list(500)}
-        updated_rack = await db.wh_racks.find_one({"id": rack_id}, {"_id": 0})
-        bldg_code = updated_rack.get("building_code", "WH")
-        zone_code = updated_rack.get("zone_code", "Z")
-        # 2026-11-02: posisi baru memakai awalan pendek (≤ 18 karakter) yang sama dengan generator rak baru
-        prefix = await assign_bin_prefix(db, updated_rack)
-        if prefix != updated_rack.get("bin_prefix"):
-            await db.wh_racks.update_one({"id": rack_id}, {"$set": {"bin_prefix": prefix}})
-        new_positions = []
-        for shelf in range(1, new_shelves + 1):
-            for slot in range(1, new_slots + 1):
-                if (shelf, slot) not in existing_positions:
-                    barcode = bin_code(prefix, shelf, slot)
-                    new_positions.append({
-                        "id": _uid(), "rack_id": rack_id,
-                        "zone_id": updated_rack["zone_id"], "building_id": updated_rack["building_id"],
-                        "building_code": bldg_code, "zone_code": zone_code, "rack_code": updated_rack["code"],
-                        "shelf_no": shelf, "slot_no": slot, "barcode": barcode,
-                        "label": f"Shelf {shelf}, Slot {slot}", "status": "empty",
-                        "material_id": None, "material_code": None, "material_name": None,
-                        "qty": 0, "unit": None, "lot_number": None, "notes": "",
-                        "last_updated": _now(),
-                    })
-        if new_positions:
-            await db.wh_positions.insert_many(new_positions)
-            added = len(new_positions)
+    added = await add_missing_positions(db, rack_id) if structure_changed else 0
 
     return serialize_doc({"message": f"Rak diupdate{f', {added} posisi baru ditambahkan' if added else ''}"})
 

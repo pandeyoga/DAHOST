@@ -104,13 +104,15 @@ async def get_warehouse_alerts(
     await require_auth(request)
     db = get_db()
 
-    # Get rack occupancy
-    racks = await db.rahaza_racks.find({}, {"_id": 0}).to_list(length=500)
+    # 2026-11-06 (pola P2): okupansi rak dari SSOT `wh_racks` + `wh_positions` (rumus yang sama
+    # dengan alert rak kritis di wms_receiving). Dulu dibaca dari `rahaza_racks` yang tidak pernah
+    # ditulis → alert rak tidak pernah muncul.
+    from routes.wms_receiving import rack_occupancy
+    racks = await db.wh_racks.find({"active": {"$ne": False}}, {"_id": 0}).to_list(length=500)
 
     high_occupancy = []
     for rack in racks:
-        total = rack.get("total_slots", 0)
-        occupied = rack.get("occupied", rack.get("occupied_slots", 0))
+        occupied, total = await rack_occupancy(db, rack)
         if total <= 0:
             continue
         pct = round(occupied / total * 100)
@@ -118,12 +120,12 @@ async def get_warehouse_alerts(
             high_occupancy.append({
                 "type": "rack_occupancy",
                 "severity": "critical" if pct >= 95 else "warning",
-                "rack_code": rack.get("rack_code", rack.get("code")),
-                "location": rack.get("location", rack.get("zone")),
+                "rack_code": rack.get("code"),
+                "location": "-".join(x for x in (rack.get("building_code"), rack.get("zone_code")) if x),
                 "occupied": occupied,
                 "total": total,
                 "occupancy_pct": pct,
-                "message": f"Rak {rack.get('rack_code', rack.get('code'))} mencapai {pct}% kapasitas",
+                "message": f"Rak {rack.get('code')} mencapai {pct}% kapasitas",
             })
 
     # Get low stock alerts — W3: SATU definisi "rendah" dari SSOT
@@ -373,28 +375,36 @@ async def undo_stock_adjustment(
     location_id = entry.get("location_id")
     actor = {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")}
 
-    if material_id and delta != 0:
-        row = await db.rahaza_material_stock.find_one(
-            {"material_id": material_id, "location_id": location_id}, {"_id": 0}
-        )
-        current = _row_qty(row)
-        new_qty = round(current - delta, 4)
-        if new_qty < 0:
-            new_qty = 0.0
-        await stock_service.adjust(
-            material_id, location_id, new_qty,
-            ref={"source": "undo_adjustment", "undo_of": ledger_id, "original_delta": delta},
-            actor=actor, db=db,
-        )
-
-    await db.rahaza_stock_ledger.update_one(
-        {"id": ledger_id},
+    # 2026-11-06 (pola P9): entri ledger DITANDAI undo secara atomik SEBELUM stok dibalik. Dulu klik
+    # ganda sama-sama lolos cek `soft_deleted` → stok dibalik dua kali (current − delta − delta).
+    claim = await db.rahaza_stock_ledger.update_one(
+        {"id": ledger_id, "soft_deleted": {"$ne": True}},
         {"$set": {
             "soft_deleted": True,
             "deleted_at": _now().isoformat(),
             "deleted_by": user.get("email") or user.get("name") or "unknown",
         }},
     )
+    if not claim.matched_count:
+        raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-undo pengguna lain")
+    try:
+        if material_id and delta != 0:
+            row = await db.rahaza_material_stock.find_one(
+                {"material_id": material_id, "location_id": location_id}, {"_id": 0}
+            )
+            current = _row_qty(row)
+            new_qty = round(current - delta, 4)
+            if new_qty < 0:
+                new_qty = 0.0
+            await stock_service.adjust(
+                material_id, location_id, new_qty,
+                ref={"source": "undo_adjustment", "undo_of": ledger_id, "original_delta": delta},
+                actor=actor, db=db,
+            )
+    except BaseException:
+        await db.rahaza_stock_ledger.update_one(
+            {"id": ledger_id}, {"$set": {"soft_deleted": False, "deleted_at": None, "deleted_by": None}})
+        raise
     return ok(data={"id": ledger_id, "undone": True})
 
 
@@ -422,26 +432,34 @@ async def restore_stock_adjustment(
     location_id = entry.get("location_id")
     actor = {"id": user.get("id"), "name": user.get("name"), "email": user.get("email")}
 
-    if material_id and delta != 0:
-        row = await db.rahaza_material_stock.find_one(
-            {"material_id": material_id, "location_id": location_id}, {"_id": 0}
-        )
-        current = _row_qty(row)
-        new_qty = round(current + delta, 4)
-        if new_qty < 0:
-            new_qty = 0.0
-        await stock_service.adjust(
-            material_id, location_id, new_qty,
-            ref={"source": "restore_adjustment", "restore_of": ledger_id, "original_delta": delta},
-            actor=actor, db=db,
-        )
-
-    await db.rahaza_stock_ledger.update_one(
-        {"id": ledger_id},
+    # 2026-11-06 (pola P9): sama dengan undo — tanda dilepas atomik DULU supaya restore ganda tidak
+    # menerapkan delta dua kali.
+    claim = await db.rahaza_stock_ledger.update_one(
+        {"id": ledger_id, "soft_deleted": True},
         {"$set": {
             "soft_deleted": False,
             "restored_at": _now().isoformat(),
             "restored_by": user.get("email") or user.get("name") or "unknown",
         }},
     )
+    if not claim.matched_count:
+        raise HTTPException(status_code=409, detail="Penyesuaian ini sedang/sudah di-restore pengguna lain")
+    try:
+        if material_id and delta != 0:
+            row = await db.rahaza_material_stock.find_one(
+                {"material_id": material_id, "location_id": location_id}, {"_id": 0}
+            )
+            current = _row_qty(row)
+            new_qty = round(current + delta, 4)
+            if new_qty < 0:
+                new_qty = 0.0
+            await stock_service.adjust(
+                material_id, location_id, new_qty,
+                ref={"source": "restore_adjustment", "restore_of": ledger_id, "original_delta": delta},
+                actor=actor, db=db,
+            )
+    except BaseException:
+        await db.rahaza_stock_ledger.update_one(
+            {"id": ledger_id}, {"$set": {"soft_deleted": True, "restored_at": None, "restored_by": None}})
+        raise
     return ok(data={"id": ledger_id, "restored": True})

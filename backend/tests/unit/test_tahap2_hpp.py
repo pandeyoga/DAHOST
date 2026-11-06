@@ -592,3 +592,41 @@ def test_migrasi_memulihkan_hpp_tertimpa():
     again = run(mig.plan_and_apply(db, apply=True))
     assert (again["fg_restore"], again["items_restore"], again["models_restore"]) == (0, 0, 0)   # idempoten
     assert again["rnd_docs_with_overhead"] == 1
+
+
+def test_migrasi_penerapan_terakhir_nol_tidak_memasang_angka_lama():
+    # Uji di VPS 6 Nov: penerapan September bernilai, penerapan 5 Nov bernilai 0 (potongan Rp 0, keputusan
+    # 23 Sep) → FG ber-HPP 0 TIDAK boleh diisi angka September yang basi.
+    mig = _migration()
+    sep, nov = datetime(2026, 9, 12, tzinfo=timezone.utc), datetime(2026, 11, 5, tzinfo=timezone.utc)
+    db = FakeDB(
+        product_cost_snapshots=[
+            {"model_id": "M", "created_at": sep, "applied_sizes": [{"fg_id": "F1", "size_id": "S", "hpp_unit": 45000}]},
+            {"model_id": "M", "created_at": nov, "applied_sizes": [{"fg_id": "F1", "size_id": "S", "hpp_unit": 0}]}],
+        rahaza_models=[{"id": "M"}],
+        rahaza_materials=[{"id": "F1", "type": "fg", "model_id": "M", "size_id": "S", "hpp": 0, "hpp_source": "bom"}],
+        marketing_catalog_items=[], dewi_rnd_hpp=[])
+    prev = run(mig.plan_and_apply(db, apply=False))
+    assert prev["fg_restore"] == 0
+    run(mig.plan_and_apply(db, apply=True))
+    assert db.rahaza_materials.docs[0]["hpp"] == 0
+
+
+def test_migrasi_ukuran_dilewati_penerapan_baru_tidak_dipulihkan():
+    mig = _migration()
+    sep, nov = datetime(2026, 9, 12, tzinfo=timezone.utc), datetime(2026, 11, 5, tzinfo=timezone.utc)
+    db = FakeDB(
+        product_cost_snapshots=[
+            {"model_id": "M", "created_at": sep, "applied_sizes": [{"size_id": "S", "hpp_unit": 9300}]},
+            {"model_id": "M", "created_at": nov, "applied_sizes": [],
+             "skipped_sizes": [{"size_id": "S", "fg_id": "F1", "reason": "baris BOM belum bisa dinilai"}]}],
+        rahaza_models=[{"id": "M"}],
+        rahaza_materials=[{"id": "F1", "type": "fg", "model_id": "M", "size_id": "S", "hpp": 0, "hpp_source": "bom"}],
+        marketing_catalog_items=[], dewi_rnd_hpp=[])
+    assert run(mig.plan_and_apply(db, apply=False))["fg_restore"] == 0
+
+
+def test_migrasi_model_menunggu_cutting_tidak_diisi_hpp_bom_lama():
+    mig = _migration()
+    assert mig.model_target({"id": "M", "hpp": 0, "hpp_source": "menunggu_cutting", "hpp_bom": 11406.68}) is None
+    assert mig.model_target({"id": "M", "hpp": 77000, "hpp_source": "rnd", "hpp_bom": 61785.55}) is not None

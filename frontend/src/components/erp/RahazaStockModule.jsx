@@ -51,11 +51,13 @@ function QuickAdjustPopover({ row, token, onDone }) {
       const r = await fetch('/api/rahaza/material-adjust', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        // 2026-11-06 (pola P1): server (rahaza_inventory_stock.material_adjust) membaca `qty` dan `reason`.
+        // Dulu dikirim `qty_delta`/`notes` → qty terbaca 0 → server selalu menolak "qty (≠0) wajib".
         body: JSON.stringify({
           material_id: row.material_id,
           location_id: row.location_id,
-          qty_delta: qty,
-          notes: notes || (qty > 0 ? 'Quick adjust +' : 'Quick adjust -'),
+          qty,
+          reason: notes || (qty > 0 ? 'Penyesuaian cepat +' : 'Penyesuaian cepat -'),
         }),
       });
       if (r.ok) {

@@ -162,8 +162,10 @@ async def cancel_correction(corr_id: str, request: Request):
         raise HTTPException(403, "Hanya pemohon atau HR yang boleh menarik pengajuan ini.")
     if doc.get("status") != "pending":
         raise HTTPException(400, "Hanya pengajuan yang menunggu yang bisa ditarik.")
-    await db.rahaza_attendance_corrections.update_one({"id": corr_id}, {"$set": {
+    res = await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "pending"}, {"$set": {
         "status": "cancelled", "cancelled_by": user["id"], "cancelled_at": _now(), "updated_at": _now()}})
+    if not res.matched_count:   # 2026-11-06 (pola P9)
+        raise HTTPException(409, "Pengajuan koreksi ini baru saja diputuskan orang lain — muat ulang halaman.")
     return {"ok": True}
 
 
@@ -242,9 +244,28 @@ async def decide_correction(db, corr_id: str, user: dict, *, approve: bool, note
     if not approve:
         if not (note or "").strip():
             raise HTTPException(400, "Alasan penolakan wajib diisi.")
-        await db.rahaza_attendance_corrections.update_one({"id": corr_id}, {"$set": {"status": "rejected",
-                                                                                      **decided}})
+        res = await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "pending"},
+                                                                {"$set": {"status": "rejected", **decided}})
+        if not res.matched_count:   # 2026-11-06 (pola P9)
+            raise HTTPException(409, "Pengajuan koreksi ini baru saja diputuskan orang lain — muat ulang halaman.")
         return {**doc, "status": "rejected", **decided}
+
+    # 2026-11-06 (pola P9): klaim atomik pending → deciding SEBELUM absensi ditulis. Dulu Setuju ganda /
+    # setuju-tolak bersamaan sama-sama lolos: absensi ditulis dua kali (atau sisipan kedua gagal di
+    # indeks unik) dan keputusan saling menimpa.
+    claim = await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "pending"},
+                                                              {"$set": {"status": "deciding", "updated_at": now}})
+    if not claim.matched_count:
+        raise HTTPException(409, "Pengajuan koreksi ini baru saja diputuskan orang lain — muat ulang halaman.")
+    try:
+        return await _approve_correction_claimed(db, corr_id, doc, user, decided)
+    except BaseException:
+        await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "deciding"},
+                                                          {"$set": {"status": "pending"}})
+        raise
+
+
+async def _approve_correction_claimed(db, corr_id: str, doc: dict, user: dict, decided: dict) -> dict:
 
     day, emp_id = doc["date"], doc["employee_id"]
     existing = await db.rahaza_attendance_events.find_one({"employee_id": emp_id, "date": day}, {"_id": 0})
@@ -256,7 +277,7 @@ async def decide_correction(db, corr_id: str, user: dict, *, approve: bool, note
         upd = {"status": "approved", "apply_mode": "penyesuaian_payroll", "current": current,
                "locked_run_id": lock.get("run_id"), "locked_run_number": lock.get("run_number"),
                "payroll_adjustment": {"status": "pending", "run_id": None, "applied_at": None}, **decided}
-        await db.rahaza_attendance_corrections.update_one({"id": corr_id}, {"$set": upd})
+        await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "deciding"}, {"$set": upd})
         return {**doc, **upd}
 
     from routes.rahaza_attendance import _build_att_doc, _build_att_patch
@@ -279,7 +300,7 @@ async def decide_correction(db, corr_id: str, user: dict, *, approve: bool, note
                                  employee_id=emp_id, day=day, note=f"Koreksi disetujui: {doc.get('reason', '')}")
     upd = {"status": "approved", "apply_mode": "langsung", "current": current, "event_id": after.get("id"),
            **decided}
-    await db.rahaza_attendance_corrections.update_one({"id": corr_id}, {"$set": upd})
+    await db.rahaza_attendance_corrections.update_one({"id": corr_id, "status": "deciding"}, {"$set": upd})
     return {**doc, **upd}
 
 

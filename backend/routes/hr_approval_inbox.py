@@ -25,6 +25,8 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth, serialize_doc, log_activity
+from utils.employee_identity import job_title_of
+from core import doc_lock
 import logging
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,7 @@ async def _enrich_employee(db, emp_id: str) -> Dict[str, Any]:
         'employee_code': emp.get('employee_code'),
         'employee_name': emp.get('name'),
         'employee_dept': emp.get('department'),
-        'employee_position': emp.get('position'),
+        'employee_position': job_title_of(emp),  # 2026-11-06 (pola P3)
         'manager_id': emp.get('manager_id'),
     }
 
@@ -236,11 +238,17 @@ async def _fetch_resignations(db, type_filter: Optional[str], limit: int) -> Lis
     """Resignations awaiting acceptance."""
     if type_filter and type_filter != 'resignation':
         return []
+    # 2026-11-06 (pola P3): pengajuan resignasi ditulis `routes.rahaza_resignation` sebagai
+    # `employee_status='resigning'` + resignation_date/last_working_date/reason_for_leaving. Dulu inbox
+    # menyaring `resignation_status='submitted'` (tak pernah ditulis) → resignasi tidak pernah muncul.
+    from routes.rahaza_resignation import RESIGNING
     rows = await db.rahaza_employees.find(
-        {'resignation_status': 'submitted'}, {'_id': 0}
+        {'employee_status': RESIGNING}, {'_id': 0}
     ).sort('resignation_submitted_at', -1).limit(limit).to_list(length=limit)
     items = []
     for r in rows:
+        eff = r.get('resignation_date') or ''
+        reason = r.get('reason_for_leaving') or r.get('resignation_notes') or ''
         items.append({
             'id': r['id'],
             'type': 'resignation',
@@ -251,19 +259,35 @@ async def _fetch_resignations(db, type_filter: Optional[str], limit: int) -> Lis
             'requester_name': r.get('name'),
             'requester_code': r.get('employee_code'),
             'requester_dept': r.get('department'),
-            'title': f"Resignasi efektif {r.get('resignation_effective_date', '—')}",
-            'period': r.get('resignation_effective_date', ''),
-            'reason': r.get('resignation_reason', ''),
+            'title': f"Resignasi efektif {eff or '—'}",
+            'period': eff,
+            'reason': reason,
             'amount': None,
             'meta': {
-                'resignation_reason': r.get('resignation_reason'),
-                'resignation_effective_date': r.get('resignation_effective_date'),
-                'last_working_date': r.get('resignation_effective_date'),
-                'position': r.get('position'),
+                'resignation_reason': reason,
+                'resignation_effective_date': eff,
+                'last_working_date': r.get('last_working_date') or eff,
+                'position': job_title_of(r),
             },
             'raw': serialize_doc(r),
         })
     return items
+
+
+# Label metode absen untuk layar (sama dengan layar Persetujuan Absen) — bukan kode program.
+METODE_ABSEN = {'selfie_geo_ai': 'Selfie', 'webauthn': 'Biometrik HP', 'device_zkteco': 'Mesin sidik jari',
+                'manual': 'Manual HR'}
+
+
+def _jam_wib(v) -> str:
+    """'HH:MM' WIB dari instan tersimpan (datetime / string ISO); '' bila kosong/tak terbaca."""
+    from utils.waktu import fmt_wib
+    if isinstance(v, str) and v:
+        try:
+            v = datetime.fromisoformat(v.replace('Z', '+00:00'))
+        except ValueError:
+            return v[11:16] if len(v) >= 16 else ''
+    return fmt_wib('%H:%M', v) if isinstance(v, datetime) else ''
 
 
 async def _fetch_attendance(db, type_filter: Optional[str], limit: int) -> List[Dict[str, Any]]:
@@ -291,8 +315,12 @@ async def _fetch_attendance(db, type_filter: Optional[str], limit: int) -> List[
     for r in rows:
         e = emp_map.get(r.get('employee_id')) or {}
         date_str = r.get('date', '')
-        check_in = r.get('check_in_time') or r.get('clock_in_time') or '—'
-        check_out = r.get('check_out_time') or r.get('clock_out_time') or '—'
+        # 2026-11-06 (pola P3): mesin absen menulis `clock_in`/`clock_out` (instan UTC), `hours_worked`,
+        # `clock_in_geo`, `notes`, `attendance_method` — dulu dibaca check_in_time/work_hours/location/
+        # note/attendance_type (tak pernah ditulis) → judul "— → —" & detail kosong.
+        check_in = _jam_wib(r.get('clock_in')) or r.get('check_in_time') or '—'
+        check_out = _jam_wib(r.get('clock_out')) or r.get('check_out_time') or '—'
+        geo = r.get('clock_in_geo') if isinstance(r.get('clock_in_geo'), dict) else {}
         items.append({
             'id': r['id'],
             'type': 'attendance',
@@ -305,18 +333,18 @@ async def _fetch_attendance(db, type_filter: Optional[str], limit: int) -> List[
             'requester_dept': e.get('department'),
             'title': f"Absen {date_str} — {check_in} → {check_out}",
             'period': date_str,
-            'reason': r.get('note', '') or r.get('reason', ''),
+            'reason': r.get('notes') or r.get('approval_reason') or '',
             'amount': None,
             'meta': {
                 'date': date_str,
                 'check_in_time': check_in,
                 'check_out_time': check_out,
-                'work_hours': r.get('work_hours') or r.get('total_hours'),
-                'location': r.get('clock_in_location') or r.get('location'),
+                'work_hours': r.get('hours_worked'),
+                'location': (f"{geo.get('lat')}, {geo.get('lng')}" if geo.get('lat') is not None else None),
                 'face_match': r.get('face_match_score'),
-                'geo_distance_m': r.get('geo_distance_m'),
-                'note': r.get('note') or r.get('reason'),
-                'attendance_type': r.get('attendance_type') or r.get('type'),
+                'geo_distance_m': r.get('geo_distance_m') if r.get('geo_distance_m') is not None else geo.get('distance_m'),
+                'note': r.get('notes') or r.get('approval_reason'),
+                'attendance_type': METODE_ABSEN.get(r.get('attendance_method'), r.get('attendance_method')),
                 # Tahap 2: selfie disimpan di photo_selfie_url / photo_selfie_out_url (dulu dibaca nama lain → kosong)
                 'photo_url': r.get('photo_selfie_url') or r.get('clock_in_photo_url') or r.get('photo_url'),
                 'photo_out_url': r.get('photo_selfie_out_url'),
@@ -389,7 +417,8 @@ async def inbox_summary(user: dict = Depends(require_auth)):
     sal_c = await db.rahaza_salary_adjustments.count_documents(
         {'status': {'$in': ['draft', 'pending_manager', 'pending_hr']}}
     )
-    resig_c = await db.rahaza_employees.count_documents({'resignation_status': 'submitted'})
+    from routes.rahaza_resignation import RESIGNING  # 2026-11-06 (pola P3)
+    resig_c = await db.rahaza_employees.count_documents({'employee_status': RESIGNING})
     att_c = await db.rahaza_attendance_events.count_documents({'approval_status': 'pending'})
     corr_c = await db.rahaza_attendance_corrections.count_documents({'status': 'pending'})
     total = leaves_c + overtime_c + sal_c + resig_c + att_c + corr_c
@@ -500,32 +529,42 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
             raise HTTPException(400, f'Status sudah {cur_status}, tidak bisa di-approve.')
         if note:
             upd['approval_note'] = note
+        # 2026-11-06 (pola P9): status ditulis bersyarat DULU (klik ganda / tolak bersamaan → 409), baru
+        # Profil Gaji diubah; bila profil gagal, status dikembalikan.
+        res = await db.rahaza_salary_adjustments.update_one({'id': req_id, 'status': cur_status}, {'$set': upd})
+        doc_lock.require_matched(res, 'Penyesuaian gaji ini baru saja diputuskan pengguna lain — muat ulang kotak masuk.')
         if new_status == 'approved':
             # 2026-11-06 (Tahap 2): dulu persetujuan di sini TIDAK pernah sampai ke payroll. Sekarang memakai
             # fungsi yang sama dengan layar Penyesuaian: versi tarif baru di Profil Gaji mulai effective_date.
             from routes.rahaza_payroll_profiles import apply_salary_adjustment_to_profile
-            applied = await apply_salary_adjustment_to_profile(db, adj, user)
-            upd.update(applied_at=now, applied_effective_from=applied.get('effective_from'))
-        await db.rahaza_salary_adjustments.update_one({'id': req_id}, {'$set': upd})
+            try:
+                applied = await apply_salary_adjustment_to_profile(db, adj, user)
+            except BaseException:
+                await db.rahaza_salary_adjustments.update_one({'id': req_id, 'status': new_status},
+                                                              {'$set': {'status': cur_status}})
+                raise
+            await db.rahaza_salary_adjustments.update_one({'id': req_id}, {'$set': {
+                'applied_at': now, 'applied_effective_from': applied.get('effective_from')}})
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve penyesuaian gaji {req_id} → {new_status} via HR Inbox')
         return {'ok': True, 'type': 'salary_adjustment', 'id': req_id, 'new_status': new_status}
 
     if req_type == 'resignation':
+        # 2026-11-06 (pola P3): status pengajuan = `employee_status`; menyetujui di inbox = efek yang SAMA
+        # dengan tombol Terima di layar Resignasi (karyawan nonaktif), bukan hanya menandai.
+        from routes.rahaza_resignation import RESIGNING, accept_update
         emp = await db.rahaza_employees.find_one({'id': req_id})
         if not emp:
             raise HTTPException(404, 'Employee tidak ditemukan')
-        if emp.get('resignation_status') != 'submitted':
-            raise HTTPException(400, f"Resignation status saat ini: {emp.get('resignation_status')}")
-        await db.rahaza_employees.update_one(
-            {'id': req_id},
-            {'$set': {
-                'resignation_status': 'accepted',
-                'resignation_accepted_by': actor_id,
-                'resignation_accepted_at': now,
-                'resignation_acceptance_note': note,
-            }}
+        if emp.get('employee_status') != RESIGNING:
+            raise HTTPException(400, f"Status resignasi saat ini: {emp.get('employee_status') or '-'}")
+        res = await db.rahaza_employees.update_one(
+            {'id': req_id, 'employee_status': RESIGNING},
+            {'$set': {**accept_update(actor_id), 'resignation_status': 'accepted',
+                      'resignation_acceptance_note': note}}
         )
+        if not res.matched_count:
+            raise HTTPException(409, 'Resignasi ini baru saja diproses pengguna lain.')
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Accept resignasi karyawan {req_id} via HR Inbox')
         return {'ok': True, 'type': 'resignation', 'id': req_id, 'new_status': 'accepted'}
@@ -557,8 +596,8 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         if claim.get('status') != 'submitted':
             raise HTTPException(400, f"Status klaim saat ini: {claim.get('status')}. Harus submitted.")
         _tolak_ajuan_sendiri(claim, user, 'klaim biaya')
-        await db.rahaza_expense_claims.update_one(
-            {'id': req_id},
+        res = await db.rahaza_expense_claims.update_one(
+            {'id': req_id, 'status': 'submitted'},   # 2026-11-06 (pola P9)
             {'$set': {
                 'status': 'approved',
                 'approved_by': actor_id,
@@ -568,6 +607,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
                 'updated_at': now,
             }}
         )
+        doc_lock.require_matched(res, 'Klaim biaya ini baru saja diputuskan pengguna lain — muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve klaim biaya {req_id} via HR Inbox')
         await _kabari_pemohon('expense_claim', claim, approved=True, note=note)
@@ -580,8 +620,8 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
         if tr.get('status') != 'submitted':
             raise HTTPException(400, f"Status travel request saat ini: {tr.get('status')}. Harus submitted.")
         _tolak_ajuan_sendiri(tr, user, 'perjalanan dinas')
-        await db.employee_travel_requests.update_one(
-            {'id': req_id},
+        res = await db.employee_travel_requests.update_one(
+            {'id': req_id, 'status': 'submitted'},   # 2026-11-06 (pola P9)
             {'$set': {
                 'status': 'approved',
                 'approved_by': actor_id,
@@ -592,6 +632,7 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
                 'updated_at': now,
             }}
         )
+        doc_lock.require_matched(res, 'Perjalanan dinas ini baru saja diputuskan pengguna lain — muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
                            f'Approve travel request {req_id} via HR Inbox')
         await _kabari_pemohon('travel_request', tr, approved=True, note=note)
@@ -634,8 +675,10 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         adj = await db.rahaza_salary_adjustments.find_one({'id': req_id})
         if not adj:
             raise HTTPException(404, 'Salary adjustment tidak ditemukan')
-        await db.rahaza_salary_adjustments.update_one(
-            {'id': req_id},
+        # 2026-11-06 (pola P9): dulu TANPA pemeriksaan status — penyesuaian yang sudah disetujui (Profil Gaji
+        # sudah berubah) bisa "ditolak" dari kotak masuk. Sekarang hanya yang masih menunggu.
+        res = await db.rahaza_salary_adjustments.update_one(
+            {'id': req_id, 'status': {'$in': ['draft', 'pending_manager', 'pending_hr']}},
             {'$set': {
                 'status': 'rejected',
                 'rejected_by': actor_id,
@@ -643,24 +686,30 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
                 'reject_reason': reason,
             }}
         )
+        doc_lock.require_matched(res, 'Penyesuaian gaji ini sudah diputuskan — muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject penyesuaian gaji {req_id}: {reason}')
         return {'ok': True, 'type': 'salary_adjustment', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'resignation':
         # Soft-reject = withdraw resignation submission
+        from routes.rahaza_resignation import RESIGNING
         emp = await db.rahaza_employees.find_one({'id': req_id})
         if not emp:
             raise HTTPException(404, 'Employee tidak ditemukan')
-        await db.rahaza_employees.update_one(
-            {'id': req_id},
+        # 2026-11-06 (pola P3): pengajuan ditarik → karyawan kembali aktif (status pengajuan = employee_status)
+        res = await db.rahaza_employees.update_one(
+            {'id': req_id, 'employee_status': RESIGNING},
             {'$set': {
+                'employee_status': 'active',
                 'resignation_status': 'rejected',
                 'resignation_rejected_by': actor_id,
                 'resignation_rejected_at': now,
                 'resignation_reject_reason': reason,
             }}
         )
+        if not res.matched_count:   # 2026-11-06 (pola P9): sudah diputuskan pengguna lain
+            raise HTTPException(409, 'Pengunduran diri ini sudah diputuskan — muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject resignasi karyawan {req_id}: {reason}')
         return {'ok': True, 'type': 'resignation', 'id': req_id, 'new_status': 'rejected'}
@@ -686,8 +735,10 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         claim = await db.rahaza_expense_claims.find_one({'id': req_id})
         if not claim:
             raise HTTPException(404, 'Klaim biaya tidak ditemukan')
-        await db.rahaza_expense_claims.update_one(
-            {'id': req_id},
+        # 2026-11-06 (pola P9): aturan yang sama dengan layar Klaim — dulu klaim yang SUDAH dicairkan
+        # (jurnal bayar ada) bisa "ditolak" dari kotak masuk.
+        res = await db.rahaza_expense_claims.update_one(
+            {'id': req_id, 'status': {'$in': ['submitted', 'approved']}, **doc_lock.lock_free('disburse_lock')},
             {'$set': {
                 'status': 'rejected',
                 'reject_reason': reason,
@@ -697,6 +748,7 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
                 'updated_at': now,
             }}
         )
+        doc_lock.require_matched(res, 'Klaim biaya ini sudah diproses (dicairkan/diputuskan) — muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject klaim biaya {req_id}: {reason}')
         await _kabari_pemohon('expense_claim', claim, approved=False, note=reason)
@@ -706,8 +758,10 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         tr = await db.employee_travel_requests.find_one({'id': req_id})
         if not tr:
             raise HTTPException(404, 'Travel request tidak ditemukan')
-        await db.employee_travel_requests.update_one(
-            {'id': req_id},
+        # 2026-11-06 (pola P9): aturan yang sama dengan layar Dinas — dinas yang uang mukanya sudah
+        # dibayar tidak bisa "ditolak" dari kotak masuk.
+        res = await db.employee_travel_requests.update_one(
+            {'id': req_id, 'status': {'$in': ['submitted', 'approved']}, **doc_lock.lock_free('advance_lock')},
             {'$set': {
                 'status': 'rejected',
                 'reject_reason': reason,
@@ -717,6 +771,8 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
                 'updated_at': now,
             }}
         )
+        doc_lock.require_matched(res, 'Perjalanan dinas ini sudah diproses (uang muka dibayar/diputuskan) — '
+                                      'muat ulang kotak masuk.')
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject travel request {req_id}: {reason}')
         await _kabari_pemohon('travel_request', tr, approved=False, note=reason)

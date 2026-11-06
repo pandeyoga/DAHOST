@@ -741,6 +741,10 @@ async def create_indexes():
         await db.production_pos.create_index([("created_at", -1)])
         await db.production_pos.create_index("status")
         await db.production_pos.create_index("vendor_id")
+        # 2026-11-06 (T6): satu PO saldo awal per kunci impor PO berjalan (kode potongan + CMT)
+        await _ensure_unique_index(db, "production_pos", [("opening_import.key", 1)],
+                                   name="uniq_opening_import_key",
+                                   partial={"opening_import.key": {"$exists": True}})
 
         # PO Items — used in batch prefetch
         await db.po_items.create_index("po_id")
@@ -750,6 +754,8 @@ async def create_indexes():
         # Attachments — queried by (entity_type, entity_id)
         await db.attachments.create_index([("entity_type", 1), ("entity_id", 1)])
         await db.attachments.create_index([("uploaded_at", -1)])
+        # 2026-11-07: GET /api/uploads/{path} memeriksa lampiran HR per path (core/sensitive_files.py)
+        await db.attachments.create_index("storage_path")
 
         # Accessories shipments (kept).
         # `accessories` + `accessory_requests` indexes REMOVED in Session #11.16

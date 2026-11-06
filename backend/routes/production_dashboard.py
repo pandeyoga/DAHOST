@@ -87,7 +87,8 @@ async def production_dashboard(
     qty_rencana = sum(qty_by_po.get(p["id"], 0) for p in pos if p.get("status") in PLANNING_STATUSES)
 
     # ── Cutting (portal sendiri, dipakai kedua tipe bisnis) ──────────────────
-    cut_rows = await db.cutting_orders.aggregate([
+    from core.cutting_material_issue import ORDERS as _CUT_ORDERS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    cut_rows = await db[_CUT_ORDERS].aggregate([
         {"$group": {"_id": "$status", "n": {"$sum": 1},
                     "planned": {"$sum": "$planned_output_qty"},
                     "produced": {"$sum": "$produced_qty"},
@@ -184,21 +185,24 @@ async def production_dashboard(
 
     # ── Serah terima FG / dispatch ke buyer ──────────────────────────────────
     bs = await db.buyer_shipments.find({"po_id": {"$in": po_ids}},
-                                       {"_id": 0, "id": 1, "shipment_date": 1}).to_list(5000)
+                                       {"_id": 0, "id": 1}).to_list(5000)
     bs_ids = [s["id"] for s in bs]
     bsi = await db.buyer_shipment_items.aggregate([
         {"$match": {"shipment_id": {"$in": bs_ids}}},
         {"$group": {"_id": None, "qty": {"$sum": "$qty_shipped"}}},
     ]).to_list(1) if bs_ids else []
-    recent_ids = [s["id"] for s in bs if str(s.get("shipment_date") or "")[:10] >= since]
-    bsi_recent = await db.buyer_shipment_items.aggregate([
-        {"$match": {"shipment_id": {"$in": recent_ids}}},
-        {"$group": {"_id": None, "qty": {"$sum": "$qty_shipped"}}},
-    ]).to_list(1) if recent_ids else []
+    # 2026-11-06 (pola P3): tanggal kirim ada di BARIS (`dispatch_date`, per kiriman bertahap) — kepala
+    # SJ buyer tidak pernah punya `shipment_date`, jadi "qty periode" dulu selalu 0.
+    rows_recent = await db.buyer_shipment_items.find(
+        {"shipment_id": {"$in": bs_ids}},
+        {"_id": 0, "shipment_id": 1, "qty_shipped": 1, "dispatch_date": 1, "created_at": 1}).to_list(20000) if bs_ids else []
+    rows_recent = [r for r in rows_recent if wib_date_of(r.get("dispatch_date") or r.get("created_at")) >= since]
+    qty_recent = sum(_i(r.get("qty_shipped")) for r in rows_recent)
+    recent_ids = {r.get("shipment_id") for r in rows_recent if r.get("shipment_id")}
     handover = {
         "pengiriman": len(bs),
         "qty_total": _i(bsi[0]["qty"]) if bsi else 0,
-        "qty_periode": _i(bsi_recent[0]["qty"]) if bsi_recent else 0,
+        "qty_periode": qty_recent,
         "label": "Serah Terima FG" if business_type == "internal" else "Dispatch ke Buyer",
     }
 

@@ -45,27 +45,20 @@ async def _auth_or_token(request: Request, token: Optional[str] = None):
 
 
 async def _find_fg(db, fg_id: str) -> Optional[dict]:
-    """Cari FG di matrix lama DULU, lalu di SSOT `rahaza_materials` (type='fg')."""
-    fg = await db.rahaza_fg_matrix.find_one(
-        {"$or": [{"id": fg_id}, {"sku": fg_id}, {"sku_code": fg_id}]}, {"_id": 0})
-    if fg:
-        return fg
+    """Cari FG di SSOT `rahaza_materials` (type='fg').
+
+    2026-11-06 (pola P2): pencarian di `rahaza_fg_matrix` dihapus — koleksi itu tidak pernah
+    ditulis (layar matriks FG menghitung langsung dari `rahaza_materials`)."""
     return await db.rahaza_materials.find_one(
         {"type": "fg", "$or": [{"id": fg_id}, {"code": fg_id}, {"sku": fg_id}]}, {"_id": 0})
 
 
 async def _find_fg_many(db, ids: List[str]) -> List[dict]:
-    rows = await db.rahaza_fg_matrix.find(
-        {"$or": [{"id": {"$in": ids}}, {"sku": {"$in": ids}},
-                 {"sku_code": {"$in": ids}}]}, {"_id": 0}).to_list(MAX_BATCH)
-    seen = {str(r.get("id"))for r in rows} | {str(r.get("sku")) for r in rows}
-    rest = [i for i in ids if i not in seen]
-    if rest:
-        rows += await db.rahaza_materials.find(
-            {"type": "fg", "$or": [{"id": {"$in": rest}}, {"code": {"$in": rest}},
-                                   {"sku": {"$in": rest}}]},
-            {"_id": 0}).to_list(MAX_BATCH)
-    return rows
+    # 2026-11-06 (pola P2): langsung SSOT `rahaza_materials` (tanpa `rahaza_fg_matrix` hantu)
+    return await db.rahaza_materials.find(
+        {"type": "fg", "$or": [{"id": {"$in": ids}}, {"code": {"$in": ids}},
+                               {"sku": {"$in": ids}}]},
+        {"_id": 0}).to_list(MAX_BATCH)
 
 
 @router.get("/{fg_id}/label-pdf")

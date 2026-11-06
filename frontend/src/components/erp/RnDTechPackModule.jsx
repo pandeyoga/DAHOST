@@ -14,6 +14,7 @@ import ConfirmDialog from './ConfirmDialog';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import RnDUnitSelect, { UOM_STATUS } from './RnDUnitSelect';
 import { ColorSelect, ColorMultiSelect, useColorOptions } from './RnDColorPicker';
+import { apiPost, apiDelete } from '@/lib/api';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -308,7 +309,8 @@ export default function RnDTechPackModule({ token }) {
 
   const handleApprove = async id => {
     try {
-      await fetch(`${API}/api/dewi/rnd/tech-packs/${id}/approve`, { method: 'POST', headers: h });
+      // 2026-11-06 (pola P6): helper lib/api melempar bila server menolak → pesan sukses hanya bila benar tersimpan
+      await apiPost(`/api/dewi/rnd/tech-packs/${id}/approve`, {});
       toast.success('Tech pack disetujui');
       loadTechPacks();
     } catch { toast.error('Gagal approve'); }
@@ -348,7 +350,7 @@ export default function RnDTechPackModule({ token }) {
 
   const handleDelete = async () => {
     try {
-      await fetch(`${API}/api/dewi/rnd/tech-packs/${delId}`, { method: 'DELETE', headers: h });
+      await apiDelete(`/api/dewi/rnd/tech-packs/${delId}`);  // 2026-11-06 (pola P6): lihat approve
       toast.success('Tech pack dihapus');
       setDelId(null); loadTechPacks();
     } catch { toast.error('Gagal menghapus'); }

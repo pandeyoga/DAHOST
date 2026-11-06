@@ -28,6 +28,7 @@ async def import_data(request: Request):
     data_rows = body.get('data', [])
     imported = 0
     errors = []
+    vendor_accounts = []
     if import_type == 'products':
         for row in data_rows:
             try:
@@ -59,50 +60,26 @@ async def import_data(request: Request):
                 await db.users.insert_one({'id': new_id(), 'name': row.get('garment_name', ''),
                     'email': email, 'password': hash_password(raw_pw), 'role': 'vendor',
                     'vendor_id': gid, 'status': 'active', 'created_at': now(), 'updated_at': now()})
+                # 2026-11-07 KEAMANAN: sandi awal TIDAK disimpan teks biasa (dulu `vendor_password_plain`).
+                # Ditampilkan SEKALI di respons impor (`vendor_accounts`), sama seperti POST /api/garments.
+                row = {k: v for k, v in row.items() if 'password' not in str(k).lower()}
                 await db.garments.insert_one({'id': gid, **row, 'status': 'active',
-                    'login_email': email, 'vendor_password_plain': raw_pw,
-                    'created_at': now(), 'updated_at': now()})
+                    'login_email': email, 'created_at': now(), 'updated_at': now()})
+                vendor_accounts.append({'garment_id': gid, 'garment_name': row.get('garment_name', ''),
+                                        'email': email, 'password': raw_pw})
                 imported += 1
             except Exception as e:
                 errors.append(f"Row {imported+1}: {str(e)}")
     elif import_type == 'production-pos':
-        # Batch prefetch all referenced vendors once
-        vendor_ids = list({row.get('vendor_id') for row in data_rows if row.get('vendor_id')})
-        vendor_map = {}
-        if vendor_ids:
-            async for vd in db.garments.find({'id': {'$in': vendor_ids}}):
-                vendor_map[vd['id']] = vd
-        for row in data_rows:
-            try:
-                vendor_name = ''
-                if row.get('vendor_id'):
-                    vd = vendor_map.get(row['vendor_id'])
-                    vendor_name = (vd or {}).get('garment_name', '')
-                po_id = new_id()
-                po = {'id': po_id, 'po_number': row.get('po_number', ''),
-                      'customer_name': row.get('customer_name', ''),
-                      'vendor_id': row.get('vendor_id'), 'vendor_name': vendor_name,
-                      'po_date': parse_date(row.get('po_date')) or now(),
-                      'deadline': parse_date(row.get('deadline')),
-                      'status': 'Draft', 'notes': row.get('notes', ''),
-                      'created_by': user['name'], 'created_at': now(), 'updated_at': now()}
-                await db.production_pos.insert_one(po)
-                # Batch insert all po_items at once per PO
-                items_to_insert = [{
-                    'id': new_id(), 'po_id': po_id, 'po_number': row['po_number'],
-                    'product_name': item.get('product_name', ''),
-                    'sku': item.get('sku', ''), 'size': item.get('size', ''),
-                    'color': item.get('color', ''), 'serial_number': item.get('serial_number', ''),
-                    'qty': int(item.get('qty', 0) or 0),
-                    'selling_price_snapshot': float(item.get('selling_price', 0) or 0),
-                    'cmt_price_snapshot': float(item.get('cmt_price', 0) or 0),
-                    'created_at': now()
-                } for item in row.get('items', [])]
-                if items_to_insert:
-                    await db.po_items.insert_many(items_to_insert)
-                imported += 1
-            except Exception as e:
-                errors.append(f"Row {imported+1}: {str(e)}")
+        # 2026-11-06 (T6): jalur lama ini menulis PO Draf tanpa validasi master (vendor `garments`,
+        # item tanpa model/varian) dan layar mengirim FormData ke endpoint JSON ini sehingga tidak
+        # pernah berhasil. Impor PO kini SATU jalur: Data Transfer `po_berjalan` (pratinjau per baris,
+        # PO dikonfirmasi lewat jalur PO resmi + surat jalan saldo awal).
+        raise HTTPException(410, detail={
+            "deprecated": True,
+            "use": "/api/data-transfer/import/po_berjalan",
+            "message": "Impor PO lewat tombol Impor PO berjalan (Data Transfer) di layar PO Produksi.",
+        })
     elif import_type == 'accessories':
         # DEPRECATED Sprint A.0 — redirect to rahaza_materials (type='accessory')
         logger.warning("[DEPRECATED-NOOP] import accessories — use /api/acc/items instead")
@@ -114,7 +91,10 @@ async def import_data(request: Request):
     else:
         raise HTTPException(400, f"Unknown import type: {import_type}")
     await log_activity(user['id'], user['name'], 'Import', import_type, f"Imported {imported} records")
-    return {'imported': imported, 'errors': errors, 'type': import_type}
+    out = {'imported': imported, 'errors': errors, 'type': import_type}
+    if vendor_accounts:
+        out['vendor_accounts'] = vendor_accounts  # sekali tampil; tidak disimpan di DB
+    return out
 
 
 @router.get("/import-template")

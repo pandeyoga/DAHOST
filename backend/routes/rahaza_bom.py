@@ -207,17 +207,17 @@ async def migrate_bom_data(db):
     3. Phase 7A Fase 1: convert legacy yarn_materials/accessory_materials → materials[].
     """
     # Step 1: Fix string versions
-    bad_version_boms = await db.rahaza_boms.find(
-        {"version": {"$type": "string"}, "active": True}, {"_id": 0, "id": 1, "version": 1}
-    ).to_list(500)
+    # 2026-11-06 (pola P7): semua BOM (dulu to_list(500) — data VPS 1.243 BOM aktif; sisanya tak pernah dirapikan)
+    bad_version_boms = [b async for b in db.rahaza_boms.find(
+        {"version": {"$type": "string"}, "active": True}, {"_id": 0, "id": 1, "version": 1})]
     for b in bad_version_boms:
         new_v = _parse_version(b.get("version")) or 1
         await db.rahaza_boms.update_one({"id": b["id"]}, {"$set": {"version": new_v}})
 
     # Step 2: Fix missing is_active — collect model+size combos
-    boms_no_active = await db.rahaza_boms.find(
-        {"active": True, "is_active": {"$in": [None, False, True]}}, {"_id": 0}
-    ).to_list(500)
+    boms_no_active = [b async for b in db.rahaza_boms.find(
+        {"active": True, "is_active": {"$in": [None, False, True]}},
+        {"_id": 0, "id": 1, "model_id": 1, "size_id": 1, "version": 1, "is_active": 1})]
     from collections import defaultdict
     groups = defaultdict(list)
     for b in boms_no_active:

@@ -605,8 +605,11 @@ async def reject_settlement(stl_id: str, payload: RejectPayload, user: dict = De
         raise HTTPException(400, f"Status '{doc.get('status')}' tidak bisa di-reject")
 
     now = _now()
-    await db.employee_travel_settlements.update_one(
-        {'id': stl_id},
+    # 2026-11-06 (pola P9): tolak hanya bila MASIH submitted/approved & tidak sedang diposting —
+    # dulu bisa menimpa penyelesaian yang baru saja dijurnal (lalu penyelesaian baru bisa dibayar lagi).
+    from core import doc_lock
+    res = await db.employee_travel_settlements.update_one(
+        {'id': stl_id, 'status': {'$in': ['submitted', 'approved']}, **doc_lock.lock_free('post_lock')},
         {'$set': {
             'status': 'rejected',
             'reject_reason': payload.reason,
@@ -616,6 +619,8 @@ async def reject_settlement(stl_id: str, payload: RejectPayload, user: dict = De
             'updated_at': now,
         }}
     )
+    doc_lock.require_matched(res, f"Penyelesaian {doc.get('settlement_number') or ''} baru saja diproses "
+                                  "pengguna lain — muat ulang.")
     await log_activity(user.get('id'), user.get('name'), 'reject', 'travel_settlement',
                        f"Reject settlement {doc.get('settlement_number')}: {payload.reason}")
     return {'ok': True, 'id': stl_id, 'new_status': 'rejected'}
@@ -643,7 +648,18 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
     # hanya peran Keuangan; HR tidak lagi (dulu FINANCE_ROLES + 'hr').
     if role not in FINANCE_ROLES:  # FIN-02
         raise HTTPException(403, 'Hanya Keuangan yang dapat memposting penyelesaian dinas (pemisahan tugas).')
+    # 2026-11-06 (pola P9): penyelesaian DIKUNCI selama dijurnal (penolakan yang menyalip → 409).
+    from core import doc_lock
+    token = await doc_lock.claim(db, 'employee_travel_settlements', stl_id, field='post_lock', actor=user,
+                                 not_found=f'Settlement {stl_id} tidak ditemukan',
+                                 busy='Penyelesaian dinas ini sedang diposting / diproses pengguna lain — muat ulang.')
+    try:
+        return await _post_settlement_gl_locked(db, stl_id, payload, user)
+    finally:
+        await doc_lock.release(db, 'employee_travel_settlements', stl_id, token, field='post_lock')
 
+
+async def _post_settlement_gl_locked(db, stl_id: str, payload, user: dict):
     doc = await _get_or_404(db, stl_id)
     if doc.get('status') != 'approved':
         raise HTTPException(400, f"Status '{doc.get('status')}' harus 'approved' sebelum di-post")
@@ -738,7 +754,7 @@ async def post_settlement_gl(stl_id: str, payload: PostPayload, user: dict = Dep
 
     # Update settlement
     await db.employee_travel_settlements.update_one(
-        {'id': stl_id},
+        {'id': stl_id, 'status': 'approved'},
         {'$set': {
             'status': 'posted',
             'posted_by': user.get('id'),
@@ -909,7 +925,15 @@ async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = De
     db = get_db()
     results = {'success': [], 'failed': []}
 
+    from core import doc_lock
     for stl_id in body.settlement_ids:
+        # 2026-11-06 (pola P9): kunci yang sama dengan posting satuan — penolakan tidak menyalip.
+        try:
+            token = await doc_lock.claim(db, 'employee_travel_settlements', stl_id, field='post_lock', actor=user)
+        except HTTPException as e:
+            results['failed'].append({'id': stl_id, 'reason': 'Tidak ditemukan' if e.status_code == 404
+                                      else 'Sedang diproses pengguna lain'})
+            continue
         try:
             doc = await db.employee_travel_settlements.find_one({'id': stl_id}, {'_id': 0})
             if not doc:
@@ -989,6 +1013,8 @@ async def bulk_post_settlements(body: BulkPostSettlementRequest, user: dict = De
         except Exception as e:
             logger.error(f'Bulk post settlement {stl_id} error: {e}')
             results['failed'].append({'id': stl_id, 'reason': str(e)})
+        finally:
+            await doc_lock.release(db, 'employee_travel_settlements', stl_id, token, field='post_lock')
 
     return {
         'ok': True,

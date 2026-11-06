@@ -540,7 +540,9 @@ async def attendance_summary(request: Request, from_: Optional[str] = None, to: 
         q["date"] = rg
     if employee_id:
         q["employee_id"] = employee_id
-    rows = await db.rahaza_attendance_events.find(q, {"_id": 0}).to_list(500)
+    # 2026-11-06 (pola P7): semua record periode (dulu to_list(500) — rekap sebulan 25 karyawan = 650 record)
+    rows = [r async for r in db.rahaza_attendance_events.find(
+        q, {"_id": 0, "employee_id": 1, "status": 1, "approval_status": 1, "hours_worked": 1, "overtime_hours": 1})]
     from utils.attendance_policy import attendance_counts
     summary = {}
     for r in rows:

@@ -54,13 +54,11 @@ DISPOSAL_APPROVAL_THRESHOLD = 5_000_000  # 5 juta IDR
 async def _ensure_default_categories(db):
     cnt = await db.dewi_asset_categories.count_documents({})
     if cnt == 0:
-        seed = []
-        for cat in DEFAULT_CATEGORIES:
-            d = dict(cat)
-            d["id"] = _uid()
-            d["created_at"] = _now()
-            seed.append(d)
-        await db.dewi_asset_categories.insert_many(seed)
+        # 2026-11-06 (pola P8): dulu `insert_many` setelah hitung 0 — dua layar yang dibuka bersamaan (daftar +
+        # dasbor) sama-sama melihat 0 sehingga 7 kategori tercatat DUA KALI. `_id` tetap per kode.
+        from core.reference_dedup import seed_once
+        await seed_once(db, "dewi_asset_categories",
+                        [{**cat, "id": _uid(), "active": True, "created_at": _now()} for cat in DEFAULT_CATEGORIES])
 
 
 async def _gen_asset_number(db, category_code: str, requested: str = "") -> str:

@@ -88,6 +88,8 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
 
+from core.product_master import CATEGORIES as _CATEGORIES  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+
 logger = logging.getLogger(__name__)
 
 VARIANTS = 'rahaza_model_variants'
@@ -662,7 +664,7 @@ async def ensure_category_master(db) -> dict:
     """Semai kategori tambahan (Aksesoris, keputusan 5a). Idempoten."""
     created = 0
     for seed in CATEGORY_SEED_EXTRA:
-        coll = db.rahaza_product_categories
+        coll = db[_CATEGORIES]
         if await coll.find_one({'code': seed['code']}, {'_id': 0, 'id': 1}):
             continue
         await coll.insert_one({
@@ -876,8 +878,8 @@ async def list_product_groups(db, *, account_id: str = None, limit: int = 800,
     for g in groups.values():
         model_name = propose_model_name(g['product_name'], shop_name=g['account_name'])
         cat_code = propose_category_code(g['product_name'])
-        cat = await db.rahaza_product_categories.find_one({'code': cat_code},
-                                                          {'_id': 0, 'name': 1, 'code': 1}) or {}
+        cat = await db[_CATEGORIES].find_one({'code': cat_code},
+                                             {'_id': 0, 'name': 1, 'code': 1}) or {}
         existing = await db[MODELS].find_one(
             {'name': {'$regex': f'^{re.escape(model_name)}$', '$options': 'i'}},
             {'_id': 0, 'id': 1, 'code': 1})
@@ -935,12 +937,12 @@ async def _compute_plan(db, *, pkey: str, model_name: str = None,
 
     mname = (model_name or '').strip() or propose_model_name(pname, shop_name=shop)
     ccode = (category_code or '').strip().upper() or propose_category_code(pname)
-    cat = await db.rahaza_product_categories.find_one({'code': ccode}, {'_id': 0})
+    cat = await db[_CATEGORIES].find_one({'code': ccode}, {'_id': 0})
     cat_seed = next((c for c in CATEGORY_SEED_EXTRA if c['code'] == ccode), None)
     if not cat and cat_seed:
         cat = {**cat_seed, 'id': None}          # akan disemai saat apply
     if not cat:
-        cat = await db.rahaza_product_categories.find_one({'code': 'LAINNYA'}, {'_id': 0}) or {}
+        cat = await db[_CATEGORIES].find_one({'code': 'LAINNYA'}, {'_id': 0}) or {}
 
     model = None
     if model_id:
@@ -1124,7 +1126,7 @@ async def apply_onboarding(db, *, product_key: str, model_name: str = None,
     acc = plan['product']['account_id']
     cat = plan['_cat']
     if not cat.get('id'):
-        cat = await db.rahaza_product_categories.find_one(
+        cat = await db[_CATEGORIES].find_one(
             {'code': cat.get('code') or 'LAINNYA'}, {'_id': 0}) or cat
 
     created = {'model': 0, 'colors': 0, 'sizes': 0, 'variants': 0}

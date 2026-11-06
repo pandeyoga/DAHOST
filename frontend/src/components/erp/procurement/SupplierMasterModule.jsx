@@ -12,15 +12,15 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Ban, Building2, CheckCircle2, Contact, CreditCard, Download,
+  Ban, Building2, CheckCircle2, Contact, CreditCard,
   Eye, Landmark, Pencil, Plus, RefreshCw, Search, Star, Tag, Trash2, Truck,
 } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { MoneyInput } from '@/components/ui/money-input';
-import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import Modal from '../Modal';
+import ImportExportToolbar from '../ImportExportToolbar';
 import { toast } from 'sonner';
 import {
   CATEGORY_LABEL, EP, PAYMENT_TERM_LABEL, apiDelete, apiGet, apiPost, apiPut,
@@ -874,22 +874,8 @@ export default function SupplierMasterModule({ token }) {
     } catch (e) { toast.error(e.message); }
   };
 
-  const exportCsv = () => {
-    const head = ['Kode', 'Nama', 'NPWP', 'Kota', 'Telepon', 'Email', 'Termin', 'Mata Uang',
-      'Lead Time', 'Kategori', 'Status'];
-    const lines = rows.map((s) => [
-      s.code, s.name, s.npwp || '', s.city || '', s.phone || '', s.email || '',
-      PAYMENT_TERM_LABEL[s.payment_terms] || s.payment_terms, s.currency,
-      s.lead_time_days || 0, (s.categories || []).map((c) => CATEGORY_LABEL[c] || c).join('|'),
-      s.is_active === false ? 'Nonaktif' : 'Aktif',
-    ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','));
-    const blob = new Blob([[head.join(','), ...lines].join('\n')], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `master-supplier-${todayWIB()}.csv`;
-    a.click();
-    toast.success('Master supplier diekspor ke CSV');
-  };
+  // 2026-11-06 (T4): ekspor CSV halaman ini (hanya 50 baris halaman aktif) diganti Unduh/Impor Data Transfer
+  // (semua supplier, format template impor) — satu pintu, tidak dua tombol ekspor.
 
   return (
     <div className="space-y-5" data-testid="supplier-master-page">
@@ -904,9 +890,9 @@ export default function SupplierMasterModule({ token }) {
           <Button variant="secondary" onClick={() => setMigrateOpen(true)} data-testid="supplier-migrate-btn">
             <Truck className="w-4 h-4 mr-1.5" /> Tarik Data Lama
           </Button>
-          <Button variant="secondary" onClick={exportCsv} data-testid="supplier-export-btn">
-            <Download className="w-4 h-4 mr-1.5" /> Ekspor CSV
-          </Button>
+          <ImportExportToolbar collectionKey="suppliers" label="Master Supplier" onImported={() => load(1)} />
+          <ImportExportToolbar collectionKey="supplier_prices" label="Daftar Harga Supplier" caption="harga"
+                               onImported={() => load(pagination.page)} />
           <Button onClick={() => { setEditing(null); setFormOpen(true); }} data-testid="supplier-create-btn">
             <Plus className="w-4 h-4 mr-1.5" /> Tambah Supplier
           </Button>

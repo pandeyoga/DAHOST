@@ -651,12 +651,15 @@ async def get_attachments(request: Request):
     entity_id = sp.get('entity_id')
     if not entity_type or not entity_id:
         raise HTTPException(400, 'entity_type and entity_id required')
-    q = {'entity_type': entity_type, 'entity_id': entity_id}
+    # 2026-11-06 (pola P1): DELETE /attachments/{id} hanya menandai is_deleted — daftar wajib
+    # menyaringnya, kalau tidak lampiran yang dihapus muncul lagi saat panel dibuka ulang.
+    # Urutan memakai created_at (field yang ditulis /upload); `uploaded_at` tidak pernah ada.
+    q = {'entity_type': entity_type, 'entity_id': entity_id, 'is_deleted': {'$ne': True}}
     # Dual-mode: paginated or full list
     if sp.get('page') or sp.get('limit'):
         page, limit, skip = get_pagination_params(request, default_limit=20)
         total = await db.attachments.count_documents(q)
-        items = await db.attachments.find(q, {'_id': 0}).sort('uploaded_at', -1).skip(skip).limit(limit).to_list(limit)
+        items = await db.attachments.find(q, {'_id': 0}).sort('created_at', -1).skip(skip).limit(limit).to_list(limit)
         return paginated_response(serialize_doc(items), total, page, limit)
-    return serialize_doc(await db.attachments.find(q, {'_id': 0}).sort('uploaded_at', -1).to_list(500))
+    return serialize_doc(await db.attachments.find(q, {'_id': 0}).sort('created_at', -1).to_list(500))
 

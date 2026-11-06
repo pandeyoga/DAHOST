@@ -20,6 +20,7 @@ from fastapi import APIRouter, Request
 from auth import require_auth, serialize_doc
 from database import get_db
 from utils.waktu import today_wib
+from core.platform_balance import SETTLEMENTS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
 
 router = APIRouter(prefix="/api/finance", tags=["finance-home"])
 
@@ -97,7 +98,7 @@ async def _profit(db, today: date) -> dict:
 async def _marketplace(db, today: date) -> dict:
     ym = today.strftime("%Y-%m")
     s = {}
-    async for r in db.marketing_settlements.aggregate([
+    async for r in db[SETTLEMENTS].aggregate([
             {"$match": {"settlement_date": {"$regex": f"^{ym}"}}},
             {"$group": {"_id": None, "n": {"$sum": 1}, "gross": {"$sum": "$gross_sales"},
                         "ded": {"$sum": "$total_deductions"}, "net": {"$sum": "$net_payout"}}}]):
@@ -129,7 +130,7 @@ async def _todo(db, today: date, ar: dict, ap: dict) -> list[dict]:
         "warning")
     add("cmt_unposted", ap["unposted_cmt_count"], "tagihan CMT belum dijurnal", "fin-ap-hub", "bills",
         ap["unposted_cmt"], "warning")
-    add("settle_unverified", await db.marketing_settlements.count_documents({"math_verified": False}),
+    add("settle_unverified", await db[SETTLEMENTS].count_documents({"math_verified": False}),
         "laporan dana marketplace masih ada selisih hitungan", "fin-marketplace-settlement", "settlements",
         level="warning")
     add("kasbon", await db.dewi_kasbon_requests.count_documents({"status": "hr_approved"}),

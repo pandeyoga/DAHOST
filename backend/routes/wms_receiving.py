@@ -203,6 +203,15 @@ async def helper_create_pending_outbound_rm(
     return doc
 
 
+async def rack_occupancy(db, rack: dict) -> tuple:
+    """(slot terisi, total slot) satu rak `wh_racks` — satu rumus untuk alert & dasbor gudang."""
+    total = (rack.get("num_shelves") or 0) * (rack.get("slots_per_shelf") or 0)
+    if total <= 0:
+        return 0, 0
+    occupied = await db.wh_positions.count_documents({"rack_id": rack.get("id"), "status": "occupied"})
+    return occupied, total
+
+
 async def helper_check_rack_occupancy_alert(db, rack_id: str) -> Optional[dict]:
     """
     Dicek setelah setiap scan-in / opname adjust yang mengubah occupancy rak.
@@ -215,10 +224,9 @@ async def helper_check_rack_occupancy_alert(db, rack_id: str) -> Optional[dict]:
     rack = await db.wh_racks.find_one({"id": rack_id}, {"_id": 0})
     if not rack:
         return None
-    total = (rack.get("num_shelves") or 0) * (rack.get("slots_per_shelf") or 0)
+    occupied, total = await rack_occupancy(db, rack)
     if total <= 0:
         return None
-    occupied = await db.wh_positions.count_documents({"rack_id": rack_id, "status": "occupied"})
     pct = round(occupied / total * 100) if total else 0
     if pct < 95:
         return None
@@ -310,6 +318,32 @@ class ScanOutIn(BaseModel):
     notes: Optional[str] = None
     # 2026-11-02 — No.18(a): lokasi asal WAJIB dipilih (dulu "lokasi aktif pertama").
     location_id: Optional[str] = Field(None, description="Lokasi asal stok keluar (wajib, kecuali fulfillment ber-stock_id)")
+
+
+async def _claim_scan(db, movement: dict, qty: float) -> tuple:
+    """2026-11-06 (pola P9): qty scan DICADANGKAN atomik sebelum stok disentuh.
+
+    Dulu `scanned_qty` & status dibaca, stok diubah, lalu `scanned_qty = lama + qty` ditulis. Dua scan
+    bersamaan (klik ganda / dua perangkat) sama-sama lolos: stok bergerak dua kali tetapi `scanned_qty`
+    hanya naik sekali, dan movement yang sudah 'confirmed' masih bisa di-scan lagi. Sekarang
+    penulisan bersyarat (status & qty lama) — yang kalah mendapat 409 dan stok tidak disentuh."""
+    prev = movement.get("scanned_qty")
+    new_scanned = (prev or 0) + qty
+    new_status = "confirmed" if new_scanned >= movement["expected_qty"] else "partial"
+    res = await db.wh_pending_movements.update_one(
+        {"id": movement["id"], "status": movement.get("status"), "scanned_qty": prev},
+        {"$set": {"scanned_qty": new_scanned, "status": new_status}})
+    if not res.matched_count:
+        raise HTTPException(409, "Movement ini baru saja di-scan perangkat/pengguna lain. Muat ulang lalu "
+                                 "periksa sisa qty-nya sebelum scan lagi.")
+    return new_scanned, new_status
+
+
+async def _release_scan(db, movement: dict, new_scanned: float, new_status: str) -> None:
+    """Kembalikan cadangan qty bila stok gagal diubah (scan bisa diulang)."""
+    await db.wh_pending_movements.update_one(
+        {"id": movement["id"], "status": new_status, "scanned_qty": new_scanned},
+        {"$set": {"scanned_qty": movement.get("scanned_qty"), "status": movement.get("status")}})
 
 
 async def _require_scan_location(db, picked: Optional[str], movement: dict, *, direction: str) -> str:
@@ -497,41 +531,45 @@ async def scan_in(movement_id: str, data: ScanInIn, request: Request):
 
     # 1. Add to material stock — lokasi dipilih pengguna (No.18a)
     loc_id = await _require_scan_location(db, data.location_id, movement, direction="in")
-
-    if loc_id and qty > 0:
-        # SSOT: semua penambahan stok lewat stock_service (jaga qty+alias+available).
-        # INV-1: set ownership & inventory_category agar FG produksi internal TERLIHAT
-        #        oleh fulfillment (yang query ownership=cv_da, inventory_category=fg_internal).
-        mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
-        mtype = ((mat or {}).get("type") or movement.get("material_type") or "").lower()
-        is_fg = mtype == "fg" or (movement.get("material_type") == "fg")
-        meta = {
-            "material_type": mtype or ("fg" if is_fg else None),
-            "material_code": movement.get("material_code"),
-            "material_name": movement.get("material_name"),
-            "ownership": "cv_da",
-            "inventory_category": "fg_internal" if is_fg else "raw_material",
-            "unit": unit,
-        }
-        # `unit` pada movement boleh berupa satuan kemasan (mis. "bks").
-        # stock_service mengonversinya ke satuan dasar bila dikenal; bila sama
-        # dengan satuan dasar atau tidak dikenal, perilakunya tidak berubah.
-        _in_uom = None
-        try:
-            if mat and unit and _uom.normalize_code(unit) != _uom.base_uom_of(mat) \
-                    and _uom.find_uom(mat, unit):
-                _in_uom = _uom.normalize_code(unit)
-        except Exception:  # noqa: BLE001 — konversi bersifat opsional
+    new_scanned, new_status = await _claim_scan(db, movement, qty)   # 2026-11-06 (pola P9)
+    try:
+        if loc_id and qty > 0:
+            # SSOT: semua penambahan stok lewat stock_service (jaga qty+alias+available).
+            # INV-1: set ownership & inventory_category agar FG produksi internal TERLIHAT
+            #        oleh fulfillment (yang query ownership=cv_da, inventory_category=fg_internal).
+            mat = await db.rahaza_materials.find_one({"id": material_id}, {"_id": 0})
+            mtype = ((mat or {}).get("type") or movement.get("material_type") or "").lower()
+            is_fg = mtype == "fg" or (movement.get("material_type") == "fg")
+            meta = {
+                "material_type": mtype or ("fg" if is_fg else None),
+                "material_code": movement.get("material_code"),
+                "material_name": movement.get("material_name"),
+                "ownership": "cv_da",
+                "inventory_category": "fg_internal" if is_fg else "raw_material",
+                "unit": unit,
+            }
+            # `unit` pada movement boleh berupa satuan kemasan (mis. "bks").
+            # stock_service mengonversinya ke satuan dasar bila dikenal; bila sama
+            # dengan satuan dasar atau tidak dikenal, perilakunya tidak berubah.
             _in_uom = None
-        await stock_service.add(
-            material_id, loc_id, qty, meta=meta,
-            ref={"source": "wh_scan_in", "movement_id": movement_id,
-                 "ref_number": movement.get("ref_number"),
-                 "source_type": movement.get("source_type"),
-                 "source_id": movement.get("source_id")},
-            actor={"id": user.get("id"), "email": user.get("email")},
-            db=db, input_uom=_in_uom,
-        )
+            try:
+                if mat and unit and _uom.normalize_code(unit) != _uom.base_uom_of(mat) \
+                        and _uom.find_uom(mat, unit):
+                    _in_uom = _uom.normalize_code(unit)
+            except Exception:  # noqa: BLE001 — konversi bersifat opsional
+                _in_uom = None
+            await stock_service.add(
+                material_id, loc_id, qty, meta=meta,
+                ref={"source": "wh_scan_in", "movement_id": movement_id,
+                     "ref_number": movement.get("ref_number"),
+                     "source_type": movement.get("source_type"),
+                     "source_id": movement.get("source_id")},
+                actor={"id": user.get("id"), "email": user.get("email")},
+                db=db, input_uom=_in_uom,
+            )
+    except BaseException:
+        await _release_scan(db, movement, new_scanned, new_status)
+        raise
 
     # 2. Log FG movement
     await db.rahaza_fg_movements.insert_one({
@@ -571,13 +609,10 @@ async def scan_in(movement_id: str, data: ScanInIn, request: Request):
             except Exception:
                 logging.getLogger(__name__).debug("suppressed exception", exc_info=True)
 
-    # 4. Update movement
-    new_scanned = movement.get("scanned_qty", 0) + qty
-    new_status = "confirmed" if new_scanned >= movement["expected_qty"] else "partial"
+    # 4. Update movement (qty & status sudah dicadangkan atomik di `_claim_scan`)
     await db.wh_pending_movements.update_one(
         {"id": movement_id},
         {"$set": {
-            "scanned_qty": new_scanned, "status": new_status,
             "position_id": position_id,
             "position_barcode": data.position_barcode,
             "confirmed_at": _now() if new_status == "confirmed" else None,
@@ -643,6 +678,7 @@ async def scan_out(movement_id: str, data: ScanOutIn, request: Request):
             "source_id": movement.get("source_id")}
     _actor = {"id": user.get("id"), "email": user.get("email")}
     stock_remaining = None
+    new_scanned, new_status = await _claim_scan(db, movement, qty)   # 2026-11-06 (pola P9)
     try:
         if is_fulfillment_fg:
             _srow = await stock_service.issue_row(movement["stock_id"], qty, release_reserved=True,
@@ -654,7 +690,11 @@ async def scan_out(movement_id: str, data: ScanOutIn, request: Request):
             _srow = await stock_service.issue(material_id, loc_id, qty, ref=_ref, actor=_actor, db=db)
             stock_remaining = read_qty(_srow)
     except stock_service.InsufficientStock as e:
+        await _release_scan(db, movement, new_scanned, new_status)
         raise HTTPException(400, f"Stok tidak cukup: tersedia {e.available:.2f}{unit}, diminta {qty:.2f}{unit}")
+    except BaseException:
+        await _release_scan(db, movement, new_scanned, new_status)
+        raise
 
     # 3. Log movement
     direction_label = "outbound_rm" if movement["type"] == "outbound_rm" else "outbound_fg"
@@ -687,13 +727,10 @@ async def scan_out(movement_id: str, data: ScanOutIn, request: Request):
                 }}
             )
 
-    # 5. Update movement
-    new_scanned = movement.get("scanned_qty", 0) + qty
-    new_status = "confirmed" if new_scanned >= movement["expected_qty"] else "partial"
+    # 5. Update movement (qty & status sudah dicadangkan atomik di `_claim_scan`)
     await db.wh_pending_movements.update_one(
         {"id": movement_id},
         {"$set": {
-            "scanned_qty": new_scanned, "status": new_status,
             "confirmed_at": _now() if new_status == "confirmed" else None,
             "confirmed_by": user.get("email") if new_status == "confirmed" else None,
         }}
@@ -735,10 +772,14 @@ async def cancel_pending(movement_id: str, request: Request):
         raise HTTPException(404, "Pending movement tidak ditemukan")
     if movement["status"] == "confirmed":
         raise HTTPException(400, "Movement yang sudah dikonfirmasi tidak bisa dibatalkan")
-    await db.wh_pending_movements.update_one(
-        {"id": movement_id},
+    # 2026-11-06 (pola P9): batal hanya bila status & qty scan belum berubah sejak dibaca — dulu bisa
+    # menimpa movement yang baru saja di-scan penuh (stok sudah bergerak, movement tampak batal).
+    res = await db.wh_pending_movements.update_one(
+        {"id": movement_id, "status": movement.get("status"), "scanned_qty": movement.get("scanned_qty")},
         {"$set": {"status": "cancelled", "cancelled_at": _now(), "cancelled_by": user.get("email")}}
     )
+    if not res.matched_count:
+        raise HTTPException(409, "Movement ini baru saja di-scan / diubah pengguna lain — muat ulang.")
     return {"message": "Movement dibatalkan"}
 
 

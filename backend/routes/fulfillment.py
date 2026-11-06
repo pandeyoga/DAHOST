@@ -630,6 +630,29 @@ async def dispatch_order(
 
 
 async def finalize_fulfillment_dispatch(db, order_id: str, user: dict) -> dict:
+    """Pintu finalisasi kirim pesanan — 2026-11-06 (pola P9): pesanan DIKUNCI selama difinalisasi.
+
+    Dua scan-out terakhir yang selesai bersamaan dulu sama-sama melihat "semua sudah ter-scan" lalu
+    sama-sama memakan lapisan HPP FIFO (dan bisa membuat dua dokumen kirim + dua jurnal HPP). Sekarang
+    hanya satu yang lolos kunci; yang lain mendapat jawaban "sedang diproses" tanpa efek apa pun."""
+    from core import doc_lock
+    try:
+        token = await doc_lock.claim(db, "marketing_orders", order_id, field="dispatch_lock", actor=user,
+                                     extra={"fulfillment_status": {"$ne": "dispatched"}})
+    except HTTPException as e:
+        if e.status_code == 404:
+            return {"ok": False, "reason": "order_not_found"}
+        cur = await db.marketing_orders.find_one({"id": order_id}, {"_id": 0, "fulfillment_status": 1})
+        if (cur or {}).get("fulfillment_status") == "dispatched":
+            return {"ok": True, "already_dispatched": True}
+        return {"ok": False, "reason": "finalize_in_progress"}
+    try:
+        return await _finalize_fulfillment_dispatch_locked(db, order_id, user)
+    finally:
+        await doc_lock.release(db, "marketing_orders", order_id, token, field="dispatch_lock")
+
+
+async def _finalize_fulfillment_dispatch_locked(db, order_id: str, user: dict) -> dict:
     """
     Dipicu dari WMS scan-out ketika outbound_fg suatu order sudah confirmed.
     Setelah SEMUA outbound_fg untuk order ini confirmed:

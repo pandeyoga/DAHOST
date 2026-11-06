@@ -26,7 +26,8 @@ DEFAULT_SHIFT = {
     "end_time": "17:00",
     "break_duration_minutes": 60,
     "effective_hours": 8.0,
-    "days_active": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+    # 2026-11-06 (pola P5): 6 hari kerja (keputusan owner, `core.workdays`), dulu Senin–Jumat
+    "days_active": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
     "is_default": True,
     "color": "#64748b",
     "status": "active",
@@ -218,6 +219,12 @@ async def create_shift(db, data: Dict) -> Dict:
         {"$or": [{"code": code}, {"shift_code": code}]}, {"_id": 0, "id": 1})
     if dup:
         raise ValueError(f"Kode shift '{code}' sudah dipakai.")
+    # 2026-11-06 (pola P8): aturan nama yang SAMA dengan POST /api/rahaza/shifts (dua pintu ke `rahaza_shifts`)
+    from core.reference_dedup import find_duplicate_ref
+    same = await find_duplicate_ref(db, "rahaza_shifts", name=data.get("shift_name"))
+    if same:
+        raise ValueError(f"Shift '{same.get('name') or same.get('shift_name')}' sudah ada. "
+                         "Pakai yang sudah ada supaya data tidak tercatat dua kali.")
 
     now = _now().isoformat()
     overnight = data.get("is_overnight", False)
@@ -240,7 +247,7 @@ async def create_shift(db, data: Dict) -> Dict:
         "shift_name": data.get("shift_name") or "",
         "break_duration_minutes": int(data.get("break_duration_minutes", 60)),
         "effective_hours": eff,
-        "days_active": data.get("days_active", ["Mon", "Tue", "Wed", "Thu", "Fri"]),
+        "days_active": data.get("days_active", ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]),  # pola P5: 6 hari
         "is_overnight": overnight,
         "is_default": bool(data.get("is_default", False)),
         "color": data.get("color", "#64748b"),

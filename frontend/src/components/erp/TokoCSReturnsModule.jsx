@@ -214,11 +214,16 @@ export default function TokoCSReturnsModule({ token, defaultTab = 'cs' }) {
           throw new Error(d.detail || 'Gagal approve');
         }
         // 2) Set refund_type + notes via PUT
-        await fetch(`/api/marketing/returns/${decisionDialog.id}`, {
+        const r2 = await fetch(`/api/marketing/returns/${decisionDialog.id}`, {
           method: 'PUT',
           headers,
           body: JSON.stringify({ refund_type: decision.refund_type, notes: decision.notes }),
         });
+        // 2026-11-06 (pola P6): jenis refund & catatan bisa ditolak server — jangan tampilkan sukses penuh
+        if (!r2.ok) {
+          const d = await r2.json().catch(() => ({}));
+          throw new Error(`Retur disetujui, tetapi jenis refund/catatan gagal disimpan: ${d.detail || r2.status}`);
+        }
         toast.success(`Disetujui — ${REFUND_TYPE_LABELS[decision.refund_type]}`);
       } else if (decision.action === 'reject') {
         const r1 = await fetch(`/api/marketing/returns/${decisionDialog.id}/reject`, {

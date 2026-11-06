@@ -16,7 +16,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiGet, apiPost, apiDownload } from '@/lib/api';
+import { formatRupiah } from '@/lib/format';
 import { Button } from '@/components/ui/button';
+import { Notice } from './moduleAtoms';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -35,7 +37,9 @@ function loadRegistry() {
   return _registryPromise;
 }
 
-export default function ImportExportToolbar({ collectionKey, label, onImported, size = 'sm' }) {
+// `caption` (opsional): pembeda tombol bila satu layar punya dua tabel, mis. "Unduh harga" / "Impor harga".
+// `importLabel` (opsional): teks tombol impor lengkap (mis. impor PO berjalan); menang atas `caption`.
+export default function ImportExportToolbar({ collectionKey, label, onImported, size = 'sm', caption = '', importLabel = '' }) {
   const [entry, setEntry] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
@@ -64,11 +68,13 @@ export default function ImportExportToolbar({ collectionKey, label, onImported, 
 
   return (
     <div className="flex items-center gap-2" data-testid={`ie-toolbar-${collectionKey}`}>
+      {/* 2026-11-06 (T6): entri impor-saja (mis. PO berjalan saat cutoff) tidak punya tombol Unduh */}
+      {entry.exportable !== false && (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="outline" size={size} disabled={exporting} data-testid={`ie-export-${collectionKey}`}>
             {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            <span className="ml-1.5">Unduh</span>
+            <span className="ml-1.5">{caption ? `Unduh ${caption}` : 'Unduh'}</span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -80,11 +86,12 @@ export default function ImportExportToolbar({ collectionKey, label, onImported, 
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      )}
 
       {entry.importable && (
         <Button variant="outline" size={size} onClick={() => setImportOpen(true)} data-testid={`ie-import-${collectionKey}`}>
           <Upload className="h-4 w-4" />
-          <span className="ml-1.5">Impor</span>
+          <span className="ml-1.5">{importLabel || (caption ? `Impor ${caption}` : 'Impor')}</span>
         </Button>
       )}
 
@@ -93,6 +100,8 @@ export default function ImportExportToolbar({ collectionKey, label, onImported, 
           collectionKey={collectionKey}
           label={label || entry.label}
           keyFields={entry.key_fields}
+          acceptsAlias={entry.accepts_alias}
+          existingRows={entry.existing_rows}
           onClose={() => setImportOpen(false)}
           onDone={() => { setImportOpen(false); onImported && onImported(); }}
         />
@@ -116,8 +125,9 @@ function Chip({ tone, icon: Icon, children }) {
   );
 }
 
-function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
+function ImportDialog({ collectionKey, label, keyFields, acceptsAlias, existingRows, onClose, onDone }) {
   const [file, setFile] = useState(null);
+  const [aliasFile, setAliasFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [dropActive, setDropActive] = useState(false);
@@ -130,12 +140,13 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
     }
   };
 
-  const runDryRun = useCallback(async (f) => {
+  const runDryRun = useCallback(async (f, alias) => {
     setBusy(true);
     setPreview(null);
     try {
       const fd = new FormData();
       fd.append('file', f);
+      if (alias) fd.append('alias_file', alias);
       const res = await apiPost(`/data-transfer/import/${collectionKey}?mode=dry_run`, fd);
       setPreview(res);
     } catch (e) {
@@ -148,7 +159,12 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
   const onFile = (f) => {
     if (!f) return;
     setFile(f);
-    runDryRun(f);
+    runDryRun(f, aliasFile);
+  };
+
+  const onAliasFile = (f) => {
+    setAliasFile(f || null);
+    if (file) runDryRun(file, f || null);
   };
 
   const commit = async () => {
@@ -157,7 +173,14 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      if (aliasFile) fd.append('alias_file', aliasFile);
       const res = await apiPost(`/data-transfer/import/${collectionKey}?mode=commit`, fd);
+      // 2026-11-06 (T6): impor per kelompok — kelompok yang gagal dilaporkan, bukan disebut sukses
+      if (res.failed?.length) {
+        toast.error(`${res.inserted} dibuat, ${res.failed.length} gagal: ${res.failed[0].error}`);
+        setPreview(null);
+        return;
+      }
       toast.success(`Impor sukses: ${res.inserted} baru, ${res.updated} diperbarui`);
       onDone();
     } catch (e) {
@@ -167,7 +190,8 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
     }
   };
 
-  const canCommit = preview && preview.valid > 0 && preview.invalid === 0 && !busy;
+  const canCommit = preview && preview.valid > 0 && preview.invalid === 0 && !busy
+    && (preview.would_skip === undefined || preview.would_insert > 0);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -178,7 +202,9 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
           </DialogTitle>
           <DialogDescription>
             Unduh template, isi datanya, lalu unggah. Sistem akan mengecek dulu (dry-run) sebelum Anda konfirmasi.
-            Key untuk update: <b>{(keyFields || []).join(' + ') || '-'}</b> (baris dengan key yang sudah ada akan diperbarui).
+            {existingRows === 'skip'
+              ? <>Kunci impor: <b>{(keyFields || []).join(' + ') || '-'}</b> (yang sudah pernah diimpor dilewati, tidak dibuat dua kali).</>
+              : <>Baris dicocokkan lewat <b>{(keyFields || []).join(' + ') || '-'}</b> (baris yang sudah ada akan diperbarui, tidak digandakan).</>}
           </DialogDescription>
         </DialogHeader>
 
@@ -208,6 +234,19 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
             onChange={(e) => onFile(e.target.files?.[0])} data-testid="ie-file-input" />
         </label>
 
+        {acceptsAlias && (
+          <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="ie-alias">
+            <span className="text-muted-foreground">Tabel padanan kode (opsional):</span>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-border px-2.5 py-1 font-medium text-foreground hover:bg-muted">
+              <FileText className="h-3.5 w-3.5 text-[hsl(var(--primary))]" />
+              {aliasFile ? aliasFile.name : 'Pilih berkas padanan (.csv / .xlsx)'}
+              <input type="file" accept=".csv,.xlsx" className="hidden"
+                onChange={(e) => onAliasFile(e.target.files?.[0])} data-testid="ie-alias-input" />
+            </label>
+            {preview && preview.alias_rows > 0 && <span className="text-muted-foreground">{preview.alias_rows} baris padanan dipakai</span>}
+          </div>
+        )}
+
         {busy && !preview && (
           <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Memproses file…</div>
         )}
@@ -218,15 +257,36 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
               <Chip tone="slate">Total: {preview.total_rows}</Chip>
               <Chip tone="green" icon={CheckCircle2}>Valid: {preview.valid}</Chip>
               <Chip tone="blue">Baru: {preview.would_insert}</Chip>
-              <Chip tone="amber">Update: {preview.would_update}</Chip>
+              {preview.would_skip > 0
+                ? <Chip tone="amber">Dilewati: {preview.would_skip}</Chip>
+                : <Chip tone="amber">Update: {preview.would_update}</Chip>}
               {preview.invalid > 0 && <Chip tone="red" icon={AlertTriangle}>Invalid: {preview.invalid}</Chip>}
+              {preview.skipped > 0 && <Chip tone="slate">Dilewati: {preview.skipped}</Chip>}
             </div>
 
+            {preview.totals && (
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-lg border border-border p-2 text-xs sm:grid-cols-3" data-testid="ie-totals">
+                <span>PO baru: <b className="tabular-nums">{preview.totals.po_baru}</b></span>
+                <span>Sudah diimpor: <b className="tabular-nums">{preview.totals.po_sudah_ada}</b></span>
+                <span>Pcs di CMT: <b className="tabular-nums">{preview.totals.pcs_sisa}</b></span>
+                <span>Hutang CMT terjadwal: <b className="tabular-nums">{formatRupiah(preview.totals.hutang_cmt_terjadwal)}</b></span>
+                <span>Piutang maklon terjadwal: <b className="tabular-nums">{formatRupiah(preview.totals.piutang_maklon_terjadwal)}</b></span>
+                <span>Nilai bahan di CMT (saldo awal barang dalam proses): <b className="tabular-nums">{formatRupiah(preview.totals.nilai_bahan_di_cmt)}</b></span>
+              </div>
+            )}
+
+            {preview.skipped > 0 && (
+              <div className="max-h-24 overflow-auto rounded-lg border border-border p-2 text-xs text-muted-foreground" data-testid="ie-skipped">
+                {(preview.preview_skipped || []).map((r, i) => (
+                  <div key={i}><span className="tabular-nums">Baris {r.row}:</span> {r.reason}</div>
+                ))}
+              </div>
+            )}
+
             {preview.invalid > 0 && (
-              <div className="rounded-lg border border-[hsl(var(--destructive)/0.3)] bg-[hsl(var(--destructive)/0.05)] p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-[hsl(var(--destructive))]">
-                  <AlertTriangle className="h-4 w-4" /> {preview.invalid} baris bermasalah — perbaiki dulu sebelum impor
-                </div>
+              // 2026-11-06 (T4): kotak galat = Notice (PANDUAN_UI), bukan <div> berwarna buatan sendiri
+              <Notice tone="danger" icon={AlertTriangle} testId="ie-invalid"
+                title={`${preview.invalid} baris bermasalah — perbaiki dulu sebelum impor`}>
                 <div className="max-h-40 overflow-auto text-xs">
                   {preview.preview_invalid.map((r, i) => (
                     <div key={i} className="border-b border-border/50 py-1">
@@ -235,7 +295,7 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
                     </div>
                   ))}
                 </div>
-              </div>
+              </Notice>
             )}
 
             {preview.valid > 0 && (
@@ -245,9 +305,9 @@ function ImportDialog({ collectionKey, label, keyFields, onClose, onDone }) {
                   {preview.preview_valid.slice(0, 100).map((r, i) => (
                     <div key={i} className="flex items-center gap-2 border-b border-border/40 py-1">
                       <span className={`rounded px-1.5 text-[10px] font-bold ${r.action === 'insert' ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]'}`}>
-                        {r.action === 'insert' ? 'BARU' : 'UPDATE'}
+                        {r.action === 'insert' ? 'BARU' : r.action === 'skip' ? 'DILEWATI' : 'UPDATE'}
                       </span>
-                      <span className="truncate text-foreground">{Object.values(r.data).slice(0, 4).join(' · ')}</span>
+                      <span className="truncate text-foreground">{Object.values(r.data).slice(0, r.data?.Catatan ? 5 : 4).join(' · ')}</span>
                     </div>
                   ))}
                 </div>

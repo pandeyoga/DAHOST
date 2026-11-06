@@ -108,11 +108,13 @@ async def inspect(db, panel: dict, *, onhand: float | None = None) -> dict:
     else:
         reasons.append("source_unknown")
 
-    orders_ref = await db.cutting_orders.count_documents({"output_material_id": pid})
+    # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    from core.cutting_material_issue import ORDERS
+    orders_ref = await db[ORDERS].count_documents({"output_material_id": pid})
     order_id = (panel.get("cutting_order_id") or "").strip()
     maker = None
     if order_id:
-        maker = await db.cutting_orders.find_one(
+        maker = await db[ORDERS].find_one(
             {"id": order_id}, {"_id": 0, "id": 1, "number": 1, "status": 1})
     # 2026-09-12: potongan yang lahir dari BOM/impor (`created_from != 'cutting'`) memang
     # belum punya order cutting — itu bahan master produk, BUKAN yatim.
@@ -170,9 +172,13 @@ async def inspect(db, panel: dict, *, onhand: float | None = None) -> dict:
 
 
 async def scan(db, *, limit: int = 500, only_orphan: bool = True) -> dict:
-    """Periksa SEMUA master potongan. Dipakai layar + gate INV-F37."""
-    panels = await db.rahaza_materials.find(
-        {"is_cut_panel": True}, {"_id": 0}).sort("code", 1).to_list(limit)
+    """Periksa SEMUA master potongan. Dipakai layar + gate INV-F37.
+
+    2026-11-06 (pola P7): dulu hanya `limit` (500) potongan pertama yang DIPERIKSA, padahal data VPS kini
+    1.273 potongan aktif — `panel_total` & hitungan yatim/bisa-dibersihkan terpotong diam-diam. Kini semua
+    diperiksa dan dihitung; `limit` hanya membatasi jumlah baris `items` yang dikirim ke layar
+    (`items_truncated` = True bila ada yang tidak ikut terkirim)."""
+    panels = [p async for p in db.rahaza_materials.find({"is_cut_panel": True}, {"_id": 0}).sort("code", 1)]
     ids = [p["id"] for p in panels]
     onhand = await stock_service.onhand_map(ids, db=db) if ids else {}
     items = []
@@ -181,8 +187,10 @@ async def scan(db, *, limit: int = 500, only_orphan: bool = True) -> dict:
         if row["orphan"] or not only_orphan:
             items.append(row)
     orphans = [r for r in items if r["orphan"]]
+    cap = max(1, int(limit or 0)) if limit else len(items)
     return {
-        "items": items,
+        "items": items[:cap],
+        "items_truncated": len(items) > cap,
         "panel_total": len(panels),
         "orphan_count": len(orphans),
         "cleanable_count": len([r for r in orphans if r["cleanable"]]),
@@ -202,7 +210,8 @@ async def cleanup(db, user: dict | None = None, *, ids: list[str] | None = None,
     q: dict = {"is_cut_panel": True}
     if ids:
         q["id"] = {"$in": list(ids)}
-    panels = await db.rahaza_materials.find(q, {"_id": 0}).to_list(1000)
+    # 2026-11-06 (pola P7): semua potongan (dulu to_list(1000) — 1.273 potongan, sisanya tidak pernah diperiksa)
+    panels = [p async for p in db.rahaza_materials.find(q, {"_id": 0})]
     removed, kept = [], []
     for p in panels:
         row = await inspect(db, p)
@@ -245,7 +254,8 @@ async def remove_if_unused(db, *, panel_id: str, order_id: str,
         return None
     row = await inspect(db, panel)
     # order ini sendiri masih menunjuk master → jangan hitung sebagai penahan
-    others = await db.cutting_orders.count_documents(
+    from core.cutting_material_issue import ORDERS  # 2026-11-06 (pola P2): koleksi dibaca lewat konstanta penulisnya (satu nama, tidak ada koleksi hantu)
+    others = await db[ORDERS].count_documents(
         {"output_material_id": panel_id, "id": {"$ne": order_id}})
     if others:
         return None

@@ -8,7 +8,8 @@ export const RND_UNITS = [
   'kg', 'gram', 'ons', 'ton',
   'pcs', 'lusin', 'kodi', 'gross', 'pasang', 'lembar', 'set',
   'liter', 'ml',
-  'rol', 'pak', 'karton', 'bal', 'ikat',
+  // 2026-11-06 (pola P8): roll/pack = ejaan master material
+  'roll', 'pack', 'karton', 'bal', 'ikat',
 ];
 
 export const UOM_STATUS = {

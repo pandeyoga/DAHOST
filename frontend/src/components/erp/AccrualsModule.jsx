@@ -11,7 +11,6 @@ import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
-import { todayWIB } from '@/lib/waktu';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { monthOptions } from './finance/PeriodPicker';
 
@@ -88,12 +87,14 @@ export default function AccrualsModule({ token }) {
   };
 
   const reverse = async (id) => {
-    if (!(await confirmDialog({ title: 'Balik akrual ini?', body: 'Jurnal pembalik dicatat per hari ini.', confirmLabel: 'Balik' }))) return;
+    // 2026-11-06 (pola P1): server TIDAK membaca tanggal kiriman layar — jurnal pembalik selalu
+    // bertanggal 1 periode pembalik (bulan sesudah periode akrual, rahaza_posting.post_accrual_reversal).
+    // Dulu layar mengirim `reversal_date` hari ini dan menulis "dicatat per hari ini" (tidak benar).
+    if (!(await confirmDialog({ title: 'Balik akrual ini?', body: 'Jurnal pembalik dicatat pada tanggal 1 bulan sesudah periode akrual.', confirmLabel: 'Balik' }))) return;
     try {
       const r = await fetch(`/api/rahaza/finance/accruals/${id}/reverse`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ reversal_date: todayWIB() })
       });
       if (r.ok) {
         toast({ title: 'Berhasil', description: 'Akrual dibalik' });

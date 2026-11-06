@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import apiFetch from '@/lib/apiFetch';
+import { withFileAuth } from '@/lib/fileUrl';
 
 // Import Communication Hub and Workspace components
 import CommunicationHubPortal from '../../CommunicationHubPortal';
@@ -206,7 +207,7 @@ export default function StudyGroupDetail({ groupId, onNavigate, token, user }) {
                     data-testid={`member-${member.id}`}
                   >
                     <Avatar className="h-6 w-6">
-                      {member.foto_url && <AvatarImage src={member.foto_url} />}
+                      {member.foto_url && <AvatarImage src={withFileAuth(member.foto_url)} />}
                       <AvatarFallback className="text-xs">{getInitials(member.name)}</AvatarFallback>
                     </Avatar>
                     <span className="flex-1 truncate">{member.name}</span>
