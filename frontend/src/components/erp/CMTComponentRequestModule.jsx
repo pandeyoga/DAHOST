@@ -109,6 +109,33 @@ export default function CMTComponentRequestModule({ token }) {
       .catch(() => { if (alive) setModelVariants([]); });
     return () => { alive = false; };
   }, [showForm, form.model_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 2026-11-07 (Tahap 6, PR2): bahan BOM produk terpilih tampil PALING ATAS di pilihan barang, berlabel
+  // "(dari BOM)". Bahan master lain tetap bisa dipilih. Sumber: BOM aktif model itu (GET /api/rahaza/boms),
+  // termasuk kain asal baris potongan.
+  const [bomKeys, setBomKeys] = useState({ ids: new Set(), codes: new Set() });
+  useEffect(() => {
+    if (!showForm || !form.model_id) { setBomKeys({ ids: new Set(), codes: new Set() }); return; }
+    let alive = true;
+    fetch(`${API}/api/rahaza/boms?model_id=${encodeURIComponent(form.model_id)}`, { headers: h })
+      .then(r => (r.ok ? r.json() : [])).then(d => {
+        if (!alive) return;
+        const ids = new Set(); const codes = new Set();
+        (Array.isArray(d) ? d : []).forEach(b => (b.materials || []).forEach(m => {
+          if (m.material_id) ids.add(m.material_id);
+          if (m.code) codes.add(String(m.code).toUpperCase());
+          if (m.source_material_code) codes.add(String(m.source_material_code).toUpperCase());
+        }));
+        setBomKeys({ ids, codes });
+      })
+      .catch(() => { if (alive) setBomKeys({ ids: new Set(), codes: new Set() }); });
+    return () => { alive = false; };
+  }, [showForm, form.model_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const materialChoices = useMemo(() => {
+    const inBom = (m) => bomKeys.ids.has(m.id) || bomKeys.codes.has(String(m.code || '').toUpperCase());
+    const fromBom = materials.filter(inBom).map(m => ({ ...m, fromBom: true }));
+    return [...fromBom, ...materials.filter(m => !inBom(m))];
+  }, [materials, bomKeys]);
+  const bomCount = materialChoices.filter(m => m.fromBom).length;
   // Ukuran & warna = milik varian produk terpilih; tanpa produk (atau produk belum punya varian) = master.
   const sizeOpts = useMemo(() => {
     const fromVar = [...new Set(modelVariants.map(v => v.size_code).filter(Boolean))];
@@ -567,6 +594,11 @@ export default function CMTComponentRequestModule({ token }) {
                   <Plus className="w-3.5 h-3.5" /> Tambah Baris
                 </Button>
               </div>
+              {form.model_id && bomCount > 0 && (
+                <p className="text-[11px] text-muted-foreground mb-2" data-testid="cmt-form-bom-hint">
+                  {bomCount} barang dari BOM {form.model_code || 'produk ini'} tampil paling atas (bertanda "dari BOM"). Barang lain tetap bisa dipilih.
+                </p>
+              )}
               <div className="space-y-2">
                 {form.items.map((it, idx) => (
                   <div key={idx} className="grid grid-cols-12 gap-2 items-start" data-testid={`cmt-form-row-${idx}`}>
@@ -576,7 +608,7 @@ export default function CMTComponentRequestModule({ token }) {
                       onChange={e => pickMaterial(idx, e.target.value)} aria-label="Barang dari master"
                       data-testid={`cmt-form-row-${idx}-type`}>
                       <option value="">{form.request_type === 'accessory' ? '— Pilih aksesoris (master) —' : '— Pilih bahan (master) —'}</option>
-                      {materials.map(m => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+                      {materialChoices.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name}${m.fromBom ? ' (dari BOM)' : ''}`}</option>)}
                     </SmartNativeSelect>
                     <SmartNativeSelect className="w-full" wrapperClassName="col-span-2 min-w-0" value={it.size || ''} aria-label="Ukuran"
                       onChange={e => updateItem(idx, 'size', e.target.value)} data-testid={`cmt-form-row-${idx}-size`}>

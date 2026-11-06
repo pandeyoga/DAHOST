@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DepartmentSelect } from './hrPickers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { AlertTriangle, Sparkles, TrendingDown, Users, Loader2, Brain, Target, UserX, Shield } from 'lucide-react';
@@ -41,7 +41,7 @@ export default function HRAttritionModule({ token }) {
     setPredicting(true);
     setResult(null);
     try {
-      const url = `${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/attrition/predict${department ? `?department=${department}` : ''}`;
+      const url = `${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/attrition/predict${department ? `?department=${encodeURIComponent(department)}` : ''}`;
       const r = await fetch(url, { method: 'POST', headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
@@ -85,19 +85,10 @@ export default function HRAttritionModule({ token }) {
       <GlassCard className="p-6">
         <div className="flex items-center gap-4">
           <div className="flex-1">
-            <Select value={department || '__all__'} onValueChange={(v) => setDepartment(v === '__all__' ? '' : v)}>
-              <SelectTrigger>
-                <SelectValue placeholder="Semua departemen" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__all__">Semua Departemen</SelectItem>
-                <SelectItem value="Production">Production</SelectItem>
-                <SelectItem value="Warehouse">Warehouse</SelectItem>
-                <SelectItem value="Finance">Finance</SelectItem>
-                <SelectItem value="HR">HR</SelectItem>
-                <SelectItem value="Marketing">Marketing</SelectItem>
-              </SelectContent>
-            </Select>
+            {/* 2026-11-07 (OR1): dari Struktur Organisasi — dulu daftar tetap berbahasa Inggris yang tidak cocok
+                dengan departemen karyawan (saringan selalu kosong) */}
+            <DepartmentSelect token={token} value={department} onChange={setDepartment}
+              placeholder="Semua departemen" testId="attrition-department" />
           </div>
           <Button onClick={handlePredict} disabled={predicting} className="shrink-0">
             {predicting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Memprediksi...</> : <><Brain className="w-4 h-4 mr-2" /> Prediksi Attrition</>}

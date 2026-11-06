@@ -141,10 +141,66 @@ async def _gen_supplier_code(db, name: str = "") -> str:
 
 async def sync_po_vendor_name(db, supplier_id: str, new_name: str | None, old_name: str | None) -> None:
     """Nama supplier berubah → sinkronkan cache nama di PO (bukan SSOT, hanya cermin tampilan).
-    2026-11-06 (T4): satu helper untuk form supplier & impor Excel Data Transfer."""
+    2026-11-06 (T4): satu helper untuk form supplier & impor Excel Data Transfer.
+    2026-11-07 (Tahap 6 PG5): nama supplier yang tertaut di master aksesoris ikut diperbarui."""
     if new_name and new_name != old_name:
         await db.rahaza_purchase_orders.update_many(
             {"supplier_id": supplier_id}, {"$set": {"vendor_name": new_name}})
+        await db.rahaza_materials.update_many(
+            {"supplier_id": supplier_id}, {"$set": {"supplier": new_name}})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tautan supplier dari modul lain (2026-11-07, Tahap 6 PG5 — aksesoris & PR aksesoris)
+# ─────────────────────────────────────────────────────────────────────────────
+def loose_name_key(name) -> str:
+    """Kunci cocok-nama LONGGAR: huruf besar/kecil & spasi diabaikan ("PT  Uji " = "pt uji").
+    Lebih ketat dari `name_key` (tanda baca & prefiks badan usaha tetap dihitung) — dipakai untuk
+    menautkan nama lama secara otomatis hanya bila cocok dengan SATU supplier."""
+    return re.sub(r"\s+", " ", str(name or "")).strip().lower()
+
+
+async def match_supplier_by_name(db, name) -> tuple:
+    """(supplier | None, jumlah supplier yang cocok) — tertaut hanya bila cocok tepat satu."""
+    key = loose_name_key(name)
+    if not key:
+        return None, 0
+    rx = r"^\s*" + r"\s+".join(re.escape(p) for p in key.split(" ")) + r"\s*$"
+    hits = [s for s in await db.rahaza_suppliers.find(
+        {"name": {"$regex": rx, "$options": "i"}}, {"_id": 0, "id": 1, "code": 1, "name": 1}).to_list(20)
+        if loose_name_key(s.get("name")) == key]
+    return (hits[0] if len(hits) == 1 else None), len(hits)
+
+
+async def supplier_link_patch(db, body: dict, existing: dict | None = None, *, field: str = "supplier") -> dict:
+    """Field supplier tertaut untuk dokumen non-PO (master aksesoris, PR aksesoris).
+
+    * `supplier_id` terisi → wajib ada di Master Supplier & aktif; NAMA (`field`) + kode diambil dari master
+      (ketikan klien diabaikan). Id sama dengan yang tersimpan → tidak diperiksa ulang (supplier yang kini
+      nonaktif tidak menghalangi ubah field lain).
+    * `supplier_id` kosong / tidak dikirim (klien lama) → nama apa adanya; ditautkan otomatis bila cocok
+      dengan tepat SATU supplier (huruf besar/kecil & spasi diabaikan), selain itu tanpa tautan.
+    Return {} bila body tidak menyentuh supplier sama sekali."""
+    cur = existing or {}
+    if "supplier_id" not in body and field not in body:
+        return {}
+    sid = str(body.get("supplier_id") or "").strip()
+    if sid:
+        if existing is not None and sid == (cur.get("supplier_id") or ""):
+            return {}
+        sup = await db.rahaza_suppliers.find_one({"id": sid}, {"_id": 0, "id": 1, "code": 1, "name": 1,
+                                                               "is_active": 1})
+        if not sup:
+            raise HTTPException(400, "Supplier yang dipilih tidak ada di Master Supplier.")
+        if sup.get("is_active") is False:
+            raise HTTPException(400, f"Supplier {sup.get('name') or ''} sudah tidak aktif — pilih supplier lain.")
+        return {"supplier_id": sup["id"], "supplier_code": sup.get("code") or None, field: sup.get("name") or ""}
+    name = str(body.get(field) if field in body else cur.get(field) or "").strip()
+    if existing is not None and "supplier_id" not in body and cur.get("supplier_id") \
+            and name == str(cur.get(field) or "").strip():
+        return {}                          # klien lama mengirim ulang nama yang sama → tautan tetap
+    sup, _n = await match_supplier_by_name(db, name)
+    return {"supplier_id": (sup or {}).get("id"), "supplier_code": (sup or {}).get("code"), field: name}
 
 
 async def _require_procurement(request: Request):
@@ -560,10 +616,22 @@ async def _price_row_from_body(db, supplier_id: str, body: dict, cur: dict | Non
     }
 
 
+def _valid_today_q(today: str) -> dict:
+    """Baris harga yang berlaku HARI INI (aktif & sudah mulai berlaku). `valid_to` disaring sesudahnya."""
+    return {"is_active": True, "valid_from": {"$lte": today}}
+
+
+def _not_expired(rows: list, today: str) -> list:
+    return [r for r in rows if not r.get("valid_to") or str(r["valid_to"]) >= today]
+
+
 @router.get("/suppliers/{supplier_id}/price-list")
 async def list_price_list(supplier_id: str, request: Request,
                           material_id: Optional[str] = None,
-                          active_only: bool = Query(True)):
+                          active_only: bool = Query(True),
+                          current: bool = Query(False)):
+    """Daftar harga supplier. `current=true` (2026-11-07, Tahap 6 PG2): hanya harga yang berlaku hari ini —
+    aturan yang SAMA dengan `/price-lookup` (dipakai form PO: barang berdaftar-harga supplier tampil di atas)."""
     await _require_procurement_read(request)
     db = get_db()
     q: dict = {"supplier_id": supplier_id}
@@ -571,7 +639,12 @@ async def list_price_list(supplier_id: str, request: Request,
         q["material_id"] = material_id
     if active_only:
         q["is_active"] = True
+    today = today_wib().isoformat()
+    if current:
+        q.update(_valid_today_q(today))
     rows = await db.rahaza_supplier_price_lists.find(q, {"_id": 0}).sort("material_code", 1).to_list(500)
+    if current:
+        rows = _not_expired(rows, today)
     return {"items": serialize_doc(rows)}
 
 
@@ -633,14 +706,13 @@ async def price_lookup(request: Request, material_id: str, supplier_id: Optional
     await _require_procurement_read(request)
     db = get_db()
     today = today_wib().isoformat()
-    q: dict = {"material_id": material_id, "is_active": True,
-               "valid_from": {"$lte": today}}
+    q: dict = {"material_id": material_id, **_valid_today_q(today)}
     if supplier_id:
         q["supplier_id"] = supplier_id
     if uom:
         q["uom"] = uom.strip().lower()
     rows = await db.rahaza_supplier_price_lists.find(q, {"_id": 0}).to_list(200)
-    rows = [r for r in rows if not r.get("valid_to") or str(r["valid_to"]) >= today]
+    rows = _not_expired(rows, today)
     sup_ids = list({r["supplier_id"] for r in rows})
     sups = await db.rahaza_suppliers.find({"id": {"$in": sup_ids}},
                                           {"_id": 0, "id": 1, "code": 1, "name": 1,

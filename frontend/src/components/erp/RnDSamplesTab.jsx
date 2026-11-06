@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,7 @@ import PaginationLite, { useClientPagination } from '@/components/ui/pagination-
 import OnwardCTA from './OnwardCTA';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import RnDUnitSelect from './RnDUnitSelect';
+import { useActiveEmployees, employeeLabel } from './hr/hrPickers';
 
 const STATUS_CONF = {
   draft:     { label: 'Draft',     cls: 'bg-muted dark:bg-zinc-500/20 text-muted-foreground dark:text-zinc-400 border-border dark:border-zinc-500/30',     Icon: Clock },
@@ -31,8 +32,17 @@ const PRIORITY_CLS = {
 };
 
 const emptyForm = {
-  style_id: '', quantity: 1, priority: 'normal', sample_pic: '', due_date: '', notes: '',
+  style_id: '', quantity: 1, priority: 'normal', sample_pic: '', sample_pic_employee_id: '',
+  sample_pic_external: false, due_date: '', notes: '',
 };
+
+// 2026-11-07 (Tahap 6, HR4): PIC sample DIPILIH dari karyawan aktif — karyawan bagian sample (departemen /
+// jabatan / peran memuat "sample", "RnD", "riset") ditawarkan paling atas. Penjahit luar tetap bisa lewat
+// pilihan eksplisit "Penjahit luar — ketik nama" (disimpan dengan penanda `sample_pic_external`).
+const PIC_EXTERNAL = '__luar__';
+const SAMPLE_DEPT_RX = /sampl|\brnd\b|r\s*&\s*d|riset/i;
+const isSampleStaff = (e) => [e?.department, e?.job_title, e?.position, e?.role_hint]
+  .some((v) => v && SAMPLE_DEPT_RX.test(String(v)));
 
 export default function RnDSamplesTab({ token, onNavigate }) {
   const [samples,  setSamples]  = useState([]);
@@ -55,6 +65,19 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   const [accReqCode, setAccReqCode] = useState('');
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const { employees } = useActiveEmployees(token, { enabled: showForm });
+  const picChoices = useMemo(() => {
+    const list = (employees || []).filter((e) => e && e.id);
+    return [...list.filter(isSampleStaff).map((e) => ({ ...e, sampleStaff: true })),
+            ...list.filter((e) => !isSampleStaff(e))];
+  }, [employees]);
+  const picValue = form.sample_pic_employee_id || (form.sample_pic_external ? PIC_EXTERNAL : '');
+  const pickPic = (v) => {
+    if (v === PIC_EXTERNAL) { setForm(p => ({ ...p, sample_pic_employee_id: '', sample_pic_external: true, sample_pic: '' })); return; }
+    const emp = (employees || []).find((e) => e.id === v);
+    setForm(p => ({ ...p, sample_pic_employee_id: v, sample_pic_external: false, sample_pic: emp?.name || '' }));
+  };
 
   const fetchSamples = async () => {
     setLoading(true);
@@ -83,6 +106,7 @@ export default function RnDSamplesTab({ token, onNavigate }) {
   const handleCreate = async () => {
     if (!form.style_id) return toast.error('Pilih style terlebih dahulu');
     if (!(Number(form.quantity) > 0)) return toast.error('Jumlah sample minimal 1 pcs');
+    if (form.sample_pic_external && !String(form.sample_pic || '').trim()) return toast.error('Ketik nama penjahit luar');
     try {
       await apiFetch('/dewi/rnd/sample-requests', { method: 'POST', body: { ...form, quantity: Number(form.quantity) } });
       toast.success('Sample request berhasil dibuat');
@@ -289,6 +313,7 @@ export default function RnDSamplesTab({ token, onNavigate }) {
                     <td className="px-4 py-3 text-foreground/70">{s.quantity} pcs</td>
                     <td className="px-4 py-3 text-foreground/70 text-xs" data-testid={`sample-pic-${s.id}`}>
                       {s.sample_pic || <span className="text-foreground/40">belum ditentukan</span>}
+                      {s.sample_pic && s.sample_pic_external && <span className="ml-1 text-[11px] text-muted-foreground">(penjahit luar)</span>}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded-full border ${PRIORITY_CLS[s.priority] || PRIORITY_CLS.normal}`}>
@@ -385,10 +410,21 @@ export default function RnDSamplesTab({ token, onNavigate }) {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label>PIC / Pembuat Sample</Label>
-              <Input className="mt-1" value={form.sample_pic}
-                onChange={e => f('sample_pic', e.target.value)}
-                placeholder="Nama penjahit / tim sample"
-                data-testid="sample-pic-input" />
+              <SmartNativeSelect value={picValue} onChange={e => pickPic(e.target.value)}
+                searchable={true} className="w-full mt-1" aria-label="PIC / pembuat sample"
+                data-testid="sample-pic-select">
+                <option value="">— Belum ditentukan —</option>
+                <option value={PIC_EXTERNAL}>Penjahit luar — ketik nama</option>
+                {picChoices.map((e) => (
+                  <option key={e.id} value={e.id}>{`${employeeLabel(e)}${e.sampleStaff ? ' — bagian sample' : ''}`}</option>
+                ))}
+              </SmartNativeSelect>
+              {form.sample_pic_external && (
+                <Input className="mt-1.5" value={form.sample_pic}
+                  onChange={e => f('sample_pic', e.target.value)}
+                  placeholder="Nama penjahit luar"
+                  data-testid="sample-pic-input" />
+              )}
             </div>
             <div>
               <Label>Target Selesai</Label>

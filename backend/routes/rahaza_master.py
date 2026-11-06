@@ -643,7 +643,9 @@ async def create_employee(request: Request):
         "name": name,
         # ─── Info Dasar
         "department": body.get("department") or "",
-        "job_title": body.get("job_title") or "Operator",
+        # 2026-11-07 (OR2): tanpa jabatan = KOSONG (dulu otomatis "Operator" — jabatan palsu di laporan,
+        # slip, dan struktur). Jabatan dipilih dari Struktur Organisasi di formulir Data Karyawan.
+        "job_title": (body.get("job_title") or "").strip(),
         "location_id": body.get("location_id") or None,
         # 2026-11-07 (Tahap 5): shift utama karyawan (fallback absensi `resolve_day_shift`) — dulu hanya
         # terisi lewat impor; formulir Data Karyawan kini memilihnya dari master shift.

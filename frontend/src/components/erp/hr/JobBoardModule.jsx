@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { toast } from 'sonner';
 import { Briefcase, Plus, Search, Send, Loader2, MapPin, DollarSign, Calendar, Award, TrendingUp, FileText } from 'lucide-react';
 import { IconButton } from '../IconButton';
+import { DepartmentSelect } from './hrPickers';
 
 const MATCH_COLOR = { 
   'Strongly Recommended': '#10b981',
@@ -442,8 +443,10 @@ export default function JobBoardModule({ token }) {
                 <Input value={jobForm.title} onChange={e => setJobForm({ ...jobForm, title: e.target.value })} placeholder="Senior Developer" />
               </div>
               <div>
-                <Label>Department *</Label>
-                <Input value={jobForm.department} onChange={e => setJobForm({ ...jobForm, department: e.target.value })} placeholder="Engineering" />
+                <Label>Departemen *</Label>
+                {/* 2026-11-07 (OR1): dari Struktur Organisasi (satu daftar untuk semua formulir) */}
+                <DepartmentSelect token={token} value={jobForm.department} testId="job-board-department"
+                  onChange={v => setJobForm(f => ({ ...f, department: v }))} />
               </div>
             </div>
 

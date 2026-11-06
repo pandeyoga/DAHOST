@@ -16,6 +16,8 @@ from typing import Optional, Any
 from datetime import datetime, timezone
 from database import get_db
 from auth import require_auth
+from core.authz import only
+from core.roles import SYSTEM_CONFIG_ROLES
 
 router = APIRouter(prefix='/api/dewi/system/config', tags=['Dewi-System-Config'])
 
@@ -28,7 +30,9 @@ router = APIRouter(prefix='/api/dewi/system/config', tags=['Dewi-System-Config']
 # non-PKP tidak memungut PPN, PKP = 12% × DPP 11/12. Dokumen lama di DB dibiarkan (tidak dihapus).
 # 2026-11-06 (pola P5): `hpp_overhead_pct` (15%) PENSIUN — keputusan owner: overhead pabrik tidak masuk HPP, dan
 # tidak ada kode yang membacanya; setelan yang tampil hanya menyesatkan.
-RETIRED_KEYS = {'maklon_tax_pct', 'hpp_overhead_pct'}
+# 2026-11-07 (Tahap 6, SY4): `notification_whatsapp_provider` PENSIUN — tidak dibaca kode mana pun; notifikasi
+# WhatsApp memakai Fonnte (Pusat Notifikasi), jadi pilihan "twilio | waba_cloud | wabots" hanya menyesatkan.
+RETIRED_KEYS = {'maklon_tax_pct', 'hpp_overhead_pct', 'notification_whatsapp_provider'}
 
 # 2026-11-07 (Tahap 5, audit form) — setelan teks yang nilainya HARUS salah satu kode tetap.
 # Dulu diketik bebas ("30 hari" untuk termin) sehingga pembaca kode (`TERM_DAYS`) diam-diam jatuh
@@ -40,8 +44,6 @@ CONFIG_CHOICES = {
         {'value': 'net_30', 'label': '30 hari setelah tagihan'},
         {'value': 'net_60', 'label': '60 hari setelah tagihan'},
     ],
-    # `notification_whatsapp_provider` sengaja TIDAK dikunci: tidak ada kode yang membacanya dan
-    # Pusat Notifikasi memakai penyedia lain (Fonnte) — keputusan owner (hapus / sambungkan).
 }
 
 
@@ -163,15 +165,7 @@ DEFAULT_CONFIGS = [
         'data_type': 'boolean',
         'is_secret': False,
     },
-    {
-        'key': 'notification_whatsapp_provider',
-        'value': 'twilio',
-        'category': 'notification',
-        'label': 'WhatsApp Provider',
-        'description': 'twilio | waba_cloud | wabots',
-        'data_type': 'string',
-        'is_secret': False,
-    },
+    # `notification_whatsapp_provider` dicabut 2026-11-07 (SY4) — lihat RETIRED_KEYS.
     {
         'key': 'notification_whatsapp_api_key',
         'value': '',
@@ -376,7 +370,10 @@ async def get_config(key: str, user: dict = Depends(require_auth)):
         doc.pop('value', None)
     return doc
 
-@router.put('/{key}')
+# 2026-11-07 (Tahap 6, SY2 — keputusan owner): MENGUBAH pengaturan sistem (termasuk kunci rahasia) hanya
+# admin / owner / superadmin. Dulu semua peran internal boleh. Membaca tetap seperti semula (rahasia disamarkan
+# untuk non-admin); layar menampilkan mode baca saja bagi peran lain.
+@router.put('/{key}', dependencies=only(*SYSTEM_CONFIG_ROLES))
 async def update_config(key: str, payload: ConfigUpdate, user: dict = Depends(require_auth)):
     db = get_db()
     # 2026-11-02 (K15): Langkah 2 (potong stok dari impor) tidak boleh menyala bersama Scan Keluar.
@@ -422,7 +419,7 @@ class BulkUpdateIn(BaseModel):
     model_config = {'extra': 'allow'}
 
 
-@router.post('/bulk')
+@router.post('/bulk', dependencies=only(*SYSTEM_CONFIG_ROLES))  # SY2 — lihat update_config
 async def bulk_update(payload: BulkUpdateIn, user: dict = Depends(require_auth)):
     """Update multiple configs in one call. payload = {key: value, ...}"""
     db = get_db()

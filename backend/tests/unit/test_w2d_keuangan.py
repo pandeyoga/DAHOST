@@ -211,8 +211,11 @@ def test_k18_pembelian_tunai_jurnal_ke_akun_kategori(asset_db, je_sink):
 
 
 def test_k18_pembelian_hutang_dan_faktur_pemasok(asset_db, je_sink):
+    # Tahap 6 (KU2): hutang faktur menyusul wajib pemasok dari master
+    asset_db.rahaza_suppliers.docs.append({"id": "sup-1", "code": "SUP-1", "name": "PT Pemasok Uji", "is_active": True})
     run(fa.register_fixed_asset(asset_db, {**BASE, "category": "kendaraan", "name": "Mobil", "purchase_cost": 60_000_000,
-                                           "useful_life_months": 60, "funding_source": "payable"}, USER, code="FA-T2"))
+                                           "useful_life_months": 60, "funding_source": "payable", "supplier_id": "sup-1"},
+                                USER, code="FA-T2"))
     assert _lines(je_sink[-1]) == {("1-2400", 60_000_000, 0), ("2-1150", 0, 60_000_000)}
     # faktur pemasok sudah menjurnal Dr 6-2900 / Cr 2-1100 → perolehan mereklas 6-2900 ke akun aset
     asset_db.rahaza_ap_invoices.docs.append({"id": "ap1", "invoice_number": "AP-1", "status": "sent", "subtotal": 5_000_000,

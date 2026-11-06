@@ -111,6 +111,28 @@ def _norm_item(it: dict) -> dict:
     }
 
 
+async def _requester_fields(db, user: dict, employee_id: Optional[str]) -> dict:
+    """2026-11-07 (Tahap 6, keputusan owner HR3): PEMOHON = karyawan dari master karyawan.
+
+    `employee_id` dikirim → wajib karyawan aktif; id + kode + nama diambil dari master (bukan ketikan).
+    Tidak dikirim → karyawan yang tertaut ke akun login (SSOT `utils.employee_identity`); bila akun belum
+    tertaut, nama akun dipakai seperti dulu. `requester_id` tetap id AKUN pembuat (jejak audit)."""
+    eid = str(employee_id or '').strip()
+    if eid:
+        emp = await db.rahaza_employees.find_one({'id': eid}, {'_id': 0, 'id': 1, 'name': 1, 'employee_code': 1,
+                                                              'active': 1})
+        if not emp or emp.get('active') is False:
+            raise HTTPException(400, 'Pemohon harus karyawan aktif dari Data Karyawan.')
+    else:
+        from utils.employee_identity import resolve_my_employee
+        emp = await resolve_my_employee(db, user)
+    if not emp:
+        return {'requester_employee_id': None, 'requester_employee_code': '',
+                'requester_name': user.get('name', '')}
+    return {'requester_employee_id': emp['id'], 'requester_employee_code': emp.get('employee_code') or '',
+            'requester_name': emp.get('name') or user.get('name', '')}
+
+
 async def _enrich_labels(db, docs: list) -> list:
     """2026-11-06 (Tahap 2): nama vendor, nomor surat jalan asal & kode sampel untuk layar — dulu
     layar menampilkan id mentah (UUID) vendor / surat jalan / permintaan sampel."""
@@ -276,7 +298,9 @@ async def create_request(body: dict, user: dict = Depends(require_auth)):
         'status': status,
         'submitted_at': now_utc() if status == 'submitted' else None,
         'requester_id': user['id'],
-        'requester_name': user.get('name', ''),
+        # HR3: pemohon = karyawan (master); akun pembuat dicatat terpisah
+        **(await _requester_fields(db, user, body.get('requester_employee_id'))),
+        'created_by_name': user.get('name', ''),
         'allocated_by': None,
         'allocated_at': None,
         'delivered_by': None,
@@ -303,8 +327,12 @@ async def update_request(request_id: str, body: dict, user: dict = Depends(requi
                                  'Siapkan, Tandai Kirim, atau Tolak supaya stok dan jejak auditnya tercatat.')
 
     upd = {k: v for k, v in body.items()
-           if k not in ('id', '_id', 'created_at', 'created_by', 'requester_id', 'request_code')
+           if k not in ('id', '_id', 'created_at', 'created_by', 'requester_id', 'request_code',
+                        # HR3: pemohon hanya lewat master karyawan (di bawah), bukan nama ketikan
+                        'requester_name', 'requester_employee_id', 'requester_employee_code', 'created_by_name')
            and k not in WORKFLOW_FIELDS}
+    if body.get('requester_employee_id') and body['requester_employee_id'] != doc.get('requester_employee_id'):
+        upd.update(await _requester_fields(db, user, body['requester_employee_id']))
     if 'items' in upd:
         # 2026-11-06 (Tahap 2): baris disusun ulang dengan bentuk yang SAMA seperti saat dibuat, dan
         # tautan baris lama (material_id + field tautan lain) dipertahankan bila klien tidak

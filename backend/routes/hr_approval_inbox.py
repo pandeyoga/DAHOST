@@ -8,6 +8,7 @@ Unified inbox for managers/HR to approve multiple types of HR requests in one pl
 - Penyesuaian Gaji (Salary Adjustment) — rahaza_salary_adjustments (status in
   draft/pending_manager/pending_hr)
 - Resignasi — rahaza_employees (resignation flow with status=submitted)
+- Perubahan data — rahaza_employee_data_changes (No. HP/alamat/kontak darurat dari Portal Saya, HR1 2026-11-07)
 
 Endpoints:
 - GET  /api/hr/inbox                        — aggregate all pending approvals
@@ -37,7 +38,7 @@ router = APIRouter(prefix='/api/hr/inbox', tags=['HR-Inbox'])
 # Allowed request types & validation
 # ─────────────────────────────────────────────────────────────────────────────
 ALLOWED_TYPES = ('leave', 'overtime', 'salary_adjustment', 'resignation', 'attendance', 'expense_claim', 'travel_request',
-                 'attendance_correction')
+                 'attendance_correction', 'employee_data_change')
 # Tahap 2 (2026-11-06): cuti tingkat 1 (atasan) DAN tingkat 2 (HR) tampil di kotak masuk; dulu hanya tingkat 1
 # dan persetujuannya melompati tingkat 2.
 LEAVE_PENDING = ['pending_approval', 'pending_hr_approval']
@@ -362,6 +363,14 @@ async def _fetch_corrections(db, type_filter: Optional[str], limit: int) -> List
     return await inbox_items(db, limit)
 
 
+async def _fetch_data_changes(db, type_filter: Optional[str], limit: int) -> List[Dict[str, Any]]:
+    """Perubahan No. HP / alamat / kontak darurat dari Portal Saya › Profil (HR1, 2026-11-07): lama → baru."""
+    if type_filter and type_filter != 'employee_data_change':
+        return []
+    from core.employee_data_change import inbox_items
+    return await inbox_items(db, limit)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
@@ -388,8 +397,9 @@ async def list_inbox(
     resignation = await _fetch_resignations(db, type_filter, limit_per_type)
     attendance  = await _fetch_attendance(db, type_filter, limit_per_type)
     corrections = await _fetch_corrections(db, type_filter, limit_per_type)
+    data_changes = await _fetch_data_changes(db, type_filter, limit_per_type)
 
-    all_items = leaves + overtime + salary_adj + resignation + attendance + corrections
+    all_items = leaves + overtime + salary_adj + resignation + attendance + corrections + data_changes
     # Sort by submitted_at desc, fallback created_at
     all_items.sort(key=lambda x: (x.get('submitted_at') or x.get('created_at') or ''), reverse=True)
 
@@ -402,6 +412,7 @@ async def list_inbox(
             'resignation': len(resignation),
             'attendance': len(attendance),
             'attendance_correction': len(corrections),
+            'employee_data_change': len(data_changes),
         },
         'items': all_items,
     }
@@ -421,7 +432,8 @@ async def inbox_summary(user: dict = Depends(require_auth)):
     resig_c = await db.rahaza_employees.count_documents({'employee_status': RESIGNING})
     att_c = await db.rahaza_attendance_events.count_documents({'approval_status': 'pending'})
     corr_c = await db.rahaza_attendance_corrections.count_documents({'status': 'pending'})
-    total = leaves_c + overtime_c + sal_c + resig_c + att_c + corr_c
+    chg_c = await db.rahaza_employee_data_changes.count_documents({'status': 'pending'})
+    total = leaves_c + overtime_c + sal_c + resig_c + att_c + corr_c + chg_c
     return {
         'total_pending': total,
         'leave': leaves_c,
@@ -430,6 +442,7 @@ async def inbox_summary(user: dict = Depends(require_auth)):
         'resignation': resig_c,
         'attendance': att_c,
         'attendance_correction': corr_c,
+        'employee_data_change': chg_c,
     }
 
 
@@ -582,6 +595,14 @@ async def approve_request(req_type: str, req_id: str, payload: Optional[ActionPa
                            f'Approve absen {req_id} via HR Inbox')
         return {'ok': True, 'type': 'attendance', 'id': req_id, 'new_status': 'approved'}
 
+    if req_type == 'employee_data_change':
+        # HR1 (2026-11-07): klaim atomik pending → deciding, lalu data karyawan (+ akun login) diperbarui
+        from core.employee_data_change import decide as decide_data_change
+        await decide_data_change(db, req_id, user, approve=True, note=note)
+        await log_activity(actor_id, actor_name, 'approve', 'hr_inbox',
+                           f'Setujui perubahan data karyawan {req_id} via HR Inbox')
+        return {'ok': True, 'type': 'employee_data_change', 'id': req_id, 'new_status': 'approved'}
+
     if req_type == 'attendance_correction':
         from routes.rahaza_attendance_corrections import decide_correction
         out = await decide_correction(db, req_id, user, approve=True, note=note)
@@ -723,6 +744,13 @@ async def reject_request(req_type: str, req_id: str, payload: ActionPayload,
         await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
                            f'Reject absen {req_id}: {reason}')
         return {'ok': True, 'type': 'attendance', 'id': req_id, 'new_status': 'rejected'}
+
+    if req_type == 'employee_data_change':
+        from core.employee_data_change import decide as decide_data_change
+        await decide_data_change(db, req_id, user, approve=False, note=reason)
+        await log_activity(actor_id, actor_name, 'reject', 'hr_inbox',
+                           f'Tolak perubahan data karyawan {req_id}: {reason}')
+        return {'ok': True, 'type': 'employee_data_change', 'id': req_id, 'new_status': 'rejected'}
 
     if req_type == 'attendance_correction':
         from routes.rahaza_attendance_corrections import decide_correction

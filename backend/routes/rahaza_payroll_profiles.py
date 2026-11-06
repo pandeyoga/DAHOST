@@ -166,6 +166,16 @@ async def get_profile(employee_id: str, request: Request):
     return serialize_doc(row)
 
 
+def _keep_unused_period(doc: dict, body: dict, existing: Optional[dict]) -> dict:
+    """2026-11-07 (HR2): tipe periode & hari/tanggal mulai TIDAK dipakai perhitungan gaji (periode ikut proses
+    payroll) — isiannya disembunyikan di layar Profil Gaji. Bila tidak dikirim, nilai tersimpan dibiarkan apa
+    adanya (tidak diganti bawaan "bulanan, tanggal 1")."""
+    if existing and "period_type" not in body and "cutoff_config" not in body:
+        doc.pop("period_type", None)
+        doc.pop("cutoff_config", None)
+    return doc
+
+
 def _normalize_profile(body: dict) -> dict:
     pay_scheme = (body.get("pay_scheme") or "monthly").lower()
     period_type = (body.get("period_type") or "monthly").lower()
@@ -221,6 +231,7 @@ async def upsert_profile(request: Request):
         raise HTTPException(404, f"Pegawai dengan id={emp_id} tidak ditemukan.")
     doc = _normalize_profile(body)
     existing = await db.rahaza_payroll_profiles.find_one({"employee_id": emp_id, "active": True}, {"_id": 0})
+    _keep_unused_period(doc, body, existing)   # HR2
     if existing:
         doc = _manual_rate_edit(existing, doc, body.get("effective_from"))
     now = _now()
@@ -255,7 +266,8 @@ async def update_profile(pid: str, request: Request):
         raise HTTPException(404, "Profile tidak ditemukan.")
     body = await request.json()
     body["employee_id"] = existing["employee_id"]  # cannot change
-    doc = _manual_rate_edit(existing, _normalize_profile(body), body.get("effective_from"))
+    doc = _manual_rate_edit(existing, _keep_unused_period(_normalize_profile(body), body, existing),
+                            body.get("effective_from"))
     doc.update({
         "updated_at": _now(),
         "updated_by": user["id"],

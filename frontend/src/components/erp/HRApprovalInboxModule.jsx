@@ -14,7 +14,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Inbox, Filter, RefreshCw, Calendar, Clock, DollarSign, UserMinus,
   CheckCircle2, XCircle, Search, AlertTriangle, User, Building2,
-  Briefcase, FileText, ChevronRight, Sparkles, CalendarCheck,
+  Briefcase, FileText, ChevronRight, Sparkles, CalendarCheck, UserCog,
 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -59,6 +59,8 @@ const TYPE_META = {
   attendance:        { label: 'Approval Absensi',  icon: CalendarCheck, color: 'blue',    bgClass: 'bg-blue-100 dark:bg-blue-500/15 text-blue-600 dark:text-blue-300 border-blue-400 dark:border-blue-400/30' },
   // Tahap 2 (2026-11-06): pengajuan koreksi absen dari Portal Saya
   attendance_correction: { label: 'Koreksi Absen', icon: CalendarCheck, color: 'warning', bgClass: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning))] border-[hsl(var(--warning)/0.3)]' },
+  // HR1 (2026-11-07): perubahan No. HP / alamat / kontak darurat dari Portal Saya › Profil
+  employee_data_change: { label: 'Perubahan Data', icon: UserCog, color: 'primary', bgClass: 'bg-[hsl(var(--primary)/0.12)] text-primary border-[hsl(var(--primary)/0.3)]' },
 };
 const KIND_LABEL = { cuti: 'Cuti', izin: 'Izin', sakit: 'Sakit' };
 
@@ -190,7 +192,8 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
                   {meta.attachment_url && <Row label="Lampiran" value={<a className="text-primary underline" href={withFileAuth(`${API}${meta.attachment_url}`)} target="_blank" rel="noreferrer">Buka lampiran</a>} />}
                 </>
               )}
-              <Row label="Alasan" value={item.reason || raw.reason || '—'} multiline />
+              {item.type === 'employee_data_change' && <DataChanges changes={meta.changes} />}
+              {item.type !== 'employee_data_change' && <Row label="Alasan" value={item.reason || raw.reason || '—'} multiline />}
             </div>
           </GlassCard>
         </div>
@@ -214,6 +217,24 @@ function ItemDetailDrawer({ item, open, onClose, onApprove, onReject }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** HR1: isian lama → baru (lama = data karyawan saat ini, yang akan diganti bila disetujui). */
+function DataChanges({ changes = [] }) {
+  return (
+    <div className="space-y-1.5" data-testid="hr-inbox-data-changes">
+      {changes.map((c) => (
+        <div key={c.field} className="text-sm" data-testid={`hr-inbox-change-${c.field}`}>
+          <div className="text-muted-foreground text-xs">{c.label}</div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="line-through text-muted-foreground">{c.old || '(kosong)'}</span>
+            <ChevronRight className="w-3 h-3 text-muted-foreground" aria-hidden="true" />
+            <span className="text-foreground font-medium">{c.new || '(dikosongkan)'}</span>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -310,6 +331,7 @@ function ApproveDialog({ open, item, onClose, onConfirm }) {
             <span className="text-foreground">{item.title}</span> dari{' '}
             <span className="text-foreground">{item.requester_name || '—'}</span>
           </div>
+          {item.type === 'employee_data_change' && <DataChanges changes={item.meta?.changes} />}
           {isLeave && (
             <div className="space-y-1.5" data-testid="hr-inbox-pay-decision">
               <p className="text-xs text-foreground/70">
@@ -502,7 +524,8 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
     }
   };
 
-  const total = (counts.leave || 0) + (counts.overtime || 0) + (counts.salary_adjustment || 0) + (counts.resignation || 0);
+  // semua jenis (dulu hanya 4 jenis → koreksi absen & perubahan data tidak ikut "Semua")
+  const total = Object.values(counts).reduce((a, n) => a + (Number(n) || 0), 0);
 
   return (
     <div className="space-y-6">
@@ -555,6 +578,7 @@ export default function HRApprovalInboxModule({ token, onNavigate }) {
               <TabsTrigger value="resignation" data-testid="hr-inbox-tab-resignation">Resignasi ({counts.resignation || 0})</TabsTrigger>
               <TabsTrigger value="attendance" data-testid="hr-inbox-tab-attendance">Absensi ({counts.attendance || 0})</TabsTrigger>
               <TabsTrigger value="attendance_correction" data-testid="hr-inbox-tab-correction">Koreksi absen ({counts.attendance_correction || 0})</TabsTrigger>
+              <TabsTrigger value="employee_data_change" data-testid="hr-inbox-tab-data-change">Perubahan data ({counts.employee_data_change || 0})</TabsTrigger>
             </TabsList>
           </Tabs>
           <div className="flex items-center bg-foreground/5 border border-foreground/10 rounded-md px-3 min-w-[220px]">

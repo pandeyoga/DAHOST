@@ -14,6 +14,7 @@ import { Separator } from '@/components/ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { apicall } from '../utils';
+import { DepartmentSelect } from '../../hr/hrPickers';
 
 export function TransferAssetDialog({ open, onClose, token, asset, onTransferred }) {
   const [form, setForm] = useState({
@@ -96,8 +97,11 @@ export function TransferAssetDialog({ open, onClose, token, asset, onTransferred
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Departemen Baru</label>
-            <Input placeholder="Produksi, IT, Finance..." value={form.to_department}
-              onChange={e => set('to_department', e.target.value)} className="mt-1" />
+            {/* 2026-11-07 (OR1): dari Struktur Organisasi; Lokasi Baru (tempat fisik) tetap isian bebas */}
+            <div className="mt-1">
+              <DepartmentSelect token={token} value={form.to_department} testId="transfer-department"
+                placeholder="— Tidak diubah —" onChange={v => set('to_department', v)} />
+            </div>
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Penanggung jawab (karyawan)</label>

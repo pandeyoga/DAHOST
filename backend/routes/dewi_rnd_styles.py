@@ -19,6 +19,84 @@ LIFECYCLE_STATUSES = frozenset({'pending_owner_review', 'approved_for_launch'})
 EDITABLE_STATUSES = frozenset({'draft', 'active', 'archived'})
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 2026-11-07 (Tahap 6, keputusan owner PR3): Buyer & Jenis kain style DARI MASTER
+# ──────────────────────────────────────────────────────────────────────────────
+# Dulu dua-duanya teks bebas. Sekarang:
+#   · Buyer      = master Klien maklon (`dewi_maklon_clients`) → `client_id` + `client_name`, dan `buyer`
+#                  ikut nama master (pembaca lama: kolom daftar, filter, ekspor). Kosong = produk internal DA.
+#   · Jenis kain = NAMA kain di master material (`rahaza_materials` jenis kain, tanpa baris potongan) —
+#                  master kain yang sama dengan Order Cutting & Costing. Satu nama kain punya banyak warna
+#                  (warna dipilih per varian), jadi yang dipilih di style adalah namanya.
+# Nilai ketikan LAMA tetap tampil dan boleh tetap tersimpan selama tidak diubah.
+FABRIC_TYPES = ('fabric', 'kain')
+
+
+async def fabric_type_names(db) -> list:
+    """Daftar jenis kain = nama unik kain aktif di master material (urut abjad)."""
+    seen: dict = {}
+    async for m in db.rahaza_materials.find(
+            {'type': {'$in': list(FABRIC_TYPES)}, 'active': {'$ne': False}, 'is_cut_panel': {'$ne': True}},
+            {'_id': 0, 'name': 1}):
+        nm = str(m.get('name') or '').strip()
+        if nm and nm.lower() not in seen:
+            seen[nm.lower()] = nm
+    return sorted(seen.values(), key=str.lower)
+
+
+async def buyer_options(db) -> list:
+    rows = await db.dewi_maklon_clients.find(
+        {'status': {'$ne': 'inactive'}}, {'_id': 0, 'id': 1, 'code': 1, 'name': 1}).sort('name', 1).to_list(500)
+    return [{'id': r['id'], 'code': r.get('code') or '', 'name': r.get('name') or ''} for r in rows if r.get('id')]
+
+
+async def resolve_style_masters(db, body: dict, before: dict = None) -> dict:
+    """Buyer & jenis kain dari body → field tersimpan (hanya kunci yang dikirim). 400 bila tidak sah."""
+    out: dict = {}
+    before = before or {}
+    if 'client_id' in body or 'buyer' in body:
+        cid = str(body.get('client_id') or '').strip()
+        if cid:
+            cl = await db.dewi_maklon_clients.find_one({'id': cid}, {'_id': 0, 'id': 1, 'name': 1, 'status': 1})
+            if not cl:
+                raise HTTPException(400, 'Buyer yang dipilih tidak ada di master Klien maklon — pilih dari daftar.')
+            if cl.get('status') == 'inactive' and before.get('client_id') != cid:
+                raise HTTPException(400, f"Klien maklon {cl.get('name')} nonaktif — pilih buyer lain.")
+            out.update({'client_id': cid, 'client_name': cl.get('name') or '', 'buyer': cl.get('name') or ''})
+        else:
+            typed = str(body.get('buyer') or '').strip()
+            if not typed:
+                out.update({'client_id': None, 'client_name': '', 'buyer': ''})
+            elif not before.get('client_id') and typed == str(before.get('buyer') or '').strip():
+                # ketikan lama yang tidak diubah — dibiarkan apa adanya
+                out.update({'client_id': before.get('client_id'), 'buyer': before.get('buyer')})
+            else:
+                raise HTTPException(400, 'Pilih buyer dari master Klien maklon (kosongkan untuk produk internal DA) '
+                                         '— ketik bebas tidak diterima.')
+    if 'fabric_type' in body:
+        val = str(body.get('fabric_type') or '').strip()
+        if not val:
+            out['fabric_type'] = ''
+        else:
+            names = {n.lower(): n for n in await fabric_type_names(db)}
+            if val.lower() in names:
+                out['fabric_type'] = names[val.lower()]
+            elif val == str(before.get('fabric_type') or '').strip():
+                out['fabric_type'] = val   # nilai lama yang tidak diubah
+            else:
+                raise HTTPException(400, f"Jenis kain '{val}' tidak ada di master kain — pilih dari daftar. "
+                                         'Kain baru ditambahkan di Master Material.')
+    return out
+
+
+@router.get('/style-form-options')
+async def style_form_options(user: dict = Depends(require_auth)):
+    """Pilihan formulir Style: buyer (Klien maklon aktif) + jenis kain (master kain). Sumber yang sama
+    dengan validasi `resolve_style_masters`."""
+    db = get_db()
+    return {'buyers': await buyer_options(db), 'fabric_types': await fabric_type_names(db)}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # STYLE MASTER (Master Style & Tech Pack)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -86,20 +164,24 @@ async def create_style(body: dict, user: dict = Depends(require_auth)):
     existing = await db.dewi_rnd_styles.find_one({'style_code': code})
     if existing:
         raise HTTPException(409, f'Style code {code} sudah ada')
+    # Tahap 6 (PR3): buyer & jenis kain dari master
+    masters = await resolve_style_masters(
+        db, {'client_id': body.get('client_id'), 'buyer': body.get('buyer', ''),
+             'fabric_type': body.get('fabric_type', '')})
 
     doc = {
         'id': sid(),
         'style_code': code,
         'style_name': name,
         'category': body.get('category', ''),
-        'buyer': body.get('buyer', ''),
-        'fabric_type': body.get('fabric_type', ''),
+        'buyer': masters.get('buyer', ''),
+        'fabric_type': masters.get('fabric_type', ''),
         'season': body.get('season', ''),
         'description': body.get('description', ''),
         'status': body.get('status', 'draft'),
         'rnd_type': body.get('rnd_type', 'internal_product'),
-        'client_id': body.get('client_id', None),
-        'client_name': body.get('client_name', ''),
+        'client_id': masters.get('client_id'),
+        'client_name': masters.get('client_name', ''),
         'promoted_to_model_id': None,
         'techpack_url': None,
         'techpack_name': None,
@@ -270,6 +352,10 @@ async def update_style(style_id: str, body: dict, user: dict = Depends(require_a
                     f'Status tidak dikenal: {new_status}. Pilihan: {", ".join(sorted(EDITABLE_STATUSES))}.')
         else:
             body.pop('status', None)  # tidak berubah → jangan dicatat sebagai revisi
+
+    # Tahap 6 (PR3): buyer & jenis kain hanya dari master; `client_name` tidak bisa diketik langsung.
+    body.pop('client_name', None)
+    body.update(await resolve_style_masters(db, body, before))
 
     body['updated_at'] = now_utc()
 

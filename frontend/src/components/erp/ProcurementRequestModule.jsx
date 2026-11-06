@@ -22,6 +22,7 @@ import { MoneyInput } from '@/components/ui/money-input';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite from '@/components/ui/pagination-lite';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
+import { DepartmentSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
@@ -183,7 +184,8 @@ function CreatePRModal({ onClose, onCreated, token }) {
   // stok kanonik, dan satuan beli dikonversi otomatis ke satuan dasar.
   useEffect(() => {
     const h = { Authorization: `Bearer ${token}` };
-    fetch(`${API}/api/rahaza/materials`, { headers: h })
+    // 2026-11-07 (Tahap 6 PG1): barang jadi tidak dibeli → tidak dimuat ke pilihan material PR
+    fetch(`${API}/api/rahaza/materials?exclude_type=fg`, { headers: h })
       .then((r) => (r.ok ? r.json() : []))
       .then((m) => setMaterials((Array.isArray(m) ? m : m?.items || []).filter((x) => x.active !== false)))
       .catch(() => {});
@@ -322,7 +324,9 @@ function CreatePRModal({ onClose, onCreated, token }) {
             </div>
             <div className="col-span-2">
               <label className="text-xs text-muted-foreground mb-1 block">Departemen</label>
-              <input className={inp} placeholder="mis. Produksi, HR, IT" value={form.department} onChange={e => setForm(p=>({...p,department:e.target.value}))} />
+              {/* 2026-11-07 (OR1): dari Struktur Organisasi; bawaan = departemen karyawan pemohon */}
+              <DepartmentSelect token={token} value={form.department} defaultToMine testId="pr-form-department"
+                className={sel} onChange={v => setForm(p => ({ ...p, department: v }))} />
             </div>
             <div className="col-span-2">
               <label className="text-xs text-muted-foreground mb-1 block">Justifikasi / Alasan</label>

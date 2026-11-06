@@ -38,6 +38,10 @@ async def create_user(request: Request):
     email = (body.get('email') or '').strip().lower()
     if not email:
         raise HTTPException(400, 'Email wajib diisi.')
+    # 2026-11-07 (Tahap 6, SY3 — keputusan owner): tidak ada peran bawaan. Dulu form memilih 'admin'
+    # otomatis, sehingga akun baru yang lupa diganti perannya langsung berhak penuh.
+    if not role_given(body):
+        raise HTTPException(400, ROLE_REQUIRED_MSG)
     existing = await db.users.find_one({'email': email}, {'_id': 0, 'id': 1})
     if existing:
         raise HTTPException(409, f"Email '{email}' sudah terdaftar.")
@@ -48,6 +52,8 @@ async def create_user(request: Request):
     hashed = hash_password(default_password(body.get('password')))
     new_user = {'id': new_id(), **body, 'email': email, 'password': hashed, 'status': 'active', 'created_at': now(), 'updated_at': now()}
     await _sync_role_link(db, new_user)
+    if not str(new_user.get('role') or '').strip():   # role_id yang tidak menunjuk peran mana pun
+        raise HTTPException(400, ROLE_REQUIRED_MSG)
     try:
         await db.users.insert_one(new_user)
     except Exception as e:
@@ -60,6 +66,12 @@ async def create_user(request: Request):
 
 
 DEFAULT_USER_PASSWORD = 'User@123'
+ROLE_REQUIRED_MSG = 'Peran wajib dipilih'
+
+
+def role_given(body: dict) -> bool:
+    """Akun baru wajib menyebut peran (nama `role` atau `role_id` dari master Peran) — SY3."""
+    return any(str(body.get(k) or '').strip() for k in ('role', 'role_id'))
 
 
 def default_password(raw) -> str:
@@ -91,6 +103,8 @@ async def update_user(uid: str, request: Request):
     body = await request.json()
     body.pop('_id', None)
     body.pop('id', None)
+    if ('role' in body or 'role_id' in body) and not role_given(body):   # SY3: peran tidak boleh dikosongkan
+        raise HTTPException(400, ROLE_REQUIRED_MSG)
     if body.get('password'):
         body['password'] = hash_password(body['password'])
     await _sync_role_link(db, body)

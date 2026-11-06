@@ -128,6 +128,38 @@ def check_parent(code: str, acc_type: str, parent_code: str | None, by_code: dic
                            f"akun bertipe {TYPE_LABELS.get(acc_type, acc_type)} tidak boleh berada di bawahnya.")
 
 
+# 2026-11-07 (Tahap 6, KU4 keputusan owner): akun KONTROL piutang/hutang — baris jurnal manual ke akun ini diberi
+# peringatan (bukan diblokir) karena rincian per pelanggan/pemasok hanya ikut benar bila dicatat lewat faktur &
+# pembayaran. Sumber: penanda akun (`flags.is_ar` / `flags.is_ap`) + induk sub-ledger per pelanggan/pemasok
+# (`flags.subledger_parent` anak berjenis entitas piutang/hutang, mis. 1-1305 & 2-1110 yang tanpa penanda).
+# Kode tetap (1-1301 / 2-1100) HANYA dipakai bila Bagan Akun sama sekali tidak punya penanda itu.
+SUBLEDGER_CONTROL_KIND = {"customer": "ar", "channel": "ar", "maklon_client": "ar",
+                          "supplier": "ap", "cmt_vendor": "ap"}
+CONTROL_FALLBACK_CODES = {"1-1301": "ar", "2-1100": "ap"}
+
+
+def control_account_kinds(rows: list) -> dict:
+    """MURNI. {kode akun: 'ar'|'ap'} untuk akun kontrol piutang/hutang dan sub-akun per pelanggan/pemasok."""
+    out: dict = {}
+    for r in rows:
+        fl = r.get("flags") or {}
+        if fl.get("is_ar"):
+            out[r["code"]] = "ar"
+        elif fl.get("is_ap"):
+            out[r["code"]] = "ap"
+    for r in rows:
+        fl = r.get("flags") or {}
+        kind = SUBLEDGER_CONTROL_KIND.get(fl.get("subledger_entity_type"))
+        if fl.get("subledger") and kind:
+            parent = fl.get("subledger_parent") or r.get("parent_code")
+            if parent:
+                out.setdefault(parent, kind)
+            out.setdefault(r["code"], kind)
+    if not out:
+        out = dict(CONTROL_FALLBACK_CODES)
+    return out
+
+
 def merge_flags(existing: dict | None, incoming: dict | None) -> dict:
     """Penanda di-MERGE (bukan diganti): hanya USER_FLAGS yang disebut yang berubah; penanda sistem dijaga.
     Dulu impor/form mengganti seluruh `flags` → is_sales/channel toko & subledger_* hilang (T8)."""
@@ -402,7 +434,7 @@ async def _attach_usage(db, rows: list, full: bool) -> list:
 
 @router.get("/accounts")
 async def list_accounts(request: Request, active_only: bool = True, search: str = "", type: str = "",
-                        with_usage: bool = False):
+                        with_usage: bool = False, with_control: bool = False):
     await require_auth(request)
     db = get_db()
     q = {}
@@ -418,6 +450,14 @@ async def list_accounts(request: Request, active_only: bool = True, search: str 
     rows = await db.rahaza_coa_accounts.find(q, {"_id": 0}).sort("code", 1).to_list(5000)
     if with_usage:
         rows = await _attach_usage(db, rows, full=not q)
+    if with_control:
+        # KU4 (Tahap 6): penanda akun kontrol dihitung dari SELURUH bagan (anak sub-ledger bisa tersaring kueri)
+        allr = rows if not q else await db.rahaza_coa_accounts.find(
+            {}, {"_id": 0, "code": 1, "parent_code": 1, "flags": 1}).to_list(10000)
+        kinds = control_account_kinds(allr)
+        for r in rows:
+            if r.get("code") in kinds:
+                r["control_kind"] = kinds[r["code"]]
     return serialize_doc(rows)
 
 

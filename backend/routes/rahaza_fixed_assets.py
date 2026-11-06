@@ -262,6 +262,20 @@ async def resolve_asset_accounts(db, category: str, body: dict) -> dict:
     return out
 
 
+async def _master_supplier(db, supplier_id) -> dict:
+    """KU2: pemasok dari master `rahaza_suppliers` (aktif) → {supplier, supplier_id, supplier_code}."""
+    sid = str(supplier_id or "").strip()
+    if not sid:
+        _bad("Hutang pemasok (faktur menyusul) wajib memilih pemasok dari Master Pemasok — supaya hutangnya "
+             "bisa ditagihkan ke pemasok yang benar saat fakturnya datang.")
+    sup = await db.rahaza_suppliers.find_one({"id": sid}, {"_id": 0, "id": 1, "code": 1, "name": 1, "is_active": 1})
+    if not sup:
+        _bad("Pemasok yang dipilih tidak ada di Master Pemasok.")
+    if sup.get("is_active") is False:
+        _bad(f"Pemasok '{sup.get('name')}' nonaktif — aktifkan lagi di Master Pemasok atau pilih pemasok lain.")
+    return {"supplier": (sup.get("name") or "").strip(), "supplier_id": sup["id"], "supplier_code": sup.get("code") or ""}
+
+
 async def _funding_credit_code(db, body: dict, cost: float) -> tuple[str, dict]:
     """K18 Pembelian baru: akun KREDIT jurnal perolehan dari sumber dana + metadata tautan."""
     src = (body.get("funding_source") or "").strip()
@@ -277,10 +291,18 @@ async def _funding_credit_code(db, body: dict, cost: float) -> tuple[str, dict]:
             _bad(f"Rekening '{acc.get('name')}' belum tertaut akun GL (Kas & Bank › Sinkron GL).")
         return acc["gl_account_code"], {"cash_account_id": acc["id"], "cash_account_name": acc.get("name")}
     if src in ("payable", "grni"):
+        # 2026-11-07 (Tahap 6, KU2 keputusan owner): beli kredit "faktur menyusul" WAJIB memilih pemasok dari
+        # master `rahaza_suppliers` (id + nama disimpan). Jurnal perolehan mengkredit Hutang Belum Ditagih
+        # (GRNI, tanpa rincian per pemasok); hutang per pemasok (sub-ledger 2-1100-…) lahir saat faktur
+        # pemasoknya dicatat — jadi `supplier_id` ini penaut aset ↔ pemasok untuk faktur yang menyusul.
+        # Jalur GR (`grni`, sistem) tetap memakai pemasok dari dokumen GR.
+        link = {"supplier": (body.get("supplier") or "").strip()}
+        if src == "payable":
+            link = await _master_supplier(db, body.get("supplier_id"))
         code = (await get_mapping(db, "asset_acquisition")).get("credit_ap_clearing")
         if not code:
             _bad("Profil posting 'asset_acquisition.credit_ap_clearing' (Hutang Belum Ditagih) belum diisi.")
-        return code, {"supplier": (body.get("supplier") or "").strip()}
+        return code, link
     # ap_invoice — faktur pemasok sudah menjurnal hutang (Dr akun debit faktur / Cr Hutang). Jurnal perolehan
     # MEREKLAS akun debit faktur itu ke akun aset, jadi hutang tidak tercatat dua kali.
     inv = await db.rahaza_ap_invoices.find_one({"id": body.get("ap_invoice_id")}, {"_id": 0})
@@ -392,7 +414,9 @@ async def register_fixed_asset(db, body: dict, user: dict, *, code: Optional[str
         "depreciation_method":    method,
         **accounts,
         "location":               (body.get("location") or "").strip(),
-        "supplier":               (body.get("supplier") or doc_extra.get("supplier") or "").strip(),
+        # KU2: pemasok dari master (hutang faktur menyusul) menang atas teks ketikan
+        "supplier":               (doc_extra.get("supplier") if doc_extra.get("supplier_id")
+                                   else body.get("supplier") or doc_extra.get("supplier") or "").strip(),
         "serial_number":          (body.get("serial_number") or "").strip(),
         "notes":                  (body.get("notes") or "").strip(),
         "status":                 "active",
@@ -455,10 +479,17 @@ async def acquisition_options(request: Request):
             row[f] = {"id": acc.get("id"), "code": acc.get("code"), "name": acc.get("name")} if acc else None
         cats[cat] = row
     from utils.waktu import today_wib
+    # KU2 (Tahap 6): pilihan pemasok dari master `rahaza_suppliers` — hanya id/kode/nama pemasok aktif (tanpa
+    # rekening, NPWP, termin, harga). Dulu layar membaca /api/procurement/suppliers/options yang menolak staf
+    # Keuangan tanpa akses portal Pengadaan (403 → pemasok tidak bisa dipilih).
+    sups = await db.rahaza_suppliers.find({"is_active": {"$ne": False}},
+                                          {"_id": 0, "id": 1, "code": 1, "name": 1}).sort("name", 1).to_list(2000)
     return {"acquisition_types": [{"value": "purchase", "label": "Pembelian baru"},
                                   {"value": "opening", "label": "Aset lama (saldo awal)"}],
             "funding_sources": [{"value": k, "label": v} for k, v in FUNDING_SOURCES.items() if k != "grni"],
             "category_accounts": cats, "golive_default": await _golive_default(db),
+            "suppliers": [{"id": s["id"], "code": s.get("code") or "", "name": s.get("name") or ""}
+                          for s in sups if s.get("id") and s.get("name")],
             "today_wib": today_wib().isoformat()}
 
 
@@ -583,6 +614,14 @@ async def update_fixed_asset(aid: str, request: Request):
     allowed = ["name", "location", "supplier", "serial_number", "notes",
                "account_id_asset", "account_id_accum_depr", "account_id_depr_expense"]
     update = {k: body[k] for k in allowed if k in body}
+    if asset.get("funding_source") == "payable":
+        # KU2: pemasok aset beli kredit tetap dari master — nama mengikuti master, bukan ketikan
+        if body.get("supplier_id"):
+            update.update(await _master_supplier(db, body.get("supplier_id")))
+        elif "supplier" in body and (body.get("supplier") or "") != (asset.get("supplier") or ""):
+            _bad("Pemasok aset beli kredit (faktur menyusul) diganti dengan memilih pemasok dari Master Pemasok.")
+        else:
+            update.pop("supplier", None)
     if update:
         update["updated_at"] = _now()
         await db.rahaza_fixed_assets.update_one({"id": aid}, {"$set": update})

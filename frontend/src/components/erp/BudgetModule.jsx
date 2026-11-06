@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { formatRupiah, formatPercent } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
 import { thisYearWIB } from '@/lib/waktu';
+import { DepartmentSelect } from './hr/hrPickers';
 
 const STATUS_MAP = {
   draft:    { label: 'Draf',      tone: 'muted' },
@@ -438,7 +439,9 @@ export default function BudgetModule({ token }) {
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Departemen</label>
-              <GlassInput placeholder="mis. Produksi, Keuangan" value={budgetForm.department} onChange={e => setBudgetForm(f => ({...f, department: e.target.value}))} />
+              {/* 2026-11-07 (OR1): departemen dari Struktur Organisasi (satu daftar untuk semua formulir) */}
+              <DepartmentSelect token={token} value={budgetForm.department} className="h-9 w-full" testId="budget-department"
+                placeholder="— Tanpa departemen —" onChange={v => setBudgetForm(f => ({ ...f, department: v }))} />
             </div>
             <div>
               <label className="block text-xs text-muted-foreground mb-1">Pusat biaya</label>

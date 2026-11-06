@@ -79,7 +79,7 @@ export default function RnDStylesTab({ token, user }) {
 
   const [form, setForm] = useState({
     style_code: '', style_name: '', category: '',
-    buyer: '', fabric_type: '', season: '', description: '', status: 'draft',
+    client_id: '', buyer: '', fabric_type: '', season: '', description: '', status: 'draft',
   });
 
   // Foto desain (unggah di form Tambah/Edit Style → galeri approval manajemen)
@@ -110,6 +110,25 @@ export default function RnDStylesTab({ token, user }) {
       .catch(() => setCategories([]));
   }, [showForm]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 2026-11-07 (Tahap 6, PR3): Buyer dari master Klien maklon (kosong = produk internal DA) dan Jenis kain dari
+  // master kain (nama kain di Master Material). Dulu teks bebas. Nilai lama tetap tampil (ditandai "lama").
+  const [formOpts, setFormOpts] = useState({ buyers: [], fabric_types: [] });
+  useEffect(() => {
+    if (!showForm) return;
+    apiFetch('/dewi/rnd/style-form-options')
+      .then(d => setFormOpts({ buyers: d?.buyers || [], fabric_types: d?.fabric_types || [] }))
+      .catch(() => setFormOpts({ buyers: [], fabric_types: [] }));
+  }, [showForm]);
+  const LEGACY = '__lama__';
+  const buyerValue = form.client_id || (form.buyer ? LEGACY : '');
+  const pickBuyer = (v) => {
+    if (v === LEGACY) return;
+    const b = formOpts.buyers.find(x => x.id === v);
+    setForm(p => ({ ...p, client_id: v, buyer: b?.name || '' }));
+  };
+  const fabricLegacy = !!form.fabric_type
+    && !formOpts.fabric_types.some(n => n.toLowerCase() === form.fabric_type.toLowerCase());
+
   const fetchStyles = async () => {
     setLoading(true);
     try {
@@ -135,7 +154,7 @@ export default function RnDStylesTab({ token, user }) {
 
   const openCreate = () => {
     setEditing(null);
-    setForm({ style_code: '', style_name: '', category: '', buyer: '', fabric_type: '', season: '', description: '', status: 'draft' });
+    setForm({ style_code: '', style_name: '', category: '', client_id: '', buyer: '', fabric_type: '', season: '', description: '', status: 'draft' });
     setPhotos([]);
     setPendingPhotos([]);
     setShowForm(true);
@@ -147,7 +166,7 @@ export default function RnDStylesTab({ token, user }) {
     setPendingPhotos([]);
     setForm({
       style_code: style.style_code || '', style_name: style.style_name || '',
-      category: style.category || '', buyer: style.buyer || '',
+      category: style.category || '', client_id: style.client_id || '', buyer: style.buyer || '',
       fabric_type: style.fabric_type || '', season: style.season || '',
       description: style.description || '', status: style.status || 'draft',
     });
@@ -400,7 +419,7 @@ export default function RnDStylesTab({ token, user }) {
                         )}
                       </td>
                       <td className="p-3 text-sm text-muted-foreground">{style.category || '-'}</td>
-                      <td className="p-3 text-sm text-muted-foreground">{style.buyer || '-'}</td>
+                      <td className="p-3 text-sm text-muted-foreground">{style.client_name || style.buyer || '-'}</td>
                       <td className="p-3 text-sm text-muted-foreground">{style.season || '-'}</td>
                       <td className="p-3">
                         {variantCount > 0 ? (
@@ -528,13 +547,23 @@ export default function RnDStylesTab({ token, user }) {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Buyer</label>
-                  <input type="text" value={form.buyer} onChange={(e) => setForm({ ...form, buyer: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Zara" />
+                  <SmartNativeSelect value={buyerValue} onChange={(e) => pickBuyer(e.target.value)}
+                    className="w-full" aria-label="Buyer" data-testid="style-buyer-select">
+                    <option value="">— Internal DA (tanpa buyer) —</option>
+                    {buyerValue === LEGACY && <option value={LEGACY}>{`${form.buyer} (lama, belum di master)`}</option>}
+                    {formOpts.buyers.map(b => <option key={b.id} value={b.id}>{`${b.code ? `${b.code} · ` : ''}${b.name}`}</option>)}
+                  </SmartNativeSelect>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Dari master Klien maklon.</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1.5">Fabric Type</label>
-                  <input type="text" value={form.fabric_type} onChange={(e) => setForm({ ...form, fabric_type: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary" placeholder="Cotton Combed 30s" />
+                  <label className="block text-sm font-medium mb-1.5">Jenis kain</label>
+                  <SmartNativeSelect value={form.fabric_type} onChange={(e) => setForm({ ...form, fabric_type: e.target.value })}
+                    className="w-full" aria-label="Jenis kain" data-testid="style-fabric-select">
+                    <option value="">— Pilih jenis kain —</option>
+                    {fabricLegacy && <option value={form.fabric_type}>{`${form.fabric_type} (lama, belum ada di master)`}</option>}
+                    {formOpts.fabric_types.map(n => <option key={n} value={n}>{n}</option>)}
+                  </SmartNativeSelect>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Dari master kain (Master Material).</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Season</label>
@@ -764,8 +793,8 @@ function OwnerReviewDialog({ style, onClose, onApprove, onReject }) {
           {/* Style info */}
           <div className="grid grid-cols-2 gap-3 p-4 rounded-xl bg-foreground/[0.04] border border-foreground/[0.08] text-sm">
             <InfoItem label="Kategori" value={style.category} />
-            <InfoItem label="Buyer" value={style.buyer} />
-            <InfoItem label="Fabric Type" value={style.fabric_type} />
+            <InfoItem label="Buyer" value={style.client_name || style.buyer} />
+            <InfoItem label="Jenis kain" value={style.fabric_type} />
             <InfoItem label="Season" value={style.season} />
             {style.description && (
               <div className="col-span-2">

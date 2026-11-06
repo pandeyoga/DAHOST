@@ -150,9 +150,8 @@ export default function UnifiedApprovalHub({ token, onNavigate }) {
       // HR Inbox count
       if (hrRes.status === 'fulfilled' && hrRes.value) {
         const hrData = hrRes.value;
-        newCounts.hr = (hrData.counts?.leave || 0) + (hrData.counts?.overtime || 0) + 
-                       (hrData.counts?.salary_adjustment || 0) + (hrData.counts?.resignation || 0) + 
-                       (hrData.counts?.attendance || 0);
+        // semua jenis di Kotak Masuk SDM (termasuk koreksi absen & perubahan data karyawan, 2026-11-07)
+        newCounts.hr = Number(hrData.total) || Object.values(hrData.counts || {}).reduce((a, n) => a + (Number(n) || 0), 0);
       }
 
       // Multi-level Approval count

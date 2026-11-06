@@ -54,6 +54,8 @@ const PERMAK_TYPE_META = {
   retur_ke_cmt: { label: 'Retur ke CMT', cls: 'bg-[hsl(var(--warning)/0.15)] text-[hsl(var(--warning))]' },
 };
 const PROBLEM_OPTS = ['jahitan', 'noda', 'ukuran', 'bahan', 'aksesoris', 'lainnya'];
+// Tahap 6 (PR1) — penanda tetap workshop sendiri; sama dengan WORKSHOP_DA_ID di routes/dewi_cmt_permak.py
+const WORKSHOP_DA_ID = 'workshop_da';
 const fmtDate = (iso) => {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }); }
@@ -232,6 +234,12 @@ export default function CMTPermakModule() {
                       punya vendor_id sehingga retur ke CMT tidak pernah terlacak. */}
                   <td className="px-3 py-2 text-xs">
                     <div className="text-foreground truncate max-w-[160px]">{r.vendor_name || r.vendor_permak || '—'}</div>
+                    {/* Tahap 6 (PR1): siapa yang mengerjakan permak (master Vendor CMT / Workshop DA sendiri) */}
+                    {(r.vendor_permak_name || r.vendor_permak) && (r.vendor_permak_name || r.vendor_permak) !== r.vendor_name && (
+                      <div className="text-[11px] text-muted-foreground truncate max-w-[160px]" data-testid={`permak-workshop-${r.id}`}>
+                        Dikerjakan: {r.vendor_permak_name || r.vendor_permak}
+                      </div>
+                    )}
                     {r.rework_shipment_number ? (
                       <div className="tabular-nums text-[11px] text-[hsl(var(--warning))] whitespace-nowrap" title="Surat jalan rework ke vendor">
                         {r.rework_shipment_number}
@@ -342,7 +350,10 @@ function CreatePermakDialog({ onClose, onCreated }) {
   const [problemType, setProblemType] = useState('jahitan');
   const [costPerPcs, setCostPerPcs] = useState('');
   const [returnDeadline, setReturnDeadline] = useState('');
-  const [vendor, setVendor] = useState('');
+  // 2026-11-07 (Tahap 6, PR1): vendor/workshop permak DARI MASTER Vendor CMT (sama dengan Komponen Kurang)
+  // + pilihan tetap "Workshop DA sendiri" (bawaan untuk Permak Sendiri). Dulu teks bebas.
+  const [workshopId, setWorkshopId] = useState(WORKSHOP_DA_ID);
+  const [vendors, setVendors] = useState([]);
   const [reason, setReason] = useState('');
   const [loadingItems, setLoadingItems] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -360,7 +371,20 @@ function CreatePermakDialog({ onClose, onCreated }) {
         setPos(Array.isArray(data) ? data : []);
       } catch (e) { toast.error(`Gagal memuat PO: ${e.message || e}`); }
     })();
+    (async () => {
+      try {
+        const data = await apiGet('/garments');
+        setVendors((Array.isArray(data) ? data : []).filter((v) => v.status !== 'inactive'));
+      } catch { setVendors([]); }
+    })();
   }, []);
+
+  const changePermakType = (t) => {
+    setPermakType(t);
+    // Retur ke CMT = vendor pemilik barang (otomatis dari penerimaan/PO); Permak Sendiri = Workshop DA.
+    setWorkshopId((w) => (t === 'retur_ke_cmt' && w === WORKSHOP_DA_ID ? ''
+      : t === 'permak_sendiri' && !w ? WORKSHOP_DA_ID : w));
+  };
 
   useEffect(() => {
     // ganti PO = item PO lama dilepas (dulu tertinggal ⇒ simpan ditolak "Item PO tidak ditemukan pada PO ini")
@@ -391,7 +415,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
         permak_type: permakType, problem_type: problemType,
         cost_per_pcs: Number(costPerPcs || 0),
         return_deadline: returnDeadline || null,
-        vendor_permak: vendor, reason,
+        vendor_permak_id: workshopId, reason,
         ...docNumberPayload(numPolicy, 'permak_number', permakNumber),
       });
       toast.success('Permak dibuat');
@@ -477,7 +501,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
             <label className="text-xs font-medium text-muted-foreground">Tipe Permak</label>
             <SmartNativeSelect
               value={permakType}
-              onChange={(e) => setPermakType(e.target.value)}
+              onChange={(e) => changePermakType(e.target.value)}
               className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
               data-testid="select-permak-type"
             >
@@ -526,15 +550,21 @@ function CreatePermakDialog({ onClose, onCreated }) {
         </div>
 
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Vendor / Workshop Permak (opsional)</label>
-          <input
-            type="text"
-            value={vendor}
-            onChange={(e) => setVendor(e.target.value)}
-            placeholder="Nama vendor/tukang permak"
-            className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
-            data-testid="input-permak-vendor"
-          />
+          <label className="text-xs font-medium text-muted-foreground">Vendor / workshop permak</label>
+          <SmartNativeSelect
+            value={workshopId}
+            onChange={(e) => setWorkshopId(e.target.value)}
+            className="mt-1 w-full"
+            aria-label="Vendor / workshop permak"
+            data-testid="select-permak-workshop"
+          >
+            <option value="">— Belum ditentukan —</option>
+            <option value={WORKSHOP_DA_ID}>Workshop DA sendiri</option>
+            {vendors.map((v) => (
+              <option key={v.id} value={v.id}>{`${v.garment_code ? `${v.garment_code} · ` : ''}${v.garment_name || v.name}`}</option>
+            ))}
+          </SmartNativeSelect>
+          <p className="mt-1 text-[11px] text-muted-foreground">Dari master Vendor CMT. Vendor baru ditambahkan di menu Vendor CMT.</p>
         </div>
 
         {/* SESI #27 — nomor dokumen mengikuti kebijakan Otomatis/Manual milik owner */}

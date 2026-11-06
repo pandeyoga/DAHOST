@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Plus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { apicall, fmtCurrency } from '../utils';
+import { DepartmentSelect } from '../../hr/hrPickers';
 
 export function CreatePRDialog({ open, onClose, token, onCreated }) {
   const initialForm = {
@@ -47,7 +48,6 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
     form.title.trim() !== '' ||
     form.description.trim() !== '' ||
     form.justification.trim() !== '' ||
-    form.department.trim() !== '' ||
     form.items.some(i => (i.name || '').trim() !== '' || (i.specification || '').trim() !== '' || Number(i.estimated_price) > 0);
 
   const safeClose = () => {
@@ -120,8 +120,10 @@ export function CreatePRDialog({ open, onClose, token, onCreated }) {
                 <SelectItem value="other">Lainnya</SelectItem>
               </SelectContent>
             </Select>
-            <Input placeholder="Departemen" value={form.department}
-              onChange={e => set('department', e.target.value)} />
+            {/* 2026-11-07 (OR1): Struktur Organisasi; bawaan = departemen karyawan pemohon (isian bawaan
+                tidak dihitung "belum disimpan") */}
+            {open && <DepartmentSelect token={token} value={form.department} defaultToMine testId="asset-pr-department"
+              onChange={v => set('department', v)} />}
           </div>
           <Input placeholder="Justifikasi kebutuhan..." value={form.justification}
             onChange={e => set('justification', e.target.value)} />

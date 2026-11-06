@@ -226,6 +226,19 @@ async def resolve_role_access(db, user: dict) -> dict:
     }
 
 
+async def user_has_portal(db, user: dict, portal_id: str) -> bool:
+    """Apakah pengguna `user` (dokumen users: id + role) bisa membuka portal `portal_id`?
+
+    2026-11-07 (Tahap 6, MK3): aturan yang SAMA dengan yang memberi portal saat login/`/auth/me`
+    (`resolve_role_access`: peran super, `roles.portals`, `users.extra_portals`, izin Lihat per modul,
+    lalu `PORTAL_ACCESS` bawaan) — bukan daftar peran tetap saja. Dipakai pemilih PIC toko.
+    """
+    if portal_id in ALL_ROLE_PORTALS:
+        return True
+    access = await resolve_role_access(db, {"id": (user or {}).get("id"), "role": (user or {}).get("role")})
+    return portal_id in access["portals"]
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RBAC read/write guard (SSOT: check_portal_access) — menutup BUG-RBAC-1.

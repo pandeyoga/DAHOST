@@ -52,7 +52,9 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
   const [grs, setGrs] = useState([]);
   const [grId, setGrId] = useState('');
   const [lineId, setLineId] = useState('');
-  const [locs, setLocs] = useState([]);
+  // 2026-11-07 (Tahap 6 PG4): lokasi asal = HANYA lokasi yang memegang stok barang baris GR terpilih
+  // (sumber sama dengan Transfer: /api/rahaza/material-stock). null = belum ada baris terpilih / sedang dimuat.
+  const [stockLocs, setStockLocs] = useState(null);
   const [locId, setLocId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -66,9 +68,6 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
         const rows = await apiGet(token, '/api/wms/legacy/receiving');
         setGrs((Array.isArray(rows) ? rows : []).filter((g) => ['received', 'completed', 'partial_received', 'accepted'].includes(g.status)));
       } catch (e) { setErr(e.message); }
-      if (!fromQ) {
-        try { setLocs(await apiGet(token, '/api/rahaza/storage-locations')); } catch { /* noop */ }
-      }
     })();
   }, [token, needGr, fromQ]);
 
@@ -77,6 +76,32 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
     && (!fromQ || li.material_id === quarantineItem.material_id)), [gr, fromQ, quarantineItem]);
   const line = grLines.find((li) => (li.id || li.po_item_id) === lineId);
   const price = Number(line?.unit_price || line?.unit_cost || quarantineItem?.unit_cost || 0);
+  const lineMaterialId = line?.material_id || '';
+
+  useEffect(() => {
+    setLocId('');
+    if (fromQ || !lineMaterialId) { setStockLocs(null); return undefined; }
+    let off = false;
+    setStockLocs(null);
+    apiGet(token, `/api/rahaza/material-stock?material_id=${encodeURIComponent(lineMaterialId)}`)
+      .then((rows) => {
+        if (off) return;
+        // Tersedia = qty − dipesan (aturan server retur). Stok karantina QC tidak ikut: barang reject
+        // diretur lewat item karantinanya (server menolak lokasi karantina sebagai asal stok).
+        const byLoc = {};
+        (Array.isArray(rows) ? rows : []).forEach((s) => {
+          if (!s.location_id || s.quarantine || s.blocked) return;
+          const cur = byLoc[s.location_id] || { id: s.location_id, code: s.location_code || '', name: s.location_name || '', qty: 0, unit: s.unit || '' };
+          cur.qty += Number(s.qty || 0) - Number(s.reserved_quantity || 0);
+          byLoc[s.location_id] = cur;
+        });
+        setStockLocs(Object.values(byLoc).filter((l) => l.qty > 1e-9)
+          .sort((a, b) => String(a.code || a.name).localeCompare(String(b.code || b.name), 'id')));
+      })
+      .catch((e) => { if (!off) { setStockLocs([]); setErr(e.message); } });
+    return () => { off = true; };
+  }, [token, fromQ, lineMaterialId]);
+  const stockAtLoc = (stockLocs || []).find((l) => l.id === locId);
 
   const submit = async () => {
     const q = parseFloat(qty);
@@ -84,6 +109,10 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
     if (!reason.trim()) { setErr('Alasan retur wajib diisi'); return; }
     if (needGr && !grId) { setErr('GR asal wajib dipilih (harga & pemasok diambil dari penerimaan asal)'); return; }
     if (!fromQ && (!lineId || !locId)) { setErr('Pilih baris GR dan lokasi asal stok'); return; }
+    if (!fromQ && stockAtLoc && q > stockAtLoc.qty + 1e-9) {
+      setErr(`Stok barang ini di lokasi asal hanya ${fmtNum(stockAtLoc.qty)} ${stockAtLoc.unit || ''} — qty retur melebihi stok.`);
+      return;
+    }
     if (settlement === 'refund' && unvalued > 1e-6) {
       setErr('Refund hanya untuk barang yang sudah bernilai/ditagih. Reject saat penerimaan belum ditagih — pilih tukar barang atau potong tagihan.');
       return;
@@ -164,10 +193,24 @@ export function PurchaseReturnCreateModal({ token, quarantineItem, onClose, onSa
           <div>
             <label className="text-xs text-muted-foreground block mb-1">Lokasi asal stok *</label>
             <SmartNativeSelect value={locId} onChange={(e) => setLocId(e.target.value)}
+              disabled={!lineMaterialId || stockLocs === null || stockLocs.length === 0}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="rtp-location">
-              <option value="">— pilih lokasi —</option>
-              {locs.map((l) => <option key={l.id} value={l.id}>{l.code ? `${l.code} · ` : ''}{l.name || l.code}</option>)}
+              <option value="">
+                {!lineMaterialId ? '— pilih baris GR dulu —'
+                  : stockLocs === null ? 'Memuat lokasi stok…'
+                    : stockLocs.length === 0 ? '— tidak ada stok barang ini di lokasi mana pun —' : '— pilih lokasi —'}
+              </option>
+              {(stockLocs || []).map((l) => (
+                <option key={l.id} value={l.id}>
+                  {`${l.code ? `${l.code} · ` : ''}${l.name || l.code || 'Lokasi'} — stok ${fmtNum(l.qty)} ${l.unit || ''}`.trim()}
+                </option>
+              ))}
             </SmartNativeSelect>
+            <p className="text-[11px] text-muted-foreground mt-1" data-testid="rtp-location-hint">
+              {lineMaterialId && stockLocs && stockLocs.length === 0
+                ? 'Barang ini tidak punya stok di lokasi mana pun, jadi tidak bisa diretur dari stok. Bila barangnya ada di Karantina QC, buat retur dari layar Karantina.'
+                : 'Hanya lokasi yang memegang stok barang baris GR terpilih.'}
+            </p>
           </div>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

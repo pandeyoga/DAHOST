@@ -25,6 +25,21 @@ import {
 import { PageHeader } from './moduleAtoms';
 import { toast } from 'sonner';
 import { X } from 'lucide-react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { useMarketingAccounts } from '@/hooks/useMarketingAccounts';
+
+// 2026-11-07 (Tahap 6, MK1 — keputusan owner): tugas dari template diberikan ke PIC TOKO template itu
+// (Kelola Akun). Isian lama "peran bawaan" (staff/pic) bukan peran yang ada dan membuat tugas otomatis
+// tanpa penanggung jawab — diganti pilihan toko + keterangan penanggung jawab.
+const ASSIGNEE_PIC_TOKO = 'pic_toko';
+
+/** Kalimat penanggung jawab untuk toko terpilih (dipakai di form & daftar template). */
+function assigneeText(acc) {
+  if (!acc) return 'Belum ada toko — tugas dibuat tanpa penanggung jawab';
+  return acc.pic_user_name
+    ? `PIC toko: ${acc.pic_user_name}`
+    : 'Toko ini belum punya PIC — tugas dibuat tanpa penanggung jawab';
+}
 
 const FREQUENCIES = [
   { value: 'daily', label: 'Setiap Hari' },
@@ -57,7 +72,7 @@ const DAYS = [
   { value: 'sunday', label: 'Min' },
 ];
 
-function TemplateFormDialog({ open, onOpenChange, template, onSaved, token }) {
+function TemplateFormDialog({ open, onOpenChange, template, onSaved, token, accounts = [], byId = {} }) {
   const isEdit = !!template;
   const [submitting, setSubmitting] = useState(false);
   const [form, setForm] = useState({
@@ -71,11 +86,13 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token }) {
     days_of_week: [],
     day_of_month: 1,
     auto_create: true,
-    default_assigned_role: 'staff',
+    account_id: '',
     is_active: true,
     checklist_template: [],
   });
   const [newChecklistItem, setNewChecklistItem] = useState('');
+  const storeOptions = accounts.filter(a => a.status === 'active' || a.id === form.account_id);
+  const selectedStore = form.account_id ? byId[form.account_id] : null;
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -93,7 +110,7 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token }) {
         days_of_week: cfg.days_of_week || [],
         day_of_month: cfg.day_of_month || 1,
         auto_create: cfg.auto_create !== false,
-        default_assigned_role: template.default_assigned_role || 'staff',
+        account_id: template.account_id || '',
         is_active: template.is_active !== false,
         checklist_template: template.checklist_template || [],
       });
@@ -109,7 +126,7 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token }) {
         days_of_week: [],
         day_of_month: 1,
         auto_create: true,
-        default_assigned_role: 'staff',
+        account_id: '',
         is_active: true,
         checklist_template: [],
       });
@@ -168,7 +185,8 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token }) {
         priority: form.priority,
         recurrence: form.recurrence,
         recurrence_config,
-        default_assigned_role: form.default_assigned_role,
+        default_assigned_role: ASSIGNEE_PIC_TOKO,
+        account_id: form.account_id || null,
         is_active: form.is_active,
         checklist_template: form.checklist_template,
       };
@@ -320,15 +338,22 @@ function TemplateFormDialog({ open, onOpenChange, template, onSaved, token }) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Default Assigned Role</Label>
-              <Select value={form.default_assigned_role} onValueChange={v => setForm(f => ({ ...f, default_assigned_role: v }))}>
-                <SelectTrigger data-testid="tpl-role-select"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="staff">Staff Marketing</SelectItem>
-                  <SelectItem value="pic">PIC Marketing</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Toko</Label>
+              <SmartNativeSelect value={form.account_id} onChange={e => setForm(f => ({ ...f, account_id: e.target.value }))}
+                className="w-full mt-1" data-testid="tpl-store-select">
+                <option value="">— Tanpa toko —</option>
+                {storeOptions.map(a => (
+                  <option key={a.id} value={a.id}>{`${a.account_code ? `${a.account_code} · ` : ''}${a.account_name}`}</option>
+                ))}
+              </SmartNativeSelect>
             </div>
+            <div>
+              <Label>Penanggung jawab</Label>
+              <p className="mt-2 text-sm text-foreground" data-testid="tpl-assignee-text">{assigneeText(selectedStore)}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <div className="flex items-end gap-3">
               <div className="flex items-center gap-2">
                 <Switch
@@ -397,6 +422,7 @@ export default function TaskTemplatesModule({ token }) {
   const [templates, setTemplates] = useState([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTpl, setEditTpl] = useState(null);
+  const { accounts, byId } = useMarketingAccounts(token, { status: 'all' });
 
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
 
@@ -436,7 +462,8 @@ export default function TaskTemplatesModule({ token }) {
           task_type: tpl.task_type,
           recurrence: tpl.recurrence,
           recurrence_config: tpl.recurrence_config,
-          default_assigned_role: tpl.default_assigned_role,
+          default_assigned_role: ASSIGNEE_PIC_TOKO,
+          account_id: tpl.account_id || null,
           priority: tpl.priority,
           checklist_template: tpl.checklist_template || [],
           is_active: true,
@@ -510,7 +537,10 @@ export default function TaskTemplatesModule({ token }) {
                     <span>·</span>
                     <Badge variant="outline" className="text-xs">{tpl.task_type}</Badge>
                     <Badge variant="outline" className="text-xs">{tpl.priority}</Badge>
-                    <Badge variant="outline" className="text-xs">{tpl.default_assigned_role}</Badge>
+                    <span data-testid={`tpl-assignee-${tpl.id}`}>
+                      {tpl.account_id && byId[tpl.account_id] ? `${byId[tpl.account_id].account_name} · ` : ''}
+                      {assigneeText(tpl.account_id ? byId[tpl.account_id] : null)}
+                    </span>
                   </div>
                   {tpl.checklist_template?.length > 0 && (
                     <div className="text-xs text-muted-foreground mt-2">
@@ -549,6 +579,8 @@ export default function TaskTemplatesModule({ token }) {
         template={editTpl}
         onSaved={fetchTemplates}
         token={token}
+        accounts={accounts}
+        byId={byId}
       />
     </div>
   );

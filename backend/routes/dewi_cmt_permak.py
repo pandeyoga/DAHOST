@@ -12,7 +12,8 @@ Collection: `dewi_cmt_permak`
   sku, product_name, size, color, serial_number,
   source ('reject'|'good'), source_receipt_id, source_receipt_line_id,
   qty, qty_fixed, qty_scrap,
-  vendor_permak, reason, notes, photos[],
+  vendor_permak (nama), vendor_permak_kind ('vendor_cmt'|'workshop_da'|''), vendor_permak_id,
+  vendor_permak_name, reason, notes, photos[],
   status ('open'|'in_progress'|'selesai_berhasil'|'gagal_buang'),
   status_history[], created_at, created_by, updated_at, updated_by
 
@@ -50,6 +51,13 @@ TRANSITIONS = {
 
 # Jenis permak (S4: retur ke penjahit vs permak sendiri)
 PERMAK_TYPES = ("permak_sendiri", "retur_ke_cmt")
+# 2026-11-07 (Tahap 6, keputusan owner PR1): "Vendor / workshop permak" dulu teks bebas. Kini DIPILIH dari
+# master Vendor CMT (`vendor_partners` — master yang sama dengan Komponen Kurang) atau satu pilihan tetap
+# "Workshop DA sendiri". Yang disimpan: `vendor_permak_kind` + `vendor_permak_id` + `vendor_permak_name`;
+# `vendor_permak` tetap diisi nama (pembaca & dokumen lama).
+WORKSHOP_DA_ID = "workshop_da"
+WORKSHOP_DA_NAME = "Workshop DA sendiri"
+PERMAK_WORKSHOP_KINDS = {"workshop_da": WORKSHOP_DA_NAME, "vendor_cmt": "Vendor CMT"}
 # Taksonomi masalah (informational; UI bebas menambah via free-text bila perlu)
 PROBLEM_TYPES = ("jahitan", "noda", "ukuran", "bahan", "aksesoris", "lainnya")
 
@@ -109,6 +117,8 @@ class PermakCreate(BaseModel):
     source_receipt_id: Optional[str] = None
     source_receipt_line_id: Optional[str] = None
     vendor_permak: str = ""
+    # Tahap 6 (PR1): id master Vendor CMT, atau WORKSHOP_DA_ID. Kosong = belum ditentukan.
+    vendor_permak_id: Optional[str] = None
     reason: str = ""
     notes: str = ""
     photos: List[str] = []
@@ -126,6 +136,7 @@ class FromReceiptLine(BaseModel):
     cost_per_pcs: float = Field(0.0, ge=0)   # FASE 14 — lihat PermakCreate.cost_per_pcs
     return_deadline: Optional[str] = None
     vendor_permak: str = ""
+    vendor_permak_id: Optional[str] = None   # Tahap 6 (PR1) — lihat PermakCreate
     reason: str = ""
     notes: str = ""
     photos: List[str] = []
@@ -142,6 +153,7 @@ class PermakUpdate(BaseModel):
     cost_per_pcs: Optional[float] = Field(default=None, ge=0)
     return_deadline: Optional[str] = None
     vendor_permak: Optional[str] = None
+    vendor_permak_id: Optional[str] = None   # Tahap 6 (PR1) — "" = kosongkan
     reason: Optional[str] = None
     notes: Optional[str] = None
     photos: Optional[List[str]] = None
@@ -173,6 +185,43 @@ async def _enrich_from_po_item(db, po_id: str, po_item_id: str) -> dict:
         "color": item.get("color", ""),
         "serial_number": item.get("serial_number", ""),
     }
+
+
+def _vendor_partner_active(p: dict) -> bool:
+    """Penanda aktif `vendor_partners` (sama dengan GET /api/garments): `active`/`is_active`/`status`."""
+    if "active" in p or "is_active" in p:
+        return p.get("active", True) is not False and p.get("is_active", True) is not False
+    if "status" in p:
+        return p.get("status") == "active"
+    return True
+
+
+async def resolve_permak_workshop(db, vendor_permak_id: Optional[str], typed: Optional[str] = "",
+                                  current: Optional[dict] = None) -> dict:
+    """Tahap 6 (PR1): vendor/workshop permak → field tersimpan. 400 bila tidak sah.
+
+    · `WORKSHOP_DA_ID`  → workshop DA sendiri (penanda tetap, bukan vendor).
+    · id lain           → WAJIB ada di master Vendor CMT (`vendor_partners`) dan aktif; nama ikut master.
+    · kosong + ketikan  → DITOLAK (ketik bebas tidak diterima lagi).
+    · kosong            → belum ditentukan.
+    `current` = dokumen lama (ubah): vendor yang sama boleh tetap walau kini nonaktif."""
+    vid = (vendor_permak_id or "").strip()
+    if vid == WORKSHOP_DA_ID:
+        return {"vendor_permak_kind": "workshop_da", "vendor_permak_id": WORKSHOP_DA_ID,
+                "vendor_permak_name": WORKSHOP_DA_NAME, "vendor_permak": WORKSHOP_DA_NAME}
+    if vid:
+        v = await db.vendor_partners.find_one({"id": vid}, {"_id": 0})
+        if not v:
+            raise HTTPException(400, "Vendor permak yang dipilih tidak ada di master Vendor CMT — pilih dari daftar.")
+        if not _vendor_partner_active(v) and (current or {}).get("vendor_permak_id") != vid:
+            raise HTTPException(400, f"Vendor CMT {v.get('name') or vid} nonaktif — pilih vendor lain.")
+        name = v.get("name") or v.get("garment_name") or ""
+        return {"vendor_permak_kind": "vendor_cmt", "vendor_permak_id": vid,
+                "vendor_permak_name": name, "vendor_permak": name}
+    if (typed or "").strip():
+        raise HTTPException(400, "Vendor / workshop permak dipilih dari master Vendor CMT atau "
+                                 f"'{WORKSHOP_DA_NAME}' — ketik bebas tidak diterima.")
+    return {"vendor_permak_kind": "", "vendor_permak_id": "", "vendor_permak_name": "", "vendor_permak": ""}
 
 
 async def _permaked_qty_for_line(db, receipt_line_id: str, exclude_id: str = None) -> int:
@@ -550,6 +599,7 @@ async def create_permak(data: PermakCreate, request: Request):
     from core.po_lock import assert_po_open
     await assert_po_open(db, data.po_id, 'permak')
     meta = await _enrich_from_po_item(db, data.po_id, data.po_item_id)
+    workshop = await resolve_permak_workshop(db, data.vendor_permak_id, data.vendor_permak)
 
     # ── Tautkan ke baris penerimaan (sumber reject) ──────────────────────────
     allocations = []
@@ -627,7 +677,8 @@ async def create_permak(data: PermakCreate, request: Request):
             "qty": qty_alloc,
             "qty_fixed": 0,
             "qty_scrap": 0,
-            "vendor_permak": data.vendor_permak,
+            # Tahap 6 (PR1): vendor/workshop permak dari master (id + nama) atau Workshop DA sendiri
+            **workshop,
             "reason": data.reason,
             "notes": data.notes,
             "photos": data.photos or [],
@@ -724,6 +775,7 @@ async def create_from_receipt_line(data: FromReceiptLine, request: Request):
         source_receipt_id=receipt.get("id"),
         source_receipt_line_id=data.receipt_line_id,
         vendor_permak=data.vendor_permak,
+        vendor_permak_id=data.vendor_permak_id,
         reason=data.reason or line.get("reject_reason", ""),
         notes=data.notes,
         photos=data.photos or line.get("photos", []) or [],
@@ -778,8 +830,13 @@ async def update_permak(permak_id: str, data: PermakUpdate, request: Request):
         updates["cost_per_pcs"] = float(data.cost_per_pcs)
     if data.return_deadline is not None:
         updates["return_deadline"] = data.return_deadline
-    if data.vendor_permak is not None:
-        updates["vendor_permak"] = data.vendor_permak
+    # Tahap 6 (PR1): vendor/workshop permak hanya lewat id master (atau Workshop DA sendiri).
+    # Teks lama yang dikirim balik apa adanya (dokumen lama) tidak dianggap perubahan.
+    if data.vendor_permak_id is not None:
+        if data.vendor_permak_id.strip() != (doc.get("vendor_permak_id") or "") or not data.vendor_permak_id.strip():
+            updates.update(await resolve_permak_workshop(db, data.vendor_permak_id, "", current=doc))
+    elif data.vendor_permak is not None and data.vendor_permak.strip() != (doc.get("vendor_permak") or "").strip():
+        updates.update(await resolve_permak_workshop(db, None, data.vendor_permak, current=doc))
     if data.reason is not None:
         updates["reason"] = data.reason
     if data.notes is not None:

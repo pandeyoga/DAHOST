@@ -1,29 +1,71 @@
+/**
+ * PortalSayaProfile — Portal Saya › Profil.
+ *
+ * 2026-11-07 (keputusan owner HR1, Tahap 6): No. HP, alamat, dan kontak darurat adalah DATA KARYAWAN (yang
+ * dibaca HR, slip, laporan). Dulu isian ini hanya tersimpan di akun login sehingga HR tidak pernah melihatnya.
+ * Sekarang:
+ *  · nilai yang tampil = data karyawan (akun tanpa tautan karyawan tetap memakai isian akun);
+ *  · "Simpan" mengirim PENGAJUAN perubahan ke HR (Kotak Masuk SDM › Perubahan data, lama → baru); data
+ *    karyawan baru berubah setelah HR menyetujui. Selama menunggu, isian kontak dikunci dan pengajuan bisa
+ *    ditarik. Hasil terakhir (ditolak + alasan / disetujui) tampil di sini;
+ *  · nama panggilan dan foto tetap langsung tersimpan di akun (bukan data karyawan).
+ * Cetakan PageLayout (PANDUAN_UI G1); hubungan kontak darurat dipilih dari daftar yang sama dengan Data Karyawan.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import {
-  Loader2, User, Save, Building2, Link as LinkIcon, AlertCircle,
-  Phone, MapPin, UserCheck, Camera, Upload, X,
+  Loader2, User, Save, AlertCircle, Phone, MapPin, Camera, Upload, X, Hourglass, CheckCircle2, XCircle, Info,
+  ChevronRight,
 } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
+import { Button } from '@/components/ui/button';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { toast } from 'sonner';
 import { withFileAuth } from '@/lib/fileUrl';
+import PageLayout from './layout/PageLayout';
+import { Notice, StatusBadge } from './moduleAtoms';
+import { EMERGENCY_RELATIONS } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
+const EMPTY_KD = { nama: '', hubungan: '', no_hp: '' };
+const FROM_ACCOUNT_LABEL = {
+  no_hp: 'No. HP', alamat: 'Alamat', 'kontak_darurat.nama': 'Nama kontak darurat',
+  'kontak_darurat.hubungan': 'Hubungan kontak darurat', 'kontak_darurat.no_hp': 'No. HP kontak darurat',
+};
+const fmtDate = (v) => {
+  if (!v) return '';
+  try { return new Date(v).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Jakarta' }); }
+  catch { return ''; }
+};
+const RECENT_MS = 14 * 86400000;
+
+function ChangeList({ changes = [] }) {
+  return (
+    <ul className="mt-1 space-y-0.5" data-testid="profile-change-list">
+      {changes.map((c) => (
+        <li key={c.field} className="flex flex-wrap items-center gap-1">
+          <span className="text-muted-foreground">{c.label}:</span>
+          <span className="line-through text-muted-foreground">{c.old || '(kosong)'}</span>
+          <ChevronRight className="w-3 h-3" aria-hidden="true" />
+          <span className="font-medium">{c.new || '(dikosongkan)'}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function PortalSayaProfile({ user, headers }) {
-  const { toast } = useToast();
   const fileInputRef = useRef(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const [form, setForm] = useState({
-    nama_panggilan: '', no_hp: '', alamat: '', foto_url: '',
-    kontak_darurat: { nama: '', hubungan: '', no_hp: '' },
-  });
+  const [form, setForm] = useState({ nama_panggilan: '', no_hp: '', alamat: '', foto_url: '', kontak_darurat: EMPTY_KD });
 
   const load = useCallback(async () => {
     try {
@@ -35,10 +77,10 @@ export default function PortalSayaProfile({ user, headers }) {
         no_hp: data.no_hp || '',
         alamat: data.alamat || '',
         foto_url: data.foto_url || '',
-        kontak_darurat: data.kontak_darurat || { nama: '', hubungan: '', no_hp: '' },
+        kontak_darurat: { ...EMPTY_KD, ...(data.kontak_darurat || {}) },
       });
     } catch (e) {
-      console.error(e);
+      toast.error('Gagal memuat profil', { description: e.response?.data?.detail || e.message });
     } finally {
       setLoading(false);
     }
@@ -46,27 +88,40 @@ export default function PortalSayaProfile({ user, headers }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const change = profile?.data_change || null;
+  const pending = change && ['pending', 'deciding'].includes(change.status);
+  const recent = change && change.decided_at && (Date.now() - new Date(change.decided_at).getTime() < RECENT_MS);
+  const linked = !!profile?.is_linked;
+  const contactLocked = linked && pending;
+
   const handleSave = async () => {
     setSaving(true);
     try {
-      await axios.put(`${API}/api/portal/profile`, form, { headers });
-      toast({ title: 'Profil berhasil diperbarui.' });
+      const body = contactLocked ? { nama_panggilan: form.nama_panggilan } : form;
+      const { data } = await axios.put(`${API}/api/portal/profile`, body, { headers });
+      toast.success(data?.message || 'Profil tersimpan.');
       load();
     } catch (e) {
-      toast({ title: 'Gagal menyimpan.', description: e.response?.data?.detail, variant: 'destructive' });
+      toast.error('Gagal menyimpan', { description: e.response?.data?.detail || e.message });
     } finally {
       setSaving(false);
     }
   };
 
-  const handlePhotoSelect = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    // Local preview
-    const url = URL.createObjectURL(file);
-    setPreviewUrl(url);
-    // Upload immediately
-    uploadPhoto(file);
+  const cancelChange = async () => {
+    const ok = await confirmDialog({
+      title: 'Tarik pengajuan perubahan data?',
+      body: 'Data karyawan tidak berubah. Anda bisa mengajukan ulang kapan saja.',
+      confirmLabel: 'Tarik pengajuan',
+    });
+    if (!ok) return;
+    try {
+      await axios.post(`${API}/api/portal/profile/data-change/cancel`, {}, { headers });
+      toast.success('Pengajuan perubahan data ditarik.');
+      load();
+    } catch (e) {
+      toast.error('Gagal menarik pengajuan', { description: e.response?.data?.detail || e.message });
+    }
   };
 
   const uploadPhoto = async (file) => {
@@ -79,244 +134,180 @@ export default function PortalSayaProfile({ user, headers }) {
       });
       setForm(f => ({ ...f, foto_url: data.foto_url }));
       setPreviewUrl(`${API}${data.foto_url}`);
-      toast({ title: 'Foto profil berhasil diunggah.' });
+      toast.success('Foto profil berhasil diunggah.');
     } catch (e) {
-      toast({ title: 'Gagal mengunggah foto.', description: e.response?.data?.detail, variant: 'destructive' });
+      toast.error('Gagal mengunggah foto', { description: e.response?.data?.detail || e.message });
       setPreviewUrl(form.foto_url || null);
     } finally {
       setUploading(false);
     }
   };
 
+  const handlePhotoSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPreviewUrl(URL.createObjectURL(file));
+    uploadPhoto(file);
+  };
+
   const removePhoto = async () => {
     setPreviewUrl(null);
-    const newForm = { ...form, foto_url: '' };
-    setForm(newForm);
+    setForm(f => ({ ...f, foto_url: '' }));
     try {
       await axios.put(`${API}/api/portal/profile`, { foto_url: '' }, { headers });
-      toast({ title: 'Foto profil dihapus.' });
+      toast.success('Foto profil dihapus.');
     } catch (e) {
-      console.error(e);
+      toast.error('Gagal menghapus foto', { description: e.response?.data?.detail || e.message });
     }
   };
 
   const set = (field, val) => setForm(f => ({ ...f, [field]: val }));
-  const setKD = (field, val) => setForm(f => ({
-    ...f,
-    kontak_darurat: { ...(f.kontak_darurat || {}), [field]: val }
-  }));
+  const setKD = (field, val) => setForm(f => ({ ...f, kontak_darurat: { ...(f.kontak_darurat || {}), [field]: val } }));
 
-  if (loading) return (
-    <div className="flex items-center justify-center py-24">
-      <Loader2 className="w-8 h-8 animate-spin text-primary" />
-    </div>
-  );
+  if (loading) {
+    return (
+      <PageLayout title="Profil saya" subtitle="Data akun dan kontak Anda.">
+        <Skeleton className="h-40 rounded-[var(--radius-lg)]" />
+        <Skeleton className="h-56 rounded-[var(--radius-lg)]" />
+      </PageLayout>
+    );
+  }
 
   const emp = profile?.employee;
+  const relation = form.kontak_darurat?.hubungan || '';
+  const relationOptions = relation && !EMERGENCY_RELATIONS.includes(relation)
+    ? [...EMERGENCY_RELATIONS, relation] : EMERGENCY_RELATIONS;
+  const fromAccount = pending ? [] : (profile?.contact_from_account || []);
+  const photoSrc = previewUrl
+    ? (previewUrl.startsWith('blob:') ? previewUrl : withFileAuth(previewUrl.startsWith('/api') ? `${API}${previewUrl}` : previewUrl))
+    : null;
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-5">
-      <h2 className="text-lg font-bold">Profil Saya</h2>
+    <PageLayout
+      title="Profil saya"
+      subtitle={linked ? 'Perubahan No. HP, alamat, dan kontak darurat disetujui HR dulu.' : 'Data akun dan kontak Anda.'}
+      testId="portal-profile-page"
+      actions={(
+        <Button onClick={handleSave} disabled={saving || uploading} data-testid="btn-save-profile">
+          {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
+          {saving ? 'Menyimpan…' : 'Simpan profil'}
+        </Button>
+      )}
+    >
+      {pending && (
+        <Notice tone="warning" icon={Hourglass} title="Perubahan data menunggu persetujuan HR" testId="profile-change-pending">
+          Diajukan {fmtDate(change.created_at)}. Isian kontak dikunci sampai HR memutuskan.
+          <ChangeList changes={change.changes} />
+          <Button variant="outline" size="sm" className="mt-2" onClick={cancelChange} data-testid="btn-cancel-change">
+            Tarik pengajuan
+          </Button>
+        </Notice>
+      )}
+      {!pending && change?.status === 'rejected' && recent && (
+        <Notice tone="danger" icon={XCircle} title="Perubahan data ditolak HR" testId="profile-change-rejected">
+          {fmtDate(change.decided_at)}{change.decision_note ? ` — ${change.decision_note}` : ''}. Data karyawan tidak berubah.
+          <ChangeList changes={change.changes} />
+        </Notice>
+      )}
+      {!pending && change?.status === 'approved' && recent && (
+        <Notice tone="success" icon={CheckCircle2} title="Perubahan data disetujui HR" testId="profile-change-approved">
+          {fmtDate(change.decided_at)} — data karyawan sudah diperbarui.
+        </Notice>
+      )}
+      {fromAccount.length > 0 && (
+        <Notice tone="info" icon={Info} testId="profile-from-account">
+          {fromAccount.map(k => FROM_ACCOUNT_LABEL[k]).join(', ')} berasal dari akun Anda dan belum tercatat di data
+          karyawan. Tekan Simpan profil untuk mengajukannya ke HR.
+        </Notice>
+      )}
 
-      {/* Account info */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Informasi Akun</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Photo section */}
-          <div className="flex items-start gap-5">
-            {/* Avatar with upload overlay */}
-            <div className="relative group shrink-0">
-              <div
-                className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center overflow-hidden border-2 border-primary/20 cursor-pointer"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                {uploading ? (
-                  <Loader2 className="w-7 h-7 animate-spin text-primary" />
-                ) : previewUrl ? (
-                  <img
-                    src={previewUrl.startsWith('blob:') ? previewUrl : withFileAuth(previewUrl.startsWith('/api') ? `${API}${previewUrl}` : previewUrl)}
-                    alt="foto profil"
-                    className="w-full h-full object-cover"
-                    onError={() => setPreviewUrl(null)}
-                  />
-                ) : (
-                  <User className="w-10 h-10 text-primary/50" />
-                )}
-                {/* Hover overlay */}
-                <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <Camera className="w-6 h-6 text-foreground" />
-                </div>
-              </div>
-              {previewUrl && !uploading && (
-                <button
-                  onClick={removePhoto}
-                  className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-foreground rounded-full flex items-center justify-center hover:bg-red-600"
-                  title="Hapus foto"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-
-            {/* Upload actions */}
-            <div className="flex-1 space-y-1">
-              <p className="font-semibold text-base">{profile?.name || user?.name}</p>
-              <p className="text-sm text-muted-foreground">{profile?.email}</p>
-              <p className="text-xs text-muted-foreground capitalize mt-0.5">{profile?.role}</p>
-              <div className="flex items-center gap-2 mt-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  data-testid="btn-upload-photo"
-                  className="text-xs h-7"
-                >
-                  <Upload className="w-3 h-3 mr-1" />
-                  {uploading ? 'Mengunggah...' : 'Upload Foto'}
-                </Button>
-                <Badge className={profile?.is_linked
-                  ? 'bg-green-100 text-green-800 border-green-200'
-                  : 'bg-amber-100 text-amber-800 border-amber-200'
-                }>
-                  {profile?.is_linked ? <><LinkIcon className="w-3 h-3 mr-1" />Terhubung</> : 'Belum Terhubung'}
-                </Badge>
-              </div>
-              <p className="text-xs text-muted-foreground">JPG, PNG, WEBP max 5 MB</p>
-            </div>
+      <GlassCard className="p-4 space-y-3" data-testid="profile-account-card">
+        <div className="flex items-start gap-4">
+          <div className="relative shrink-0">
+            <button type="button" aria-label="Ganti foto profil" title="Ganti foto profil"
+              className="w-20 h-20 rounded-full bg-[hsl(var(--primary)/0.1)] flex items-center justify-center overflow-hidden border-2 border-[hsl(var(--primary)/0.2)]"
+              onClick={() => fileInputRef.current?.click()}>
+              {uploading ? <Loader2 className="w-7 h-7 animate-spin text-primary" />
+                : photoSrc ? <img src={photoSrc} alt="foto profil" className="w-full h-full object-cover" onError={() => setPreviewUrl(null)} />
+                  : <User className="w-10 h-10 text-primary/50" />}
+            </button>
+            {previewUrl && !uploading && (
+              <Button variant="outline" size="icon" onClick={removePhoto} title="Hapus foto" aria-label="Hapus foto"
+                className="absolute -top-1 -right-1 h-6 w-6 rounded-full" data-testid="btn-remove-photo">
+                <X className="w-3 h-3" />
+              </Button>
+            )}
           </div>
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={handlePhotoSelect}
-            data-testid="input-photo-file"
-          />
-
-          {/* Employee info */}
-          {emp && (
-            <div className="bg-muted/50 rounded-lg p-3 space-y-1">
-              <div className="flex items-center gap-2 text-sm">
-                <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                <span className="font-medium">{emp.name || emp.full_name}</span>
-                <span className="text-muted-foreground">·</span>
-                <span className="text-muted-foreground text-xs">{emp.nik || emp.employee_id}</span>
-              </div>
-              {emp.department && (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <UserCheck className="w-4 h-4 shrink-0" />
-                  <span>{emp.department}{emp.position ? ` — ${emp.position}` : ''}</span>
-                </div>
-              )}
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="font-semibold text-base truncate">{profile?.name || user?.name}</p>
+            <p className="text-sm text-muted-foreground truncate">{profile?.email}</p>
+            {emp && (
+              <p className="text-sm text-muted-foreground" data-testid="profile-employee-line">
+                {[emp.employee_code, emp.department, emp.job_title || emp.position].filter(Boolean).join(' · ')}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                data-testid="btn-upload-photo">
+                {uploading ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Upload className="w-3.5 h-3.5 mr-1" />}
+                {uploading ? 'Mengunggah…' : 'Unggah foto'}
+              </Button>
+              <StatusBadge tone={linked ? 'success' : 'warning'} label={linked ? 'Terhubung ke data karyawan' : 'Belum terhubung'}
+                testId="profile-linked-badge" />
             </div>
-          )}
+            <p className="text-xs text-muted-foreground">JPG, PNG, atau WEBP, paling besar 5 MB.</p>
+          </div>
+        </div>
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoSelect}
+          data-testid="input-photo-file" />
+        {!emp && (
+          <Notice tone="warning" icon={AlertCircle}>
+            Akun belum terhubung ke data karyawan. Hubungi HR untuk menghubungkan akun Anda.
+          </Notice>
+        )}
+      </GlassCard>
 
-          {!emp && (
-            <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>Akun belum terhubung ke data karyawan. Hubungi HR untuk menghubungkan akun Anda.</span>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <GlassCard className="p-4 space-y-3" data-testid="profile-personal-card">
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-nick">Nama panggilan</Label>
+          <GlassInput id="pf-nick" data-testid="input-nama-panggilan" value={form.nama_panggilan}
+            onChange={e => set('nama_panggilan', e.target.value)} placeholder="Nama yang sering dipanggil" />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-hp" className="flex items-center gap-1"><Phone className="w-3.5 h-3.5" /> No. HP</Label>
+          <GlassInput id="pf-hp" data-testid="input-no-hp" inputMode="tel" value={form.no_hp} disabled={contactLocked}
+            onChange={e => set('no_hp', e.target.value)} placeholder="08xx-xxxx-xxxx" />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-addr" className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> Alamat tinggal</Label>
+          <Textarea id="pf-addr" data-testid="input-alamat" rows={2} value={form.alamat} disabled={contactLocked}
+            onChange={e => set('alamat', e.target.value)} placeholder="Alamat tinggal saat ini" className="resize-none" />
+        </div>
+      </GlassCard>
 
-      {/* Editable fields */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Data Pribadi</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">Nama Panggilan</label>
-            <input
-              data-testid="input-nama-panggilan"
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 outline-none"
-              value={form.nama_panggilan}
-              onChange={e => set('nama_panggilan', e.target.value)}
-              placeholder="Nama yang sering dipanggil"
-            />
+      <GlassCard className="p-4 space-y-3" data-testid="profile-emergency-card">
+        <p className="text-sm font-semibold">Kontak darurat</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="pf-kd-name">Nama</Label>
+            <GlassInput id="pf-kd-name" data-testid="input-kd-nama" value={form.kontak_darurat?.nama || ''}
+              disabled={contactLocked} onChange={e => setKD('nama', e.target.value)} placeholder="Nama kontak" />
           </div>
-          <div>
-            <label className="text-sm font-medium mb-1.5 block flex items-center gap-1">
-              <Phone className="w-3.5 h-3.5" /> No. HP
-            </label>
-            <input
-              data-testid="input-no-hp"
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 outline-none"
-              value={form.no_hp}
-              onChange={e => set('no_hp', e.target.value)}
-              placeholder="08xx-xxxx-xxxx"
-            />
+          <div className="space-y-1.5">
+            <Label>Hubungan</Label>
+            <SmartNativeSelect value={relation} onChange={e => setKD('hubungan', e.target.value)} disabled={contactLocked}
+              searchable={false} data-testid="input-kd-hubungan" className="w-full">
+              <option value="">— Pilih hubungan —</option>
+              {relationOptions.map(r => <option key={r} value={r}>{r}</option>)}
+            </SmartNativeSelect>
           </div>
-          <div>
-            <label className="text-sm font-medium mb-1.5 block flex items-center gap-1">
-              <MapPin className="w-3.5 h-3.5" /> Alamat
-            </label>
-            <textarea
-              data-testid="input-alamat"
-              className="w-full border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary/30 outline-none resize-none"
-              rows={2}
-              value={form.alamat}
-              onChange={e => set('alamat', e.target.value)}
-              placeholder="Alamat tinggal saat ini"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Kontak Darurat</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">Nama</label>
-              <input
-                data-testid="input-kd-nama"
-                className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                value={form.kontak_darurat?.nama || ''}
-                onChange={e => setKD('nama', e.target.value)}
-                placeholder="Nama kontak"
-              />
-            </div>
-            <div>
-              <label className="text-sm font-medium mb-1.5 block">Hubungan</label>
-              <input
-                data-testid="input-kd-hubungan"
-                className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-                value={form.kontak_darurat?.hubungan || ''}
-                onChange={e => setKD('hubungan', e.target.value)}
-                placeholder="Ibu, Ayah, Pasangan..."
-              />
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1.5 block">No. HP Kontak</label>
-            <input
-              data-testid="input-kd-hp"
-              className="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
-              value={form.kontak_darurat?.no_hp || ''}
-              onChange={e => setKD('no_hp', e.target.value)}
-              placeholder="08xx-xxxx-xxxx"
-            />
-          </div>
-        </CardContent>
-      </Card>
-
-      <Button
-        data-testid="btn-save-profile"
-        onClick={handleSave}
-        disabled={saving || uploading}
-        className="w-full"
-      >
-        {saving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Menyimpan...</> : <><Save className="w-4 h-4 mr-2" /> Simpan Profil</>}
-      </Button>
-    </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-kd-hp">No. HP kontak</Label>
+          <GlassInput id="pf-kd-hp" data-testid="input-kd-hp" inputMode="tel" value={form.kontak_darurat?.no_hp || ''}
+            disabled={contactLocked} onChange={e => setKD('no_hp', e.target.value)} placeholder="08xx-xxxx-xxxx" />
+        </div>
+      </GlassCard>
+    </PageLayout>
   );
 }

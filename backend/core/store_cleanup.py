@@ -5,7 +5,8 @@ Dipakai dua pintu supaya keputusannya tidak pernah berbeda:
   * tombol **Hapus permanen** (super admin) di Kelola Akun — `routes.marketing_accounts`.
 
 "Data toko" = dokumen mana pun yang menunjuk `account_id` toko itu (pesanan, item katalog, sales,
-iklan, sesi live, target, kalender konten, …) + baris jurnal di akun COA toko itu. BUKAN data:
+iklan, sesi live, target, kalender konten, …) + baris jurnal di akun COA MILIK toko itu (sub-ledger toko;
+akun pendapatan bersama tidak dihitung — `own_coa_codes`, 7 Nov 2026). BUKAN data:
 koleksi jejak/riwayat (log, history, audit, notifikasi) dan sesi impor yang belum pernah disimpan
 (pratinjau/draf — tidak memasukkan satu baris pun). Katalog KOSONG juga bukan data.
 """
@@ -39,6 +40,29 @@ def store_coa_codes(store: dict) -> list:
                                store.get("ar_account_code")) if c})
 
 
+async def own_coa_codes(db, store: dict) -> list:
+    """Kode akun COA MILIK toko ini sendiri (sub-ledger toko), dari yang tertaut di toko itu.
+
+    2026-11-07 (Tahap 6, MK4 — keputusan owner): dulu SEMUA akun yang tertaut dihitung, termasuk akun
+    pendapatan BERSAMA (mis. 4-1100 Penjualan Garment) yang dijurnal toko lain / penjualan langsung —
+    toko baru tanpa transaksi pun ditolak dihapus ("62 jurnal di akun COA toko ini"). Milik toko =
+    akun penjualan bertanda kode toko ini (`flags.store_account_code`) atau piutang sub-ledger toko ini
+    (`flags.subledger_entity_id`), yaitu akun yang dibuat untuk toko itu saja.
+    """
+    codes = store_coa_codes(store)
+    if not codes:
+        return []
+    rows = await db.rahaza_coa_accounts.find(
+        {"code": {"$in": codes}}, {"_id": 0, "code": 1, "flags": 1}).to_list(len(codes) * 4)
+    own = set()
+    for a in rows:
+        fl = a.get("flags") or {}
+        if ((store.get("account_code") and fl.get("store_account_code") == store.get("account_code"))
+                or (store.get("id") and fl.get("subledger_entity_id") == store.get("id"))):
+            own.add(a["code"])
+    return sorted(own)
+
+
 async def store_data_refs(db, store: dict, collections: Optional[list] = None) -> dict:
     """{nama tampilan: jumlah} data yang menunjuk toko ini. Kosong = toko belum punya data."""
     if collections is None:
@@ -51,7 +75,7 @@ async def store_data_refs(db, store: dict, collections: Optional[list] = None) -
         if n:
             label = LABELS.get(c, OTHER)
             refs[label] = refs.get(label, 0) + n
-    codes = store_coa_codes(store)
+    codes = await own_coa_codes(db, store)   # MK4: hanya sub-ledger milik toko ini, bukan akun bersama
     if codes:
         n = (await db.rahaza_journal_lines.count_documents({"account_code": {"$in": codes}})
              + await db.rahaza_journal_entries.count_documents({"lines.account_code": {"$in": codes}}))

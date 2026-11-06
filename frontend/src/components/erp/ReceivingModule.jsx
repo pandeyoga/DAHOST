@@ -61,6 +61,9 @@ function rejectHint(cats, code, qty, unit) {
 }
 const rejectOptLabel = (rc) => `${rc.label}${rc.kind === 'dokumen' ? ' · catatan saja' : ' · karantina'}`;
 const priceOf = (it) => parseFloat(it?.unit_price) || parseFloat(it?.unit_cost) || 0;
+// 2026-11-07 (Tahap 6 PG3): jenis sumber dalam bahasa staf (GR lama bersumber produksi/pindahan tetap terbaca)
+const SOURCE_LABEL = { supplier: 'Pemasok', production: 'Produksi', transfer: 'Pindahan gudang' };
+const sourceLabel = (t) => SOURCE_LABEL[t] || t || '';
 
 export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const [receipts, setReceipts]   = useState([]);
@@ -149,7 +152,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         // FASE F+ (2026-07-25): dropdown lokasi tujuan pakai SSOT storage-locations
         // (wh_zones + rahaza storage), bukan lagi legacy warehouse_locations.
         fetch('/api/rahaza/storage-locations', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/rahaza/materials?limit=500', { headers: { Authorization: `Bearer ${token}` } }),
+        // 2026-11-07 (Tahap 6 PG1): barang jadi tidak dibeli → tidak dimuat ke pilihan barang penerimaan
+        fetch('/api/rahaza/materials?exclude_type=fg', { headers: { Authorization: `Bearer ${token}` } }),
         // Sprint 2.1: PO yang bisa diterima. 2026-11-07 (Tahap 5): + PO "Diterima Sebagian" — dulu hanya
         // `approved`, sehingga SISA PO yang baru datang sebagian tidak bisa dipilih di form ini.
         fetch('/api/rahaza/purchase-orders?status=approved', { headers: { Authorization: `Bearer ${token}` } }),
@@ -557,7 +561,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       expected_total: sum('expected_qty'),
       received_total: sum('received_qty'),
       rejected_total: sum('rejected_qty'),
-      source_label: r.supplier_name || r.source_type || '—',
+      source_label: r.supplier_name || sourceLabel(r.source_type) || '—',
     };
   }), [filtered]);
 
@@ -577,7 +581,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const toggleSort = (key) => setSort((s) => (
     s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'desc' }));
   const csvRows = rows.map((r) => [
-    r.receipt_number, r.source_label, r.source_type || '', r.po_number || '',
+    r.receipt_number, r.source_label, sourceLabel(r.source_type), r.po_number || '',
     r.status, r.item_count, r.expected_total, r.received_total, r.rejected_total,
     r.location_name || r.location_code || '', String(r.created_at || '').slice(0, 10),
     r.received_by_name || r.created_by || '',
@@ -590,7 +594,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Goods Receiving</h1>
-          <p className="text-muted-foreground text-sm">Terima barang dari supplier, produksi, atau transfer</p>
+          <p className="text-muted-foreground text-sm">Terima barang dari pemasok, dengan atau tanpa PO</p>
         </div>
         <div className="flex items-center gap-2">
           <IconButton label="Muat ulang penerimaan" onClick={fetchData} data-testid="receiving-refresh">
@@ -709,7 +713,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       data-testid={`receipt-row-${r.receipt_number}`}>
                     <td className="px-2.5 py-2 tabular-nums whitespace-nowrap">{r.receipt_number}</td>
                     <td className="px-2.5 py-2">{r.source_label}</td>
-                    <td className="px-2.5 py-2 text-muted-foreground">{r.source_type || '—'}</td>
+                    <td className="px-2.5 py-2 text-muted-foreground">{sourceLabel(r.source_type) || '—'}</td>
                     <td className="px-2.5 py-2 tabular-nums">{r.po_number || '—'}</td>
                     <td className="px-2.5 py-2">
                       <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_STYLES[r.status] || STATUS_STYLES.draft}`}>{r.status}</span>
@@ -755,7 +759,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                 <div>
                   <p className="text-sm font-semibold text-foreground tabular-nums">{r.receipt_number}</p>
                   <p className="text-xs text-muted-foreground">
-                    {r.supplier_name || r.source_type} &bull; {r.items?.length || 0} items
+                    {r.supplier_name || sourceLabel(r.source_type)} &bull; {r.items?.length || 0} items
                     {r.items?.some(i => i.material_id) && (
                       <span className="ml-1.5 text-[hsl(var(--primary))] font-medium">
                         <Link2 className="w-3 h-3 inline" /> synced
@@ -817,47 +821,43 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
               </div>
             </div>
 
+            {/* 2026-11-07 (Tahap 6 PG3, keputusan owner): Penerimaan Barang manual hanya dari PEMASOK. Pilihan
+                sumber "Produksi" / "Pindahan gudang" dengan asal barang yang diketik dihapus — memindahkan stok lewat
+                menu Transfer (server juga menolak GR manual baru bersumber itu). */}
+            <div className="rounded-lg border border-[hsl(var(--primary)/0.25)] bg-[hsl(var(--primary)/0.06)] px-3 py-2 text-xs text-muted-foreground"
+              data-testid="gr-transfer-hint">
+              Penerimaan Barang hanya untuk barang dari pemasok. Barang hasil produksi atau pindahan antar gudang
+              dipindahkan lewat menu <strong className="text-foreground">Transfer</strong> (Stok &amp; Akurasi › Stok &amp; Pergerakan › Transfer A↔B).
+              {onNavigate && (
+                <Button variant="link" size="sm" className="h-auto px-1 py-0 text-xs" data-testid="gr-transfer-link"
+                  onClick={() => { setShowCreate(false); onNavigate('wh-stock'); }}>
+                  Buka Transfer
+                </Button>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Jenis sumber</label>
-                <SmartNativeSelect value={form.source_type} onChange={e => setForm(f => ({ ...f, source_type: e.target.value }))}
-                  className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground"
-                  data-testid="gr-source-type-select">
-                  <option value="supplier">Pemasok</option>
-                  <option value="production">Produksi</option>
-                  <option value="transfer">Pindahan gudang</option>
-                </SmartNativeSelect>
-              </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">No. referensi (surat jalan / dokumen)</label>
                 <GlassInput value={form.source_ref} onChange={e => setForm(f => ({ ...f, source_ref: e.target.value }))} placeholder="PO-001" />
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  {form.source_type === 'supplier' ? 'Supplier' : 'Asal barang'}
-                </label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Supplier</label>
                 {/* 2026-11-07 (Tahap 5): sumber pemasok dipilih dari Master Supplier (dulu teks bebas → nama beda
                     ejaan tidak tertaut saat faktur/penilaian supplier). Ber-PO: supplier dari PO (terkunci). */}
-                {form.source_type === 'supplier' ? (
-                  <SmartNativeSelect value={form.supplier_name}
-                    onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
-                    disabled={!!form.po_id}
-                    className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground"
-                    data-testid="gr-supplier-select">
-                    <option value="">— pilih supplier —</option>
-                    {form.supplier_name && !suppliers.some(s => s.name === form.supplier_name) && (
-                      <option value={form.supplier_name}>{form.supplier_name}</option>
-                    )}
-                    {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
-                  </SmartNativeSelect>
-                ) : (
-                  <GlassInput value={form.supplier_name} onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
-                    placeholder={form.source_type === 'production' ? 'mis. Line jahit 2' : 'mis. Gudang Lantai 2'}
-                    data-testid="gr-source-name" />
-                )}
+                <SmartNativeSelect value={form.supplier_name}
+                  onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
+                  disabled={!!form.po_id}
+                  className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground"
+                  data-testid="gr-supplier-select">
+                  <option value="">— pilih supplier —</option>
+                  {form.supplier_name && !suppliers.some(s => s.name === form.supplier_name) && (
+                    <option value={form.supplier_name}>{form.supplier_name}</option>
+                  )}
+                  {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
+                </SmartNativeSelect>
               </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Lokasi tujuan</label>
                 <Combobox
@@ -1083,7 +1083,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         <Modal title={`Receipt ${showDetail.receipt_number}`} onClose={() => setShowDetail(null)} size="lg">
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
-              <div><p className="text-xs text-muted-foreground">Source</p><p className="text-sm font-medium text-foreground">{showDetail.supplier_name || showDetail.source_type}</p></div>
+              <div><p className="text-xs text-muted-foreground">Source</p><p className="text-sm font-medium text-foreground">{showDetail.supplier_name || sourceLabel(showDetail.source_type)}</p></div>
               <div><p className="text-xs text-muted-foreground">Reference</p><p className="text-sm font-medium text-foreground">{showDetail.source_ref || '-'}</p></div>
               <div><p className="text-xs text-muted-foreground">Lokasi</p><p className="text-sm font-medium text-foreground">{showDetail.location_name || '-'}</p></div>
               <div><p className="text-xs text-muted-foreground">Status</p><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_STYLES[showDetail.status]}`}>{showDetail.status}</span></div>

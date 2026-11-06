@@ -38,34 +38,65 @@ async def get_profile(request: Request):
     user = await require_auth(request)
     db = get_db()
     u, emp = await _get_linked_employee(db, user["id"])
+    u = u or {}
+    # 2026-11-07 (HR1): No. HP, alamat, kontak darurat dibaca dari DATA KARYAWAN (yang dilihat HR); akun yang
+    # belum ditautkan tetap memakai isian akun. Perubahan lewat persetujuan HR (`core.employee_data_change`).
+    from core.employee_data_change import latest_for_employee, profile_values
+    contact, from_account = profile_values(emp, u)
+    change = await latest_for_employee(db, (emp or {}).get("id"))
     return {
         "user_id": user["id"],
         "name": u.get("name") or u.get("full_name"),
         "email": u.get("email"),
         "role": u.get("role"),
-        "no_hp": u.get("no_hp", ""),
-        "alamat": u.get("alamat", ""),
+        **contact,
+        "contact_from_account": from_account,
         "nama_panggilan": u.get("nama_panggilan", ""),
-        "kontak_darurat": u.get("kontak_darurat", {}),
         "foto_url": u.get("foto_url", ""),
         "employee_id": u.get("employee_id"),
         "employee": emp,
         "is_linked": emp is not None,
+        "data_change": serialize_doc(change) if change else None,
     }
 
 
 @router.put("/profile")
 async def update_profile(request: Request):
+    """Simpan profil sendiri. Nama panggilan & foto langsung tersimpan di akun. No. HP, alamat, dan kontak
+    darurat milik karyawan yang ditautkan → PENGAJUAN ke HR (HR1, 2026-11-07); data karyawan baru berubah
+    setelah HR menyetujui di Kotak Masuk SDM."""
     user = await require_auth(request)
     db = get_db()
     body = await request.json()
-    allowed = ["nama_panggilan", "no_hp", "alamat", "kontak_darurat", "foto_url"]
-    upd = {k: v for k, v in body.items() if k in allowed}
-    upd["updated_at"] = _now_iso()
+    _, emp = await _get_linked_employee(db, user["id"])
+    upd = {k: v for k, v in body.items() if k in ("nama_panggilan", "foto_url")}
+    change = None
+    if emp:
+        from core.employee_data_change import submit_change
+        change = await submit_change(db, user, emp, body)
+    else:
+        # akun tanpa data karyawan: tidak ada data karyawan yang perlu disetujui HR → tetap di akun
+        upd.update({k: v for k, v in body.items() if k in ("no_hp", "alamat", "kontak_darurat")})
     if upd:
+        upd["updated_at"] = _now_iso()
         await db.users.update_one({"id": user["id"]}, {"$set": upd})
-    out = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0, "hashed_password": 0})
-    return serialize_doc(out)
+    out = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0, "hashed_password": 0,
+                                                       "password_hash": 0})
+    return {**serialize_doc(out or {}), "data_change": serialize_doc(change) if change else None,
+            "message": ("Perubahan data dikirim ke HR untuk disetujui." if change else "Profil tersimpan.")}
+
+
+@router.post("/profile/data-change/cancel")
+async def cancel_profile_change(request: Request):
+    """Tarik pengajuan perubahan data yang masih menunggu HR (milik sendiri)."""
+    user = await require_auth(request)
+    db = get_db()
+    _, emp = await _get_linked_employee(db, user["id"])
+    if not emp:
+        raise HTTPException(404, "Akun Anda belum ditautkan ke data karyawan.")
+    from core.employee_data_change import cancel_change
+    await cancel_change(db, emp)
+    return {"ok": True, "message": "Pengajuan perubahan data ditarik."}
 
 
 @router.post("/profile/photo")

@@ -99,7 +99,8 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
 
   useEffect(() => {
     const h = { Authorization: `Bearer ${token}` };
-    fetch('/api/rahaza/materials', { headers: h })
+    // 2026-11-07 (Tahap 6 PG1): barang jadi tidak dibeli → disaring di sumbernya (daftar menyusut, bukan disembunyikan)
+    fetch('/api/rahaza/materials?exclude_type=fg', { headers: h })
       .then(r => r.ok ? r.json() : [])
       .then(m => setMaterials((Array.isArray(m) ? m : m?.items || []).filter(x => x.active)));
     // Master Supplier (SSOT) — pengganti input nama vendor teks bebas
@@ -222,6 +223,37 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     () => suppliers.find(s => s.id === poForm.supplier_id) || null,
     [suppliers, poForm.supplier_id],
   );
+
+  // 2026-11-07 (Tahap 6 PG2): barang yang ada di daftar harga supplier terpilih (berlaku hari ini, aturan sama
+  // dengan saran harga) tampil PALING ATAS di pilihan material, bertanda harganya. Material lain tetap bisa dipilih.
+  const [supplierPrices, setSupplierPrices] = useState({}); // material_id → harga termurah {price, uom, price_base}
+  useEffect(() => {
+    const sid = poForm.supplier_id;
+    if (!createModal || !sid) { setSupplierPrices({}); return undefined; }
+    let off = false;
+    fetch(`/api/procurement/suppliers/${sid}/price-list?current=true`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : { items: [] }))
+      .then((d) => {
+        if (off) return;
+        const best = {};
+        (d?.items || []).forEach((row) => {
+          const cur = best[row.material_id];
+          if (!cur || Number(row.price_base || 0) < Number(cur.price_base || 0)) best[row.material_id] = row;
+        });
+        setSupplierPrices(best);
+      })
+      .catch(() => { if (!off) setSupplierPrices({}); });
+    return () => { off = true; };
+  }, [token, createModal, poForm.supplier_id]);
+  const materialChoices = useMemo(() => {
+    const priced = materials.filter(m => supplierPrices[m.id]);
+    return { priced, others: priced.length ? materials.filter(m => !supplierPrices[m.id]) : materials };
+  }, [materials, supplierPrices]);
+  // Tanda harga di DEPAN label: kolom material sempit, akhiran terpotong "…" sehingga tandanya tak terlihat.
+  const pricedLabel = (m) => {
+    const p = supplierPrices[m.id];
+    return `Rp ${Number(p.price || 0).toLocaleString('id-ID')}/${p.uom || m.unit || ''} (daftar harga) · ${materialOptionLabel(m)}`;
+  };
 
   const createPO = async () => {
     setSaving(true);
@@ -724,6 +756,11 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                     {selectedSupplier.lead_time_days ? ` · lead time ${selectedSupplier.lead_time_days} hari` : ''}
                   </p>
                 )}
+                {selectedSupplier && materialChoices.priced.length > 0 && (
+                  <p className="text-[11px] text-[hsl(var(--primary))] mt-0.5" data-testid="po-form-supplier-pricelist-info">
+                    {materialChoices.priced.length} barang ada di daftar harga supplier ini — tampil paling atas di pilihan material.
+                  </p>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium mb-1.5">Kontak Supplier</label>
@@ -826,7 +863,13 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                           data-testid={`po-form-item-material-${idx}`}
                         >
                           <option value="">Item bebas (jasa / non-master)</option>
-                          {materials.map(m => (
+                          {materialChoices.priced.map(m => (
+                            <option key={m.id} value={m.id}>{pricedLabel(m)}</option>
+                          ))}
+                          {materialChoices.priced.length > 0 && (
+                            <option value="__lain" disabled>Material lain (tanpa daftar harga supplier ini)</option>
+                          )}
+                          {materialChoices.others.map(m => (
                             <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
                           ))}
                         </SmartNativeSelect>

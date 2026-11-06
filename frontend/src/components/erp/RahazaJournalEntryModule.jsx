@@ -85,6 +85,9 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
   };
 
   const postableAccounts = accounts.filter(a => !a.is_group);
+  // 2026-11-07 (Tahap 6, KU4): baris ke akun kontrol piutang/hutang (penanda server `control_kind`, dari penanda
+  // akun / induk sub-ledger) diberi PERINGATAN — tidak memblokir simpan.
+  const controlKindOf = (code) => (code && accounts.find(a => a.code === code)?.control_kind) || '';
 
   // 2026-11-05 (PANDUAN_UI G13): formulir panjang dibuka DI HALAMAN di atas daftar (DetailPanel; × / Esc menutup).
   return (
@@ -111,7 +114,9 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
 
       <p className="text-xs text-muted-foreground">Baris jurnal</p>
       <div className="space-y-2">
-        {form.lines.map((ln, i) => (
+        {form.lines.map((ln, i) => {
+          const ctl = controlKindOf(ln.account_code);
+          return (
           <div key={i} className="grid grid-cols-12 gap-2 items-start">
             <div className="col-span-5">
               <SmartNativeSelect
@@ -141,8 +146,16 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
                 </Button>
               )}
             </div>
+            {ctl && (
+              <p className="col-span-12 -mt-1 text-[11px] text-[hsl(var(--warning))]" data-testid={`je-line-${i}-control-warning`}>
+                {ctl === 'ap'
+                  ? 'Akun hutang usaha: sebaiknya dicatat lewat faktur pemasok dan pembayarannya, supaya rincian hutang per pemasok tetap benar. Jurnal tetap bisa disimpan.'
+                  : 'Akun piutang usaha: sebaiknya dicatat lewat faktur penjualan dan penerimaan pembayarannya, supaya rincian piutang per pelanggan tetap benar. Jurnal tetap bisa disimpan.'}
+              </p>
+            )}
           </div>
-        ))}
+          );
+        })}
       </div>
       <Button size="sm" variant="outline" onClick={addLine} data-testid="je-add-line"><Plus className="w-3.5 h-3.5" />Tambah baris</Button>
 
@@ -271,7 +284,8 @@ export default function RahazaJournalEntryModule({ token }) {
   }, [token, params, skip]);
   useEffect(() => { fetchData(); }, [fetchData]);
   useEffect(() => {
-    fetch('/api/rahaza/coa/accounts', { headers }).then(r => (r.ok ? r.json() : [])).then(a => setAccounts(Array.isArray(a) ? a : []));
+    // with_control (KU4): server menandai akun kontrol piutang/hutang untuk peringatan di baris jurnal baru
+    fetch('/api/rahaza/coa/accounts?with_control=true', { headers }).then(r => (r.ok ? r.json() : [])).then(a => setAccounts(Array.isArray(a) ? a : []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 

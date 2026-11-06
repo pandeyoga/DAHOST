@@ -430,8 +430,11 @@ async def list_requests(
     }
 
 
-async def _norm_pr_items(db, raw_items):
+async def _norm_pr_items(db, raw_items, *, reject_fg: bool = False):
     """Normalisasi item PR **dengan dukungan material master + satuan SSOT**.
+
+    `reject_fg` (2026-11-07, Tahap 6 PG1): PR yang DIKETIK (tanpa `origin`) menolak barang jadi — barang jadi
+    tidak dibeli. PR otomatis (belanja mingguan, kekurangan aksesoris) tidak diubah perilakunya.
 
     2026-08-06 (Portal Pengadaan) — sebelumnya item PR hanya teks bebas
     (`name`, `unit` default "pcs"), sehingga saat PR dijadikan PO barisnya
@@ -449,6 +452,11 @@ async def _norm_pr_items(db, raw_items):
     mats = await db.rahaza_materials.find(
         {"id": {"$in": list(set(ids))}}, {"_id": 0}).to_list(len(ids) + 5) if ids else []
     mmap = {m["id"]: m for m in mats}
+    if reject_fg:
+        from core.procurement_guards import finished_goods_error
+        fg_err = finished_goods_error(mats, "Permintaan Pengadaan")
+        if fg_err:
+            raise HTTPException(400, fg_err)
 
     out = []
     for i in raw_items:
@@ -512,12 +520,16 @@ async def build_pr_doc(db, user: dict, body: dict, *, origin: str = "",
     title = (body.get("title") or "").strip()
     if not title:
         raise HTTPException(400, "Judul permintaan wajib diisi.")
-    items = await _norm_pr_items(db, body.get("items", []))
+    items = await _norm_pr_items(db, body.get("items", []), reject_fg=not origin)
     if not items:
         raise HTTPException(400, "Minimal 1 item harus diisi.")
 
     total_est = sum(float(i["total_price"]) for i in items)
     pr_number = await _gen_pr_number(db, (body.get("request_number") or "").strip())
+    # 2026-11-07 (OR1): departemen dari Struktur Organisasi (ejaan unit); kosong = departemen KARYAWAN
+    # pemohon — sumber & kunci yang sama dengan penyetuju tahap departemen (`core.departments`).
+    from core.departments import canonical_department, user_department
+    department = await canonical_department(db, body.get("department") or await user_department(db, user))
     doc = {
         "id": _uid(),
         "request_number": pr_number,
@@ -528,7 +540,7 @@ async def build_pr_doc(db, user: dict, body: dict, *, origin: str = "",
         "justification": (body.get("justification") or "").strip(),
         "priority": body.get("priority", "medium"),  # low | medium | high | urgent
         "request_type": body.get("request_type", "asset"),  # asset | consumable | service | other
-        "department": (body.get("department") or user.get("department", "")).strip(),
+        "department": department,
         "needed_by": body.get("needed_by") or None,
         "suggested_supplier_id": body.get("suggested_supplier_id") or None,
         "requested_by": user["id"],
@@ -598,10 +610,11 @@ async def update_request(req_id: str, request: Request):
         update["justification"] = body["justification"]
     if "priority" in body:
         update["priority"] = body["priority"]
-    if "department" in body:
-        update["department"] = body["department"]
+    if "department" in body:   # 2026-11-07 (OR1): ejaan unit Struktur Organisasi
+        from core.departments import canonical_department
+        update["department"] = await canonical_department(db, body["department"])
     if "items" in body:
-        items = await _norm_pr_items(db, body["items"])
+        items = await _norm_pr_items(db, body["items"], reject_fg=not req.get("origin"))
         if not items:
             raise HTTPException(400, "Minimal 1 item harus diisi.")
         update["items"] = items
@@ -958,8 +971,9 @@ async def get_approval_inbox(
     if scope == "relevant" or (scope == "all" and not is_admin):
         from core.pr_approval import pending_for_user
         items = await pending_for_user(db, user)
-        if department and is_admin:
-            items = [i for i in items if i.get("department") == department]
+        if department and is_admin:   # 2026-11-07 (OR1): kunci departemen yang sama dengan persetujuan
+            from core.departments import same_department
+            items = [i for i in items if same_department(i.get("department"), department)]
         return items
 
     query = {"status": {"$in": list(PENDING_STATUSES)}}

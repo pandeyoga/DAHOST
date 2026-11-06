@@ -232,21 +232,19 @@ def stage_role_ok(user: dict, stage: str, roles_map: dict | None = None) -> bool
 
 
 async def with_department(db, user: dict) -> dict:
-    """Lengkapi `user` dengan `department` dari master pengguna.
+    """Lengkapi `user` dengan `department` untuk batas tahap departemen.
 
-    `auth.create_token` baru memasukkan `department` sejak 2026-08-07, jadi token
-    yang MASIH BERLAKU (24 jam) belum memuatnya. Tanpa tambalan ini batas
-    departemen pada tahap pertama diam-diam tidak berjalan.
+    2026-11-07 (OR1, Tahap 6): departemen penyetuju = departemen KARYAWAN yang ditautkan (sumber yang
+    sama dengan departemen bawaan PR — Struktur Organisasi), cadangan `users.department`. Dulu hanya
+    `users.department` (token/akun login) yang hampir selalu kosong ⇒ batas departemen diam-diam mati.
     """
-    if user.get("department"):
-        return user
+    from core.departments import user_department
     try:
-        u = await db.users.find_one({"id": user.get("id")}, {"_id": 0, "department": 1})
-        if u and u.get("department"):
-            return {**user, "department": u["department"]}
+        dept = await user_department(db, user)
     except Exception as e:  # noqa: BLE001
         logger.warning("[pr-approval] gagal resolve departemen user: %s", e)
-    return user
+        dept = user.get("department") or ""
+    return {**user, "department": dept} if dept else user
 
 
 def eval_approval(doc: dict, user: dict, chain: list, *, stage=None,
@@ -346,7 +344,10 @@ def eval_approval(doc: dict, user: dict, chain: list, *, stage=None,
     if stage == STAGE_DEPT:
         udept = (user.get("department") or "").strip()
         pdept = (doc.get("department") or "").strip()
-        if udept and pdept and udept != pdept:
+        # 2026-11-07 (OR1): kunci banding yang SAMA dengan penyimpanan (`core.departments`) —
+        # "Produksi" = "produksi " (dulu dibandingkan persis → typo/ejaan = salah rute).
+        from core.departments import same_department
+        if udept and pdept and not same_department(udept, pdept):
             violations.append("department")
             reasons.append(f"Permintaan ini milik departemen {pdept}, "
                            f"sedangkan Anda di departemen {udept}.")
@@ -398,11 +399,15 @@ async def _load_perms(role: str, user_id):
     return await _load_rbac(role, user_id)
 
 
-async def _as_request_user(u: dict) -> dict:
-    """Dokumen `users` → bentuk user yang dipakai gerbang (izin terisi)."""
+async def _as_request_user(u: dict, department: str | None = None) -> dict:
+    """Dokumen `users` → bentuk user yang dipakai gerbang (izin terisi).
+
+    `department` = departemen karyawan yang ditautkan (`core.departments.user_departments`) — sama
+    dengan `with_department` di jalur permintaan, supaya penerima notifikasi = penyetuju sah."""
     role = (u.get("role") or "").lower()
     role_perms, extra = await _load_perms(role, u.get("id"))
-    return {"id": u.get("id"), "role": role, "department": u.get("department") or "",
+    dept = department if department is not None else (u.get("department") or "")
+    return {"id": u.get("id"), "role": role, "department": dept,
             "_role_perms": list(role_perms), "_extra_permissions": list(extra),
             "_permissions": sorted(set(role_perms) | set(extra))}
 
@@ -413,15 +418,17 @@ async def stage_approver_ids(db, doc: dict, stage: str, chain: list, *,
     from utils.notif_recipients import ACTIVE_USER_FILTER
     from core.authz import EXTERNAL_ROLES
     flt = {**ACTIVE_USER_FILTER, "role": {"$nin": list(EXTERNAL_ROLES)}}
-    rows = await db.users.find(flt, {"_id": 0, "id": 1, "role": 1, "department": 1}
+    rows = await db.users.find(flt, {"_id": 0, "id": 1, "role": 1, "department": 1, "employee_id": 1}
                                ).to_list(None)
+    from core.departments import user_departments
+    depts = await user_departments(db, rows)
     skip = {doc.get("requested_by")} | approved_actor_ids(doc)
     legit, override = [], []
     for r in rows:
         uid = r.get("id")
         if not uid or uid in skip:
             continue
-        ev = eval_approval(doc, await _as_request_user(r), chain, stage=stage,
+        ev = eval_approval(doc, await _as_request_user(r, depts.get(uid)), chain, stage=stage,
                            roles_map=roles_map)
         if not ev["can_approve"]:
             continue

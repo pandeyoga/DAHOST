@@ -234,6 +234,8 @@ def acc_pr_body(acc: dict, mats: dict | None = None) -> dict:
         "request_type": "consumable",
         "priority": _PRIORITY.get((acc.get("priority") or "Normal").strip().lower(), "medium"),
         "department": acc.get("department") or "",
+        # 2026-11-07 (Tahap 6 PG5): supplier usulan yang tertaut master ikut sebagai saran supplier PR
+        "suggested_supplier_id": acc.get("supplier_id") or None,
         "items": items,
     }
 

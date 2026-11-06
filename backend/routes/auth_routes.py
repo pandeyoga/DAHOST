@@ -278,11 +278,12 @@ async def list_users_for_assignment(request: Request):
     ).sort('name', 1).limit(limit).to_list(length=limit)
     
     # Portal filter (apply after fetch since portal is computed)
+    # 2026-11-07 (Tahap 6, MK3): akses portal EFEKTIF (aturan login: peran + portal yang diatur owner di
+    # Manajemen Role / per pengguna) — dulu hanya daftar peran bawaan, sehingga peran yang diberi portal
+    # oleh owner tidak ikut dan hasilnya berbeda dengan menu yang mereka lihat.
     if portal_filter:
-        users = [
-            u for u in users
-            if portal_filter in (get_user_portals({"role": u.get('role', '')}) or [])
-        ]
+        from routes.shared import user_has_portal
+        users = [u for u in users if await user_has_portal(db, u, portal_filter)]
     
     # Strip sensitive fields, attach portals
     result = []

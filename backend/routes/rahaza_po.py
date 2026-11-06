@@ -274,6 +274,11 @@ async def _norm_po_items(db, raw_items):
     mats = await db.rahaza_materials.find(
         {"id": {"$in": list(set(ids))}}, {"_id": 0}).to_list(len(ids) + 5) if ids else []
     m_map = {m["id"]: m for m in mats}
+    # 2026-11-07 (Tahap 6, PG1): barang jadi tidak dibeli — semua jalur PO (manual, dari PR, impor CSV) ditolak
+    from core.procurement_guards import finished_goods_error
+    fg_err = finished_goods_error(mats, "PO pembelian")
+    if fg_err:
+        raise HTTPException(400, fg_err)
 
     cleaned = []
     for it in raw_items:

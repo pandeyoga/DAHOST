@@ -133,6 +133,43 @@ def price_status_fields(pending: list) -> dict:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# 1b. DAFTAR PEMBELIAN TANPA BARANG JADI · GR MANUAL HANYA DARI PEMASOK (Tahap 6, keputusan owner 7 Nov)
+# ═════════════════════════════════════════════════════════════════════════════
+# PG1: barang jadi (tipe `fg`) lahir dari produksi, tidak pernah dibeli. Layar PO/PR/Penerimaan memuat
+# daftar material dengan `GET /api/rahaza/materials?exclude_type=fg` (daftar menyusut di sumbernya), dan
+# baris PO/PR manual/GR manual yang tetap mengirim barang jadi ditolak di server.
+FINISHED_GOODS_TYPES = ("fg",)
+
+
+def finished_goods_error(materials, doc_label: str) -> str | None:
+    """Pesan penolakan bila ada barang jadi di antara `materials` (dokumen master); None = boleh."""
+    fg = [m for m in (materials or []) if isinstance(m, dict) and (m.get("type") or "") in FINISHED_GOODS_TYPES]
+    if not fg:
+        return None
+    codes = sorted({str(m.get("code") or m.get("name") or m.get("id") or "?") for m in fg})
+    more = f" dan {len(codes) - 5} lainnya" if len(codes) > 5 else ""
+    return (f"Barang jadi tidak bisa dimasukkan ke {doc_label} ({', '.join(codes[:5])}{more}). Barang jadi "
+            "berasal dari produksi, bukan pembelian — hapus barisnya atau pilih bahan/aksesoris.")
+
+
+# PG3: sumber "Produksi" / "Pindahan gudang" dengan asal barang yang diketik tidak lagi dibuat lewat form
+# Penerimaan Barang manual. Tidak ada jalur otomatis yang menulis GR bersumber ini (GR dari PO = pemasok;
+# hasil produksi masuk lewat penerimaan WMS `wh_pending_movements`). GR lama bersumber ini tetap terbaca.
+MANUAL_GR_BLOCKED_SOURCES = {"production": "produksi", "transfer": "pindahan gudang"}
+TRANSFER_MENU_HINT = "Stok & Akurasi › Stok & Pergerakan › Transfer A↔B"
+
+
+def manual_gr_source_error(source_type) -> str | None:
+    """Pesan penolakan GR manual BARU bersumber produksi/pindahan; None = boleh (pemasok)."""
+    st = str(source_type or "supplier").strip().lower()
+    if st not in MANUAL_GR_BLOCKED_SOURCES:
+        return None
+    return (f"Penerimaan Barang manual bersumber {MANUAL_GR_BLOCKED_SOURCES[st]} tidak lagi dipakai — "
+            "Penerimaan Barang hanya untuk barang dari pemasok. Memindahkan stok antar gudang/lokasi lewat menu "
+            f"Transfer ({TRANSFER_MENU_HINT}).")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # 2. SATUAN DASAR DIKUNCI SELAMA ADA DOKUMEN TERBUKA
 # ═════════════════════════════════════════════════════════════════════════════
 async def base_unit_open_documents(db, material_id: str, limit: int = 50) -> list:

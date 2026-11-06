@@ -225,6 +225,85 @@ async def uom_options(
     }
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 2026-11-07 (Tahap 6, keputusan owner PR6): Kategori & Vendor Riset Material DARI MASTER
+# ──────────────────────────────────────────────────────────────────────────────
+#   · Kategori = daftar kategori material yang SAMA dengan Master Material (`rahaza_material_categories`,
+#     bawaan `DEFAULT_MATERIAL_CATEGORIES`), tanpa "Potongan" (bukan barang yang diriset/dibeli).
+#     Disimpan `category` (nama) + `category_code`.
+#   · Vendor   = master supplier (`rahaza_suppliers`) → `vendor_id` + `vendor` (nama) + `vendor_code`.
+#     Cadangan sesuai rekomendasi audit: "Calon supplier" yang belum ada di master boleh diketik dengan
+#     penanda `vendor_is_prospect: true` (supplier baru dibuat Pengadaan saat jadi dibeli).
+# Nilai ketikan LAMA tetap tampil dan boleh tetap tersimpan selama tidak diubah.
+RISET_EXCLUDED_CATEGORY_CODES = {'CUT_PANEL'}
+
+
+async def riset_categories(db) -> list:
+    rows = await db.rahaza_material_categories.find(
+        {'active': {'$ne': False}}, {'_id': 0, 'code': 1, 'name': 1, 'order_seq': 1}).sort('order_seq', 1).to_list(200)
+    if not rows:
+        from routes.rahaza_inventory_shared import DEFAULT_MATERIAL_CATEGORIES
+        rows = sorted(DEFAULT_MATERIAL_CATEGORIES, key=lambda c: c.get('order_seq', 0))
+    return [{'code': r['code'], 'name': r.get('name') or r['code']} for r in rows
+            if r.get('code') and r['code'] not in RISET_EXCLUDED_CATEGORY_CODES]
+
+
+async def riset_supplier_options(db) -> list:
+    """Hanya id/kode/nama supplier aktif — tanpa rekening, NPWP, termin, harga (data Pengadaan)."""
+    rows = await db.rahaza_suppliers.find(
+        {'is_active': {'$ne': False}}, {'_id': 0, 'id': 1, 'code': 1, 'name': 1}).sort('name', 1).to_list(2000)
+    return [{'id': r['id'], 'code': r.get('code') or '', 'name': r.get('name') or ''} for r in rows if r.get('id')]
+
+
+async def resolve_riset_masters(db, body: dict, before: dict = None) -> dict:
+    """Kategori & vendor dari body → field tersimpan (hanya kunci yang dikirim). 400 bila tidak sah."""
+    out: dict = {}
+    before = before or {}
+    if 'category' in body or 'category_code' in body:
+        raw = str(body.get('category_code') or body.get('category') or '').strip()
+        if not raw:
+            out.update({'category': '', 'category_code': ''})
+        else:
+            cats = await riset_categories(db)
+            hit = next((c for c in cats if raw.upper() == c['code'].upper() or raw.lower() == c['name'].lower()), None)
+            if hit:
+                out.update({'category': hit['name'], 'category_code': hit['code']})
+            elif raw == str(before.get('category') or '').strip() and not before.get('category_code'):
+                out.update({'category': raw, 'category_code': ''})   # nilai lama yang tidak diubah
+            else:
+                raise HTTPException(400, f"Kategori '{raw}' tidak ada di daftar kategori material — pilih dari daftar.")
+    if 'vendor_id' in body or 'vendor' in body or 'vendor_is_prospect' in body:
+        vid = str(body.get('vendor_id') or '').strip()
+        name = str(body.get('vendor') or '').strip()
+        if vid:
+            s = await db.rahaza_suppliers.find_one({'id': vid}, {'_id': 0, 'id': 1, 'code': 1, 'name': 1, 'is_active': 1})
+            if not s:
+                raise HTTPException(400, 'Supplier yang dipilih tidak ada di master supplier — pilih dari daftar.')
+            if s.get('is_active') is False and before.get('vendor_id') != vid:
+                raise HTTPException(400, f"Supplier {s.get('name')} nonaktif — pilih supplier lain.")
+            out.update({'vendor_id': vid, 'vendor': s.get('name') or '', 'vendor_code': s.get('code') or '',
+                        'vendor_is_prospect': False})
+        elif not name:
+            out.update({'vendor_id': '', 'vendor': '', 'vendor_code': '', 'vendor_is_prospect': False})
+        elif body.get('vendor_is_prospect'):
+            out.update({'vendor_id': '', 'vendor': name, 'vendor_code': '', 'vendor_is_prospect': True})
+        elif name == str(before.get('vendor') or '').strip() and not before.get('vendor_id'):
+            out.update({'vendor_id': '', 'vendor': name, 'vendor_code': '',
+                        'vendor_is_prospect': bool(before.get('vendor_is_prospect'))})   # nilai lama
+        else:
+            raise HTTPException(400, "Pilih vendor dari master supplier, atau pilih 'Calon supplier' lalu ketik "
+                                     'namanya — ketik bebas tanpa penanda tidak diterima.')
+    return out
+
+
+@router.get('/material-form-options')
+async def material_form_options(user: dict = Depends(require_auth)):
+    """Pilihan formulir Riset Material: kategori (daftar tetap dari master kategori material) + supplier
+    aktif (id/kode/nama). Sumber yang sama dengan validasi `resolve_riset_masters`."""
+    db = get_db()
+    return {'categories': await riset_categories(db), 'suppliers': await riset_supplier_options(db)}
+
+
 async def _normalize_material_colors(db, body: dict) -> list:
     """F1 (§A akhir): `dewi_rnd_materials.colors` = daftar warna yang TERSEDIA untuk bahan.
 
@@ -264,12 +343,16 @@ async def create_material(body: dict, user: dict = Depends(require_auth)):
 
     body = _normalize_price_fields(body)
     colors = await _normalize_material_colors(db, body)
+    # Tahap 6 (PR6): kategori & vendor dari master (selalu dinilai saat buat, walau tidak dikirim)
+    masters = await resolve_riset_masters(db, {
+        'category': body.get('category', ''), 'category_code': body.get('category_code', ''),
+        'vendor_id': body.get('vendor_id', ''), 'vendor': body.get('vendor', ''),
+        'vendor_is_prospect': bool(body.get('vendor_is_prospect'))})
     doc = {
         'id': sid(),
         'material_code': code,
         'material_name': name,
-        'category': body.get('category', ''),
-        'vendor': body.get('vendor', ''),
+        **masters,
         'composition': body.get('composition', ''),
         'weight': body.get('weight', 0),
         # F1: warna yang tersedia untuk bahan ini (rujuk master rahaza_colors)
@@ -315,6 +398,12 @@ async def update_material(material_id: str, body: dict, user: dict = Depends(req
         body.update({k: merged[k] for k in ('price_unit', 'price_per_unit', 'price_per_meter', 'unit')})
     if 'colors' in body:
         body['colors'] = await _normalize_material_colors(db, body)
+    # Tahap 6 (PR6): kategori & vendor hanya dari master (nilai lama yang tidak diubah tetap boleh)
+    if any(k in body for k in ('category', 'category_code', 'vendor', 'vendor_id', 'vendor_is_prospect')):
+        before = await db.dewi_rnd_materials.find_one({'id': material_id}, {'_id': 0})
+        if not before:
+            raise HTTPException(404, 'Material tidak ditemukan')
+        body.update(await resolve_riset_masters(db, body, before))
     body['updated_at'] = now_utc()
 
     res = await db.dewi_rnd_materials.update_one({'id': material_id}, {'$set': body})
