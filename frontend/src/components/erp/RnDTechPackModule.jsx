@@ -794,13 +794,13 @@ export default function RnDTechPackModule({ token }) {
               </div>
               <div>
                 <Label>Tipe Dokumen</Label>
-                <select value={form.doc_type} onChange={e => f('doc_type', e.target.value)}
-                  className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground">
+                <SmartNativeSelect value={form.doc_type} onChange={e => f('doc_type', e.target.value)}
+                  className="w-full mt-1" data-testid="tp-doc-type">
                   <option value="pdf">PDF</option>
                   <option value="image">Gambar</option>
-                  <option value="link">Link Eksternal</option>
-                  <option value="excel_import">Import Excel</option>
-                </select>
+                  <option value="link">Tautan luar</option>
+                  <option value="excel_import">Impor Excel</option>
+                </SmartNativeSelect>
               </div>
             </div>
             <GlassCard className="p-4">
@@ -923,11 +923,11 @@ export default function RnDTechPackModule({ token }) {
               {(form.fabrics || []).map((fb, i) => (
                 <div key={i} className="grid grid-cols-[1fr_130px_1fr_28px] gap-2 mb-2 items-start">
                   <Input value={fb.name} onChange={e => setFab(i, 'name', e.target.value)} placeholder="Nama kain (mis. CONDRU)" className="text-sm" data-testid={`tp-fab-name-${i}`} />
-                  <select value={fb.role} onChange={e => setFab(i, 'role', e.target.value)}
-                    className="border border-input bg-background rounded-md px-2 py-2 text-sm text-foreground">
+                  <SmartNativeSelect value={fb.role} onChange={e => setFab(i, 'role', e.target.value)}
+                    className="w-full" data-testid={`tp-fab-role-${i}`}>
                     <option value="main">Utama</option>
                     <option value="combination">Kombinasi</option>
-                  </select>
+                  </SmartNativeSelect>
                   <ColorSelect colors={colorOpts} addColor={addColor}
                     value={fb.color_id || ''} testId={`tp-fab-color-${i}`}
                     placeholder="-- Warna kain --"
@@ -965,11 +965,11 @@ export default function RnDTechPackModule({ token }) {
                       <option value={e.size}>{`${e.size} (di luar daftar)`}</option>
                     )}
                   </SmartNativeSelect>
-                  <select value={e.fabric_role || 'main'} onChange={ev => setCons(i, 'fabric_role', ev.target.value)}
-                    className="border border-input bg-background rounded-md px-2 py-2 text-sm text-foreground">
+                  <SmartNativeSelect value={e.fabric_role || 'main'} onChange={ev => setCons(i, 'fabric_role', ev.target.value)}
+                    className="w-full" data-testid={`tp-cons-role-${i}`}>
                     <option value="main">Utama</option>
                     <option value="combination">Kombinasi</option>
-                  </select>
+                  </SmartNativeSelect>
                   <Input type="number" value={e.length_cm ?? ''} onChange={ev => setCons(i, 'length_cm', ev.target.value)} placeholder="Panjang cm" className="text-sm" />
                   <Input type="number" value={e.width_cm ?? ''} onChange={ev => setCons(i, 'width_cm', ev.target.value)} placeholder="Lebar cm" className="text-sm" />
                   <Input type="number" value={e.yield_pcs ?? ''} onChange={ev => setCons(i, 'yield_pcs', ev.target.value)} placeholder="Hasil pcs" className="text-sm" />

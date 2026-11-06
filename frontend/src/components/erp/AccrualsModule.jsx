@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Plus, RefreshCw, Edit2, Trash2, FileText, RotateCcw } from 'lucide-react';
+import { Plus, RefreshCw, Edit2, Trash2, FileText, RotateCcw, BookCheck } from 'lucide-react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,37 @@ const PAGE_SIZE = 25;
 
 const fmt = formatRupiah;
 
+// 2026-11-07 (audit form Tahap 5): jenis, status, dan nama kolom SAMA dengan server (routes/rahaza_accruals.py).
+// Dulu layar mengirim `type: income|expense` + `account_id` yang TIDAK dibaca server → setiap akrual tersimpan
+// berjenis "other" tanpa akun pilihan; status server (draft/posted/reversed) dibaca sebagai "active", sehingga
+// akrual baru tampil "Dibalik" tanpa tombol apa pun dan tidak pernah bisa diposting dari layar ini.
+export const ACCRUAL_TYPES = [
+  { value: 'utility', label: 'Listrik, air & telepon' },
+  { value: 'rent', label: 'Sewa' },
+  { value: 'professional_fees', label: 'Jasa profesional' },
+  { value: 'interest_payable', label: 'Bunga hutang' },
+  { value: 'salary_bonus', label: 'Bonus karyawan' },
+  { value: 'tax_payable', label: 'Pajak terutang' },
+  { value: 'other', label: 'Lain-lain' },
+];
+const typeLabel = (v) => ACCRUAL_TYPES.find((t) => t.value === v)?.label || 'Lain-lain';
+const STATUS_META = {
+  draft: { label: 'Draf', tone: 'warning' },
+  posted: { label: 'Terjurnal', tone: 'info' },
+  reversed: { label: 'Dibalik', tone: 'muted' },
+};
+// akun beban (debit) & akun akrual/hutang (kredit) — jurnal akrual: Dr beban / Cr beban yang masih harus dibayar
+const EXPENSE_TYPES = ['EXPENSE', 'COGS', 'OTHER_EXPENSE'];
+const ACCRUED_TYPES = ['LIABILITY'];
+
+/** Isi kiriman simpan — hanya kolom yang dibaca server. */
+export function accrualPayload(s) {
+  return {
+    period: s.period, accrual_type: s.accrual_type || 'other', description: s.description || '',
+    amount: Number(s.amount) || 0, expense_account: s.expense_account || '', accrued_account: s.accrued_account || '',
+  };
+}
+
 /**
  * Akrual (menu Akuntansi › Akrual & Tutup Buku).
  * 2026-11-05 (PANDUAN_UI G1): memakai cetakan PageLayout — pilihan bulan & jenis di toolbar kiri, muat ulang di
@@ -31,6 +62,7 @@ export default function AccrualsModule({ token }) {
   const [accruals, setAccruals] = useState([]);
   const [editing, setEditing] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState({ type: '', period: '' });
   const { toast } = useToast();
   const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
@@ -38,12 +70,11 @@ export default function AccrualsModule({ token }) {
   const fetchAccruals = useCallback(async () => {
     setLoading(true);
     try {
-      let url = '/api/rahaza/finance/accruals';
-      const params = [];
-      if (filter.type) params.push(`type=${filter.type}`);
-      if (filter.period) params.push(`period=${filter.period}`);
-      if (params.length) url += '?' + params.join('&');
-      const r = await fetch(url, { headers });
+      const params = new URLSearchParams();
+      if (filter.type) params.set('accrual_type', filter.type);
+      if (filter.period) params.set('period', filter.period);
+      const qs = params.toString();
+      const r = await fetch(`/api/rahaza/finance/accruals${qs ? `?${qs}` : ''}`, { headers });
       if (r.ok) setAccruals(await r.json());
     } catch (e) {
       toast({ title: 'Gagal', description: 'Gagal memuat data akrual', variant: 'destructive' });
@@ -55,22 +86,40 @@ export default function AccrualsModule({ token }) {
 
   useEffect(() => { fetchAccruals(); }, [fetchAccruals]);
 
-  const save = async (body) => {
+  const save = async (s) => {
+    if (saving) return;
+    setSaving(true);
     try {
-      const url = body.id ? `/api/rahaza/finance/accruals/${body.id}` : '/api/rahaza/finance/accruals';
-      const method = body.id ? 'PUT' : 'POST';
-      const r = await fetch(url, { method, headers, body: JSON.stringify(body) });
+      const url = s.id ? `/api/rahaza/finance/accruals/${s.id}` : '/api/rahaza/finance/accruals';
+      const method = s.id ? 'PUT' : 'POST';
+      const r = await fetch(url, { method, headers, body: JSON.stringify(accrualPayload(s)) });
       if (r.ok) {
-        toast({ title: 'Berhasil', description: `Akrual ${body.id ? 'diperbarui' : 'dicatat'}` });
+        toast({ title: 'Berhasil', description: `Akrual ${s.id ? 'diperbarui' : 'dicatat sebagai draf'}` });
         setEditing(null);
         fetchAccruals();
       } else {
-        const err = await r.json();
+        const err = await r.json().catch(() => ({}));
         toast({ title: 'Gagal', description: err.detail || 'Gagal menyimpan', variant: 'destructive' });
       }
     } catch (e) {
       toast({ title: 'Gagal', description: 'Gagal menyimpan akrual', variant: 'destructive' });
+    } finally { setSaving(false); }
+  };
+
+  const act = async (url, okText, failText) => {
+    try {
+      const r = await fetch(url, { method: 'POST', headers });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { toast({ title: 'Berhasil', description: okText(d) }); fetchAccruals(); }
+      else toast({ title: 'Gagal', description: d.detail || failText, variant: 'destructive' });
+    } catch (e) {
+      toast({ title: 'Gagal', description: failText, variant: 'destructive' });
     }
+  };
+
+  const post = async (a) => {
+    if (!(await confirmDialog({ title: `Posting akrual ${periodLabel(a.period)}?`, body: 'Jurnal dicatat pada tanggal terakhir periode akrual. Sesudah diposting, akrual hanya bisa dibalik.', confirmLabel: 'Posting' }))) return;
+    act(`/api/rahaza/finance/accruals/${a.id}/post`, (d) => `Akrual dijurnal${d.je_number ? ` · ${d.je_number}` : ''}`, 'Gagal memposting akrual');
   };
 
   const del = async (id) => {
@@ -80,6 +129,9 @@ export default function AccrualsModule({ token }) {
       if (r.ok) {
         toast({ title: 'Berhasil', description: 'Akrual dihapus' });
         fetchAccruals();
+      } else {
+        const d = await r.json().catch(() => ({}));
+        toast({ title: 'Gagal', description: d.detail || 'Gagal menghapus', variant: 'destructive' });
       }
     } catch (e) {
       toast({ title: 'Gagal', description: 'Gagal menghapus', variant: 'destructive' });
@@ -91,31 +143,19 @@ export default function AccrualsModule({ token }) {
     // bertanggal 1 periode pembalik (bulan sesudah periode akrual, rahaza_posting.post_accrual_reversal).
     // Dulu layar mengirim `reversal_date` hari ini dan menulis "dicatat per hari ini" (tidak benar).
     if (!(await confirmDialog({ title: 'Balik akrual ini?', body: 'Jurnal pembalik dicatat pada tanggal 1 bulan sesudah periode akrual.', confirmLabel: 'Balik' }))) return;
-    try {
-      const r = await fetch(`/api/rahaza/finance/accruals/${id}/reverse`, {
-        method: 'POST',
-        headers,
-      });
-      if (r.ok) {
-        toast({ title: 'Berhasil', description: 'Akrual dibalik' });
-        fetchAccruals();
-      }
-    } catch (e) {
-      toast({ title: 'Gagal', description: 'Gagal membalik akrual', variant: 'destructive' });
-    }
+    act(`/api/rahaza/finance/accruals/${id}/reverse`, (d) => `Akrual dibalik${d.reversal_je_number ? ` · ${d.reversal_je_number}` : ''}`, 'Gagal membalik akrual');
   };
 
-  const totalIncome = accruals.filter(a => a.type === 'income' && a.status === 'active').reduce((s, a) => s + (Number(a.amount) || 0), 0);
-  const totalExpense = accruals.filter(a => a.type === 'expense' && a.status === 'active').reduce((s, a) => s + (Number(a.amount) || 0), 0);
+  const sumBy = (st) => accruals.filter(a => a.status === st).reduce((s, a) => s + (Number(a.amount) || 0), 0);
 
   const { page, setPage, totalPages, total, paged } = useClientPagination(accruals, PAGE_SIZE);
   return (
     <PageLayout
       testId="accruals-page"
       title="Akrual"
-      subtitle="Pendapatan dan beban yang sudah terjadi tetapi belum dibayar atau diterima."
+      subtitle="Beban yang sudah terjadi tetapi belum dibayar: dijurnal di akhir periode, dibalik di awal periode berikutnya."
       actions={
-        <Button onClick={() => setEditing({ period: '', type: 'expense', description: '', amount: 0, account_id: '' })} data-testid="accrual-add">
+        <Button onClick={() => setEditing({ period: '', accrual_type: 'utility', description: '', amount: 0, expense_account: '', accrued_account: '' })} data-testid="accrual-add">
           <Plus className="w-4 h-4" />Akrual baru
         </Button>
       }
@@ -127,10 +167,9 @@ export default function AccrualsModule({ token }) {
           {MONTH_OPTIONS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
         </SmartNativeSelect>
         <SmartNativeSelect value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
-          className="h-9 w-40" data-testid="accrual-filter-type">
+          className="h-9 w-48" data-testid="accrual-filter-type">
           <option value="">Semua jenis</option>
-          <option value="income">Pendapatan</option>
-          <option value="expense">Beban</option>
+          {ACCRUAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </SmartNativeSelect>
       </>}
       tools={
@@ -140,8 +179,8 @@ export default function AccrualsModule({ token }) {
       }
       summary={accruals.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <StatTile label="Akrual pendapatan aktif" value={fmt(totalIncome)} />
-          <StatTile label="Akrual beban aktif" value={fmt(totalExpense)} />
+          <StatTile label="Draf belum dijurnal" value={fmt(sumBy('draft'))} />
+          <StatTile label="Terjurnal (belum dibalik)" value={fmt(sumBy('posted'))} />
         </div>
       )}
       footer={!loading && accruals.length > 0 && (
@@ -152,7 +191,7 @@ export default function AccrualsModule({ token }) {
         {loading ? (
           <Skeleton className="h-40 m-4" />
         ) : accruals.length === 0 ? (
-          <EmptyState icon={FileText} title="Belum ada akrual" description="Akrual mencatat beban atau pendapatan yang sudah terjadi tetapi belum dibayar atau diterima." />
+          <EmptyState icon={FileText} title="Belum ada akrual" description="Akrual mencatat beban yang sudah terjadi tetapi belum dibayar." />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full" data-testid="accrual-table">
@@ -167,45 +206,53 @@ export default function AccrualsModule({ token }) {
                 </tr>
               </thead>
               <tbody>
-                {paged.map(a => (
-                  <tr key={a.id} data-testid={`accrual-row-${a.id}`}>
-                    <td className="whitespace-nowrap">{periodLabel(a.period)}</td>
-                    <td>{a.type === 'income' ? 'Pendapatan' : 'Beban'}</td>
-                    <td>{a.description}</td>
-                    <td className="text-right tabular-nums">{fmt(a.amount)}</td>
-                    <td>
-                      <StatusBadge tone={a.status === 'active' ? 'info' : 'muted'} label={a.status === 'active' ? 'Aktif' : 'Dibalik'} />
-                    </td>
-                    <td className="text-right">
-                      <div className="flex gap-1 justify-end">
-                        {a.status === 'active' && (
-                          <>
-                            <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ ...a })} title="Ubah" aria-label="Ubah" data-testid={`accrual-edit-${a.id}`}>
-                              <Edit2 className="w-4 h-4" />
-                            </Button>
+                {paged.map(a => {
+                  const st = STATUS_META[a.status] || { label: a.status || '—', tone: 'muted' };
+                  return (
+                    <tr key={a.id} data-testid={`accrual-row-${a.id}`}>
+                      <td className="whitespace-nowrap">{periodLabel(a.period)}</td>
+                      <td>{typeLabel(a.accrual_type)}</td>
+                      <td>{a.description}{(a.je_number || a.reversal_je_number) && (
+                        <div className="text-[11px] text-muted-foreground">{[a.je_number, a.reversal_je_number && `pembalik ${a.reversal_je_number}`].filter(Boolean).join(' · ')}</div>
+                      )}</td>
+                      <td className="text-right tabular-nums">{fmt(a.amount)}</td>
+                      <td><StatusBadge status={a.status} tone={st.tone} label={st.label} /></td>
+                      <td className="text-right">
+                        <div className="flex gap-1 justify-end">
+                          {a.status === 'draft' && (
+                            <>
+                              <Button variant="ghost" size="icon-sm" onClick={() => setEditing({ ...a })} title="Ubah" aria-label="Ubah" data-testid={`accrual-edit-${a.id}`}>
+                                <Edit2 className="w-4 h-4" />
+                              </Button>
+                              <Button variant="outline" size="sm" onClick={() => post(a)} data-testid={`accrual-post-${a.id}`}>
+                                <BookCheck className="w-4 h-4" />Posting
+                              </Button>
+                              <Button variant="ghost" size="icon-sm" onClick={() => del(a.id)} title="Hapus" aria-label="Hapus" className="text-[hsl(var(--destructive))]" data-testid={`accrual-delete-${a.id}`}>
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </>
+                          )}
+                          {a.status === 'posted' && !a.reversed_at && (
                             <Button variant="ghost" size="icon-sm" onClick={() => reverse(a.id)} title="Balik akrual" aria-label="Balik akrual" data-testid={`accrual-reverse-${a.id}`}>
                               <RotateCcw className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon-sm" onClick={() => del(a.id)} title="Hapus" aria-label="Hapus" className="text-[hsl(var(--destructive))]" data-testid={`accrual-delete-${a.id}`}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </GlassCard>
-      {editing && <AccrualEditor value={editing} headers={headers} onClose={() => setEditing(null)} onSave={save} />}
+      {editing && <AccrualEditor value={editing} headers={headers} saving={saving} onClose={() => setEditing(null)} onSave={save} />}
     </PageLayout>
   );
 }
 
-function AccrualEditor({ value, headers, onClose, onSave }) {
+function AccrualEditor({ value, headers, saving, onClose, onSave }) {
   const [s, setS] = useState(value);
   const [accounts, setAccounts] = useState([]);
   const upd = (k, v) => setS(x => ({ ...x, [k]: v }));
@@ -218,27 +265,34 @@ function AccrualEditor({ value, headers, onClose, onSave }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const periodOpts = s.period && !MONTH_OPTIONS.some(m => m.value === s.period)
-    ? [{ value: s.period, label: s.period }, ...MONTH_OPTIONS] : MONTH_OPTIONS;
+    ? [{ value: s.period, label: periodLabel(s.period) }, ...MONTH_OPTIONS] : MONTH_OPTIONS;
+  const accOpts = (types, cur) => accounts.filter(a => types.includes(a.type) || a.code === cur);
+  // server tidak mengubah periode & jenis draf yang sudah ada (PUT hanya keterangan, jumlah, akun)
+  const locked = !!s.id;
+  const missing = !s.period ? 'Pilih periode.' : !(Number(s.amount) > 0) ? 'Isi jumlah lebih dari 0.' : '';
   return (
     <Modal title={s.id ? 'Ubah akrual' : 'Akrual baru'} onClose={onClose} size="md" data-testid="accrual-editor">
       <div className="space-y-3">
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Periode</label>
-          <SmartNativeSelect value={s.period} onChange={e => upd('period', e.target.value)} className="h-9 w-full" data-testid="accrual-period">
-            <option value="">Pilih bulan</option>
-            {periodOpts.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </SmartNativeSelect>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Periode *</label>
+            <SmartNativeSelect value={s.period} onChange={e => upd('period', e.target.value)} disabled={locked} className="h-9 w-full" data-testid="accrual-period">
+              <option value="">Pilih bulan</option>
+              {periodOpts.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </SmartNativeSelect>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Jenis</label>
+            <SmartNativeSelect value={s.accrual_type || 'other'} onChange={e => upd('accrual_type', e.target.value)} disabled={locked} searchable={false} className="h-9 w-full" data-testid="accrual-type">
+              {ACCRUAL_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </SmartNativeSelect>
+          </div>
         </div>
+        {locked && <p className="text-[11px] text-muted-foreground">Periode dan jenis draf tidak bisa diubah — hapus lalu buat ulang bila salah.</p>}
         <div>
-          <label className="text-xs text-muted-foreground block mb-1">Jenis</label>
-          <SmartNativeSelect value={s.type} onChange={e => upd('type', e.target.value)} searchable={false} className="h-9 w-full" data-testid="accrual-type">
-            <option value="income">Pendapatan</option>
-            <option value="expense">Beban</option>
-          </SmartNativeSelect>
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Keterangan</label>
+          <label className="text-xs text-muted-foreground block mb-1" htmlFor="accrual-description">Keterangan</label>
           <textarea
+            id="accrual-description"
             value={s.description}
             onChange={e => upd('description', e.target.value)}
             className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
@@ -247,7 +301,7 @@ function AccrualEditor({ value, headers, onClose, onSave }) {
           />
         </div>
         <div>
-          <label className="text-xs text-muted-foreground block mb-1">Jumlah (Rp)</label>
+          <label className="text-xs text-muted-foreground block mb-1">Jumlah (Rp) *</label>
           <MoneyInput
             glass
             value={s.amount || 0}
@@ -255,17 +309,29 @@ function AccrualEditor({ value, headers, onClose, onSave }) {
             data-testid="accrual-amount"
           />
         </div>
-        <div>
-          <label className="text-xs text-muted-foreground block mb-1">Akun (opsional)</label>
-          <SmartNativeSelect value={s.account_id || ''} onChange={e => upd('account_id', e.target.value)} className="h-9 w-full" data-testid="accrual-account-id">
-            <option value="">Tidak dipilih</option>
-            {s.account_id && !accounts.some(a => a.id === s.account_id) && <option value={s.account_id}>Akun tersimpan</option>}
-            {accounts.map(a => <option key={a.id} value={a.id}>{a.code} — {a.name}</option>)}
-          </SmartNativeSelect>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Akun beban (debit)</label>
+            <SmartNativeSelect value={s.expense_account || ''} onChange={e => upd('expense_account', e.target.value)} className="h-9 w-full"
+              searchPlaceholder="Cari kode atau nama akun…" data-testid="accrual-expense-account">
+              <option value="">Bawaan sesuai jenis</option>
+              {accOpts(EXPENSE_TYPES, s.expense_account).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+            </SmartNativeSelect>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Akun beban yang masih harus dibayar (kredit)</label>
+            <SmartNativeSelect value={s.accrued_account || ''} onChange={e => upd('accrued_account', e.target.value)} className="h-9 w-full"
+              searchPlaceholder="Cari kode atau nama akun…" data-testid="accrual-accrued-account">
+              <option value="">Bawaan sesuai jenis</option>
+              {accOpts(ACCRUED_TYPES, s.accrued_account).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+            </SmartNativeSelect>
+          </div>
         </div>
+        <p className="text-[11px] text-muted-foreground">Akun yang dikosongkan diambil dari Pengaturan Keuangan › Pemetaan akun otomatis (Akrual).</p>
+        {missing && <p className="text-[11px] text-muted-foreground" data-testid="accrual-missing">{missing}</p>}
         <div className="flex gap-2 pt-2 justify-end">
           <Button variant="outline" onClick={onClose} data-testid="accrual-cancel">Batal</Button>
-          <Button onClick={() => onSave(s)} data-testid="accrual-save">Simpan</Button>
+          <Button onClick={() => onSave(s)} disabled={!!missing || saving} data-testid="accrual-save">{saving ? 'Menyimpan…' : 'Simpan'}</Button>
         </div>
       </div>
     </Modal>

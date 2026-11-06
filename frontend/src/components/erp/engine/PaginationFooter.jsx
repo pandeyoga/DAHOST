@@ -1,4 +1,5 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 /**
  * PaginationFooter
@@ -59,11 +60,14 @@ export default function PaginationFooter({
         {onPerPageChange && (
           <label className="flex items-center gap-2 text-xs">
             <span className="text-muted-foreground/70">Per halaman:</span>
-            <select
-              value={perPage}
+            {/* 2026-11-07 (Tahap 5): pemilih aplikasi, bukan pemilih bawaan browser (PANDUAN_UI) */}
+            <SmartNativeSelect
+              value={String(perPage)}
               onChange={(e) => onPerPageChange(Number(e.target.value))}
-              className="border border-border rounded px-1.5 py-0.5 text-xs focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]"
+              className="w-20 h-7 px-2 py-0.5 text-xs"
+              searchable={false}
               disabled={loading}
+              aria-label="Jumlah per halaman"
               data-testid={`${testIdPrefix}-per-page`}
             >
               {perPageOptions.map((n) => (
@@ -71,7 +75,7 @@ export default function PaginationFooter({
                   {n}
                 </option>
               ))}
-            </select>
+            </SmartNativeSelect>
           </label>
         )}
       </div>

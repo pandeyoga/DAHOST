@@ -667,6 +667,9 @@ async def seed_recruitment(
     db: AsyncIOMotorDatabase = Depends(get_db),
     user=Depends(require_auth),
 ):
+    # 2026-11-07 (Tahap 5): data contoh dulu menghapus semua lowongan & kandidat tanpa tanya
+    from core.demo_seed_guard import ensure_empty_for_demo
+    await ensure_empty_for_demo(db, ["dewi_recruitment_jobs", "dewi_recruitment_candidates"], "Rekrutmen")
     await db.dewi_recruitment_jobs.delete_many({})
     await db.dewi_recruitment_candidates.delete_many({})
     

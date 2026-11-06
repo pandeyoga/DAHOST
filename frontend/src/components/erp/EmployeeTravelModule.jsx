@@ -8,6 +8,7 @@
  *  - Status flow: draft → submitted → approved → advance_paid → on_trip → completed
  */
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
 import {
   Plus, RefreshCw, MapPin, CheckCircle, XCircle,
@@ -73,17 +74,24 @@ function TravelForm({ token, onClose, onSaved }) {
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
+  // Tahap 5 (2026-11-07): tarif per diem dari Konfigurasi Per Diem (`/per-diem-rates`, bawaan ikut layar itu).
+  // Dulu pratinjau memakai angka tetap di kode, sehingga bisa berbeda dari tarif yang dihitung server.
+  const [perDiemRates, setPerDiemRates] = useState(null);
+  useEffect(() => {
+    fetch(`${API}/api/hr/expenses/per-diem-rates`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : { items: [] }))
+      .then(d => setPerDiemRates(Object.fromEntries((d.items || []).filter(x => x.is_active !== false)
+        .map(x => [x.destination_type, Number(x.daily_rate) || 0]))))
+      .catch(() => setPerDiemRates({}));
+  }, [token]);
+
   // Preview per diem
   const fetchPerDiemPreview = useCallback(async () => {
-    if (!form.destination_type || !form.start_date || !form.end_date) return;
-    try {
-      const days = Math.max(1, Math.ceil((new Date(form.end_date) - new Date(form.start_date)) / 86400000) + 1);
-      // Use rate from API (will use defaults if not configured)
-      const rates = { dalam_kota: 100000, luar_kota: 300000, luar_negeri: 600000 };
-      const daily = rates[form.destination_type] || 150000;
-      setPerDiemPreview({ per_diem_daily: daily, days_count: days, per_diem_total: daily * days });
-    } catch (e) { /* ignore */ }
-  }, [form.destination_type, form.start_date, form.end_date]);
+    if (!form.destination_type || !form.start_date || !form.end_date || !perDiemRates) return;
+    const days = Math.max(1, Math.ceil((new Date(form.end_date) - new Date(form.start_date)) / 86400000) + 1);
+    const daily = perDiemRates[form.destination_type];
+    setPerDiemPreview(daily === undefined ? null : { per_diem_daily: daily, days_count: days, per_diem_total: daily * days });
+  }, [form.destination_type, form.start_date, form.end_date, perDiemRates]);
 
   useEffect(() => { fetchPerDiemPreview(); }, [fetchPerDiemPreview]);
 
@@ -231,7 +239,7 @@ function TravelDetail({ req, token, onClose, onRefresh, role }) {
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Gagal'); }
       onRefresh(); onClose();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setActionLoading(false); }
   };
 
@@ -410,7 +418,7 @@ export default function EmployeeTravelModule({ token, user }) {
       toast.error('Pilih minimal 1 travel request untuk di-approve');
       return;
     }
-    if (!window.confirm(`Approve ${selectedIds.length} travel request?`)) return;
+    if (!(await confirmDialog({ title: `Setujui ${selectedIds.length} pengajuan perjalanan dinas?` }))) return;
     
     setBulkLoading(true);
     try {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Database, Download, Trash2, RefreshCw, AlertTriangle, CheckCircle2, Clock, HardDrive, Calendar, FileUp, CheckSquare, Square } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -155,7 +156,7 @@ export default function BackupRestoreModule({ token }) {
   };
 
   const deleteBackup = async (backup) => {
-    if (!window.confirm(`Hapus backup '${backup.backup_name}'?`)) return;
+    if (!(await confirmDialog(`Hapus backup '${backup.backup_name}'?`))) return;
     setProcessing(backup.backup_id);
     try {
       const r = await fetch(`/api/admin/backup/${backup.backup_id}`, {
@@ -176,7 +177,7 @@ export default function BackupRestoreModule({ token }) {
   };
 
   const cleanup = async () => {
-    if (!window.confirm(`Hapus semua backup yang lebih lama dari ${config?.retention_days || 30} hari?`)) return;
+    if (!(await confirmDialog(`Hapus semua backup yang lebih lama dari ${config?.retention_days || 30} hari?`))) return;
     setProcessing('cleanup');
     try {
       const r = await fetch('/api/admin/backup/cleanup', {

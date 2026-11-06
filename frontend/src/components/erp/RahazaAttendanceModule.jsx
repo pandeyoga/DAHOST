@@ -77,14 +77,20 @@ export default function RahazaAttendanceModule({ token }) {
   };
 
   const DEFAULT_HOURS = 8;
-  const defaultShiftId = () => (shifts[0]?.id || '');
+  // Tahap 5 (2026-11-07): shift bawaan = shift karyawan pada tanggal itu (jadwal → penugasan → shift karyawan,
+  // dihitung server `default_shift_id`); baru jatuh ke shift pertama bila tidak diketahui. Dulu SELALU shift pertama.
+  const defaultShiftId = (r) => {
+    const own = r?.default_shift_id;
+    if (own && shifts.some(s => String(s.id) === String(own))) return own;
+    return shifts[0]?.id || '';
+  };
 
   const update = (empId, patch) => setRows(prev => prev.map(r => {
     if (r.employee_id !== empId) return r;
     const next = { ...r, ...patch };
     if ('status' in patch) {
       if (patch.status === 'hadir') {
-        if (!next.shift_id) next.shift_id = defaultShiftId();
+        if (!next.shift_id) next.shift_id = defaultShiftId(r);
         if (!(Number(next.hours_worked) > 0)) next.hours_worked = DEFAULT_HOURS;
       } else {
         // Tidak bekerja → kosongkan jam, lembur, dan shift
@@ -98,7 +104,7 @@ export default function RahazaAttendanceModule({ token }) {
 
   const setAll = (status) => setRows(prev => prev.map(r => (
     status === 'hadir'
-      ? { ...r, status, shift_id: r.shift_id || defaultShiftId(), hours_worked: Number(r.hours_worked) > 0 ? r.hours_worked : DEFAULT_HOURS }
+      ? { ...r, status, shift_id: r.shift_id || defaultShiftId(r), hours_worked: Number(r.hours_worked) > 0 ? r.hours_worked : DEFAULT_HOURS }
       : { ...r, status, hours_worked: 0, overtime_hours: 0, shift_id: '' }
   )));
 
@@ -187,7 +193,7 @@ export default function RahazaAttendanceModule({ token }) {
   const markAllHadirAndSave = () => {
     const filled = rows.map(r => ((r.existing_id || (r.status || 'hadir') !== 'hadir') ? r : {
       ...r, status: 'hadir',
-      shift_id: r.shift_id || defaultShiftId(),
+      shift_id: r.shift_id || defaultShiftId(r),
       hours_worked: Number(r.hours_worked) > 0 ? r.hours_worked : DEFAULT_HOURS,
     }));
     setRows(filled);
@@ -369,14 +375,16 @@ export default function RahazaAttendanceModule({ token }) {
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      <select disabled={r.locked} value={r.status || 'hadir'} onChange={e => update(r.employee_id, { status: e.target.value })} className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground">
+                      <SmartNativeSelect disabled={r.locked} value={r.status || 'hadir'} onChange={e => update(r.employee_id, { status: e.target.value })} searchable={false}
+                        data-testid={`att-status-${r.employee_code}`} className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground">
                         {STATUS_OPTS.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
-                      </select>
+                      </SmartNativeSelect>
                     </td>
                     <td className="px-3 py-2">
-                      <SmartNativeSelect disabled={r.locked} value={r.shift_id || ''} onChange={e => update(r.employee_id, { shift_id: e.target.value })} className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground">
+                      <SmartNativeSelect disabled={r.locked} value={r.shift_id || ''} onChange={e => update(r.employee_id, { shift_id: e.target.value })}
+                        data-testid={`att-shift-${r.employee_code}`} className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground">
                         <option value="">—</option>
-                        {shifts.map(s => <option key={s.id} value={s.id}>{s.code}</option>)}
+                        {shifts.map(s => <option key={s.id} value={s.id}>{`${s.code} · ${s.name}${s.start_time ? ` (${s.start_time}–${s.end_time || '?'})` : ''}`}</option>)}
                       </SmartNativeSelect>
                     </td>
                     <td className="px-3 py-2 text-right">

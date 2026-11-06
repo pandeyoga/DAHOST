@@ -166,11 +166,11 @@ export default function RahazaMaterialsModule({ token }) {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
           <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari kode/nama..." className="pl-8 h-9 text-sm" data-testid="mat-search" />
         </div>
-        <select value={filterType} onChange={e => setFilterType(e.target.value)} className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-filter-type">
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)} className="w-52 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-filter-type">
           <option value="">Semua (Bahan &amp; Aksesoris)</option>
           <option value="bahan">Bahan</option>
           <option value="aksesoris">Aksesoris</option>
-        </select>
+        </SmartNativeSelect>
         <button
           onClick={() => setFilterLowStock(!filterLowStock)}
           className={`h-9 px-3 rounded-lg border text-sm flex items-center gap-1.5 transition-colors ${filterLowStock ? 'bg-[hsl(var(--warning)/0.15)] border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))]' : 'border-[var(--glass-border)] text-muted-foreground hover:text-foreground'}`}
@@ -253,9 +253,9 @@ export default function RahazaMaterialsModule({ token }) {
               </div>
               <div>
                 <label className="block text-xs font-medium text-foreground/70 mb-1">Jenis <span className="text-[hsl(var(--destructive))]">*</span></label>
-                <select value={typeToCategory(form.type)} onChange={e => { const st = categoryToStoredType(e.target.value); setForm({...form, type: st, unit: isKgLike(st) ? 'kg' : 'pcs'}); }} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-field-type">
+                <SmartNativeSelect value={typeToCategory(form.type)} onChange={e => { const st = categoryToStoredType(e.target.value); setForm({...form, type: st, unit: isKgLike(st) ? 'kg' : 'pcs'}); }} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-field-type">
                   {CATEGORY_OPTIONS.filter(o => o.value !== 'fg').map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
+                </SmartNativeSelect>
               </div>
             </div>
             <div>
@@ -279,7 +279,7 @@ export default function RahazaMaterialsModule({ token }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-foreground/70 mb-1">Unit</label>
-                <SmartNativeSelect value={form.unit} onChange={e => setForm({...form, unit: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground">
+                <SmartNativeSelect value={form.unit} onChange={e => setForm({...form, unit: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="mat-field-unit">
                   {MATERIAL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                 </SmartNativeSelect>
               </div>

@@ -23,6 +23,7 @@
  * supaya jumlah "total" di layar tidak pernah berarti "20 baris pertama".
  */
 import { useState, useEffect, useCallback } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   History, RefreshCw, Loader2, Search, Download, ShieldCheck, Sigma,
   Info, Users, Store, Filter, X,
@@ -241,29 +242,29 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
           </div>
           <div>
             <Label className="text-xs">Yang diubah</Label>
-            <select className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
+            <SmartNativeSelect className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
               value={entity} onChange={(e) => setEntity(e.target.value)}
               data-testid="changelog-entity-select">
               <option value="">Semua jenis</option>
               {filters.entities.map((e) => (
                 <option key={e.value} value={e.value}>{e.label}</option>
               ))}
-            </select>
+            </SmartNativeSelect>
           </div>
           <div>
             <Label className="text-xs">Aksi</Label>
-            <select className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
+            <SmartNativeSelect className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
               value={action} onChange={(e) => setAction(e.target.value)}
               data-testid="changelog-action-select">
               <option value="">Semua aksi</option>
               {filters.actions.map((a) => (
                 <option key={a.value} value={a.value}>{a.label}</option>
               ))}
-            </select>
+            </SmartNativeSelect>
           </div>
           <div>
             <Label className="text-xs">Pelaku</Label>
-            <select className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
+            <SmartNativeSelect className="mt-1 h-9 w-full rounded-md border border-border bg-background px-2 text-xs"
               value={actorId} onChange={(e) => setActorId(e.target.value)}
               data-testid="changelog-actor-select">
               <option value="">Semua orang</option>
@@ -272,7 +273,7 @@ export default function MarketingChangeLogModule({ token, scope = 'marketing' })
                   {a.name}{a.role ? ` (${a.role})` : ''} — {a.count}×
                 </option>
               ))}
-            </select>
+            </SmartNativeSelect>
           </div>
           <div>
             <Label className="text-xs">Dari tanggal</Label>

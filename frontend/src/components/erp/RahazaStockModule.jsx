@@ -200,6 +200,20 @@ export default function RahazaStockModule({ token }) {
     .map(([id, meta]) => ({ id, ...meta }))
     .sort((a, b) => a.code.localeCompare(b.code));
 
+  // 2026-11-07 (Tahap 5): transfer — material DIBATASI pada yang punya stok di lokasi asal (dulu semua 1.700+
+  // material tampil, lalu server menolak "stok kurang"), dan stok tersedianya ditampilkan.
+  const stockAt = (matId, locId) => stocks
+    .filter(s => s.material_id === matId && s.location_id === locId)
+    .reduce((t, s) => t + Number(s.qty || 0), 0);
+  // Baris stok bisa tercatat pada id lokasi lama (sebelum migrasi zona); bila lokasi asal TIDAK punya satu
+  // pun baris stok ber-id sama, daftar tetap lengkap (perilaku lama) dan server yang memeriksa stoknya.
+  const fromHasRows = !!transferForm.from_location_id && stocks.some(s => s.location_id === transferForm.from_location_id);
+  const transferMaterials = fromHasRows
+    ? materials.filter(m => stockAt(m.id, transferForm.from_location_id) > 0)
+    : materials;
+  const transferAvail = fromHasRows && transferForm.material_id
+    ? stockAt(transferForm.material_id, transferForm.from_location_id) : null;
+
   const openReceive = () => { setReceiveForm({ material_id: '', location_id: '', qty: '', notes: '' }); setFormError(''); setReceiveOpen(true); };
   const openTransfer = () => { setTransferForm({ material_id: '', from_location_id: '', to_location_id: '', qty: '', notes: '' }); setFormError(''); setTransferOpen(true); };
 
@@ -209,8 +223,10 @@ export default function RahazaStockModule({ token }) {
       if (!receiveForm.material_id || !receiveForm.location_id || !(Number(receiveForm.qty) > 0)) throw new Error('Pilih material, lokasi, dan isi qty > 0.');
       const r = await fetch('/api/rahaza/material-receive', { method: 'POST', headers, body: JSON.stringify({ ...receiveForm, qty: Number(receiveForm.qty) }) });
       if (!r.ok) {
+        // 2026-11-07 (Tahap 5): tampilkan alasan dari server (dulu disamarkan "Data tidak valid.")
+        const d = await r.json().catch(() => ({}));
         const STATUS_MSG = { 400: 'Data tidak valid.', 403: 'Tidak ada akses.', 404: 'Material/Lokasi tidak ditemukan.' };
-        throw new Error(STATUS_MSG[r.status] || `Gagal simpan (HTTP ${r.status})`);
+        throw new Error(typeof d.detail === 'string' ? d.detail : (STATUS_MSG[r.status] || `Gagal simpan (HTTP ${r.status})`));
       }
       setReceiveOpen(false); fetchAll();
     } catch (e) { setFormError(e.message); }
@@ -223,10 +239,14 @@ export default function RahazaStockModule({ token }) {
       if (!transferForm.material_id || !transferForm.from_location_id || !transferForm.to_location_id) throw new Error('Lengkapi material & kedua lokasi.');
       if (transferForm.from_location_id === transferForm.to_location_id) throw new Error('Lokasi asal dan tujuan tidak boleh sama.');
       if (!(Number(transferForm.qty) > 0)) throw new Error('Qty harus > 0.');
+      if (transferAvail != null && Number(transferForm.qty) > transferAvail + 1e-9) {
+        throw new Error(`Stok di lokasi asal hanya ${transferAvail.toLocaleString('id-ID')} — qty transfer melebihi stok.`);
+      }
       const r = await fetch('/api/rahaza/material-transfer', { method: 'POST', headers, body: JSON.stringify({ ...transferForm, qty: Number(transferForm.qty) }) });
       if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
         const STATUS_MSG = { 400: 'Data tidak valid / stok kurang.', 403: 'Tidak ada akses.' };
-        throw new Error(STATUS_MSG[r.status] || `Gagal transfer (HTTP ${r.status})`);
+        throw new Error(typeof d.detail === 'string' ? d.detail : (STATUS_MSG[r.status] || `Gagal transfer (HTTP ${r.status})`));
       }
       setTransferOpen(false); fetchAll();
     } catch (e) { setFormError(e.message); }
@@ -512,23 +532,34 @@ export default function RahazaStockModule({ token }) {
             <div>
               <label className="block text-xs font-medium text-foreground/70 mb-1">Material <span className="text-[hsl(var(--destructive))] ">*</span></label>
               <SmartNativeSelect value={transferForm.material_id} onChange={e => setTransferForm({...transferForm, material_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-material">
-                <option value="">— Pilih —</option>
-                {materials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
+                <option value="">{fromHasRows && !transferMaterials.length ? '— Tidak ada stok di lokasi asal —' : '— Pilih —'}</option>
+                {transferMaterials.map(m => <option key={m.id} value={m.id}>{`${m.code} · ${m.name} (${m.unit})`}</option>)}
               </SmartNativeSelect>
+              {transferAvail != null && (
+                <p className="text-[11px] text-muted-foreground mt-1" data-testid="transfer-available">
+                  Stok di lokasi asal: <span className="tabular-nums font-medium text-foreground">{transferAvail.toLocaleString('id-ID')}</span>
+                </p>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-medium text-foreground/70 mb-1">Dari Lokasi <span className="text-[hsl(var(--destructive))] ">*</span></label>
-                <SmartNativeSelect value={transferForm.from_location_id} onChange={e => setTransferForm({...transferForm, from_location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-from">
-                  <option value="">—</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                <SmartNativeSelect value={transferForm.from_location_id} onChange={e => {
+                  const v = e.target.value;
+                  // material yang sudah dipilih tetap bila masih ada stoknya di lokasi asal baru
+                  const rows = stocks.some(s => s.location_id === v);
+                  setTransferForm(f => ({ ...f, from_location_id: v,
+                    material_id: f.material_id && (!rows || stockAt(f.material_id, v) > 0) ? f.material_id : '' }));
+                }} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-from">
+                  <option value="">— Pilih —</option>
+                  {locations.map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
                 </SmartNativeSelect>
               </div>
               <div>
                 <label className="block text-xs font-medium text-foreground/70 mb-1">Ke Lokasi <span className="text-[hsl(var(--destructive))] ">*</span></label>
                 <SmartNativeSelect value={transferForm.to_location_id} onChange={e => setTransferForm({...transferForm, to_location_id: e.target.value})} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="transfer-to">
-                  <option value="">—</option>
-                  {locations.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                  <option value="">— Pilih —</option>
+                  {locations.filter(l => l.id !== transferForm.from_location_id).map(l => <option key={l.id} value={l.id}>{`${l.code} · ${l.name}`}</option>)}
                 </SmartNativeSelect>
               </div>
             </div>

@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { GlassInput } from '@/components/ui/glass';
 import { useToast } from '@/hooks/use-toast';
 import axios from 'axios';
@@ -102,6 +104,9 @@ export default function PortalSayaCuti({ user, headers }) {
   const [tab, setTab] = useState('leaves');
 
   const [employee, setEmployee] = useState(null);
+  // Tahap 5 (2026-11-07): dulu akun tanpa tautan karyawan berhenti di "Mencari data karyawan..." selamanya
+  // (loading hanya dimatikan setelah data cuti dimuat, yang tidak pernah terjadi tanpa karyawan).
+  const [empChecked, setEmpChecked] = useState(false);
   const [leaves, setLeaves] = useState([]);
   const [leaveTypes, setLeaveTypes] = useState([]);
   const [balances, setBalances] = useState([]);
@@ -129,7 +134,7 @@ export default function PortalSayaCuti({ user, headers }) {
     } catch (e) {
       // 404 = employee not linked, tampilkan pesan ke user
       if (e.response?.status !== 404) console.error('loadEmployee error', e);
-    }
+    } finally { setEmpChecked(true); }
   }, [headers]); // eslint-disable-line
 
   const loadData = useCallback(async () => {
@@ -173,7 +178,9 @@ export default function PortalSayaCuti({ user, headers }) {
 
   const submitLeave = async () => {
     if (!form.leave_type_id || !form.from_date || !form.to_date)
-      return toast({ title: 'Lengkapi field wajib', variant: 'destructive' });
+      return toast({ title: 'Lengkapi jenis dan tanggal', variant: 'destructive' });
+    if (form.to_date < form.from_date)
+      return toast({ title: 'Tanggal selesai tidak boleh sebelum tanggal mulai', variant: 'destructive' });
     if (!form.reason.trim())
       return toast({ title: 'Alasan wajib diisi', variant: 'destructive' });
     if (form.is_half_day && form.to_date !== form.from_date)
@@ -214,7 +221,7 @@ export default function PortalSayaCuti({ user, headers }) {
   };
 
   const cancelLeave = async (id) => {
-    if (!window.confirm('Batalkan pengajuan ini?')) return;
+    if (!(await confirmDialog({ title: 'Batalkan pengajuan ini?', confirmLabel: 'Batalkan pengajuan', cancelLabel: 'Kembali', danger: true }))) return;
     try {
       await axios.post(`${API}/api/rahaza/leaves/${id}/cancel`, { reason: 'Dibatalkan oleh karyawan' }, { headers });
       toast({ title: 'Request dibatalkan' });
@@ -250,9 +257,9 @@ export default function PortalSayaCuti({ user, headers }) {
     return (
       <div className="p-6 text-center space-y-2">
         <p className="text-muted-foreground text-sm">
-          {loading ? 'Mencari data karyawan...' : 'Data karyawan Anda belum terdaftar. Hubungi HR untuk mendaftarkan akun Anda.'}
+          {!empChecked ? 'Mencari data karyawan...' : 'Akun Anda belum ditautkan ke data karyawan. Minta HR menautkannya di Data Karyawan › Tautkan akun.'}
         </p>
-        {loading && <Loader2 className="mx-auto animate-spin" size={20} />}
+        {!empChecked && <Loader2 className="mx-auto animate-spin" size={20} />}
       </div>
     );
   }
@@ -301,28 +308,20 @@ export default function PortalSayaCuti({ user, headers }) {
               {/* Leave type grouped by request_type */}
               <div>
                 <Label className="text-xs">Tipe Izin/Cuti <span className="text-red-700 dark:text-red-500">*</span></Label>
-                <Select value={form.leave_type_id || 'none'}
-                  onValueChange={v => setForm(f => ({ ...f, leave_type_id: v === 'none' ? '' : v }))}>
-                  <SelectTrigger className="mt-1 h-9 text-sm" data-testid="select-leave-type"><SelectValue placeholder="Pilih tipe..." /></SelectTrigger>
-                  <SelectContent>
-                    {['cuti', 'sakit', 'izin'].map(rt => {
-                      const typeGroup = leaveTypes.filter(lt => lt.request_type === rt);
-                      if (!typeGroup.length) return null;
-                      return (
-                        <div key={rt}>
-                          <div className="px-2 py-1 text-[10px] font-bold text-muted-foreground uppercase">
-                            {REQ_TYPE_CFG[rt].icon} {REQ_TYPE_CFG[rt].label}
-                          </div>
-                          {typeGroup.map(lt => (
-                            <SelectItem key={lt.id} value={lt.id}>
-                              {lt.name} {lt.quota_default ? `(${lt.quota_default} hari)` : ''}
-                            </SelectItem>
-                          ))}
-                        </div>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
+                {/* Tahap 5: hanya jenis AKTIF, bisa dicari */}
+                <SmartNativeSelect value={form.leave_type_id}
+                  onChange={e => setForm(f => ({ ...f, leave_type_id: e.target.value }))}
+                  wrapperClassName="mt-1" data-testid="select-leave-type"
+                  className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+                  <option value="">— Pilih jenis izin/cuti —</option>
+                  {['cuti', 'sakit', 'izin'].map(rt => (
+                    <optgroup key={rt} label={REQ_TYPE_CFG[rt].label}>
+                      {leaveTypes.filter(lt => lt.active !== false && (lt.request_type || 'cuti') === rt).map(lt => (
+                        <option key={lt.id} value={lt.id}>{`${REQ_TYPE_CFG[rt].label} · ${lt.name}${lt.quota_default ? ` (${lt.quota_default} hari)` : ''}`}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </SmartNativeSelect>
                 {selectedLT?.legal_basis && (
                   <p className="text-[10px] text-muted-foreground mt-1">{selectedLT.legal_basis}</p>
                 )}
@@ -332,13 +331,14 @@ export default function PortalSayaCuti({ user, headers }) {
                 <div>
                   <Label className="text-xs">Dari Tanggal <span className="text-red-700 dark:text-red-500">*</span></Label>
                   <GlassInput type="date" className="mt-1 h-9 text-sm"
-                    value={form.from_date} onChange={e => setForm(f => ({ ...f, from_date: e.target.value }))}
+                    value={form.from_date} onChange={e => setForm(f => ({ ...f, from_date: e.target.value, to_date: f.is_half_day || !f.to_date ? e.target.value : f.to_date }))}
                     data-testid="leave-from-date" />
                 </div>
                 <div>
                   <Label className="text-xs">Sampai Tanggal <span className="text-red-700 dark:text-red-500">*</span></Label>
                   <GlassInput type="date" className="mt-1 h-9 text-sm"
-                    value={form.to_date} onChange={e => setForm(f => ({ ...f, to_date: e.target.value }))}
+                    value={form.to_date} min={form.from_date || undefined} disabled={form.is_half_day}
+                    onChange={e => setForm(f => ({ ...f, to_date: e.target.value }))}
                     data-testid="leave-to-date" />
                 </div>
               </div>
@@ -373,8 +373,8 @@ export default function PortalSayaCuti({ user, headers }) {
               {/* Half day */}
               <div className="flex items-center gap-3">
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={form.is_half_day}
-                    onChange={e => setForm(f => ({ ...f, is_half_day: e.target.checked }))} className="rounded" />
+                  <input type="checkbox" checked={form.is_half_day} data-testid="leave-half-day"
+                    onChange={e => setForm(f => ({ ...f, is_half_day: e.target.checked, to_date: e.target.checked ? f.from_date : f.to_date }))} className="rounded" />
                   Setengah Hari
                 </label>
                 {form.is_half_day && (
@@ -485,24 +485,24 @@ export default function PortalSayaCuti({ user, headers }) {
             <Card className="p-4 space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-xs">Tanggal</Label>
+                  <Label className="text-xs">Tanggal <span className="text-[hsl(var(--destructive))]">*</span></Label>
                   <GlassInput type="date" className="mt-1 h-9 text-sm" data-testid="ot-date"
                     value={otForm.date} onChange={e => setOtForm(f => ({ ...f, date: e.target.value }))} />
                 </div>
                 <div>
-                  <Label className="text-xs">Jumlah jam</Label>
+                  <Label className="text-xs">Jumlah jam <span className="text-[hsl(var(--destructive))]">*</span></Label>
                   <GlassInput type="number" min="0.5" max="12" step="0.5" className="mt-1 h-9 text-sm" data-testid="ot-hours"
                     value={otForm.hours} onChange={e => setOtForm(f => ({ ...f, hours: e.target.value }))} />
                 </div>
               </div>
               <p className="text-[11px] text-muted-foreground">Pengali upah lembur mengikuti Pengaturan Payroll.</p>
               <div>
-                <Label className="text-xs">Alasan / Pekerjaan</Label>
-                <Textarea className="mt-1 text-sm" rows={2}
+                <Label className="text-xs">Alasan / Pekerjaan <span className="text-[hsl(var(--destructive))]">*</span></Label>
+                <Textarea className="mt-1 text-sm" rows={2} data-testid="ot-reason"
                   value={otForm.reason} onChange={e => setOtForm(f => ({ ...f, reason: e.target.value }))} />
               </div>
               <div className="flex gap-2">
-                <Button size="sm" onClick={submitOT} disabled={submitting}>Kirim</Button>
+                <Button size="sm" onClick={submitOT} disabled={submitting} data-testid="ot-submit">Kirim</Button>
                 <Button size="sm" variant="outline" onClick={() => setShowOtForm(false)}>Batal</Button>
               </div>
             </Card>

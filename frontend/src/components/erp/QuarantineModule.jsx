@@ -18,6 +18,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import {
   ShieldAlert, RefreshCw, Search, X, PackageCheck, Undo2, Trash2,
@@ -211,7 +212,9 @@ function ActionModal({ item, action, locations, quarantineLoc, onClose, onSubmit
 function ManualModal({ token, locations, onClose, onSaved }) {
   const [materials, setMaterials] = useState([]);
   const [reasons, setReasons] = useState([]);
-  const [form, setForm] = useState({ material_id: '', qty: '', from_location_id: (locations[0] && locations[0].id) || '', reason_code: '', notes: '', unit: 'pcs' });
+  // 2026-11-07 (Tahap 5): lokasi asal TIDAK dipilihkan (dulu otomatis lokasi pertama — melanggar aturan owner
+  // No.18(a) "pengguna wajib memilih lokasi"; barang bisa tercatat keluar dari rak yang salah).
+  const [form, setForm] = useState({ material_id: '', qty: '', from_location_id: '', reason_code: '', notes: '', unit: 'pcs' });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -246,7 +249,7 @@ function ManualModal({ token, locations, onClose, onSaved }) {
             <SmartNativeSelect value={form.material_id} onChange={(e) => setForm({ ...form, material_id: e.target.value })}
               className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-material">
               <option value="">— pilih material —</option>
-              {materials.map((m) => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
+              {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
             </SmartNativeSelect>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -259,7 +262,8 @@ function ManualModal({ token, locations, onClose, onSaved }) {
               <label className="text-xs text-muted-foreground block mb-1">Lokasi Asal *</label>
               <SmartNativeSelect value={form.from_location_id} onChange={(e) => setForm({ ...form, from_location_id: e.target.value })}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quarantine-manual-location">
-                {locations.map((l) => <option key={l.id} value={l.id}>{l.name || l.code}</option>)}
+                <option value="">— pilih lokasi asal —</option>
+                {locations.map((l) => <option key={l.id} value={l.id}>{`${l.code ? `${l.code} · ` : ''}${l.name || l.code}`}</option>)}
               </SmartNativeSelect>
             </div>
           </div>

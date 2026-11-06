@@ -26,6 +26,22 @@ const ENTITY_LABEL = {
   store_revenue: { label: 'Toko online — akun pendapatan per toko' },
 };
 
+// Keluarga tipe akun — sama dengan server (routes/coa_auto._family / _guard_parent): induk sub-ledger harus
+// sekeluarga dengan induk bawaannya (hutang → Liabilitas, piutang/bank → Aset, pendapatan maklon → Pendapatan).
+const familyOf = (t) => {
+  const u = (t || '').toUpperCase();
+  if (['ASSET', 'LIABILITY', 'EQUITY'].includes(u)) return u;
+  return ['REVENUE', 'OTHER_INCOME'].includes(u) ? 'INCOME' : 'EXPENSE';
+};
+const FAMILY_BY_PREFIX = { 1: 'ASSET', 2: 'LIABILITY', 3: 'EQUITY', 4: 'INCOME' };
+/** Keluarga tipe yang boleh menjadi induk satu jenis pihak: dari akun induk yang tersimpan (lolos validasi
+ *  server), cadangannya dari awalan kodenya. Kosong = tidak diketahui → semua akun ditampilkan. */
+export function parentFamily(cfg, accounts) {
+  const cur = accounts.find((a) => a.code === cfg?.parent_code);
+  if (cur) return familyOf(cur.type);
+  return FAMILY_BY_PREFIX[String(cfg?.parent_code || '')[0]] || '';
+}
+
 function StoreRevenueCard({ cfg, accounts, onChange, headers }) {
   const [preview, setPreview] = useState(null);
   const fmt = cfg.code_format || '{prefix}{seq}';
@@ -204,6 +220,11 @@ export default function RahazaCoaAutoModule({ token }) {
               onChange={(field, value) => patchEntity(key, field, value)} />
           );
         }
+        // 2026-11-07 (audit form Tahap 5): pilihan induk dibatasi ke keluarga tipe yang diterima server — dulu
+        // seluruh bagan akun (210 akun: beban, pendapatan, modal…) tampil dan pilihan yang salah baru ditolak
+        // saat simpan ("induk sub-ledger harus bertipe …").
+        const fam = parentFamily(cfg, accounts);
+        const opts = fam ? accountOptions.filter((a) => familyOf(a.type) === fam) : accountOptions;
         return (
           <GlassCard key={key} className="p-4 space-y-3" data-testid={`coa-auto-card-${key}`}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -240,8 +261,8 @@ export default function RahazaCoaAutoModule({ token }) {
                   data-testid={`coa-auto-parent-${key}`}
                 >
                   <option value="">Pilih akun</option>
-                  {accountOptions.map((a) => (
-                    <option key={a.code} value={a.code}>{a.code} — {a.name}</option>
+                  {opts.map((a) => (
+                    <option key={a.code} value={a.code}>{`${a.code} — ${a.name}${a.is_group ? ' (grup)' : ''}`}</option>
                   ))}
                 </SmartNativeSelect>
               </div>

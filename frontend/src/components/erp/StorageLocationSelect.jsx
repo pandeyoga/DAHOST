@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 // 2026-11-02 — No.18(a) owner: pengguna WAJIB memilih lokasi. Satu pemilih lokasi
 // penyimpanan untuk form gerak stok yang dulu tidak punya pemilih (atau diam-diam
@@ -33,11 +34,12 @@ export default function StorageLocationSelect({
 }) {
   const { items, loading } = useStorageLocations(token);
   const list = items.filter((l) => !excludeIds.includes(l.id));
+  // 2026-11-07 (Tahap 5): SmartNativeSelect (bisa dicari, aman di dalam dialog) — dulu pemilih bawaan browser.
+  // `required` tetap diterima demi kompatibilitas pemanggil; validasinya di form pemanggil.
   return (
-    <select
+    <SmartNativeSelect
       value={value || ''}
       onChange={(e) => onChange(e.target.value)}
-      required={required}
       disabled={disabled || loading}
       data-testid={testId}
       className={className || 'w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground'}
@@ -45,9 +47,9 @@ export default function StorageLocationSelect({
       <option value="">{loading ? 'Memuat lokasi…' : placeholder}</option>
       {list.map((l) => (
         <option key={l.id} value={l.id}>
-          {l.code ? `${l.code} · ` : ''}{l.name || l.id}
+          {`${l.code ? `${l.code} · ` : ''}${l.name || l.id}`}
         </option>
       ))}
-    </select>
+    </SmartNativeSelect>
   );
 }

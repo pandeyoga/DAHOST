@@ -18,6 +18,8 @@ import { MoneyInput } from '@/components/ui/money-input';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import CashAccountSelect, { usePaymentCashAccounts } from './SdmCashAccountSelect';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { monthOptions } from './finance/PeriodPicker';
 import { todayWIB } from '../../lib/waktu';
 import { EmptyState, StatusBadge as AtomStatusBadge } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
@@ -67,6 +69,9 @@ function StatusBadge({ status }) {
   const cfg = STATUS_CFG[status] || STATUS_CFG.submitted;
   return <AtomStatusBadge status={status} label={cfg.label} tone={cfg.tone} />;
 }
+
+// bulan mulai potong: 12 bulan ke depan s.d. 2 bulan lalu (terbaru di atas)
+const DEDUCTION_MONTHS = monthOptions(3, 12);
 
 // ─── Disburse Modal ───────────────────────────────────────────────────────────
 function DisburseModal({ req, onClose, onDone }) {
@@ -123,9 +128,12 @@ function DisburseModal({ req, onClose, onDone }) {
           </div>
 
           <div>
-            <label className="text-xs font-medium text-muted-foreground block mb-1" htmlFor="kasbon-deduction-start">Mulai potongan gaji (bulan)</label>
-            <GlassInput id="kasbon-deduction-start" type="month" value={form.deduction_start_period} onChange={e => setForm(p => ({...p, deduction_start_period: e.target.value}))}
-              className="h-9" />
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Mulai potongan gaji (bulan)</label>
+            {/* 2026-11-07 (audit form Tahap 5, PANDUAN_UI G6): pilihan bulan berlabel — dulu input type="month" polos */}
+            <SmartNativeSelect value={form.deduction_start_period} onChange={e => setForm(p => ({...p, deduction_start_period: e.target.value}))}
+              searchable={false} className="h-9 w-full" aria-label="Mulai potongan gaji" data-testid="kasbon-deduction-start">
+              {DEDUCTION_MONTHS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </SmartNativeSelect>
             <p className="text-xs text-muted-foreground mt-1">Potongan gaji mulai bulan ini.</p>
           </div>
 

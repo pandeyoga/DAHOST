@@ -391,18 +391,17 @@ async def search_fg_products(
     
     query = {'type': 'fg', '$or': [{'active': True}, {'active': {'$exists': False}}]}
     if q and q.strip():
-        search = q.strip()
-        # Combine with the active filter
+        # 2026-11-07 (Tahap 5, audit form) — teks cari di-escape (dulu "(" → 500) dan
+        # ikut mencari WARNA & UKURAN: staf mencari "Aisar hitam M", bukan kode FG.
+        # Setiap kata harus cocok di salah satu kolom (nama/kode/warna/ukuran).
+        words = [w for w in q.strip().split() if w][:5]
         query = {
             'type': 'fg',
             '$or': [{'active': True}, {'active': {'$exists': False}}],
             '$and': [
-                {
-                    '$or': [
-                        {'name': {'$regex': search, '$options': 'i'}},
-                        {'code': {'$regex': search, '$options': 'i'}},
-                    ]
-                }
+                {'$or': [{k: {'$regex': re.escape(w), '$options': 'i'}}
+                         for k in ('name', 'code', 'color', 'size_code')]}
+                for w in words
             ],
         }
     

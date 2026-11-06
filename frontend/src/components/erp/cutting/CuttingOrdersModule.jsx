@@ -9,13 +9,15 @@
  * Semua mutasi stok terjadi di backend lewat SSOT gudang — UI hanya melaporkan
  * hasilnya (stok kain turun, stok potongan naik) supaya user melihat efeknya.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Scissors, Plus, RefreshCw, Search, PlayCircle, CheckCircle2, XCircle,
   Trash2, Package, ArrowRight, Layers, AlertCircle, Loader2, History,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { GlassCard } from '@/components/ui/glass';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { Button } from '@/components/ui/button';
 import Modal from '../Modal';
 import { cuttingApi, StatusPill, fmtNum, fmtRp, fmtDateTime } from './cuttingApi';
 import useUomOptions from '../../../hooks/useUomOptions';
@@ -69,6 +71,26 @@ const fmtQtyTrim = (v) =>
 const inputCls =
   'w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]';
 
+/** Label varian yang bisa dibedakan: warna · ukuran · SKU (2026-11-07, keluhan owner Order Cutting). */
+const variantLabel = (v) =>
+  [v?.color_name || v?.color || '-', v?.size_code || v?.size || '-', v?.sku].filter(Boolean).join(' · ');
+
+/** Ringkasan varian per model ({model_id: "M/XL · 22 warna"}) — supaya dua model bernama sama bisa dibedakan. */
+function summarizeVariantsByModel(rows) {
+  const acc = {};
+  (rows || []).forEach((v) => {
+    if (!v?.model_id || v.active === false) return;
+    const a = acc[v.model_id] || (acc[v.model_id] = { sizes: new Set(), colors: new Set() });
+    if (v.size_code) a.sizes.add(v.size_code);
+    if (v.color_id || v.color_name) a.colors.add(v.color_id || v.color_name);
+  });
+  const out = {};
+  Object.entries(acc).forEach(([mid, a]) => {
+    out[mid] = [[...a.sizes].join('/'), a.colors.size ? `${a.colors.size} warna` : ''].filter(Boolean).join(' · ');
+  });
+  return out;
+}
+
 export default function CuttingOrdersModule({ token, onNavigate }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -87,8 +109,14 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   // Master produk (model + varian) — sumber identitas potongan.
   const [models, setModels] = useState([]);
   const [variants, setVariants] = useState([]);
+  // {model_id: "XL · 22 warna"} — label model memuat ukuran & jumlah warna (dua model bisa bernama sama).
+  const [modelSummary, setModelSummary] = useState({});
+  // Varian yang datang terlambat untuk model yang SUDAH diganti tidak boleh menimpa daftar model baru.
+  const modelReq = useRef(0);
   const [showNewModel, setShowNewModel] = useState(false);
-  const [newModel, setNewModel] = useState({ code: '', name: '' });
+  const [newModel, setNewModel] = useState({ code: '', name: '', category_id: '' });
+  // Kategori produk menentukan kode model otomatis (VST-0001) — tanpa kategori & tanpa kode server menolak.
+  const [categories, setCategories] = useState([]);
   const [savingModel, setSavingModel] = useState(false);
   // 2026-08-23 — KEBUTUHAN BAHAN DARI BOM. Sebelum ini "Rencana Pemakaian Kain"
   // diketik manual (ditebak) walau BOM per model+size sudah menyimpan kebutuhan
@@ -196,26 +224,39 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     await loadModels();
   };
 
+  const authHdr = () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` });
+
   const loadModels = async () => {
     try {
-      const r = await fetch('/api/rahaza/models', {
-        headers: { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` },
-      });
+      const [r, rv] = await Promise.all([
+        fetch('/api/rahaza/models', { headers: authHdr() }),
+        // ringkasan ukuran & warna per model untuk label pilihan model (gagal ⇒ label kode · nama saja)
+        fetch('/api/rahaza/variants', { headers: authHdr() }).catch(() => null),
+      ]);
       const d = await r.json();
       const list = Array.isArray(d) ? d : (d?.items || []);
       setModels(list.filter((m) => m.active !== false));
+      if (rv && rv.ok) {
+        const dv = await rv.json();
+        setModelSummary(summarizeVariantsByModel(Array.isArray(dv) ? dv : (dv?.variants || dv?.items || [])));
+      }
     } catch {
       setModels([]);
     }
   };
 
-  const onPickModel = async (id) => {
-    const m = models.find((x) => x.id === id) || null;
+  const onPickModel = async (id, picked = null) => {
+    // `picked` = model yang baru dibuat (belum ada di `models` milik closure ini)
+    const m = models.find((x) => x.id === id) || picked;
+    const req = ++modelReq.current;
+    // 2026-11-07: ganti model = varian, ukuran, DAN baris PO ikut dikosongkan (dulu baris PO model
+    // lama tertinggal di form ⇒ simpan ditolak "Baris PO yang dipilih untuk model lain").
     setForm((f) => ({
       ...f,
       model_id: id,
       variant_id: '',
       size_id: '',
+      po_item_id: '',
       style_name: m?.name || '',
       style_sku: m?.code || '',
       output_color: '',
@@ -225,28 +266,37 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     setSizeId('');
     setPoLines([]);
     if (!id) return;
-    cuttingApi('GET', `/po-lines?model_id=${id}`, token).then((d) => setPoLines(Array.isArray(d) ? d : [])).catch(() => setPoLines([]));
+    cuttingApi('GET', `/po-lines?model_id=${id}`, token)
+      .then((d) => { if (req === modelReq.current) setPoLines(Array.isArray(d) ? d : []); })
+      .catch(() => { if (req === modelReq.current) setPoLines([]); });
     try {
-      const r = await fetch(`/api/rahaza/models/${id}/variants`, {
-        headers: { Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` },
-      });
+      const r = await fetch(`/api/rahaza/models/${id}/variants`, { headers: authHdr() });
       const d = await r.json();
+      if (req !== modelReq.current) return;  // model sudah diganti lagi — jawaban lama dibuang
       // 2026-11-06 (pola P1): server membalas {model, variants, count} — dulu dibaca `d.items`
       // sehingga pilihan varian di form Order Cutting selalu kosong.
-      setVariants((Array.isArray(d) ? d : (d?.variants || [])).filter((v) => v.active !== false));
+      // Saringan model_id di layar = pengaman kedua: hanya varian milik model terpilih yang tampil.
+      setVariants((Array.isArray(d) ? d : (d?.variants || []))
+        .filter((v) => v.active !== false && (!v.model_id || v.model_id === id)));
     } catch {
-      setVariants([]);
+      if (req === modelReq.current) setVariants([]);
     }
   };
 
   const onPickVariant = (vid) => {
     const v = variants.find((x) => x.id === vid) || null;
-    setForm((f) => ({
-      ...f,
-      variant_id: vid,
-      output_color: v?.color_name || v?.color || '',
-      output_size: v?.size_code || v?.size || '',
-    }));
+    setForm((f) => {
+      // Baris PO berukuran lain dari varian yang dipilih ⇒ tautan PO dilepas (server menolak campuran itu).
+      const ln = poLines.find((x) => x.id === f.po_item_id);
+      const dropPo = !!(v && ln && ln.size_id && v.size_id && ln.size_id !== v.size_id);
+      return {
+        ...f,
+        variant_id: vid,
+        output_color: v?.color_name || v?.color || '',
+        output_size: v?.size_code || v?.size || '',
+        po_item_id: dropPo ? '' : f.po_item_id,
+      };
+    });
   };
 
   // ── Kebutuhan bahan menurut BOM (model + ukuran) ─────────────────────────
@@ -307,9 +357,23 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     if (ln.rahaza_variant_id && variants.some((v) => v.id === ln.rahaza_variant_id)) {
       onPickVariant(ln.rahaza_variant_id);
     } else if (ln.size_id) {
+      // 2026-11-07: varian terpilih yang ukurannya BEDA dari baris PO dilepas — dulu tertinggal dan
+      // server menolak simpan ("Ukuran yang dipilih berbeda dengan ukuran baris PO").
+      setForm((f) => {
+        const cur = variants.find((v) => v.id === f.variant_id);
+        return cur && cur.size_id && cur.size_id !== ln.size_id
+          ? { ...f, variant_id: '', output_color: ln.color || '' } : f;
+      });
       pickSize(ln.size_id);
     }
   };
+
+  // Pilihan varian = varian MILIK model terpilih; bila baris PO dipilih, hanya ukuran baris PO itu.
+  const poLinePicked = useMemo(() => poLines.find((x) => x.id === form.po_item_id) || null,
+    [poLines, form.po_item_id]);
+  const variantOptions = useMemo(() => (poLinePicked?.size_id
+    ? variants.filter((v) => !v.size_id || v.size_id === poLinePicked.size_id)
+    : variants), [variants, poLinePicked]);
 
   // SESI #32 — ukuran mana yang SUDAH punya BOM, ditandai LANGSUNG di daftar
   // pilihan. Sebelumnya keterangan itu hanya muncul sebagai kalimat di bawah
@@ -334,8 +398,21 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
     toast.success(`Rencana pemakaian kain diisi dari BOM: ${fmtQtyTrim(q)} ${bomReq.fabric.unit}.`);
   };
 
+  const openNewModel = async () => {
+    setShowNewModel(true);
+    if (categories.length) return;
+    try {
+      const r = await fetch('/api/rahaza/product-categories', { headers: authHdr() });
+      const d = await r.json();
+      setCategories((Array.isArray(d) ? d : (d?.categories || [])).filter((c) => c.active !== false));
+    } catch { setCategories([]); }
+  };
+
   const createModel = async () => {
     if (!newModel.name.trim()) return toast.error('Nama model wajib diisi.');
+    if (!newModel.code.trim() && !newModel.category_id) {
+      return toast.error('Pilih kategori produk (kode model dibuat dari kategori), atau isi kode model sendiri.');
+    }
     setSavingModel(true);
     try {
       const r = await fetch('/api/rahaza/models', {
@@ -344,16 +421,19 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
           Authorization: `Bearer ${token || localStorage.getItem('erp_token')}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ name: newModel.name.trim(), code: newModel.code.trim() }),
+        body: JSON.stringify({
+          name: newModel.name.trim(), code: newModel.code.trim(),
+          ...(newModel.category_id ? { category_id: newModel.category_id } : {}),
+        }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || d.error || `HTTP ${r.status}`);
       toast.success(`Model ${d.code || d.name} ditambahkan ke master.`);
       setShowNewModel(false);
-      setNewModel({ code: '', name: '' });
+      setNewModel({ code: '', name: '', category_id: '' });
       await loadModels();
       setModels((prev) => (prev.some((x) => x.id === d.id) ? prev : [...prev, d]));
-      await onPickModel(d.id);
+      await onPickModel(d.id, d);
     } catch (e) {
       toast.error(`Gagal membuat model: ${e.message}`);
     } finally {
@@ -600,7 +680,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
   };
 
   const removeDraft = async (row) => {
-    if (!window.confirm(`Hapus draft ${row.number}?`)) return;
+    if (!(await confirmDialog({ title: `Hapus draft ${row.number}?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await cuttingApi('DELETE', `/orders/${row.id}`, token);
       toast.success('Draft dihapus.');
@@ -653,14 +733,15 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
               data-testid="cutting-search-input"
             />
           </div>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}
-            className={`${inputCls} w-auto min-w-[160px]`} data-testid="cutting-status-filter">
-            <option value="">Semua Status</option>
+          <SmartNativeSelect value={status} onChange={(e) => setStatus(e.target.value)}
+            className={`${inputCls} w-auto min-w-[160px]`} wrapperClassName="w-auto min-w-[160px]"
+            data-testid="cutting-status-filter">
+            <option value="">Semua status</option>
             <option value="draft">Draft</option>
             <option value="in_progress">Berjalan</option>
             <option value="completed">Selesai</option>
             <option value="cancelled">Dibatalkan</option>
-          </select>
+          </SmartNativeSelect>
         </div>
       </GlassCard>
 
@@ -805,6 +886,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                         className="text-xs text-[hsl(var(--primary))] hover:underline mr-3">Detail</button>
                       {r.status === 'draft' && (
                         <button onClick={(e) => { e.stopPropagation(); removeDraft(r); }}
+                          data-testid={`cutting-delete-${r.number}`}
                           className="text-xs text-[hsl(var(--destructive))] hover:underline inline-flex items-center gap-1">
                           <Trash2 className="w-3 h-3" /> Hapus
                         </button>
@@ -843,16 +925,19 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                   Tampilkan hanya kain yang ada stoknya ({materialOptions.length} dari {materials.length})
                 </label>
               </div>
-              <select value={form.input_material_id} onChange={(e) => onPickMaterial(e.target.value)}
-                className={inputCls} data-testid="cutting-input-material-select" required>
+              <SmartNativeSelect value={form.input_material_id} onChange={(e) => onPickMaterial(e.target.value)}
+                className={inputCls} searchable searchPlaceholder="Cari kode, nama, atau warna kain…"
+                data-testid="cutting-input-material-select">
                 <option value="">— Pilih kain —</option>
                 {materialOptions.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.code} · {m.name} — stok {fmtNum(m.stock_qty, 2)} {m.unit}
-                    {m.best_location_name ? ` @ ${m.best_location_name}` : ' (belum ada stok)'}
+                    {`${m.code} · ${m.name}`
+                      + (m.color && !String(m.name || '').toLowerCase().includes(String(m.color).toLowerCase()) ? ` · ${m.color}` : '')
+                      + ` — stok ${fmtNum(m.stock_qty, 2)} ${m.unit || ''}`
+                      + (m.best_location_name ? ` @ ${m.best_location_name}` : ' (belum ada stok)')}
                   </option>
                 ))}
-              </select>
+              </SmartNativeSelect>
             </Field>
 
             {selectedMaterial && (
@@ -860,9 +945,9 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                      hint={stockAtLocation !== null
                        ? `Stok di gudang ini: ${fmtNum(stockAtLocation, 2)} ${selectedMaterial.unit}. Pemotongan stok saat input progres diambil dari gudang ini.`
                        : ''}>
-                <select value={form.location_id}
+                <SmartNativeSelect value={form.location_id}
                   onChange={(e) => setForm((f) => ({ ...f, location_id: e.target.value }))}
-                  className={inputCls} data-testid="cutting-location-select" required>
+                  className={inputCls} data-testid="cutting-location-select">
                   <option value="">— Pilih gudang —</option>
                   {(selectedMaterial.stock_locations || []).map((l) => (
                     <option key={l.location_id} value={l.location_id}>
@@ -873,7 +958,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     locations.map((l) => (
                       <option key={l.id} value={l.id}>{l.name} (stok 0)</option>
                     ))}
-                </select>
+                </SmartNativeSelect>
               </Field>
             )}
 
@@ -953,38 +1038,43 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                   dan produksi tidak bisa tahu potongan ini milik produk yang mana. */}
               <Field label="Model / Style (dari Master Produk)" required
                 hint="Wajib dipilih dari master supaya BOM & produksi mengenali produknya.">
+                {/* 2026-11-07 (keluhan owner): dulu pilihan bawaan browser — tidak bisa dicari, dan dua model
+                    bernama sama (mis. "Stela celana" M dan XL) tidak bisa dibedakan. Kini bisa dicari
+                    (kode/nama) dan labelnya memuat ukuran + jumlah warna variannya. */}
                 <div className="flex gap-2">
-                  <select value={form.model_id}
+                  <SmartNativeSelect value={form.model_id}
                     onChange={(e) => onPickModel(e.target.value)}
-                    className={inputCls} data-testid="cutting-model-select" required>
+                    className={inputCls} wrapperClassName="flex-1 min-w-0" searchable
+                    searchPlaceholder="Cari kode atau nama model…"
+                    data-testid="cutting-model-select">
                     <option value="">— pilih model —</option>
                     {models.map((m) => (
                       <option key={m.id} value={m.id}>
-                        {m.code ? `${m.code} · ` : ''}{m.name}
+                        {`${m.code ? `${m.code} · ` : ''}${m.name || ''}`
+                          + (modelSummary[m.id] ? ` — ${modelSummary[m.id]}` : ' — belum ada varian')}
                       </option>
                     ))}
-                  </select>
-                  <button type="button" onClick={() => setShowNewModel(true)}
-                    className="h-9 px-3 shrink-0 rounded-lg border border-[var(--glass-border)] text-xs font-medium text-foreground hover:bg-foreground/5"
-                    data-testid="cutting-new-model-btn">+ Model Baru</button>
+                  </SmartNativeSelect>
+                  <Button type="button" variant="outline" onClick={openNewModel}
+                    className="shrink-0" data-testid="cutting-new-model-btn">+ Model baru</Button>
                 </div>
               </Field>
-              <Field label="Varian (Warna · Size)"
+              <Field label="Varian (warna · ukuran · SKU)"
                 hint={form.model_id
-                  ? (variants.length ? 'Diambil dari varian model terpilih.' : 'Model ini belum punya varian — warna/size dibiarkan kosong.')
+                  ? (variants.length
+                    ? `${variantOptions.length} varian milik model ini${poLinePicked?.size_id ? ` (ukuran baris PO ${poLinePicked.size || ''})` : ''}.`
+                    : 'Model ini belum punya varian — pilih ukuran di kartu BOM di bawah.')
                   : 'Pilih model dulu.'}>
-                <select value={form.variant_id}
+                <SmartNativeSelect value={form.variant_id}
                   onChange={(e) => onPickVariant(e.target.value)}
                   disabled={!form.model_id || !variants.length}
-                  className={inputCls} data-testid="cutting-variant-select">
-                  <option value="">{variants.length ? '— pilih warna/size —' : '(tidak ada varian)'}</option>
-                  {variants.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {(v.color_name || v.color || '-')} · {(v.size_code || v.size || '-')}
-                      {v.sku ? ` · ${v.sku}` : ''}
-                    </option>
+                  className={inputCls} searchable searchPlaceholder="Cari warna, ukuran, atau SKU…"
+                  data-testid="cutting-variant-select">
+                  <option value="">{!form.model_id ? '— pilih model dulu —' : (variants.length ? '— pilih warna · ukuran —' : '(model belum punya varian)')}</option>
+                  {variantOptions.map((v) => (
+                    <option key={v.id} value={v.id}>{variantLabel(v)}</option>
                   ))}
-                </select>
+                </SmartNativeSelect>
               </Field>
             </div>
 
@@ -996,7 +1086,7 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                   <option value="">— tanpa baris PO —</option>
                   {poLines.map((ln) => (
                     <option key={ln.id} value={ln.id}>
-                      {ln.po_number} · {ln.size || '-'}{ln.color ? ` · ${ln.color}` : ''} · {ln.qty} pcs
+                      {`${ln.po_number} · ${ln.size || '-'}${ln.color ? ` · ${ln.color}` : ''}${ln.sku ? ` · ${ln.sku}` : ''} · ${fmtNum(ln.qty, 0)} pcs`}
                     </option>
                   ))}
                 </SmartNativeSelect>
@@ -1045,16 +1135,16 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                     <span className="text-[11px] text-muted-foreground">
                       Model ini belum punya varian — pilih ukuran untuk membaca BOM-nya:
                     </span>
-                    <select value={sizeId} onChange={(e) => pickSize(e.target.value)}
-                      className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground"
+                    <SmartNativeSelect value={sizeId} onChange={(e) => pickSize(e.target.value)}
+                      className="h-8 px-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground w-48"
                       data-testid="cutting-bom-size-select">
                       <option value="">— pilih ukuran —</option>
                       {sizes.map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.code}{sizesWithBom.has(s.id) ? ' · ada BOM' : ''}
+                          {`${s.code}${s.name && s.name !== s.code ? ` (${s.name})` : ''}${sizesWithBom.has(s.id) ? ' · ada BOM' : ''}`}
                         </option>
                       ))}
-                    </select>
+                    </SmartNativeSelect>
                   </div>
                 )}
 
@@ -1171,13 +1261,10 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
             </Field>
 
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setShowCreate(false)}
-                className="h-9 px-4 rounded-lg border border-[var(--glass-border)] text-sm text-foreground">Batal</button>
-              <button type="submit" disabled={saving}
-                className="h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium disabled:opacity-60 inline-flex items-center gap-2"
-                data-testid="cutting-submit-create">
-                {saving && <Loader2 className="w-4 h-4 animate-spin" />} Simpan Draft
-              </button>
+              <Button type="button" variant="outline" onClick={() => setShowCreate(false)}>Batal</Button>
+              <Button type="submit" disabled={saving} data-testid="cutting-submit-create">
+                {saving && <Loader2 className="w-4 h-4 animate-spin" />} Simpan draft
+              </Button>
             </div>
           </form>
         </Modal>
@@ -1196,20 +1283,28 @@ export default function CuttingOrdersModule({ token, onNavigate }) {
                 placeholder="mis. Dress Jemina" className={inputCls}
                 data-testid="new-model-name" />
             </Field>
-            <Field label="Kode Model (opsional)" hint="Dibuat otomatis bila dibiarkan kosong.">
+            <Field label="Kategori produk" required={!newModel.code.trim()}
+              hint="Kode model dibuat otomatis dari kategori ini (mis. CLN-0001).">
+              <SmartNativeSelect value={newModel.category_id}
+                onChange={(e) => setNewModel((n) => ({ ...n, category_id: e.target.value }))}
+                className={inputCls} data-testid="new-model-category">
+                <option value="">— pilih kategori —</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>{`${c.name}${c.sku_prefix ? ` (${c.sku_prefix})` : ''}`}</option>
+                ))}
+              </SmartNativeSelect>
+            </Field>
+            <Field label="Kode Model (opsional)" hint="Kosongkan supaya dibuat otomatis dari kategori.">
               <input value={newModel.code}
                 onChange={(e) => setNewModel((n) => ({ ...n, code: e.target.value }))}
                 placeholder="mis. DRS-JMN" className={inputCls}
                 data-testid="new-model-code" />
             </Field>
             <div className="flex justify-end gap-2 pt-1">
-              <button type="button" onClick={() => setShowNewModel(false)}
-                className="h-9 px-4 rounded-lg border border-[var(--glass-border)] text-sm text-foreground">Batal</button>
-              <button type="button" onClick={createModel} disabled={savingModel}
-                className="h-9 px-4 rounded-lg bg-[hsl(var(--primary))] text-white text-sm font-medium disabled:opacity-60 inline-flex items-center gap-2"
-                data-testid="new-model-submit">
-                {savingModel && <Loader2 className="w-4 h-4 animate-spin" />} Simpan Model
-              </button>
+              <Button type="button" variant="outline" onClick={() => setShowNewModel(false)}>Batal</Button>
+              <Button type="button" onClick={createModel} disabled={savingModel} data-testid="new-model-submit">
+                {savingModel && <Loader2 className="w-4 h-4 animate-spin" />} Simpan model
+              </Button>
             </div>
           </div>
         </Modal>

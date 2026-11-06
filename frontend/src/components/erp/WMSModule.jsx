@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint } from './uom/UomPicker';
 import StorageLocationSelect from './StorageLocationSelect';
+import { MATERIAL_UNITS } from '@/lib/uom';
 import ImportExportToolbar from './ImportExportToolbar';
 // F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
 import { tone } from '@/lib/tone';
@@ -248,7 +249,8 @@ function StructureTab({ token }) {
   useEffect(() => { loadBuildings(); }, [loadBuildings]);
   useEffect(() => {
     fetch(`${API}/api/rahaza/locations`, { headers }).then(r => (r.ok ? r.json() : []))
-      .then(d => setLocations(Array.isArray(d) ? d : [])).catch(() => setLocations([]));
+      // 2026-11-07 (Tahap 5): zona gudang hanya ditautkan ke lokasi penyimpan — ruang kantor tidak ditawarkan
+      .then(d => setLocations((Array.isArray(d) ? d : []).filter(l => l.type !== 'kantor' && l.active !== false))).catch(() => setLocations([]));
   }, [headers]);
 
   function openBldgModal(data = null) { setForm(data || { code: '', name: '', address: '' }); setModal({ type: 'building', data }); }
@@ -452,15 +454,15 @@ function StructureTab({ token }) {
                   <div><label className="block text-xs mb-1.5">Nama *</label><input value={form.name||''} onChange={e => setForm(f => ({...f, name: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
                 </div>
                 <div><label className="block text-xs mb-1.5">Tipe Zona</label>
-                  <select value={form.zone_type||'general'} onChange={e => setForm(f => ({...f, zone_type: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
+                  <SmartNativeSelect value={form.zone_type||'general'} onChange={e => setForm(f => ({...f, zone_type: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
                     <option value="rm">Bahan Baku (RM)</option><option value="fg">Produk Jadi (FG)</option><option value="wip">Work-in-Progress</option><option value="transit">Transit</option><option value="general">Umum</option>
-                  </select>
+                  </SmartNativeSelect>
                 </div>
                 <div><label className="block text-xs mb-1.5">Lokasi Gudang (untuk opname)</label>
-                  <select data-testid="zone-location-select" value={form.location_id||''} onChange={e => setForm(f => ({...f, location_id: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
+                  <SmartNativeSelect data-testid="zone-location-select" value={form.location_id||''} onChange={e => setForm(f => ({...f, location_id: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
                     <option value="">— belum ditautkan —</option>
                     {locations.map(l => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
-                  </select>
+                  </SmartNativeSelect>
                   <p className="text-[11px] text-muted-foreground mt-1">Rak & bin zona ini ikut dihitung saat opname lokasi yang dipilih.</p>
                 </div>
               </>}
@@ -475,7 +477,12 @@ function StructureTab({ token }) {
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className="block text-xs mb-1.5">Kapasitas/Slot</label><input type="number" min="0" value={form.capacity_per_slot||0} onChange={e => setForm(f => ({...f, capacity_per_slot: +e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" /></div>
-                  <div><label className="block text-xs mb-1.5">Satuan Kapasitas</label><input value={form.capacity_unit||''} onChange={e => setForm(f => ({...f, capacity_unit: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="kg, pcs, ..." /></div>
+                  <div><label className="block text-xs mb-1.5">Satuan Kapasitas</label><SmartNativeSelect value={form.capacity_unit||''} onChange={e => setForm(f => ({...f, capacity_unit: e.target.value}))} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" data-testid="rack-capacity-unit">
+                    {/* 2026-11-07 (Tahap 5): satuan dari daftar satuan sah (dulu teks bebas "kg, pcs, ...") */}
+                    <option value="">— tanpa satuan —</option>
+                    {form.capacity_unit && !MATERIAL_UNITS.includes(form.capacity_unit) && <option value={form.capacity_unit}>{form.capacity_unit}</option>}
+                    {MATERIAL_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+                  </SmartNativeSelect></div>
                 </div>
                 <div className="text-xs text-muted-foreground bg-foreground/[0.03] rounded-lg p-2">
                   Total posisi yang akan dibuat: <span className="font-bold text-foreground">{(form.num_shelves||4) * (form.slots_per_shelf||6)}</span> slot
@@ -1156,13 +1163,13 @@ function AuditTrailTab({ token }) {
             <option value="">Semua Gedung</option>
             {buildings.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </SmartNativeSelect>
-          <select data-testid="audit-filter-direction" value={filters.direction}
+          <SmartNativeSelect data-testid="audit-filter-direction" value={filters.direction}
             onChange={e => setFilters({ ...filters, direction: e.target.value })}
-            className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs">
+            className="w-44 bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs">
             <option value="">Semua Arah</option>
             <option value="adjust_in">Surplus (Tambah)</option>
             <option value="adjust_out">Shortage (Kurang)</option>
-          </select>
+          </SmartNativeSelect>
           <input data-testid="audit-filter-date-from" type="date" value={filters.date_from}
             onChange={e => setFilters({ ...filters, date_from: e.target.value })}
             className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-xs" />

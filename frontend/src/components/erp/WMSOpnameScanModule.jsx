@@ -99,7 +99,9 @@ export default function WMSOpnameScanModule({ token, kind = '' }) {
     try {
       const r = await fetch(`${API}/api/wms/opname3/locations`, { headers: authH });
       if (r.ok) {
-        const rows = await r.json();
+        // 2026-11-07 (Tahap 5): ruang KANTOR (Kantor Pusat, Ruang HR, …) tidak menyimpan stok — dulu ikut
+        // tampil sebagai lokasi opname. Sama dengan aturan owner No.18(a): kantor tidak ikut pemilih lokasi stok.
+        const rows = (await r.json()).filter((l) => l.type !== 'kantor');
         setLocations(rows);
         if (kind) { const pref = rows.find((l) => l.storage_role === kind && !l.quarantine); if (pref) setLocId(pref.id); }
       }

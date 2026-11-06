@@ -8,6 +8,7 @@
  *  - Finance: disburse (bayar) + GL posting otomatis
  */
 import { useState, useEffect, useCallback } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { isFinanceRole } from '../../lib/financeRoles'; // FIN-02
 import {
   Plus, RefreshCw, Wallet, CheckCircle, XCircle,
@@ -232,7 +233,7 @@ function ClaimDetail({ claim, token, onClose, onRefresh, role }) {
       });
       if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Gagal'); }
       onRefresh(); onClose();
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e.message); }
     finally { setActionLoading(false); }
   };
 
@@ -435,7 +436,7 @@ export default function EmployeeExpenseModule({ token, user }) {
       toast.error('Pilih minimal 1 klaim untuk di-approve');
       return;
     }
-    if (!window.confirm(`Approve ${selectedIds.length} klaim?`)) return;
+    if (!(await confirmDialog({ title: `Setujui ${selectedIds.length} klaim?` }))) return;
     
     setBulkLoading(true);
     try {

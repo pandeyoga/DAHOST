@@ -329,11 +329,11 @@ export default function WMSBarcodeModule() {
           {kind === 'fg' && (
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               Ukuran label:
-              <select value={fgSize} onChange={e => setFgSize(e.target.value)} data-testid="barcode-fg-size"
-                className="h-8 px-2 rounded-lg border border-input bg-background text-xs text-foreground">
+              <SmartNativeSelect value={fgSize} onChange={e => setFgSize(e.target.value)} data-testid="barcode-fg-size"
+                className="w-28 h-8 px-2 rounded-lg border border-input bg-background text-xs text-foreground">
                 <option value="standard">Label standar 100×70 mm</option>
                 <option value="hangtag">Hangtag kecil 70×40 mm</option>
-              </select>
+              </SmartNativeSelect>
             </label>
           )}
           {kind === 'material' && (

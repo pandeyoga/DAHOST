@@ -39,7 +39,13 @@ import { cn } from "@/lib/utils"
  * 14 opsi supplier tampil, klik timeout). Panel kini memakai Popover Radix — lapisan Radix yang sama dengan
  * Dialog — sehingga opsi bisa diklik dan dicari di dalam jendela mana pun, posisinya tetap menghindari tepi
  * layar (membuka ke atas bila ruang bawah sempit), dan API/testid TIDAK berubah.
+ *
+ * 2026-11-07 (Tahap 5, audit form) — daftar sangat panjang (mis. 1.727 material di form PO) membuat panel
+ * macet 1–15 detik saat dibuka di dalam jendela, karena SEMUA opsi digambar sekaligus. Kini paling banyak
+ * MAX_RENDER opsi yang digambar (opsi terpilih selalu ikut); sisanya diringkas jadi baris "ketik untuk
+ * mempersempit". Pencarian tetap atas seluruh daftar.
  */
+const MAX_RENDER = 300
 function nodeText(node) {
   if (node == null || node === false || node === true) return ""
   if (typeof node === "string" || typeof node === "number") return String(node)
@@ -101,6 +107,19 @@ export default function SmartNativeSelect({
     if (!q) return options
     return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q))
   }, [options, query])
+
+  // Yang digambar: paling banyak MAX_RENDER opsi; opsi terpilih tetap tampil walau di luar batas.
+  const shown = React.useMemo(() => {
+    if (filtered.length <= MAX_RENDER) return filtered
+    const head = filtered.slice(0, MAX_RENDER)
+    const cur = String(value ?? "")
+    if (cur !== "" && !head.some((o) => o.value === cur)) {
+      const sel = filtered.find((o) => o.value === cur)
+      if (sel) head.push(sel)
+    }
+    return head
+  }, [filtered, value])
+  const hiddenCount = filtered.length - shown.length
 
   const setOpenSafe = (o) => {
     if (disabled && o) return
@@ -193,7 +212,7 @@ export default function SmartNativeSelect({
               {filtered.length === 0 ? (
                 <div className="px-2 py-3 text-center text-sm text-muted-foreground">Tidak ada hasil</div>
               ) : (
-                filtered.map((o, i) => (
+                shown.map((o, i) => (
                   <button
                     key={`${o.value}-${i}`}
                     type="button"
@@ -212,6 +231,11 @@ export default function SmartNativeSelect({
                     <span className="truncate">{o.label}</span>
                   </button>
                 ))
+              )}
+              {hiddenCount > 0 && (
+                <div className="px-2 py-2 text-center text-xs text-muted-foreground" data-testid="select-more-hint">
+                  {hiddenCount.toLocaleString("id-ID")} pilihan lain — ketik untuk mempersempit
+                </div>
               )}
             </div>
           </PopoverPrimitive.Content>

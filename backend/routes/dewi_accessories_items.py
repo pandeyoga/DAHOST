@@ -143,6 +143,10 @@ def _material_to_acc_item(mat: dict, stock_qty: float = 0.0, cats: dict | None =
         "category": _cat_name,
         "category_id": _cat_id,
         "sub_category": mat.get("sub_category", "") or "",
+        # 2026-11-07 (Tahap 5): supplier & catatan IKUT dikirim. Dulu tidak ada di respons ⇒ form Ubah
+        # Aksesoris terbuka dengan supplier/catatan kosong lalu PUT menimpanya jadi "" (data hilang tiap edit).
+        "supplier": mat.get("supplier", "") or "",
+        "notes": mat.get("notes", "") or "",
         "min_stock": mat.get("min_stock", 0),
         "max_stock": mat.get("max_stock", 0),
         "stock_qty": stock_qty,

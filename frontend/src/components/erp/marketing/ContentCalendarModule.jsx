@@ -68,7 +68,8 @@ function KPICard({ label, value, sub, color, bg, icon: Icon }) {
 
 const EMPTY_FORM = {
   account_id: '', account_name: '', platform: 'shopee', date: '', content_type: 'foto_produk',
-  title: '', description: '', cta: '', post_time: '', reference_link: '', status: 'draft'
+  title: '', description: '', cta: '', post_time: '', reference_link: '', status: 'draft',
+  published_url: '',
 };
 
 function ContentCalendarBase({ token }) {
@@ -198,6 +199,7 @@ function ContentCalendarBase({ token }) {
       title: entry.title || '', description: entry.description || '',
       cta: entry.cta || '', post_time: entry.post_time || '',
       reference_link: entry.reference_link || '', status: entry.status || 'draft',
+      published_url: entry.published_url || '',
     });
     setShowForm(true);
   };
@@ -217,6 +219,11 @@ function ContentCalendarBase({ token }) {
     if (!form.account_id || !form.date || !form.title) {
       toast({ title: 'Wajib pilih Akun, isi Tanggal, dan Judul/Hook', variant: 'destructive' }); return;
     }
+    // 2026-11-07 (Tahap 5) — server menolak status Tayang tanpa link terbit; dulu form tidak
+    // punya isian link terbit sama sekali sehingga konten tidak pernah bisa disimpan "Tayang".
+    if (form.status === 'posted' && !/^https?:\/\/\S+$/i.test((form.published_url || '').trim())) {
+      toast({ title: 'Status Tayang wajib diisi link terbit (https://…)', variant: 'destructive' }); return;
+    }
     setFormLoading(true);
     try {
       if (editTarget) {
@@ -229,7 +236,10 @@ function ContentCalendarBase({ token }) {
       setShowForm(false);
       fetchSummary();
       if (view === 'calendar') fetchMonthly(); else fetchList();
-    } catch { toast({ title: 'Gagal menyimpan', variant: 'destructive' }); }
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      toast({ title: typeof d === 'string' ? d : 'Gagal menyimpan', variant: 'destructive' });
+    }
     finally { setFormLoading(false); }
   };
 
@@ -262,7 +272,11 @@ function ContentCalendarBase({ token }) {
       toast({ title: `Status → ${STATUS_CONFIG[newStatus]?.label}` });
       fetchSummary();
       if (view === 'calendar') fetchMonthly(); else fetchList();
-    } catch { toast({ title: 'Gagal update status', variant: 'destructive' }); }
+    } catch (e) {
+      // mis. "Tayang" tanpa link terbit — alasan dari server ditampilkan apa adanya
+      const d = e?.response?.data?.detail;
+      toast({ title: typeof d === 'string' ? d : 'Gagal mengubah status', variant: 'destructive' });
+    }
   };
 
   const kpis = [
@@ -659,15 +673,17 @@ function ContentCalendarBase({ token }) {
                 placeholder="https://drive.google.com/... (materi foto/video/brief)" className="mt-1" />
               <p className="text-[10px] text-muted-foreground mt-1">Tautan aset konten (Drive/Canva/Figma) — bisa dibuka langsung dari detail konten.</p>
             </div>
-            <div className="col-span-2">
-              <Label>Status</Label>
-              <Select value={form.status} onValueChange={v => setForm(f => ({...f, status: v}))}>
-                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(STATUS_CONFIG).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* 2026-11-07 (Tahap 5) — dulu di sini ada isian "Status" KEDUA (duplikat yang di atas). */}
+            {form.status === 'posted' && (
+              <div className="col-span-2">
+                <Label>Link terbit *</Label>
+                <Input type="url" value={form.published_url}
+                  data-testid="content-published-url-input"
+                  onChange={e => setForm(f => ({...f, published_url: e.target.value}))}
+                  placeholder="https://… (tautan unggahan yang sudah tayang)" className="mt-1" />
+                <p className="text-[10px] text-muted-foreground mt-1">Wajib untuk status Tayang — bukti konten benar-benar terbit.</p>
+              </div>
+            )}
           </div>
           <DialogFooter className="mt-2">
             <Button variant="outline" onClick={() => setShowForm(false)}>Batal</Button>

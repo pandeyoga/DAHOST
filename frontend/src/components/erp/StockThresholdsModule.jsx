@@ -7,6 +7,7 @@ import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const STATUS_META = {
   critical:     { label: 'Kritis',        cls: 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border-[hsl(var(--destructive)/0.25)]' },
@@ -468,22 +469,22 @@ export default function StockThresholdsModule({ token, onNavigate }) {
             placeholder="Cari kode / nama material…" className="pl-8 h-9 text-sm"
             data-testid="threshold-search" />
         </div>
-        <select value={filterType} onChange={e => setFilterType(e.target.value)}
-          className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)}
+          className="w-44 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
           data-testid="threshold-filter-type">
           <option value="">Semua jenis</option>
           <option value="bahan">Bahan</option>
           <option value="aksesoris">Aksesoris</option>
           <option value="fg">Produk Jadi</option>
-        </select>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+        </SmartNativeSelect>
+        <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+          className="w-44 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
           data-testid="threshold-filter-status">
           <option value="all">Semua status</option>
           <option value="missing">Belum ada ambang</option>
           <option value="set">Sudah ada ambang</option>
           <option value="low">Sedang rendah / kritis</option>
-        </select>
+        </SmartNativeSelect>
         {!!rows.length && (
           <Button variant="outline" size="sm" onClick={toggleAll} data-testid="threshold-select-all">
             {selected.size === rows.length ? 'Batalkan semua' : `Centang semua (${rows.length})`}

@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
@@ -16,11 +17,28 @@ import {
 } from 'lucide-react';
 
 const PRIORITY_OPTIONS = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'critical', label: 'Critical' },
+  { value: 'low', label: 'Rendah' },
+  { value: 'medium', label: 'Sedang' },
+  { value: 'high', label: 'Tinggi' },
+  { value: 'critical', label: 'Kritis' },
 ];
+
+/* 2026-11-07 (Tahap 5) — periode OKR dipilih dari daftar (tahun · semester · kuartal), bukan diketik:
+   ejaan bebas ("Q1 2026", "2026 Q1") membuat satu periode terpecah di saringan & dasbor. */
+function okrPeriodOptions(existing = []) {
+  const y = new Date().getFullYear();
+  const out = [];
+  for (const yr of [y - 1, y, y + 1]) {
+    out.push(String(yr), `${yr}-H1`, `${yr}-H2`, `${yr}-Q1`, `${yr}-Q2`, `${yr}-Q3`, `${yr}-Q4`);
+  }
+  return [...new Set([...out, ...existing.filter(Boolean)])];
+}
+const okrPeriodLabel = (p) => {
+  const m = /^(\d{4})(?:-(H|Q)(\d))?$/.exec(p || '');
+  if (!m) return p;
+  if (!m[2]) return `Tahun ${m[1]}`;
+  return m[2] === 'H' ? `Semester ${m[3]} ${m[1]}` : `Kuartal ${m[3]} ${m[1]}`;
+};
 
 const PRIORITY_COLOR = {
   critical: 'bg-red-100 dark:bg-red-500/15 text-red-600 dark:text-red-400 border-red-400 dark:border-red-500/30',
@@ -44,10 +62,10 @@ const HEALTH_LABEL = {
 };
 
 const METRIC_TYPES = [
-  { value: 'number', label: 'Number' },
-  { value: 'percentage', label: 'Percentage (%)' },
-  { value: 'currency', label: 'Currency (Rp)' },
-  { value: 'binary', label: 'Binary (done/not)' },
+  { value: 'number', label: 'Angka' },
+  { value: 'percentage', label: 'Persen (%)' },
+  { value: 'currency', label: 'Rupiah (Rp)' },
+  { value: 'binary', label: 'Selesai / belum' },
 ];
 
 function formatMetricValue(val, type) {
@@ -72,11 +90,14 @@ export default function OKRTrackerModule({ token }) {
     description: '',
     period: '',
     department: '',
+    owner_id: '',
     owner_name: '',
     priority: 'medium',
     key_results: [{ title: '', metric_type: 'number', target_value: 100, current_value: 0, unit: '' }],
   });
 
+  // penanggung jawab dipilih dari daftar pengguna (owner_id + owner_name), bukan diketik
+  const [users, setUsers] = useState([]);
   // detail dialog
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState(null);
@@ -128,6 +149,14 @@ export default function OKRTrackerModule({ token }) {
     Promise.all([fetchPeriods(), fetchDashboard(), fetchObjectives()]).finally(() => setLoading(false));
   }, [fetchPeriods, fetchDashboard, fetchObjectives]);
 
+  useEffect(() => {
+    if (!createOpen || users.length) return;
+    fetch(`${BASE}/api/auth/users?limit=500`, { headers })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((d) => setUsers(Array.isArray(d) ? d : (d.items || d.users || [])))
+      .catch(() => setUsers([]));
+  }, [createOpen, users.length, BASE, headers]);
+
   // ───────────────────── Handlers ─────────────────────
   const addKRRow = () => {
     setForm((f) => ({
@@ -150,11 +179,11 @@ export default function OKRTrackerModule({ token }) {
 
   const handleCreate = async () => {
     if (!form.title?.trim()) {
-      toast.error('Title objective wajib diisi');
+      toast.error('Judul objective wajib diisi');
       return;
     }
     if (!form.period?.trim()) {
-      toast.error('Period wajib diisi (mis. 2026-Q1)');
+      toast.error('Periode wajib dipilih');
       return;
     }
     if (!form.key_results.length || form.key_results.some((kr) => !kr.title?.trim())) {
@@ -174,7 +203,10 @@ export default function OKRTrackerModule({ token }) {
           })),
         }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(typeof d.detail === 'string' ? d.detail : `HTTP ${r.status}`);
+      }
       const created = await r.json();
       const newPeriod = created?.data?.period || form.period;
       toast.success('Objective berhasil dibuat');
@@ -184,6 +216,7 @@ export default function OKRTrackerModule({ token }) {
         description: '',
         period: '',
         department: '',
+        owner_id: '',
         owner_name: '',
         priority: 'medium',
         key_results: [{ title: '', metric_type: 'number', target_value: 100, current_value: 0, unit: '' }],
@@ -285,29 +318,40 @@ export default function OKRTrackerModule({ token }) {
               <div className="space-y-3 py-2">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div>
-                    <Label>Title Objective *</Label>
+                    <Label>Judul objective *</Label>
                     <Input data-testid="okr-form-title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Mis. Tingkatkan revenue 20% Q1 2026" />
                   </div>
                   <div>
-                    <Label>Period * (e.g. 2026-Q1)</Label>
-                    <Input data-testid="okr-form-period" value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })} placeholder="2026-Q1" />
+                    <Label>Periode *</Label>
+                    <SmartNativeSelect data-testid="okr-form-period" className="w-full" value={form.period}
+                      onChange={(e) => setForm({ ...form, period: e.target.value })}>
+                      <option value="">— pilih periode —</option>
+                      {okrPeriodOptions(periods).map((p) => <option key={p} value={p}>{okrPeriodLabel(p)}</option>)}
+                    </SmartNativeSelect>
                   </div>
                 </div>
                 <div>
-                  <Label>Description</Label>
+                  <Label>Deskripsi</Label>
                   <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} placeholder="Penjelasan dan konteks objective..." />
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <Label>Department</Label>
+                    <Label>Departemen</Label>
                     <Input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Marketing" />
                   </div>
                   <div>
-                    <Label>Owner</Label>
-                    <Input value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} placeholder="Nama PIC" />
+                    <Label>Penanggung jawab</Label>
+                    <SmartNativeSelect data-testid="okr-form-owner" className="w-full" value={form.owner_id}
+                      onChange={(e) => {
+                        const u = users.find((x) => x.id === e.target.value);
+                        setForm({ ...form, owner_id: e.target.value, owner_name: u ? (u.name || u.email) : '' });
+                      }}>
+                      <option value="">— belum ditentukan —</option>
+                      {users.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}{u.role ? ` (${String(u.role).replace(/_/g, ' ')})` : ''}</option>)}
+                    </SmartNativeSelect>
                   </div>
                   <div>
-                    <Label>Priority</Label>
+                    <Label>Prioritas</Label>
                     <Select value={form.priority} onValueChange={(v) => setForm({ ...form, priority: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -335,7 +379,7 @@ export default function OKRTrackerModule({ token }) {
                       <Input className="mb-2" data-testid={`okr-form-kr-title-${i}`} value={kr.title} onChange={(e) => updateKR(i, 'title', e.target.value)} placeholder="Judul KR (mis. Revenue Rp 500jt/bulan)" />
                       <div className="grid grid-cols-4 gap-2">
                         <div>
-                          <Label className="text-[11px]">Metric</Label>
+                          <Label className="text-[11px]">Jenis ukuran</Label>
                           <Select value={kr.metric_type} onValueChange={(v) => updateKR(i, 'metric_type', v)}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
@@ -348,11 +392,11 @@ export default function OKRTrackerModule({ token }) {
                           <Input type="number" value={kr.target_value} onChange={(e) => updateKR(i, 'target_value', e.target.value)} />
                         </div>
                         <div>
-                          <Label className="text-[11px]">Current</Label>
+                          <Label className="text-[11px]">Saat ini</Label>
                           <Input type="number" value={kr.current_value} onChange={(e) => updateKR(i, 'current_value', e.target.value)} />
                         </div>
                         <div>
-                          <Label className="text-[11px]">Unit</Label>
+                          <Label className="text-[11px]">Satuan</Label>
                           <Input value={kr.unit || ''} onChange={(e) => updateKR(i, 'unit', e.target.value)} placeholder="%, IDR, pcs" />
                         </div>
                       </div>

@@ -90,9 +90,14 @@ function CreateInvoicePanel({ token, gr, onClose, onCreated }) {
   const total = subtotal - disc + frt + tax;
   const diff = total - grValue - (taxProfile.pkp ? tax : 0);
   const overQty = lines.find((l) => Number(l.qty) - l.maxQty > 1e-6);
-  const problem = !billed.length ? 'Isi qty faktur minimal satu baris.'
-    : overQty ? `Qty ${overQty.name} melebihi yang belum ditagih (${fmtNum(overQty.maxQty)}).`
-      : disc - subtotal > 0.5 ? 'Potongan tidak boleh melebihi nilai barang.' : '';
+  // 2026-11-07 (audit form Tahap 5): qty/harga negatif & PPN di luar 0–100 dulu lolos ke server
+  const negLine = lines.find((l) => Number(l.qty) < 0 || Number(l.price) < 0);
+  const taxBad = !(Number(taxPct || 0) >= 0 && Number(taxPct || 0) <= 100);
+  const problem = negLine ? `Qty dan harga ${negLine.name} tidak boleh negatif.`
+    : !billed.length ? 'Isi qty faktur minimal satu baris.'
+      : overQty ? `Qty ${overQty.name} melebihi yang belum ditagih (${fmtNum(overQty.maxQty)}).`
+        : taxBad ? 'PPN harus antara 0 dan 100%.'
+          : disc - subtotal > 0.5 ? 'Potongan tidak boleh melebihi nilai barang.' : '';
 
   const submit = async () => {
     if (problem) { setErr(problem); return; }
@@ -268,7 +273,11 @@ const PAYABLE = ['sent', 'partial_paid'];
 const canPay = (inv) => PAYABLE.includes(inv?.status) && Number(inv?.balance ?? inv?.total ?? 0) > 0;
 
 function PayInvoiceModal({ token, inv, onClose, onPaid }) {
-  const balance = Number(inv.balance ?? inv.total ?? 0);
+  const isCmtBill = inv.kind === 'cmt';
+  // 2026-11-07 (audit form Tahap 5): tagihan CMT hanya bisa dibayar sampai "bisa dibayar" (server
+  // dewi_maklon_finance.pay_cmt_payment → core.maklon_ledger.cmt_bill_payable). Dulu bawaan & batasnya = sisa
+  // tagihan, sehingga tagihan bertahan (selisih lebih tagih) selalu ditolak server "Bisa dibayar Rp X dari Rp Y".
+  const balance = isCmtBill ? cmtPayable(inv) : Number(inv.balance ?? inv.total ?? 0);
   const { accounts, loaded } = usePaymentCashAccounts(token);
   const [accountId, setAccountId] = useState('');
   const [date, setDate] = useState(todayWIB());
@@ -282,9 +291,12 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
   const disc = Number(discount || 0);
   const reduced = cash + disc;
   const left = balance - reduced;
-  const problem = !accountId ? 'Pilih rekening pembayaran.'
+  const problem = isCmtBill && balance <= 0 ? 'Belum ada yang bisa dibayar — seluruh sisa tagihan tertahan selisih; selesaikan dulu di Tagihan Vendor CMT.'
+    : !accountId ? 'Pilih rekening pembayaran.'
     : cash <= 0 ? 'Jumlah dibayar harus lebih dari 0.'
-      : left < -0.5 ? `Jumlah bayar + potongan melebihi sisa hutang (${fmtRp(balance)}).`
+      : left < -0.5 ? (isCmtBill
+        ? `Melebihi yang bisa dibayar (${fmtRp(balance)}).`
+        : `Jumlah bayar + potongan melebihi sisa hutang (${fmtRp(balance)}).`)
         : '';
 
   const submit = async () => {
@@ -324,8 +336,14 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
       <div className="space-y-4" data-testid="ap-pay-modal">
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div><div className="text-xs text-muted-foreground">Supplier</div><div className="font-medium">{inv.vendor_name}</div></div>
-          <div><div className="text-xs text-muted-foreground">Sisa hutang</div><div className="font-semibold tabular-nums">{fmtRp(balance)}</div></div>
+          <div><div className="text-xs text-muted-foreground">{isCmtBill ? 'Bisa dibayar' : 'Sisa hutang'}</div><div className="font-semibold tabular-nums" data-testid="ap-pay-cap">{fmtRp(balance)}</div></div>
         </div>
+        {isCmtBill && (
+          <p className="text-xs text-muted-foreground" data-testid="ap-pay-cmt-payable">
+            Bisa dibayar {fmtRp(balance)} dari {fmtRp(inv.total)} (dibayar {fmtRp(inv.paid_amount || 0)}
+            {Number(inv.blocked_amount || 0) > 0 ? `, tertahan ${fmtRp(inv.blocked_amount)} karena selisih tagihan — selesaikan di Tagihan Vendor CMT` : ''}).
+          </p>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="block text-xs font-medium mb-1">Bayar dari rekening</label>
@@ -367,7 +385,7 @@ function PayInvoiceModal({ token, inv, onClose, onPaid }) {
           <div className="flex justify-between font-medium border-t border-[var(--glass-border)] pt-1"><span>Sisa setelah dibayar</span>
             <span className="tabular-nums" data-testid="ap-pay-left">{fmtRp(Math.max(left, 0))}</span></div>
         </div>
-        {(err || (problem && accountId)) && (
+        {(err || (problem && (accountId || (isCmtBill && balance <= 0)))) && (
           <Notice tone="danger" icon={AlertTriangle} testId="ap-pay-error">{err || problem}</Notice>
         )}
         <div className="flex justify-end gap-2 pt-2 border-t border-[var(--glass-border)]">
@@ -501,6 +519,8 @@ function InvoiceDetail({ inv, onClose, onSend, sending, token, onPay }) {
 }
 
 const CMT_PAYABLE = ['unposted', 'approved', 'posted', 'partial_paid', 'submitted', 'pending'];
+/** "Bisa dibayar" tagihan CMT dari server; data lama tanpa angka itu → sisa tagihan. */
+const cmtPayable = (r) => Math.max(0, Number(r.payable_amount ?? r.balance ?? 0));
 const KIND_LABEL = { ap: 'Bahan & jasa', cmt: 'CMT' };
 
 // tagihan CMT (`/api/production/cmt-billing`) → bentuk baris yang sama dengan faktur pemasok
@@ -508,6 +528,7 @@ const cmtToRow = (p) => ({
   kind: 'cmt', id: p.id, invoice_number: p.payment_code, vendor_name: p.cmt_name || p.vendor_name,
   po_numbers: p.po_number ? [p.po_number] : [], issue_date: p.issue_date || p.period_end || p.created_at,
   total: p.amount, balance: p.outstanding_amount, paid_amount: p.paid_amount,
+  payable_amount: p.payable_amount, blocked_amount: p.blocked_amount,
   // tagihan CMT lahir 'draft' lalu langsung dijurnal; draft = jurnalnya gagal → hutang nyata yang belum dijurnal
   status: (p.status || '').toLowerCase() === 'draft' ? 'unposted' : (p.status || '').toLowerCase(), gl_posted: p.gl_posted,
 });
@@ -561,6 +582,7 @@ export default function SupplierInvoiceModule({ token, financeMode = false }) {
     } catch (e) { toast.error(e.message); }
   };
   const canPayRow = (r) => (r.kind === 'cmt'
+    // tombol tetap ada selama masih bersisa; dialog menjelaskan bila semuanya tertahan (bisa dibayar 0)
     ? CMT_PAYABLE.includes(r.status) && Number(r.balance || 0) > 0
     : canPay(r));
 

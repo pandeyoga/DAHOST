@@ -13,6 +13,7 @@ import {
   BarChart3, Package, TrendingDown, DollarSign,
   RefreshCw, Download, Calendar, AlertCircle
 } from 'lucide-react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -87,15 +88,15 @@ function StockLevelTab({ token }) {
           onChange={e => setSearch(e.target.value)}
           className="flex-1 px-3 py-2 rounded-lg border border-foreground/10 bg-foreground/5 text-sm focus:outline-none focus:ring-1 focus:ring-[hsl(var(--primary)/0.5)]"
         />
-        <select
+        <SmartNativeSelect
           value={filter}
           onChange={e => setFilter(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-foreground/10 bg-foreground/5 text-sm focus:outline-none"
+          className="w-48 px-3 py-2 rounded-lg border border-foreground/10 bg-foreground/5 text-sm focus:outline-none"
         >
           <option value="all">Semua Status</option>
           <option value="low">Stok Rendah</option>
           <option value="out">Stok Habis</option>
-        </select>
+        </SmartNativeSelect>
       </div>
 
       {error && <p className="text-sm text-[hsl(var(--destructive))] ">{error}</p>}

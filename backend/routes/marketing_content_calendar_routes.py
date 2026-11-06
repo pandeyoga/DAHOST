@@ -227,8 +227,8 @@ async def _validate_content_links(db, doc: dict, *, status: str) -> None:
     url = (doc.get("published_url") or "").strip()
     if status == "posted":
         if not url:
-            raise _HE(400, "Konten berstatus 'posted' wajib membawa link terbit "
-                           "(published_url) sebagai bukti tayang.")
+            raise _HE(400, "Konten berstatus Tayang wajib membawa link terbit "
+                           "sebagai bukti tayang.")
         if not _URL_RE.match(url):
             raise _HE(400, f"Link terbit harus berupa URL http/https — diterima: '{url[:60]}'")
     elif url and not _URL_RE.match(url):
@@ -457,6 +457,9 @@ async def update_status(entry_id: str, request: Request):
     existing = await db.marketing_content_calendar.find_one({"id": entry_id}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Entry not found")
+    # 2026-11-07 (Tahap 5) — pintu ubah-status cepat dulu melewati pagar F7, sehingga konten
+    # bisa ditandai Tayang tanpa link terbit (form utama menolaknya). Satu aturan, dua pintu.
+    await _validate_content_links(db, {**existing, "status": new_status}, status=new_status)
     await db.marketing_content_calendar.update_one(
         {"id": entry_id}, {"$set": {"status": new_status, "updated_at": _now()}}
     )

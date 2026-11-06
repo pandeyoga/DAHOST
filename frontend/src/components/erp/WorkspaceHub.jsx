@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import axios from 'axios';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -19,19 +20,23 @@ import { todayWIB, thisMonthWIB, monthEndISO, nowWIBLocalInput } from '@/lib/wak
 const API = process.env.REACT_APP_BACKEND_URL;
 
 // ── Module catalog for Quick Links ───────────────────────────────────────────
+// 2026-11-07 (Tahap 5) — 4 id lama (`dashboard`, `wms-accessories`, `hris-dashboard`,
+// `marketing-dashboard`) tidak ada di moduleRegistry: pin-nya tersimpan tetapi tidak membuka apa pun
+// (handleNavigate diam bila id tidak dikenal). `self-dashboard` kini hanya pengalih ke Absen Saya.
 const MODULE_CATALOG = [
-  { id: 'dashboard', label: 'Dashboard Utama', portal: 'management' },
-  { id: 'self-dashboard', label: 'Kehadiran & Payslip', portal: 'self' },
-  { id: 'portal-dashboard', label: 'Dashboard Saya', portal: 'self' },
-  { id: 'portal-cuti', label: 'Cuti & Izin Saya', portal: 'self' },
-  { id: 'portal-payslip', label: 'Slip Gaji Saya', portal: 'self' },
-  { id: 'kpi-portal', label: 'KPI Saya', portal: 'self' },
-  { id: 'production-dashboard', label: 'Dashboard Produksi', portal: 'production' },
-  { id: 'wms-accessories', label: 'WMS Aksesoris', portal: 'warehouse' },
-  { id: 'finance-dashboard', label: 'Dashboard Keuangan', portal: 'finance' },
-  { id: 'hris-dashboard', label: 'Dashboard HR', portal: 'hr' },
-  { id: 'marketing-dashboard', label: 'Dashboard Marketing', portal: 'marketing' },
-  { id: 'maklon-dashboard', label: 'Dashboard Maklon', portal: 'maklon' },
+  { id: 'management-dashboard', label: 'Dashboard Eksekutif', portal: 'Manajemen' },
+  { id: 'portal-dashboard', label: 'Dashboard Saya', portal: 'Portal Saya' },
+  { id: 'portal-absen', label: 'Absen Saya', portal: 'Portal Saya' },
+  { id: 'portal-cuti', label: 'Cuti & Izin Saya', portal: 'Portal Saya' },
+  { id: 'portal-payslip', label: 'Slip Gaji Saya', portal: 'Portal Saya' },
+  { id: 'kpi-portal', label: 'KPI Saya', portal: 'Portal Saya' },
+  { id: 'production-dashboard', label: 'Dashboard Produksi', portal: 'Produksi' },
+  { id: 'warehouse-dashboard', label: 'Dashboard Gudang', portal: 'Gudang' },
+  { id: 'accessories-dashboard', label: 'Dashboard Aksesoris', portal: 'Aksesoris' },
+  { id: 'finance-dashboard', label: 'Dashboard Keuangan', portal: 'Keuangan' },
+  { id: 'hr-dashboard', label: 'Dashboard SDM', portal: 'SDM' },
+  { id: 'toko-dashboard', label: 'Dashboard Marketing', portal: 'Marketing' },
+  { id: 'maklon-dashboard', label: 'Dashboard Maklon', portal: 'Maklon' },
 ];
 
 const PRIORITY_CFG = {
@@ -315,13 +320,13 @@ function WorkspaceTodo({ headers }) {
               onKeyDown={e => e.key === 'Enter' && addTodo()}
             />
             <div className="flex gap-2 items-center flex-wrap">
-              <select data-testid="todo-priority-select"
-                className="border rounded-lg px-2 py-1.5 text-xs outline-none"
+              <SmartNativeSelect data-testid="todo-priority-select"
+                className="w-40 border rounded-lg px-2 py-1.5 text-xs outline-none"
                 value={form.priority} onChange={e => setForm(f => ({ ...f, priority: e.target.value }))}>
                 <option value="high">Tinggi</option>
                 <option value="medium">Sedang</option>
                 <option value="low">Rendah</option>
-              </select>
+              </SmartNativeSelect>
               <input type="date" data-testid="todo-due-date"
                 className="border rounded-lg px-2 py-1.5 text-xs outline-none"
                 value={form.due_date} onChange={e => setForm(f => ({ ...f, due_date: e.target.value }))} />
@@ -467,13 +472,13 @@ function WorkspaceReminder({ headers }) {
               </div>
               <div>
                 <label className="text-xs font-medium mb-1 block">Pengulangan</label>
-                <select data-testid="reminder-recurrence"
+                <SmartNativeSelect data-testid="reminder-recurrence"
                   className="w-full border rounded-lg px-2 py-1.5 text-xs outline-none"
                   value={form.recurrence} onChange={e => setForm(f => ({ ...f, recurrence: e.target.value }))}>
                   <option value="once">Sekali</option>
                   <option value="daily">Harian</option>
                   <option value="weekly">Mingguan</option>
-                </select>
+                </SmartNativeSelect>
               </div>
             </div>
             <textarea className="w-full border rounded-lg px-3 py-2 text-xs outline-none resize-none"
@@ -863,7 +868,7 @@ function WorkspaceQuickLinks({ headers, onNavigate }) {
           <CardContent className="pt-4 space-y-3">
             <div>
               <label className="text-xs font-medium mb-1 block">Pilih Modul</label>
-              <select data-testid="quicklink-module-select"
+              <SmartNativeSelect data-testid="quicklink-module-select"
                 className="w-full border rounded-lg px-3 py-2 text-sm outline-none"
                 value={form.module_id}
                 onChange={e => {
@@ -874,7 +879,7 @@ function WorkspaceQuickLinks({ headers, onNavigate }) {
                 {MODULE_CATALOG.map(m => (
                   <option key={m.id} value={m.id}>{m.label} ({m.portal})</option>
                 ))}
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               <label className="text-xs font-medium mb-1 block">Label (opsional)</label>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import axios from 'axios';
 import {
   Users, Plus, Edit2, Search, Save, X, Loader2, RefreshCw, User,
@@ -10,7 +11,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { EmptyState } from './EmptyState';
@@ -20,11 +20,17 @@ import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB, toWIBDate, daysBetweenISO } from '@/lib/waktu';
 import { withFileAuth } from '@/lib/fileUrl';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import {
+  EmployeeSelect, useHrMasters, departmentOptions, positionOptions, unitByName, shiftLabel,
+  useDepartmentFilterOptions,
+} from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-const DEPARTMENTS = ['Produksi', 'QC', 'Gudang/WMS', 'HRD', 'Finance/Accounting', 'Marketing', 'IT', 'Administrasi', 'Manajemen', 'Lainnya'];
-const JOB_TITLES = ['Operator Cutting', 'Operator CMT-Sewing', 'Operator QC', 'Operator Finishing', 'Operator Packing', 'Operator Washer', 'Operator Sontek', 'Supervisor', 'Staff Gudang', 'Staff Admin', 'Manager', 'Lainnya'];
+// 2026-11-07 (Tahap 5): departemen & jabatan TIDAK lagi daftar tetap di kode — diambil dari master
+// Struktur Organisasi (unit & posisi), jabatan mengikuti departemen yang dipilih. Nilai lama hasil impor
+// yang belum ada di master tetap tampil (ditandai) supaya tidak hilang saat formulir dibuka.
 // 2026-11-06 (Tahap 2): skema & tarif gaji TIDAK lagi diisi di sini — satu sumber = Profil Gaji (Penggajian).
 // Layar ini hanya menampilkannya (baca saja).
 const PAY_SCHEME_LABEL = { monthly: 'Bulanan', weekly: 'Mingguan', hourly: 'Borongan per jam', pcs: 'Borongan per pcs' };
@@ -52,12 +58,14 @@ const TAX_PTKP = [
   { value: 'K/2',  label: 'K/2 — Kawin, 2 tanggungan' },
   { value: 'K/3',  label: 'K/3 — Kawin, 3 tanggungan' },
 ];
-const BANKS = ['BCA', 'BRI', 'Mandiri', 'BNI', 'BSI', 'CIMB Niaga', 'Permata', 'Danamon', 'BTN', 'Mega', 'Panin', 'Jago', 'Lainnya'];
+// Bank di luar daftar: pilih "Bank lain" lalu ketik namanya (dulu "Lainnya" tersimpan apa adanya → nama bank hilang).
+const BANKS = ['BCA', 'BRI', 'Mandiri', 'BNI', 'BSI', 'CIMB Niaga', 'Permata', 'Danamon', 'BTN', 'Mega', 'Panin', 'Jago'];
+const BANK_OTHER = '__lain';
 const RELATIONS = ['Orang Tua', 'Pasangan', 'Saudara Kandung', 'Anak', 'Teman', 'Lainnya'];
 const DOC_CATEGORIES = ['Kontrak Kerja', 'KTP', 'NPWP', 'Ijazah', 'SKCK', 'Sertifikat', 'Surat Pengalaman', 'BPJS', 'KK (Kartu Keluarga)', 'Pas Foto', 'Lainnya'];
 
 const defaultEmployee = {
-  employee_code: '', name: '', department: 'Produksi', job_title: 'Operator CMT-Sewing',
+  employee_code: '', name: '', department: '', job_title: '', shift_id: '',
   location_id: '', phone: '', email: '', contract_type: 'PKWT', contract_start_date: '',
   contract_end_date: '', join_date: '', resign_date: '',
   manager_id: '',
@@ -66,7 +74,7 @@ const defaultEmployee = {
   education_level: 'SMA/SMK', education_institution: '', education_major: '', photo_url: '',
   ktp_number: '', npwp_number: '', tax_ptkp: 'TK/0',
   bpjs_kesehatan_number: '', bpjs_ketenagakerjaan_number: '',
-  bank_name: 'BCA', bank_account_number: '', bank_account_holder: '',
+  bank_name: '', bank_account_number: '', bank_account_holder: '',
   emergency_contact_name: '', emergency_phone: '', emergency_relation: 'Orang Tua',
 };
 
@@ -92,6 +100,8 @@ export default function HREmployeeModule({ token }) {
   const [linkTarget, setLinkTarget] = useState(null); // employee object
   const [users, setUsers] = useState([]);
   const [linking, setLinking] = useState(false);
+  const masters = useHrMasters(token);
+  const deptFilterOptions = useDepartmentFilterOptions(masters.units, employees);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -142,7 +152,7 @@ export default function HREmployeeModule({ token }) {
   });
 
   const handleDelete = async (emp) => {
-    if (!window.confirm(`Non-aktifkan karyawan ${emp.name} (${emp.employee_code})?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan karyawan ${emp.name} (${emp.employee_code})?`, danger: true }))) return;
     try {
       await axios.delete(`${API}/api/rahaza/employees/${emp.id}`, { headers });
       toast.success('Karyawan dinon-aktifkan');
@@ -217,13 +227,12 @@ export default function HREmployeeModule({ token }) {
           <Input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Cari nama / kode / NIK / email / HP..." className="pl-9 h-9" data-testid="employees-search" />
         </div>
-        <Select value={deptFilter || 'all'} onValueChange={v => setDeptFilter(v === 'all' ? '' : v)}>
-          <SelectTrigger className="w-44 h-9"><SelectValue placeholder="Semua Divisi" /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Semua Divisi</SelectItem>
-            {DEPARTMENTS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <SmartNativeSelect value={deptFilter} onChange={e => setDeptFilter(e.target.value)}
+          wrapperClassName="w-56" data-testid="employees-dept-filter"
+          className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground">
+          <option value="">Semua departemen</option>
+          {deptFilterOptions.map(d => <option key={d.value} value={d.value}>{d.legacy ? d.value : d.label}</option>)}
+        </SmartNativeSelect>
         <div className="flex items-center gap-2 text-xs">
           <Switch checked={activeOnly} onCheckedChange={setActiveOnly} id="active-only" />
           <Label htmlFor="active-only" className="cursor-pointer">Aktif saja</Label>
@@ -265,6 +274,7 @@ export default function HREmployeeModule({ token }) {
           initial={editing}
           locations={locations}
           employees={employees}
+          masters={masters}
           headers={headers}
           onSave={handleSave}
           onClose={() => setEditing(null)}
@@ -416,8 +426,21 @@ function EmployeeRow({ emp, onEdit, onDelete, onLinkUser }) {
   );
 }
 
-function EmployeeDialog({ initial, locations, employees = [], headers, onSave, onClose }) {
+function EmployeeDialog({ initial, locations, employees = [], masters = {}, headers, onSave, onClose }) {
   const [form, setForm] = useState(initial);
+  const [bankOther, setBankOther] = useState(() => !!initial.bank_name && !BANKS.includes(initial.bank_name));
+  const deptOpts = departmentOptions(masters.units, form.department);
+  const selectedUnit = unitByName(masters.units, form.department);
+  const posOpts = positionOptions(masters.positions, selectedUnit, form.job_title);
+  const activeShifts = masters.shifts || [];
+  // Departemen berganti → jabatan yang tidak dimiliki departemen baru dikosongkan (jabatan bergantung departemen).
+  // Departemen tanpa jabatan di master → jabatan lama dibiarkan (tidak ada pilihan pengganti).
+  const changeDepartment = (v) => setForm(f => {
+    const unit = unitByName(masters.units, v);
+    const opts = positionOptions(masters.positions, unit, '');
+    const keep = !opts.length || opts.some(o => o.value === f.job_title);
+    return { ...f, department: v, job_title: keep ? f.job_title : '' };
+  });
   const [saving, setSaving] = useState(false);
   const [documents, setDocuments] = useState([]);
   const [tab, setTab] = useState('dasar');
@@ -467,9 +490,16 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
     // 2026-11-06 (Tahap 2): NPWP 15 digit (lama) atau 16 digit (NIK = NPWP sejak 2024) diterima.
     if (form.npwp_number && ![15, 16].includes(form.npwp_number.replace(/[^0-9]/g, '').length)) { toast.error('NPWP harus 15 atau 16 digit'); return; }
     if (form.join_date && form.resign_date && form.resign_date < form.join_date) { toast.error('Tanggal keluar tidak boleh sebelum tanggal masuk'); return; }
+    if (form.contract_start_date && form.contract_end_date && form.contract_end_date < form.contract_start_date) { toast.error('Tanggal berakhir kontrak tidak boleh sebelum tanggal mulai'); return; }
+    if (!isEdit && ['PKWT', 'Magang'].includes(form.contract_type) && !form.contract_end_date) { toast.error('Tanggal berakhir kontrak wajib untuk PKWT/Magang'); setTab('dasar'); return; }
+    if (bankOther && !String(form.bank_name || '').trim()) { toast.error('Ketik nama bank'); setTab('bank'); return; }
     const payload = { ...form };
     delete payload.base_rate;      // gaji hanya di Profil Gaji
     delete payload.wage_scheme;
+    delete payload.location_name;  // nama turunan daftar — dulu ikut tersimpan (basi) saat lokasi diganti
+    const sh = activeShifts.find(s => s.id === form.shift_id);
+    payload.shift_id = form.shift_id || null;
+    payload.shift_code = sh ? sh.code : (form.shift_id ? form.shift_code : null);
     setSaving(true); await onSave(payload); setSaving(false);
   };
 
@@ -520,7 +550,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
   };
 
   const deleteDoc = async (attId) => {
-    if (!window.confirm('Hapus dokumen ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus dokumen ini?', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/attachments/${attId}`, { headers });
       toast.success('Dokumen dihapus');
@@ -543,7 +573,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
 
         <form onSubmit={submit}>
           <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="grid grid-cols-5 w-full">
+            <TabsList className="grid grid-cols-2 sm:grid-cols-5 h-auto w-full">
               <TabsTrigger value="dasar" className="text-xs"><Briefcase className="w-3 h-3 mr-1" />Info Dasar</TabsTrigger>
               <TabsTrigger value="personal" className="text-xs"><User className="w-3 h-3 mr-1" />Personal</TabsTrigger>
               <TabsTrigger value="pajak" className="text-xs"><Shield className="w-3 h-3 mr-1" />Pajak & BPJS</TabsTrigger>
@@ -553,33 +583,41 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
 
             {/* Tab 1: Info Dasar */}
             <TabsContent value="dasar" className="space-y-3 mt-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Kode Karyawan *" data-testid="emp-code">
                   <Input value={form.employee_code} onChange={set('employee_code')} required placeholder="EMP-001" />
                 </Field>
                 <Field label="Nama Lengkap *" data-testid="emp-name">
                   <Input value={form.name} onChange={set('name')} required />
                 </Field>
-                <Field label="Divisi / Departemen">
-                  <Sel value={form.department} onChange={set('department')} options={DEPARTMENTS.map(d => ({ value: d, label: d }))} />
+                <Field label="Departemen"
+                  help={masters.loaded && !(masters.units || []).length ? 'Belum ada unit di Struktur Organisasi — tambahkan di menu Struktur Organisasi.' : 'Dari Struktur Organisasi'}>
+                  <Sel value={form.department} onChange={changeDepartment} testId="emp-department"
+                    options={[{ value: '', label: '— Pilih departemen —' }, ...deptOpts]} />
                 </Field>
-                <Field label="Jabatan">
-                  <Sel value={form.job_title} onChange={set('job_title')} options={JOB_TITLES.map(j => ({ value: j, label: j }))} />
+                <Field label="Jabatan" help={selectedUnit ? `Jabatan di ${selectedUnit.name}` : 'Pilih departemen dulu untuk menyaring jabatan'}>
+                  <Sel value={form.job_title} onChange={set('job_title')} testId="emp-job-title"
+                    options={[{ value: '', label: posOpts.length ? '— Pilih jabatan —' : '— Belum ada jabatan di Struktur Organisasi —' }, ...posOpts]} />
                 </Field>
                 <Field label="Atasan (Manager)" help="Atasan yang akan approve usulan kenaikan gaji">
-                  <Sel
+                  <EmployeeSelect
+                    employees={employees.filter(e => e.active !== false)}
+                    exclude={[form.id]}
                     value={form.manager_id || ''}
                     onChange={set('manager_id')}
-                    options={[
-                      { value: '', label: '— Tidak ada atasan —' },
-                      ...employees
-                        .filter(e => e.id !== form.id && e.active !== false)
-                        .map(e => ({ value: e.id, label: `${e.employee_code} — ${e.name}${e.job_title ? ` (${e.job_title})` : ''}` })),
-                    ]}
+                    placeholder="— Tidak ada atasan —"
+                    testId="emp-manager"
                   />
                 </Field>
                 <Field label="Lokasi Utama">
-                  <Sel value={form.location_id || ''} onChange={set('location_id')} options={[{ value: '', label: '— Pilih —' }, ...locations.filter(l => l.active).map(l => ({ value: l.id, label: `${l.code} · ${l.name}` }))]} />
+                  <Sel value={form.location_id || ''} onChange={set('location_id')} testId="emp-location"
+                    options={[{ value: '', label: '— Pilih —' }, ...locations.filter(l => l.active !== false).map(l => ({ value: l.id, label: `${l.code} · ${l.name}` }))]} />
+                </Field>
+                <Field label="Shift utama" help="Dipakai absensi bila tidak ada jadwal/penugasan shift">
+                  <Sel value={form.shift_id || ''} onChange={set('shift_id')} testId="emp-shift"
+                    options={[{ value: '', label: '— Tanpa shift tetap —' },
+                      ...activeShifts.map(s => ({ value: s.id, label: shiftLabel(s) })),
+                      ...(form.shift_id && !activeShifts.some(s => s.id === form.shift_id) ? [{ value: form.shift_id, label: `${form.shift_code || 'Shift'} (nonaktif)` }] : [])]} />
                 </Field>
                 <Field label="No. Telepon">
                   <Input value={form.phone} onChange={set('phone')} placeholder="08xxxxxxxxxx" />
@@ -614,7 +652,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
 
             {/* Tab 2: Personal */}
             <TabsContent value="personal" className="space-y-3 mt-4">
-              <div className="grid grid-cols-[120px_1fr] gap-4 items-start">
+              <div className="grid grid-cols-1 sm:grid-cols-[120px_1fr] gap-4 items-start">
                 <div className="space-y-2">
                   {form.photo_url ? (
                     <img src={withFileAuth(`${API}${form.photo_url}`)} alt={form.name}
@@ -636,7 +674,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                   </label>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 flex-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1">
                   <Field label="Jenis Kelamin">
                     <Sel value={form.gender} onChange={set('gender')} options={[{ value: 'L', label: 'Laki-laki' }, { value: 'P', label: 'Perempuan' }]} />
                   </Field>
@@ -669,7 +707,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                 </Field>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <Field label="Pendidikan Terakhir">
                   <Sel value={form.education_level} onChange={set('education_level')} options={EDUCATION_LEVELS.map(e => ({ value: e, label: e }))} />
                 </Field>
@@ -688,7 +726,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                 <AlertCircle className="inline w-3.5 h-3.5 mr-1 text-amber-700 dark:text-amber-400" />
                 Data ini digunakan untuk <strong>perhitungan PPh21 & BPJS otomatis</strong> di payroll. Pastikan akurat.
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="NIK KTP (16 digit) *" help="Nomor Induk Kependudukan — wajib untuk BPJS & pajak">
                   <Input value={form.ktp_number} onChange={set('ktp_number')}
                     maxLength={16} placeholder="3310xxxxxxxxxxxx" />
@@ -702,7 +740,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                 <Field label="PTKP (Status Pajak)" help="Menentukan Penghasilan Tidak Kena Pajak untuk PPh21">
                   <Sel value={form.tax_ptkp} onChange={set('tax_ptkp')} options={TAX_PTKP} />
                 </Field>
-                <div></div>
+                <div className="hidden sm:block"></div>
                 <Field label="No. BPJS Kesehatan">
                   <Input value={form.bpjs_kesehatan_number} onChange={set('bpjs_kesehatan_number')}
                     placeholder="13 digit" />
@@ -713,7 +751,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                 </Field>
                 {/* 2026-11-02 (K23): kepesertaan per program — potongan payroll HANYA untuk program yang dicentang.
                     Belum pernah dicentang → diturunkan dari nomor kartu (Kes ← no. Kes; JHT/JP/JKK-JKM ← no. TK). */}
-                <div className="col-span-2 rounded-lg border border-[var(--glass-border)] p-3" data-testid="emp-bpjs-programs">
+                <div className="sm:col-span-2 rounded-lg border border-[var(--glass-border)] p-3" data-testid="emp-bpjs-programs">
                   <div className="text-xs font-semibold mb-2">Kepesertaan BPJS (potongan & iuran hanya untuk yang dicentang)</div>
                   <div className="flex flex-wrap gap-4">
                     {BPJS_PROGRAMS.map(([k, label]) => {
@@ -742,9 +780,17 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-1">
                   <Landmark className="w-4 h-4 text-emerald-600 dark:text-emerald-400" /> Rekening Bank (untuk transfer payroll)
                 </h3>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Field label="Nama Bank">
-                    <Sel value={form.bank_name} onChange={set('bank_name')} options={BANKS.map(b => ({ value: b, label: b }))} />
+                    <Sel value={bankOther ? BANK_OTHER : (form.bank_name || '')} testId="emp-bank"
+                      onChange={v => {
+                        if (v === BANK_OTHER) { setBankOther(true); setForm(f => ({ ...f, bank_name: BANKS.includes(f.bank_name) ? '' : f.bank_name })); }
+                        else { setBankOther(false); setForm(f => ({ ...f, bank_name: v })); }
+                      }}
+                      options={[{ value: '', label: '— Pilih bank —' }, ...BANKS.map(b => ({ value: b, label: b })), { value: BANK_OTHER, label: 'Bank lain (ketik nama)' }]} />
+                    {bankOther && (
+                      <Input className="mt-1" value={form.bank_name || ''} onChange={set('bank_name')} placeholder="Nama bank" data-testid="emp-bank-other" />
+                    )}
                   </Field>
                   <Field label="No. Rekening">
                     <Input value={form.bank_account_number} onChange={set('bank_account_number')} placeholder="xxxxxxxxxx" />
@@ -759,7 +805,7 @@ function EmployeeDialog({ initial, locations, employees = [], headers, onSave, o
                 <h3 className="text-sm font-semibold mb-2 flex items-center gap-1">
                   <Heart className="w-4 h-4 text-red-700 dark:text-red-400" /> Emergency Contact
                 </h3>
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <Field label="Nama Kontak Darurat">
                     <Input value={form.emergency_contact_name} onChange={set('emergency_contact_name')} placeholder="Nama keluarga" />
                   </Field>
@@ -866,13 +912,13 @@ function Field({ label, help, children, ...props }) {
   );
 }
 
-function Sel({ value, onChange, options }) {
+// 2026-11-07 (Tahap 5): dulu Select Radix dengan nilai kosong diganti '_' → memilih "— Tidak ada atasan —" mengirim
+// manager_id '_' (ditolak server) dan lokasi '_' tersimpan. Kini SmartNativeSelect (nilai kosong tetap kosong, bisa dicari).
+function Sel({ value, onChange, options, testId }) {
   return (
-    <Select value={value || ''} onValueChange={onChange}>
-      <SelectTrigger className="h-9"><SelectValue placeholder="— Pilih —" /></SelectTrigger>
-      <SelectContent>
-        {options.map(o => <SelectItem key={o.value} value={o.value || '_'}>{o.label}</SelectItem>)}
-      </SelectContent>
-    </Select>
+    <SmartNativeSelect value={value || ''} onChange={e => onChange(e.target.value)} data-testid={testId}
+      className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground">
+      {options.map(o => <option key={o.value || '_kosong'} value={o.value}>{o.label}</option>)}
+    </SmartNativeSelect>
   );
 }

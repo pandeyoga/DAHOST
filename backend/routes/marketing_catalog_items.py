@@ -126,6 +126,21 @@ def _stock_status(qty: float, threshold: float) -> str:
         return 'in_stock'
 
 
+def variant_identity_fields(row: dict, fg: Optional[dict]) -> dict:
+    """Warna & ukuran varian sebuah item katalog, dibaca dari master FG tautannya.
+
+    2026-11-07 (Tahap 5, audit form) — pemilih produk di form Marketing (Kirim Sample,
+    Retur, Ulasan, Live) hanya bisa menampilkan "SKU · nama model" karena daftar item
+    tidak membawa ukuran sama sekali; ukuran/warna di form Sample lalu jatuh ke isian
+    tetap "All Size" / "-". Satu item katalog = satu varian FG, jadi warna & ukurannya
+    milik master, bukan diketik ulang.
+    """
+    fg = fg or {}
+    color = (row.get('fg_color') or fg.get('color') or '').strip()
+    size = (fg.get('size_code') or row.get('fg_size') or '').strip()
+    return {'fg_color': color, 'fg_size': size}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FASE 3b / F7 — Jembatan stok Toko ↔ Finished Goods
 # Konvensi: rahaza_model_variants.sku == kode FG (rahaza_materials.code, type='fg').
@@ -621,10 +636,11 @@ async def create_item_from_fg(db, catalog: dict, fg_material_id: str,
 
     # Build variant info from FG attributes
     variant_parts = []
+    fg_size = (fg.get('size_code') or '').strip()
     if fg_color:
         variant_parts.append(f"Warna: {fg_color}")
-    if fg.get('size_code'):
-        variant_parts.append(f"Size: {fg.get('size_code')}")
+    if fg_size:
+        variant_parts.append(f"Size: {fg_size}")
     if fg_yarn:
         variant_parts.append(f"Material: {fg_yarn}")
     variant_info = ' | '.join(variant_parts)
@@ -650,6 +666,7 @@ async def create_item_from_fg(db, catalog: dict, fg_material_id: str,
         'fg_code': fg_code,
         'fg_name': fg_name,
         'fg_color': fg_color,
+        'fg_size': fg_size,
         'model_id': fg.get('model_id'),
         'variant_id': variant_id,
         'variant_sku': variant_sku,
@@ -1366,10 +1383,12 @@ async def list_catalog_items(
 
     q: dict = {'catalog_id': catalog_id}
     if search:
+        # 2026-11-07 (Tahap 5) — teks cari di-escape: "(" atau "+" dulu membuat 500.
+        rx = re.escape(search.strip())
         q['$or'] = [
-            {'name': {'$regex': search, '$options': 'i'}},
-            {'sku': {'$regex': search, '$options': 'i'}},
-            {'tags': {'$regex': search, '$options': 'i'}},
+            {'name': {'$regex': rx, '$options': 'i'}},
+            {'sku': {'$regex': rx, '$options': 'i'}},
+            {'tags': {'$regex': rx, '$options': 'i'}},
         ]
     if status:
         q['stock_status'] = status
@@ -1410,6 +1429,7 @@ async def list_catalog_items(
         row['link_type'] = lk.get('link_type')
         row['fg_material_id'] = lk.get('fg_material_id')
         row['fg_code'] = lk.get('fg_code') or row.get('fg_code') or ''
+        row.update(variant_identity_fields(row, lk.get('fg')))
         row['available'] = res['available'] if linked else None
         row['fg_onhand'] = res['onhand']
         row['fg_reserved'] = res['reserved']

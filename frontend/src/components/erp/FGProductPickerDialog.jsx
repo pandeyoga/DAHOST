@@ -17,7 +17,7 @@
  *   - excludeIds: array of FG ids untuk di-exclude (e.g. yang sudah ada di catalog)
  *   - title, description: custom modal text
  */
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -53,6 +53,10 @@ export function FGProductPickerDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedIds, setSelectedIds] = useState(new Set());
+  // 2026-11-07 (Tahap 5) — jawaban lama tidak boleh menimpa hasil cari yang lebih baru.
+  // Terbukti di layar: daftar awal (50 FG, lambat karena hitung stok) tiba SETELAH hasil cari
+  // "Aisar" (9 FG), sehingga yang tampil & terpilih justru "Anna [HITAM · XL]".
+  const reqSeq = useRef(0);
 
   const authH = useMemo(
     () => ({ Authorization: `Bearer ${token || localStorage.getItem('erp_token')}` }),
@@ -67,6 +71,7 @@ export function FGProductPickerDialog({
 
   // Fetch FG products
   const fetchFG = useCallback(async () => {
+    const seq = ++reqSeq.current;
     setLoading(true);
     setError(null);
     try {
@@ -76,6 +81,7 @@ export function FGProductPickerDialog({
         headers: authH,
         params,
       });
+      if (seq !== reqSeq.current) return;
       const list = res.data?.data || [];
       // Filter out excluded ids
       const filtered = excludeIds.length > 0
@@ -83,10 +89,11 @@ export function FGProductPickerDialog({
         : list;
       setItems(filtered);
     } catch (e) {
+      if (seq !== reqSeq.current) return;
       setError(e?.response?.data?.detail || e.message);
       setItems([]);
     } finally {
-      setLoading(false);
+      if (seq === reqSeq.current) setLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authH, debouncedQuery]);
@@ -138,7 +145,7 @@ export function FGProductPickerDialog({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Cari berdasarkan kode atau nama FG..."
+            placeholder="Cari nama, kode, warna, atau ukuran…"
             className="pl-9"
             data-testid="fg-picker-search"
             autoFocus
@@ -203,8 +210,10 @@ export function FGProductPickerDialog({
                         <code className="px-1.5 py-0.5 bg-muted rounded text-[10px] font-mono">
                           {fg.code}
                         </code>
+                        {/* 2026-11-07 (Tahap 5) — varian = warna · ukuran; dulu ukuran tidak tampil */}
                         {fg.color && <span>Warna: {fg.color}</span>}
-                        {fg.unit && <span>Unit: {fg.unit}</span>}
+                        {fg.size_code && <span>Ukuran: {fg.size_code}</span>}
+                        {fg.unit && <span>Satuan: {fg.unit}</span>}
                       </div>
                     </div>
                     <Badge variant={sb.variant} className="flex-shrink-0">

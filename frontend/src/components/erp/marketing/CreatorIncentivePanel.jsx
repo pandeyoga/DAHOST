@@ -11,6 +11,7 @@
  *    kembali 0, tetapi entri periode lama tetap tersimpan sebagai bukti bayar.
  */
 import { useCallback, useEffect, useState } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Target, Plus, Trash2, RotateCcw, Save, Loader2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -132,14 +133,14 @@ export default function CreatorIncentivePanel({ token, creator, onClose }) {
             <div className="text-sm font-medium">Konfigurasi</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
               <Field label="Skema">
-                <select data-testid="incentive-mode-select" value={cfg.mode}
+                <SmartNativeSelect data-testid="incentive-mode-select" value={cfg.mode}
                   onChange={(e) => setCfg({ ...cfg, mode: e.target.value })}
                   className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-2 py-1.5">
                   <option value="none">Tidak dapat insentif</option>
                   <option value="per_pcs">Rp per pcs terjual</option>
                   <option value="target_bonus">Bonus bila target tercapai</option>
                   <option value="both">Keduanya</option>
-                </select>
+                </SmartNativeSelect>
               </Field>
               <Field label="Rp per pcs">
                 <MoneyInput unstyled data-testid="incentive-rate-input" value={cfg.rate_per_pcs}

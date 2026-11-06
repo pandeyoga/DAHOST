@@ -9,6 +9,8 @@ import ImportExportToolbar from '../ImportExportToolbar';
 import { PageHeader } from '../moduleAtoms';
 import { apiGet, apiPost, apiPut, apiDelete, getToken } from '../../../lib/api';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../docnum/DocNumberField';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 
 export const TERMS = [
   { v: 'cash', l: 'Tunai' }, { v: 'net_7', l: 'Tempo 7 hari' }, { v: 'net_14', l: 'Tempo 14 hari' }, { v: 'net_30', l: 'Tempo 30 hari' },
@@ -36,9 +38,14 @@ export default function SalesCustomersModule() {
       toast.success('Pelanggan tersimpan'); setForm(null); load();
     } catch (e) { toast.error(e.message); } finally { setBusy(false); }
   };
+  // 2026-11-07 (audit form Tahap 5): konfirmasi dialog aplikasi (dulu window.confirm) + pelanggan nonaktif bisa
+  // diaktifkan lagi (dulu tidak ada jalannya — status hanya bisa berubah satu arah).
   const deactivate = async (r) => {
-    if (!window.confirm(`Nonaktifkan pelanggan ${r.name}?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan pelanggan ${r.name}?`, body: 'Pelanggan tidak bisa dipilih di nota baru. Riwayat tetap ada.', confirmLabel: 'Nonaktifkan', danger: true }))) return;
     try { await apiDelete(`/sales/customers/${r.id}`); toast.success('Dinonaktifkan'); load(); } catch (e) { toast.error(e.message); }
+  };
+  const reactivate = async (r) => {
+    try { await apiPut(`/sales/customers/${r.id}`, { active: true }); toast.success(`${r.name} diaktifkan lagi`); load(); } catch (e) { toast.error(e.message); }
   };
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -67,7 +74,9 @@ export default function SalesCustomersModule() {
                 <td className="px-3 py-2">{r.active === false ? <span className="text-red-400">Nonaktif</span> : <span className="text-emerald-400">Aktif</span>}</td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <Button size="sm" variant="ghost" onClick={() => setForm({ ...EMPTY, ...r })} data-testid={`cust-edit-${r.code}`}><Pencil className="w-3.5 h-3.5" /></Button>
-                  {r.active !== false && <Button size="sm" variant="ghost" onClick={() => deactivate(r)} data-testid={`cust-deactivate-${r.code}`}><Ban className="w-3.5 h-3.5 text-red-400" /></Button>}
+                  {r.active !== false
+                    ? <Button size="sm" variant="ghost" onClick={() => deactivate(r)} title="Nonaktifkan" aria-label="Nonaktifkan" data-testid={`cust-deactivate-${r.code}`}><Ban className="w-3.5 h-3.5 text-red-400" /></Button>
+                    : <Button size="sm" variant="outline" onClick={() => reactivate(r)} data-testid={`cust-reactivate-${r.code}`}>Aktifkan</Button>}
                 </td>
               </tr>
             ))}</tbody>
@@ -83,9 +92,9 @@ export default function SalesCustomersModule() {
               : <DocNumberField policy={numPolicy} value={form.code} onChange={v => set('code', v)} testId="cust-form-code" label="Kode Pelanggan" />}
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Nama *</span><GlassInput value={form.name} onChange={e => set('name', e.target.value)} data-testid="cust-form-name" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Jenis</span>
-              <select className="w-full h-9 rounded-md border border-[var(--glass-border)] bg-transparent px-2" value={form.company_type} onChange={e => set('company_type', e.target.value)} data-testid="cust-form-type"><option value="personal">Perorangan</option><option value="company">Perusahaan</option></select></label>
+              <SmartNativeSelect className="w-full h-9" searchable={false} value={form.company_type} onChange={e => set('company_type', e.target.value)} data-testid="cust-form-type"><option value="personal">Perorangan</option><option value="company">Perusahaan</option></SmartNativeSelect></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Termin Bayar</span>
-              <select className="w-full h-9 rounded-md border border-[var(--glass-border)] bg-transparent px-2" value={form.payment_terms} onChange={e => set('payment_terms', e.target.value)} data-testid="cust-form-terms">{TERMS.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}</select></label>
+              <SmartNativeSelect className="w-full h-9" searchable={false} value={form.payment_terms} onChange={e => set('payment_terms', e.target.value)} data-testid="cust-form-terms">{TERMS.map(t => <option key={t.v} value={t.v}>{t.l}</option>)}</SmartNativeSelect></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Telepon</span><GlassInput value={form.phone || ''} onChange={e => set('phone', e.target.value)} data-testid="cust-form-phone" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">Email</span><GlassInput value={form.email || ''} onChange={e => set('email', e.target.value)} data-testid="cust-form-email" /></label>
             <label className="space-y-1"><span className="text-xs text-muted-foreground">NPWP</span><GlassInput value={form.npwp || ''} onChange={e => set('npwp', e.target.value)} data-testid="cust-form-npwp" /></label>

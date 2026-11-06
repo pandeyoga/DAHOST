@@ -155,7 +155,6 @@ function Field({ label, htmlFor, children, hint, error }) {
   );
 }
 
-const selectCls = 'w-full h-9 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-sm text-foreground disabled:opacity-60';
 
 function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
   const isNew = !initial?.id;
@@ -261,9 +260,9 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
             <GlassInput id="coa-code" value={form.code} onChange={(e) => onCode(e.target.value)} disabled={lockCode}
               placeholder="6-2950" autoComplete="off" className="font-mono" data-testid="coa-input-code" />
             {suggestion && !form.code && (
-              <button type="button" className="text-[11px] text-primary mt-1 underline" onClick={() => onCode(suggestion)} data-testid="coa-code-suggest">
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 mt-1 text-[11px]" onClick={() => onCode(suggestion)} data-testid="coa-code-suggest">
                 Pakai saran: {suggestion}
-              </button>
+              </Button>
             )}
           </Field>
           <Field label="Nama akun *" htmlFor="coa-name" error={nameError}>
@@ -271,10 +270,10 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
           </Field>
           <Field label="Tipe *" htmlFor="coa-type" error={typeError}
             hint={lockType ? `Terkunci: ${(actions.change_type?.reasons || ['akun sudah dipakai'])[0]}` : 'Tipe mengikuti awalan kode.'}>
-            <select id="coa-type" value={form.type} onChange={(e) => set('type', e.target.value)} disabled={lockType}
-              className={selectCls} data-testid="coa-input-type">
+            <SmartNativeSelect id="coa-type" value={form.type} onChange={(e) => set('type', e.target.value)} disabled={lockType}
+              searchable={false} className="h-9 text-sm" data-testid="coa-input-type">
               {TYPE_ORDER.map((t) => <option key={t} value={t} disabled={CODE_RX.test(code) && !prefixTypes.includes(t)}>{TYPE_LABELS[t]}</option>)}
-            </select>
+            </SmartNativeSelect>
           </Field>
           <Field label="Akun induk" htmlFor="coa-parent" error={parentError}
             hint={parentIsControl ? 'Induk = akun kontrol sub-ledger (dibuat Auto Akun).' : 'Hanya akun grup aktif dengan tipe sekeluarga.'}>
@@ -299,12 +298,13 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
             </label>
           </div>
           <Field label="Kelompok arus kas" htmlFor="coa-cfg" hint="Dipakai Laporan Arus Kas “Per Akun”.">
-            <select id="coa-cfg" value={form.cash_flow_group || ''} onChange={(e) => set('cash_flow_group', e.target.value)} className={selectCls} data-testid="coa-input-cfgroup">
-              <option value="">— bawaan dari kode akun —</option>
+            <SmartNativeSelect id="coa-cfg" value={form.cash_flow_group || ''} onChange={(e) => set('cash_flow_group', e.target.value)}
+              searchable={false} className="h-9 text-sm" data-testid="coa-input-cfgroup">
+              <option value="">Bawaan dari kode akun</option>
               <option value="OPR">Operasi</option>
               <option value="INV">Investasi</option>
               <option value="PND">Pendanaan</option>
-            </select>
+            </SmartNativeSelect>
           </Field>
           <div className="space-y-2">
             <label className={`flex items-start gap-2 text-sm ${groupLocked ? 'opacity-70' : ''}`}>
@@ -340,13 +340,14 @@ function AccountEditorDialog({ initial, accounts, api, onClose, onSaved }) {
             {form.flags.is_sales && (
               <div className="mt-2 max-w-xs">
                 <Field label="Kanal penjualan" htmlFor="coa-channel">
-                  <select id="coa-channel" value={form.flags.channel || ''} onChange={(e) => setFlag('channel', e.target.value)} className={selectCls}>
-                    <option value="">— pilih —</option>
+                  <SmartNativeSelect id="coa-channel" value={form.flags.channel || ''} onChange={(e) => setFlag('channel', e.target.value)}
+                    searchable={false} className="h-9 text-sm" data-testid="coa-input-channel">
+                    <option value="">— Pilih kanal —</option>
                     <option value="shopee">Shopee</option>
                     <option value="tiktok">TikTok</option>
                     <option value="tokopedia">Tokopedia</option>
                     <option value="lazada">Lazada</option>
-                  </select>
+                  </SmartNativeSelect>
                 </Field>
               </div>
             )}

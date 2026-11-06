@@ -7,6 +7,7 @@
  * mereka mudah tertekan dan membingungkan staf. Logika tetap di endpoint yang sama; layar ini hanya pintu.
  */
 import { useCallback, useEffect, useState } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { BookOpen, Database, Landmark, Loader2, PlayCircle, Eye, Sparkles, Boxes, Settings2 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -45,7 +46,7 @@ function OneShot({ label, path, confirmText, describe, testId }) {
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState('');
   const run = async () => {
-    if (confirmText && !window.confirm(confirmText)) return;
+    if (confirmText && !(await confirmDialog(confirmText))) return;
     setBusy(true);
     try { const d = await post(path); const msg = describe(d); setOut(msg); toast.success(msg); }
     catch (e) { toast.error(e.message); setOut(`Gagal: ${e.message}`); }
@@ -110,7 +111,7 @@ function WipFgBackfill() {
   const [d, setD] = useState(null);
   const [busy, setBusy] = useState(false);
   const run = useCallback(async (dryRun) => {
-    if (!dryRun && !window.confirm('Posting jurnal WIP → Barang Jadi untuk semua Terima FG dari CMT (PO internal) yang belum berjurnal?')) return;
+    if (!dryRun && !(await confirmDialog('Posting jurnal WIP → Barang Jadi untuk semua Terima FG dari CMT (PO internal) yang belum berjurnal?'))) return;
     setBusy(true);
     try { setD(await post(`/api/prod/cmt-receipts/backfill-wip-fg?dry_run=${dryRun}`)); }
     catch (e) { toast.error(e.message); } finally { setBusy(false); }

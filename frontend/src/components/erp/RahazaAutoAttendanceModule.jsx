@@ -7,10 +7,12 @@
  * Tab 4: Live Feed Absen Otomatis
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import axios from 'axios';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB } from '@/lib/waktu';
 import FingerprintImportPanel from './hr/FingerprintImportPanel';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
@@ -289,7 +291,7 @@ function WebAuthnTab({ headers }) {
     try {
       const [d, e] = await Promise.all([
         axios.get(`${BACKEND}/api/rahaza/attendance/webauthn/devices`, { headers }),
-        axios.get(`${BACKEND}/api/rahaza/employees`, { headers }),
+        axios.get(`${BACKEND}/api/rahaza/employees?limit=500`, { headers }),   // Tahap 5: dulu batas bawaan 50
       ]);
       setDevices(d.data || []);
       setEmployees(Array.isArray(e.data) ? e.data : (e.data?.items || e.data?.rows || e.data?.data || []));
@@ -300,7 +302,7 @@ function WebAuthnTab({ headers }) {
   useEffect(() => { load(); }, [load]);
 
   const revoke = async (id) => {
-    if (!window.confirm('Cabut credential biometrik ini?')) return;
+    if (!(await confirmDialog({ title: 'Cabut data biometrik ini?', danger: true }))) return;
     setRevoking(id);
     try {
       await axios.delete(`${BACKEND}/api/rahaza/attendance/webauthn/devices/${id}`, { headers });
@@ -417,7 +419,7 @@ function DeviceTab({ headers }) {
   };
 
   const deleteDevice = async (id) => {
-    if (!window.confirm('Hapus device ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus perangkat ini?', danger: true }))) return;
     try {
       await axios.delete(`${BACKEND}/api/rahaza/devices/zkteco/${id}`, { headers });
       await load();
@@ -629,11 +631,11 @@ function LiveFeedTab({ headers }) {
           <p className="text-xs text-muted-foreground">{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
         </div>
         <div className="flex items-center gap-2">
-          <select value={methodFilter} onChange={e => setMethodFilter(e.target.value)}
-            className="border rounded-lg px-2.5 py-1.5 text-sm bg-background">
-            <option value="auto">Hanya Absen Otomatis</option>
-            <option value="all">Semua Metode</option>
-          </select>
+          <SmartNativeSelect value={methodFilter} onChange={e => setMethodFilter(e.target.value)} searchable={false}
+            data-testid="auto-att-method-filter" className="border rounded-lg px-2.5 h-9 text-sm bg-background">
+            <option value="auto">Hanya absen otomatis</option>
+            <option value="all">Semua metode</option>
+          </SmartNativeSelect>
           <button onClick={load} className="bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg text-sm">🔄</button>
         </div>
       </div>

@@ -11,6 +11,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MoneyInput } from '@/components/ui/money-input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
@@ -84,6 +86,11 @@ export default function WMSFabricRollsModule({ token }) {
   // Unit cost dialog Buat Roll = MoneyInput terkendali (teks tampilannya bertitik ribuan,
   // jadi tidak dibaca lewat FormData). Kembali ke 0 setiap dialog dibuka.
   const [createUnitCost, setCreateUnitCost] = useState('0');
+  // 2026-11-07 (Tahap 5): roll baru menunjuk MASTER — material kain, supplier, dan PO dipilih dari daftar.
+  // Dulu semua teks bebas dan `material_id` tidak pernah terisi (form tidak punya isiannya), sehingga roll
+  // manual tidak pernah tertaut ke material: tidak ikut stok/HPP per kain dan tidak bisa dipakai Cutting.
+  const [createPick, setCreatePick] = useState({ material_id: '', supplier_name: '', po_no: '', color: '' });
+  const [rollMasters, setRollMasters] = useState({ materials: [], suppliers: [], pos: [], loaded: false });
   useEffect(() => { if (createDialog) setCreateUnitCost('0'); }, [createDialog]);
   const [issueDialog, setIssueDialog] = useState(null); // {roll}
   const [putawayDialog, setPutawayDialog] = useState(null); // {roll}
@@ -215,23 +222,49 @@ export default function WMSFabricRollsModule({ token }) {
     }
   };
 
+  useEffect(() => {
+    if (!createDialog || rollMasters.loaded) return undefined;
+    let alive = true;
+    const get = (u) => fetch(`${API}${u}`, { headers }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    Promise.all([
+      get('/api/rahaza/materials?type=bahan'),
+      get('/api/procurement/suppliers/options'),
+      get('/api/rahaza/purchase-orders?status=approved'),
+      get('/api/rahaza/purchase-orders?status=partially_received'),
+      get('/api/rahaza/purchase-orders?status=fully_received'),
+    ]).then(([m, s, a, b, c]) => {
+      if (!alive) return;
+      const list = (x) => (Array.isArray(x) ? x : (x?.items || []));
+      setRollMasters({
+        materials: list(m).filter((x) => x.type === 'fabric' || x.type === 'kain'),
+        suppliers: s?.items || [],
+        pos: [...list(a), ...list(b), ...list(c)],
+        loaded: true,
+      });
+    });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createDialog]);
+  const pickedMat = rollMasters.materials.find((m) => m.id === createPick.material_id) || null;
+
   const handleCreateRoll = async (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
+    if (!createPick.material_id) { toast.error('Pilih material kain dari master.'); return; }
     const data = {
       // FASE H-5: `roll_no` TIDAK dikirim — nomor diterbitkan server (mode otomatis).
       // Dua gulungan fisik bernomor sama membuat pertanyaan "gulungan mana yang
       // dipotong" tidak bisa dijawab, jadi nomor tidak boleh datang dari ketikan.
-      material_id: fd.get('material_id') || '',
-      material_code: fd.get('material_code') || '',
-      material_name: fd.get('material_name'),
-      color: fd.get('color') || '',
+      material_id: createPick.material_id,
+      material_code: pickedMat?.code || '',
+      material_name: pickedMat?.name || '',
+      color: createPick.color || pickedMat?.color || '',
       color_lot: fd.get('color_lot') || '',
-      supplier_name: fd.get('supplier_name') || '',
+      supplier_name: createPick.supplier_name || '',
       uom: fd.get('uom') || 'meter',
       length_m: parseFloat(fd.get('length_m')) || 0,
       weight_kg: parseFloat(fd.get('weight_kg')) || 0,
-      po_no: fd.get('po_no') || '',
+      po_no: createPick.po_no || '',
       unit_cost: parseFloat(createUnitCost) || 0,
       notes: fd.get('notes') || '',
     };
@@ -244,6 +277,7 @@ export default function WMSFabricRollsModule({ token }) {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
       toast.success(`Roll ${d?.roll?.roll_no || ''} dibuat`);
+      setCreatePick({ material_id: '', supplier_name: '', po_no: '', color: '' });
       setCreateDialog(false);
       load();
     } catch (e2) {
@@ -801,29 +835,51 @@ export default function WMSFabricRollsModule({ token }) {
                   Pola {rollPolicy?.format || 'RL-{YYYY}{MM}-{SEQ:4}'} — diatur di Administrasi Sistem → Penomoran Dokumen.
                 </p>
               </div>
-              <div>
-                <Label>Material Code</Label>
-                <Input name="material_code" className="bg-foreground/5 border-foreground/10" data-testid="input-material-code" />
-              </div>
               <div className="col-span-2">
-                <Label>Material Name *</Label>
-                <Input name="material_name" required className="bg-foreground/5 border-foreground/10" data-testid="input-material-name" />
+                <Label>Material kain *</Label>
+                <SmartNativeSelect value={createPick.material_id}
+                  onChange={(e) => {
+                    const m = rollMasters.materials.find((x) => x.id === e.target.value);
+                    setCreatePick((p) => ({ ...p, material_id: e.target.value, color: m?.color || '' }));
+                  }}
+                  className="w-full h-10 px-3 rounded-md border border-foreground/10 bg-foreground/5 text-sm"
+                  data-testid="input-material">
+                  <option value="">{rollMasters.loaded ? '— pilih kain dari master —' : 'Memuat material…'}</option>
+                  {rollMasters.materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
-                <Label>Color</Label>
-                <Input name="color" className="bg-foreground/5 border-foreground/10" data-testid="input-color" />
+                <Label>Warna</Label>
+                <Input value={createPick.color} onChange={(e) => setCreatePick((p) => ({ ...p, color: e.target.value }))}
+                  placeholder={pickedMat?.color ? '' : 'mis. Navy'} className="bg-foreground/5 border-foreground/10" data-testid="input-color" />
               </div>
               <div>
-                <Label>Color Lot</Label>
+                <Label>Lot warna</Label>
                 <Input name="color_lot" className="bg-foreground/5 border-foreground/10" data-testid="input-color-lot" />
               </div>
               <div>
-                <Label>Supplier Name</Label>
-                <Input name="supplier_name" className="bg-foreground/5 border-foreground/10" data-testid="input-supplier" />
+                <Label>Supplier</Label>
+                <SmartNativeSelect value={createPick.supplier_name}
+                  onChange={(e) => setCreatePick((p) => ({ ...p, supplier_name: e.target.value }))}
+                  className="w-full h-10 px-3 rounded-md border border-foreground/10 bg-foreground/5 text-sm"
+                  data-testid="input-supplier">
+                  <option value="">— tanpa supplier —</option>
+                  {rollMasters.suppliers.map((s) => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
-                <Label>PO Number</Label>
-                <Input name="po_no" className="bg-foreground/5 border-foreground/10" data-testid="input-po-no" />
+                <Label>No. PO</Label>
+                <SmartNativeSelect value={createPick.po_no}
+                  onChange={(e) => {
+                    const po = rollMasters.pos.find((x) => x.po_number === e.target.value);
+                    setCreatePick((p) => ({ ...p, po_no: e.target.value,
+                      supplier_name: po ? (po.supplier_name || po.vendor_name || p.supplier_name) : p.supplier_name }));
+                  }}
+                  className="w-full h-10 px-3 rounded-md border border-foreground/10 bg-foreground/5 text-sm"
+                  data-testid="input-po-no">
+                  <option value="">— tanpa PO —</option>
+                  {rollMasters.pos.map((po) => <option key={po.id} value={po.po_number}>{`${po.po_number} · ${po.supplier_name || po.vendor_name || ''}`}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
                 <Label>Satuan</Label>
@@ -846,15 +902,15 @@ export default function WMSFabricRollsModule({ token }) {
                 <Input name="length_m" type="number" step="0.01" defaultValue="0" className="bg-foreground/5 border-foreground/10" data-testid="input-length" />
               </div>
               <div>
-                <Label>Weight (kg)</Label>
+                <Label>Berat (kg)</Label>
                 <Input name="weight_kg" type="number" step="0.01" defaultValue="0" className="bg-foreground/5 border-foreground/10" data-testid="input-weight" />
               </div>
               <div>
-                <Label>Unit Cost</Label>
+                <Label>Harga per satuan (Rp)</Label>
                 <MoneyInput decimals={2} value={createUnitCost} onChange={(e) => setCreateUnitCost(e.target.value)} className="bg-foreground/5 border-foreground/10" data-testid="input-unit-cost" />
               </div>
               <div className="col-span-2">
-                <Label>Notes</Label>
+                <Label>Catatan</Label>
                 <Input name="notes" className="bg-foreground/5 border-foreground/10" data-testid="input-notes" />
               </div>
             </div>

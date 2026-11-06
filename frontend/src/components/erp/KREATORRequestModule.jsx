@@ -301,13 +301,13 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
             placeholder="Cari kode / kreator / konsep..." className="pl-9"
             data-testid="kreator-req-search-input" />
         </div>
-        <select value={filterType} onChange={e => setFilterType(e.target.value)}
+        <SmartNativeSelect value={filterType} onChange={e => setFilterType(e.target.value)}
           data-testid="kreator-req-filter-type"
-          className="border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground min-w-[150px]">
-          <option value="">Semua Tipe</option>
-          <option value="live_streaming">Live Streaming</option>
-          <option value="tiktok_video">TikTok Video</option>
-        </select>
+          className="w-40 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground min-w-[150px]">
+          <option value="">Semua tipe</option>
+          <option value="live_streaming">Live streaming</option>
+          <option value="tiktok_video">Video TikTok</option>
+        </SmartNativeSelect>
         <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
           data-testid="kreator-req-filter-status"
           className="border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground min-w-[150px]">
@@ -642,15 +642,15 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
             <div className="space-y-3">
               <div>
                 <Label>Metode Pengiriman</Label>
-                <select value={actionModal.delivery_method || ''}
+                <SmartNativeSelect value={actionModal.delivery_method || ''}
                   onChange={e => setActionModal(p => ({ ...p, delivery_method: e.target.value }))}
-                  className="w-full mt-1 border border-input bg-background rounded-md px-3 py-2 text-sm text-foreground"
+                  className="w-full mt-1"
                   data-testid="kreator-deliver-method">
                   <option value="">— Pilih —</option>
                   <option value="courier">Kurir (JNE/JNT/SiCepat)</option>
-                  <option value="pickup">Pickup Langsung</option>
-                  <option value="mail">POS / Mail</option>
-                </select>
+                  <option value="pickup">Diambil langsung</option>
+                  <option value="mail">Pos</option>
+                </SmartNativeSelect>
               </div>
               <div>
                 <Label>Nomor Resi (opsional)</Label>

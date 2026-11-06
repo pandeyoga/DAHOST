@@ -9,7 +9,7 @@
  */
 import { useState, useEffect, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { GlassCard } from '@/components/ui/glass';
+import { GlassCard, GlassInput } from '@/components/ui/glass';
 import {
   UserPlus, CheckCircle2, Circle, AlertCircle, RefreshCw, Plus, X,
   Clock, Users, ClipboardList, User, Pencil, Trash2, Calendar,
@@ -19,6 +19,8 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmployeeSelect, useActiveEmployees } from './hr/hrPickers';
 
 const BASE = process.env.REACT_APP_BACKEND_URL;
 const api = (path, opts = {}) =>
@@ -152,10 +154,10 @@ function AddTaskModal({ checklistId, headers, onSuccess, onClose }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Kategori</label>
-                <select value={form.category} onChange={e => setForm(p => ({...p, category: e.target.value}))}
+                <SmartNativeSelect searchable={false} value={form.category} onChange={e => setForm(p => ({...p, category: e.target.value}))}
                   className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                </select>
+                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Hari ke-</label>
@@ -171,7 +173,7 @@ function AddTaskModal({ checklistId, headers, onSuccess, onClose }) {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground block mb-1">Deadline (Tanggal)</label>
-                <input type="date" value={form.due_date} onChange={e => setForm(p => ({...p, due_date: e.target.value}))}
+                <GlassInput type="date" value={form.due_date} onChange={e => setForm(p => ({...p, due_date: e.target.value}))}
                   className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
               </div>
             </div>
@@ -221,7 +223,7 @@ function ChecklistDetail({ cl: initCl, headers, onUpdate, onClose }) {
   };
 
   const handleDeleteTask = async (task) => {
-    if (!window.confirm(`Hapus aktivitas "${task.title}"?`)) return;
+    if (!(await confirmDialog({ title: `Hapus aktivitas "${task.title}"?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const r = await api(`/checklists/${cl.checklist_id}/tasks/${task.task_id}`, { method: 'DELETE', headers });
       const d = await r.json().catch(() => ({}));
@@ -598,10 +600,10 @@ function TemplateEditorModal({ template, headers, onSuccess, onClose }) {
                     <input value={addTaskForm.title} onChange={e => setAddTaskForm(p => ({...p, title: e.target.value}))} placeholder="Nama aktivitas *"
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" autoFocus />
                   </div>
-                  <select value={addTaskForm.category} onChange={e => setAddTaskForm(p => ({...p, category: e.target.value}))}
+                  <SmartNativeSelect searchable={false} value={addTaskForm.category} onChange={e => setAddTaskForm(p => ({...p, category: e.target.value}))}
                     className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
-                    {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                  </select>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </SmartNativeSelect>
                   <input value={addTaskForm.assigned_to} onChange={e => setAddTaskForm(p => ({...p, assigned_to: e.target.value}))} placeholder="PIC (HR/IT/Karyawan)"
                     className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
                   <div className="flex items-center gap-2">
@@ -665,6 +667,15 @@ export default function HROnboardingModule({ token }) {
   const [filterStatus, setFilterStatus] = useState('');
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  // Tahap 5 (2026-11-07): karyawan baru, buddy, dan supervisor DIPILIH dari data karyawan (dulu nama diketik
+  // bebas dan employee_id selalu kosong — checklist tidak terhubung ke karyawannya).
+  const { employees } = useActiveEmployees(token);
+  const pickNewEmployee = (id) => {
+    const e = employees.find(x => x.id === id);
+    setForm(p => ({ ...p, employee_id: id, employee_name: e?.name || '', employee_dept: e?.department || '', employee_position: e?.job_title || '' }));
+  };
+  const empIdByName = (name) => (employees.find(e => e.name === name) || {}).id || '';
+  const nameOf = (id) => (employees.find(e => e.id === id) || {}).name || '';
 
   // ── Effects
   useEffect(() => {
@@ -700,24 +711,28 @@ export default function HROnboardingModule({ token }) {
   };
 
   const handleSeed = async () => {
+    // Tahap 5: data contoh hanya untuk onboarding yang masih kosong (server menolak bila sudah ada data)
+    if (!(await confirmDialog({ title: 'Muat data contoh onboarding?', body: 'Hanya bisa bila belum ada template dan checklist.', confirmLabel: 'Muat contoh' }))) return;
     setSeeding(true);
     try {
-      await api(`/seed`, { method: 'POST', headers });
+      const r = await api(`/seed`, { method: 'POST', headers });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal memuat contoh'); return; }
       await refreshAll();
-      toast.success('Data demo dimuat');
+      toast.success('Data contoh dimuat');
     } catch { toast.error('Gagal'); }
     finally { setSeeding(false); }
   };
 
   const handleSave = async () => {
+    if (!form.employee_id) { toast.error('Pilih karyawan dulu'); return; }
     setSaving(true);
     try {
       const r = await api(`/checklists`, { method: 'POST', headers, body: JSON.stringify(form) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === 'string' ? d.detail : `HTTP ${r.status}`); }  // 2026-11-06 (pola P6): sukses hanya bila server menerima
       setShowForm(false);
       await refreshAll();
       toast.success('Onboarding checklist dibuat');
-    } catch { toast.error('Gagal membuat checklist'); } finally { setSaving(false); }
+    } catch (e) { toast.error(`Gagal membuat checklist${e?.message && !e.message.startsWith('HTTP') ? `: ${e.message}` : ''}`); } finally { setSaving(false); }
   };
 
   const handleUpdateChecklist = (updated) => {
@@ -726,7 +741,7 @@ export default function HROnboardingModule({ token }) {
   };
 
   const handleDeleteTemplate = async (tplId, name) => {
-    if (!window.confirm(`Hapus template "${name}"?`)) return;
+    if (!(await confirmDialog({ title: `Hapus template "${name}"?`, confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const r = await api(`/templates/${tplId}`, { method: 'DELETE', headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);  // 2026-11-06 (pola P6): sukses hanya bila server menerima
@@ -815,14 +830,14 @@ export default function HROnboardingModule({ token }) {
               <input value={q} onChange={e => setQ(e.target.value)} placeholder="Cari karyawan..."
                 className="flex-1 bg-transparent text-sm focus:outline-none" />
             </div>
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+            <SmartNativeSelect searchable={false} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
               className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
               <option value="">Semua Status</option>
               <option value="active">Aktif</option>
               <option value="in_progress">Berjalan</option>
               <option value="completed">Selesai</option>
               <option value="paused">Ditunda</option>
-            </select>
+            </SmartNativeSelect>
           </div>
 
           {filtered.length === 0 ? (
@@ -997,28 +1012,28 @@ export default function HROnboardingModule({ token }) {
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Nama Karyawan *</label>
-                    <input value={form.employee_name} onChange={e => setForm(p => ({...p, employee_name: e.target.value}))} placeholder="Nama lengkap"
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">Karyawan *</label>
+                    <EmployeeSelect employees={employees} value={form.employee_id} onChange={pickNewEmployee} testId="onb-employee"
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Jabatan</label>
-                    <input value={form.employee_position} onChange={e => setForm(p => ({...p, employee_position: e.target.value}))} placeholder="Jabatan"
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
+                    <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="onb-position">{form.employee_position || '— (dari data karyawan)'}</div>
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Departemen</label>
-                    <input value={form.employee_dept} onChange={e => setForm(p => ({...p, employee_dept: e.target.value}))} placeholder="Departemen"
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
+                    <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="onb-dept">{form.employee_dept || '— (dari data karyawan)'}</div>
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Buddy</label>
-                    <input value={form.buddy} onChange={e => setForm(p => ({...p, buddy: e.target.value}))} placeholder="Nama buddy"
+                    <EmployeeSelect employees={employees} value={empIdByName(form.buddy)} exclude={[form.employee_id]} placeholder="— Tanpa buddy —"
+                      onChange={v => setForm(p => ({...p, buddy: nameOf(v)}))} testId="onb-buddy"
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Supervisor</label>
-                    <input value={form.supervisor} onChange={e => setForm(p => ({...p, supervisor: e.target.value}))} placeholder="Nama supervisor"
+                    <EmployeeSelect employees={employees} value={empIdByName(form.supervisor)} exclude={[form.employee_id]} placeholder="— Tanpa supervisor —"
+                      onChange={v => setForm(p => ({...p, supervisor: nameOf(v)}))} testId="onb-supervisor"
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" />
                   </div>
                   <div className="col-span-2">
@@ -1033,7 +1048,7 @@ export default function HROnboardingModule({ token }) {
               </div>
               <div className="flex gap-3 mt-6">
                 <button onClick={() => setShowForm(false)} className="flex-1 h-10 rounded-xl border border-[var(--glass-border)] text-sm text-muted-foreground">Batal</button>
-                <button onClick={handleSave} disabled={saving || !form.employee_name}
+                <button onClick={handleSave} disabled={saving || !form.employee_id} data-testid="onb-save"
                   className="flex-1 h-10 rounded-xl bg-[hsl(var(--primary))] text-foreground text-sm font-medium disabled:opacity-50">
                   {saving ? 'Membuat...' : 'Buat Checklist'}
                 </button>

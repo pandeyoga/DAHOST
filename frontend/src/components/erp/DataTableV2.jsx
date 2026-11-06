@@ -44,6 +44,7 @@ import {
 import { cn } from '@/lib/utils';
 import { todayWIB } from '@/lib/waktu';
 import { ResponsiveTableWrapper } from '@/components/ui/responsive-table-wrapper';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 
 function useDebouncedValue(value, delay = 250) {
   const [debounced, setDebounced] = useState(value);
@@ -524,14 +525,15 @@ export function DataTable({
             <span className="mx-1">·</span>
             <label className="inline-flex items-center gap-1">
               Tampil
-              <select
-                value={pageSize}
+              <SmartNativeSelect
+                value={String(pageSize)}
                 onChange={(e) => setPageSize(Number(e.target.value))}
-                className="h-7 px-1.5 rounded border border-[var(--glass-border)] bg-[var(--input-surface)] text-[11px]"
+                className="w-20 h-7 px-2 py-0.5 text-[11px]"
+                searchable={false}
                 aria-label="Jumlah per halaman"
               >
                 {pageSizeOptions.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
+              </SmartNativeSelect>
             </label>
           </div>
           <div className="flex items-center gap-1.5">
@@ -568,16 +570,17 @@ export function DataTable({
 function FilterChip({ filter, value, onChange, testId }) {
   if (filter.type === 'select') {
     return (
-      <select
+      // 2026-11-07 (Tahap 5): pemilih aplikasi (bisa dicari bila pilihan ≥ 8), bukan pemilih bawaan browser
+      <SmartNativeSelect
         value={value || ''}
         onChange={(e) => onChange(e.target.value || null)}
-        className="h-9 px-2.5 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-xs text-foreground focus-visible:ring-2 focus-visible:ring-[hsl(var(--ring))] focus-visible:outline-none"
+        className="w-44 h-9 px-2.5 text-xs"
         data-testid={testId}
         aria-label={filter.label}
       >
         <option value="">{filter.label}</option>
         {filter.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      </SmartNativeSelect>
     );
   }
   if (filter.type === 'date-range') {

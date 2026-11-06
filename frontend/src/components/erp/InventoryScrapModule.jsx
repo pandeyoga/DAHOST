@@ -7,6 +7,17 @@ import { useToast } from '@/hooks/use-toast';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { formatRupiah } from '@/lib/format';
 import StorageLocationSelect from './StorageLocationSelect';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
+
+// 2026-11-07 (Tahap 5): tanda qty mengikuti tipe — dulu tipe hanya hiasan (tidak dikirim, tidak diperiksa),
+// sehingga "Scrap" dengan qty +50 menambah stok.
+const ADJ_TYPES = [
+  { value: 'scrap', label: 'Scrap / rusak (mengurangi stok)', sign: -1 },
+  { value: 'theft', label: 'Hilang (mengurangi stok)', sign: -1 },
+  { value: 'found', label: 'Ditemukan / tambahan (menambah stok)', sign: 1 },
+  { value: 'correction', label: 'Koreksi hitung stok (tambah atau kurang)', sign: 0 },
+];
 
 const fmt = formatRupiah;
 
@@ -42,7 +53,10 @@ export default function InventoryScrapModule({ token }) {
           fetch('/api/rahaza/materials', { headers }),
         ]);
         if (mvR.ok) setMovements(await mvR.json());
-        if (matR.ok) setMaterials(await matR.json());
+        if (matR.ok) {
+          const d = await matR.json();
+          setMaterials((Array.isArray(d) ? d : d?.items || []).filter((m) => m.active !== false));
+        }
       } catch (e) {
         // Silent fail on initial load
       } finally {
@@ -78,6 +92,15 @@ export default function InventoryScrapModule({ token }) {
       toast({ title: 'Error', description: 'Qty adjustment tidak boleh 0', variant: 'destructive' });
       return;
     }
+    const typ = ADJ_TYPES.find((t) => t.value === adjustForm.adjustment_type);
+    if (typ && typ.sign < 0 && delta > 0) {
+      toast({ title: 'Periksa qty', description: `${typ.label}: isi qty negatif, mis. -${delta}.`, variant: 'destructive' });
+      return;
+    }
+    if (typ && typ.sign > 0 && delta < 0) {
+      toast({ title: 'Periksa qty', description: `${typ.label}: isi qty positif, mis. ${Math.abs(delta)}.`, variant: 'destructive' });
+      return;
+    }
     // Check stock availability for negative adjustment
     if (delta < 0 && stockInfo && Math.abs(delta) > stockInfo.qty) {
       toast({ title: 'Error', description: `Stok tidak cukup. Tersedia: ${stockInfo.qty}`, variant: 'destructive' });
@@ -100,8 +123,8 @@ export default function InventoryScrapModule({ token }) {
         setStockInfo(null);
         fetchMovements();
       } else {
-        const err = await r.json();
-        toast({ title: 'Error', description: err.detail || 'Gagal adjustment', variant: 'destructive' });
+        const err = await r.json().catch(() => ({}));
+        toast({ title: 'Gagal', description: typeof err.detail === 'string' ? err.detail : `Gagal menyimpan penyesuaian (HTTP ${r.status})`, variant: 'destructive' });
       }
     } catch (e) {
       toast({ title: 'Error', description: 'Gagal adjustment', variant: 'destructive' });
@@ -119,9 +142,8 @@ export default function InventoryScrapModule({ token }) {
     <div className="space-y-5" data-testid="inventory-scrap-page">
       <PageHeader
         icon={PackageMinus}
-        eyebrow="Portal Warehouse · Inventory"
-        title="Penyesuaian Stok (Adjustment)"
-        subtitle="Catat adjustment stok untuk scrap, damage, theft, atau stock count correction. Sistem otomatis posting GL."
+        title="Penyesuaian Stok"
+        subtitle="Catat penyesuaian stok: barang rusak, hilang, ditemukan, atau koreksi hitung. Jurnal dibuat otomatis."
         actions={
           <>
             <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchMovements} data-testid="adj-refresh">
@@ -191,16 +213,21 @@ export default function InventoryScrapModule({ token }) {
             <h2 className="text-xl font-bold text-foreground mb-4">Buat Adjustment Stok</h2>
             <div className="space-y-3">
               <div>
-                <label className="text-xs uppercase text-muted-foreground">Material ID</label>
-                <GlassInput
+                {/* 2026-11-07 (Tahap 5): material DIPILIH dari master (dulu staf harus mengetik UUID material). */}
+                <label className="text-xs uppercase text-muted-foreground">Material <span className="text-[hsl(var(--destructive))]">*</span></label>
+                <SmartNativeSelect
                   value={adjustForm.material_id}
                   onChange={e => {
                     setAdjustForm(f => ({ ...f, material_id: e.target.value }));
+                    setStockInfo(null);
                     if (e.target.value && adjustForm.location_id) checkStock(e.target.value, adjustForm.location_id);
                   }}
-                  placeholder="UUID material"
+                  className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
                   data-testid="adj-material-id"
-                />
+                >
+                  <option value="">— pilih material —</option>
+                  {materials.map((m) => <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
                 {/* 2026-11-02 — No.18(a): lokasi DIPILIH dari daftar gudang, bukan UUID diketik. */}
@@ -210,6 +237,7 @@ export default function InventoryScrapModule({ token }) {
                   value={adjustForm.location_id}
                   onChange={(v) => {
                     setAdjustForm(f => ({ ...f, location_id: v }));
+                    setStockInfo(null);
                     if (adjustForm.material_id && v) checkStock(adjustForm.material_id, v);
                   }}
                   testId="adj-location-id"
@@ -231,17 +259,14 @@ export default function InventoryScrapModule({ token }) {
               )}
               <div>
                 <label className="text-xs uppercase text-muted-foreground">Tipe Adjustment</label>
-                <select
+                <SmartNativeSelect
                   value={adjustForm.adjustment_type}
                   onChange={e => setAdjustForm(f => ({ ...f, adjustment_type: e.target.value }))}
                   className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
                   data-testid="adj-type"
                 >
-                  <option value="scrap">Scrap / Rusak (negatif)</option>
-                  <option value="theft">Hilang / Theft (negatif)</option>
-                  <option value="found">Ditemukan / Tambahan (positif)</option>
-                  <option value="correction">Stock Count Correction</option>
-                </select>
+                  {ADJ_TYPES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                </SmartNativeSelect>
               </div>
               <div>
                 <label className="text-xs uppercase text-muted-foreground">Qty Adjustment</label>

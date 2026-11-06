@@ -280,11 +280,11 @@ function CreateModal({ onClose, onSaved, token, defaultType }) {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Channel</label>
-              <select value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })}
+              <SmartNativeSelect value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })}
                 className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="ret-channel">
                 <option value="">Pilih...</option>
                 {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               <label className="text-xs text-muted-foreground block mb-1">Nama Customer</label>
@@ -724,10 +724,10 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Kondisi Barang *</label>
-                  <select value={form.condition || 'Baik'} onChange={e => setForm({ ...form, condition: e.target.value })}
+                  <SmartNativeSelect value={form.condition || 'Baik'} onChange={e => setForm({ ...form, condition: e.target.value })}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quick-condition">
                     {CONDITIONS.map(c => <option key={c} value={c}>{c}{SELLABLE_CONDITIONS.includes(c) ? ' — masuk stok jual' : ' — masuk karantina'}</option>)}
-                  </select>
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Qty Aktual Masuk * (pengajuan {data.qty})</label>
@@ -797,19 +797,19 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Kondisi Item *</label>
-                  <select value={form.item_condition || ''} onChange={e => setForm({ ...form, item_condition: e.target.value })}
+                  <SmartNativeSelect value={form.item_condition || ''} onChange={e => setForm({ ...form, item_condition: e.target.value })}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="inspect-condition">
                     <option value="">Pilih...</option>
                     {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Penyebab Return *</label>
-                  <select value={form.return_cause || ''} onChange={e => setForm({ ...form, return_cause: e.target.value })}
+                  <SmartNativeSelect value={form.return_cause || ''} onChange={e => setForm({ ...form, return_cause: e.target.value })}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="inspect-cause">
                     <option value="">Pilih...</option>
                     {CAUSES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  </SmartNativeSelect>
                 </div>
               </div>
               <div>
@@ -819,11 +819,11 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               </div>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Rekomendasi Tindakan</label>
-                <select value={form.recommended_action || ''} onChange={e => setForm({ ...form, recommended_action: e.target.value })}
+                <SmartNativeSelect value={form.recommended_action || ''} onChange={e => setForm({ ...form, recommended_action: e.target.value })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="inspect-action">
                   <option value="">Auto (dari penyebab)</option>
                   {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
+                </SmartNativeSelect>
               </div>
               {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
               <div className="flex gap-2">
@@ -841,11 +841,11 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               <h4 className="font-semibold text-[hsl(var(--success))] flex items-center gap-2"><CheckCircle className="w-4 h-4" /> Resolusi Return</h4>
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Tindakan yang Diambil *</label>
-                <select value={form.action_taken || data.recommended_action || ''} onChange={e => setForm({ ...form, action_taken: e.target.value })}
+                <SmartNativeSelect value={form.action_taken || data.recommended_action || ''} onChange={e => setForm({ ...form, action_taken: e.target.value })}
                   className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="resolve-action">
                   <option value="">Pilih tindakan...</option>
                   {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
+                </SmartNativeSelect>
               </div>
 
               {/* Conditional extra fields */}
@@ -859,11 +859,11 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
               {(form.action_taken || data.recommended_action) === 'Appeal Platform' && (
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Status Appeal</label>
-                  <select value={form.appeal_status || ''} onChange={e => setForm({ ...form, appeal_status: e.target.value })}
+                  <SmartNativeSelect value={form.appeal_status || ''} onChange={e => setForm({ ...form, appeal_status: e.target.value })}
                     className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="appeal-status">
                     <option value="">Pilih...</option>
                     {APPEAL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+                  </SmartNativeSelect>
                 </div>
               )}
               {QTY_ACTIONS.includes(form.action_taken || data.recommended_action) && (

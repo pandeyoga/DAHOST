@@ -354,18 +354,22 @@ function CreatePermakDialog({ onClose, onCreated }) {
   useEffect(() => {
     (async () => {
       try {
-        const data = await apiGet('/maklon-client/pos');
+        // 2026-11-07 (Tahap 5): dulu `/maklon-client/pos` (pintu portal klien, PO MAKLON saja) — PO internal
+        // tidak pernah bisa dipilih dari menu Permak di portal Produksi. Kini semua PO terbuka.
+        const data = await apiGet('/dewi/cmt-permak/po-options');
         setPos(Array.isArray(data) ? data : []);
       } catch (e) { toast.error(`Gagal memuat PO: ${e.message || e}`); }
     })();
   }, []);
 
   useEffect(() => {
-    if (!poId) { setItems([]); setItemId(''); return; }
+    // ganti PO = item PO lama dilepas (dulu tertinggal ⇒ simpan ditolak "Item PO tidak ditemukan pada PO ini")
+    setItemId('');
+    if (!poId) { setItems([]); return; }
     (async () => {
       setLoadingItems(true);
       try {
-        const prog = await apiGet(`/maklon-client/pos/${poId}/progress`);
+        const prog = await apiGet(`/dewi/cmt-permak/po-options/${poId}/items`);
         setItems(Array.isArray(prog.items) ? prog.items : []);
       } catch (e) {
         toast.error(`Gagal memuat item PO: ${e.message || e}`);
@@ -401,7 +405,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
     <Modal title="Buat Permak Baru" onClose={onClose} size="lg">
       <div className="space-y-4" data-testid="create-permak-dialog">
         <div>
-          <label className="text-xs font-medium text-muted-foreground">PO Maklon</label>
+          <label className="text-xs font-medium text-muted-foreground">PO produksi *</label>
           <SmartNativeSelect
             value={poId}
             onChange={(e) => setPoId(e.target.value)}
@@ -410,13 +414,15 @@ function CreatePermakDialog({ onClose, onCreated }) {
           >
             <option value="">— Pilih PO —</option>
             {pos.map((p) => (
-              <option key={p.po_id} value={p.po_id}>{p.po_number} — {p.status}</option>
+              <option key={p.po_id} value={p.po_id}>
+                {`${p.po_number} · ${p.business_type_label || ''}${p.customer_name ? ` · ${p.customer_name}` : ''} — ${p.status}`}
+              </option>
             ))}
           </SmartNativeSelect>
         </div>
 
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Item / SKU</label>
+          <label className="text-xs font-medium text-muted-foreground">Item / SKU *</label>
           <SmartNativeSelect
             value={itemId}
             onChange={(e) => setItemId(e.target.value)}
@@ -427,7 +433,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
             <option value="">{loadingItems ? 'Memuat item...' : '— Pilih item —'}</option>
             {items.map((i) => (
               <option key={i.po_item_id} value={i.po_item_id}>
-                {i.product_name || i.sku} ({i.sku} · {i.color} · {i.size}) — bagus {fmt(i.qty_good)} / reject {fmt(i.qty_reject_qc)}
+                {`${i.product_name || i.sku} · ${i.color || '-'} · ${i.size || '-'} · ${i.sku || '-'} — bagus ${fmt(i.qty_good)} / reject ${fmt(i.qty_reject_qc)}`}
               </option>
             ))}
           </SmartNativeSelect>
@@ -455,7 +461,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
             </SmartNativeSelect>
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">Qty</label>
+            <label className="text-xs font-medium text-muted-foreground">Qty *</label>
             <input
               type="number" min="1"
               value={qty}
@@ -487,7 +493,7 @@ function CreatePermakDialog({ onClose, onCreated }) {
               className="mt-1 w-full text-sm px-3 py-2 rounded-md border border-input bg-background"
               data-testid="select-permak-problem"
             >
-              {PROBLEM_OPTS.map((p) => <option key={p} value={p}>{p}</option>)}
+              {PROBLEM_OPTS.map((p) => <option key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</option>)}
             </SmartNativeSelect>
           </div>
         </div>

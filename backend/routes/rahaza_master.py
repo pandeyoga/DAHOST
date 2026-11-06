@@ -635,7 +635,8 @@ async def create_employee(request: Request):
         if not mgr:
             raise HTTPException(400, "Atasan (manager) yang dipilih tidak ditemukan atau tidak aktif.")
         manager_name = mgr.get("name")
-    
+    shift_fields = await _employee_shift_fields(db, body)
+
     doc = {
         "id": _uid(),
         "employee_code": code,
@@ -644,6 +645,9 @@ async def create_employee(request: Request):
         "department": body.get("department") or "",
         "job_title": body.get("job_title") or "Operator",
         "location_id": body.get("location_id") or None,
+        # 2026-11-07 (Tahap 5): shift utama karyawan (fallback absensi `resolve_day_shift`) — dulu hanya
+        # terisi lewat impor; formulir Data Karyawan kini memilihnya dari master shift.
+        **shift_fields,
         "phone": body.get("phone") or "",
         "email": (body.get("email") or "").strip().lower(),
         "contract_type": body.get("contract_type") or None,       # PKWT | PKWTT | Magang | Tetap
@@ -696,6 +700,27 @@ async def create_employee(request: Request):
     return serialize_doc(doc)
 
 
+async def _employee_shift_fields(db, body: dict, current: Optional[dict] = None) -> dict:
+    """{'shift_id', 'shift_code'} dari master `rahaza_shifts` bila `shift_id` dikirim (2026-11-07, Tahap 5).
+
+    Kosong/None → tanpa shift tetap. Id yang tidak ada di master ditolak (dulu kolom ini tidak divalidasi).
+    Tidak dikirim, atau sama dengan nilai tersimpan (`current`) → {} (field tidak disentuh — data impor lama
+    yang shift-nya sudah tidak ada di master tetap bisa diubah kolom lainnya)."""
+    if "shift_id" not in body:
+        return {}
+    sid = body.get("shift_id") or None
+    if current is not None and sid == (current.get("shift_id") or None):
+        body.pop("shift_id", None)
+        body.pop("shift_code", None)
+        return {}
+    if not sid:
+        return {"shift_id": None, "shift_code": None}
+    sh = await db.rahaza_shifts.find_one({"id": sid}, {"_id": 0, "id": 1, "code": 1})
+    if not sh:
+        raise HTTPException(400, "Shift yang dipilih tidak ditemukan di master shift.")
+    return {"shift_id": sh["id"], "shift_code": sh.get("code") or None}
+
+
 def _bpjs_programs_field(body: dict) -> dict:
     """{'bpjs_programs': {...}} bila dikirim, {} bila tidak (2026-11-02, K23)."""
     from routes.rahaza_payroll_tax import normalize_bpjs_programs
@@ -728,6 +753,10 @@ async def update_employee(eid: str, request: Request):
             body.pop("bpjs_programs")
         else:
             body.update(_bpjs_programs_field(body))
+    if "shift_id" in body:   # 2026-11-07 (Tahap 5): shift dari master
+        cur = await db.rahaza_employees.find_one({"id": eid}, {"_id": 0, "shift_id": 1}) or {}
+        body.update(await _employee_shift_fields(db, body, cur))
+    body.pop("location_name", None)   # nama turunan daftar, bukan data karyawan
 
     # Validate manager_id (Atasan) if being updated (Sprint 42)
     if "manager_id" in body:

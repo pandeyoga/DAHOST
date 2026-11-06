@@ -30,6 +30,32 @@ router = APIRouter(prefix='/api/dewi/system/config', tags=['Dewi-System-Config']
 # tidak ada kode yang membacanya; setelan yang tampil hanya menyesatkan.
 RETIRED_KEYS = {'maklon_tax_pct', 'hpp_overhead_pct'}
 
+# 2026-11-07 (Tahap 5, audit form) — setelan teks yang nilainya HARUS salah satu kode tetap.
+# Dulu diketik bebas ("30 hari" untuk termin) sehingga pembaca kode (`TERM_DAYS`) diam-diam jatuh
+# ke nilai cadangan. Pilihan dikirim ke layar (`choices`) dan nilai lain ditolak saat disimpan.
+CONFIG_CHOICES = {
+    'maklon_payment_terms_default': [
+        {'value': 'net_7', 'label': '7 hari setelah tagihan'},
+        {'value': 'net_14', 'label': '14 hari setelah tagihan'},
+        {'value': 'net_30', 'label': '30 hari setelah tagihan'},
+        {'value': 'net_60', 'label': '60 hari setelah tagihan'},
+    ],
+    # `notification_whatsapp_provider` sengaja TIDAK dikunci: tidak ada kode yang membacanya dan
+    # Pusat Notifikasi memakai penyedia lain (Fonnte) — keputusan owner (hapus / sambungkan).
+}
+
+
+def choice_error(key: str, value) -> Optional[str]:
+    """Pesan galat bila `value` bukan salah satu pilihan setelan `key` (None = sah)."""
+    choices = CONFIG_CHOICES.get(key)
+    if not choices:
+        return None
+    allowed = [c['value'] for c in choices]
+    if str(value) in allowed:
+        return None
+    return ('nilai harus salah satu dari: '
+            + ', '.join(c['label'] for c in choices))
+
 DEFAULT_CONFIGS = [
     # 2026-09-24 — gate GDG-2 (progress produksi internal wajib MI issued) bisa dimatikan.
     {
@@ -71,7 +97,7 @@ DEFAULT_CONFIGS = [
         'value': 'net_30',
         'category': 'maklon',
         'label': 'Payment Terms Default',
-        'description': 'Termin pembayaran default: net_7 | net_14 | net_30 | net_60',
+        'description': 'Termin pembayaran bawaan invoice maklon (jatuh tempo setelah tagihan terbit).',
         'data_type': 'string',
         'is_secret': False,
     },
@@ -316,6 +342,12 @@ async def list_configs(
         if doc.get('key') in RETIRED_KEYS:
             continue
         cleaned = {**doc}
+        if cleaned.get('key') in CONFIG_CHOICES:
+            cleaned['choices'] = CONFIG_CHOICES[cleaned['key']]
+            # keterangan lama di DB berisi kode mentah ("net_7 | net_14 …") — pakai teks terbaru
+            cleaned['description'] = next(
+                (c['description'] for c in DEFAULT_CONFIGS if c['key'] == cleaned['key']),
+                cleaned.get('description'))
         _mask_secret(cleaned)
         # Hide raw secret value if not admin
         if cleaned.get('is_secret') and not is_admin:
@@ -371,6 +403,9 @@ async def update_config(key: str, payload: ConfigUpdate, user: dict = Depends(re
             new_value = '' if new_value is None else str(new_value)
     except (ValueError, TypeError):
         raise HTTPException(400, f'Value tidak valid untuk data_type {dt}')
+    bad = choice_error(key, new_value)
+    if bad:
+        raise HTTPException(400, f"{existing.get('label') or key}: {bad}")
 
     await db.dewi_system_config.update_one(
         {'key': key},
@@ -425,6 +460,10 @@ async def bulk_update(payload: BulkUpdateIn, user: dict = Depends(require_auth))
                 new_value = '' if new_value is None else str(new_value)
         except (ValueError, TypeError):
             errors.append(f'{key}: invalid type')
+            continue
+        bad = choice_error(key, new_value)
+        if bad:
+            errors.append(f"{existing.get('label') or key}: {bad}")
             continue
         await db.dewi_system_config.update_one(
             {'key': key},

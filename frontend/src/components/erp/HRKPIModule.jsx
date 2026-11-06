@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   Target, Users, ClipboardList, BarChart3, Settings, Plus, RefreshCw,
@@ -16,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmployeeSelect } from './hr/hrPickers';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
@@ -280,7 +282,7 @@ export default function HRKPIModule({ token }) {
   };
 
   const handleDeletePeriod = async (period) => {
-    if (!window.confirm(`Hapus periode "${period.name}"?`)) return;
+    if (!(await confirmDialog({ title: `Hapus periode "${period.name}"?`, danger: true }))) return;
     const r = await kpi(`/periods/${period.period_id}`, { method: 'DELETE', headers });
     const d = await r.json();
     if (!r.ok) { toast.error(d.detail || 'Gagal hapus'); return; }
@@ -302,7 +304,7 @@ export default function HRKPIModule({ token }) {
   };
 
   const handleDeleteQuestion = async (qid) => {
-    if (!window.confirm('Nonaktifkan pertanyaan ini?')) return;
+    if (!(await confirmDialog({ title: 'Nonaktifkan pertanyaan ini?', danger: true }))) return;
     const r = await kpi(`/questions/${qid}`, { method: 'DELETE', headers });
     if (!r.ok) { toast.error('Gagal menonaktifkan pertanyaan'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
     toast.success('Pertanyaan dinonaktifkan');
@@ -1212,7 +1214,7 @@ export default function HRKPIModule({ token }) {
                         </Button>
                         <Button size="icon" variant="ghost" className="h-7 w-7"
                           onClick={async () => {
-                            if (!window.confirm('Hapus goal ini?')) return;
+                            if (!(await confirmDialog({ title: 'Hapus goal ini?', danger: true }))) return;
                             const r = await kpi(`/goals/${goal.goal_id}`, { method: 'DELETE', headers });
                             if (!r.ok) { toast.error('Gagal menghapus goal'); return; }  // 2026-11-06 (pola P6): dulu selalu "berhasil"
                             toast.success('Goal dihapus');
@@ -1633,18 +1635,13 @@ function PerformDialog({ initial, employees, onSave, onClose }) {
           {!form.employee_id && (
             <div className="space-y-1">
               <Label>Karyawan</Label>
-              <Select value={form.employee_id}
-                onValueChange={v => {
+              {/* Tahap 5 (2026-11-07): pemilih karyawan bisa dicari (dulu Select tanpa kotak cari) */}
+              <EmployeeSelect employees={employees} value={form.employee_id} testId="kpi-goal-employee"
+                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm text-foreground"
+                onChange={v => {
                   const emp = employees.find(e => e.id === v);
                   setForm(f => ({ ...f, employee_id: v, employee_name: emp?.name || '' }));
-                }}>
-                <SelectTrigger><SelectValue placeholder="Pilih karyawan" /></SelectTrigger>
-                <SelectContent>
-                  {employees.map(e => (
-                    <SelectItem key={e.id} value={e.id}>{e.employee_code} — {e.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                }} />
             </div>
           )}
           {form.employee_name && (

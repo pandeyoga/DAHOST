@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import axios from 'axios';
 import { Clock, Plus, RefreshCw, Users, Calendar, Edit2, Trash2, ChevronRight, Moon, Sun, Sunset, AlertCircle } from 'lucide-react';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { StatCard } from '@/components/ui/data-card';
 import { todayWIB } from '@/lib/waktu';
+import { GlassInput } from '@/components/ui/glass';
+import { EmployeeSelect, useActiveEmployees, employeeLabel } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 const DAYS_ID = { Mon: 'Sen', Tue: 'Sel', Wed: 'Rab', Thu: 'Kam', Fri: 'Jum', Sat: 'Sab', Sun: 'Min' };
@@ -192,14 +195,23 @@ function ShiftForm({ initial, shifts, onSave, onCancel }) {
   );
 }
 
-function AssignmentForm({ shifts, onSave, onCancel }) {
+// Tahap 5 (2026-11-07): karyawan DIPILIH dari master (dulu kotak "ID Karyawan" diketik bebas, mis. "emp-001",
+// tanpa pemeriksaan — penugasan bisa menunjuk karyawan yang tidak ada). Departemen mengikuti data karyawan.
+function AssignmentForm({ shifts, employees = [], onSave, onCancel }) {
   const [form, setForm] = useState({ employee_id: '', shift_id: '', effective_from: todayWIB(), effective_until: '', department: '', notes: '' });
+  const pickEmployee = (id) => {
+    const emp = employees.find(e => e.id === id);
+    setForm(p => ({ ...p, employee_id: id, department: emp?.department || '' }));
+  };
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const handleSubmit = async () => {
     if (!form.employee_id || !form.shift_id || !form.effective_from) {
-      setError('ID Karyawan, shift, dan tanggal mulai wajib diisi.'); return;
+      setError('Karyawan, shift, dan tanggal mulai wajib diisi.'); return;
+    }
+    if (form.effective_until && form.effective_until < form.effective_from) {
+      setError('Tanggal berakhir tidak boleh sebelum tanggal mulai.'); return;
     }
     setSaving(true); setError('');
     try {
@@ -214,13 +226,13 @@ function AssignmentForm({ shifts, onSave, onCancel }) {
       <h2 className="font-semibold text-foreground">Assign Shift ke Karyawan</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-xs font-medium text-muted-foreground/50 mb-1">ID Karyawan *</label>
-          <input value={form.employee_id} onChange={e => setForm(p => ({ ...p, employee_id: e.target.value }))}
-            placeholder="emp-001" className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <label className="block text-xs font-medium text-muted-foreground/50 mb-1">Karyawan *</label>
+          <EmployeeSelect employees={employees} value={form.employee_id} onChange={pickEmployee} testId="assign-employee"
+            className="w-full border border-border rounded-lg px-3 py-2 text-sm" />
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground/50 mb-1">Shift *</label>
-          <SmartNativeSelect value={form.shift_id} onChange={e => setForm(p => ({ ...p, shift_id: e.target.value }))}
+          <SmartNativeSelect value={form.shift_id} onChange={e => setForm(p => ({ ...p, shift_id: e.target.value }))} data-testid="assign-shift"
             className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
             <option value="">-- Pilih Shift --</option>
             {shifts.filter(s => !s.is_default).map(s => (
@@ -230,18 +242,15 @@ function AssignmentForm({ shifts, onSave, onCancel }) {
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground/50 mb-1">Berlaku Mulai *</label>
-          <input type="date" value={form.effective_from} onChange={e => setForm(p => ({ ...p, effective_from: e.target.value }))}
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <GlassInput type="date" value={form.effective_from} onChange={e => setForm(p => ({ ...p, effective_from: e.target.value }))} data-testid="assign-from" />
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground/50 mb-1">Berlaku Hingga (opsional)</label>
-          <input type="date" value={form.effective_until} onChange={e => setForm(p => ({ ...p, effective_until: e.target.value }))}
-            className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <GlassInput type="date" value={form.effective_until} min={form.effective_from || undefined} onChange={e => setForm(p => ({ ...p, effective_until: e.target.value }))} data-testid="assign-until" />
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground/50 mb-1">Departemen</label>
-          <input value={form.department} onChange={e => setForm(p => ({ ...p, department: e.target.value }))}
-            placeholder="Produksi / HR / Keuangan..." className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          <div className="h-9 flex items-center text-sm text-muted-foreground" data-testid="assign-department">{form.department || '— (mengikuti data karyawan)'}</div>
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground/50 mb-1">Catatan</label>
@@ -273,6 +282,8 @@ export default function HRShiftManagementModule({ user }) {
   const token = localStorage.getItem('erp_token');
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
   const isAdmin = ['superadmin', 'admin', 'owner', 'hr'].includes((user?.role || '').toLowerCase());
+  const { employees } = useActiveEmployees(token);
+  const empById = useMemo(() => Object.fromEntries(employees.map(e => [e.id, e])), [employees]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -311,7 +322,7 @@ export default function HRShiftManagementModule({ user }) {
   };
 
   const handleDeleteShift = async (id) => {
-    if (!window.confirm('Nonaktifkan shift ini?')) return;
+    if (!(await confirmDialog({ title: 'Nonaktifkan shift ini?', danger: true }))) return;
     await axios.delete(`${API}/api/hr/shifts/${id}`, { headers });
     load();
   };
@@ -435,7 +446,7 @@ export default function HRShiftManagementModule({ user }) {
       ) : (
         <>
           {view === 'assign' ? (
-            <AssignmentForm shifts={shifts} onSave={handleAssign} onCancel={() => setView('list')} />
+            <AssignmentForm shifts={shifts} employees={employees} onSave={handleAssign} onCancel={() => setView('list')} />
           ) : (
             <>
               <div className="flex gap-2 mb-4">
@@ -457,7 +468,7 @@ export default function HRShiftManagementModule({ user }) {
                   <table className="w-full text-sm">
                     <thead className="bg-muted border-b border-border">
                       <tr>
-                        {['ID Karyawan','Shift','Dept','Berlaku Mulai','Berlaku Hingga','Status'].map(h => (
+                        {['Karyawan','Shift','Dept','Berlaku Mulai','Berlaku Hingga','Status'].map(h => (
                           <th key={h} className="text-left px-4 py-3 text-xs font-medium text-muted-foreground/60">{h}</th>
                         ))}
                       </tr>
@@ -465,7 +476,7 @@ export default function HRShiftManagementModule({ user }) {
                     <tbody className="divide-y divide-border">
                       {paged.map(a => (
                         <tr key={a.id} className="hover:bg-muted">
-                          <td className="px-4 py-3 font-mono text-xs text-muted-foreground/50">{a.employee_id}</td>
+                          <td className="px-4 py-3 text-xs">{a.employee_name ? `${a.employee_code || ''} · ${a.employee_name}` : (empById[a.employee_id] ? employeeLabel(empById[a.employee_id]) : a.employee_id)}</td>
                           <td className="px-4 py-3">
                             <ShiftBadge shift={{ shift_code: a.shift_code, color: a.shift_color }} />
                           </td>

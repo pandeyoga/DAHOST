@@ -13,6 +13,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { monthOptions } from '../finance/PeriodPicker';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import {
   Banknote, Coins, AlertTriangle, RefreshCw, Search, X, Trash2, Tag,
@@ -25,6 +26,9 @@ import { MoneyInput } from '@/components/ui/money-input';
 import { thisMonthWIB } from '@/lib/waktu';
 // FASE 10: otomasi — ringkasan harian item belum dinilai + rapor bulanan via email
 import AccessoryValuationAutomation from './AccessoryValuationAutomation';
+
+// 2026-11-07 (Tahap 5): periode rapor = pilihan bulan aplikasi (dulu isian bulan bawaan browser)
+const MONTH_OPTIONS = monthOptions(24);
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -258,9 +262,11 @@ export default function AccessoryValuationTab({ token, onRefreshDash }) {
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs text-muted-foreground" htmlFor="acc-val-month">Periode mutasi</label>
-          <input id="acc-val-month" type="month" value={month} onChange={e => setMonth(e.target.value)}
-            className="border border-border rounded-lg px-3 py-1.5 text-sm bg-[var(--card-surface)]"
-            data-testid="acc-val-month" />
+          <SmartNativeSelect id="acc-val-month" value={month} onChange={e => setMonth(e.target.value)}
+            className="w-40 border border-border rounded-lg px-3 py-1.5 text-sm bg-[var(--card-surface)]"
+            data-testid="acc-val-month">
+            {MONTH_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </SmartNativeSelect>
         </div>
         <button onClick={() => downloadReport('xlsx')} disabled={!!downloading}
           className="inline-flex items-center gap-2 px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5 disabled:opacity-50"

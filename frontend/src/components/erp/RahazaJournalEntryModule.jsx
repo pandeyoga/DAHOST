@@ -55,6 +55,18 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
   const totalC = form.lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
   const balanced = totalD === totalC && totalD > 0;
   const nomorSiap = numPolicy?.mode !== 'manual' || !!form.je_number.trim();
+  // 2026-11-07 (audit form Tahap 5): baris berangka tanpa akun dulu DIBUANG diam-diam saat simpan (indikator
+  // "Seimbang" tetap hijau, lalu server menolak "tidak seimbang"/"minimal 2 baris"). Kini disebut per baris.
+  const lineProblem = (() => {
+    const filled = form.lines.filter(l => l.account_code);
+    for (let i = 0; i < form.lines.length; i += 1) {
+      const l = form.lines[i];
+      const amt = (Number(l.debit) || 0) + (Number(l.credit) || 0);
+      if (!l.account_code && amt > 0) return `Baris ${i + 1}: pilih akunnya.`;
+      if (l.account_code && amt <= 0) return `Baris ${i + 1}: isi debit atau kredit.`;
+    }
+    return filled.length < 2 ? 'Isi minimal 2 baris berakun.' : '';
+  })();
 
   const submit = (asDraft) => {
     const body = {
@@ -141,11 +153,12 @@ function JournalEditor({ accounts, onSave, onClose, token }) {
           <div className={`font-semibold ${balanced ? 'text-[hsl(var(--success))]' : 'text-[hsl(var(--destructive))]'}`} data-testid="je-balanced-indicator">
             {balanced ? 'Seimbang ✓' : 'Tidak seimbang (selisih ' + fmt(Math.abs(totalD - totalC)) + ')'}
           </div>
+          {lineProblem && <div className="text-xs text-[hsl(var(--warning))]" data-testid="je-line-problem">{lineProblem}</div>}
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={onClose} data-testid="je-editor-cancel">Batal</Button>
-          <Button variant="outline" onClick={() => submit(true)} disabled={!balanced || !nomorSiap} data-testid="je-save-draft">Simpan draf</Button>
-          <Button onClick={() => submit(false)} disabled={!balanced || !nomorSiap} data-testid="je-save-post">Simpan & posting</Button>
+          <Button variant="outline" onClick={() => submit(true)} disabled={!balanced || !nomorSiap || !!lineProblem} data-testid="je-save-draft">Simpan draf</Button>
+          <Button onClick={() => submit(false)} disabled={!balanced || !nomorSiap || !!lineProblem} data-testid="je-save-post">Simpan & posting</Button>
         </div>
       </div>
     </DetailPanel>
@@ -321,7 +334,13 @@ export default function RahazaJournalEntryModule({ token }) {
         <option value="">Semua sumber</option>
         {sources.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
       </SmartNativeSelect>
-      <GlassInput value={accountCode} onChange={e => setAccountCode(e.target.value.trim())} placeholder="Kode akun (opsional)" aria-label="Kode akun" className="h-9 w-40" data-testid="je-filter-account" />
+      {/* 2026-11-07 (audit form Tahap 5): akun dipilih dari Bagan Akun (dulu kotak teks "Kode akun" yang harus
+          diketik persis) — kode · nama, bisa dicari. */}
+      <SmartNativeSelect value={accountCode} onChange={e => setAccountCode(e.target.value)} aria-label="Akun"
+        className="h-9 w-64" searchPlaceholder="Cari kode atau nama akun…" data-testid="je-filter-account">
+        <option value="">Semua akun</option>
+        {accounts.filter(a => !a.is_group).map(a => <option key={a.code} value={a.code}>{`${a.code} · ${a.name}`}</option>)}
+      </SmartNativeSelect>
       <div className="relative w-72 max-w-full">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <GlassInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari nomor jurnal / memo / referensi…" aria-label="Cari jurnal" className="pl-9 h-9" data-testid="je-search" />

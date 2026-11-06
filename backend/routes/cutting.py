@@ -86,6 +86,8 @@ STATUS_CANCELLED = "cancelled"
 
 # Satuan kain yang wajar jadi INPUT cutting (roll).
 # 2026-11-06 (pola P8): "roll" = ejaan resmi master satuan; "rol"/"gulung" tetap diterima (data lama)
+#: Jenis lokasi yang tidak memegang stok kain (master `rahaza_locations.type`).
+NON_STOCK_LOCATION_TYPES = ("kantor",)
 INPUT_UNITS = {"kg", "gram", "m", "cm", "yard", "inch", "roll", "rol", "gulung", "bal"}
 OUTPUT_UNIT = "pcs"
 OUTPUT_CATEGORY = "POTONGAN"
@@ -296,10 +298,14 @@ async def list_input_materials(request: Request, q: Optional[str] = None):
 
 @router.get("/locations")
 async def list_locations(request: Request):
-    """Lokasi gudang untuk dropdown form cutting."""
+    """Lokasi gudang untuk dropdown form cutting.
+
+    2026-11-07 (Tahap 5): lokasi KANTOR (Kantor Pusat, Ruang Admin/HR/Marketing) tidak memegang kain —
+    dulu ikut tampil sebagai "Gudang Sumber Kain" sehingga order bisa menunjuk ruang kantor."""
     await require_auth(request)
     db = get_db()
-    rows = await db.rahaza_locations.find({"active": True}, {"_id": 0}).sort("name", 1).to_list(500)
+    rows = await db.rahaza_locations.find(
+        {"active": True, "type": {"$nin": list(NON_STOCK_LOCATION_TYPES)}}, {"_id": 0}).sort("name", 1).to_list(500)
     return serialize_doc(rows)
 
 

@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/table';
 import { toast } from 'sonner';
 import SearchableSelect from './engine/SearchableSelect';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { apiGet, apiPost } from '../../lib/api';
 import { readNumber, FIELD } from '@/lib/materialFields';  // FASE 6.6-B
 
@@ -44,6 +45,8 @@ export default function RahazaMaterialRequirementsModule() {
   const [mode, setMode] = useState('po');            // 'po' | 'manual'
   const [models, setModels] = useState([]);
   const [sizes, setSizes] = useState([]);
+  // {model_id: Set(size_id)} dari varian aktif — ukuran baris manual mengikuti model (2026-11-07)
+  const [modelSizes, setModelSizes] = useState({});
   const [pos, setPos] = useState([]);
   const [poId, setPoId] = useState('');
   const [lines, setLines] = useState([emptyLine()]);
@@ -56,12 +59,19 @@ export default function RahazaMaterialRequirementsModule() {
   useEffect(() => {
     (async () => {
       try {
-        const [m, s] = await Promise.all([
+        const [m, s, v] = await Promise.all([
           apiGet('/rahaza/models?active=true&limit=500'),
           apiGet('/rahaza/sizes?active=true&limit=100'),
+          apiGet('/rahaza/variants').catch(() => []),
         ]);
-        setModels(Array.isArray(m) ? m : (m?.items || []));
-        setSizes(Array.isArray(s) ? s : (s?.items || []));
+        // server mengembalikan model non-aktif juga (penanda `active`) — yang non-aktif tidak ditawarkan
+        setModels((Array.isArray(m) ? m : (m?.items || [])).filter(x => x.active !== false));
+        setSizes((Array.isArray(s) ? s : (s?.items || [])).filter(x => x.active !== false));
+        const per = {};
+        (Array.isArray(v) ? v : []).forEach(x => {
+          if (x.model_id && x.size_id) (per[x.model_id] = per[x.model_id] || new Set()).add(x.size_id);
+        });
+        setModelSizes(per);
       } catch (e) { /* non-fatal */ }
       try {
         const env = await apiGet('/production-pos?business_type=internal&per_page=200&sort_by=created_at&sort_dir=desc');
@@ -79,6 +89,11 @@ export default function RahazaMaterialRequirementsModule() {
     () => sizes.map(s => ({ value: s.id, label: s.code, sub: s.name && s.name !== s.code ? s.name : '' })),
     [sizes],
   );
+  // Ukuran yang ditawarkan = ukuran varian model itu; model tanpa varian → semua ukuran master.
+  const sizeOptionsFor = (modelId) => {
+    const own = modelSizes[modelId];
+    return own && own.size ? sizeOptions.filter(o => own.has(o.value)) : sizeOptions;
+  };
   const poOptions = useMemo(
     () => pos.map(p => ({
       value: p.id,
@@ -91,7 +106,16 @@ export default function RahazaMaterialRequirementsModule() {
   const addLine = () => setLines(ls => [...ls, emptyLine()]);
   const removeLine = (idx) => setLines(ls => ls.filter((_, i) => i !== idx));
   const updateLine = (idx, field, value) =>
-    setLines(ls => ls.map((l, i) => (i === idx ? { ...l, [field]: value } : l)));
+    setLines(ls => ls.map((l, i) => {
+      if (i !== idx) return l;
+      const next = { ...l, [field]: value };
+      // ganti model → ukuran yang bukan milik model baru dilepas
+      if (field === 'model_id' && l.size_id) {
+        const own = modelSizes[value];
+        if (own && own.size && !own.has(l.size_id)) next.size_id = '';
+      }
+      return next;
+    }));
 
   const compute = async () => {
     let body = { rounding, include_stock: includeStock };
@@ -246,14 +270,17 @@ export default function RahazaMaterialRequirementsModule() {
                     value={l.model_id}
                     onChange={v => updateLine(idx, 'model_id', v)}
                     placeholder="— Pilih Model —"
+                    data-testid={`mrp-line-model-${idx}`}
                   />
                 </div>
                 <div className="col-span-3">
                   <SearchableSelect
-                    options={sizeOptions}
+                    options={sizeOptionsFor(l.model_id)}
                     value={l.size_id}
                     onChange={v => updateLine(idx, 'size_id', v)}
-                    placeholder="— Ukuran —"
+                    placeholder={l.model_id ? '— Ukuran —' : 'Pilih model dulu'}
+                    disabled={!l.model_id}
+                    data-testid={`mrp-line-size-${idx}`}
                   />
                 </div>
                 <div className="col-span-2">
@@ -289,16 +316,16 @@ export default function RahazaMaterialRequirementsModule() {
         <div className="flex flex-wrap items-end gap-4 pt-2 border-t border-[var(--glass-border)]">
           <div>
             <label className="block text-xs font-medium text-foreground/60 mb-1">Pembulatan total</label>
-            <select
+            <SmartNativeSelect
               value={rounding}
               onChange={e => setRounding(e.target.value)}
               data-testid="mrp-rounding"
-              className="h-9 rounded-lg border border-[var(--glass-border)] bg-background px-3 text-sm text-foreground"
+              className="w-40" wrapperClassName="w-40"
             >
-              <option value="none">Tidak ada</option>
-              <option value="ceil">Ke atas (ceil)</option>
-              <option value="floor">Ke bawah (floor)</option>
-            </select>
+              <option value="none">Tidak dibulatkan</option>
+              <option value="ceil">Dibulatkan ke atas</option>
+              <option value="floor">Dibulatkan ke bawah</option>
+            </SmartNativeSelect>
           </div>
           <div className="flex items-center gap-2 pb-1.5">
             <Switch checked={includeStock} onCheckedChange={setIncludeStock} data-testid="mrp-include-stock" />

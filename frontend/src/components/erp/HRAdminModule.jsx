@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import axios from 'axios';
 import {
   Settings, Sparkles, Landmark, UserX, MapPin, Database, RefreshCw, LayoutGrid,
@@ -85,7 +86,7 @@ function SalaryGradesTab({ token }) {
   };
 
   const del = async (id) => {
-    if (!window.confirm('Non-aktifkan grade ini?')) return;
+    if (!(await confirmDialog({ title: 'Nonaktifkan grade ini?', danger: true }))) return;
     await axios.delete(`${API}/api/rahaza/salary-grades/${id}`, { headers });
     toast.success('Grade dinon-aktifkan'); load();
   };
@@ -265,7 +266,7 @@ function ResignationProcessDialog({ emp, headers, onReload, onClose }) {
     } catch { toast.error('Gagal'); }
   };
   const accept = async () => {
-    if (!window.confirm('Accept resignation? Karyawan akan di-deactivate.')) return;
+    if (!(await confirmDialog({ title: 'Terima pengunduran diri?', body: 'Karyawan akan dinonaktifkan.' }))) return;
     try {
       await axios.post(`${API}/api/rahaza/resignation/accept/${emp.id}`, { rehire_eligible: true }, { headers });
       toast.success('Resignation accepted'); onReload(); onClose();

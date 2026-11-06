@@ -10,6 +10,8 @@ import { OrgNode } from './OrgNode';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import { EmployeeSelect, useActiveEmployees } from './hr/hrPickers';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = (path, opts = {}) => fetch(`${BACKEND_URL}/api/dewi/org${path}`, opts);
@@ -43,11 +45,19 @@ export default function HROrgChartModule({ token }) {
   const [showUnitForm, setShowUnitForm] = useState(false);
   const [showPosForm, setShowPosForm] = useState(false);
   const [editUnit, setEditUnit] = useState(null);
-  const [unitForm, setUnitForm] = useState({ name: '', code: '', type: 'department', parent_id: '', head_employee_name: '', headcount_target: 0, color: '', description: '' });
+  const [unitForm, setUnitForm] = useState({ name: '', code: '', type: 'department', parent_id: '', head_employee_id: '', head_employee_name: '', headcount_target: 0, color: '', description: '' });
   const [posForm, setPosForm] = useState({ title: '', unit_id: '', grade: 1, headcount_target: 1, salary_grade: '' });
   const [saving, setSaving] = useState(false);
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
+  // Tahap 5 (2026-11-07): kepala unit dipilih dari karyawan aktif (dulu nama diketik bebas);
+  // grade gaji jabatan dipilih dari master Struktur Gaji (Pengaturan SDM), dulu diketik bebas.
+  const { employees } = useActiveEmployees(token);
+  const [salaryGrades, setSalaryGrades] = useState([]);
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/api/rahaza/salary-grades`, { headers })
+      .then(r => (r.ok ? r.json() : {})).then(d => setSalaryGrades(d.grades || [])).catch(() => setSalaryGrades([]));
+  }, [headers]);
 
   const fetchAll = useCallback(async () => {
     setLoading(true); setError(null);
@@ -70,8 +80,12 @@ export default function HROrgChartModule({ token }) {
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
   const handleSeed = async () => {
+    // Tahap 5 (2026-11-07): demo MENGHAPUS seluruh unit & jabatan lalu mengisi data contoh — kini hanya untuk
+    // struktur kosong (server menolak bila sudah ada unit) dan selalu dikonfirmasi.
+    if (!(await confirmDialog({ title: 'Muat struktur contoh?', body: 'Hanya untuk struktur yang masih kosong. Data contoh bisa diubah atau dihapus setelahnya.', confirmLabel: 'Muat contoh' }))) return;
     setSeeding(true);
-    await API(`/seed`, { method: 'POST', headers });
+    const r = await API(`/seed`, { method: 'POST', headers });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); toast.error(typeof d.detail === 'string' ? d.detail : 'Gagal memuat contoh'); }
     setSeeding(false);
     fetchAll();
   };
@@ -80,8 +94,8 @@ export default function HROrgChartModule({ token }) {
     setEditUnit(u);
     setUnitForm(u ? {
       name: u.name, code: u.code, type: u.type, parent_id: u.parent_id || '',
-      head_employee_name: u.head_employee_name, headcount_target: u.headcount_target, color: u.color, description: u.description
-    } : { name: '', code: '', type: 'department', parent_id: '', head_employee_name: '', headcount_target: 0, color: '', description: '' });
+      head_employee_id: u.head_employee_id || '', head_employee_name: u.head_employee_name, headcount_target: u.headcount_target, color: u.color, description: u.description
+    } : { name: '', code: '', type: 'department', parent_id: '', head_employee_id: '', head_employee_name: '', headcount_target: 0, color: '', description: '' });
     setShowUnitForm(true);
   };
 
@@ -104,11 +118,11 @@ export default function HROrgChartModule({ token }) {
   };
 
   const handleDeleteUnit = async (uid) => {
-    if (!window.confirm('Hapus unit ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus unit ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const r = await API(`/units/${uid}`, { method: 'DELETE', headers });
       const d = await r.json();
-      if (!d.ok) { alert(d.detail || 'Tidak bisa dihapus'); return; }
+      if (!d.ok) { toast.error(d.detail || 'Tidak bisa dihapus'); return; }
       fetchAll();
     } catch {}
   };
@@ -152,10 +166,12 @@ export default function HROrgChartModule({ token }) {
           <p className="text-muted-foreground text-sm">Bagan organisasi, unit, posisi, dan headcount planning</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={handleSeed} disabled={seeding}
+          {units.length === 0 && (
+          <button onClick={handleSeed} disabled={seeding} data-testid="org-seed"
             className="h-9 px-3 rounded-lg border border-dashed border-[var(--glass-border)] text-xs text-muted-foreground hover:text-foreground">
-            {seeding ? 'Memuat...' : 'Muat Demo'}
+            {seeding ? 'Memuat...' : 'Muat contoh'}
           </button>
+          )}
           <button onClick={fetchAll} className="h-9 w-9 rounded-lg border border-[var(--glass-border)] flex items-center justify-center text-muted-foreground hover:text-foreground">
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -396,10 +412,10 @@ export default function HROrgChartModule({ token }) {
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Tipe</label>
-                    <select value={unitForm.type} onChange={e => setUnitForm(p => ({...p, type: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
+                    <SmartNativeSelect value={unitForm.type} onChange={e => setUnitForm(p => ({...p, type: e.target.value}))} searchable={false}
+                      data-testid="org-unit-type" className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
                       {TYPE_LEVELS.map(t => <option key={t} value={t}>{TYPE_CONFIG[t].label}</option>)}
-                    </select></div>
+                    </SmartNativeSelect></div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Unit Induk</label>
                     <SmartNativeSelect value={unitForm.parent_id} onChange={e => setUnitForm(p => ({...p, parent_id: e.target.value}))}
@@ -408,8 +424,10 @@ export default function HROrgChartModule({ token }) {
                       {units.filter(u => !editUnit || u.unit_id !== editUnit.unit_id).map(u => <option key={u.unit_id} value={u.unit_id}>{u.name}</option>)}
                     </SmartNativeSelect></div>
                   <div>
-                    <label className="text-xs font-medium text-muted-foreground block mb-1">Nama Kepala</label>
-                    <input value={unitForm.head_employee_name} onChange={e => setUnitForm(p => ({...p, head_employee_name: e.target.value}))}
+                    <label className="text-xs font-medium text-muted-foreground block mb-1">Kepala unit</label>
+                    <EmployeeSelect employees={employees} value={unitForm.head_employee_id} testId="org-unit-head"
+                      placeholder={unitForm.head_employee_name && !unitForm.head_employee_id ? `${unitForm.head_employee_name} (belum dipilih dari karyawan)` : '— Belum ditentukan —'}
+                      onChange={v => { const e = employees.find(x => x.id === v); setUnitForm(p => ({ ...p, head_employee_id: v, head_employee_name: e ? e.name : (v ? p.head_employee_name : '') })); }}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground block mb-1">Target Headcount</label>
@@ -446,10 +464,10 @@ export default function HROrgChartModule({ token }) {
                     className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Unit</label>
-                    <SmartNativeSelect value={posForm.unit_id} onChange={e => setPosForm(p => ({...p, unit_id: e.target.value}))}
+                    <SmartNativeSelect value={posForm.unit_id} onChange={e => setPosForm(p => ({...p, unit_id: e.target.value}))} data-testid="org-pos-unit"
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
                       <option value="">Pilih unit</option>
-                      {units.map(u => <option key={u.unit_id} value={u.unit_id}>{u.name}</option>)}
+                      {units.map(u => <option key={u.unit_id} value={u.unit_id}>{`${u.code ? `${u.code} · ` : ''}${u.name}`}</option>)}
                     </SmartNativeSelect></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Grade (1-10)</label>
                     <input type="number" value={posForm.grade} onChange={e => setPosForm(p => ({...p, grade: +e.target.value}))}
@@ -458,8 +476,11 @@ export default function HROrgChartModule({ token }) {
                     <input type="number" value={posForm.headcount_target} onChange={e => setPosForm(p => ({...p, headcount_target: +e.target.value}))}
                       className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" min={1} /></div>
                   <div><label className="text-xs font-medium text-muted-foreground block mb-1">Salary Grade</label>
-                    <input value={posForm.salary_grade} onChange={e => setPosForm(p => ({...p, salary_grade: e.target.value}))}
-                      className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm" placeholder="A, B, C..." /></div>
+                    <SmartNativeSelect value={posForm.salary_grade} onChange={e => setPosForm(p => ({...p, salary_grade: e.target.value}))}
+                      data-testid="org-pos-salary-grade" className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm">
+                      <option value="">{salaryGrades.length ? '— Tanpa grade —' : '— Belum ada grade (Pengaturan SDM) —'}</option>
+                      {salaryGrades.map(g => <option key={g.id} value={g.grade_code}>{`${g.grade_code}${g.grade_name ? ` · ${g.grade_name}` : ''}`}</option>)}
+                    </SmartNativeSelect></div>
                 </div>
               </div>
               <div className="flex gap-3 mt-5">

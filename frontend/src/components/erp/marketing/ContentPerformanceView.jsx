@@ -17,6 +17,7 @@
  * beserta **cakupan KPI** supaya pembaca tahu berapa bagian yang benar-benar terukur.
  */
 import { useState, useEffect, useCallback } from 'react';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { RefreshCw, Loader2, Table2, LayoutGrid, Info, Users, PencilLine, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -113,29 +114,29 @@ export default function ContentPerformanceView({ token }) {
         </div>
         <div>
           <label className="text-[11px] text-muted-foreground block">Tampilkan</label>
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value)}
+          <SmartNativeSelect value={groupBy} onChange={(e) => setGroupBy(e.target.value)}
             data-testid="perf-group-by"
-            className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
+            className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
             {GROUPS.map((g) => <option key={g.v} value={g.v}>{g.l}</option>)}
-          </select>
+          </SmartNativeSelect>
         </div>
         {perContent && (
           <>
             <div>
               <label className="text-[11px] text-muted-foreground block">Saring KPI</label>
-              <select value={kpiState} onChange={(e) => setKpiState(e.target.value)}
+              <SmartNativeSelect value={kpiState} onChange={(e) => setKpiState(e.target.value)}
                 data-testid="perf-kpi-state"
-                className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
+                className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
                 {KPI_STATES.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
-              </select>
+              </SmartNativeSelect>
             </div>
             <div>
               <label className="text-[11px] text-muted-foreground block">Urutkan</label>
-              <select value={sort} onChange={(e) => setSort(e.target.value)}
+              <SmartNativeSelect value={sort} onChange={(e) => setSort(e.target.value)}
                 data-testid="perf-sort"
-                className="h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
+                className="w-40 h-8 rounded-md border border-border bg-background text-foreground px-2 text-xs">
                 {SORTS.map((s) => <option key={s.v} value={s.v}>{s.l}</option>)}
-              </select>
+              </SmartNativeSelect>
             </div>
           </>
         )}

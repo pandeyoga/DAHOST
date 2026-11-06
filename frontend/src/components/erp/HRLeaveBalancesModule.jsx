@@ -88,7 +88,8 @@ export default function HRLeaveBalancesModule({ token }) {
           <Select value={String(year)} onValueChange={v => setYear(Number(v))}>
             <SelectTrigger className="w-28 h-9"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {[2024, 2025, 2026, 2027].map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
+              {/* Tahap 5: tahun dihitung dari tahun berjalan (dulu daftar tetap 2024–2027) */}
+              {[-2, -1, 0, 1].map(d => new Date().getFullYear() + d).map(y => <SelectItem key={y} value={String(y)}>{y}</SelectItem>)}
             </SelectContent>
           </Select>
           <Button variant="outline" size="sm" onClick={load}>

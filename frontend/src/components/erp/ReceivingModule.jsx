@@ -68,6 +68,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const [materials, setMaterials] = useState([]);
   // Sprint 2.1: PO integration
   const [purchaseOrders, setPurchaseOrders] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading]     = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
@@ -143,14 +144,18 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
 
   const fetchData = useCallback(async () => {
     try {
-      const [rRes, lRes, mRes, poRes] = await Promise.all([
+      const [rRes, lRes, mRes, poRes, poPartRes, supRes] = await Promise.all([
         fetch('/api/wms/legacy/receiving',    { headers: { Authorization: `Bearer ${token}` } }),
         // FASE F+ (2026-07-25): dropdown lokasi tujuan pakai SSOT storage-locations
         // (wh_zones + rahaza storage), bukan lagi legacy warehouse_locations.
         fetch('/api/rahaza/storage-locations', { headers: { Authorization: `Bearer ${token}` } }),
         fetch('/api/rahaza/materials?limit=500', { headers: { Authorization: `Bearer ${token}` } }),
-        // Sprint 2.1: Fetch approved POs (also include partially_received for resume)
+        // Sprint 2.1: PO yang bisa diterima. 2026-11-07 (Tahap 5): + PO "Diterima Sebagian" — dulu hanya
+        // `approved`, sehingga SISA PO yang baru datang sebagian tidak bisa dipilih di form ini.
         fetch('/api/rahaza/purchase-orders?status=approved', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/rahaza/purchase-orders?status=partially_received', { headers: { Authorization: `Bearer ${token}` } }),
+        // Master Supplier — penerimaan tanpa PO dari pemasok memilih nama dari master (dulu teks bebas)
+        fetch('/api/procurement/suppliers/options', { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       if (rRes.ok) setReceipts(await rRes.json());
       if (lRes.ok) setLocations(await lRes.json());
@@ -158,7 +163,10 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         const data = await mRes.json();
         setMaterials(Array.isArray(data) ? data : (data.items || []));
       }
-      if (poRes.ok) setPurchaseOrders(await poRes.json());
+      const poA = poRes.ok ? await poRes.json() : [];
+      const poP = poPartRes.ok ? await poPartRes.json() : [];
+      setPurchaseOrders([...(Array.isArray(poA) ? poA : []), ...(Array.isArray(poP) ? poP : [])]);
+      if (supRes.ok) setSuppliers((await supRes.json())?.items || []);
       // FASE H-5: baris kain yang sudah masuk stok tetapi belum punya gulungan.
       // Ditarik bersama daftar penerimaan supaya lubangnya terlihat di layar yang
       // sama tempat lubang itu tercipta.
@@ -253,13 +261,17 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
     }
     
     // Pre-fill items from PO
-    const poItems = (po.items || []).map(item => ({
+    // 2026-11-07 (Tahap 5): baris yang sudah diterima penuh tidak ikut; qty = SISA (satuan dasar). Dulu qty
+    // pesanan penuh walau PO sudah diterima sebagian → GR kedua tercatat lebih (selisih stok & tagihan).
+    const remainingOf = (item) => (item.qty_remaining != null
+      ? Number(item.qty_remaining) : Math.max(0, Number(item.qty_ordered || 0) - Number(item.qty_received || 0)));
+    const poItems = (po.items || []).filter(item => remainingOf(item) > 0).map(item => ({
       product_name:  item.material_name || '',
       sku:           item.material_code || '',
       material_id:   item.material_id,
       material_name: item.material_name || '',
-      expected_qty:  item.qty_ordered || 0,
-      received_qty:  item.qty_ordered || 0,
+      expected_qty:  remainingOf(item),
+      received_qty:  remainingOf(item),
       rejected_qty:  0,
       unit:          item.unit || 'pcs',
       // 2026-11-02 (K11): harga baris PO (satuan dasar) ikut — dulu GR dari pilih-PO tanpa harga
@@ -272,7 +284,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       ...f,
       po_id: po.id,
       po_number: po.po_number,
-      supplier_name: po.vendor_name,
+      source_type: 'supplier',
+      supplier_name: po.supplier_name || po.vendor_name,
       items: poItems.length > 0 ? poItems : [EMPTY_ITEM()],
     }));
   };
@@ -288,10 +301,10 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       });
       if (badRoll) {
         const st = rollLinesState(badRoll.rolls, acceptedOf(badRoll));
-        alert(`Rincian gulungan ${badRoll.sku || badRoll.product_name} belum cocok:\n\n`
+        toast.error(`Rincian gulungan ${badRoll.sku || badRoll.product_name} belum cocok: `
           + `${st.count} gulungan = ${fmtQty(st.total)} ${badRoll.unit}, qty diterima ${fmtQty(acceptedOf(badRoll))} ${badRoll.unit}`
-          + `${st.diff ? ` (selisih ${st.diff > 0 ? '+' : ''}${fmtQty(st.diff, 3)})` : ''}.\n\n`
-          + 'Perbaiki angkanya — stok dan gulungan harus menjelaskan penerimaan yang sama.');
+          + `${st.diff ? ` (selisih ${st.diff > 0 ? '+' : ''}${fmtQty(st.diff, 3)})` : ''}. `
+          + 'Perbaiki angkanya — stok dan gulungan harus menjelaskan penerimaan yang sama.', { duration: 10000 });
         return;
       }
       // 2026-11-02 (K11): penerimaan TANPA PO boleh, tetapi harga satuan WAJIB.
@@ -300,8 +313,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         const noPrice = (form.items || []).find(it => it.material_id
           && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
         if (noPrice) {
-          alert(`Harga satuan wajib diisi untuk penerimaan tanpa PO (${noPrice.sku || noPrice.product_name || 'baris'}).\n\n`
-            + 'Harga ini menjadi nilai persediaan, HPP rata-rata, dan dasar tagihan pemasok.');
+          toast.error(`Harga satuan wajib diisi untuk penerimaan tanpa PO (${noPrice.sku || noPrice.product_name || 'baris'}). `
+            + 'Harga ini menjadi nilai persediaan, HPP rata-rata, dan dasar tagihan pemasok.', { duration: 10000 });
           return;
         }
       }
@@ -331,9 +344,9 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       }
       else {
         const err = await res.json().catch(() => ({}));
-        alert('Error: ' + (err.detail || res.status));
+        toast.error('Error: ' + (err.detail || res.status));
       }
-    } catch (e) { alert('Error: ' + e.message); }
+    } catch (e) { toast.error('Error: ' + e.message); }
   };
 
   const handleStatusChange = async (receipt, newStatus) => {
@@ -370,7 +383,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         const touched = items.reduce(
           (s, it) => s + (parseFloat(it.received_qty) || 0) + (parseFloat(it.rejected_qty) || 0), 0);
         if (touched <= 0) {
-          alert('Qty diterima masih 0.\n\nIsi dulu jumlah yang benar-benar datang pada '
+          toast.error('Qty diterima masih 0.\n\nIsi dulu jumlah yang benar-benar datang pada '
             + 'setiap baris (atau tekan "Terima semua sesuai PO").\n\n'
             + 'Kalau dikonfirmasi sekarang, penerimaan tercatat tetapi stok TIDAK '
             + 'bertambah sama sekali — inilah sebabnya pembelian terlihat selesai '
@@ -378,7 +391,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
           return;
         }
         if (!(detailLocationId || receipt.location_id)) {
-          alert('Lokasi tujuan belum dipilih.\n\nStok yang masuk harus mendarat di rak '
+          toast.error('Lokasi tujuan belum dipilih.\n\nStok yang masuk harus mendarat di rak '
             + 'yang jelas — tanpa lokasi, barangnya ada di sistem tetapi tidak ada di '
             + 'rak mana pun, dan Put-Away tidak bisa menemukannya.');
           return;
@@ -387,7 +400,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         // 2026-11-06 (Tahap 2): harga diisi Keuangan; baris ber-PO memakai harga PO.
         const noPrice = items.find(it => it.material_id && (parseFloat(it.received_qty) || 0) > 0 && !(priceOf(it) > 0));
         if (noPrice) {
-          alert(`Penerimaan ini menunggu harga dari Keuangan (${noPrice.sku || noPrice.product_name || 'baris'}).\n\n`
+          toast.error(`Penerimaan ini menunggu harga dari Keuangan (${noPrice.sku || noPrice.product_name || 'baris'}).\n\n`
             + (receipt.po_id ? 'Harga baris PO masih 0 — Keuangan mengubah harga baris PO lebih dulu.'
               : 'Penerimaan tanpa PO diberi harga oleh Keuangan sebelum bisa dikonfirmasi.'));
           return;
@@ -398,7 +411,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         && rollLinesState(it.rolls, acceptedOf(it)).state !== 'match');
       if (badRoll) {
         const st = rollLinesState(badRoll.rolls, acceptedOf(badRoll));
-        alert(`Rincian gulungan ${badRoll.sku || badRoll.product_name} belum cocok:\n\n`
+        toast.error(`Rincian gulungan ${badRoll.sku || badRoll.product_name} belum cocok:\n\n`
           + `${st.count} gulungan = ${fmtQty(st.total)} ${badRoll.unit}, qty diterima ${fmtQty(acceptedOf(badRoll))} ${badRoll.unit}.\n\n`
           + 'Perbaiki angkanya dulu — kalau tidak, stok dan gulungan akan bercerita beda.');
         return;
@@ -419,7 +432,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         const qs = updated?.quarantine_summary;
         const ds = updated?.reject_doc_summary;
         if (qs?.total_qty > 0 || ds?.total_qty > 0) {
-          alert('Barang diterima.\n\n'
+          toast.success('Barang diterima.\n\n'
             + (qs?.total_qty > 0 ? `${qs.total_qty} unit REJECT fisik dipindahkan ke ${qs.location?.name || 'Karantina QC'} `
               + '(stok diblokir).\nTindak lanjuti di menu Gudang → "Karantina QC": lepas ke stok, Buat Retur Pembelian, atau scrap.\n\n' : '')
             + (ds?.total_qty > 0 ? `${ds.total_qty} unit ditolak karena alasan dokumen/kuantitas — TIDAK masuk stok, `
@@ -436,9 +449,9 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       }
       else {
         const err = await res.json().catch(() => ({}));
-        alert('Error: ' + (err.detail || res.status));
+        toast.error('Error: ' + (err.detail || res.status));
       }
-    } catch (e) { alert('Error: ' + e.message); }
+    } catch (e) { toast.error('Error: ' + e.message); }
   };
 
   // 2026-11-06 (Tahap 2): Keuangan memberi harga penerimaan tanpa PO TANPA harus mengonfirmasinya —
@@ -476,7 +489,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
         throw new Error(typeof d.detail === 'string' ? d.detail : 'Gagal menghapus penerimaan');
       }
       setConfirmDelete(null); fetchData();
-    } catch (e) { alert('Error: ' + e.message); }
+    } catch (e) { toast.error('Error: ' + e.message); }
   };
 
   const resetForm = () => setForm({
@@ -584,7 +597,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             <RefreshCw className="w-4 h-4 text-muted-foreground" />
           </IconButton>
           <Button onClick={() => setShowCreate(true)} className="bg-primary text-primary-foreground hover:brightness-110 gap-1.5" data-testid="create-receipt-btn">
-            <Plus className="w-4 h-4" /> New Receipt
+            <Plus className="w-4 h-4" /> Penerimaan baru
           </Button>
         </div>
       </div>
@@ -772,14 +785,14 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
 
       {/* Create Modal */}
       {showCreate && (
-        <Modal title="New Goods Receipt" onClose={() => setShowCreate(false)} size="xl">
+        <Modal title="Penerimaan barang baru" onClose={() => setShowCreate(false)} size="xl">
           <div className="space-y-4">
             {/* Sprint 2.1: PO Selection */}
             <div className="p-3 rounded-lg bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)] ">
               <div className="flex items-start gap-2 mb-2">
                 <FileText className="w-4 h-4 text-[hsl(var(--primary))] shrink-0 mt-0.5" />
                 <div className="flex-1">
-                  <label className="text-xs font-semibold text-[hsl(var(--primary))] mb-1 block">Link ke Purchase Order (Optional)</label>
+                  <label className="text-xs font-semibold text-[hsl(var(--primary))] mb-1 block">Tautkan ke Purchase Order (opsional)</label>
                   <Combobox
                     value={form.po_id}
                     onChange={(v) => handlePOPick(v)}
@@ -787,8 +800,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       { value: '', label: 'Manual (tanpa PO)' },
                       ...purchaseOrders.map(po => ({
                         value: po.id,
-                        label: `${po.po_number} - ${po.vendor_name}`,
-                        description: `${po.item_count} items`,
+                        label: `${po.po_number} - ${po.supplier_name || po.vendor_name}`,
+                        description: po.status === 'partially_received' ? `sisa · ${po.item_count} item` : `${po.item_count} item`,
                       }))
                     ]}
                     placeholder="Manual (tanpa PO)"
@@ -798,7 +811,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                     data-testid="gr-po-select"
                   />
                   {form.po_number && (
-                    <p className="text-xs text-[hsl(var(--primary))] mt-1">✓ Items akan di-pre-fill dari PO {form.po_number}</p>
+                    <p className="text-xs text-[hsl(var(--primary))] mt-1">✓ Barang diisi otomatis dari sisa PO {form.po_number}</p>
                   )}
                 </div>
               </div>
@@ -816,17 +829,37 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                 </SmartNativeSelect>
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Reference (PO/SO)</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">No. referensi (surat jalan / dokumen)</label>
                 <GlassInput value={form.source_ref} onChange={e => setForm(f => ({ ...f, source_ref: e.target.value }))} placeholder="PO-001" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Supplier / Source</label>
-                <GlassInput value={form.supplier_name} onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))} placeholder="Nama supplier" />
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                  {form.source_type === 'supplier' ? 'Supplier' : 'Asal barang'}
+                </label>
+                {/* 2026-11-07 (Tahap 5): sumber pemasok dipilih dari Master Supplier (dulu teks bebas → nama beda
+                    ejaan tidak tertaut saat faktur/penilaian supplier). Ber-PO: supplier dari PO (terkunci). */}
+                {form.source_type === 'supplier' ? (
+                  <SmartNativeSelect value={form.supplier_name}
+                    onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
+                    disabled={!!form.po_id}
+                    className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground"
+                    data-testid="gr-supplier-select">
+                    <option value="">— pilih supplier —</option>
+                    {form.supplier_name && !suppliers.some(s => s.name === form.supplier_name) && (
+                      <option value={form.supplier_name}>{form.supplier_name}</option>
+                    )}
+                    {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
+                  </SmartNativeSelect>
+                ) : (
+                  <GlassInput value={form.supplier_name} onChange={e => setForm(f => ({ ...f, supplier_name: e.target.value }))}
+                    placeholder={form.source_type === 'production' ? 'mis. Line jahit 2' : 'mis. Gudang Lantai 2'}
+                    data-testid="gr-source-name" />
+                )}
               </div>
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Location Tujuan</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Lokasi tujuan</label>
                 <Combobox
                   value={form.location_id}
                   onChange={(v) => setForm(f => ({ ...f, location_id: v }))}
@@ -846,8 +879,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             {/* Items */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <label className="text-xs font-medium text-muted-foreground">Items</label>
-                <button onClick={addItem} className="text-xs text-primary hover:brightness-110 font-medium">+ Add Item</button>
+                <label className="text-xs font-medium text-muted-foreground">Barang</label>
+                <Button variant="link" size="sm" onClick={addItem} data-testid="gr-add-item">+ Tambah barang</Button>
               </div>
               <div className="space-y-3">
                 {form.items.map((item, idx) => (
@@ -1022,8 +1055,8 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Notes</label>
-              <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground h-16 resize-none placeholder:text-muted-foreground" placeholder="Optional notes..." />
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Catatan</label>
+              <textarea value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground h-16 resize-none placeholder:text-muted-foreground" placeholder="Opsional" />
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
@@ -1052,7 +1085,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
             <div className="grid grid-cols-2 gap-4">
               <div><p className="text-xs text-muted-foreground">Source</p><p className="text-sm font-medium text-foreground">{showDetail.supplier_name || showDetail.source_type}</p></div>
               <div><p className="text-xs text-muted-foreground">Reference</p><p className="text-sm font-medium text-foreground">{showDetail.source_ref || '-'}</p></div>
-              <div><p className="text-xs text-muted-foreground">Location</p><p className="text-sm font-medium text-foreground">{showDetail.location_name || '-'}</p></div>
+              <div><p className="text-xs text-muted-foreground">Lokasi</p><p className="text-sm font-medium text-foreground">{showDetail.location_name || '-'}</p></div>
               <div><p className="text-xs text-muted-foreground">Status</p><span className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${STATUS_STYLES[showDetail.status]}`}>{showDetail.status}</span></div>
             </div>
 
@@ -1339,7 +1372,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
       )}
 
       {confirmDelete && (
-        <ConfirmDialog title="Delete Receipt?" message="GR draft ini akan dihapus permanen." onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />
+        <ConfirmDialog title="Hapus penerimaan?" message="GR draft ini akan dihapus permanen." onConfirm={() => handleDelete(confirmDelete)} onCancel={() => setConfirmDelete(null)} />
       )}
 
       {/* ── FASE H-5: hasil penerbitan gulungan setelah GR dikonfirmasi ────────── */}

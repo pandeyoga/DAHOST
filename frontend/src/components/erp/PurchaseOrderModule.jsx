@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { materialOptionLabel } from '@/lib/materialFields';
 import { Plus, Eye, Trash2, CheckCircle2, XCircle, AlertTriangle, Send, Package, FileText, TruckIcon, Upload, Download, Building2, Tag } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { MoneyInput } from '@/components/ui/money-input';
 import { todayWIB } from '@/lib/waktu';
 import { Button } from '@/components/ui/button';
 import Modal from './Modal';
+import ConfirmDialog from './ConfirmDialog';
 import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
@@ -46,6 +48,8 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
   const [approveModal, setApproveModal] = useState(false);
   const [rejectModal, setRejectModal] = useState(false);
   const [cancelModal, setCancelModal] = useState(false);
+  // 2026-11-07 (Tahap 5): konfirmasi hapus memakai dialog aplikasi (dulu window.confirm bawaan browser)
+  const [confirmDelPO, setConfirmDelPO] = useState(null);
   const [selectedPO, setSelectedPO] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [approveNote, setApproveNote] = useState('');
@@ -448,8 +452,9 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
     }
   };
 
-  const deletePO = async (po) => {
-    if (!window.confirm(`Hapus PO ${po.po_number}?`)) return;
+  const deletePO = (po) => setConfirmDelPO(po);
+  const doDeletePO = async (po) => {
+    setConfirmDelPO(null);
     const r = await fetch(`/api/rahaza/purchase-orders/${po.id}`, { method: 'DELETE', headers });
     if (r.ok) {
       toast.success('PO berhasil dihapus');
@@ -503,10 +508,10 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <select
+          <SmartNativeSelect
             value={filterStatus}
             onChange={e => setFilterStatus(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
+            className="w-44 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
             data-testid="po-filter-status"
           >
             <option value="">Semua Status</option>
@@ -517,18 +522,18 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             <option value="fully_received">Diterima Penuh</option>
             <option value="rejected">Ditolak</option>
             <option value="cancelled">Dibatalkan</option>
-          </select>
-          <select
+          </SmartNativeSelect>
+          <SmartNativeSelect
             value={filterSupplier}
             onChange={e => setFilterSupplier(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground max-w-[220px]"
+            className="w-56 h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
             data-testid="po-filter-supplier"
           >
             <option value="">Semua Supplier</option>
             {suppliers.map(s => (
               <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>
             ))}
-          </select>
+          </SmartNativeSelect>
           <Button onClick={openCreate} data-testid="po-create-btn">
             <Plus className="w-4 h-4 mr-1.5" /> Buat PO
           </Button>
@@ -682,12 +687,17 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                   onChange={(e) => {
                     const sid = e.target.value;
                     const s = suppliers.find(x => x.id === sid);
+                    const prevSup = suppliers.find(x => x.id === poForm.supplier_id);
+                    // 2026-11-07 (Tahap 5): kontak & alamat MENGIKUTI supplier yang baru dipilih. Dulu supplier
+                    // tanpa telepon/alamat mewarisi kontak supplier SEBELUMNYA (tercetak di PO yang salah).
+                    // Isian ketikan sendiri (bukan dari master) tetap dipertahankan.
+                    const fromPrev = (v, k) => !prevSup || v === (prevSup[k] || '');
                     setPOForm(prev => ({
                       ...prev,
                       supplier_id: sid,
                       vendor_name: s?.name || '',
-                      vendor_contact: s?.phone || prev.vendor_contact,
-                      vendor_address: s?.address || prev.vendor_address,
+                      vendor_contact: s?.phone || (fromPrev(prev.vendor_contact, 'phone') ? '' : prev.vendor_contact),
+                      vendor_address: s?.address || (fromPrev(prev.vendor_address, 'address') ? '' : prev.vendor_address),
                     }));
                     // Harga bisa berbeda per supplier → segarkan saran harga
                     poForm.items.forEach(it => {
@@ -817,7 +827,7 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
                         >
                           <option value="">Item bebas (jasa / non-master)</option>
                           {materials.map(m => (
-                            <option key={m.id} value={m.id}>{`${m.code} - ${m.name}`}</option>
+                            <option key={m.id} value={m.id}>{materialOptionLabel(m)}</option>
                           ))}
                         </SmartNativeSelect>
                         {!item.material_id && (
@@ -1466,14 +1476,20 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
 
             {/* Default vendor */}
             <div>
-              <label className="block text-xs font-medium text-foreground/70 mb-1">Vendor Default (opsional — bisa di-override per baris CSV)</label>
-              <input
+              <label className="block text-xs font-medium text-foreground/70 mb-1">Supplier default (opsional — bisa diganti per baris file)</label>
+              {/* 2026-11-07 (Tahap 5): dipilih dari Master Supplier (dulu teks bebas → PO "belum tertaut master"
+                  bila ejaannya beda). Server menautkan lewat nama yang sama persis dengan master. */}
+              <SmartNativeSelect
                 value={bulkVendor}
                 onChange={e => setBulkVendor(e.target.value)}
-                placeholder="Nama vendor..."
                 className="w-full h-9 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
                 data-testid="bulk-vendor-input"
-              />
+              >
+                <option value="">Tanpa supplier default (ambil dari kolom vendor_name)</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>
+                ))}
+              </SmartNativeSelect>
             </div>
 
             {/* File picker */}
@@ -1568,6 +1584,12 @@ export default function PurchaseOrderModule({ token, onNavigate }) {
             </div>
           </div>
         </Modal>
+      )}
+
+      {confirmDelPO && (
+        <ConfirmDialog title={`Hapus PO ${confirmDelPO.po_number}?`}
+          message="PO draft ini akan dihapus permanen."
+          onConfirm={() => doDeletePO(confirmDelPO)} onCancel={() => setConfirmDelPO(null)} />
       )}
     </div>
   );

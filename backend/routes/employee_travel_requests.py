@@ -131,13 +131,11 @@ async def _get_per_diem_rate(db, destination_type: str) -> dict:
         {'_id': 0}
     )
     if not rate:
-        # Default rates jika belum dikonfigurasi
-        defaults = {
-            'dalam_kota': {'daily_rate': 100_000, 'meal_allowance': 50_000, 'transport_allowance': 50_000},
-            'luar_kota': {'daily_rate': 300_000, 'meal_allowance': 75_000, 'transport_allowance': 100_000},
-            'luar_negeri': {'daily_rate': 500_000, 'meal_allowance': 150_000, 'transport_allowance': 200_000},
-        }
-        return defaults.get(destination_type, {'daily_rate': 100_000, 'meal_allowance': 50_000, 'transport_allowance': 50_000})
+        # 2026-11-07 (Tahap 5): tarif bawaan = SATU sumber dengan layar Konfigurasi Per Diem
+        # (`employee_per_diem.DEFAULT_RATES`). Dulu salinan di sini berbeda (luar negeri 500.000 vs 600.000 yang
+        # tampil di layar konfigurasi & pratinjau formulir).
+        from routes.employee_per_diem import DEFAULT_RATES
+        return dict(DEFAULT_RATES.get(destination_type) or DEFAULT_RATES['dalam_kota'])
     return rate
 
 

@@ -104,6 +104,23 @@ function useDivisions(token) {
   return divs;
 }
 
+// 2026-11-07 (Tahap 5): supplier aksesoris & PR aksesoris dipilih dari Master Supplier (dulu teks bebas →
+// ejaan berbeda tidak tertaut ke supplier/PO). Nilai yang disimpan tetap NAMA (kunci lama `supplier`).
+function useSupplierOptions(token) {
+  const [rows, setRows] = useState([]);
+  useEffect(() => {
+    let alive = true;
+    api('GET', '/api/procurement/suppliers/options', token)
+      .then(d => { if (alive) setRows(d?.items || []); })
+      .catch(() => { /* master kosong → hanya nilai lama yang tampil */ });
+    return () => { alive = false; };
+  }, [token]);
+  return rows;
+}
+
+// Prioritas PR: nilai server tetap (Urgent/Normal/Low), label berbahasa Indonesia
+const PR_PRIORITY_LABEL = { Urgent: 'Mendesak', Normal: 'Normal', Low: 'Rendah' };
+
 function divisionHint(divs, value) {
   const d = (divs || []).find(x => x.value === value);
   if (!d) return '';
@@ -123,6 +140,7 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const [moveForm, setMoveForm] = useState({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' });
   // 2026-11-06 (Tahap 2): divisi pemohon (Keluarkan Stok) + harga penerimaan (hanya Keuangan yang mengubah)
   const divisions = useDivisions(token);
+  const suppliers = useSupplierOptions(token);
   const [recvPrice, setRecvPrice] = useState(null); // {can_set_price, unit_cost, source_label}
   // 2026-11-06 (Tahap 2): pilihan kategori dari master kategori material (dulu teks bebas → ID tampil)
   const [catMaster, setCatMaster] = useState([]);
@@ -437,14 +455,23 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
               {[
                 {label:'Kode', key:'code', placeholder:'ACC-001'},
                 {label:'Nama *', key:'name', placeholder:'Kancing'},
-                {label:'Supplier', key:'supplier', placeholder:'CV. Supplier'},
               ].map(f => (
                 <div key={f.key}>
                   <label className="text-xs text-muted-foreground block mb-1">{f.label}</label>
                   <input value={form[f.key]||''} onChange={e=>setForm({...form,[f.key]:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder={f.placeholder} />
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder={f.placeholder}
+                    data-testid={`acc-field-${f.key}`} />
                 </div>
               ))}
+              <div>
+                <label className="text-xs text-muted-foreground block mb-1">Supplier</label>
+                <SmartNativeSelect value={form.supplier} onChange={e=>setForm({...form,supplier:e.target.value})}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-supplier-select">
+                    <option value="">— pilih supplier —</option>
+                    {form.supplier && !suppliers.some(s => s.name === form.supplier) && <option value={form.supplier}>{`${form.supplier} (belum di Master Supplier)`}</option>}
+                    {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
+                  </SmartNativeSelect>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Unit</label>
@@ -893,7 +920,7 @@ function RequestInternalTab({ token, items }) {
                   <div key={i} className="flex items-center gap-2 mb-2">
                     <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="flex-1 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" data-testid={`req-item-${i}`}>
                       <option value="">Pilih item...</option>
-                      {items.map(a=><option key={a.id} value={a.id}>{a.name} (stok: {a.stock_qty} {a.unit})</option>)}
+                      {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
                     </SmartNativeSelect>
                     <input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)}
                       className="w-16 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Qty" />
@@ -993,6 +1020,7 @@ function PurchaseRequestTab({ token, items }) {
   // SESI #27 — nomor PR aksesoris mengikuti kebijakan Otomatis/Manual milik owner.
   const numPolicy = useDocNumberPolicy('acc_purchase_requests.pr_number', token);
   const [prNumber, setPrNumber] = useState('');
+  const suppliers = useSupplierOptions(token);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1113,7 +1141,7 @@ function PurchaseRequestTab({ token, items }) {
                 <td className="px-4 py-3 text-muted-foreground">{pr.supplier||'-'}</td>
                 <td className="px-4 py-3 text-center">
                   <span className={`px-2 py-0.5 rounded-full text-xs ${pr.priority==='Urgent'?'bg-red-100 dark:bg-red-500/10 text-red-700 dark:text-red-400':pr.priority==='Low'?'bg-muted dark:bg-slate-500/10 text-muted-foreground':'bg-sky-100 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400'}`}>
-                    {pr.priority}
+                    {PR_PRIORITY_LABEL[pr.priority] || pr.priority}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right font-medium">Rp {fmtNum(pr.total_estimated)}</td>
@@ -1174,12 +1202,17 @@ function PurchaseRequestTab({ token, items }) {
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Prioritas</label>
                   <SmartNativeSelect value={form.priority} onChange={e=>setForm({...form,priority:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="pr-priority">
-                    {['Urgent','Normal','Low'].map(p=><option key={p} value={p}>{p}</option>)}
+                    {['Urgent','Normal','Low'].map(p=><option key={p} value={p}>{PR_PRIORITY_LABEL[p]}</option>)}
                   </SmartNativeSelect>
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Supplier</label>
-                  <input value={form.supplier} onChange={e=>setForm({...form,supplier:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Nama supplier..." />
+                  <label className="text-xs text-muted-foreground block mb-1">Supplier usulan</label>
+                  <SmartNativeSelect value={form.supplier} onChange={e=>setForm({...form,supplier:e.target.value})}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="pr-supplier">
+                    <option value="">— pilih supplier —</option>
+                    {form.supplier && !suppliers.some(s => s.name === form.supplier) && <option value={form.supplier}>{`${form.supplier} (belum di Master Supplier)`}</option>}
+                    {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
+                  </SmartNativeSelect>
                 </div>
               </div>
               <div>
@@ -1193,9 +1226,9 @@ function PurchaseRequestTab({ token, items }) {
                 </div>
                 {lines.map((ln,i)=>(
                   <div key={i} className="flex items-center gap-2 mb-2">
-                    <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="flex-1 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]">
+                    <SmartNativeSelect value={ln.acc_id} onChange={e=>lineChange(i,e.target.value)} className="flex-1 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" data-testid={`pr-item-${i}`}>
                       <option value="">Pilih item...</option>
-                      {items.map(a=><option key={a.id} value={a.id}>{a.name} (stok: {a.stock_qty} {a.unit})</option>)}
+                      {items.map(a=><option key={a.id} value={a.id}>{`${a.code ? `${a.code} · ` : ''}${a.name} (stok: ${a.stock_qty} ${a.unit})`}</option>)}
                     </SmartNativeSelect>
                     <input type="number" min="1" value={ln.qty_requested} onChange={e=>updateLine(i,'qty_requested',+e.target.value)} className="w-14 border border-border rounded-lg px-2 py-1.5 text-xs bg-[var(--card-surface)]" placeholder="Qty" />
                     <span className="text-xs text-muted-foreground">{ln.unit}</span>

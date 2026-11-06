@@ -1358,7 +1358,9 @@ export default function BuyerShipmentModule({ userRole, hasPerm = () => false, p
                 <option value="">-- Pilih PO --</option>
                 {pos.map(p => (
                   <option key={p.id} value={p.id}>
-                    {p.po_number} | {p.vendor_name || ''} | {p.created_at ? new Date(p.created_at).toLocaleDateString('id-ID') : ''}
+                    {/* 2026-11-07: pembeli (tujuan kiriman) ikut di label — dulu hanya nomor | vendor | tanggal */}
+                    {[p.po_number, p.customer_name, p.vendor_name ? `CMT ${p.vendor_name}` : '',
+                      p.created_at ? new Date(p.created_at).toLocaleDateString('id-ID') : ''].filter(Boolean).join(' · ')}
                   </option>
                 ))}
               </SmartNativeSelect>
