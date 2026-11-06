@@ -23,7 +23,7 @@ import { withFileAuth } from '@/lib/fileUrl';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import {
   EmployeeSelect, useHrMasters, departmentOptions, positionOptions, unitByName, shiftLabel,
-  useDepartmentFilterOptions,
+  useDepartmentFilterOptions, EMERGENCY_RELATIONS,
 } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -61,7 +61,7 @@ const TAX_PTKP = [
 // Bank di luar daftar: pilih "Bank lain" lalu ketik namanya (dulu "Lainnya" tersimpan apa adanya → nama bank hilang).
 const BANKS = ['BCA', 'BRI', 'Mandiri', 'BNI', 'BSI', 'CIMB Niaga', 'Permata', 'Danamon', 'BTN', 'Mega', 'Panin', 'Jago'];
 const BANK_OTHER = '__lain';
-const RELATIONS = ['Orang Tua', 'Pasangan', 'Saudara Kandung', 'Anak', 'Teman', 'Lainnya'];
+const RELATIONS = EMERGENCY_RELATIONS;   // satu daftar dengan Portal Saya › Profil (HR1, 2026-11-07)
 const DOC_CATEGORIES = ['Kontrak Kerja', 'KTP', 'NPWP', 'Ijazah', 'SKCK', 'Sertifikat', 'Surat Pengalaman', 'BPJS', 'KK (Kartu Keluarga)', 'Pas Foto', 'Lainnya'];
 
 const defaultEmployee = {

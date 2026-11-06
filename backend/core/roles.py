@@ -19,3 +19,7 @@ RND_ROLES = MGMT_ROLES + ("rnd_staff",)
 MAKLON_ROLES = MGMT_ROLES + ("admin_maklon",)
 MARKETING_ROLES = MGMT_ROLES + ("marketing_kol", "pic_toko")
 MARKETING_CS_ROLES = MARKETING_ROLES + ("cs_staff",)
+
+# 2026-11-07 (Tahap 6, SY2 — keputusan owner): yang boleh MENGUBAH Pengaturan Sistem (dewi_system_config,
+# termasuk kunci rahasia). Cermin layar: `frontend/src/lib/systemConfigRoles.js`.
+SYSTEM_CONFIG_ROLES = ("superadmin", "admin", "owner")

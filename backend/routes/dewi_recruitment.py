@@ -280,7 +280,7 @@ async def update_candidate(
                     emp_code = f"{code_prefix}-{seq:03d}"
 
                     job = await db.dewi_recruitment_jobs.find_one({"job_id": candidate["job_id"]}, {"_id": 0})
-                    job_title = (job or {}).get("title") or "Staff"
+                    job_title = (job or {}).get("title") or ""   # 2026-11-07 (OR2): tanpa jabatan bawaan
                     department = (job or {}).get("department") or ""
 
                     new_emp = {

@@ -263,8 +263,21 @@ async def create_po(request: Request):
     if not check_role(user, PROD_ADMIN_ROLES): raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
+    assert_maklon_buyer(body)
     result = await create_po_internal(db, body, user)
     return JSONResponse(result, status_code=201)
+
+
+def assert_maklon_buyer(body: dict) -> None:
+    """2026-11-07 (Tahap 6, PR7): PO maklon baru WAJIB memilih buyer (klien maklon).
+
+    Formulir dulu menawarkan "atau ketik nama pelanggan" — tidak berguna, karena artikel katalog selalu
+    milik satu buyer (tanpa buyer tidak ada artikel yang bisa dipilih). Kotak itu dihapus; server ikut
+    menolak PO maklon tanpa `buyer_id` supaya nama ketikan tidak bisa masuk lewat jalur lain.
+    Jalur impor/cermin (`create_po_internal` langsung) tidak lewat sini."""
+    if (body.get('business_type') or 'internal') == 'maklon' and not str(body.get('buyer_id') or '').strip():
+        raise HTTPException(400, 'PO maklon wajib memilih buyer (klien maklon) — artikel katalog selalu '
+                                 'milik satu buyer. Nama pelanggan ketikan tidak diterima.')
 
 
 async def create_po_internal(db, body: dict, user: dict, *,

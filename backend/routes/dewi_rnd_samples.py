@@ -11,6 +11,40 @@ RND_APPROVER_ROLES = ('rnd_staff', 'manager_produksi', 'supervisor_produksi',
                       'manager', 'owner', 'admin', 'superadmin')
 
 # ──────────────────────────────────────────────────────────────────────────────
+# 2026-11-07 (Tahap 6, keputusan owner HR4): PIC / pembuat sample
+# ──────────────────────────────────────────────────────────────────────────────
+# Dulu teks bebas. Sekarang DIPILIH dari karyawan (`rahaza_employees`, karyawan bagian sample ditawarkan
+# paling atas di layar) → `sample_pic_employee_id` + `sample_pic` (nama dari master). Penjahit LUAR tetap
+# bisa diketik lewat pilihan eksplisit "Penjahit luar" → `sample_pic` + `sample_pic_external: true`.
+# Ketikan tanpa penanda ditolak; nilai lama yang tidak diubah tetap boleh.
+PIC_KEYS = ('sample_pic', 'sample_pic_employee_id', 'sample_pic_external')
+
+
+async def resolve_sample_pic(db, body: dict, before: dict = None) -> dict:
+    """PIC sample dari body → field tersimpan. {} bila body tidak menyentuh PIC. 400 bila tidak sah."""
+    if not any(k in body for k in PIC_KEYS):
+        return {}
+    before = before or {}
+    eid = str(body.get('sample_pic_employee_id') or '').strip()
+    name = str(body.get('sample_pic') or '').strip()
+    if eid:
+        emp = await db.rahaza_employees.find_one({'id': eid}, {'_id': 0, 'id': 1, 'name': 1, 'active': 1})
+        if not emp:
+            raise HTTPException(400, 'Karyawan PIC sample tidak ada di data karyawan — pilih dari daftar.')
+        if emp.get('active') is False and before.get('sample_pic_employee_id') != eid:
+            raise HTTPException(400, f"Karyawan {emp.get('name')} sudah nonaktif — pilih karyawan lain.")
+        return {'sample_pic_employee_id': eid, 'sample_pic': emp.get('name') or '', 'sample_pic_external': False}
+    if not name:
+        return {'sample_pic_employee_id': '', 'sample_pic': '', 'sample_pic_external': False}
+    if body.get('sample_pic_external'):
+        return {'sample_pic_employee_id': '', 'sample_pic': name, 'sample_pic_external': True}
+    if name == str(before.get('sample_pic') or '').strip() and not before.get('sample_pic_employee_id'):
+        return {'sample_pic_employee_id': '', 'sample_pic': name,
+                'sample_pic_external': bool(before.get('sample_pic_external'))}   # nilai lama
+    raise HTTPException(400, "Pilih karyawan sebagai PIC sample, atau pilih 'Penjahit luar' lalu ketik namanya.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # SAMPLE REQUESTS
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -44,6 +78,7 @@ async def create_sample_request(body: dict, user: dict = Depends(require_auth)):
     style = await db.dewi_rnd_styles.find_one({'id': style_id})
     if not style:
         raise HTTPException(404, 'Style tidak ditemukan')
+    pic = await resolve_sample_pic(db, {k: body.get(k) for k in PIC_KEYS})
 
     doc = {
         'id': sid(),
@@ -53,7 +88,8 @@ async def create_sample_request(body: dict, user: dict = Depends(require_auth)):
         'style_name': style.get('style_name', ''),
         'quantity': body.get('quantity', 1),
         'priority': body.get('priority', 'normal'),
-        'sample_pic': (body.get('sample_pic') or '').strip(),   # PIC / pembuat sample (2026-08-07)
+        # PIC / pembuat sample (2026-08-07) — Tahap 6 (HR4): karyawan (id + nama) atau penjahit luar (nama + penanda)
+        **pic,
         'due_date': body.get('due_date'),
         'notes': body.get('notes', ''),
         'status': 'draft',
@@ -86,6 +122,12 @@ async def update_sample_request(request_id: str, body: dict, user: dict = Depend
     body.pop('_id', None)
     body.pop('id', None)
     body.pop('created_at', None)
+    # Tahap 6 (HR4): PIC sample hanya karyawan dari master atau penjahit luar bertanda
+    if any(k in body for k in PIC_KEYS):
+        before = await db.dewi_rnd_sample_requests.find_one({'id': request_id}, {'_id': 0})
+        if not before:
+            raise HTTPException(404, 'Sample request tidak ditemukan')
+        body.update(await resolve_sample_pic(db, body, before))
     body['updated_at'] = now_utc()
 
     res = await db.dewi_rnd_sample_requests.update_one({'id': request_id}, {'$set': body})

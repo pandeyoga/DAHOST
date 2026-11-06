@@ -398,6 +398,9 @@ async def job_auto_create_tasks_from_templates():
             # Generate task code
             count = await db.marketing_tasks.count_documents({})
             task_code = f"TKS-{str(count + 1 + created).zfill(4)}"
+            # 2026-11-07 (Tahap 6, MK1): penanggung jawab = PIC toko template; kosong hanya bila toko tanpa PIC.
+            from routes.marketing_task_templates import template_assignee, TEMPLATE_ASSIGNEE_PIC
+            pic_id, pic_name = await template_assignee(db, tmpl)
 
             task_doc = {
                 'id': str(uuid.uuid4()),
@@ -408,8 +411,9 @@ async def job_auto_create_tasks_from_templates():
                 'task_type': tmpl.get('task_type', 'regular'),
                 'recurrence': recurrence,
                 'recurrence_config': cfg,
-                'assigned_to': None,          # Template assigns by role, not user
-                'assigned_role': tmpl.get('default_assigned_role'),
+                'assigned_to': pic_id,
+                'assigned_to_name': pic_name,
+                'assigned_role': TEMPLATE_ASSIGNEE_PIC,
                 'assigned_by': 'scheduler',
                 'account_id': tmpl.get('account_id'),
                 'priority': tmpl.get('priority', 'medium'),

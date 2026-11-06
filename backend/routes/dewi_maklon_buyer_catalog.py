@@ -135,6 +135,42 @@ def _mk_size_code(size: str) -> str:
     return re.sub(r'[^A-Za-z0-9]', '', (size or '').strip()).upper()
 
 
+async def resolve_options_from_master(db, colors: Optional[List[str]], sizes: Optional[List[str]],
+                                      existing: Optional[dict] = None) -> dict:
+    """2026-11-07 (Tahap 6, PR5): opsi warna & ukuran artikel HANYA dari master (`rahaza_colors` nama,
+    `rahaza_sizes` kode — master yang sama dengan palet di formulir). Kotak "warna/ukuran lain" dihapus.
+
+    Dipadankan tanpa beda huruf besar/kecil lalu ditulis persis seperti di master. Nilai di luar master
+    DITOLAK (400) — kecuali nilai yang SUDAH tersimpan di artikel itu (`existing`), supaya artikel lama
+    tetap bisa disunting tanpa kehilangan opsi/varian lamanya. Warna/ukuran baru ditambahkan di Master Data.
+    → {'color_options': [...], 'size_options': [...]} hanya untuk kunci yang dikirim (None = tidak diubah)."""
+    out: dict = {}
+    for key, values, coll, field, label in (
+            ('color_options', colors, 'rahaza_colors', 'name', 'Warna'),
+            ('size_options', sizes, 'rahaza_sizes', 'code', 'Ukuran')):
+        if values is None:
+            continue
+        master = {str(r.get(field) or '').strip().lower(): str(r.get(field) or '').strip()
+                  async for r in getattr(db, coll).find({'active': {'$ne': False}}, {'_id': 0, field: 1})
+                  if str(r.get(field) or '').strip()}
+        old = {str(x).strip() for x in ((existing or {}).get(key) or []) if str(x).strip()}
+        clean, unknown = [], []
+        for raw in values:
+            v = str(raw or '').strip()
+            if not v:
+                continue
+            val = master.get(v.lower()) or (v if v in old else None)
+            if val is None:
+                unknown.append(v)
+            elif val not in clean:
+                clean.append(val)
+        if unknown:
+            raise HTTPException(400, f"{label} {', '.join(unknown)} tidak ada di master. Pilih dari daftar — "
+                                     f"{label.lower()} baru ditambahkan di Master Data (Portal RnD › Master Produk).")
+        out[key] = clean
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # ENDPOINTS — Buyer Catalog CRUD
 # ──────────────────────────────────────────────────────────────────────────────
@@ -187,6 +223,7 @@ async def create_buyer_catalog(payload: BuyerCatalogIn, user: dict = Depends(req
 
     artikel_code = payload.artikel_code.strip()
     await _ensure_unique_artikel_code(db, payload.client_id, artikel_code)
+    opts = await resolve_options_from_master(db, payload.color_options or [], payload.size_options or [])
 
     doc = {
         'id': _uid(),
@@ -201,8 +238,9 @@ async def create_buyer_catalog(payload: BuyerCatalogIn, user: dict = Depends(req
         'gender': (payload.gender or '').strip(),
         'default_cmt_price': float(payload.default_cmt_price or 0),
         'default_selling_price': float(payload.default_selling_price or 0),
-        'color_options': [c.strip() for c in (payload.color_options or []) if c and c.strip()],
-        'size_options': [s.strip() for s in (payload.size_options or []) if s and s.strip()],
+        # Tahap 6 (PR5): hanya warna/ukuran master (ditulis persis seperti master)
+        'color_options': opts['color_options'],
+        'size_options': opts['size_options'],
         # Fase 3: varian ber-SKU maklon (di-generate dari color×size). Kosong saat create.
         'variants': [],
         'description': (payload.description or '').strip(),
@@ -285,9 +323,12 @@ async def update_buyer_catalog(catalog_id: str, payload: BuyerCatalogUpdate, use
         if f in update_data and isinstance(update_data[f], str):
             update_data[f] = update_data[f].strip()
 
-    for f in ('color_options', 'size_options'):
-        if f in update_data and isinstance(update_data[f], list):
-            update_data[f] = [x.strip() for x in update_data[f] if x and str(x).strip()]
+    # Tahap 6 (PR5): opsi baru wajib dari master; opsi lama artikel ini boleh tetap.
+    update_data.update(await resolve_options_from_master(
+        db,
+        update_data['color_options'] if isinstance(update_data.get('color_options'), list) else None,
+        update_data['size_options'] if isinstance(update_data.get('size_options'), list) else None,
+        existing=existing))
 
     update_data['updated_at'] = _now()
 

@@ -383,6 +383,7 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
     e.preventDefault();
     const fail = (text, itemIdx = null) => { setFormError({ text, itemIdx }); return false; };
     setFormError(null);
+    if (!isInternal && !editData && !form.buyer_id) { fail('Pilih buyer (klien maklon) dulu — artikel katalog selalu milik satu buyer.'); return; }
     if (form.items.length === 0) { fail('Tambahkan minimal 1 item produk.'); return; }
     // Validasi Maklon: artikel yg punya varian master data WAJIB pilih varian (SKU), bukan custom.
     if (!isInternal) {
@@ -854,12 +855,10 @@ export default function ProductionPOModule({ userRole, hasPerm = () => false, bu
                     fetchCatalog(val);
                   }}
                   placeholder="— Pilih Buyer —"
+                  data-testid="po-buyer-select"
                 />
-                {!form.buyer_id && (
-                  <input className="w-full border border-border rounded-lg px-3 py-2 text-sm mt-1 focus:outline-none focus:ring-2 focus:ring-[hsl(var(--primary)/0.35)]" 
-                    value={form.customer_name} onChange={e => setForm({...form, customer_name: e.target.value})} 
-                    placeholder="Atau ketik nama pelanggan" />
-                )}
+                {/* 2026-11-07 (Tahap 6, PR7): kotak "Atau ketik nama pelanggan" dihapus — artikel katalog selalu
+                    milik satu buyer, jadi PO maklon tanpa buyer terpilih tidak bisa diisi. */}
                 </>)}
               </div>
             </div>

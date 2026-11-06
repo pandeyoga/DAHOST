@@ -483,8 +483,6 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
   // Fase 3: palet warna standar + master size untuk input varian/SKU yang jelas
   const [palette, setPalette] = useState([]);
   const [sizeMaster, setSizeMaster] = useState([]);
-  const [customColor, setCustomColor] = useState('');
-  const [customSize, setCustomSize] = useState('');
   const [autoGen, setAutoGen] = useState(!isEdit);
 
   useEffect(() => {
@@ -527,17 +525,6 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
         ? f.size_options.filter((x) => x !== code)
         : [...f.size_options, code],
     }));
-  const addCustomColor = () => {
-    const v = customColor.trim();
-    if (v && !form.color_options.includes(v)) toggleColor(v);
-    setCustomColor('');
-  };
-  const addCustomSize = () => {
-    const v = customSize.trim().toUpperCase();
-    if (v && !form.size_options.includes(v)) toggleSize(v);
-    setCustomSize('');
-  };
-
   const skuCount = form.color_options.length * form.size_options.length;
   const exampleSku =
     form.artikel_code && form.color_options[0] && form.size_options[0]
@@ -759,7 +746,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
 
             {/* Opsi Warna — dari palet standar (kode konsisten utk SKU) */}
             <div>
-              <Label className="text-xs mb-1 block">Opsi Warna (pilih dari palet standar)</Label>
+              <Label className="text-xs mb-1 block">Opsi Warna (dari master warna)</Label>
               <div className="flex flex-wrap gap-1.5" data-testid="bc-form-color-palette">
                 {palette.map((c) => {
                   const sel = form.color_options.includes(c.name);
@@ -790,6 +777,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                       <span
                         key={n}
                         className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))] text-[11px]"
+                        title="Opsi lama — belum ada di master warna"
                       >
                         {n}
                         <button type="button" onClick={() => toggleColor(n)}>
@@ -799,29 +787,11 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                     ))}
                 </div>
               )}
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <Input
-                  value={customColor}
-                  onChange={(e) => setCustomColor(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addCustomColor();
-                    }
-                  }}
-                  placeholder="Warna lain (opsional)"
-                  className="h-8 text-xs w-44"
-                  data-testid="bc-form-color-custom"
-                />
-                <Button type="button" size="sm" variant="outline" onClick={addCustomColor}>
-                  + Tambah
-                </Button>
-              </div>
             </div>
 
             {/* Opsi Ukuran — dari master size */}
             <div>
-              <Label className="text-xs mb-1 block">Opsi Ukuran (dari master size)</Label>
+              <Label className="text-xs mb-1 block">Opsi Ukuran (dari master ukuran)</Label>
               <div className="flex flex-wrap gap-1.5" data-testid="bc-form-size-palette">
                 {sizeMaster.map((s) => {
                   const sel = form.size_options.includes(s.code);
@@ -847,6 +817,7 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                     <span
                       key={c}
                       className="flex items-center gap-1 px-2 py-1 rounded-md bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.3)] text-[hsl(var(--warning))] text-xs tabular-nums"
+                      title="Opsi lama — belum ada di master ukuran"
                     >
                       {c}
                       <button type="button" onClick={() => toggleSize(c)}>
@@ -855,25 +826,19 @@ function BuyerCatalogDialog({ data, clients, headers, onClose, onSuccess }) {
                     </span>
                   ))}
               </div>
-              <div className="flex items-center gap-1.5 mt-1.5">
-                <Input
-                  value={customSize}
-                  onChange={(e) => setCustomSize(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      addCustomSize();
-                    }
-                  }}
-                  placeholder="Size lain (opsional)"
-                  className="h-8 text-xs w-32"
-                  data-testid="bc-form-size-custom"
-                />
-                <Button type="button" size="sm" variant="outline" onClick={addCustomSize}>
-                  + Tambah
-                </Button>
-              </div>
             </div>
+
+            {/* 2026-11-07 (Tahap 6, PR5): kotak "warna/ukuran lain" dihapus — warna & ukuran HANYA dari master
+                (server menolak nilai di luar master untuk artikel baru/diubah). Opsi lama artikel tetap tampil
+                (bertanda kuning) dan boleh tetap disimpan. */}
+            <p className="text-[11px] text-muted-foreground" data-testid="bc-form-master-hint">
+              Warna atau ukuran belum ada? Tambahkan dulu di Master Data (Portal RnD › Master Produk › Warna / Ukuran).{' '}
+              <Button type="button" variant="link" size="sm" className="h-auto p-0 text-[11px]"
+                onClick={() => window.open('/?portal=rnd&module=rnd-master-product-hub', '_blank', 'noopener')}
+                data-testid="bc-form-master-link">
+                Buka Master Produk
+              </Button>
+            </p>
 
             {/* SKU preview */}
             <div

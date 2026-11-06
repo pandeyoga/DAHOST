@@ -47,7 +47,7 @@ export default function AccountBulkReviewModule({ token }) {
     try {
       const [ra, ru, rc] = await Promise.all([
         fetch(`${API}/api/marketing/accounts`, { headers }),
-        fetch(`${API}/api/auth/users?limit=200`, { headers }),
+        fetch(`${API}/api/auth/users?portal=toko&limit=500`, { headers }),   // MK3: hanya pengguna Portal Toko
         fetch(`${API}/api/marketing/accounts/coa-options`, { headers }),
       ]);
       const accs = ra.ok ? await ra.json() : [];

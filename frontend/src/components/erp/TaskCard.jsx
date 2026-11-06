@@ -190,7 +190,8 @@ export function TaskCard({ task, isDragging, onRefresh, token, accounts = [], on
         {task.assigned_to && (
           <div className="flex items-center gap-1">
             <User className="w-3 h-3" />
-            <span className="truncate max-w-[80px]">{task.assigned_to.slice(0, 8)}</span>
+            {/* MK1 (7 Nov 2026): tugas dari template membawa nama PIC toko */}
+            <span className="truncate max-w-[80px]">{task.assigned_to_name || task.assigned_to.slice(0, 8)}</span>
           </div>
         )}
       </div>

@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { Input } from '@/components/ui/input';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Plus, Search, Pencil, Trash2, X, Check } from 'lucide-react';
 import { toast } from '../ui/sonner';
 import { apiFetch, ApiError } from '@/lib/apiFetch';
@@ -19,7 +22,10 @@ export default function RnDMaterialsTab({ token }) {
     material_code: '',
     material_name: '',
     category: '',
+    category_code: '',
     vendor: '',
+    vendor_id: '',
+    vendor_is_prospect: false,
     composition: '',
     weight: 0,
     price_per_unit: 0,
@@ -35,6 +41,32 @@ export default function RnDMaterialsTab({ token }) {
     fetchMaterials();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
+
+  // 2026-11-07 (Tahap 6, PR6): Kategori = daftar tetap dari server (kategori Master Material); Vendor = master
+  // supplier (id + nama) dengan cadangan eksplisit "Calon supplier" untuk vendor yang belum jadi supplier.
+  // Dulu keduanya teks bebas. Nilai lama tetap tampil (ditandai "lama").
+  const [formOpts, setFormOpts] = useState({ categories: [], suppliers: [] });
+  useEffect(() => {
+    if (!showForm) return;
+    apiFetch('/dewi/rnd/material-form-options')
+      .then(d => setFormOpts({ categories: d?.categories || [], suppliers: d?.suppliers || [] }))
+      .catch(() => setFormOpts({ categories: [], suppliers: [] }));
+  }, [showForm]);
+  const LEGACY = '__lama__';
+  const PROSPECT = '__calon__';
+  const categoryValue = form.category_code || (form.category ? LEGACY : '');
+  const vendorValue = form.vendor_id || (form.vendor_is_prospect ? PROSPECT : (form.vendor ? LEGACY : ''));
+  const pickCategory = (v) => {
+    if (v === LEGACY) return;
+    const c = formOpts.categories.find(x => x.code === v);
+    setForm(p => ({ ...p, category_code: v, category: c?.name || '' }));
+  };
+  const pickVendor = (v) => {
+    if (v === LEGACY) return;
+    if (v === PROSPECT) { setForm(p => ({ ...p, vendor_id: '', vendor_is_prospect: true, vendor: p.vendor_id ? '' : p.vendor })); return; }
+    const sup = formOpts.suppliers.find(x => x.id === v);
+    setForm(p => ({ ...p, vendor_id: v, vendor_is_prospect: false, vendor: sup?.name || '' }));
+  };
 
   const fetchMaterials = async () => {
     setLoading(true);
@@ -59,7 +91,10 @@ export default function RnDMaterialsTab({ token }) {
       material_code: '',
       material_name: '',
       category: '',
+      category_code: '',
       vendor: '',
+      vendor_id: '',
+      vendor_is_prospect: false,
       composition: '',
       weight: 0,
       price_per_unit: 0,
@@ -80,6 +115,9 @@ export default function RnDMaterialsTab({ token }) {
       ...material,
       price_per_unit: material.price_per_unit ?? material.price_per_meter ?? 0,
       price_unit: material.price_unit || 'm',
+      category_code: material.category_code || '',
+      vendor_id: material.vendor_id || '',
+      vendor_is_prospect: !!material.vendor_is_prospect,
       colors: Array.isArray(material.colors) ? material.colors : [],
     });
     setShowForm(true);
@@ -88,6 +126,10 @@ export default function RnDMaterialsTab({ token }) {
   const handleSave = async () => {
     if (!form.material_code.trim() || !form.material_name.trim()) {
       toast.error('Kode material dan nama material wajib diisi');
+      return;
+    }
+    if (form.vendor_is_prospect && !String(form.vendor || '').trim()) {
+      toast.error('Ketik nama calon supplier, atau pilih supplier dari master');
       return;
     }
 
@@ -108,7 +150,7 @@ export default function RnDMaterialsTab({ token }) {
   };
 
   const handleDelete = async (id) => {
-    if (!confirm('Yakin ingin menghapus material ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus material ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await apiFetch(`/dewi/rnd/materials/${id}`, { method: 'DELETE' });
       toast.success('Material berhasil dihapus');
@@ -163,21 +205,28 @@ export default function RnDMaterialsTab({ token }) {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Kategori</label>
-                  <input
-                    type="text"
-                    value={form.category}
-                    onChange={(e) => setForm({ ...form, category: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm"
-                  />
+                  <SmartNativeSelect value={categoryValue} onChange={(e) => pickCategory(e.target.value)}
+                    className="w-full" aria-label="Kategori" data-testid="material-category-select">
+                    <option value="">— Pilih kategori —</option>
+                    {categoryValue === LEGACY && <option value={LEGACY}>{`${form.category} (lama, belum ada di daftar)`}</option>}
+                    {formOpts.categories.map(c => <option key={c.code} value={c.code}>{c.name}</option>)}
+                  </SmartNativeSelect>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Vendor</label>
-                  <input
-                    type="text"
-                    value={form.vendor}
-                    onChange={(e) => setForm({ ...form, vendor: e.target.value })}
-                    className="w-full px-3 py-2 bg-background border rounded-lg text-sm"
-                  />
+                  <SmartNativeSelect value={vendorValue} onChange={(e) => pickVendor(e.target.value)}
+                    className="w-full" aria-label="Vendor" data-testid="material-vendor-select">
+                    <option value="">— Belum ada vendor —</option>
+                    <option value={PROSPECT}>Calon supplier (belum di master) — ketik nama</option>
+                    {vendorValue === LEGACY && <option value={LEGACY}>{`${form.vendor} (lama, belum di master)`}</option>}
+                    {formOpts.suppliers.map(sup => <option key={sup.id} value={sup.id}>{`${sup.code ? `${sup.code} · ` : ''}${sup.name}`}</option>)}
+                  </SmartNativeSelect>
+                  {form.vendor_is_prospect && (
+                    <Input className="mt-1.5" value={form.vendor} placeholder="Nama calon supplier"
+                      onChange={(e) => setForm({ ...form, vendor: e.target.value })}
+                      data-testid="material-vendor-prospect" />
+                  )}
+                  <p className="mt-1 text-[11px] text-muted-foreground">Dari master supplier (Pengadaan).</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Harga per Satuan (Rp)</label>
@@ -313,7 +362,10 @@ function RnDMaterialsTable({ materials, loading, search, setSearch, openCreate, 
                     </td>
                     <td className="p-3">{material.material_name}</td>
                     <td className="p-3 text-sm text-muted-foreground">{material.category || '-'}</td>
-                    <td className="p-3 text-sm text-muted-foreground">{material.vendor || '-'}</td>
+                    <td className="p-3 text-sm text-muted-foreground">
+                      {material.vendor || '-'}
+                      {material.vendor_is_prospect && <span className="ml-1 text-[11px]">(calon)</span>}
+                    </td>
                     <td className="p-3" data-testid={`material-colors-${material.id}`}>
                       {(material.colors || []).length === 0 ? (
                         <span className="text-sm text-muted-foreground">-</span>

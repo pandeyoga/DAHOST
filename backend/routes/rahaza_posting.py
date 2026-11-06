@@ -2332,6 +2332,8 @@ async def post_asset_acquisition(db, asset: dict, user: dict) -> dict:
 
     via = (f"GR {asset.get('grn_number')}" if asset.get("grn_number")
            else f"faktur {asset.get('ap_invoice_number')}" if asset.get("ap_invoice_number")
+           # 2026-11-07 (KU2): beli kredit faktur menyusul → nama pemasok master (dulu kata "payable")
+           else f"hutang {asset.get('supplier')}" if asset.get("supplier_id") and asset.get("supplier")
            else asset.get("cash_account_name") or asset.get("funding_source") or "")
     memo = f"Asset Acquisition: {asset.get('code')} - {asset.get('name')} · {via}".strip(" ·")
     desc = f"Asset {asset.get('code')}"

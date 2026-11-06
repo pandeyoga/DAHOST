@@ -10,7 +10,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
-import { PageHeader } from './moduleAtoms';
+import { PageHeader, Notice } from './moduleAtoms';
+import { isCurrentUserConfigAdmin } from '@/lib/systemConfigRoles';
 
 const CATEGORY_META = {
   inventory:    { label: 'Gudang & Stok',      color: 'text-rose-700 dark:text-rose-400' },
@@ -30,6 +31,8 @@ export default function MaklonSystemConfigModule({ token }) {
   const [activeTab, setActiveTab] = useState('maklon');
   const [edited, setEdited] = useState({});
   const [showSecret, setShowSecret] = useState({});
+  // 2026-11-07 (Tahap 6, SY2): hanya admin/owner/superadmin yang boleh mengubah (server menolak peran lain).
+  const canEdit = useMemo(() => isCurrentUserConfigAdmin(), []);
 
   const fetchConfigs = useCallback(async () => {
     setLoading(true);
@@ -74,33 +77,33 @@ export default function MaklonSystemConfigModule({ token }) {
     const show = showSecret[cfg.key];
     if (cfg.data_type === 'boolean') {
       return (
-        <Switch checked={!!val} onCheckedChange={(v) => setValue(cfg.key, v)} data-testid={`cfg-${cfg.key}`} />
+        <Switch checked={!!val} onCheckedChange={(v) => setValue(cfg.key, v)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />
       );
     }
     // 2026-11-07 (Tahap 5) — setelan berkode tetap dipilih, bukan diketik (server menolak nilai lain).
     if (Array.isArray(cfg.choices) && cfg.choices.length) {
       return (
         <SmartNativeSelect value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)}
-          className="w-full" data-testid={`cfg-${cfg.key}`}>
+          disabled={!canEdit} className="w-full" data-testid={`cfg-${cfg.key}`}>
           {!cfg.choices.some(c => c.value === val) && <option value={val ?? ''}>{val ? `${val} (tidak dikenal)` : '— pilih —'}</option>}
           {cfg.choices.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
         </SmartNativeSelect>
       );
     }
     if (cfg.data_type === 'number') {
-      return <Input type="number" step="any" value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} data-testid={`cfg-${cfg.key}`} />;
+      return <Input type="number" step="any" value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />;
     }
     if (isSecret) {
       return (
         <div className="flex gap-2">
-          <Input type={show ? 'text' : 'password'} value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} placeholder={cfg.value_masked || '•••••'} data-testid={`cfg-${cfg.key}`} />
+          <Input type={show ? 'text' : 'password'} value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} placeholder={cfg.value_masked || '•••••'} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />
           <Button size="icon" variant="ghost" className="w-9 h-9" onClick={() => setShowSecret(p => ({ ...p, [cfg.key]: !p[cfg.key] }))}>
             {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </Button>
         </div>
       );
     }
-    return <Input value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} data-testid={`cfg-${cfg.key}`} />;
+    return <Input value={val ?? ''} onChange={e => setValue(cfg.key, e.target.value)} disabled={!canEdit} data-testid={`cfg-${cfg.key}`} />;
   };
 
   return (
@@ -114,12 +117,20 @@ export default function MaklonSystemConfigModule({ token }) {
             <Button size="sm" variant="outline" onClick={fetchConfigs} className="gap-2" data-testid="cfg-refresh-btn">
               <RefreshCw className="w-3.5 h-3.5" /> Refresh
             </Button>
-            <Button size="sm" onClick={saveAll} disabled={saving || Object.keys(edited).length === 0} className="gap-1.5" data-testid="cfg-save-btn">
-              <Save className="w-3.5 h-3.5" /> Simpan{Object.keys(edited).length > 0 ? ` (${Object.keys(edited).length})` : ''}
-            </Button>
+            {canEdit && (
+              <Button size="sm" onClick={saveAll} disabled={saving || Object.keys(edited).length === 0} className="gap-1.5" data-testid="cfg-save-btn">
+                <Save className="w-3.5 h-3.5" /> Simpan{Object.keys(edited).length > 0 ? ` (${Object.keys(edited).length})` : ''}
+              </Button>
+            )}
           </div>
         }
       />
+
+      {!canEdit && (
+        <Notice tone="info" icon={Lock} testId="cfg-readonly-note" title="Mode baca saja">
+          Pengaturan sistem hanya bisa diubah oleh admin, owner, atau superadmin.
+        </Notice>
+      )}
 
       {loading ? (
         <GlassCard className="p-10 text-center text-foreground/50">Memuat...</GlassCard>

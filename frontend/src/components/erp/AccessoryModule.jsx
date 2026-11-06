@@ -34,6 +34,8 @@ import { MoneyInput } from '@/components/ui/money-input';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 // 2026-11-02 (K9): tab Stok Opname = layar Sesi Opname bersama (mesin tunggal), terfilter aksesoris
 import WMSOpnameScanModule from './WMSOpnameScanModule';
+// 2026-11-07 (Tahap 6 HR3): pemohon Request Internal = karyawan dari master (pemilih SDM bersama)
+import { useActiveEmployees, EmployeeSelect } from './hr/hrPickers';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -105,7 +107,7 @@ function useDivisions(token) {
 }
 
 // 2026-11-07 (Tahap 5): supplier aksesoris & PR aksesoris dipilih dari Master Supplier (dulu teks bebas →
-// ejaan berbeda tidak tertaut ke supplier/PO). Nilai yang disimpan tetap NAMA (kunci lama `supplier`).
+// ejaan berbeda tidak tertaut ke supplier/PO). Sejak Tahap 6 (PG5) yang disimpan `supplier_id` + nama (SupplierPick).
 function useSupplierOptions(token) {
   const [rows, setRows] = useState([]);
   useEffect(() => {
@@ -116,6 +118,28 @@ function useSupplierOptions(token) {
     return () => { alive = false; };
   }, [token]);
   return rows;
+}
+
+// 2026-11-07 (Tahap 6 PG5): supplier DISIMPAN sebagai id Master Supplier (`supplier_id`); nama ikut untuk
+// tampilan (server mengambilnya dari master). Nama lama yang belum tertaut tetap tampil sebagai pilihan bertanda.
+const LEGACY_SUPPLIER = '__nama_lama__';
+function SupplierPick({ suppliers, form, setForm, className, 'data-testid': testId }) {
+  const linkedMissing = form.supplier_id && !suppliers.some(s => s.id === form.supplier_id);
+  return (
+    <SmartNativeSelect value={form.supplier_id || (form.supplier ? LEGACY_SUPPLIER : '')}
+      onChange={e => {
+        const v = e.target.value;
+        if (v === LEGACY_SUPPLIER) return;
+        const s = suppliers.find(x => x.id === v);
+        setForm(f => ({ ...f, supplier_id: v, supplier: v ? (s?.name || f.supplier) : '' }));
+      }}
+      className={className} data-testid={testId}>
+      <option value="">— pilih supplier —</option>
+      {!form.supplier_id && form.supplier && <option value={LEGACY_SUPPLIER}>{`${form.supplier} (belum di Master Supplier)`}</option>}
+      {linkedMissing && <option value={form.supplier_id}>{`${form.supplier || 'Supplier'} (nonaktif)`}</option>}
+      {suppliers.map(s => <option key={s.id} value={s.id}>{`${s.code} — ${s.name}`}</option>)}
+    </SmartNativeSelect>
+  );
 }
 
 // Prioritas PR: nilai server tetap (Urgent/Normal/Low), label berbahasa Indonesia
@@ -135,7 +159,7 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const [catFilter, setCat]     = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
-  const [form, setForm]         = useState({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false });
+  const [form, setForm]         = useState({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', supplier_id:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false });
   const [showMove, setShowMove] = useState(null); // {id, name, action:'in'|'out'}
   const [moveForm, setMoveForm] = useState({ qty:'', notes:'', input_unit:'base', unit_cost:'', divisi:'' });
   // 2026-11-06 (Tahap 2): divisi pemohon (Keluarkan Stok) + harga penerimaan (hanya Keuangan yang mengubah)
@@ -190,8 +214,8 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
   const cats = [...new Map(items.filter(i => i.category)
     .map(i => [i.category_id || i.category, i.category])).entries()];
 
-  const openAdd = () => { setEditItem(null); setForm({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false }); setShowForm(true); };
-  const openEdit = it => { setEditItem(it); setForm({ code: it.code||'', name: it.name||'', category_id: it.category_id||'', sub_category: it.sub_category||'', unit: it.unit||'pcs', description: it.description||'', min_stock: it.min_stock||0, unit_cost: it.unit_cost||0, supplier: it.supplier||'', notes: it.notes||'', uoms: resolveUoms(it), purchase_uom: purchaseUomOf(it), issue_uom: issueUomOf(it), display_uom: displayUomOf(it), pack_unit: it.pack_unit||'pack', pack_size: it.pack_size||1, display_in_packs: it.display_in_packs||false }); setShowForm(true); };
+  const openAdd = () => { setEditItem(null); setForm({ code:'', name:'', category_id:'', sub_category:'', unit:'pcs', description:'', min_stock:0, unit_cost:0, supplier:'', supplier_id:'', notes:'', uoms:[], purchase_uom:'', issue_uom:'', display_uom:'', pack_unit:'pack', pack_size:1, display_in_packs:false }); setShowForm(true); };
+  const openEdit = it => { setEditItem(it); setForm({ code: it.code||'', name: it.name||'', category_id: it.category_id||'', sub_category: it.sub_category||'', unit: it.unit||'pcs', description: it.description||'', min_stock: it.min_stock||0, unit_cost: it.unit_cost||0, supplier: it.supplier||'', supplier_id: it.supplier_id||'', notes: it.notes||'', uoms: resolveUoms(it), purchase_uom: purchaseUomOf(it), issue_uom: issueUomOf(it), display_uom: displayUomOf(it), pack_unit: it.pack_unit||'pack', pack_size: it.pack_size||1, display_in_packs: it.display_in_packs||false }); setShowForm(true); };
 
   const save = async () => {
     if (!form.name.trim()) return;
@@ -465,12 +489,8 @@ function MasterTab({ token, onRefreshDash, onOpenValuation }) {
               ))}
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">Supplier</label>
-                <SmartNativeSelect value={form.supplier} onChange={e=>setForm({...form,supplier:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-supplier-select">
-                    <option value="">— pilih supplier —</option>
-                    {form.supplier && !suppliers.some(s => s.name === form.supplier) && <option value={form.supplier}>{`${form.supplier} (belum di Master Supplier)`}</option>}
-                    {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
-                  </SmartNativeSelect>
+                <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
+                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="acc-supplier-select" />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -681,9 +701,20 @@ function RequestInternalTab({ token, items }) {
   const [requests, setReqs]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShow]   = useState(false);
-  const [form, setForm]       = useState({ divisi:'', requester_name:'', purpose:'', needed_by:'', items:[] });
+  const [form, setForm]       = useState({ divisi:'', requester_employee_id:'', purpose:'', needed_by:'', items:[] });
   const [lines, setLines]     = useState([{ acc_id:'', qty_requested:1, unit:'pcs', notes:'' }]);
   const [detail, setDetail]   = useState(null);
+  // 2026-11-07 (Tahap 6 HR3): "Nama Pemohon" = karyawan dari Data Karyawan (dulu teks bebas di catatan).
+  // Bawaan = karyawan yang tertaut ke akun login (SSOT identitas karyawan di server); bisa diganti.
+  const { employees } = useActiveEmployees(token, { enabled: showForm });
+  useEffect(() => {
+    if (!showForm) return undefined;
+    let off = false;
+    api('GET', '/api/portal-saya/me/employee', token)
+      .then(e => { if (!off && e?.id) setForm(f => (f.requester_employee_id ? f : { ...f, requester_employee_id: e.id })); })
+      .catch(() => { /* akun belum tertaut ke karyawan → pemohon dipilih manual */ });
+    return () => { off = true; };
+  }, [showForm, token]);
   const [saving, setSaving]   = useState(false);
   const [err, setErr]         = useState('');
   const [msg, setMsg]         = useState('');
@@ -722,6 +753,7 @@ function RequestInternalTab({ token, items }) {
 
   const submit = async () => {
     if (!form.divisi) { setErr('Divisi wajib dipilih'); return; }
+    if (!form.requester_employee_id) { setErr('Pemohon wajib dipilih dari Data Karyawan'); return; }
     const validLines = lines.filter(l=>l.acc_id && l.qty_requested>0);
     if (validLines.length === 0) { setErr('Minimal 1 item'); return; }
     setSaving(true); setErr(''); setMsg('');
@@ -733,14 +765,14 @@ function RequestInternalTab({ token, items }) {
         divisi: form.divisi,
         purpose: form.purpose,
         needed_by_date: form.needed_by,
-        notes: form.requester_name ? `Pemohon: ${form.requester_name}` : '',
+        requester_employee_id: form.requester_employee_id,
         items: validLines.map(l => ({
           material_id: l.acc_id, material_code: l.acc_code || '', material_name: l.acc_name || '',
           qty: Number(l.qty_requested) || 0, unit: l.unit || 'pcs', notes: l.notes || '',
         })),
       });
       setShow(false); setLines([{ acc_id:'', qty_requested:1, unit:'pcs', notes:'' }]);
-      setForm({ divisi:'', requester_name:'', purpose:'', needed_by:'', items:[] });
+      setForm({ divisi:'', requester_employee_id:'', purpose:'', needed_by:'', items:[] });
       setMsg(`Request ${res.request_code || ''} dibuat & menunggu persetujuan.`);
       load();
     } catch(e) { setErr(e.message); }
@@ -896,8 +928,11 @@ function RequestInternalTab({ token, items }) {
                   )}
                 </div>
                 <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Nama Pemohon</label>
-                  <input value={form.requester_name} onChange={e=>setForm({...form,requester_name:e.target.value})} className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Nama..." />
+                  <label className="text-xs text-muted-foreground block mb-1">Pemohon *</label>
+                  <EmployeeSelect employees={employees} value={form.requester_employee_id}
+                    onChange={v => setForm(f => ({ ...f, requester_employee_id: v }))}
+                    placeholder="— pilih karyawan —" testId="req-requester"
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -1012,7 +1047,7 @@ function PurchaseRequestTab({ token, items }) {
   const [prs, setPRs]         = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShow]   = useState(false);
-  const [form, setForm]       = useState({ priority:'Normal', purpose:'', supplier:'', notes:'', items:[] });
+  const [form, setForm]       = useState({ priority:'Normal', purpose:'', supplier:'', supplier_id:'', notes:'', items:[] });
   const [lines, setLines]     = useState([{ acc_id:'', qty_requested:1, unit:'pcs', estimated_price:0, notes:'' }]);
   const [filter, setFilter]   = useState('');
   const [saving, setSaving]   = useState(false);
@@ -1052,7 +1087,7 @@ function PurchaseRequestTab({ token, items }) {
                 { ...form, items: validLines,
                   ...docNumberPayload(numPolicy, 'pr_number', prNumber) });
       setShow(false); setLines([{acc_id:'',qty_requested:1,unit:'pcs',estimated_price:0,notes:''}]);
-      setForm({ priority:'Normal', purpose:'', supplier:'', notes:'', items:[] });
+      setForm({ priority:'Normal', purpose:'', supplier:'', supplier_id:'', notes:'', items:[] });
       load();
     } catch(e) { setErr(e.message); }
     finally { setSaving(false); }
@@ -1207,12 +1242,8 @@ function PurchaseRequestTab({ token, items }) {
                 </div>
                 <div>
                   <label className="text-xs text-muted-foreground block mb-1">Supplier usulan</label>
-                  <SmartNativeSelect value={form.supplier} onChange={e=>setForm({...form,supplier:e.target.value})}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="pr-supplier">
-                    <option value="">— pilih supplier —</option>
-                    {form.supplier && !suppliers.some(s => s.name === form.supplier) && <option value={form.supplier}>{`${form.supplier} (belum di Master Supplier)`}</option>}
-                    {suppliers.map(s => <option key={s.id} value={s.name}>{`${s.code} — ${s.name}`}</option>)}
-                  </SmartNativeSelect>
+                  <SupplierPick suppliers={suppliers} form={form} setForm={setForm}
+                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="pr-supplier" />
                 </div>
               </div>
               <div>

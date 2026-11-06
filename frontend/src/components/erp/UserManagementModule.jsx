@@ -30,7 +30,9 @@ export default function UserManagementModule({ token }) {
   const [showModal, setShowModal] = useState(false);
   const [editData, setEditData] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
-  const [form, setForm] = useState({ name: '', email: '', password: '', role: 'admin', status: 'active', vendor_id: '', buyer_id: '', customer_name: '' });
+  // 2026-11-07 (Tahap 6, SY3): tanpa peran bawaan — dulu 'admin' terpilih otomatis. Peran wajib dipilih.
+  const EMPTY_FORM = { name: '', email: '', password: '', role: '', status: 'active', vendor_id: '', buyer_id: '', customer_name: '' };
+  const [form, setForm] = useState(EMPTY_FORM);
   const [showLinkModal, setShowLinkModal] = useState(null); // user to link
   const [linkEmployeeId, setLinkEmployeeId] = useState('');
   const [linkLoading, setLinkLoading] = useState(false);
@@ -103,7 +105,7 @@ export default function UserManagementModule({ token }) {
 
   const openCreate = () => {
     setEditData(null);
-    setForm({ name: '', email: '', password: '', role: 'admin', status: 'active', vendor_id: '', buyer_id: '', customer_name: '' });
+    setForm(EMPTY_FORM);
     setShowModal(true);
   };
 
@@ -124,6 +126,7 @@ export default function UserManagementModule({ token }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!String(form.role || '').trim()) { toast.error('Peran wajib dipilih'); return; }
     const payload = { ...form };
     if (editData && !payload.password) delete payload.password;
     // Set customer_name from buyer if buyer role
@@ -267,6 +270,7 @@ export default function UserManagementModule({ token }) {
                 <label className="block text-sm font-medium text-foreground mb-1">Peran *</label>
                 <SmartNativeSelect className="w-full border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   value={form.role} onChange={e => setForm({...form, role: e.target.value})} data-testid="user-role">
+                  <option value="">— Pilih peran —</option>
                   {form.role && !knownRole(form.role) && (
                     <option value={form.role}>{`${form.role} (tidak ada di master Peran)`}</option>
                   )}

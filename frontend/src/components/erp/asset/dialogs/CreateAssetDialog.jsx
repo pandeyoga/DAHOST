@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { toast } from 'sonner';
 import { apicall } from '../utils';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from '../../docnum/DocNumberField';
+import { DepartmentSelect } from '../../hr/hrPickers';
 
 export function CreateAssetDialog({ open, onClose, token, categories, onCreated }) {
   const [form, setForm] = useState({
@@ -145,8 +146,11 @@ export function CreateAssetDialog({ open, onClose, token, categories, onCreated 
           </div>
           <div>
             <label className="text-xs font-medium text-muted-foreground">Departemen</label>
-            <Input placeholder="IT, Produksi, dll" value={form.department}
-              onChange={e => set('department', e.target.value)} className="mt-1" />
+            {/* 2026-11-07 (OR1): dari Struktur Organisasi; Lokasi (ruang fisik) tetap isian bebas */}
+            <div className="mt-1">
+              <DepartmentSelect token={token} value={form.department} testId="asset-department"
+                placeholder="— Tanpa departemen —" onChange={v => set('department', v)} />
+            </div>
           </div>
           <div className="col-span-2">
             <label className="text-xs font-medium text-muted-foreground">Catatan</label>

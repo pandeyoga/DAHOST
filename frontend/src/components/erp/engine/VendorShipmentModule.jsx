@@ -292,6 +292,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
       const mi = data.material_issue;
       toast.success(
         `Shipment ${data.shipment_number || ''} dibuat`
+        + ((data.po_vendor_assigned || []).length ? ` · vendor PO ${data.po_vendor_assigned.join(', ')} diisi ${data.vendor_name || ''}` : '')
         + (data.accessory_lines ? ` · ${data.accessory_lines} aksesoris ikut tercatat` : '')
         + (mi?.mi_number
             ? ` · pengeluaran material ${mi.mi_number} (${mi.material_lines} bahan) otomatis terbit & stok berkurang`
@@ -412,13 +413,16 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
   // Remove old columns definition - now using custom hierarchical table
 
   const poOptions = pos
-    // Phase 8.5: PO selector shows only POs assigned to the currently selected vendor
-    .filter(p => !form.vendor_id || p.vendor_id === form.vendor_id)
+    // Phase 8.5: PO selector shows only POs assigned to the currently selected vendor.
+    // 2026-11-07 (Tahap 6, PR4): + PO yang BELUM punya vendor (vendor opsional di PO internal) — dulu tidak
+    // pernah muncul. Vendornya = vendor surat jalan ini, dan server ikut mencatatnya di PO.
+    .filter(p => !form.vendor_id || !p.vendor_id || p.vendor_id === form.vendor_id)
     .map(p => ({
       value: p.id,
-      label: `${p.po_number} – ${p.vendor_name || 'No Vendor'} – ${fmtDate(p.po_date)}`,
+      label: `${p.po_number} – ${p.vendor_name || 'belum ada vendor'} – ${fmtDate(p.po_date)}`,
       sub: p.customer_name
     }));
+  const selectedPoNoVendor = !!(selectedPO && !selectedPO.vendor_id);
 
   // Separate parent shipments (no parent_shipment_id) from child shipments
   const parentShipments = shipments.filter(s => !s.parent_shipment_id);
@@ -641,7 +645,7 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                   } else {
                     setForm({...form, vendor_id: val});
                   }
-                }} placeholder="Pilih Vendor" required />
+                }} placeholder="Pilih Vendor" required data-testid="vship-vendor-select" />
               </div>
               <div>
                 <label className="block text-sm font-medium text-foreground/90 mb-1">Tanggal Pengiriman</label>
@@ -657,9 +661,15 @@ function ShipmentList({ userRole, hasPerm = () => false, businessType = null }) 
                 onChange={val => loadPOItems(val)}
                 placeholder={form.vendor_id ? 'Pilih PO untuk load items' : 'Pilih vendor terlebih dahulu'}
                 disabled={!form.vendor_id}
+                data-testid="vship-po-select"
               />
               {form.vendor_id && poOptions.length === 0 && (
                 <p className="text-xs text-[hsl(var(--warning))] mt-1">Tidak ada PO aktif untuk vendor ini (atau sudah fully shipped).</p>
+              )}
+              {selectedPoNoVendor && (
+                <p className="text-xs text-muted-foreground mt-1" data-testid="vship-po-no-vendor">
+                  PO {selectedPO.po_number} belum punya vendor — vendor pengiriman ini akan dicatat sebagai vendor PO.
+                </p>
               )}
             </div>
 

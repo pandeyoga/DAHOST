@@ -181,14 +181,27 @@ def cash_code_change_blocked(current: Optional[str], incoming: Optional[str]) ->
     return (incoming or "").strip() != (current or "").strip()
 
 
-async def _resolve_pic(db, pic_user_id):
-    """(pic_user_id, pic_user_name) — 400 bila id pengguna tidak ada."""
+PIC_NEEDS_TOKO_MSG = ("PIC toko harus pengguna yang punya akses Portal Toko. Beri dulu aksesnya di "
+                      "Manajemen Role / Pengguna, atau pilih pengguna lain.")
+
+
+async def _resolve_pic(db, pic_user_id, current: Optional[str] = None):
+    """(pic_user_id, pic_user_name) — 400 bila id pengguna tidak ada.
+
+    2026-11-07 (Tahap 6, MK3 — keputusan owner): PIC BARU wajib punya akses Portal Toko (aturan akses yang
+    sama dengan menu: `routes.shared.user_has_portal`). PIC lama yang tidak diganti (`current`) tidak
+    diperiksa ulang, supaya menyimpan perubahan lain pada toko itu tidak ditolak.
+    """
     pid = (pic_user_id or "").strip()
     if not pid:
         return None, None
-    user = await db.users.find_one({"id": pid}, {"_id": 0, "name": 1, "email": 1})
+    user = await db.users.find_one({"id": pid}, {"_id": 0, "id": 1, "name": 1, "email": 1, "role": 1})
     if not user:
         raise HTTPException(400, f"PIC dengan id '{pid}' tidak ditemukan di daftar pengguna")
+    if pid != (current or ""):
+        from routes.shared import user_has_portal
+        if not await user_has_portal(db, user, "toko"):
+            raise HTTPException(400, PIC_NEEDS_TOKO_MSG)
     return pid, (user.get("name") or user.get("email"))
 
 
@@ -701,7 +714,7 @@ async def update_platform_account(account_id: str, data: PlatformAccountUpdate, 
     if data.has_api_integration is not None:
         update_data["credentials.has_api_integration"] = data.has_api_integration
     if data.pic_user_id is not None:
-        pid, pname = await _resolve_pic(db, data.pic_user_id)
+        pid, pname = await _resolve_pic(db, data.pic_user_id, current=account.get("pic_user_id"))
         update_data["pic_user_id"] = pid
         update_data["pic_user_name"] = pname
 

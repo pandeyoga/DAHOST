@@ -365,27 +365,47 @@ export function useMasterList(path, token) {
   return rows.filter((r) => r.active !== false);
 }
 
-/** Pilih banyak nilai dari master (mis. warna/ukuran). `value` = array nama. */
-export function MasterChipsSelect({ token, path, value = [], onChange, testId, emptyText }) {
+/**
+ * Pilih banyak nilai dari master (mis. warna/ukuran). `value` = array nama.
+ *
+ * `priority` (opsional, 7 Nov 2026 — MK2): daftar `{id, name}` yang ditampilkan DULUAN di bawah judul
+ * `priorityLabel` (mis. warna model acuan), sisanya di bawah `otherLabel`. Semua tetap bisa dipilih.
+ */
+export function MasterChipsSelect({
+  token, path, value = [], onChange, testId, emptyText,
+  priority = [], priorityLabel = 'Disarankan', otherLabel = 'Lainnya',
+}) {
   const rows = useMasterList(path, token);
   const toggle = (name) => onChange(value.includes(name) ? value.filter((v) => v !== name) : [...value, name]);
+  const prioIds = new Set(priority.map((p) => p.id).filter(Boolean));
+  const prioNames = new Set(priority.map((p) => String(p.name || '').trim().toUpperCase()).filter(Boolean));
+  const isPrio = (r) => prioIds.has(r.id) || prioNames.has(String(r.name || r.code || '').trim().toUpperCase());
+  const first = priority.length ? rows.filter(isPrio) : [];
+  const rest = priority.length ? rows.filter((r) => !isPrio(r)) : rows;
+  const chip = (r, group) => {
+    const name = r.name || r.code;
+    const on = value.includes(name);
+    return (
+      <button type="button" key={r.id || name} onClick={() => toggle(name)}
+        data-testid={`${testId}-${r.code || name}`} data-group={group}
+        className={`px-2 py-0.5 rounded text-[11px] border transition-colors ${on
+          ? 'bg-primary text-primary-foreground border-primary'
+          : 'border-foreground/15 text-foreground/70 hover:border-foreground/30'}`}>
+        {r.hex && <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: r.hex }} />}
+        {name}
+      </button>
+    );
+  };
+  const heading = (text, tid) => (
+    <p className="w-full text-[10px] font-medium uppercase tracking-wide text-muted-foreground px-1" data-testid={tid}>{text}</p>
+  );
   return (
-    <div className="flex flex-wrap gap-1.5 mt-1 max-h-32 overflow-auto p-1 rounded-md border border-input" data-testid={testId}>
+    <div className="flex flex-wrap gap-1.5 mt-1 max-h-40 overflow-auto p-1 rounded-md border border-input" data-testid={testId}>
       {rows.length === 0 && <span className="text-[11px] text-muted-foreground px-1">{emptyText || 'Master kosong'}</span>}
-      {rows.map((r) => {
-        const name = r.name || r.code;
-        const on = value.includes(name);
-        return (
-          <button type="button" key={r.id || name} onClick={() => toggle(name)}
-            data-testid={`${testId}-${r.code || name}`}
-            className={`px-2 py-0.5 rounded text-[11px] border transition-colors ${on
-              ? 'bg-primary text-primary-foreground border-primary'
-              : 'border-foreground/15 text-foreground/70 hover:border-foreground/30'}`}>
-            {r.hex && <span className="inline-block w-2 h-2 rounded-full mr-1 align-middle" style={{ background: r.hex }} />}
-            {name}
-          </button>
-        );
-      })}
+      {first.length > 0 && heading(priorityLabel, `${testId}-priority-label`)}
+      {first.map((r) => chip(r, 'priority'))}
+      {first.length > 0 && rest.length > 0 && heading(otherLabel, `${testId}-other-label`)}
+      {rest.map((r) => chip(r, first.length ? 'other' : 'all'))}
     </div>
   );
 }

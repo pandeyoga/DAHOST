@@ -340,6 +340,8 @@ REGISTRY: dict[str, str] = {
     "rahaza_downtime_events": "lain",
     "rahaza_employee_loan_repayments": "hr",
     "rahaza_employee_loans": "hr",
+    # 2026-11-07 (HR1, Tahap 6): perubahan kontak karyawan dari Portal Saya menunggu persetujuan HR
+    "rahaza_employee_data_changes": "hr",
     "rahaza_employees": "hr",
     "rahaza_expense_claims": "lain",
     "rahaza_expenses": "lain",
@@ -646,7 +648,8 @@ production_return_items production_returns production_variances rahaza_accruals 
 rahaza_ap_payments rahaza_ar_invoices rahaza_ar_payments rahaza_attendance rahaza_attendance_audit
 rahaza_attendance_corrections rahaza_attendance_events rahaza_bank_recon_adjustments
 rahaza_bank_transfers rahaza_bundles rahaza_cash_movements rahaza_credit_notes rahaza_debit_notes
-rahaza_downtime_events rahaza_employee_loan_repayments rahaza_employee_loans rahaza_expense_claims
+rahaza_downtime_events rahaza_employee_data_changes rahaza_employee_loan_repayments rahaza_employee_loans
+rahaza_expense_claims
 rahaza_expenses rahaza_fg_inventory rahaza_fg_issues rahaza_fg_movements rahaza_fg_reservations
 rahaza_fingerprint_imports rahaza_goods_receipts rahaza_grn_inspections rahaza_hpp_snapshots
 rahaza_inventory_revaluations rahaza_job_applications rahaza_journal_entries rahaza_journal_lines

@@ -24,6 +24,34 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix='/api/marketing', tags=['Marketing-Task Templates'])
 
+# 2026-11-07 (Tahap 6, MK1 — keputusan owner): penanggung jawab tugas dari template = PIC TOKO template itu
+# (`pic_user_id` + `pic_user_name` di Kelola Akun). Dulu template menyimpan "peran bawaan" `staff`/`pic` —
+# bukan peran yang ada di master — dan tugas otomatis selalu lahir tanpa penanggung jawab. Template lama
+# (berisi `staff`/`pic`/kosong) ikut aturan baru tanpa perlu disimpan ulang.
+TEMPLATE_ASSIGNEE_PIC = "pic_toko"
+
+
+async def template_assignee(db, tmpl: dict) -> tuple:
+    """(user_id, nama) PIC toko template; (None, None) bila template tanpa toko atau tokonya belum ber-PIC."""
+    aid = (tmpl or {}).get("account_id")
+    if not aid:
+        return None, None
+    acc = await db.marketing_platform_accounts.find_one(
+        {"id": aid}, {"_id": 0, "pic_user_id": 1, "pic_user_name": 1})
+    pid = (acc or {}).get("pic_user_id")
+    if not pid:
+        return None, None
+    return pid, ((acc or {}).get("pic_user_name") or None)
+
+
+async def _template_account_or_400(db, account_id):
+    """Toko template (opsional) harus ada di Kelola Akun."""
+    aid = (account_id or "").strip() or None
+    if aid and not await db.marketing_platform_accounts.find_one({"id": aid}, {"_id": 0, "id": 1}):
+        raise HTTPException(400, "Toko template tidak ditemukan di Kelola Akun.")
+    return aid
+
+
 @router.post("/task-templates")
 async def create_task_template(data: TaskTemplateCreate, request: Request):
     """
@@ -34,6 +62,7 @@ async def create_task_template(data: TaskTemplateCreate, request: Request):
     db = get_db()
     user = _get_user(request)
     
+    account_id = await _template_account_or_400(db, data.account_id)
     template = {
         "id": _uid(),
         "template_name": _sanitize(data.template_name, 200),
@@ -42,8 +71,8 @@ async def create_task_template(data: TaskTemplateCreate, request: Request):
         "task_type": data.task_type,
         "recurrence": data.recurrence,
         "recurrence_config": data.recurrence_config.model_dump(exclude_none=True),  # 2026-11-06 (pola P1): tanpa kunci None (scheduler membaca int(...))
-        "default_assigned_role": data.default_assigned_role,
-        "account_id": data.account_id,
+        "default_assigned_role": TEMPLATE_ASSIGNEE_PIC,   # MK1: selalu PIC toko (isian lama diabaikan)
+        "account_id": account_id,
         "priority": data.priority,
         "checklist_template": data.checklist_template or [],
         "is_active": data.is_active,
@@ -107,6 +136,9 @@ async def update_task_template(template_id: str, data: TaskTemplateCreate, reque
     if not template:
         raise HTTPException(404, "Task template not found")
     
+    # MK1: layar lama (tombol Aktifkan) tidak mengirim `account_id` — toko yang tersimpan jangan terhapus.
+    account_id = (await _template_account_or_400(db, data.account_id)
+                  if "account_id" in data.model_fields_set else template.get("account_id"))
     update_data = {
         "template_name": data.template_name,
         "title": data.title,
@@ -114,8 +146,8 @@ async def update_task_template(template_id: str, data: TaskTemplateCreate, reque
         "task_type": data.task_type,
         "recurrence": data.recurrence,
         "recurrence_config": data.recurrence_config.model_dump(exclude_none=True),  # 2026-11-06 (pola P1): tanpa kunci None (scheduler membaca int(...))
-        "default_assigned_role": data.default_assigned_role,
-        "account_id": data.account_id,
+        "default_assigned_role": TEMPLATE_ASSIGNEE_PIC,
+        "account_id": account_id,
         "priority": data.priority,
         "checklist_template": data.checklist_template or [],
         "is_active": data.is_active,

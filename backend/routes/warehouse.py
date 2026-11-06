@@ -221,7 +221,23 @@ async def create_receiving(request: Request):
     user = await require_auth(request)
     body = await request.json()
     db = get_db()
-    
+
+    # 2026-11-07 (Tahap 6, keputusan owner PG3): GR manual BARU hanya dari pemasok. Sumber "Produksi" /
+    # "Pindahan gudang" dengan asal barang yang diketik ditolak — pindahan stok lewat menu Transfer. GR lama
+    # bersumber itu tetap bisa dibuka & dikonfirmasi (PUT tidak memeriksa sumber).
+    src_err = pguard.manual_gr_source_error(body.get("source_type"))
+    if src_err:
+        raise HTTPException(400, src_err)
+    # PG1: barang jadi tidak dibeli → tidak ada di daftar Penerimaan Barang (layar memuat exclude_type=fg)
+    _mids = list({it.get("material_id") for it in (body.get("items") or [])
+                  if isinstance(it, dict) and it.get("material_id")})
+    if _mids:
+        fg_err = pguard.finished_goods_error(
+            await db.rahaza_materials.find({"id": {"$in": _mids}}, {"_id": 0, "id": 1, "code": 1, "name": 1, "type": 1})
+            .to_list(len(_mids) + 5), "Penerimaan Barang")
+        if fg_err:
+            raise HTTPException(400, fg_err)
+
     # 2026-11-06 (Tahap 1): SATU pencacah nomor GR. Dulu layar ini memakai pencacah `gr_number`
     # sedangkan "Buat GR dari PO" memakai `gen_prefixed_number` — dua deret pada satu index unik
     # `receipt_number` ⇒ cepat atau lambat bertabrakan (HTTP 500). Kanonik = gen_prefixed_number

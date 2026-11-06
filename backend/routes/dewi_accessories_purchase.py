@@ -146,12 +146,19 @@ async def create_purchase_request(request: Request):
     from core.doc_number_policy import issue_number
     pr_number = await issue_number(db, "acc_purchase_requests.pr_number",
                                    requested=(body.get("pr_number") or "").strip())
+    # 2026-11-07 (Tahap 6 PG5): supplier usulan ditautkan ke Master Supplier (`supplier_id`, nama dari master)
+    from routes.procurement_suppliers import supplier_link_patch
+    sup_patch = await supplier_link_patch(db, body)
+    # 2026-11-07 (OR1): departemen = aturan yang sama dengan Permintaan Pengadaan (`core.departments`)
+    from core.departments import canonical_department, user_department
+    department = await canonical_department(db, body.get("department") or await user_department(db, user))
     doc = {
         "id": _id(),
         "pr_number": pr_number,
         "priority": body.get("priority", "Normal"),
         "purpose": body.get("purpose", ""),
-        "supplier": body.get("supplier", ""),
+        "supplier": "", "supplier_id": None, "supplier_code": None,
+        **sup_patch,
         "items": items,
         "total_estimated": sum(
             float(i.get("qty_requested") or 0) * float(i.get("estimated_price") or 0)
@@ -167,7 +174,7 @@ async def create_purchase_request(request: Request):
         # dan aturan "pembuat tidak boleh menyetujui sendiri" tidak bisa ditegakkan.
         "requested_by": user.get("id"),
         "requested_by_name": user.get("name", "") or user.get("email", ""),
-        "department": (body.get("department") or user.get("department") or "").strip(),
+        "department": department,
         "approval_steps": [],
         "approval_chain": [],
         "current_approver_stage": None,
@@ -221,8 +228,12 @@ async def update_purchase_request(pr_id: str, request: Request):
     # field alur kerja / tautan tidak boleh ditimpa lewat ubah detail
     locked = ("_id", "id", "created_at", "created_by", "pr_number", "requested_by",
               "approval_steps", "approval_chain", "current_approver_stage", "procurement_pr_id",
-              "procurement_pr_number", "status_before_forward")
+              "procurement_pr_number", "status_before_forward",
+              # 2026-11-07 (Tahap 6 PG5): supplier hanya lewat tautan master (di bawah)
+              "supplier", "supplier_id", "supplier_code")
     upd.update({k: v for k, v in body.items() if k not in locked})
+    from routes.procurement_suppliers import supplier_link_patch
+    upd.update(await supplier_link_patch(db, body, doc))
 
     await db.acc_purchase_requests.update_one({"id": pr_id}, {"$set": upd})
     result = await db.acc_purchase_requests.find_one({"id": pr_id}, {"_id": 0})

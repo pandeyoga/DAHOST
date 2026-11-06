@@ -424,6 +424,16 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
     body['shipment_number'] = await issue_number(
         db, 'vendor_shipments.shipment_number',
         requested=(body.get('shipment_number') or '').strip())
+    # 2026-11-07 (Tahap 6, PR4): PO tanpa vendor (vendor opsional di PO internal) kini boleh dikirimi
+    # material; vendor dipilih SAAT KIRIM dan dicatat juga di PO, karena alur hilir membaca vendor dari PO
+    # (job produksi, penerimaan FG & permak, portal vendor, jadwal hutang CMT maklon).
+    try:
+        po_vendor_assigned = await assign_vendor_to_vendorless_pos(
+            db, _po_ids_seen, body['vendor_id'], vendor.get('garment_name', ''), body['shipment_number'], user)
+    except HTTPException:
+        from core.doc_number_policy import release_number
+        await release_number(db, 'vendor_shipments.shipment_number', body['shipment_number'])
+        raise
     shipment_id = new_id()
     shipment = {
         'id': shipment_id, 'shipment_number': body.get('shipment_number'),
@@ -515,6 +525,7 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
         async def _rollback_shipment():
             await db.vendor_shipment_items.delete_many({'shipment_id': shipment_id})
             await db.vendor_shipments.delete_one({'id': shipment_id})
+            await revert_po_vendor_assignment(db, po_vendor_assigned, body['vendor_id'])
             # nomor otomatis yang batal dipakai dikembalikan → tidak ada lubang nomor
             from core.doc_number_policy import release_number
             await release_number(db, 'vendor_shipments.shipment_number', shipment['shipment_number'])
@@ -564,9 +575,11 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
         except Exception:  # noqa: BLE001 — surat jalan garmen tetap sah; aksesoris dilaporkan
             logger.exception('aksesoris kiriman %s gagal dicatat', shipment.get('shipment_number'))
     await log_activity(user['id'], user['name'], 'Create', 'Vendor Shipment', f"Created shipment {body.get('shipment_number')}")
+    po_vendor_numbers = await after_po_vendor_assigned(db, po_vendor_assigned, shipment, user)
     result = serialize_doc(shipment)
     result['items'] = serialize_doc(inserted_items)
     result['accessory_lines'] = acc_recorded
+    result['po_vendor_assigned'] = po_vendor_numbers
     if material_issue:
         result['material_issue'] = {
             'mi_number': (material_issue.get('mi') or {}).get('mi_number')
@@ -577,6 +590,66 @@ async def create_vendor_shipment_internal(db, body: dict, user: dict, *, opening
             'negative_stock_lines': material_issue.get('negative_stock_lines') or [],
         }
     return result
+
+
+_NO_VENDOR ={'vendor_id': {'$in': [None, '']}}
+_ASSIGN_TRACE = ('vendor_assigned_via', 'vendor_assigned_shipment_number', 'vendor_assigned_at',
+                 'vendor_assigned_by')
+
+
+async def assign_vendor_to_vendorless_pos(db, po_ids, vendor_id: str, vendor_name: str,
+                                          shipment_number: str, user: dict) -> list:
+    """Tahap 6 (PR4): PO yang BELUM punya vendor mendapat vendor surat jalan ini. → [po_id yang diisi].
+
+    Penulisan bersyarat (`vendor_id` masih kosong) supaya dua kiriman bersamaan ke vendor berbeda tidak
+    saling menimpa: yang kalah ditolak 400 dan isiannya sendiri dikembalikan. PO yang sudah ber-vendor
+    tidak disentuh (vendor beda sudah ditolak lebih awal)."""
+    assigned: list = []
+    for pid in sorted(p for p in (po_ids or []) if p):
+        res = await db.production_pos.update_one({'id': pid, **_NO_VENDOR}, {'$set': {
+            'vendor_id': vendor_id, 'vendor_name': vendor_name,
+            'vendor_assigned_via': 'kirim_material', 'vendor_assigned_shipment_number': shipment_number,
+            'vendor_assigned_at': now(), 'vendor_assigned_by': user.get('name', ''), 'updated_at': now()}})
+        if getattr(res, 'modified_count', 0):
+            assigned.append(pid)
+            continue
+        po = await db.production_pos.find_one({'id': pid}, {'_id': 0, 'vendor_id': 1, 'po_number': 1})
+        if po and po.get('vendor_id') and po['vendor_id'] != vendor_id:
+            await revert_po_vendor_assignment(db, assigned, vendor_id)
+            raise HTTPException(400, f"PO {po.get('po_number')} ditujukan untuk vendor lain")
+    return assigned
+
+
+async def revert_po_vendor_assignment(db, po_ids, vendor_id: str) -> None:
+    """Batalkan isian vendor PO (surat jalan gagal dibuat) — hanya bila masih vendor yang sama."""
+    for pid in po_ids or []:
+        await db.production_pos.update_one(
+            {'id': pid, 'vendor_id': vendor_id, 'vendor_assigned_via': 'kirim_material'},
+            {'$set': {'vendor_id': None, 'vendor_name': '', 'updated_at': now()},
+             '$unset': {k: '' for k in _ASSIGN_TRACE}})
+
+
+async def after_po_vendor_assigned(db, po_ids, shipment: dict, user: dict) -> list:
+    """Jejak + sinkron keuangan setelah PO mendapat vendor dari surat jalan. → [nomor PO].
+
+    PO maklon yang sudah dikonfirmasi: jadwal hutang CMT dibagi per vendor (`core.maklon_ledger`) —
+    sisa pesanan yang belum dikirim dijadwalkan ke vendor PO, jadi disegarkan lewat jalur sinkron yang
+    SAMA dengan ubah PO (`try_sync_maklon_finance`)."""
+    numbers = []
+    for pid in po_ids or []:
+        po = await db.production_pos.find_one({'id': pid}, {'_id': 0, 'po_number': 1, 'business_type': 1,
+                                                            'status': 1})
+        if not po:
+            continue
+        numbers.append(po.get('po_number') or pid)
+        await log_activity(user['id'], user.get('name', ''), 'Update', 'Production PO',
+                           f"Vendor PO {po.get('po_number')} diisi {shipment.get('vendor_name')} "
+                           f"dari surat jalan {shipment.get('shipment_number')}")
+        if po.get('business_type') == 'maklon' and (po.get('status') or 'Draft') != 'Draft':
+            from routes.production_maklon_bridge import try_sync_maklon_finance
+            await try_sync_maklon_finance(db, pid, user)
+    return numbers
+
 
 async def draft_pos_of_shipment(db, sid: str) -> list:
     """Nomor PO surat jalan ini (kepala + baris) yang masih Draf.

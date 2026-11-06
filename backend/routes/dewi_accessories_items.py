@@ -146,6 +146,9 @@ def _material_to_acc_item(mat: dict, stock_qty: float = 0.0, cats: dict | None =
         # 2026-11-07 (Tahap 5): supplier & catatan IKUT dikirim. Dulu tidak ada di respons ⇒ form Ubah
         # Aksesoris terbuka dengan supplier/catatan kosong lalu PUT menimpanya jadi "" (data hilang tiap edit).
         "supplier": mat.get("supplier", "") or "",
+        # 2026-11-07 (Tahap 6 PG5): tautan Master Supplier (nama di atas tetap untuk tampilan)
+        "supplier_id": mat.get("supplier_id") or "",
+        "supplier_code": mat.get("supplier_code") or "",
         "notes": mat.get("notes", "") or "",
         "min_stock": mat.get("min_stock", 0),
         "max_stock": mat.get("max_stock", 0),
@@ -235,6 +238,9 @@ async def create_item(request: Request):
     if "category" not in cat_patch:
         acc_cat = await db.rahaza_material_categories.find_one({"code": "ACCESSORY"}, {"_id": 0})
         cat_patch.update(_cat_fields(acc_cat) if acc_cat else {"category": "Umum"})
+    # 2026-11-07 (Tahap 6 PG5): supplier ditautkan ke Master Supplier (`supplier_id`), nama dari master
+    from routes.procurement_suppliers import supplier_link_patch
+    sup_patch = await supplier_link_patch(db, body)
     doc = {
         "id": _id(),
         "code": code,
@@ -247,7 +253,8 @@ async def create_item(request: Request):
         "min_stock": float(body.get("min_stock") or 0),
         # FASE G+: harga satuan wajib agar selisih opname bisa dinilai & posting ke keuangan
         "unit_cost": float(body.get("unit_cost") or body.get("hpp") or 0),
-        "supplier": body.get("supplier", ""),
+        "supplier": "", "supplier_id": None, "supplier_code": None,
+        **sup_patch,
         "notes": body.get("notes", ""),
         # Satuan & kemasan (uoms + cermin pack_*) — SSOT di core/uom
         **uom_patch,
@@ -271,10 +278,13 @@ async def update_item(item_id: str, request: Request):
         raise HTTPException(404, "Aksesoris tidak ditemukan")
 
     upd: dict = {}
-    allowed = ("name", "description", "supplier", "notes")
+    allowed = ("name", "description", "notes")
     for k in allowed:
         if k in body:
             upd[k] = body[k]
+    # 2026-11-07 (Tahap 6 PG5): supplier lewat Master Supplier (`supplier_id` divalidasi, nama dari master)
+    from routes.procurement_suppliers import supplier_link_patch
+    upd.update(await supplier_link_patch(db, body, existing))
     # 2026-11-06 (Tahap 2): kategori lewat master (form mengirim ulang NAMA yang ditampilkan → tidak
     # menimpa ID kategori master dengan teks)
     upd.update(await _category_patch(db, body, existing))

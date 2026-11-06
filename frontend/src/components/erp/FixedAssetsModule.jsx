@@ -85,7 +85,7 @@ export default function FixedAssetsModule({ token }) {
     code: '', name: '', category: 'peralatan', purchase_date: '', purchase_cost: '',
     residual_value: '', useful_life_months: '60', depreciation_method: 'straight_line',
     account_id_asset: '', account_id_accum_depr: '', account_id_depr_expense: '',
-    location: '', supplier: '', serial_number: '', notes: '',
+    location: '', supplier: '', supplier_id: '', serial_number: '', notes: '',
     acquisition_type: '', funding_source: '', cash_account_id: '', ap_invoice_id: '',
     golive_date: '', opening_accumulated_depr: '',
   };
@@ -106,7 +106,7 @@ export default function FixedAssetsModule({ token }) {
     }));
   };
   const openCreate = async () => {
-    setForm(BLANK_FORM); setModalOpen(true); fetchCoa(); loadSuppliers();
+    setForm(BLANK_FORM); setModalOpen(true); fetchCoa();
     const r = await fetch('/api/rahaza/finance/fixed-assets/acquisition-options', { headers });
     if (r.ok) {
       const o = await r.json(); setAcqOpts(o);
@@ -114,12 +114,11 @@ export default function FixedAssetsModule({ token }) {
       applyCategoryDefaults('peralatan', o);
     }
   };
-  // Pemasok = saran dari master pemasok (tetap boleh diketik untuk toko yang belum terdaftar — server menyimpan teks)
-  const [suppliers, setSuppliers] = useState([]);
-  const loadSuppliers = async () => {
-    const r = await fetch('/api/procurement/suppliers/options', { headers });  // 403 (tanpa akses Pengadaan) → tanpa saran
-    if (r.ok) { const d = await r.json(); setSuppliers(Array.isArray(d) ? d : (d.items || [])); }
-  };
+  // Pemasok dari master pemasok (id · kode · nama), dikirim server lewat acquisition-options (bisa dibaca staf
+  // Keuangan tanpa akses Pengadaan). 2026-11-07 (Tahap 6, KU2): sumber dana "Hutang pemasok — faktur menyusul"
+  // WAJIB memilih dari master (id + nama disimpan); sumber dana lain tetap teks bebas dengan saran.
+  const suppliers = acqOpts?.suppliers || [];
+  const creditPurchase = form.acquisition_type === 'purchase' && form.funding_source === 'payable';
   const loadApInvoices = async () => {
     const r = await fetch('/api/rahaza/ap-invoices', { headers });
     if (r.ok) setApInvoices((await r.json()).filter(i => !['draft', 'cancelled', 'void'].includes((i.status || '').toLowerCase())));
@@ -182,6 +181,7 @@ export default function FixedAssetsModule({ token }) {
     if (DEPRECIATING.includes(form.depreciation_method) && !(parseInt(form.useful_life_months, 10) > 0)) { toast.error('Masa manfaat (bulan) harus lebih dari 0'); return; }
     if (form.purchase_date && form.purchase_date > maxDate) { toast.error(`Tanggal pembelian melewati hari ini (${formatDateID(maxDate)})`); return; }
     if (form.acquisition_type === 'purchase' && !form.funding_source) { toast.error('Pilih sumber dana pembelian'); return; }
+    if (creditPurchase && !form.supplier_id) { toast.error('Pilih pemasok dari Master Pemasok untuk pembelian kredit (faktur menyusul)'); return; }
     if (form.acquisition_type === 'opening' && !form.golive_date) { toast.error('Isi tanggal go-live untuk aset lama'); return; }
     // SESI #27 — `code` DIBUANG dari payload saat mode OTOMATIS: mengirimnya akan
     // ditolak backend ("nomor tidak boleh diketik manual").
@@ -191,6 +191,7 @@ export default function FixedAssetsModule({ token }) {
       body: JSON.stringify({
         ...rest,
         ...docNumberPayload(numPolicy, 'code', form.code),
+        supplier_id: creditPurchase ? form.supplier_id : undefined,
         purchase_cost: parseFloat(form.purchase_cost) || 0,
         residual_value: parseFloat(form.residual_value) || 0,
         useful_life_months: parseInt(form.useful_life_months, 10) || 0,
@@ -496,11 +497,22 @@ export default function FixedAssetsModule({ token }) {
               <>
                 <div className="sm:col-span-2"><label className="block text-xs text-muted-foreground mb-1">Sumber dana *</label>
                   <SmartNativeSelect value={form.funding_source} data-testid="asset-funding" searchable={false} className="h-9 w-full"
-                    onChange={e => { const v = e.target.value; setForm(f => ({ ...f, funding_source: v })); if (v === 'ap_invoice') loadApInvoices(); }}>
+                    onChange={e => { const v = e.target.value; setForm(f => ({ ...f, funding_source: v, ...(v === 'payable' ? {} : { supplier_id: '' }) })); if (v === 'ap_invoice') loadApInvoices(); }}>
                     <option value="">Pilih sumber dana</option>
                     {FUNDING.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
                   </SmartNativeSelect>
                 </div>
+                {form.funding_source === 'payable' && (
+                  <div className="sm:col-span-2"><label className="block text-xs text-muted-foreground mb-1">Pemasok (Master Pemasok) *</label>
+                    <SmartNativeSelect value={form.supplier_id} data-testid="asset-supplier-master" className="h-9 w-full"
+                      searchPlaceholder="Cari kode atau nama pemasok…"
+                      onChange={e => { const id = e.target.value; const s = suppliers.find(x => x.id === id); setForm(f => ({ ...f, supplier_id: id, supplier: s?.name || '' })); }}>
+                      <option value="">{suppliers.length ? 'Pilih pemasok' : 'Master Pemasok masih kosong'}</option>
+                      {suppliers.map(s => <option key={s.id} value={s.id}>{s.code ? `${s.name} · ${s.code}` : s.name}</option>)}
+                    </SmartNativeSelect>
+                    <p className="text-[11px] text-muted-foreground mt-1">Hutang dicatat ke Hutang Belum Ditagih atas nama pemasok ini; faktur pemasoknya dicatat saat datang. Pemasok baru didaftarkan dulu di Master Pemasok.</p>
+                  </div>
+                )}
                 {form.funding_source === 'cash' && (
                   <div className="sm:col-span-2"><label className="block text-xs text-muted-foreground mb-1">Rekening kas/bank *</label>
                     <CashAccountSelect accounts={cashAccounts} loaded={cashLoaded} value={form.cash_account_id}
@@ -587,7 +599,8 @@ export default function FixedAssetsModule({ token }) {
             {[{l:'Lokasi', k:'location'},{l:'Pemasok', k:'supplier', list: 'fa-supplier-list'},{l:'No. seri', k:'serial_number'}].map(f => (
               <div key={f.k}><label className="block text-xs text-muted-foreground mb-1">{f.l}</label>
                 <GlassInput value={form[f.k]} onChange={e => setForm(v => ({...v, [f.k]: e.target.value}))} list={f.list}
-                  placeholder={f.k === 'supplier' ? 'Ketik / pilih dari master pemasok' : undefined} data-testid={`asset-${f.k}`} />
+                  disabled={f.k === 'supplier' && creditPurchase} title={f.k === 'supplier' && creditPurchase ? 'Mengikuti pemasok yang dipilih di atas' : undefined}
+                  placeholder={f.k === 'supplier' ? (creditPurchase ? 'Pilih pemasok di atas' : 'Ketik / pilih dari master pemasok') : undefined} data-testid={`asset-${f.k}`} />
               </div>
             ))}
             <datalist id="fa-supplier-list">

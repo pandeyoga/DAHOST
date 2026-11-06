@@ -664,6 +664,88 @@ def role_label(role: str, event_type: str | None = None) -> str:
     return (ROLE_LABELS_BY_EVENT.get((event_type, role)) or ROLE_LABELS.get(role)
             or (role or "").replace("_", " "))
 
+
+# ── 2026-11-07 (Tahap 6, KU1 keputusan owner): JENIS akun per peran ───────────────────────────────────
+# Dulu setiap peran menerima akun rinci apa pun (peran kas bisa diisi akun beban, audit form Tahap 5 No.19).
+# Kini tiap peran punya KELUARGA akun; aturan tipenya = `routes.rahaza_coa.type_family` (aturan yang sama
+# dengan induk akun di Bagan Akun) dan akun kas/bank = `core.fin_statements.cash_account_codes` (SSOT daftar
+# kas/bank). Layar Profil Posting menyaring pilihan dengan daftar kode dari server (GET /meta → family_codes),
+# jadi layar & validasi simpan tidak mungkin berbeda. "Tampilkan semua akun" di layar → peran yang sengaja
+# dipilih di luar jenisnya dikirim di `off_type_ok`; nilai lama yang tidak diubah tidak ditolak.
+ROLE_FAMILIES = {   # keluarga → (label untuk staf, keluarga tipe rahaza_coa.type_family)
+    "cash": ("kas/bank", "ASSET"),
+    "receivable": ("aset (piutang)", "ASSET"),
+    "asset": ("aset", "ASSET"),
+    "liability": ("liabilitas (hutang)", "LIABILITY"),
+    "equity": ("ekuitas", "EQUITY"),
+    "revenue": ("pendapatan", "INCOME"),
+    "expense": ("beban/HPP", "EXPENSE"),
+}
+_FAMILY_ROLES = {
+    "cash": ("debit_cash_default", "credit_cash_default", "debit_cash", "credit_cash", "debit_bank", "credit_bank",
+             "credit_bank_default", "debit_bank_target", "credit_bank_source", "debit_petty_cash", "credit_petty_cash"),
+    "receivable": ("debit_ar", "credit_ar", "debit_employee_loan_receivable", "credit_employee_loan_receivable",
+                   "control_ar_customer", "control_ar_maklon"),
+    "asset": ("debit_inventory_rm", "credit_inventory_rm", "inventory_rm", "debit_inventory_accessory",
+              "credit_inventory_accessory", "inventory_accessory", "inventory_fg", "credit_inventory_fg",
+              "debit_inventory_fg", "debit_fg_inventory", "credit_fg_inventory", "debit_wip", "credit_wip",
+              "debit_cmt_wip_internal", "debit_tax_input", "debit_fixed_asset", "credit_fixed_asset",
+              "debit_accum_depr", "credit_accum_depr", "debit_employee_advance", "supplier_claim"),
+    "liability": ("credit_ap", "debit_ap", "ap", "debit_grni", "credit_ap_clearing", "grni", "credit_tax_output",
+                  "credit_salary_payable", "debit_salary_payable", "credit_tax_pph21", "credit_bpjs_payable",
+                  "credit_bpjs_kes_payable", "credit_bpjs_tk_payable", "credit_advance_customer", "credit_accrued",
+                  "debit_accrued", "control_ap_supplier", "control_ap_cmt"),
+    "equity": ("credit_opening_equity", "credit_retained_earnings", "credit_retained_earnings_balancing"),
+    "revenue": ("credit_revenue", "credit_revenue_maklon", "debit_sales_discount", "debit_revenue", "debit_returns",
+                "debit_discount", "debit_platform_fee", "credit_purchase_discount", "credit_interest_income",
+                "credit_gain_on_disposal", "credit_variance_income", "credit_other_income", "debit_penalty_income",
+                "credit_other_deduction"),
+    "expense": ("debit_expense_default", "debit_expense", "credit_expense", "debit_price_variance", "price_variance",
+                "debit_salary_expense", "debit_bpjs_kes_employer_expense", "debit_bpjs_tk_employer_expense",
+                "adjustment_expense", "debit_cogs_material", "debit_cogs_labor", "debit_cogs_overhead", "credit_cogs",
+                "debit_cmt_expense_internal", "debit_cmt_expense_maklon", "debit_maklon_material",
+                "debit_accessory_office", "debit_accessory_marketing", "debit_accessory_other",
+                "debit_accessory_rnd_sample", "debit_sample", "debit_internal", "debit_return_loss",
+                "debit_variance_loss", "debit_variance", "debit_depr_expense", "debit_bad_debt_expense",
+                "debit_bank_charges", "debit_service_fee", "debit_loss_on_disposal", "debit_scrap_expense",
+                "scrap_expense", "debit_ads_default", "debit_ads_shopee", "debit_ads_tiktok", "debit_ads_tokopedia",
+                "debit_other_expense", "debit_travel_expense"),
+}
+ROLE_FAMILY = {r: fam for fam, roles in _FAMILY_ROLES.items() for r in roles}
+
+
+def role_family(event_type: str, role: str) -> str | None:
+    """Keluarga akun satu peran profil; None = peran tak dikenal (tidak disaring/divalidasi)."""
+    return ROLE_FAMILY.get(role)
+
+
+def family_label(family: str | None) -> str:
+    return ROLE_FAMILIES.get(family, ("", ""))[0]
+
+
+def account_fits_family(acc: dict, family: str | None, cash_codes=None) -> bool:
+    """MURNI. Akun cocok dengan keluarga peran? Akun tanpa tipe (data lama) tidak dinilai.
+    Peran kas/bank: tipe aset DAN termasuk daftar kas/bank (bila daftar itu ada)."""
+    if not family or not acc or not acc.get("type"):
+        return True
+    from routes.rahaza_coa import type_family
+    if type_family(acc.get("type")) != ROLE_FAMILIES[family][1]:
+        return False
+    if family == "cash" and cash_codes:
+        return acc.get("code") in cash_codes
+    return True
+
+
+async def family_codes(db) -> dict:
+    """{keluarga: [kode akun rinci yang cocok]} — sumber saringan layar Profil Posting."""
+    from core.fin_statements import cash_account_codes
+    cash = await cash_account_codes(db)
+    accs = [a async for a in db.rahaza_coa_accounts.find({}, {"_id": 0, "code": 1, "type": 1, "is_group": 1})]
+    return {fam: sorted(a["code"] for a in accs
+                        if a.get("code") and not a.get("is_group") and a.get("type")
+                        and account_fits_family(a, fam, cash))
+            for fam in ROLE_FAMILIES}
+
 # Perbaikan WAJIB pada profil yang sudah tersimpan di DB (idempoten):
 # (event_type, role) → kode kanonik. Dipakai upgrade_posting_profiles().
 PROFILE_CODE_FIXES = {
@@ -782,10 +864,19 @@ async def profiles_meta(request: Request):
     kode program (`consumers[*].reads_profile=False`) — layar Profil Posting menandainya."""
     await require_auth(request)
     from core.coa_bindings import role_consumers
+    db = get_db()
+    # 2026-11-07 (Tahap 6, KU1): keluarga akun per peran + daftar kode per keluarga (aturan server yang sama
+    # dengan validasi simpan) → layar menyaring pilihan akun tanpa menulis aturan tipe sendiri.
+    pairs = {(p["event_type"], r) for p in DEFAULT_PROFILES for r in p["mapping"]}
+    async for p in db.rahaza_posting_profiles.find({}, {"_id": 0, "event_type": 1, "mapping": 1}):
+        pairs |= {(p.get("event_type") or "", str(r)) for r in (p.get("mapping") or {})}
     return {"events": EVENT_LABELS, "roles": ROLE_LABELS,
             "roles_by_event": {f"{e}.{r}": lbl for (e, r), lbl in ROLE_LABELS_BY_EVENT.items()},
             "consumers": role_consumers(),
-            "defaults": {p["event_type"]: p["mapping"] for p in DEFAULT_PROFILES}}
+            "defaults": {p["event_type"]: p["mapping"] for p in DEFAULT_PROFILES},
+            "families": {k: v[0] for k, v in ROLE_FAMILIES.items()},
+            "role_families": {f"{e}.{r}": fam for e, r in sorted(pairs) if (fam := role_family(e, r))},
+            "family_codes": await family_codes(db)}
 
 
 @router.get("/{event_type}")
@@ -820,25 +911,41 @@ async def update_profile(event_type: str, request: Request):
         # 2026-11-02 (S2-H): SEMUA peran bermasalah dilaporkan sekaligus, dengan label manusiawi + kunci
         # peran dalam [..] supaya layar menandai baris yang tepat (dulu hanya yang pertama, kunci teknis).
         problems = []
+        old_map = doc.get("mapping") or {}
+        # 2026-11-07 (Tahap 6, KU1): jenis akun per peran. Hanya peran yang DIUBAH yang dinilai (nilai lama di
+        # luar jenis tetap tersimpan & ditandai di layar); `off_type_ok` = peran yang sengaja dipilih lewat
+        # "Tampilkan semua akun".
+        off_ok = {str(r) for r in (body.get("off_type_ok") or []) if r}
+        from routes.rahaza_coa import TYPE_LABELS
+        cash_codes = None
         for role, code in mapping.items():
             if not code:
                 continue
             code = str(code).strip()
             acc = coa_map.get(code)
             who = f"Peran «{role_label(role, event_type)}» [{role}]"
+            fam = role_family(event_type, role)
             if not acc:
                 problems.append(f"{who}: akun {code} tidak ada di Bagan Akun")
             elif acc.get("is_group"):
                 problems.append(f"{who}: akun {code} adalah akun grup (header) — pilih akun rinci")
             elif not acc.get("active"):
                 problems.append(f"{who}: akun {code} nonaktif — aktifkan lagi di Bagan Akun atau pilih akun lain")
+            elif fam and old_map.get(role) != code and role not in off_ok:
+                if fam == "cash" and cash_codes is None:
+                    from core.fin_statements import cash_account_codes
+                    cash_codes = await cash_account_codes(db)
+                if not account_fits_family(acc, fam, cash_codes):
+                    lbl = family_label(fam)
+                    problems.append(f"{who}: akun {code} {acc.get('name') or ''} "
+                                    f"({TYPE_LABELS.get(acc.get('type'), acc.get('type'))}) bukan akun {lbl} — pilih "
+                                    f"akun {lbl}, atau nyalakan «Tampilkan semua akun» bila memang disengaja")
             clean[role] = code
         if problems:
             raise HTTPException(400, "; ".join(problems) + ".")
         upd["mapping"] = clean
         # 2026-11-02 (audit No.47): catat peran yang DIUBAH/DIHAPUS pengguna agar startup
         # (upgrade_posting_profiles) tidak mengembalikannya ke bawaan.
-        old_map = doc.get("mapping") or {}
         changed = {r for r, c in clean.items() if old_map.get(r) != c}
         removed = {r for r in old_map if r not in clean}
         upd["user_roles"] = sorted((set(doc.get("user_roles") or []) | changed) - removed)

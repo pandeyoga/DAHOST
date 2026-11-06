@@ -4,6 +4,7 @@ import FilterChips from '@/components/ui/filter-chips';
 import { RefreshCw, Save, BookOpen, AlertCircle, CheckCircle2, AlertTriangle, Search } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
@@ -46,6 +47,7 @@ export default function RahazaPostingProfilesModule({ token }) {
   const [edits, setEdits] = useState({}); // { event_type: { role: code, ... } }
   const [search, setSearch] = useState('');
   const [onlyProblems, setOnlyProblems] = useState(false);
+  const [showAll, setShowAll] = useState(false); // KU1: "Tampilkan semua akun" (tanpa saring jenis per peran)
   const [focus, setFocus] = useState('');
   const cardRefs = useRef({});
 
@@ -84,6 +86,16 @@ export default function RahazaPostingProfilesModule({ token }) {
   const eventLabel = (et) => meta?.events?.[et] || FALLBACK_EVENT_LABELS[et] || humanize(et);
   const roleLabel = (et, role) => meta?.roles_by_event?.[`${et}.${role}`] || meta?.roles?.[role] || humanize(role);
   const consumersOf = (et, role) => (meta?.consumers?.[`${et}.${role}`] || []).filter((c) => !c.reads_profile);
+  // 2026-11-07 (Tahap 6, KU1): pilihan akun per peran disaring JENISnya (kas/bank, piutang, hutang, pendapatan,
+  // beban/HPP, …). Daftar kode per jenis dihitung server dengan aturan yang sama dengan validasi simpan
+  // (GET /meta → role_families + family_codes); meta gagal dimuat → tanpa saringan.
+  const familySets = useMemo(() => Object.fromEntries(
+    Object.entries(meta?.family_codes || {}).map(([f, codes]) => [f, new Set(codes)])), [meta]);
+  const familyOf = (et, role) => meta?.role_families?.[`${et}.${role}`] || '';
+  const fitsRole = (et, role, code) => {
+    const set = familySets[familyOf(et, role)];
+    return !set || !code || !byCode.get(code) || set.has(code);
+  };
 
   const getValue = (event_type, role, fallback) => {
     const ed = edits[event_type] || {};
@@ -106,8 +118,11 @@ export default function RahazaPostingProfilesModule({ token }) {
     const merged = { ...(original.mapping || {}), ...(edits[event_type] || {}) };
     const clean = {};
     Object.entries(merged).forEach(([k, v]) => { if ((v || '').trim()) clean[k] = v.trim(); });
+    // peran yang SENGAJA diisi akun di luar jenisnya (lewat "Tampilkan semua akun") — server menolak yang lain
+    const offTypeOk = Object.entries(edits[event_type] || {})
+      .filter(([role, code]) => code && !fitsRole(event_type, role, code)).map(([role]) => role);
     const r = await fetch(`/api/rahaza/posting-profiles/${event_type}`, {
-      method: 'PUT', headers, body: JSON.stringify({ mapping: clean }),
+      method: 'PUT', headers, body: JSON.stringify({ mapping: clean, off_type_ok: offTypeOk }),
     });
     setSaving('');
     if (!r.ok) {
@@ -152,6 +167,11 @@ export default function RahazaPostingProfilesModule({ token }) {
         </div>
         <FilterChips value={onlyProblems ? 'problems' : 'all'} onChange={(k) => setOnlyProblems(k === 'problems')} testId="pp-filter" ariaLabel="Penyaring masalah"
           options={[{ key: 'all', label: 'Semua', count: profiles.length }, { key: 'problems', label: 'Bermasalah', count: problemEvents.size }]} />
+        <label className="flex items-center gap-2 text-sm text-foreground/80 h-9" htmlFor="pp-show-all"
+          title="Pilihan akun tiap peran disaring sesuai jenisnya (kas/bank, piutang, hutang, pendapatan, beban/HPP). Nyalakan untuk melihat semua akun rinci.">
+          <Switch id="pp-show-all" checked={showAll} onCheckedChange={setShowAll} data-testid="pp-show-all" />
+          Tampilkan semua akun
+        </label>
       </>}
       tools={<>
         <ImportExportToolbar collectionKey="posting_profiles" label="Profil jurnal otomatis" onImported={fetchData} size="default" />
@@ -231,27 +251,41 @@ export default function RahazaPostingProfilesModule({ token }) {
                       const st = codeStatus(value, byCode);
                       const red = (st.kind !== 'ok' && st.kind !== 'empty') || bad.has(role);
                       const pending = consumersOf(p.event_type, role);
+                      const fam = familyOf(p.event_type, role);
+                      const famLabel = meta?.families?.[fam] || '';
+                      const famSet = familySets[fam];
+                      // KU1: nilai tersimpan/terpilih di luar jenis tetap tampil, ditandai (tidak hilang dari pilihan)
+                      const offType = st.kind === 'ok' && !fitsRole(p.event_type, role, value);
+                      const options = (showAll || !famSet) ? leafAccounts : leafAccounts.filter((a) => famSet.has(a.code));
+                      const offTypeAcc = offType && !options.some((a) => a.code === value) ? byCode.get(value) : null;
                       return (
-                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} data-role={role} className="min-w-0">
+                        <div key={role} data-testid={`pp-row-${p.event_type}-${role}`} data-role={role} data-family={fam || undefined} className="min-w-0">
                           <label className="text-xs font-medium text-foreground/80 block mb-1">
                             {roleLabel(p.event_type, role)}
+                            {famLabel && <span className="font-normal text-muted-foreground"> · akun {famLabel}</span>}
                           </label>
                           <SmartNativeSelect
                             value={value}
                             onChange={(e) => handleEdit(p.event_type, role, e.target.value)}
-                            className={`w-full h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : ''}`}
+                            className={`w-full h-9 ${red ? 'border-[hsl(var(--destructive))] ring-1 ring-[hsl(var(--destructive)/0.4)]' : offType ? 'border-[hsl(var(--warning))]' : ''}`}
                             data-testid={`pp-select-${p.event_type}-${role}`}
                             aria-invalid={red}
                           >
                             <option value="">— Tidak dipetakan —</option>
                             {st.kind !== 'ok' && st.kind !== 'empty' && <option value={value}>{`⚠ ${st.text}`}</option>}
-                            {leafAccounts.map((a) => (
+                            {offTypeAcc && <option value={value}>{`${offTypeAcc.code} — ${offTypeAcc.name} (di luar jenis yang disarankan)`}</option>}
+                            {options.map((a) => (
                               <option key={a.code} value={a.code}>{`${a.code} — ${a.name}`}</option>
                             ))}
                           </SmartNativeSelect>
                           {red && (
                             <p className="text-[11px] text-[hsl(var(--destructive))] mt-1" role="alert" data-testid={`pp-bad-${p.event_type}-${role}`}>
                               {st.text || 'Ditolak server — lihat pesan di atas.'} Pilih akun rinci yang aktif.
+                            </p>
+                          )}
+                          {offType && !red && (
+                            <p className="text-[11px] text-[hsl(var(--warning))] mt-1" data-testid={`pp-offtype-${p.event_type}-${role}`}>
+                              Akun ini di luar jenis yang disarankan untuk peran ini (akun {famLabel}). Periksa lagi bila tidak disengaja.
                             </p>
                           )}
                           {pending.length > 0 && (

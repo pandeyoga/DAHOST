@@ -425,6 +425,12 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
                   <SelectTrigger data-testid="acc-pic-select"><SelectValue placeholder="Pilih PIC..." /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">— Tidak ada PIC —</SelectItem>
+                    {form.pic_user_id && !users.some(u => u.id === form.pic_user_id) && (
+                      <SelectItem value={form.pic_user_id}>
+                        {account?.pic_user_name || 'PIC tersimpan'}
+                        <span className="text-muted-foreground text-xs ml-1">(tanpa akses Portal Toko)</span>
+                      </SelectItem>
+                    )}
                     {users.map(u => (
                       <SelectItem key={u.id} value={u.id}>
                         {u.name || u.email}
@@ -434,7 +440,8 @@ function AccountFormDialog({ open, onOpenChange, account, onSaved, token, coa, u
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Task otomatis (input sales, health alert) di-assign ke PIC ini.
+                  Hanya pengguna yang punya akses Portal Toko. Tugas otomatis (input sales, peringatan
+                  kesehatan toko, template tugas) diberikan ke PIC ini.
                 </p>
               </div>
             </div>
@@ -659,7 +666,8 @@ function AccountManagementBase({ token, onNavigate }) {
     try {
       const [rc, ru] = await Promise.all([
         fetch(`${API}/api/marketing/accounts/coa-options`, { headers }),
-        fetch(`${API}/api/auth/users?limit=200`, { headers }),
+        // MK3 (7 Nov 2026): calon PIC = pengguna yang punya akses Portal Toko (aturan akses yang sama dengan menu)
+        fetch(`${API}/api/auth/users?portal=toko&limit=500`, { headers }),
       ]);
       if (rc.ok) setCoa(await rc.json());
       if (ru.ok) {

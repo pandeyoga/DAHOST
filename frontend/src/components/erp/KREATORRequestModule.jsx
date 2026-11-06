@@ -78,7 +78,27 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
   const [delId, setDelId] = useState(null);
 
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
-  const models = useMasterList('/api/rahaza/models', token);
+  // 2026-11-07 (Tahap 6, MK2): varian aktif memberi WARNA model acuan (tampil duluan di pilihan warna).
+  // Varian juga melengkapi daftar model: Master Model (/rahaza/models, berisi HPP) tertutup untuk peran
+  // marketing (pic_toko/marketing_kol), sehingga dulu pilihan Model Referensi kosong bagi mereka.
+  const masterModels = useMasterList('/api/rahaza/models', token);
+  const variants = useMasterList('/api/rahaza/variants', token);
+  const models = useMemo(() => {
+    const byId = new Map(masterModels.map(m => [m.id, { id: m.id, code: m.code, name: m.name }]));
+    variants.forEach(v => {
+      if (v.model_id && !byId.has(v.model_id)) byId.set(v.model_id, { id: v.model_id, code: v.model_code, name: v.model_name });
+    });
+    return [...byId.values()].sort((a, b) => String(a.code || '').localeCompare(String(b.code || '')));
+  }, [masterModels, variants]);
+  const modelColors = useMemo(() => {
+    if (!form.model_id) return [];
+    const seen = new Map();
+    variants.filter(v => v.model_id === form.model_id && (v.color_id || v.color_name)).forEach(v => {
+      const k = v.color_id || v.color_name;
+      if (!seen.has(k)) seen.set(k, { id: v.color_id, name: v.color_name });
+    });
+    return [...seen.values()];
+  }, [variants, form.model_id]);
 
   const fetchRequests = async () => {
     setLoading(true);
@@ -508,7 +528,8 @@ export default function KREATORRequestModule({ token, currentUser, user, moduleI
               <div>
                 <Label>Warna (Master Warna)</Label>
                 <MasterChipsSelect token={token} path="/api/rahaza/colors" value={form.sample_colors}
-                  onChange={(v) => f('sample_colors', v)} testId="kreator-form-colors" />
+                  onChange={(v) => f('sample_colors', v)} testId="kreator-form-colors"
+                  priority={modelColors} priorityLabel="Warna model ini" otherLabel="Warna lain" />
               </div>
               <div>
                 <Label>Ukuran (Master Ukuran)</Label>

@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
+import { DepartmentSelect } from './hr/hrPickers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
@@ -337,7 +338,9 @@ export default function OKRTrackerModule({ token }) {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
                     <Label>Departemen</Label>
-                    <Input value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} placeholder="Marketing" />
+                    {/* 2026-11-07 (OR1): departemen dari Struktur Organisasi (satu daftar untuk semua formulir) */}
+                    <DepartmentSelect token={token} value={form.department} testId="okr-form-department"
+                      className="w-full" onChange={(v) => setForm((f) => ({ ...f, department: v }))} />
                   </div>
                   <div>
                     <Label>Penanggung jawab</Label>

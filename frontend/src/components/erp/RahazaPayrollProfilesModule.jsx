@@ -19,12 +19,9 @@ const SCHEMES = [
 ];
 const SCHEME_META = Object.fromEntries(SCHEMES.map(s => [s.code, s]));
 
-const PERIOD_TYPES = [
-  { code: 'weekly', label: 'Mingguan' },
-  { code: 'monthly', label: 'Bulanan' },
-];
-
-const WEEK_DAYS = ['Senin','Selasa','Rabu','Kamis','Jumat','Sabtu','Minggu'];
+// 2026-11-07 (HR2): isian "tipe periode / hari mulai minggu / tanggal mulai bulan" DISEMBUNYIKAN — tidak dipakai
+// menghitung gaji (periode gaji ikut proses payroll). Nilai yang sudah tersimpan tidak dikirim ulang, jadi tidak
+// berubah (server membiarkannya bila tidak dikirim).
 
 export default function RahazaPayrollProfilesModule({ token }) {
   const [profiles, setProfiles] = useState([]);
@@ -82,12 +79,12 @@ export default function RahazaPayrollProfilesModule({ token }) {
         icon={UserCog}
         eyebrow="Portal SDM · Penggajian"
         title="Profil Gaji Karyawan"
-        subtitle="Konfigurasi skema payroll, periode, dan rate per pegawai. Setiap pegawai dapat punya skema berbeda."
+        subtitle="Konfigurasi skema payroll dan rate per pegawai. Setiap pegawai dapat punya skema berbeda."
         actions={
           <>
             <ImportExportToolbar collectionKey="payroll_profiles" label="Profil Gaji Karyawan" onImported={fetchAll} />
             <Button variant="ghost" onClick={fetchAll} className="h-9 border border-[var(--glass-border)]" data-testid="pp-refresh"><RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Refresh</Button>
-            <Button onClick={() => setEditing({ employee_id: '', pay_scheme: 'monthly', period_type: 'monthly', base_rate: 0, overtime_rate: 0, cutoff_config: {}, pcs_process_rates: [] })} className="h-9" data-testid="pp-add"><Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Profil</Button>
+            <Button onClick={() => setEditing({ employee_id: '', pay_scheme: 'monthly', base_rate: 0, overtime_rate: 0, pcs_process_rates: [] })} className="h-9" data-testid="pp-add"><Plus className="w-3.5 h-3.5 mr-1.5" /> Tambah Profil</Button>
           </>
         }
       />
@@ -119,7 +116,6 @@ export default function RahazaPayrollProfilesModule({ token }) {
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="px-4 py-3">Karyawan</th>
                   <th className="px-3 py-3">Skema</th>
-                  <th className="px-3 py-3">Periode</th>
                   <th className="px-3 py-3 text-right">Tarif Dasar</th>
                   <th className="px-3 py-3 text-right">Tarif Lembur</th>
                   <th className="px-3 py-3">Tarif per Proses</th>
@@ -128,7 +124,7 @@ export default function RahazaPayrollProfilesModule({ token }) {
               </thead>
               <tbody>
                 {profiles.length === 0 ? (
-                  <tr><td colSpan={7} className="text-center py-12 text-muted-foreground">Belum ada profile. Tekan “Tambah Profile”.</td></tr>
+                  <tr><td colSpan={6} className="text-center py-12 text-muted-foreground">Belum ada profile. Tekan “Tambah Profile”.</td></tr>
                 ) : paged.map(p => {
                   const sm = SCHEME_META[p.pay_scheme] || SCHEMES[3];
                   return (
@@ -138,7 +134,6 @@ export default function RahazaPayrollProfilesModule({ token }) {
                         <div className="text-xs text-muted-foreground">{p.employee_name}</div>
                       </td>
                       <td className="px-3 py-2"><span className={`text-xs font-semibold ${sm.color}`}>{sm.label}</span></td>
-                      <td className="px-3 py-2 text-xs text-foreground">{p.period_type === 'weekly' ? `Mingguan (${WEEK_DAYS[p.cutoff_config?.week_start_day ?? 1]} start)` : `Bulanan (start day ${p.cutoff_config?.start_day ?? 1})`}</td>
                       <td className="px-3 py-2 text-right font-mono text-foreground">Rp {Number(p.base_rate || 0).toLocaleString('id-ID')}</td>
                       <td className="px-3 py-2 text-right font-mono text-foreground">Rp {Number(p.overtime_rate || 0).toLocaleString('id-ID')}</td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{(p.pcs_process_rates || []).length > 0 ? `${p.pcs_process_rates.length} override` : '—'}</td>
@@ -175,7 +170,6 @@ function ProfileEditor({ profile, employees, processes, isNew, takenIds = [], on
   const [state, setState] = useState(profile);
   useEffect(() => setState(profile), [profile]);
   const update = (k, v) => setState(s => ({ ...s, [k]: v }));
-  const updateCutoff = (k, v) => setState(s => ({ ...s, cutoff_config: { ...(s.cutoff_config || {}), [k]: v } }));
 
   const addProcRate = () => {
     setState(s => ({ ...s, pcs_process_rates: [...(s.pcs_process_rates || []), { process_id: '', process_code: '', rate: 0 }] }));
@@ -188,8 +182,6 @@ function ProfileEditor({ profile, employees, processes, isNew, takenIds = [], on
     onSave({
       employee_id: state.employee_id,
       pay_scheme: state.pay_scheme,
-      period_type: state.period_type,
-      cutoff_config: state.cutoff_config || {},
       base_rate: Number(state.base_rate) || 0,
       overtime_rate: Number(state.overtime_rate) || 0,
       pcs_process_rates: (state.pcs_process_rates || []).filter(r => r.process_id),
@@ -218,27 +210,6 @@ function ProfileEditor({ profile, employees, processes, isNew, takenIds = [], on
               <SmartNativeSelect value={state.pay_scheme} onChange={e => update('pay_scheme', e.target.value)} searchable={false} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-scheme">
                 {SCHEMES.map(s => <option key={s.code} value={s.code}>{s.label}</option>)}
               </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground uppercase block mb-1">Tipe Periode</label>
-              <SmartNativeSelect value={state.period_type} onChange={e => update('period_type', e.target.value)} searchable={false} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-period">
-                {PERIOD_TYPES.map(p => <option key={p.code} value={p.code}>{p.label}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              {state.period_type === 'weekly' ? (
-                <>
-                  <label className="text-xs text-muted-foreground uppercase block mb-1">Hari Mulai Minggu</label>
-                  <SmartNativeSelect value={String(state.cutoff_config?.week_start_day ?? 1)} onChange={e => updateCutoff('week_start_day', Number(e.target.value))} searchable={false} className="w-full h-10 px-3 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground" data-testid="pp-edit-weekday">
-                    {WEEK_DAYS.map((d, i) => <option key={i} value={String(i)}>{d}</option>)}
-                  </SmartNativeSelect>
-                </>
-              ) : (
-                <>
-                  <label className="text-xs text-muted-foreground uppercase block mb-1">Tanggal Mulai Bulan</label>
-                  <GlassInput type="number" min={1} max={28} value={state.cutoff_config?.start_day ?? 1} onChange={e => updateCutoff('start_day', Number(e.target.value))} />
-                </>
-              )}
             </div>
           </div>
 
