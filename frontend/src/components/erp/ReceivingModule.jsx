@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard, GlassPanel, GlassInput } from '@/components/ui/glass';
 import Modal from '@/components/erp/Modal';
@@ -7,12 +7,14 @@ import { Button } from '@/components/ui/button';
 import {
   ArrowDownToLine, Plus, Eye, CheckCircle, XCircle, Trash2,
   Package, Truck, Search, RefreshCw, FileText, Link2, AlertCircle, MapPin, Warehouse,
-  Table2, LayoutGrid, ArrowUpDown,
+  Table2, LayoutGrid, ArrowUpDown, ScanLine, Loader2,
 } from 'lucide-react';
 import { IconButton } from './IconButton';
 import { Combobox } from './Combobox';
 // Sprint A.1: UniversalScanner SSOT
 import UniversalScanner from './scanner/UniversalScanner';
+import ScanResult from './scanner/ScanResult';
+import { sameScanCode, scanFeedback } from './scanner/scanCode';
 import OnwardCTA from './OnwardCTA';
 import ExportCsvButton from '@/components/ui/export-csv-button';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
@@ -80,6 +82,23 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
   const [detailLocationId, setDetailLocationId] = useState('');
   const [receiveResult, setReceiveResult] = useState(null);
   const [missingRolls, setMissingRolls] = useState([]);
+  // 2026-11-06 (audit layar scan Gudang): scan SKU per baris → bunyi + ScanResult singkat di bawah barisnya.
+  const [skuScanIdx, setSkuScanIdx] = useState(null);   // baris yang sedang di-scan (kamera terbuka)
+  const [skuScan, setSkuScan] = useState(null);         // { idx, tone, title, detail }
+  useEffect(() => {
+    if (!skuScan) return undefined;
+    const t = setTimeout(() => setSkuScan(null), 6000);
+    return () => clearTimeout(t);
+  }, [skuScan]);
+  // Penjaga klik ganda: tombol simpan/konfirmasi terkunci selama permintaan berjalan
+  // (dulu dua klik = dua kali konfirmasi = stok masuk dua kali).
+  const [posting, setPosting] = useState(false);
+  const postingRef = useRef(false);
+  const runOnce = async (fn) => {
+    if (postingRef.current) return;
+    postingRef.current = true; setPosting(true);
+    try { await fn(); } finally { postingRef.current = false; setPosting(false); }
+  };
 
   // M12: memoized headers
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
@@ -400,6 +419,26 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
     ...f, items: f.items.map((it, i) => i === idx ? { ...it, [field]: val } : it)
   }));
 
+  // Scan SKU satu baris: isinya tetap seperti dulu (kode → kolom SKU); yang baru hanya umpan baliknya.
+  // Master material di layar ini dimuat maks. 500 — kode yang tidak ketemu diberi tanda kuning, bukan ditolak.
+  const handleSkuScan = (idx, code) => {
+    if (!code) {
+      scanFeedback('error');
+      setSkuScan({ idx, tone: 'error', title: 'Kode kosong — scan ulang' });
+      return;
+    }
+    updateItem(idx, 'sku', code);
+    const mat = materials.find(m => sameScanCode(m.code, code));
+    if (mat) {
+      scanFeedback('ok');
+      setSkuScan({ idx, tone: 'ok', title: `SKU terisi: ${code}`, detail: `${mat.code} · ${mat.name}` });
+    } else {
+      scanFeedback('dup');
+      setSkuScan({ idx, tone: 'dup', title: `SKU terisi: ${code}`,
+        detail: 'Tidak ditemukan di master material — periksa kodenya, atau pilih material di kolom atas.' });
+    }
+  };
+
   const filtered = search ? receipts.filter(r =>
     r.receipt_number?.toLowerCase().includes(search.toLowerCase()) ||
     r.supplier_name?.toLowerCase().includes(search.toLowerCase())
@@ -688,12 +727,14 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Source Type</label>
-                <select value={form.source_type} onChange={e => setForm(f => ({ ...f, source_type: e.target.value }))} className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground">
-                  <option value="supplier">Supplier</option>
-                  <option value="production">Production</option>
-                  <option value="transfer">Transfer</option>
-                </select>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Jenis sumber</label>
+                <SmartNativeSelect value={form.source_type} onChange={e => setForm(f => ({ ...f, source_type: e.target.value }))}
+                  className="w-full border border-[var(--glass-border)] bg-[var(--input-surface)] rounded-lg px-3 py-2 text-sm text-foreground"
+                  data-testid="gr-source-type-select">
+                  <option value="supplier">Pemasok</option>
+                  <option value="production">Produksi</option>
+                  <option value="transfer">Pindahan gudang</option>
+                </SmartNativeSelect>
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Reference (PO/SO)</label>
@@ -759,7 +800,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         />
                       </div>
                       <div>
-                        <label className="text-[10px] text-muted-foreground">Product Name</label>
+                        <label className="text-[10px] text-muted-foreground">Nama produk</label>
                         <GlassInput
                           value={item.product_name}
                           onChange={e => updateItem(idx, 'product_name', e.target.value)}
@@ -775,19 +816,16 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         {/* Sprint A.1: scan button next to SKU */}
                         <div className="flex gap-1">
                           <GlassInput value={item.sku} onChange={e => updateItem(idx, 'sku', e.target.value)} placeholder="SKU" className="h-8 text-xs flex-1" data-testid={`sku-input-${idx}`} />
-                          <UniversalScanner
-                            variant="button"
-                            onScan={(code) => updateItem(idx, 'sku', code)}
-                            title="Scan SKU"
-                            size="icon"
-                            btnVariant="outline"
-                            className="h-8 w-8 shrink-0 p-0"
-                            data-testid={`scan-sku-${idx}`}
-                          />
+                          {/* Tombol ikon 32 px (size icon-sm) membuka kamera bersama; hasilnya diumumkan di bawah baris. */}
+                          <Button type="button" variant="outline" size="icon-sm" className="shrink-0"
+                            onClick={() => setSkuScanIdx(idx)} title="Scan SKU" aria-label="Scan SKU"
+                            data-testid={`scan-sku-${idx}`}>
+                            <ScanLine className="w-4 h-4" />
+                          </Button>
                         </div>
                       </div>
                       <div>
-                        <label className="text-[10px] text-muted-foreground">Unit</label>
+                        <label className="text-[10px] text-muted-foreground">Satuan</label>
                         <SmartNativeSelect
                           value={item.unit}
                           onChange={e => updateItem(idx, 'unit', e.target.value)}
@@ -797,11 +835,11 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         </SmartNativeSelect>
                       </div>
                       <div>
-                        <label className="text-[10px] text-muted-foreground">Expected</label>
+                        <label className="text-[10px] text-muted-foreground">Diharap</label>
                         <GlassInput type="number" value={item.expected_qty} onChange={e => updateItem(idx, 'expected_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-expected-${idx}`} />
                       </div>
                       <div>
-                        <label className="text-[10px] text-muted-foreground">Received</label>
+                        <label className="text-[10px] text-muted-foreground">Diterima</label>
                         <GlassInput type="number" value={item.received_qty} onChange={e => updateItem(idx, 'received_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-received-${idx}`} />
                       </div>
                       {/* 2026-11-02 (K11): harga satuan — WAJIB bila tanpa PO (nilai persediaan & HPP) */}
@@ -816,7 +854,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                       </div>
                       <div className="flex gap-1">
                         <div className="flex-1">
-                          <label className="text-[10px] text-muted-foreground">Rejected</label>
+                          <label className="text-[10px] text-muted-foreground">Ditolak</label>
                           <GlassInput type="number" value={item.rejected_qty} onChange={e => updateItem(idx, 'rejected_qty', parseFloat(e.target.value) || 0)} className="h-8 text-xs" data-testid={`item-rejected-${idx}`} />
                         </div>
                         {form.items.length > 1 && (
@@ -864,6 +902,7 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                         />
                       </div>
                     </div>
+                    {skuScan?.idx === idx && <ScanResult {...skuScan} testId={`scan-sku-result-${idx}`} />}
                     {item.material_id && (
                       <p className="text-[10px] text-[hsl(var(--primary))] flex items-center gap-1">
                         <Link2 className="w-3 h-3" /> Stok akan disinkronkan ke modul Inventory saat GR confirmed
@@ -893,9 +932,20 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
 
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowCreate(false)} className="border-[var(--glass-border)] text-muted-foreground hover:bg-[var(--glass-bg-hover)]">Batal</Button>
-              <Button onClick={handleCreate} className="bg-primary text-primary-foreground hover:brightness-110" data-testid="submit-receipt-btn">Create Receipt</Button>
+              <Button onClick={() => runOnce(handleCreate)} disabled={posting} aria-busy={posting}
+                data-testid="submit-receipt-btn">
+                {posting ? <><Loader2 className="w-4 h-4 animate-spin" /> Menyimpan…</> : 'Simpan penerimaan'}
+              </Button>
             </div>
           </div>
+          {/* Satu kamera untuk semua baris (dulu satu tombol "Scan" per baris yang teksnya meluber dari kotak 32 px). */}
+          <UniversalScanner
+            variant="modal"
+            open={skuScanIdx !== null}
+            onClose={() => setSkuScanIdx(null)}
+            onScan={(code) => { const i = skuScanIdx; setSkuScanIdx(null); if (i !== null) handleSkuScan(i, code); }}
+            title="Scan SKU"
+          />
         </Modal>
       )}
 
@@ -1160,13 +1210,15 @@ export default function ReceivingModule({ token, deepLinkParams, onNavigate }) {
                 )}
                 <div className="flex justify-end gap-2">
                   <Button variant="outline" onClick={() => { setConfirmDelete(showDetail.id); setShowDetail(null); }} className="border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  hover:bg-[hsl(var(--destructive)/0.1)] ">
-                    <Trash2 className="w-4 h-4 mr-1" /> Delete
+                    <Trash2 className="w-4 h-4 mr-1" /> Hapus
                   </Button>
-                  <Button onClick={() => handleStatusChange(showDetail, 'received')}
-                    disabled={detailTotals.touched <= 0}
+                  <Button onClick={() => runOnce(() => handleStatusChange(showDetail, 'received'))}
+                    disabled={detailTotals.touched <= 0 || posting} aria-busy={posting}
                     className="bg-[hsl(var(--success))] text-foreground hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
                     data-testid="confirm-receive-btn">
-                    <CheckCircle className="w-4 h-4 mr-1" /> Confirm Received
+                    {posting
+                      ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Menyimpan…</>
+                      : <><CheckCircle className="w-4 h-4 mr-1" /> Konfirmasi diterima</>}
                   </Button>
                 </div>
               </div>

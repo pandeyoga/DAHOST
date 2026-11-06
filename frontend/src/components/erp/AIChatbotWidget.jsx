@@ -15,7 +15,9 @@ const FALLBACK_SUGGESTIONS = [
   'Bagaimana cara ekspor/impor data lewat Excel?',
 ];
 
-export default function AIChatbotWidget({ headers, user, portal, moduleId }) {
+// 2026-11-06 — `docked`: dibuka dari tombol "Asisten ERP" di menu samping (event `erp-chat-toggle`), tanpa
+// bulatan mengambang yang menutupi isi halaman. Tanpa menu samping (Portal Kolaborasi) bulatannya tetap ada.
+export default function AIChatbotWidget({ headers, user, portal, moduleId, docked = false }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -34,6 +36,11 @@ export default function AIChatbotWidget({ headers, user, portal, moduleId }) {
   }, [headers, portal]);
 
   useEffect(() => { if (open) loadContext(); }, [open, loadContext]);
+  useEffect(() => {
+    const toggle = () => setOpen(o => !o);
+    window.addEventListener('erp-chat-toggle', toggle);
+    return () => window.removeEventListener('erp-chat-toggle', toggle);
+  }, []);
 
   const sendMessage = async (text) => {
     const msg = (text || input).trim();
@@ -54,7 +61,7 @@ export default function AIChatbotWidget({ headers, user, portal, moduleId }) {
 
   return (
     <>
-      <button
+      {!docked && <button
         onClick={() => setOpen(o => !o)}
         data-testid="ai-chat-toggle"
         aria-label="Asisten ERP"
@@ -66,7 +73,7 @@ export default function AIChatbotWidget({ headers, user, portal, moduleId }) {
             : <motion.div key="chat" initial={{ rotate: 90, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} exit={{ rotate: -90, opacity: 0 }}><MessageCircle className="w-6 h-6 text-primary-foreground" /></motion.div>
           }
         </AnimatePresence>
-      </button>
+      </button>}
 
       <AnimatePresence>
         {open && (
@@ -75,7 +82,7 @@ export default function AIChatbotWidget({ headers, user, portal, moduleId }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-24 right-6 z-50 w-80 sm:w-96 shadow-2xl rounded-2xl border bg-background overflow-hidden"
+            className={`fixed ${docked ? 'bottom-4 right-4' : 'bottom-24 right-6'} z-50 w-[calc(100vw-2rem)] sm:w-96 shadow-2xl rounded-2xl border bg-background overflow-hidden`}
             data-testid="ai-chat-window"
           >
             <div className="bg-primary px-4 py-3 flex items-center justify-between">

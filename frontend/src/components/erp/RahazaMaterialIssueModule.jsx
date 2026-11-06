@@ -9,7 +9,8 @@ import { EmptyState, Notice } from './moduleAtoms';
 import Modal from './Modal';
 // Sprint A.1: UniversalScanner SSOT replaces inline BarcodeScanner
 import UniversalScanner from './scanner/UniversalScanner';
-import { sameScanCode } from './scanner/scanCode';
+import ScanResult from './scanner/ScanResult';
+import { sameScanCode, scanFeedback } from './scanner/scanCode';
 import useUomOptions from '@/hooks/useUomOptions';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 import { UomSelect, UomConversionHint, baseUnitOf } from './uom/UomPicker';
@@ -24,7 +25,7 @@ const SOURCE_META = {
   vendor_shipment: { label: 'Kirim Material CMT', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
   job: { label: 'Job Produksi', cls: 'bg-[hsl(var(--primary)/0.15)]  text-[hsl(var(--primary))]  border-[hsl(var(--primary)/0.35)] ' },
   work_order: { label: 'Work Order', cls: 'bg-[hsl(var(--warning)/0.15)]  text-[hsl(var(--warning))]  border-[hsl(var(--warning)/0.35)] ' },
-  manual: { label: 'Manual', cls: 'bg-slate-100 dark:bg-slate-400/20 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-400/30' },
+  manual: { label: 'Manual', cls: 'bg-muted text-muted-foreground border-border' },
 };
 
 function SourceBadge({ mi }) {
@@ -49,11 +50,11 @@ function refOf(mi) {
 }
 
 const STATUS_META = {
-  draft:             { label: 'Draft',             bg: 'bg-muted dark:bg-slate-400/15',   border: 'border-border/25',   text: 'text-foreground/70' },
+  draft:             { label: 'Draft',             bg: 'bg-muted',   border: 'border-border/25',   text: 'text-foreground/70' },
   pending_approval:  { label: 'Menunggu Approval', bg: 'bg-[hsl(var(--warning)/0.1)] ',   border: 'border-[hsl(var(--warning)/0.25)]',   text: 'text-[hsl(var(--warning))] ' },
   rejected:          { label: 'Ditolak',           bg: 'bg-[hsl(var(--destructive)/0.1)] ',     border: 'border-[hsl(var(--destructive)/0.25)]',     text: 'text-[hsl(var(--destructive))] ' },
   issued:            { label: 'Issued',            bg: 'bg-[hsl(var(--success)/0.1)] ', border: 'border-[hsl(var(--success)/0.25)]', text: 'text-[hsl(var(--success))] ' },
-  cancelled:         { label: 'Cancelled',         bg: 'bg-muted dark:bg-gray-400/15',    border: 'border-border/25',    text: 'text-foreground/80' },
+  cancelled:         { label: 'Cancelled',         bg: 'bg-muted',    border: 'border-border/25',    text: 'text-foreground/80' },
 };
 
 function StatusBadge({ status }) {
@@ -127,12 +128,25 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
     });
   }, [token]);
 
+  // 2026-11-06 (audit layar scan Gudang): hasil scan tampil di dekat yang diisi — di bawah material baris
+  // itu (scan per baris) atau di bawah tombol scan atas. `idx` null = tombol scan atas.
+  const [scanRes, setScanRes] = useState(null);   // { idx, tone, title, detail }
+  useEffect(() => { setScanRes(null); }, [detail?.id]);
+
   // U3 — Barcode scan handler: match scanned code to material
   const handleBarcodeScan = useCallback((code) => {
     setShowScanner(false);
+    const rowIdx = scanTarget?.itemIdx;
+    const at = rowIdx !== undefined ? rowIdx : null;
     // 2026-11-02 (Paket 3a): aturan kode scan bersama (tanpa beda huruf, prefix scanner dibuang)
     const mat = materials.find(m => sameScanCode(m.code, code) || m.id === code);
-    if (!mat) { toast.error(`Material dengan kode '${code}' tidak ditemukan.`); return; }
+    if (!mat) {
+      scanFeedback('error');
+      setScanRes({ idx: at, tone: 'error', title: `Ditolak: kode "${code}" tidak ada di master material`,
+        detail: 'Periksa labelnya, atau pilih material lewat master.' });
+      setScanTarget(null);
+      return;
+    }
     // If scanTarget has miId+itemIdx, update that specific MI item
     if (scanTarget && detail) {
       const updItems = [...(detail.items || [])];
@@ -140,6 +154,19 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
         updItems[scanTarget.itemIdx] = { ...updItems[scanTarget.itemIdx], material_id: mat.id, material_code: mat.code, material_name: mat.name };
       }
       setDetail(prev => ({ ...prev, items: updItems }));
+    }
+    if (at !== null) {
+      scanFeedback('ok');
+      setScanRes({ idx: at, tone: 'ok', title: `Terisi: ${mat.code} · ${mat.name}`,
+        detail: 'Belum tersimpan — tekan "Simpan qty, satuan & lokasi".' });
+    } else {
+      // Scan dari tombol atas tidak mengganti baris mana pun: kabarkan apakah material ini ada di daftar MI.
+      const found = (detail?.items || []).findIndex(it => it.material_id === mat.id);
+      scanFeedback(found >= 0 ? 'ok' : 'error');
+      setScanRes(found >= 0
+        ? { idx: null, tone: 'ok', title: `Ada di daftar: ${mat.code} · ${mat.name}`, detail: `Baris ${found + 1}.` }
+        : { idx: null, tone: 'error', title: `Ditolak: ${mat.code} tidak ada di daftar MI ini`,
+            detail: 'Untuk mengganti material sebuah baris, pakai ikon scan di baris itu.' });
     }
     setScanTarget(null);
   }, [materials, detail, scanTarget]);
@@ -830,15 +857,16 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
 
             {/* U3 — Scan button for draft MI */}
             {detail.status === 'draft' && (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { setScanTarget({ miId: detail.id }); setShowScanner(true); }}
-                  className="flex items-center gap-1.5 text-xs text-[hsl(var(--primary))] hover:text-[hsl(var(--primary))]  px-3 py-1.5 bg-[hsl(var(--primary)/0.15)]  rounded-lg border border-[hsl(var(--primary)/0.35)]  transition-colors"
-                  data-testid="mi-scan-barcode-btn"
-                >
-                  <ScanLine size={13} /> Scan Barcode Material
-                </button>
-                <span className="text-xs text-foreground/40">Scan untuk auto-fill material dari barcode</span>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" size="sm" variant="outline"
+                    onClick={() => { setScanTarget({ miId: detail.id }); setShowScanner(true); }}
+                    data-testid="mi-scan-barcode-btn">
+                    <ScanLine className="w-4 h-4" /> Scan barcode material
+                  </Button>
+                  <span className="text-xs text-muted-foreground">Cek apakah material ada di daftar; ikon scan di baris mengganti material baris itu.</span>
+                </div>
+                {scanRes && scanRes.idx === null && <ScanResult {...scanRes} testId="mi-scan-result" />}
               </div>
             )}
 
@@ -860,17 +888,18 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
                         <div className="tabular-nums text-xs text-foreground flex items-center gap-1">
                           {it.material_code}
                           {detail.status === 'draft' && (
-                            <button
+                            <Button type="button" variant="ghost" size="icon-sm"
                               onClick={() => { setScanTarget({ miId: detail.id, itemIdx: idx }); setShowScanner(true); }}
-                              className="text-[hsl(var(--primary)/0.6)] hover:text-[hsl(var(--primary))] ml-1"
-                              title="Scan barcode untuk material ini"
+                              className="text-[hsl(var(--primary))]"
+                              title="Scan barcode untuk material ini" aria-label="Scan barcode untuk material ini"
                               data-testid={`mi-item-scan-${it.material_code}`}
                             >
-                              <ScanLine size={11} />
-                            </button>
+                              <ScanLine className="w-4 h-4" />
+                            </Button>
                           )}
                         </div>
                         <div className="text-xs text-muted-foreground">{it.material_name}</div>
+                        {scanRes && scanRes.idx === idx && <ScanResult {...scanRes} testId={`mi-item-scan-result-${idx}`} />}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">{it.material_type}</td>
                       <td className="px-3 py-2 text-right tabular-nums text-foreground">

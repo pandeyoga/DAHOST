@@ -1048,9 +1048,9 @@ function App() {
           />
         </Suspense>
       </PortalShell>
-      {/* Global AI Chatbot Widget — available on all portals */}
+      {/* Global AI Chatbot Widget — dibuka dari tombol "Asisten ERP" di menu samping (2026-11-06) */}
       <Suspense fallback={null}>
-        <AIChatbotWidget headers={headers} user={user} portal={selectedPortal} moduleId={currentModule} />
+        <AIChatbotWidget headers={headers} user={user} portal={selectedPortal} moduleId={currentModule} docked />
       </Suspense>
     </>
   );

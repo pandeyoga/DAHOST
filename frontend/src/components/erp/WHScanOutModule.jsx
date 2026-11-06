@@ -18,7 +18,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   ScanLine, MapPin, Store, Lock, AlertTriangle, RefreshCw, Undo2, FileDown,
-  ClipboardList, Scale, CheckCircle2,
+  ClipboardList, Scale, CheckCircle2, RotateCw,
 } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,9 @@ import { downloadCsv } from '@/lib/csv';
 import { todayWIB, daysAgoWIB } from '@/lib/waktu';
 import UniversalScanner from './scanner/UniversalScanner';
 import { scanFeedback } from './scanner/scanCode';
+import { toScanResult } from './scanner/ScanResult';
+import PageLayout from './layout/PageLayout';
+import { StatTile } from './moduleAtoms';
 
 const API = '/api/wh/scan-out';
 const LS_LOC = 'whScanOut.location';
@@ -40,6 +43,9 @@ const FLAG_LABEL = {
   batal_tanpa_scan: 'Batal kirim tanpa scan keluar 7 hari',
 };
 
+// Scan yang gagal terkirim dikirim ulang dengan id scan yang SAMA (server tidak menghitung dua kali).
+// Scan ulang barangnya = id baru = stok terpotong dua kali — jadi petugas diarahkan ke "Kirim ulang".
+const RESEND_HINT = 'Jangan scan ulang barangnya — tekan "Kirim ulang" di bawah. Scan ulang memotong stok dua kali.';
 const rp = (v) => formatRupiah(v, { decimals: Math.abs(v || 0) % 1 ? 2 : 0 });
 const num = (v) => formatNumber(v);
 const newScanId = () => {
@@ -64,14 +70,15 @@ function Tab({ active, onClick, icon: Icon, children, testId }) {
   );
 }
 
-function Stat({ label, value, tone = '' }) {
-  return (
-    <div className="rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] px-3 py-2 min-w-0">
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground truncate">{label}</div>
-      <div className={`text-lg font-bold leading-tight truncate ${tone}`}>{value}</div>
-    </div>
-  );
+// Kartu angka = StatTile bersama (2026-11-06). Label & angka boleh turun baris — dulu dipotong
+// ("PCS NETO …") di HP. `break-words` diwariskan ke angka sehingga "Rp 12.345.678" tidak meluber.
+function Stat({ label, value, accent, className = '' }) {
+  return <StatTile label={label} value={value} accent={accent} className={`px-3 py-2 min-w-0 break-words ${className}`} />;
 }
+
+// Lokasi asal: yang MENYIMPAN barang jadi tampil lebih dulu (dulu ruang aksesoris dll. di atas).
+const fgFirst = (list) => [...list.filter((l) => Number(l.fg_qty) > 0), ...list.filter((l) => !(Number(l.fg_qty) > 0))];
+const locLabel = (l) => `${l.code}${l.name ? ` · ${l.name}` : ''} · ${num(l.fg_qty)} pcs barang jadi`;
 
 function Banner({ tone = 'red', children, testId }) {
   const cls = tone === 'red'
@@ -141,14 +148,15 @@ function ScanTab({ token }) {
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         scanFeedback('error');
-        setLast({ tone: 'red', text: d.detail || `Scan gagal (${r.status})` });
+        setLast({ tone: 'red', text: d.detail || `Scan gagal (${r.status})`,
+          detail: r.status >= 500 ? RESEND_HINT : undefined });
         if (r.status >= 500) setFailed((f) => [...f.filter((x) => x.client_scan_id !== payload.client_scan_id), payload]);
         return;
       }
       setFailed((f) => f.filter((x) => x.client_scan_id !== payload.client_scan_id));
       if (d.result === 'rejected') {
         scanFeedback('error');
-        setLast({ tone: 'red', text: `DITOLAK — ${d.reject?.reason || 'kode tidak dikenal'}` });
+        setLast({ tone: 'red', text: `Ditolak: ${d.reject?.reason || 'kode tidak dikenal'}`, detail: payload.code });
       } else if (d.result === 'processing') {
         scanFeedback('dup');
         setLast({ tone: 'amber', text: 'Scan yang sama sedang diproses — tidak dihitung dua kali.' });
@@ -156,17 +164,17 @@ function ScanTab({ token }) {
         const ln = d.line || {};
         const red = (ln.flags || []).length > 0;
         scanFeedback(red ? 'dup' : 'ok');
-        const verb = ln.kind === 'batal_kirim' ? 'BATAL KIRIM' : 'KELUAR';
+        const verb = ln.kind === 'batal_kirim' ? 'Batal kirim' : 'Keluar';
         setLast({
           tone: red ? 'red' : 'green',
-          text: `${d.duplicate ? '(sudah tercatat) ' : ''}${verb} ${ln.sku} ×${ln.qty}`
-            + (red ? ` — ${(ln.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')} (tetap tercatat)` : ''),
+          text: `${verb} ${ln.sku} ×${ln.qty}${d.duplicate ? ' (sudah tercatat)' : ''}`,
+          detail: red ? `${(ln.flags || []).map((f) => FLAG_LABEL[f] || f).join(', ')} — tetap tercatat.` : undefined,
         });
       }
       scheduleRefresh();
     } catch (e) {
       scanFeedback('error');
-      setLast({ tone: 'red', text: `Jaringan putus — scan disimpan di "Belum terkirim", kirim ulang tidak akan dobel.` });
+      setLast({ tone: 'red', text: `Jaringan putus — ${payload.code} ×${payload.multiplier} belum pasti tercatat.`, detail: RESEND_HINT });
       setFailed((f) => [...f.filter((x) => x.client_scan_id !== payload.client_scan_id), payload]);
     } finally {
       setInflight((n) => Math.max(0, n - 1));
@@ -212,6 +220,9 @@ function ScanTab({ token }) {
   const lines = data?.lines || [];
   const redLines = lines.filter((l) => l.status === 'active' && (l.flags || []).length);
   const locObj = locations.find((l) => l.id === loc);
+  const locOptions = useMemo(() => fgFirst(locations), [locations]);
+  // Hasil scan terakhir → ScanResult TEPAT di bawah kotak scan (testid lama `scan-out-last` dipertahankan).
+  const lastResult = last ? { ...toScanResult(last), testId: 'scan-out-last' } : null;
 
   return (
     <div className="space-y-3" data-testid="scan-out-tab-scan">
@@ -223,8 +234,8 @@ function ScanTab({ token }) {
               onChange={(e) => { setLoc(e.target.value); lsSet(LS_LOC, e.target.value); }}
               className="w-full h-10 rounded-md border border-[var(--glass-border)] bg-[var(--glass-bg)] px-2 text-sm">
               <option value="">— pilih lokasi —</option>
-              {locations.map((l) => (
-                <option key={l.id} value={l.id}>{l.code} {l.name ? `· ${l.name}` : ''} ({num(l.fg_qty)} pcs FG)</option>
+              {locOptions.map((l) => (
+                <option key={l.id} value={l.id}>{locLabel(l)}</option>
               ))}
             </SmartNativeSelect>
           </label>
@@ -265,22 +276,41 @@ function ScanTab({ token }) {
         </div>
         <div className={mode === 'batal_kirim' ? 'rounded-lg ring-2 ring-[hsl(var(--warning)/0.35)] p-1' : ''}>
           <UniversalScanner variant="inline" onScan={onScan} continuous keepFocus autoFocus disabled={!loc}
-            placeholder={loc ? (mode === 'batal_kirim' ? 'Scan paket yang BATAL dikirim…' : 'Scan SKU barang keluar…') : 'Pilih lokasi dulu'}
-            data-testid="scan-out-input" inputClassName="h-12 text-base" />
+            placeholder={loc ? (mode === 'batal_kirim' ? 'Scan paket yang batal dikirim…' : 'Scan SKU barang keluar…') : 'Pilih lokasi dulu'}
+            data-testid="scan-out-input" inputClassName="h-12 text-base" result={lastResult} />
         </div>
+        {/* Scan gagal terkirim: TEPAT di bawah hasil scan, satu tombol "Kirim ulang" per baris (id scan sama →
+            tidak dobel). Dulu hanya tautan kecil "Kirim ulang" di bawah teks keterangan. */}
+        {failed.length > 0 && (
+          <Banner tone="amber" testId="scan-out-failed">
+            <div className="font-semibold">{failed.length} scan belum terkirim — jangan scan ulang barangnya.</div>
+            <div className="mb-1">Tekan "Kirim ulang": scan yang sama dikirim lagi dan tidak dihitung dua kali.</div>
+            <div className="divide-y divide-[hsl(var(--warning)/0.25)]">
+              {failed.map((p) => (
+                <div key={p.client_scan_id} className="flex items-center justify-between gap-2 py-1" data-testid="scan-out-failed-line">
+                  <span className="tabular-nums break-all text-foreground">
+                    {p.kind === 'batal_kirim' ? 'Batal kirim · ' : ''}{p.code} ×{p.multiplier}
+                  </span>
+                  <Button size="sm" variant="outline" className="shrink-0" data-testid="scan-out-resend"
+                    onClick={() => { setFailed((f) => f.filter((x) => x.client_scan_id !== p.client_scan_id)); send(p); }}>
+                    <RotateCw className="w-4 h-4" /> Kirim ulang
+                  </Button>
+                </div>
+              ))}
+            </div>
+            {failed.length > 1 && (
+              <Button size="sm" variant="outline" className="mt-1" data-testid="scan-out-resend-all"
+                onClick={() => { const f = failed; setFailed([]); f.forEach(send); }}>
+                <RotateCw className="w-4 h-4" /> Kirim ulang semua ({failed.length})
+              </Button>
+            )}
+          </Banner>
+        )}
         <div className="text-[11px] text-muted-foreground">
           Khusus penjualan <b>marketplace</b>. Barang nota Portal Penjualan <b>tidak</b> di-scan di sini.
           {mult > 1 && <span className="ml-1 font-semibold text-[hsl(var(--primary))]">Scan berikutnya dihitung ×{mult} pcs.</span>}
           {inflight > 0 && <span className="ml-1">Mengirim {inflight}…</span>}
         </div>
-        {last && <Banner tone={last.tone} testId="scan-out-last">{last.text}</Banner>}
-        {failed.length > 0 && (
-          <Banner tone="amber" testId="scan-out-failed">
-            {failed.length} scan belum terkirim.{' '}
-            <button type="button" className="underline font-semibold"
-              onClick={() => { const f = failed; setFailed([]); f.forEach(send); }}>Kirim ulang</button>
-          </Banner>
-        )}
         {data?.langkah2?.enabled_in_db && (
           <Banner tone="red">Setelan "Langkah 2" tersimpan ON di database — {data.langkah2.message}</Banner>
         )}
@@ -302,27 +332,31 @@ function ScanTab({ token }) {
 
       {loc && (
         <GlassCard className="p-3 space-y-3" hover={false}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
+          {/* Judul lembar boleh turun baris; tombol muat ulang menempel di sebelahnya (dulu sendirian satu baris di HP). */}
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
               <div className="text-xs text-muted-foreground">{data?.date} · {locObj?.code || ''}</div>
-              <div className="font-semibold truncate" data-testid="scan-out-sheet">
+              <div className="font-semibold break-words" data-testid="scan-out-sheet">
                 {open ? `${open.number} — terbuka` : 'Belum ada scan hari ini (lembar dibuat otomatis saat scan pertama)'}
               </div>
               {open?.post_error && <div className="text-xs text-[hsl(var(--destructive))]">Tutup terakhir gagal: {open.post_error}</div>}
             </div>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="ghost" onClick={loadToday} title="Muat ulang"><RefreshCw className="w-4 h-4" /></Button>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button size="icon-sm" variant="outline" onClick={loadToday} title="Muat ulang" aria-label="Muat ulang"
+                data-testid="scan-out-refresh">
+                <RefreshCw className="w-4 h-4" />
+              </Button>
               {open && data?.can_supervise && (
                 <Button size="sm" disabled={busy} onClick={() => closeSheet(open)} data-testid="scan-out-close">
-                  <Lock className="w-4 h-4 mr-1" /> Tutup Hari
+                  <Lock className="w-4 h-4 mr-1" /> Tutup hari
                 </Button>
               )}
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-2">
-            <Stat label="Pcs neto hari ini" value={num(tot.pcs)} tone="text-[hsl(var(--success))] " />
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <Stat label="Pcs neto hari ini" value={num(tot.pcs)} accent="success" />
             <Stat label="Batal kirim" value={num(tot.pcs_cancel)} />
-            <Stat label="HPP (WAC)" value={rp(tot.value)} />
+            <Stat label="HPP (WAC)" value={rp(tot.value)} className="col-span-2 sm:col-span-1" />
           </div>
           {(data?.per_sku || []).length > 0 && (
             <div className="flex flex-wrap gap-1.5" data-testid="scan-out-per-sku">
@@ -466,7 +500,7 @@ function ReportTab({ token }) {
             <Stat label="HPP (WAC)" value={rp(s.value)} />
             <Stat label="SKU" value={num(s.skus)} />
             <Stat label="Impor vs scan" value={`${num(ctl.today?.import_pcs)} / ${num(ctl.today?.scan_pcs)}`}
-              tone={ctl.today?.flag ? 'text-[hsl(var(--destructive))] ' : ''} />
+              accent={ctl.today?.flag ? 'danger' : undefined} />
           </div>
           <GlassCard className="p-3 space-y-1" hover={false}>
             <div className="text-xs font-semibold">Lembar</div>
@@ -564,7 +598,7 @@ function ControlTab({ token, canSupervise }) {
           <div className="grid grid-cols-3 gap-2">
             <Stat label={`Impor ${ctl.days} hr`} value={num(cum.import_pcs)} />
             <Stat label={`Scan ${ctl.days} hr`} value={num(cum.scan_pcs)} />
-            <Stat label="Selisih kumulatif" value={num(cum.gap)} tone={cum.flag ? 'text-[hsl(var(--destructive))] ' : ''} />
+            <Stat label="Selisih kumulatif" value={num(cum.gap)} accent={cum.flag ? 'danger' : undefined} />
           </div>
           <GlassCard className="p-3" hover={false}>
             <Table testId="scan-out-control-rows" head={['Tanggal', 'Impor', 'basis pesanan', 'Scan', 'Selisih', 'Kumulatif', '']}
@@ -613,14 +647,8 @@ export default function WHScanOutModule({ token, user, initialTab }) {
   const role = (user?.role || '').toLowerCase();
   const canSupervise = !['tim_packing', 'admin_aksesoris'].includes(role);
   return (
-    <div className="p-3 sm:p-4 space-y-3 max-w-4xl mx-auto" data-testid="wh-scan-out-module">
-      <div className="flex items-center gap-2">
-        <ScanLine className="w-5 h-5 text-[hsl(var(--primary))]" />
-        <div className="min-w-0">
-          <h1 className="text-base sm:text-lg font-bold leading-tight">Scan Keluar Penjualan</h1>
-          <p className="text-[11px] text-muted-foreground truncate">Barang marketplace keluar gudang · stok & HPP (WAC) per scan · jurnal saat Tutup Hari</p>
-        </div>
-      </div>
+    <PageLayout testId="wh-scan-out-module" title="Scan keluar penjualan"
+      subtitle="Barang marketplace keluar gudang: stok & HPP (WAC) dipotong per scan, jurnal saat tutup hari.">
       <div className="inline-flex rounded-lg border border-[var(--glass-border)] bg-[var(--glass-bg)] p-1 w-full">
         <Tab active={tab === 'scan'} onClick={() => setTab('scan')} icon={ScanLine} testId="scan-out-tabbtn-scan">Scan</Tab>
         <Tab active={tab === 'report'} onClick={() => setTab('report')} icon={ClipboardList} testId="scan-out-tabbtn-report">Laporan</Tab>
@@ -629,6 +657,6 @@ export default function WHScanOutModule({ token, user, initialTab }) {
       {tab === 'scan' && <ScanTab token={token} />}
       {tab === 'report' && <ReportTab token={token} />}
       {tab === 'control' && <ControlTab token={token} canSupervise={canSupervise} />}
-    </div>
+    </PageLayout>
   );
 }

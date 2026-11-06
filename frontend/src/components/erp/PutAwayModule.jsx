@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { MapPin, ArrowRight, Boxes, Search, RefreshCw, Check, Warehouse, ArrowDownToLine, ScanLine, PackageOpen } from 'lucide-react';
-import { IconButton } from './IconButton';
+import { MapPin, ArrowRight, Boxes, Search, RefreshCw, Check, Warehouse, ArrowDownToLine, ScanLine, PackageOpen, CheckCircle2, XCircle } from 'lucide-react';
 import OnwardCTA from './OnwardCTA';
+import PageLayout from './layout/PageLayout';
+import { Notice } from './moduleAtoms';
 import useUomOptions from '@/hooks/useUomOptions';
 import { UomSelect, UomConversionHint, toBaseQty, baseUnitOf } from './uom/UomPicker';
 import UniversalScanner from './scanner/UniversalScanner';
@@ -29,6 +30,9 @@ export default function PutAwayModule({ token, onNavigate }) {
   const [inputUom, setInputUom] = useState('');   // satuan hitung fisik operator
   const [message, setMessage] = useState(null);
   const [saving, setSaving] = useState(false);
+  // 2026-11-06 (audit layar scan Gudang): hasil scan tampil TEPAT di bawah kotak scannya (ScanResult).
+  const [itemScan, setItemScan] = useState(null);   // kotak scan langkah 1 (barang / label bin)
+  const [binScan, setBinScan] = useState(null);     // kotak scan bin langkah 2
 
   // Satuan yang sah untuk material terpilih (kemasan master + konversi global)
   const { options: uomOpts } = useUomOptions(selected ? [selected.material_id] : []);
@@ -71,6 +75,7 @@ export default function PutAwayModule({ token, onNavigate }) {
     setSelected(item); setQty(item.unshelved); setInputUom('');
     setBldg(''); setZone(''); setRack(''); setBinId('');
     setPlacements(null); loadPlacements(item.material_id);
+    setBinScan(null);   // hasil scan bin milik barang sebelumnya
   };
 
   // Cascade filtering
@@ -86,17 +91,48 @@ export default function PutAwayModule({ token, onNavigate }) {
 
   // 2026-11-02 (Paket 3a): komponen scanner bersama + aturan kode yang sama dengan
   // backend (`sameScanCode`: tanpa beda huruf, prefix/suffix scanner dibuang).
+  const findBin = (code) => loc.positions.find((p) => sameScanCode(p.barcode, code));
+  // Pilih bin dari barcode; mengembalikan hasil untuk ScanResult (dipakai kotak scan langkah 1 & 2).
+  const applyBin = (pos, code) => {
+    if (!pos) return { tone: 'error', title: `Ditolak: bin "${code}" tidak ditemukan`, detail: 'Periksa label bin, atau pilih bin secara manual.' };
+    if (selected && !pos.is_empty && pos.material_id !== selected.material_id) {
+      return { tone: 'error', title: `Ditolak: bin ${pos.barcode} sudah berisi ${pos.material_code || 'material lain'}`, detail: 'Pilih bin kosong.' };
+    }
+    setBldg(pos.building_id || ''); setZone(pos.zone_id || ''); setRack(pos.rack_id || ''); setBinId(pos.id);
+    return { tone: 'ok', title: `Bin dipilih: ${pos.full_label}`, detail: selected ? `Untuk ${selected.code} · ${selected.name}` : undefined };
+  };
   const handleScanBarcode = (raw) => {
     const code = (raw || '').trim();
     if (!code) return;
-    const pos = loc.positions.find((p) => sameScanCode(p.barcode, code));
-    if (!pos) { scanFeedback('error'); flash('error', `Bin dengan barcode "${code}" tidak ditemukan`); return; }
-    if (selected && !pos.is_empty && pos.material_id !== selected.material_id) {
-      flash('error', `Bin ${pos.barcode} sudah berisi ${pos.material_code || 'material lain'}. Pilih bin kosong.`);
-      return;
+    const res = applyBin(findBin(code), code);
+    scanFeedback(res.tone === 'ok' ? 'ok' : 'error');
+    setBinScan(res);
+  };
+
+  // Langkah 1: scan kode barang → barang dipilih seperti klik di daftar. Kalau barang sudah dipilih,
+  // kotak yang sama menerima label bin (petugas tidak perlu pindah kotak di antara dua scan).
+  const pendingItems = useMemo(() => CAT_ORDER.flatMap((c) => groups[c] || []), [groups]);
+  const handleScanItem = (raw) => {
+    const code = (raw || '').trim();
+    if (!code) return;
+    const it = pendingItems.find((x) => sameScanCode(x.code, code) || x.material_id === code);
+    let res;
+    if (it) {
+      selectItem(it);
+      res = { tone: 'ok', title: `Dipilih: ${it.code} · ${it.name}`,
+        detail: `Belum dirak ${fmtNum(it.unshelved)} ${it.unit}. Lanjut scan label bin tujuan.` };
+    } else {
+      const pos = findBin(code);
+      if (pos && selected) res = applyBin(pos, code);
+      else if (pos) res = { tone: 'error', title: `Ini label bin ${pos.full_label}`, detail: 'Scan barangnya dulu, baru label bin tujuan.' };
+      else {
+        res = { tone: 'error', title: `Ditolak: "${code}" tidak ada di daftar belum dirak`,
+          detail: search ? 'Daftar sedang disaring — kosongkan pencarian, lalu scan ulang.'
+            : 'Barang ini sudah dirak semua, atau kodenya bukan kode barang.' };
+      }
     }
-    setBldg(pos.building_id || ''); setZone(pos.zone_id || ''); setRack(pos.rack_id || ''); setBinId(pos.id);
-    flash('success', `Bin ${pos.full_label} dipilih`);
+    scanFeedback(res.tone === 'ok' ? 'ok' : 'error');
+    setItemScan(res);
   };
 
   const handlePlace = async () => {
@@ -123,8 +159,9 @@ export default function PutAwayModule({ token, onNavigate }) {
           ? ` (${fmtNum(qty)} ${effUom} = ${fmtNum(qtyBase)} ${baseUnit})` : '';
         flash('success', `Berhasil menempatkan ${fmtNum(qtyBase)} ${baseUnit || selected.unit || 'pcs'} ${selected.code}${conv} → ${selectedBin?.full_label || 'bin'}. Sisa belum dirak: ${fmtNum(data.remaining_unshelved)}`);
         setSelected(null); setBinId(''); setQty(0); setInputUom(''); setPlacements(null);
+        setItemScan(null); setBinScan(null);
         fetchData();
-      } else { flash('error', data.detail || 'Gagal put-away'); }
+      } else { flash('error', data.detail || 'Gagal menyimpan ke bin'); }
     } catch (e) { flash('error', e.message); }
     finally { setSaving(false); }
   };
@@ -134,32 +171,25 @@ export default function PutAwayModule({ token, onNavigate }) {
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-10 w-10 border-b-2 border-primary" /></div>;
 
   return (
-    <div className="space-y-6" data-testid="wh-putaway-module">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Put-Away</h1>
-          <p className="text-muted-foreground text-sm">Tempatkan stok yang belum dirak ke lokasi gudang &rarr; zona &rarr; rak &rarr; bin</p>
-        </div>
-        <IconButton label="Refresh data" onClick={fetchData} data-testid="putaway-refresh"><RefreshCw className="w-4 h-4 text-muted-foreground" /></IconButton>
-      </div>
-
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Langkah Berikutnya"
-        actions={[
-          { module: 'wms-stock-hub', label: 'Lihat Stok Terkini', icon: Warehouse, primary: true, hint: 'Cek posisi stok setelah put-away' },
-          { module: 'wh-receiving', label: 'Kembali ke Penerimaan', icon: ArrowDownToLine, hint: 'Terima barang lain' },
-        ]}
-      />
-
-      {message && (
-        <div data-testid="putaway-message" className={`p-3 rounded-xl text-sm font-medium ${message.type === 'success' ? 'bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success))] border border-[hsl(var(--success)/0.2)]' : 'bg-[hsl(var(--destructive)/0.1)] text-[hsl(var(--destructive))] border border-[hsl(var(--destructive)/0.2)]'}`}>{message.text}</div>
+    <PageLayout
+      testId="wh-putaway-module"
+      title="Penyimpanan"
+      subtitle="Tempatkan barang yang belum dirak ke gudang, zona, rak, dan bin."
+      tools={(
+        <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="putaway-refresh">
+          <RefreshCw className="w-4 h-4" />
+        </Button>
       )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Step 1: Pilih barang belum dirak */}
+    >
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Step 1: Pilih barang belum dirak — scan kode barang (atau klik di daftar) */}
         <GlassCard hover={false} className="p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><PackageOpen className="w-4 h-4 text-primary" /> 1. Barang Belum Dirak <span className="ml-auto text-xs text-muted-foreground">{totalPending} item</span></h3>
+          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><PackageOpen className="w-4 h-4 text-primary" /> 1. Barang belum dirak <span className="ml-auto text-xs text-muted-foreground">{totalPending} item</span></h3>
+          <div className="mb-3">
+            <UniversalScanner variant="inline" onScan={handleScanItem} keepFocus result={itemScan}
+              placeholder="Scan barang / label" data-testid="putaway-scan-item" />
+          </div>
           <div className="relative mb-3">
             <Search className="w-4 h-4 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
             <GlassInput placeholder="Cari kode / nama..." value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && fetchData()} className="pl-8" data-testid="putaway-search" />
@@ -172,7 +202,7 @@ export default function PutAwayModule({ token, onNavigate }) {
                 <p className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mb-1.5">{labels[cat]}</p>
                 <div className="space-y-2">
                   {groups[cat].map((it) => (
-                    <button key={it.material_id} onClick={() => selectItem(it)}
+                    <button key={it.material_id} onClick={() => { selectItem(it); setItemScan(null); }}
                       className={`w-full text-left p-3 rounded-xl border transition-colors ${selected?.material_id === it.material_id ? 'border-primary/40 bg-primary/10' : 'border-[var(--glass-border)] bg-[var(--glass-bg)] hover:bg-[var(--glass-bg-hover)]'}`}
                       data-testid={`putaway-item-${it.code}`}>
                       <p className="text-sm font-medium text-foreground">{it.name}</p>
@@ -191,7 +221,7 @@ export default function PutAwayModule({ token, onNavigate }) {
 
         {/* Step 2: Lokasi tujuan */}
         <GlassCard hover={false} className="p-5">
-          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> 2. Lokasi Tujuan</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><MapPin className="w-4 h-4 text-primary" /> 2. Lokasi tujuan</h3>
           {!selected ? (
             <p className="text-xs text-muted-foreground text-center py-8">Pilih barang dulu di langkah 1</p>
           ) : (
@@ -204,8 +234,8 @@ export default function PutAwayModule({ token, onNavigate }) {
 
               {/* Scan bin */}
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block flex items-center gap-1"><ScanLine className="w-3 h-3" /> Scan / Ketik Barcode Bin</label>
-                <UniversalScanner variant="inline" onScan={handleScanBarcode}
+                <label className="text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1"><ScanLine className="w-3 h-3" /> Scan / ketik barcode bin</label>
+                <UniversalScanner variant="inline" onScan={handleScanBarcode} keepFocus result={binScan}
                   placeholder="GD-01-ZN-01-RK-01-S01-P01" data-testid="putaway-barcode-input" />
               </div>
 
@@ -245,7 +275,7 @@ export default function PutAwayModule({ token, onNavigate }) {
 
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                  Qty Ditempatkan (maks {fmtNum(selected.unshelved)} {baseUnit})
+                  Jumlah ditempatkan (maks {fmtNum(selected.unshelved)} {baseUnit})
                 </label>
                 <div className="flex gap-2">
                   <GlassInput type="number" value={qty} min={0} step="0.0001"
@@ -295,8 +325,8 @@ export default function PutAwayModule({ token, onNavigate }) {
                   </div>
                 )}
               </div>
-              <Button onClick={handlePlace} disabled={saving} className="w-full bg-primary text-primary-foreground hover:brightness-110" data-testid="putaway-confirm-btn">
-                <Check className="w-4 h-4 mr-1" /> {saving ? 'Menyimpan...' : 'Tempatkan (Put-Away)'}
+              <Button onClick={handlePlace} disabled={saving} className="w-full" data-testid="putaway-confirm-btn">
+                <Check className="w-4 h-4 mr-1" /> {saving ? 'Menyimpan...' : 'Tempatkan di bin'}
               </Button>
             </div>
           ) : (
@@ -305,8 +335,24 @@ export default function PutAwayModule({ token, onNavigate }) {
               Lengkapi langkah 1 &amp; 2 dulu
             </div>
           )}
+          {/* Hasil simpan tampil di kartu tempat tombolnya ditekan — dulu di atas halaman (di HP di luar layar). */}
+          {message && (
+            <Notice tone={message.type === 'success' ? 'success' : 'danger'} className="mt-3"
+              icon={message.type === 'success' ? CheckCircle2 : XCircle} testId="putaway-message"
+              title={message.text} />
+          )}
         </GlassCard>
       </div>
-    </div>
+
+      {/* Navigasi lanjutan di akhir halaman — dulu di atas dan memenuhi layar pertama HP sebelum pekerjaannya. */}
+      <OnwardCTA
+        onNavigate={onNavigate}
+        title="Langkah berikutnya"
+        actions={[
+          { module: 'wms-stock-hub', label: 'Lihat stok terkini', icon: Warehouse, primary: true, hint: 'Cek posisi stok setelah disimpan' },
+          { module: 'wh-receiving', label: 'Kembali ke penerimaan', icon: ArrowDownToLine, hint: 'Terima barang lain' },
+        ]}
+      />
+    </PageLayout>
   );
 }

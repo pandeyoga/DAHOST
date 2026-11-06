@@ -9,7 +9,8 @@
  *   - sidebar footer (RecentModulesFooter + breadcrumb + TV link)
  */
 
-import { Menu, X, Tv2 } from 'lucide-react';
+import { Menu, X, Tv2, MessageCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import NavItem from './NavItem';
 import { navItemVisible, currentRole } from '../portalAccess';
 import RecentModulesFooter from './RecentModulesFooter';
@@ -145,6 +146,18 @@ export default function Sidebar({
               </div>
             )}
           </nav>
+
+          {/* 2026-11-06 (keputusan owner "Pindah ke menu samping") — tombol Asisten ERP di menu samping,
+              bukan bulatan mengambang yang menutupi isi (angka terakhir tabel, daftar scan di HP). */}
+          <div className={`py-2 border-t border-[var(--glass-border)] ${collapsed ? 'px-2' : 'px-3'}`}>
+            <Button variant="ghost" size={collapsed ? 'icon' : 'sm'}
+              className={collapsed ? 'w-full' : 'w-full justify-start gap-2 text-foreground/80'}
+              onClick={() => { setMobileOpen?.(false); window.dispatchEvent(new CustomEvent('erp-chat-toggle')); }}
+              title="Asisten ERP" aria-label="Asisten ERP" data-testid="ai-chat-toggle">
+              <MessageCircle className="w-4 h-4 text-[hsl(var(--primary))]" />
+              {!collapsed && 'Asisten ERP'}
+            </Button>
+          </div>
 
           {/* Sidebar footer: Recent modules + TV link + breadcrumb */}
           {!collapsed && (
