@@ -156,7 +156,8 @@ export default function WMSBarcodeModule() {
 
   const kolomMaster = [
     { kunci: 'code', label: 'Kode', hp: 'judul', isi: (it) => <span className="tabular-nums">{it.code}</span> },
-    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (it) => it.name },
+    // Nama dipotong dengan judul lengkap di `title`: dulu nama panjang mendorong kolom Satuan & tombol tambah keluar kartu.
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (it) => <span className="block max-w-[13rem] truncate xl:max-w-[18rem]" title={it.name}>{it.name}</span> },
     { kunci: 'unit', label: 'Satuan', hp: false, isi: (it) => <span className="text-muted-foreground">{it.unit}</span> },
     { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (it) => (
       <Button size="icon-sm" variant="outline" onClick={() => addItem(it)} title="Tambah ke daftar cetak"
@@ -174,7 +175,7 @@ export default function WMSBarcodeModule() {
           </p>
         )}
       </div>) },
-    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => r.name },
+    { kunci: 'name', label: 'Nama', hp: 'keterangan', isi: (r) => <span className="block max-w-[13rem] truncate xl:max-w-[18rem]" title={r.name}>{r.name}</span> },
     { kunci: 'varian', label: 'Varian', hp: false, isi: (r) => [r.color, r.size].filter(Boolean).join(' · ') || '—' },
     { kunci: 'copies', label: 'Lembar', rata: 'kanan', isi: (r) => (
       <Input type="number" min="1" max="200" value={r.copies} onChange={e => setCopies(r.code, e.target.value)}

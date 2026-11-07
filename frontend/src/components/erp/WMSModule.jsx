@@ -524,12 +524,14 @@ function UnitsTab({ token }) {
             <Isian label="Kode" wajib htmlFor="wms-u-kode"><Input id="wms-u-kode" value={form.code || ''} onChange={e => setForm(f => ({ ...f, code: e.target.value }))} placeholder="rol" /></Isian>
             <Isian label="Simbol" wajib htmlFor="wms-u-simbol"><Input id="wms-u-simbol" value={form.symbol || ''} onChange={e => setForm(f => ({ ...f, symbol: e.target.value }))} /></Isian>
           </div>
-          <Isian label="Nama" wajib htmlFor="wms-u-nama"><Input id="wms-u-nama" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Isian>
-          <Isian label="Kategori">
-            <SmartNativeSelect value={form.category || 'count'} searchable={false} className="w-full" onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
-              {['weight', 'length', 'count', 'roll', 'pack', 'volume', 'other'].map(c => <option key={c} value={c}>{kategoriSatuan(c)}</option>)}
-            </SmartNativeSelect>
-          </Isian>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Isian label="Nama" wajib htmlFor="wms-u-nama"><Input id="wms-u-nama" value={form.name || ''} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Isian>
+            <Isian label="Kategori">
+              <SmartNativeSelect value={form.category || 'count'} searchable={false} className="w-full" onChange={e => setForm(f => ({ ...f, category: e.target.value }))}>
+                {['weight', 'length', 'count', 'roll', 'pack', 'volume', 'other'].map(c => <option key={c} value={c}>{kategoriSatuan(c)}</option>)}
+              </SmartNativeSelect>
+            </Isian>
+          </div>
         </>}
         {modal?.type === 'conversion' && <>
           <div className="grid gap-4 sm:grid-cols-2">
