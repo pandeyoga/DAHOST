@@ -127,14 +127,14 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
         {loading ? (
           <div className="space-y-2">{[1, 2, 3].map(i => <Skeleton key={i} className="h-10" />)}</div>
         ) : unmapped.length === 0 ? (
-          <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400"
+          <div className="flex items-center gap-2 text-sm text-[hsl(var(--success-text))]"
             data-testid="sku-mapping-clear">
             <CheckCircle2 className="w-4 h-4" /> Semua SKU pada impor ini sudah tertaut item katalog.
           </div>
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="bg-amber-500/10 text-amber-500 border-amber-500/30">
+              <Badge variant="outline" className="bg-amber-500/10 text-[hsl(var(--warning-text))] border-amber-500/30">
                 <AlertTriangle size={11} className="mr-1" /> {unmapped.length} SKU belum tertaut
               </Badge>
               <span className="text-xs text-muted-foreground">
@@ -201,7 +201,7 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
                         </Select>
                         {u.suggestion && !picks[u.platform_sku_id] && (
                           <button type="button"
-                            className="mt-1 text-[10px] text-primary hover:underline"
+                            className="mt-1 text-xs text-primary hover:underline"
                             onClick={() => setPicks(p => ({
                               ...p, [u.platform_sku_id]: u.suggestion.catalog_item_id }))}
                             data-testid={`sku-map-apply-suggestion-${u.platform_sku_id}`}>
@@ -215,7 +215,7 @@ export default function SkuMappingPanel({ sessionId, token, onDone }) {
               </table>
             </div>
             {catalogItems.length === 0 && (
-              <p className="text-xs text-amber-500 flex items-start gap-1"
+              <p className="text-xs text-[hsl(var(--warning-text))] flex items-start gap-1"
                 data-testid="sku-map-empty-catalog">
                 <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                 Katalog toko ini masih kosong — tambahkan item di <b className="mx-1">Manajemen Katalog</b>
