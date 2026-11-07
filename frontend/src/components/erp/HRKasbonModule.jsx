@@ -13,7 +13,7 @@
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { toast } from 'sonner';
-import { CheckCircle2, RefreshCw, Search, XCircle } from 'lucide-react';
+import { ArrowDownWideNarrow, ArrowUpNarrowWide, CheckCircle2, RefreshCw, Search, XCircle } from 'lucide-react';
 import { formatRupiah, formatDateID } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -53,13 +53,12 @@ function KasbonStatus({ status }) {
   return <StatusBadge status={status} label={cfg.label} tone={cfg.tone} />;
 }
 
+// Urutan: semua kolom yang dulu bisa diklik di kepala tabel, plus arah naik/turun.
 const URUTAN = [
-  { key: 'amount:desc', label: 'Jumlah terbesar' },
-  { key: 'amount:asc', label: 'Jumlah terkecil' },
-  { key: 'created_at:desc', label: 'Terbaru diajukan' },
-  { key: 'created_at:asc', label: 'Paling lama menunggu' },
-  { key: 'outstanding_balance:desc', label: 'Sisa terbesar' },
-  { key: 'employee_name:asc', label: 'Nama karyawan (A–Z)' },
+  ['amount', 'Jumlah'], ['created_at', 'Tanggal diajukan'], ['outstanding_balance', 'Sisa'],
+  ['installment_amount', 'Cicilan/bulan'], ['employee_name', 'Nama karyawan'], ['employee_code', 'Kode karyawan'],
+  ['department', 'Departemen'], ['request_number', 'No. pengajuan'], ['type_label', 'Jenis'],
+  ['purpose', 'Keperluan'], ['status', 'Status'],
 ];
 
 // ─── Tinjau pengajuan (popup form) ────────────────────────────────────────────
@@ -286,11 +285,19 @@ export default function HRKasbonModule() {
           data-testid="hrkasbon-filter-status" className="h-9 w-full sm:w-48" aria-label="Status">
           {opsiStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
         </SmartNativeSelect>
-        <SmartNativeSelect value={`${sort.key}:${sort.dir}`} searchable={false} className="h-9 w-full sm:w-48" aria-label="Urutan"
-          data-testid="hrkasbon-sort"
-          onChange={e => { const [key, dir] = e.target.value.split(':'); setSort({ key, dir }); }}>
-          {URUTAN.map((u) => <option key={u.key} value={u.key}>{u.label}</option>)}
-        </SmartNativeSelect>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <SmartNativeSelect value={sort.key} searchable={false} className="h-9 min-w-0 flex-1 sm:w-48 sm:flex-none"
+            aria-label="Urutkan menurut" data-testid="hrkasbon-sort"
+            onChange={e => setSort((s) => ({ key: e.target.value, dir: s.dir }))}>
+            {URUTAN.map(([k, l]) => <option key={k} value={k}>{`Urut: ${l}`}</option>)}
+          </SmartNativeSelect>
+          <Button variant="outline" size="icon" data-testid="hrkasbon-sort-dir"
+            onClick={() => setSort((s) => ({ ...s, dir: s.dir === 'asc' ? 'desc' : 'asc' }))}
+            title={sort.dir === 'asc' ? 'Urutan naik (kecil ke besar, A–Z). Klik untuk membalik.' : 'Urutan turun (besar ke kecil, Z–A). Klik untuk membalik.'}
+            aria-label={sort.dir === 'asc' ? 'Urutan naik, klik untuk membalik' : 'Urutan turun, klik untuk membalik'}>
+            {sort.dir === 'asc' ? <ArrowUpNarrowWide /> : <ArrowDownWideNarrow />}
+          </Button>
+        </div>
         <div className="relative w-full sm:w-64">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari karyawan, nomor, keperluan"
