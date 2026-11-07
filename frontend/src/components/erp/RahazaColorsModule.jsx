@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Plus, Edit2, Trash2, Palette } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
@@ -66,7 +67,7 @@ export function RahazaColorsModule({ token }) {
   };
 
   const handleDelete = async (row) => {
-    if (!window.confirm(`Nonaktifkan warna ${row.name} (${row.code})?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan warna ${row.name} (${row.code})?`, confirmLabel: 'Nonaktifkan', danger: true }))) return;
     const r = await fetch(`/api/rahaza/colors/${row.id}`, { method: 'DELETE', headers });
     if (r.ok) { toast.success('Warna dinonaktifkan'); fetchRows(); }
     else {

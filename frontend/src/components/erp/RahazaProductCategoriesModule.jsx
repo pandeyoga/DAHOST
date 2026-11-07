@@ -9,6 +9,7 @@
  * OTOMATIS dari prefix itu (mis. `VST-0001`). Format SKU varian tidak diubah,
  * jadi hasilnya `VST-0001-NVY-M`.
  */
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Plus, Edit2, Ban, RotateCcw, Tags, Info, PackageSearch } from 'lucide-react';
 import { GlassCard, GlassInput } from '@/components/ui/glass';
@@ -88,7 +89,7 @@ export default function RahazaProductCategoriesModule({ token }) {
   };
 
   const handleDeactivate = async (row) => {
-    if (!window.confirm(`Nonaktifkan kategori "${row.name}"?`)) return;
+    if (!(await confirmDialog({ title: `Nonaktifkan kategori "${row.name}"?`, confirmLabel: 'Nonaktifkan', danger: true }))) return;
     const r = await fetch(`/api/rahaza/product-categories/${row.id}`, { method: 'DELETE', headers });
     const d = await r.json().catch(() => ({}));
     if (r.ok) { toast.success('Kategori dinonaktifkan'); fetchRows(); }
