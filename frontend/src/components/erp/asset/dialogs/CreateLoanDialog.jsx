@@ -6,13 +6,15 @@
  * hanya menampilkan aset yang benar-benar SIAP dipinjam (endpoint
  * /api/assets/loanable-assets sudah mengecualikan aset yang sedang dipinjam,
  * dalam pemeliharaan, atau sudah dilepas).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): popup form standar (panjang, 8 isian), pemilih tanggal seragam
+ * (dulu isian tanggal bawaan peramban), galat di kaki form. Isian & aturan sama.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import DatePicker from '@/components/ui/date-picker';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
 import { toast } from 'sonner';
-import { PackageSearch } from 'lucide-react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { apicall } from '../utils';
 import { todayWIB } from '@/lib/waktu';
@@ -71,7 +73,7 @@ export function CreateLoanDialog({ open, onClose, token, onCreated }) {
     // menebak satu-satu (submit → perbaiki → submit → error lain).
     const missing = [];
     if (!form.asset_id) missing.push('Aset');
-    if (!form.borrower_name.trim()) missing.push('Nama Peminjam');
+    if (!form.borrower_name.trim()) missing.push('Nama peminjam');
     if (missing.length) {
       setErr(`${missing.join(' & ')} wajib diisi.`);
       return;
@@ -88,101 +90,68 @@ export function CreateLoanDialog({ open, onClose, token, onCreated }) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg" data-testid="asset-loan-create-dialog">
-        <DialogHeader>
-          <DialogTitle>Pinjamkan Aset</DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            Catat alat/aset yang dibawa keluar. Aset akan berstatus <strong>Dipinjam</strong> sampai dikembalikan.
-          </p>
-        </DialogHeader>
+    <FormPopup open={open} onClose={onClose} ukuran="panjang" testId="asset-loan-create-dialog"
+      judul="Pinjamkan aset"
+      keterangan="Catat alat/aset yang dibawa keluar. Aset berstatus Dipinjam sampai dikembalikan."
+      onSimpan={submit} labelSimpan="Catat peminjaman" menyimpan={saving} galat={err && <span data-testid="asset-loan-error">{err}</span>}>
+      <Isian label="Aset" wajib
+        petunjuk={!loadingRef && assets.length === 0
+          ? 'Tidak ada aset yang siap dipinjam. Tambah aset baru di tab Aset, atau kembalikan aset yang sedang dipinjam / selesaikan pemeliharaannya.'
+          : 'Hanya aset yang siap dipinjam.'}>
+        <SmartNativeSelect value={form.asset_id} onChange={e => set('asset_id', e.target.value)}
+          className="w-full" data-testid="asset-loan-asset">
+          <option value="">{loadingRef ? 'Memuat aset…' : '— pilih aset —'}</option>
+          {assets.map(a => (
+            <option key={a.id} value={a.id}>
+              {a.asset_number} · {a.name}{a.category_name ? ` (${a.category_name})` : ''}
+            </option>
+          ))}
+        </SmartNativeSelect>
+      </Isian>
 
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Aset *</label>
-            <SmartNativeSelect value={form.asset_id} onChange={e => set('asset_id', e.target.value)}
-              className="w-full" data-testid="asset-loan-asset">
-              <option value="">{loadingRef ? 'Memuat aset...' : '— pilih aset —'}</option>
-              {assets.map(a => (
-                <option key={a.id} value={a.id}>
-                  {a.asset_number} · {a.name}{a.category_name ? ` (${a.category_name})` : ''}
-                </option>
-              ))}
-            </SmartNativeSelect>
-            {!loadingRef && assets.length === 0 && (
-              <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1 flex items-start gap-1">
-                <PackageSearch className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                Tidak ada aset yang siap dipinjam. Tambah aset baru di tab "Aset", atau kembalikan aset
-                yang sedang dipinjam / selesaikan pemeliharaannya.
-              </p>
-            )}
-          </div>
+      <Isian label="Peminjam (karyawan)" petunjuk="Opsional. Nama dan divisi terisi otomatis; peminjam luar (vendor) cukup diketik.">
+        <SmartNativeSelect value={form.borrower_id} onChange={e => pickEmployee(e.target.value)}
+          className="w-full" data-testid="asset-loan-employee">
+          <option value="">— pilih karyawan (opsional) —</option>
+          {employees.map(e => (
+            <option key={e.id} value={e.id}>
+              {e.employee_code ? `${e.employee_code} · ` : ''}{e.name}{e.department ? ` (${e.department})` : ''}
+            </option>
+          ))}
+        </SmartNativeSelect>
+      </Isian>
 
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Peminjam (karyawan)</label>
-            <SmartNativeSelect value={form.borrower_id} onChange={e => pickEmployee(e.target.value)}
-              className="w-full" data-testid="asset-loan-employee">
-              <option value="">— pilih karyawan (opsional) —</option>
-              {employees.map(e => (
-                <option key={e.id} value={e.id}>
-                  {e.employee_code ? `${e.employee_code} · ` : ''}{e.name}{e.department ? ` (${e.department})` : ''}
-                </option>
-              ))}
-            </SmartNativeSelect>
-          </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Nama peminjam" wajib htmlFor="loan-borrower">
+          <Input id="loan-borrower" value={form.borrower_name} onChange={e => set('borrower_name', e.target.value)}
+            placeholder="Nama lengkap / vendor" data-testid="asset-loan-borrower" />
+        </Isian>
+        <Isian label="Divisi / unit" htmlFor="loan-divisi">
+          <Input id="loan-divisi" value={form.borrower_divisi} onChange={e => set('borrower_divisi', e.target.value)}
+            placeholder="Contoh: Produksi" data-testid="asset-loan-divisi" />
+        </Isian>
+      </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Nama Peminjam *</label>
-              <Input value={form.borrower_name} onChange={e => set('borrower_name', e.target.value)}
-                placeholder="Nama lengkap / vendor" data-testid="asset-loan-borrower" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Divisi / Unit</label>
-              <Input value={form.borrower_divisi} onChange={e => set('borrower_divisi', e.target.value)}
-                placeholder="mis. Produksi" data-testid="asset-loan-divisi" />
-            </div>
-          </div>
+      <Isian label="Tujuan pemakaian" htmlFor="loan-purpose">
+        <Input id="loan-purpose" value={form.purpose} onChange={e => set('purpose', e.target.value)}
+          placeholder="Contoh: perbaikan mesin jahit line 2" data-testid="asset-loan-purpose" />
+      </Isian>
 
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tujuan Pemakaian</label>
-            <Input value={form.purpose} onChange={e => set('purpose', e.target.value)}
-              placeholder="mis. perbaikan mesin jahit line 2" data-testid="asset-loan-purpose" />
-          </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Tanggal pinjam" wajib>
+          <DatePicker value={form.loan_date} onChange={v => set('loan_date', v)} bolehKosong={false}
+            testId="asset-loan-date" />
+        </Isian>
+        <Isian label="Target kembali" petunjuk="Kosong = tidak ditentukan.">
+          <DatePicker value={form.expected_return_date} onChange={v => set('expected_return_date', v)}
+            placeholder="Tidak ditentukan" testId="asset-loan-expected" />
+        </Isian>
+      </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Tanggal Pinjam *</label>
-              <Input type="date" value={form.loan_date} onChange={e => set('loan_date', e.target.value)}
-                data-testid="asset-loan-date" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Target Kembali</label>
-              <Input type="date" value={form.expected_return_date}
-                onChange={e => set('expected_return_date', e.target.value)}
-                data-testid="asset-loan-expected" />
-            </div>
-          </div>
-
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-            <Input value={form.notes} onChange={e => set('notes', e.target.value)}
-              placeholder="kondisi saat keluar, kelengkapan, dll." data-testid="asset-loan-notes" />
-          </div>
-
-          {err && (
-            <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 rounded-lg px-3 py-2"
-              data-testid="asset-loan-error">{err}</div>
-          )}
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Batal</Button>
-          <Button onClick={submit} disabled={saving} data-testid="asset-loan-submit">
-            {saving ? 'Menyimpan...' : 'Catat Peminjaman'}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      <Isian label="Catatan" htmlFor="loan-notes">
+        <Input id="loan-notes" value={form.notes} onChange={e => set('notes', e.target.value)}
+          placeholder="Kondisi saat keluar, kelengkapan, dll." data-testid="asset-loan-notes" />
+      </Isian>
+    </FormPopup>
   );
 }
