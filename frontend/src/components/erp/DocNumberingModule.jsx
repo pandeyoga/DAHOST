@@ -3,14 +3,23 @@
  * Owner mengatur format nomor tiap jenis dokumen. Modul ini TIDAK membuat
  * nomor sendiri: format disimpan lalu dibaca generator resmi di backend
  * (`utils/counters.gen_prefixed_number`), jadi tidak ada dua sumber kebenaran.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): 49 jenis dokumen = satu tabel (dulu 49 kartu berisi form) dengan penyaring
+ * kelompok + unduh Excel/CSV; mengubah format/mode = FormPopup dengan pratinjau; setel nomor urut = FormPopup
+ * pendek; kode internal jenis dokumen (`wh_fabric_rolls.roll_no`) tidak ditampilkan. Jalur simpan tidak berubah.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Hash, RefreshCw, Loader2, Save, RotateCcw, AlertCircle, Check, ListOrdered } from 'lucide-react';
+import { ListOrdered, Pencil, RefreshCw, RotateCcw, Search } from 'lucide-react';
 import { toast } from 'sonner';
-import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { PageHeader } from './moduleAtoms';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 const BASE = `${API}/api/admin/doc-numbering`;
@@ -23,6 +32,10 @@ const TOKEN_HELP = [
   ['{SEQ:4}', 'nomor urut 4 digit — 0001 (wajib di akhir)'],
 ];
 
+const labelMode = (item) => (!item.policy_enforced
+  ? { label: item.auto_only ? 'Selalu otomatis' : 'Otomatis saja', tone: 'muted' }
+  : item.mode === 'manual' ? { label: 'Manual', tone: 'warning' } : { label: 'Otomatis', tone: 'primary' });
+
 export default function DocNumberingModule({ token }) {
   const [items, setItems] = useState([]);
   const [groups, setGroups] = useState([]);
@@ -31,6 +44,8 @@ export default function DocNumberingModule({ token }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('');
+  const [kelompok, setKelompok] = useState('');
+  const [editKey, setEditKey] = useState(null);
   const [counterFor, setCounterFor] = useState(null);
   const [counterVal, setCounterVal] = useState('');
 
@@ -40,7 +55,7 @@ export default function DocNumberingModule({ token }) {
     setLoading(true);
     try {
       const r = await fetch(BASE, { headers: h });
-      if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error((await r.json()).detail || `Kode ${r.status}`);
       const d = await r.json();
       setItems(d.items || []);
       setGroups(d.groups || []);
@@ -70,8 +85,9 @@ export default function DocNumberingModule({ token }) {
     try {
       const r = await fetch(BASE, { method: 'PUT', headers: h, body: JSON.stringify({ key: item.key, format, active: true }) });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(d.detail || `Kode ${r.status}`);
       toast.success(`Format ${item.label} disimpan — contoh: ${d.contoh}`);
+      setEditKey(null);
       await load();
     } catch (e) { toast.error(e.message); } finally { setBusy(''); }
   };
@@ -89,20 +105,25 @@ export default function DocNumberingModule({ token }) {
         body: JSON.stringify({ key: item.key, mode, active: true }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(d.detail || `Kode ${r.status}`);
       toast.success(mode === 'auto'
-        ? `${item.label}: nomor dibuat OTOMATIS oleh sistem`
-        : `${item.label}: nomor DIKETIK, wajib mengikuti pola ${d.format}`);
+        ? `${item.label}: nomor dibuat otomatis oleh sistem`
+        : `${item.label}: nomor diketik, wajib mengikuti pola ${d.format}`);
       await load();
     } catch (e) { toast.error(e.message); } finally { setBusy(''); }
   };
 
   const reset = async (item) => {
+    if (!(await confirmDialog({
+      title: `Kembalikan format ${item.label} ke bawaan?`, body: `Format bawaan: ${item.default_format || '—'}. Hanya berlaku untuk dokumen baru.`,
+      confirmLabel: 'Kembalikan',
+    }))) return;
     setBusy(item.key);
     try {
       const r = await fetch(`${BASE}/${item.key}`, { method: 'DELETE', headers: h });
-      if (!r.ok) throw new Error((await r.json()).detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error((await r.json()).detail || `Kode ${r.status}`);
       toast.success(`${item.label} kembali ke format bawaan`);
+      setEditKey(null);
       await load();
     } catch (e) { toast.error(e.message); } finally { setBusy(''); }
   };
@@ -115,7 +136,7 @@ export default function DocNumberingModule({ token }) {
         body: JSON.stringify({ key: counterFor.key, start_from: Number(counterVal) }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+      if (!r.ok) throw new Error(d.detail || `Kode ${r.status}`);
       toast.success(`Nomor berikutnya: ${d.nomor_berikutnya}`);
       setCounterFor(null); setCounterVal('');
       await load();
@@ -124,188 +145,178 @@ export default function DocNumberingModule({ token }) {
 
   const visible = items.filter(i => {
     const q = filter.trim().toLowerCase();
-    return !q || i.label.toLowerCase().includes(q) || i.key.toLowerCase().includes(q) || i.group.toLowerCase().includes(q);
+    return (!kelompok || i.group === kelompok)
+      && (!q || i.label.toLowerCase().includes(q) || i.key.toLowerCase().includes(q) || i.group.toLowerCase().includes(q));
   });
   const customCount = items.filter(i => i.is_custom).length;
+  const item = items.find((i) => i.key === editKey) || null;
+  const draft = item ? drafts[item.key] : undefined;
+  const changed = draft !== undefined && item && draft !== item.format;
+  const pv = item ? previews[item.key] : null;
+  const bukaSetelUrut = (it) => { setCounterFor(it); setCounterVal(String(it.nomor_terakhir || 0)); };
 
-  if (loading) {
-    return <div className="flex items-center justify-center py-20" data-testid="docnum-loading">
-      <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
-  }
+  const kolom = [
+    { kunci: 'label', label: 'Jenis dokumen', hp: 'judul', isi: (i) => (
+      <div className="min-w-0 md:max-w-[16rem]" data-testid={`docnum-row-${i.key}`}>
+        <p className="font-medium text-foreground">{i.label}</p>
+        <p className="text-xs text-muted-foreground">{i.group}</p>
+      </div>) },
+    { kunci: 'format', label: 'Format', hp: 'keterangan', isi: (i) => (
+      <span className="break-all font-mono text-sm">{i.format}{i.is_custom && <StatusBadge status="khusus" label="Khusus" tone="primary" className="ml-1.5 font-sans" />}</span>) },
+    { kunci: 'contoh', label: 'Contoh', isi: (i) => <span className="break-all font-mono text-sm" data-testid={`docnum-sample-${i.key}`}>{i.contoh || '—'}</span> },
+    { kunci: 'mode', label: 'Mode', isi: (i) => <StatusBadge status={i.mode} label={labelMode(i).label} tone={labelMode(i).tone} /> },
+    { kunci: 'terakhir', label: 'Nomor terakhir', rata: 'kanan', isi: (i) => <span className="tabular-nums">{i.nomor_terakhir ?? '—'}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (i) => (
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="outline" onClick={() => setEditKey(i.key)} data-testid={`docnum-edit-${i.key}`}><Pencil />Atur</Button>
+        {i.sequenced !== false && (
+          <Button size="icon-sm" variant="ghost" onClick={() => bukaSetelUrut(i)} title="Setel nomor urut" aria-label="Setel nomor urut"
+            data-testid={`docnum-counter-${i.key}`}>
+            <ListOrdered />
+          </Button>
+        )}
+      </div>) },
+  ];
 
   return (
-    <div className="space-y-6" data-testid="doc-numbering-module">
-      <PageHeader
-        icon={Hash}
-        eyebrow="Administrasi Sistem"
-        title="Penomoran Dokumen & SKU"
-        subtitle={`${items.length} jenis dokumen · ${customCount} memakai format khusus. Perubahan hanya berlaku untuk dokumen BARU.`}
-        actions={<Button variant="outline" size="sm" onClick={load} data-testid="docnum-refresh">
-          <RefreshCw className="w-4 h-4 mr-2" />Muat Ulang</Button>}
-        testId="docnum-header"
-      />
-
-      <GlassCard className="p-4">
-        <p className="text-sm font-semibold mb-3 flex items-center gap-2"><ListOrdered className="w-4 h-4" />Token yang bisa dipakai</p>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-          {TOKEN_HELP.map(([t, d]) => (
-            <div key={t} className="flex items-baseline gap-2 text-xs">
-              <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-[11px]">{t}</code>
-              <span className="text-muted-foreground">{d}</span>
-            </div>
-          ))}
+    <PageLayout testId="doc-numbering-module" headerTestId="docnum-header" title="Penomoran dokumen"
+      subtitle="Format nomor tiap jenis dokumen dan SKU. Perubahan hanya berlaku untuk dokumen baru."
+      filters={<>
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input placeholder="Cari jenis dokumen" value={filter} onChange={e => setFilter(e.target.value)} className="pl-8"
+            data-testid="docnum-search" />
         </div>
-      </GlassCard>
-
-      <Input placeholder="Cari jenis dokumen…" value={filter} onChange={e => setFilter(e.target.value)}
-        className="max-w-sm" data-testid="docnum-search" />
-
-      {groups.filter(g => visible.some(i => i.group === g)).map(group => (
-        <div key={group} className="space-y-2">
-          <h2 className="text-base font-semibold text-foreground/70">{group}</h2>
-          <div className="space-y-2">
-            {visible.filter(i => i.group === group).map(item => {
-              const draft = drafts[item.key];
-              const changed = draft !== undefined && draft !== item.format;
-              const pv = previews[item.key];
-              return (
-                <GlassCard key={item.key} className="p-4" data-testid={`docnum-row-${item.key}`}>
-                  <div className="flex flex-wrap items-start gap-4">
-                    <div className="min-w-[190px] flex-1">
-                      <p className="font-medium text-sm">{item.label}</p>
-                      <p className="text-[11px] text-muted-foreground font-mono">{item.key}</p>
-                      {item.catatan && <p className="text-[11px] text-muted-foreground mt-1">{item.catatan}</p>}
-                      {item.tokens?.length > 0 && (
-                        <p className="text-[11px] mt-1">Token khusus: {item.tokens.map(t => (
-                          <code key={t} className="mx-0.5 px-1 rounded bg-muted font-mono">{'{' + t + '}'}</code>
-                        ))}</p>
-                      )}
-                    </div>
-
-                    <div className="flex-1 min-w-[240px] space-y-1.5">
-                      <Input
-                        value={draft !== undefined ? draft : item.format}
-                        onChange={e => onDraft(item.key, e.target.value)}
-                        className="font-mono text-sm"
-                        data-testid={`docnum-input-${item.key}`}
-                      />
-                      <div className="flex items-center gap-2 text-[11px]">
-                        {pv && !pv.ok
-                          ? <span className="text-destructive flex items-center gap-1" data-testid="docnum-error"><AlertCircle className="w-3 h-3" />{pv.error}</span>
-                          : <span className="text-muted-foreground">Contoh: <span className="font-mono text-foreground" data-testid={`docnum-sample-${item.key}`}>{pv?.contoh || item.contoh || '—'}</span></span>}
-                        {item.is_custom && !changed && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary flex items-center gap-1"><Check className="w-3 h-3" />khusus</span>}
-                      </div>
-                      {item.nomor_terakhir != null && (
-                        <p className="text-[11px] text-muted-foreground">Nomor urut terakhir terpakai: <b>{item.nomor_terakhir}</b></p>
-                      )}
-                    </div>
-
-                    {/* FASE G — mode penomoran per jenis dokumen.
-                        SESI #18 — KEJUJURAN: mode hanya bisa dipindah untuk jenis dokumen
-                        yang JALUR TULISNYA sudah menegakkan kebijakan (`policy_enforced`).
-                        Sebelum ini togglenya tampil untuk SEMUA 49 jenis padahal hanya
-                        beberapa yang menegakkannya ⇒ owner memindah ke "Manual", tidak
-                        terjadi apa pun, dan setelan itu berbohong. Sekarang jenis yang
-                        belum ditegakkan mengatakannya terang-terangan. */}
-                    <div className="min-w-[190px] space-y-1">
-                      {item.policy_enforced ? (
-                        <>
-                          <div className="inline-flex rounded-lg border border-border overflow-hidden">
-                            {[['auto', 'Otomatis'], ['manual', 'Manual']].map(([m, lbl]) => (
-                              <button key={m} onClick={() => setMode(item, m)} disabled={busy === item.key}
-                                data-testid={`docnum-mode-${item.key}-${m}`}
-                                className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                                  item.mode === m
-                                    ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
-                                    : 'bg-transparent text-muted-foreground hover:text-foreground'}`}>
-                                {lbl}
-                              </button>
-                            ))}
-                          </div>
-                          <p className="text-[11px] text-muted-foreground" data-testid={`docnum-mode-hint-${item.key}`}>
-                            {item.mode === 'manual'
-                              ? 'Nomor diketik petugas — yang tidak sesuai pola ditolak.'
-                              : 'Nomor dibuat sistem — kolom nomor di form dikunci.'}
-                            {item.mode_is_custom && item.mode !== item.mode_default && (
-                              <span className="text-primary"> (bawaan: {item.mode_default === 'auto' ? 'otomatis' : 'manual'})</span>
-                            )}
-                          </p>
-                        </>
-                      ) : (
-                        <>
-                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-300 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 text-[11px] font-semibold text-amber-800 dark:text-amber-200"
-                            data-testid={`docnum-mode-locked-${item.key}`}>
-                            {item.auto_only ? 'Selalu otomatis' : 'Otomatis saja'}
-                          </span>
-                          <p className="text-[11px] text-muted-foreground" data-testid={`docnum-mode-hint-${item.key}`}>
-                            {item.auto_only ? (
-                              /* SESI #19 — dokumen yang LAHIR TANPA MANUSIA: sebutkan
-                                 alasannya apa adanya, jangan menjanjikan "nanti bisa". */
-                              <>{item.alasan_otomatis || 'Dokumen ini dibuat sistem, bukan diketik.'}{' '}
-                                Formatnya tetap bisa diubah di sini.</>
-                            ) : (
-                              <>Jalur dokumen ini <b>belum menegakkan</b> mode manual, jadi pilihannya
-                                belum ditampilkan agar setelan tidak berbohong. Formatnya tetap berlaku.</>
-                            )}
-                          </p>
-                        </>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" disabled={!changed || (pv && !pv.ok) || busy === item.key}
-                        onClick={() => save(item)} data-testid={`docnum-save-${item.key}`}>
-                        {busy === item.key ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Save className="w-4 h-4 mr-1.5" />Simpan</>}
-                      </Button>
-                      {item.is_custom && (
-                        <Button size="sm" variant="outline" onClick={() => reset(item)}
-                          disabled={busy === item.key} data-testid={`docnum-reset-${item.key}`}>
-                          <RotateCcw className="w-4 h-4 mr-1.5" />Bawaan
-                        </Button>
-                      )}
-                      {item.sequenced !== false && (
-                        <Button size="sm" variant="ghost" onClick={() => { setCounterFor(item); setCounterVal(String(item.nomor_terakhir || 0)); }}
-                          data-testid={`docnum-counter-${item.key}`}>
-                          <ListOrdered className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                </GlassCard>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-
-      {counterFor && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => setCounterFor(null)}>
-          <GlassCard className="p-5 w-full max-w-md space-y-4" onClick={e => e.stopPropagation()} data-testid="docnum-counter-dialog">
-            <div>
-              <h3 className="font-semibold">Setel Nomor Urut — {counterFor.label}</h3>
-              <p className="text-xs text-muted-foreground mt-1">
-                Nomor dokumen berikutnya = angka ini + 1. Menurunkan angka ditolak bila
-                sudah ada dokumen memakai awalan yang sama (mencegah nomor ganda).
-              </p>
-            </div>
-            <Input type="number" min={0} value={counterVal} onChange={e => setCounterVal(e.target.value)}
-              data-testid="docnum-counter-input" />
-            {Number(counterVal) - (counterFor.nomor_terakhir || 0) > 100 && (
-              <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-500" data-testid="docnum-counter-warning">
-                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-                Lompatan besar: dari {counterFor.nomor_terakhir || 0} ke {counterVal}. Nomor di antaranya
-                tidak akan pernah terpakai. Pastikan ini memang disengaja.
-              </p>
-            )}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setCounterFor(null)} data-testid="docnum-counter-cancel">Batal</Button>
-              <Button size="sm" onClick={saveCounter} disabled={counterVal === '' || busy === counterFor.key} data-testid="docnum-counter-save">
-                {busy === counterFor.key ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Simpan'}
-              </Button>
-            </div>
-          </GlassCard>
-        </div>
+        <SmartNativeSelect value={kelompok} onChange={(e) => setKelompok(e.target.value)} className="w-full"
+          wrapperClassName="w-full sm:w-52" aria-label="Kelompok" data-testid="docnum-group-filter">
+          <option value="">Semua kelompok</option>
+          {groups.map((g) => <option key={g} value={g}>{g}</option>)}
+        </SmartNativeSelect>
+      </>}
+      tools={<>
+        <TombolUnduh namaBerkas="penomoran-dokumen" namaLembar="Penomoran" baris={visible} testId="docnum-unduh" kolom={[
+          { label: 'Jenis dokumen', nilai: (i) => i.label }, { label: 'Kelompok', nilai: (i) => i.group },
+          { label: 'Format', nilai: (i) => i.format }, { label: 'Format bawaan', nilai: (i) => i.default_format || '' },
+          { label: 'Contoh', nilai: (i) => i.contoh || '' }, { label: 'Mode', nilai: (i) => labelMode(i).label },
+          { label: 'Nomor terakhir', nilai: (i) => i.nomor_terakhir ?? '' },
+        ]} />
+        <Button variant="outline" size="icon" onClick={load} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
+          data-testid="docnum-refresh">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}
+      summary={!loading && (
+        <p className="text-sm text-muted-foreground" data-testid="docnum-summary">
+          {items.length} jenis dokumen · {customCount} memakai format khusus
+          {visible.length !== items.length && ` · ${visible.length} tampil`}.
+        </p>
+      )}>
+      {loading && items.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="docnum-loading">Memuat penomoran…</p>
+      ) : (
+        <TabelData kolom={kolom} baris={visible} kunci={(i) => i.key} onKlikBaris={(i) => setEditKey(i.key)} testId="docnum-table"
+          kosong={<EmptyState title="Tidak ada jenis dokumen yang cocok" description="Ubah kata pencarian atau kelompok." />} />
       )}
-    </div>
+
+      {/* Atur format & mode satu jenis dokumen */}
+      <FormPopup open={!!item} onClose={() => { if (item) setDrafts((d) => { const n = { ...d }; delete n[item.key]; return n; }); setEditKey(null); }}
+        ukuran="panjang" testId="docnum-form" judul={item ? `Format nomor ${item.label}` : ''}
+        keterangan={item ? `${item.group} · perubahan hanya berlaku untuk dokumen baru.` : undefined}
+        onSimpan={() => item && save(item)} menyimpan={!!item && busy === item.key}
+        bisaSimpan={!!changed && !(pv && !pv.ok)} labelSimpan="Simpan format"
+        aksiKiri={item?.is_custom && (
+          <Button type="button" variant="outline" size="sm" onClick={() => reset(item)} disabled={busy === item.key}
+            data-testid={`docnum-reset-${item.key}`}>
+            <RotateCcw />Kembalikan bawaan
+          </Button>
+        )}>
+        {item && (<>
+          <Isian label="Format" htmlFor="docnum-format" petunjuk={item.default_format ? `Bawaan: ${item.default_format}` : undefined}>
+            <Input id="docnum-format" value={draft !== undefined ? draft : item.format}
+              onChange={e => onDraft(item.key, e.target.value)} className="font-mono" data-testid={`docnum-input-${item.key}`} />
+          </Isian>
+          <p className="text-sm">
+            {pv && !pv.ok
+              ? <span className="text-[hsl(var(--danger-text))]" data-testid="docnum-error">{pv.error}</span>
+              : <span className="text-muted-foreground">Contoh: <span className="font-mono text-foreground">{pv?.contoh || item.contoh || '—'}</span></span>}
+          </p>
+          {item.nomor_terakhir != null && (
+            <p className="text-sm text-muted-foreground">Nomor urut terakhir terpakai: <b className="text-foreground">{item.nomor_terakhir}</b></p>
+          )}
+          <Notice tone="info" title="Token yang bisa dipakai">
+            <ul className="mt-1 grid gap-1 sm:grid-cols-2">
+              {TOKEN_HELP.map(([t, d]) => (
+                <li key={t} className="text-xs"><code className="font-mono text-foreground">{t}</code> — {d}</li>
+              ))}
+              {(item.tokens || []).map((t) => (
+                <li key={t} className="text-xs"><code className="font-mono text-foreground">{'{' + t + '}'}</code> — token khusus dokumen ini</li>
+              ))}
+            </ul>
+          </Notice>
+          {item.catatan && <p className="text-sm text-muted-foreground">{item.catatan}</p>}
+
+          {/* FASE G — mode penomoran per jenis dokumen.
+              SESI #18 — KEJUJURAN: mode hanya bisa dipindah untuk jenis dokumen
+              yang JALUR TULISNYA sudah menegakkan kebijakan (`policy_enforced`).
+              Jenis yang belum ditegakkan mengatakannya terang-terangan. */}
+          <Isian label="Mode penomoran" petunjuk={item.policy_enforced ? 'Pilihan mode langsung tersimpan saat diklik.' : undefined}>
+            {item.policy_enforced ? (
+              <div className="space-y-1">
+                <div className="inline-flex overflow-hidden rounded-lg border border-[var(--glass-border)]" role="group" aria-label="Mode penomoran">
+                  {[['auto', 'Otomatis'], ['manual', 'Manual']].map(([m, lbl]) => (
+                    <button key={m} type="button" onClick={() => setMode(item, m)} disabled={busy === item.key}
+                      data-testid={`docnum-mode-${item.key}-${m}`} aria-pressed={item.mode === m}
+                      className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                        item.mode === m
+                          ? 'bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))]'
+                          : 'bg-[var(--card-surface)] text-muted-foreground hover:text-foreground'}`}>
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-sm text-muted-foreground" data-testid={`docnum-mode-hint-${item.key}`}>
+                  {item.mode === 'manual'
+                    ? 'Nomor diketik petugas — yang tidak sesuai pola ditolak.'
+                    : 'Nomor dibuat sistem — kolom nomor di form dikunci.'}
+                  {item.mode_is_custom && item.mode !== item.mode_default && (
+                    <span className="text-primary"> (bawaan: {item.mode_default === 'auto' ? 'otomatis' : 'manual'})</span>
+                  )}
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <StatusBadge status="auto" label={item.auto_only ? 'Selalu otomatis' : 'Otomatis saja'} tone="muted"
+                  testId={`docnum-mode-locked-${item.key}`} />
+                <p className="text-sm text-muted-foreground" data-testid={`docnum-mode-hint-${item.key}`}>
+                  {item.auto_only ? (
+                    <>{item.alasan_otomatis || 'Dokumen ini dibuat sistem, bukan diketik.'}{' '}Formatnya tetap bisa diubah di sini.</>
+                  ) : (
+                    <>Jalur dokumen ini <b>belum menegakkan</b> mode manual, jadi pilihannya belum ditampilkan agar setelan
+                      tidak berbohong. Formatnya tetap berlaku.</>
+                  )}
+                </p>
+              </div>
+            )}
+          </Isian>
+        </>)}
+      </FormPopup>
+
+      {/* Setel nomor urut */}
+      <FormPopup open={!!counterFor} onClose={() => setCounterFor(null)} ukuran="pendek" testId="docnum-counter-dialog"
+        judul={counterFor ? `Setel nomor urut ${counterFor.label}` : ''}
+        keterangan="Nomor dokumen berikutnya = angka ini + 1. Menurunkan angka ditolak bila sudah ada dokumen memakai awalan yang sama (mencegah nomor ganda)."
+        onSimpan={saveCounter} menyimpan={!!counterFor && busy === counterFor.key} bisaSimpan={counterVal !== ''}>
+        <Isian label="Nomor urut terakhir" htmlFor="docnum-counter-input">
+          <Input id="docnum-counter-input" type="number" min={0} value={counterVal} onChange={e => setCounterVal(e.target.value)}
+            className="w-40 tabular-nums" data-testid="docnum-counter-input" />
+        </Isian>
+        {counterFor && Number(counterVal) - (counterFor.nomor_terakhir || 0) > 100 && (
+          <Notice tone="warning" testId="docnum-counter-warning">
+            Lompatan besar: dari {counterFor.nomor_terakhir || 0} ke {counterVal}. Nomor di antaranya tidak akan pernah
+            terpakai. Pastikan ini memang disengaja.
+          </Notice>
+        )}
+      </FormPopup>
+    </PageLayout>
   );
 }
