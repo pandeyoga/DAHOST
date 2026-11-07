@@ -25,7 +25,9 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import FilterChips from '@/components/ui/filter-chips';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import FormPopup from '@/components/ui/form-popup';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
 import { apiDelete, apiGet, apiPost, apiPut } from '../../lib/api';
 import { formatDateTimeID } from '@/lib/format';
 import PageLayout, { DetailPanel } from './layout/PageLayout';
@@ -63,10 +65,10 @@ function Info({ label, value, testId }) {
 
 function SearchBox({ value, onChange, placeholder, testId }) {
   return (
-    <div className="relative w-72 max-w-full">
+    <div className="relative w-full sm:w-64">
       <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-      <GlassInput value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className="pl-8 h-9" data-testid={testId} />
+      <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+        className="pl-8" data-testid={testId} />
     </div>
   );
 }
@@ -246,17 +248,11 @@ function NewPartnerDialog({ onClose, onCreated }) {
     finally { setBusy(false); }
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg" data-testid="partner-create-dialog">
-        <DialogHeader><DialogTitle>Vendor baru</DialogTitle></DialogHeader>
-        <PartnerFormFields form={form} setForm={setForm} full={false} />
-        <p className="text-xs text-muted-foreground">Alamat, kapasitas, dan catatan bisa dilengkapi dari rincian vendor setelah disimpan.</p>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-          <Button type="button" onClick={save} disabled={busy} data-testid="partner-create-save">Simpan</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="partner-create-dialog" judul="Vendor baru"
+      keterangan="Alamat, kapasitas, dan catatan bisa dilengkapi dari rincian vendor setelah disimpan."
+      onSimpan={save} menyimpan={busy}>
+      <PartnerFormFields form={form} setForm={setForm} full={false} />
+    </FormPopup>
   );
 }
 
@@ -300,6 +296,14 @@ export function VendorPartnersTab() {
             { key: 'inactive', label: 'Nonaktif', count: counts.inactive }]} />
       </>}
       tools={<>
+        <TombolUnduh namaBerkas="vendor-cmt" namaLembar="Vendor" baris={filtered} testId="partner-unduh" kolom={[
+          { label: 'Vendor', nilai: (p) => p.name || '' }, { label: 'Kode', nilai: (p) => p.code || '' },
+          { label: 'Kontak', nilai: (p) => p.contact_name || '' }, { label: 'Telepon', nilai: (p) => p.contact_phone || '' },
+          { label: 'Kapasitas (pcs)', nilai: (p) => (p.capacity_pcs > 0 ? Number(p.capacity_pcs) : '') },
+          { label: 'PO', nilai: (p) => Number(p.po_count) || 0 }, { label: 'Job berjalan', nilai: (p) => Number(p.active_job_count) || 0 },
+          { label: 'Akun', nilai: (p) => Number(p.account_count) || 0 }, { label: 'Pemilik', nilai: (p) => OWNER_LABEL[p.owner_entity || ''] || '' },
+          { label: 'Status', nilai: (p) => (isActive(p) ? 'Aktif' : 'Nonaktif') }, { label: 'Catatan', nilai: (p) => p.notes || '' },
+        ]} />
         <ImportExportToolbar collectionKey="vendor_partners" label="Vendor CMT" onImported={load} />
         <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="partner-refresh">
           <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
@@ -308,7 +312,7 @@ export function VendorPartnersTab() {
       summary={error && <Notice tone="danger" title="Gagal memuat vendor" testId="partner-error">{error}</Notice>}
       detail={selected && <PartnerDetail partner={selected} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat vendor…</div>
         ) : !paged.length ? (
@@ -472,10 +476,9 @@ function NewAccountDialog({ partners, onClose, onCreated }) {
     finally { setBusy(false); }
   };
   return (
-    <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg" data-testid="account-form">
-        <DialogHeader><DialogTitle>Akun vendor baru</DialogTitle></DialogHeader>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <FormPopup open onClose={onClose} ukuran="pendek" testId="account-form" judul="Akun vendor baru"
+      onSimpan={save} menyimpan={busy} labelSimpan="Buat akun">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Vendor *" className="sm:col-span-2">
             <SmartNativeSelect value={form.partner_id} onChange={set('partner_id')} className="w-full h-9"
               data-testid="account-partner-select" aria-label="Vendor">
@@ -487,12 +490,7 @@ function NewAccountDialog({ partners, onClose, onCreated }) {
           <Field label="Email login *"><GlassInput value={form.email} onChange={set('email')} data-testid="account-email" /></Field>
           <Field label="Sandi *" className="sm:col-span-2"><GlassInput type="password" value={form.password} onChange={set('password')} data-testid="account-password" /></Field>
         </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>Batal</Button>
-          <Button type="button" onClick={save} disabled={busy} data-testid="account-create-save"><KeyRound className="w-4 h-4" />Buat akun</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    </FormPopup>
   );
 }
 
@@ -546,13 +544,21 @@ export function VendorAccountsTab() {
           </SmartNativeSelect>
         )}
       </>}
-      tools={<Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
-        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-      </Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="akun-vendor-cmt" namaLembar="Akun" baris={filtered} testId="account-unduh" kolom={[
+          { label: 'Nama', nilai: (u) => u.name || '' }, { label: 'Email login', nilai: (u) => u.email || '' },
+          { label: 'Vendor', nilai: (u) => u.partner_name || '' },
+          { label: 'Login terakhir', nilai: (u) => (u.last_login_at ? formatDateTimeID(u.last_login_at) : 'Belum pernah') },
+          { label: 'Status', nilai: (u) => (isActive(u) ? 'Aktif' : 'Nonaktif') },
+        ]} />
+        <Button type="button" variant="outline" size="icon" onClick={load} title="Muat ulang" aria-label="Muat ulang" data-testid="account-refresh">
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+        </Button>
+      </>}
       summary={error && <Notice tone="danger" title="Gagal memuat akun vendor">{error}</Notice>}
       detail={selected && <AccountDetail account={selected} partners={partners} onClose={() => setSelectedId(null)} onChanged={afterChange} />}
       footer={filtered.length > pageSize && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}>
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {loading && !rows.length ? (
           <div className="p-4 text-sm text-muted-foreground">Memuat akun…</div>
         ) : !paged.length ? (
