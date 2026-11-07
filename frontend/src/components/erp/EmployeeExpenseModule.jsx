@@ -598,7 +598,7 @@ export default function EmployeeExpenseModule({ token, user }) {
             ariaLabel="Klaim siapa" options={[{ key: 'my', label: 'Klaim saya' }, { key: 'all', label: 'Semua klaim' }]} />
         )}
         <SmartNativeSelect value={filter} onChange={e => setFilter(e.target.value)} searchable={false}
-          className="h-9 w-full sm:w-52" aria-label="Status" data-testid="claim-filter-status">
+          className="h-9 w-full" wrapperClassName="w-full sm:w-52" aria-label="Status" data-testid="claim-filter-status">
           <option value="all">Semua status</option>
           <option value="draft">Draf</option>
           <option value="submitted">Menunggu persetujuan</option>

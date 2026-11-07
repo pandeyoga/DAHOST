@@ -282,11 +282,11 @@ export default function HRKasbonModule() {
       subtitle="Tinjau pengajuan kasbon dan pinjaman karyawan, lalu pantau sisa pinjaman yang dipotong dari gaji."
       filters={<>
         <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
-          data-testid="hrkasbon-filter-status" className="h-9 w-full sm:w-48" aria-label="Status">
+          data-testid="hrkasbon-filter-status" className="h-9 w-full" wrapperClassName="w-full sm:w-48" aria-label="Status">
           {opsiStatus.map((o) => <option key={o.key} value={o.key}>{`${o.label} (${o.count})`}</option>)}
         </SmartNativeSelect>
         <div className="flex w-full items-center gap-2 sm:w-auto">
-          <SmartNativeSelect value={sort.key} searchable={false} className="h-9 min-w-0 flex-1 sm:w-48 sm:flex-none"
+          <SmartNativeSelect value={sort.key} searchable={false} className="h-9 w-full" wrapperClassName="min-w-0 flex-1 sm:w-48 sm:flex-none"
             aria-label="Urutkan menurut" data-testid="hrkasbon-sort"
             onChange={e => setSort((s) => ({ key: e.target.value, dir: s.dir }))}>
             {URUTAN.map(([k, l]) => <option key={k} value={k}>{`Urut: ${l}`}</option>)}

@@ -389,12 +389,12 @@ export default function HRAssetModule({ token }) {
             </div>
             <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
             <SmartNativeSelect value={filterCat} onChange={e => setFilterCat(e.target.value)} searchable={false}
-              className="h-9 w-full sm:w-44" aria-label="Kategori" data-testid="asset-filter-category">
+              className="h-9 w-full" wrapperClassName="w-full sm:w-44" aria-label="Kategori" data-testid="asset-filter-category">
               <option value="">Semua kategori</option>
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
             </SmartNativeSelect>
             <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} searchable={false}
-              className="h-9 w-full sm:w-40" aria-label="Status" data-testid="asset-filter-status">
+              className="h-9 w-full" wrapperClassName="w-full sm:w-40" aria-label="Status" data-testid="asset-filter-status">
               <option value="">Semua status</option>
               {STATUSES.map(s => <option key={s} value={s}>{STATUS_CFG[s]?.label || s}</option>)}
             </SmartNativeSelect>
@@ -402,7 +402,7 @@ export default function HRAssetModule({ token }) {
           </>)}
           {tab === 'by_employee' && (
             <EmployeeSelect employees={employees} value={selectedEmp?.id || ''} testId="asset-by-employee"
-              placeholder="— Pilih karyawan —" className="h-9 w-full sm:w-72"
+              placeholder="— Pilih karyawan —" className="h-9 w-72 max-w-full"
               onChange={(v) => { const e = employees.find((x) => x.id === v) || null; setSelectedEmp(e); if (!e) setEmpAssets([]); }} />
           )}
         </>}
