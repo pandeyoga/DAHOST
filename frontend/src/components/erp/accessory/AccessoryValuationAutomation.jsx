@@ -12,14 +12,26 @@
  *    daftar penerima, status SMTP, tombol kirim sekarang, dan riwayat pengiriman.
  *
  * Endpoint: /api/acc/valuation/unvalued-digest[/send] · /api/acc/valuation/report-schedule[/send-now]
+ *
+ * Standar UI/UX v2 (8 Nov 2026): dibuka sebagai popup dari tab Valuasi HPP; warna token & StatusBadge,
+ * tombol `Button`, isian bulan = pilihan bulan aplikasi (dulu input bulan bawaan browser), sakelar
+ * aktif/nonaktif = Switch, riwayat = tabel + unduh.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import {
   BellRing, CalendarClock, Mail, Send, Loader2, CheckCircle2, AlertTriangle,
-  RefreshCw, Users, Settings2, History, Info, Clock,
+  RefreshCw, Users, History, Info, Clock, ChevronDown, ChevronRight,
 } from 'lucide-react';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+import { GlassCard } from '@/components/ui/glass';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { monthOptions } from '../finance/PeriodPicker';
+import { Notice, StatTile, StatusBadge } from '../moduleAtoms';
 
 const API = process.env.REACT_APP_BACKEND_URL || '';
 
@@ -57,18 +69,21 @@ function periodLabel(m) {
   return `${MONTHS_ID[Number(mo) - 1] || mo} ${y}`;
 }
 
+// 2026-11-08: pilihan bulan aplikasi (dulu isian bulan bawaan browser)
+const MONTH_OPTIONS = monthOptions(24);
+
 const RUN_STATUS = {
-  sent: { label: 'Terkirim', cls: 'text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10' },
-  partial: { label: 'Sebagian', cls: 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10' },
-  failed: { label: 'Gagal', cls: 'text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10' },
-  skipped_already_sent: { label: 'Sudah pernah', cls: 'text-muted-foreground bg-muted dark:bg-slate-500/10' },
-  skipped_no_smtp: { label: 'SMTP kosong', cls: 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10' },
-  no_recipients: { label: 'Tanpa penerima', cls: 'text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-500/10' },
+  sent: { label: 'Terkirim', tone: 'success' },
+  partial: { label: 'Sebagian', tone: 'warning' },
+  failed: { label: 'Gagal', tone: 'danger' },
+  skipped_already_sent: { label: 'Sudah pernah', tone: 'muted' },
+  skipped_no_smtp: { label: 'Email belum diatur', tone: 'warning' },
+  no_recipients: { label: 'Tanpa penerima', tone: 'warning' },
 };
 
 function StatusPill({ status }) {
-  const s = RUN_STATUS[status] || { label: status || '-', cls: 'text-muted-foreground bg-muted' };
-  return <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${s.cls}`}>{s.label}</span>;
+  const s = RUN_STATUS[status] || { label: 'Lainnya', tone: 'muted' };
+  return <StatusBadge status={status} label={s.label} tone={s.tone} />;
 }
 
 export default function AccessoryValuationAutomation({ token, onChanged }) {
@@ -136,196 +151,152 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
       if (r.status === 'sent') setMsg(r.message);
       else if (r.status === 'skipped_no_smtp') setErr(r.message);
       else if (r.status === 'no_recipients') setErr(r.message);
-      else setErr(r.message || `Status: ${r.status}`);
+      else setErr(r.message || `Status: ${(RUN_STATUS[r.status] || {}).label || r.status}`);
       await load(true);
       onChanged?.();
     } catch (e) { setErr(e.message); }
     finally { setBusy(''); }
   };
 
-  // Skeleton HANYA saat muat pertama. Saat memuat ulang setelah aksi, panel tetap
-  // tampil (kalau tidak, seluruh panel berkedip jadi skeleton dan banner hasil aksi
-  // ikut hilang dari layar).
+  // Muat awal saja yang menampilkan tulisan memuat. Saat memuat ulang setelah aksi, panel tetap
+  // tampil (kalau tidak, banner hasil aksi ikut hilang dari layar).
   if (loading && !digest && !sched) {
-    return (
-      <div className="grid lg:grid-cols-2 gap-4" data-testid="acc-val-automation-loading">
-        <Skeleton className="h-56 rounded-xl" />
-        <Skeleton className="h-56 rounded-xl" />
-      </div>
-    );
+    return <p className="py-10 text-center text-sm text-muted-foreground" data-testid="acc-val-automation-loading">Memuat pengaturan otomasi…</p>;
   }
 
   const dt = digest?.totals || {};
   const smtp = sched?.smtp || {};
   const recipients = sched?.recipients || [];
   const runs = sched?.runs || [];
+  const pilihanBulan = reportMonth && !MONTH_OPTIONS.some((o) => o.value === reportMonth)
+    ? [{ value: reportMonth, label: periodLabel(reportMonth) }, ...MONTH_OPTIONS] : MONTH_OPTIONS;
 
   return (
     <div className="space-y-3" data-testid="acc-val-automation">
-      {err && (
-        <div className="text-sm text-red-700 dark:text-red-400 bg-red-100 dark:bg-red-500/10 border border-red-300 dark:border-red-500/20 rounded-lg px-4 py-2"
-          data-testid="acc-val-auto-error">{err}</div>
-      )}
-      {msg && (
-        <div className="text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-4 py-2"
-          data-testid="acc-val-auto-msg">{msg}</div>
-      )}
+      {err && <Notice tone="danger" testId="acc-val-auto-error">{err}</Notice>}
+      {msg && <Notice tone="success" testId="acc-val-auto-msg">{msg}</Notice>}
 
-      <div className="grid lg:grid-cols-2 gap-4">
+      <div className="grid gap-4 lg:grid-cols-2">
         {/* ── PANEL 1: ALARM / RINGKASAN HARIAN ─────────────────────────── */}
-        <div className="bg-[var(--card-surface)] border border-border rounded-xl p-4 space-y-3"
-          data-testid="acc-digest-panel">
+        <GlassCard className="space-y-3 p-4" data-testid="acc-digest-panel">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <BellRing className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            <div className="flex items-start gap-2">
+              <BellRing className="mt-0.5 h-4 w-4 text-[hsl(var(--warning-text))]" />
               <div>
-                <div className="font-semibold text-sm">Alarm item belum dinilai</div>
-                <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
+                <p className="text-base font-semibold">Alarm item belum dinilai</p>
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock className="h-3 w-3" />
                   {digest?.schedule_label || 'Setiap hari pukul 07:30 (Asia/Jakarta)'}
-                </div>
+                </p>
               </div>
             </div>
-            <button onClick={() => load()} className="p-1.5 border border-border rounded-lg hover:bg-foreground/5"
-              title="Muat ulang" data-testid="acc-digest-refresh">
-              <RefreshCw className="w-3.5 h-3.5" />
-            </button>
+            <Button variant="outline" size="icon-sm" onClick={() => load()} title="Muat ulang" aria-label="Muat ulang"
+              data-testid="acc-digest-refresh">
+              <RefreshCw className={loading ? 'animate-spin' : ''} />
+            </Button>
           </div>
 
           {dt.items > 0 ? (
             <>
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-lg bg-amber-100 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/20 py-2">
-                  <div className="text-lg font-bold text-amber-700 dark:text-amber-400"
-                    data-testid="acc-digest-count">{fmtNum(dt.items)}</div>
-                  <div className="text-[11px] text-muted-foreground">item HPP 0</div>
-                </div>
-                <div className="rounded-lg bg-foreground/[0.03] border border-border py-2">
-                  <div className="text-lg font-bold">{fmtNum(dt.items_with_stock)}</div>
-                  <div className="text-[11px] text-muted-foreground">punya stok</div>
-                </div>
-                <div className="rounded-lg bg-foreground/[0.03] border border-border py-2">
-                  <div className="text-lg font-bold">{fmtNum(dt.movements_window)}</div>
-                  <div className="text-[11px] text-muted-foreground">mutasi {digest?.window_hours || 24} jam</div>
-                </div>
+              <div className="grid grid-cols-3 gap-2">
+                <StatTile label="Item HPP 0" value={fmtNum(dt.items)} accent="warning" testId="acc-digest-count" />
+                <StatTile label="Punya stok" value={fmtNum(dt.items_with_stock)} />
+                <StatTile label={`Mutasi ${digest?.window_hours || 24} jam`} value={fmtNum(dt.movements_window)} />
               </div>
 
-              <ul className="text-xs space-y-1 max-h-36 overflow-y-auto" data-testid="acc-digest-list">
+              <ul className="divide-y divide-[var(--glass-border)] text-sm" data-testid="acc-digest-list">
                 {(digest?.items || []).slice(0, 6).map((it) => (
-                  <li key={it.id} className="flex items-center justify-between gap-2 border-b border-border/60 pb-1">
-                    <span className="truncate">
-                      <span className="font-mono text-[11px] text-muted-foreground">{it.code}</span>{' '}
-                      {it.name}
+                  <li key={it.id} className="flex items-center justify-between gap-2 py-1.5">
+                    <span className="min-w-0 truncate">
+                      <span className="text-xs text-muted-foreground">{it.code}</span>{' '}{it.name}
                     </span>
-                    <span className="shrink-0 text-muted-foreground">
+                    <span className="flex shrink-0 items-center gap-1 text-muted-foreground">
                       {fmtNum(it.stock_qty)} {it.unit}
                       {it.movements_window > 0 && (
-                        <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400">
-                          {it.movements_window} mutasi
-                        </span>
+                        <StatusBadge status="mutasi" label={`${it.movements_window} mutasi`} tone="warning" />
                       )}
                     </span>
                   </li>
                 ))}
                 {(digest?.items || []).length > 6 && (
-                  <li className="text-muted-foreground">… dan {digest.items.length - 6} item lain</li>
+                  <li className="py-1.5 text-muted-foreground">… dan {digest.items.length - 6} item lain</li>
                 )}
               </ul>
             </>
           ) : (
-            <div className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-300 dark:border-emerald-500/20 rounded-lg px-3 py-2"
-              data-testid="acc-digest-clean">
-              <CheckCircle2 className="w-4 h-4" /> Semua aksesoris sudah punya HPP — tidak ada alarm.
-            </div>
+            <Notice tone="success" icon={CheckCircle2} testId="acc-digest-clean">
+              Semua aksesoris sudah punya HPP — tidak ada alarm.
+            </Notice>
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-            <div className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {digest?.last_digest
                 ? `Ringkasan terakhir: ${fmtDateTime(digest.last_digest.created_at)} · ${digest.last_digest.count || 0} item`
                 : 'Belum pernah mengirim ringkasan.'}
-            </div>
-            <button onClick={sendDigest} disabled={busy === 'digest' || !dt.items}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-amber-600 text-white hover:brightness-110 disabled:opacity-50"
-              data-testid="acc-digest-send">
-              {busy === 'digest' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            </p>
+            <Button onClick={sendDigest} disabled={busy === 'digest' || !dt.items} data-testid="acc-digest-send">
+              {busy === 'digest' ? <Loader2 className="animate-spin" /> : <Send />}
               Kirim ringkasan sekarang
-            </button>
+            </Button>
           </div>
-          <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-            <Info className="w-3 h-3 mt-0.5 shrink-0" />
-            Satu notifikasi berisi SEMUA item tanpa harga (bukan satu per item). Alarm per-item
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-3 w-3 shrink-0" />
+            Satu notifikasi berisi semua item tanpa harga (bukan satu per item). Alarm per item
             saat mutasi tetap berjalan, dibatasi 1×/24 jam per item.
           </p>
-        </div>
+        </GlassCard>
 
         {/* ── PANEL 2: RAPOR BULANAN OTOMATIS ───────────────────────────── */}
-        <div className="bg-[var(--card-surface)] border border-border rounded-xl p-4 space-y-3"
-          data-testid="acc-report-schedule-panel">
+        <GlassCard className="space-y-3 p-4" data-testid="acc-report-schedule-panel">
           <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <CalendarClock className="w-4 h-4 text-sky-600 dark:text-sky-400" />
+            <div className="flex items-start gap-2">
+              <CalendarClock className="mt-0.5 h-4 w-4 text-[hsl(var(--primary))]" />
               <div>
-                <div className="font-semibold text-sm">Rapor bulanan otomatis ke keuangan</div>
-                <div className="text-[11px] text-muted-foreground flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
+                <p className="text-base font-semibold">Rapor bulanan otomatis ke keuangan</p>
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Clock className="h-3 w-3" />
                   {sched?.schedule_label || 'Setiap tanggal 1 pukul 06:00 (Asia/Jakarta)'}
                   {sched?.next_run_at && ` · berikutnya ${fmtDateTime(sched.next_run_at)}`}
-                </div>
+                </p>
               </div>
             </div>
-            <button
-              onClick={() => saveSchedule({ enabled: !sched?.enabled })}
-              disabled={busy === 'schedule'}
-              className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition ${
-                sched?.enabled
-                  ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-500/30'
-                  : 'bg-muted text-muted-foreground border-border'}`}
-              data-testid="acc-report-toggle">
+            <label className="flex shrink-0 items-center gap-2 text-sm" htmlFor="acc-report-toggle">
+              <Switch id="acc-report-toggle" checked={!!sched?.enabled} disabled={busy === 'schedule'}
+                onCheckedChange={(v) => saveSchedule({ enabled: v })} data-testid="acc-report-toggle" />
               {sched?.enabled ? 'Aktif' : 'Nonaktif'}
-            </button>
+            </label>
           </div>
 
           {/* Status SMTP */}
-          <div className={`rounded-lg px-3 py-2 text-xs border flex items-start gap-2 ${
-            smtp.configured
-              ? 'bg-emerald-100 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400'
-              : 'bg-amber-100 dark:bg-amber-500/10 border-amber-300 dark:border-amber-500/25 text-amber-800 dark:text-amber-300'}`}
-            data-testid="acc-report-smtp-status">
-            {smtp.configured ? <Mail className="w-3.5 h-3.5 mt-0.5" /> : <AlertTriangle className="w-3.5 h-3.5 mt-0.5" />}
-            <div>
-              {smtp.configured ? (
-                <>Email siap: <strong>{smtp.host}:{smtp.port}</strong> ({smtp.security}
-                  {smtp.auth ? ', dengan login' : ', tanpa login'}) · pengirim {smtp.from_email || '-'}</>
-              ) : (
-                <>SMTP belum diisi — rapor tetap dibuat &amp; dikirim sebagai notifikasi aplikasi,
-                  tapi lampiran belum bisa dikirim lewat email. Isi di{' '}
-                  <a href="#maklon-notifications" className="underline font-medium">
-                    Pusat Notifikasi → Pengaturan → Email (SMTP)</a>.</>
-              )}
-              {smtp.note && <div className="opacity-80 mt-0.5">{smtp.note}</div>}
-            </div>
-          </div>
+          <Notice tone={smtp.configured ? 'success' : 'warning'} icon={smtp.configured ? Mail : AlertTriangle}
+            testId="acc-report-smtp-status">
+            {smtp.configured ? (
+              <>Email siap: <strong>{smtp.host}:{smtp.port}</strong> ({smtp.security}
+                {smtp.auth ? ', dengan login' : ', tanpa login'}) · pengirim {smtp.from_email || '-'}</>
+            ) : (
+              <>Email (SMTP) belum diatur — rapor tetap dibuat & dikirim sebagai notifikasi aplikasi,
+                tapi lampiran belum bisa dikirim lewat email. Atur di{' '}
+                <a href="#maklon-notifications" className="font-medium underline">
+                  Pusat Notifikasi › Pengaturan › Email (SMTP)</a>.</>
+            )}
+            {smtp.note && <div className="mt-0.5">{smtp.note}</div>}
+          </Notice>
 
           {/* Penerima */}
           <div className="space-y-1.5">
-            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Users className="w-3.5 h-3.5" /> Penerima ({recipients.length})
-            </div>
+            <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <Users className="h-4 w-4" /> Penerima ({recipients.length})
+            </p>
             <div className="flex flex-wrap gap-1.5" data-testid="acc-report-recipients">
               {recipients.length === 0 && (
-                <span className="text-xs text-amber-700 dark:text-amber-400">
-                  Belum ada penerima — tambahkan email di bawah atau isi email pada user role keuangan.
+                <span className="text-sm text-[hsl(var(--warning-text))]">
+                  Belum ada penerima — tambahkan email di bawah atau isi email pada pengguna peran keuangan.
                 </span>
               )}
               {recipients.map((r) => (
-                <span key={r.email}
-                  className={`px-2 py-0.5 rounded-full text-[11px] border ${
-                    r.source === 'role_keuangan'
-                      ? 'bg-sky-100 dark:bg-sky-500/10 text-sky-700 dark:text-sky-400 border-sky-300 dark:border-sky-500/30'
-                      : 'bg-violet-100 dark:bg-violet-500/10 text-violet-700 dark:text-violet-400 border-violet-300 dark:border-violet-500/30'}`}
-                  title={r.source === 'role_keuangan' ? `User role ${r.role}` : 'Email tambahan'}>
-                  {r.email}
+                <span key={r.email} title={r.source === 'role_keuangan' ? 'Pengguna peran keuangan' : 'Email tambahan'}>
+                  <StatusBadge status={r.source} label={r.email} tone={r.source === 'role_keuangan' ? 'info' : 'primary'} />
                 </span>
               ))}
             </div>
@@ -333,84 +304,95 @@ export default function AccessoryValuationAutomation({ token, onChanged }) {
 
           {/* Email tambahan */}
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground flex items-center gap-1.5" htmlFor="acc-report-extra">
-              <Settings2 className="w-3.5 h-3.5" /> Email tambahan (pisahkan dengan koma)
+            <label className="block text-sm font-medium" htmlFor="acc-report-extra">
+              Email tambahan (pisahkan dengan koma)
             </label>
             <div className="flex gap-2">
-              <input id="acc-report-extra" value={extra} onChange={(e) => setExtra(e.target.value)}
-                placeholder="pajak@perusahaan.id, arsip@perusahaan.id"
-                className="flex-1 border border-border rounded-lg px-3 py-1.5 text-sm bg-[var(--card-surface)]"
+              <Input id="acc-report-extra" value={extra} onChange={(e) => setExtra(e.target.value)}
+                placeholder="pajak@perusahaan.id, arsip@perusahaan.id" className="min-w-0 flex-1"
                 data-testid="acc-report-extra-emails" />
-              <button onClick={() => saveSchedule({ extra_emails: extra })} disabled={busy === 'schedule'}
-                className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5 disabled:opacity-50"
+              <Button variant="success" onClick={() => saveSchedule({ extra_emails: extra })} disabled={busy === 'schedule'}
                 data-testid="acc-report-extra-save">
-                {busy === 'schedule' ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Simpan'}
-              </button>
+                {busy === 'schedule' ? <Loader2 className="animate-spin" /> : 'Simpan'}
+              </Button>
             </div>
           </div>
 
           {/* Kirim sekarang */}
-          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border">
-            <label className="text-xs text-muted-foreground" htmlFor="acc-report-month">Periode rapor</label>
-            <input id="acc-report-month" type="month" value={reportMonth}
-              onChange={(e) => setReportMonth(e.target.value)}
-              className="border border-border rounded-lg px-2 py-1.5 text-sm bg-[var(--card-surface)]"
-              data-testid="acc-report-month" />
-            <button onClick={sendReport} disabled={busy === 'report'}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm bg-sky-600 text-white hover:brightness-110 disabled:opacity-50"
-              data-testid="acc-report-send-now">
-              {busy === 'report' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              Kirim rapor sekarang
-            </button>
-            <span className="text-[11px] text-muted-foreground">
-              Lampiran Excel + PDF · default periode {periodLabel(sched?.default_month)}
-            </span>
+          <div className="space-y-1.5 border-t border-[var(--glass-border)] pt-3">
+            <label className="block text-sm font-medium" htmlFor="acc-report-month">Periode rapor</label>
+            <div className="flex flex-wrap items-center gap-2">
+              <SmartNativeSelect id="acc-report-month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)}
+                className="w-44" data-testid="acc-report-month">
+                {pilihanBulan.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </SmartNativeSelect>
+              <Button onClick={sendReport} disabled={busy === 'report'} data-testid="acc-report-send-now">
+                {busy === 'report' ? <Loader2 className="animate-spin" /> : <Send />}
+                Kirim rapor sekarang
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Lampiran Excel + PDF · bawaan periode {periodLabel(sched?.default_month)}
+            </p>
           </div>
 
           {/* Riwayat */}
-          <div>
-            <button onClick={() => setOpenHistory((v) => !v)}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
-              data-testid="acc-report-history-toggle">
-              <History className="w-3.5 h-3.5" />
-              Riwayat pengiriman ({runs.length}) {openHistory ? '▲' : '▼'}
-            </button>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <Button variant="link" size="sm" className="px-0" onClick={() => setOpenHistory((v) => !v)}
+                aria-expanded={openHistory} data-testid="acc-report-history-toggle">
+                {openHistory ? <ChevronDown /> : <ChevronRight />}
+                <History /> Riwayat pengiriman ({runs.length})
+              </Button>
+              {openHistory && runs.length > 0 && (
+                <TombolUnduh namaBerkas="riwayat-rapor-valuasi" namaLembar="Riwayat" baris={runs} testId="acc-report-history-unduh"
+                  kolom={[
+                    { label: 'Waktu', nilai: (r) => fmtDateTime(r.created_at) },
+                    { label: 'Periode', nilai: (r) => periodLabel(r.month) },
+                    { label: 'Status', nilai: (r) => (RUN_STATUS[r.status] || {}).label || r.status },
+                    { label: 'Terkirim', nilai: (r) => Number(r.sent_count || 0) },
+                    { label: 'Gagal', nilai: (r) => Number(r.failed_count || 0) },
+                    { label: 'Nilai persediaan (Rp)', nilai: (r) => Number(r.total_value || 0) },
+                    { label: 'Pemicu', nilai: (r) => r.triggered_by || '' },
+                  ]} />
+              )}
+            </div>
             {openHistory && (
-              <div className="mt-2 border border-border rounded-lg overflow-hidden" data-testid="acc-report-history">
+              <div data-testid="acc-report-history">
                 {runs.length === 0 ? (
-                  <div className="text-xs text-muted-foreground px-3 py-3">Belum ada pengiriman.</div>
+                  <p className="text-sm text-muted-foreground">Belum ada pengiriman.</p>
                 ) : (
-                  <table className="w-full text-[11px]">
-                    <thead className="bg-[var(--glass-bg)] border-b border-border">
-                      <tr>
-                        <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Waktu</th>
-                        <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Periode</th>
-                        <th className="text-center px-2 py-1.5 font-medium text-muted-foreground">Status</th>
-                        <th className="text-right px-2 py-1.5 font-medium text-muted-foreground">Terkirim</th>
-                        <th className="text-left px-2 py-1.5 font-medium text-muted-foreground">Pemicu</th>
-                      </tr>
-                    </thead>
-                    <tbody>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Waktu</TableHead>
+                        <TableHead>Periode</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right">Terkirim</TableHead>
+                        <TableHead>Pemicu</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
                       {runs.slice(0, 8).map((r) => (
-                        <tr key={r.id} className="border-b border-border/60">
-                          <td className="px-2 py-1.5 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                          <td className="px-2 py-1.5">{periodLabel(r.month)}</td>
-                          <td className="px-2 py-1.5 text-center"><StatusPill status={r.status} /></td>
-                          <td className="px-2 py-1.5 text-right">
+                        <TableRow key={r.id}>
+                          <TableCell className="whitespace-nowrap">{fmtDateTime(r.created_at)}</TableCell>
+                          <TableCell>{periodLabel(r.month)}</TableCell>
+                          <TableCell><StatusPill status={r.status} /></TableCell>
+                          <TableCell className="text-right tabular-nums">
                             {r.sent_count || 0}
-                            {r.failed_count ? <span className="text-red-600 dark:text-red-400"> / {r.failed_count} gagal</span> : ''}
-                            {r.total_value ? <div className="text-muted-foreground">{fmtRp(r.total_value)}</div> : null}
-                          </td>
-                          <td className="px-2 py-1.5 truncate max-w-[120px]" title={r.triggered_by}>{r.triggered_by}</td>
-                        </tr>
+                            {r.failed_count ? <span className="text-[hsl(var(--danger-text))]"> / {r.failed_count} gagal</span> : ''}
+                            {r.total_value ? <div className="text-xs text-muted-foreground">{fmtRp(r.total_value)}</div> : null}
+                          </TableCell>
+                          <TableCell className="max-w-[10rem] truncate" title={r.triggered_by}>{r.triggered_by}</TableCell>
+                        </TableRow>
                       ))}
-                    </tbody>
-                  </table>
+                    </TableBody>
+                  </Table>
                 )}
               </div>
             )}
           </div>
-        </div>
+        </GlassCard>
       </div>
     </div>
   );
