@@ -100,7 +100,7 @@ export default function RahazaMaterialReturnModule({ deepLinkParams, portalId })
     <PageLayout
       testId="material-return-module"
       title="Retur material"
-      subtitle="Bahan yang sudah keluar ke produksi atau CMT dikembalikan ke gudang, dengan jurnal balik pada HPP saat keluar."
+      subtitle="Bahan dari produksi atau CMT kembali ke gudang, dengan jurnal balik pada HPP saat keluar."
       actions={<Button onClick={() => setCreating({ key: Date.now() })} data-testid="pmr-new"><Plus className="w-4 h-4" />Retur material</Button>}
       filters={<>
         <FilterChips className="w-full sm:w-auto" value={status} onChange={setStatus} testId="pmr-filter" ariaLabel="Penyaring status retur" hideWhenEmpty={false} options={chips} />

@@ -479,7 +479,7 @@ export default function RahazaMaterialIssueModule({ token, onNavigate }) {
 
   return (
     <PageLayout testId="rahaza-mi-page" title="Pengeluaran Material"
-      subtitle="Satu daftar semua bahan keluar gudang: MI manual, job produksi, kirim ke CMT, dan kain yang dipotong di Portal Cutting."
+      subtitle="Semua bahan keluar gudang: MI manual, job produksi, kirim ke CMT, dan potong kain."
       actions={<Button onClick={openCreate} data-testid="mi-create-btn"><Plus /> Buat MI</Button>}
       filters={<>
         {/* FASE H-6b — penyaring SUMBER arus keluar; angka dari `GET /material-issues/sources`. Pil berangka 0 tetap

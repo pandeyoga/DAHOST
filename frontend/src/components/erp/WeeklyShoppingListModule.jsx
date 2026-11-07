@@ -193,7 +193,7 @@ export default function WeeklyShoppingListModule({ token, onNavigate }) {
 
   return (
       <PageLayout testId="shopping-list-page" title="Belanja mingguan"
-        subtitle="Barang yang perlu dibeli minggu ini, dihitung dari ambang minimum / titik pesan ulang dan stok semua lokasi."
+        subtitle="Barang yang perlu dibeli minggu ini, dari ambang stok dan stok semua lokasi."
         actions={
           <Button onClick={() => setDialogOpen(true)} disabled={!chosen.length} data-testid="shopping-create-pr">
             <FileText />Buat PR pengadaan{chosen.length ? ` (${chosen.length})` : ''}
