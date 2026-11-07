@@ -1,8 +1,9 @@
 /**
  * StatusAsisten — tampilan Asisten AI saat belum bisa menjawab (`GET /api/asisten-ai/status`: kunci API kosong,
- * AI dimatikan, anggaran habis, server tidak menjawab) dan tempat "Tindakan AI" / "Ingatan AI" (Tahap B/D).
+ * AI dimatikan, anggaran habis, server tidak menjawab). "Tindakan AI" (Tahap B) dan "Ingatan AI" (Tahap D) kini halaman
+ * sendiri (`asisten-ai-tindakan`, `asisten-ai-ingatan`), jadi tempat "tahap berikutnya" sudah dihapus.
  */
-import { Brain, CloudOff, KeyRound, ListChecks, Power, Wallet } from 'lucide-react';
+import { CloudOff, KeyRound, Power, Wallet } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '../moduleAtoms';
 import { canAccessPortal } from '../portalAccess';
@@ -54,20 +55,3 @@ export const PLACEHOLDER_BELUM_SIAP = {
   ai_nonaktif: 'Asisten AI sedang dimatikan admin',
   anggaran_habis: 'Anggaran AI sudah habis',
 };
-
-export function TahapBerikut({ jenis, onKembali }) {
-  const tindakan = jenis === 'tindakan';
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto">
-      <EmptyState
-        icon={tindakan ? ListChecks : Brain}
-        testId={tindakan ? 'asisten-tindakan-kosong' : 'asisten-ingatan-kosong'}
-        title={tindakan ? 'Tindakan AI hadir di tahap berikutnya' : 'Ingatan AI hadir di tahap berikutnya'}
-        description={tindakan
-          ? 'Nanti di sini tampil perubahan data yang diusulkan Asisten AI dan menunggu persetujuan Anda, lengkap dengan riwayat dan tombol batalkan.'
-          : 'Nanti di sini Anda bisa melihat, mengubah, dan menghapus hal yang diingat Asisten AI, mis. target pertumbuhan atau toko prioritas.'}
-        action={{ label: 'Kembali ke percakapan', variant: 'outline', onClick: onKembali, testId: 'asisten-kembali-chat' }}
-      />
-    </div>
-  );
-}

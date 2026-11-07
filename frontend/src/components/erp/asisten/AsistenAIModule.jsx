@@ -3,8 +3,13 @@
  *
  * Chat analis data internal: jawaban mengalir (SSE), langkah analisis yang bisa dibuka, grafik, tabel, sumber
  * data/web, dan unduhan laporan PDF/Excel. Data selalu mengikuti hak akses pengguna yang bertanya (backend
- * memanggil endpoint aplikasi dengan token pengguna). Tahap A hanya MEMBACA; tindakan tulis (kartu
- * konfirmasi) datang di Tahap B — "Tindakan AI" dan "Ingatan AI" sudah ada tempatnya.
+ * memanggil endpoint aplikasi dengan token pengguna). Tahap B (8 Nov 2026): AI boleh MENYIAPKAN perubahan data
+ * berisiko rendah sebagai kartu konfirmasi (KartuTindakan); data baru berubah setelah pengguna menekan "Setujui".
+ * Keputusan dikirim ke `POST /tindakan/{id}/putuskan` (aliran SSE) dan lanjutan jawabannya ditambahkan ke utas
+ * seperti jawaban biasa (bisa dihentikan). "Tindakan AI" = halaman sendiri (`asisten-ai-tindakan`).
+ * Tahap D (8 Nov 2026): "Ingatan AI" = halaman sendiri (`asisten-ai-ingatan`); chip "Diingat: …" di jawaban; lencana
+ * Briefing/Laporan mingguan di riwayat; TAUTAN LANGSUNG `?portal=management&module=asisten-ai&sesi=<id>` (dan klik
+ * notifikasi → `deepLinkParams`) membuka percakapan itu, juga saat halaman ini sudah terbuka.
  *
  * Tata letak (PANDUAN_UI G1): cetakan PageLayout — judul, pilihan CV & periode di `filters`, isi = jendela chat:
  *   [riwayat percakapan | kepala utas · utas pesan · kotak tanya]. Di HP riwayat pindah ke laci (Sheet).
@@ -23,20 +28,26 @@ import { thisMonthWIB } from '@/lib/waktu';
 import PageLayout from '../layout/PageLayout';
 import { EmptyState } from '../moduleAtoms';
 import { monthOptions } from '../finance/PeriodPicker';
-import { asistenApi } from './asistenApi';
-import { dariRiwayat, judulDariTeks, pesanAsistenBaru, terapkanPeristiwa } from './peristiwaSse';
+import { KUNCI_SESI_AKTIF, asistenApi } from './asistenApi';
+import { JENIS_ISI as KONTEN, dariRiwayat, judulDariTeks, pesanAsistenBaru, terapkanPeristiwa } from './peristiwaSse';
 import KomposerAsisten from './KomposerAsisten';
-import { PLACEHOLDER_BELUM_SIAP, StatusBelumSiap, TahapBerikut } from './StatusAsisten';
+import { PLACEHOLDER_BELUM_SIAP, StatusBelumSiap } from './StatusAsisten';
 import RiwayatPercakapan from './RiwayatPercakapan';
+import {
+  kartuMenunggu, kedaluwarsakanMenunggu, terapkanStatusTindakan, terapkanUbahanKeRencana, ubahKartu,
+} from './tindakanAsisten';
 import UtasPesan from './UtasPesan';
+import { alamatTanpaSesi, sesiDariAlamat, sesiDariParams } from './adapterTahapCD';
 
-const KUNCI_SESI = 'asisten_ai_sesi_aktif';
+// Tahap B: halaman "Tindakan AI" (TindakanAIModule) membuka percakapan asal lewat kunci yang sama.
+const KUNCI_SESI = KUNCI_SESI_AKTIF;
+const CATATAN_TINDAKAN_MATI = 'Tindakan AI sedang dimatikan admin; AI hanya menjawab.';
+const CATATAN_ADA_MENUNGGU = 'Ada usulan perubahan yang menunggu keputusan Anda. Pertanyaan baru membuat usulan itu kedaluwarsa.';
 const KUNCI_CV = 'asisten_ai_cv';
 const MODEL_BAWAAN = 'Claude Opus 5.5';
 // 4 analisis lama "AI Business Intelligence" jadi saran (audit AI §4) — dipakai bila server belum memberi saran.
 const SARAN_CADANGAN = ['Ringkasan hari ini', 'Omzet bulan ini per toko', 'Prakiraan omzet bulan depan',
   'Cek kejanggalan transaksi', 'Rekomendasi produksi'];
-const KONTEN = new Set(['teks', 'grafik', 'tabel', 'laporan']);
 
 const baca = (k) => { try { return window.sessionStorage.getItem(k); } catch { return null; } };
 const tulis = (k, v) => { try { if (v) window.sessionStorage.setItem(k, v); else window.sessionStorage.removeItem(k); } catch { /* diblokir */ } };
@@ -45,8 +56,36 @@ const tulisCv = (v) => { try { window.localStorage.setItem(KUNCI_CV, v); } catch
 let urut = 0;
 const kunciBaru = (p) => `${p}-${Date.now().toString(36)}-${(urut += 1)}`;
 
+// ── Tahap D: tautan langsung ke satu percakapan (notifikasi briefing / laporan mingguan) ──────────────────────
+// App menyimpan `deepLinkParams` terakhir sampai navigasi berikutnya; tanpa catatan ini, membuka Asisten AI lagi
+// dari menu samping akan membuka percakapan notifikasi lama. Setiap objek parameter hanya dipakai sekali
+// (klik notifikasi berikutnya = objek baru). Alamat `?sesi=` dibersihkan setelah dipakai.
+const tautanTerpakai = new WeakSet();
+const paramsBaru = (p) => (p && typeof p === 'object' && !tautanTerpakai.has(p) ? p : null);
+function sesiTautanAwal(params) {
+  const dariParams = sesiDariParams(paramsBaru(params));
+  if (dariParams) return dariParams;
+  try { return sesiDariAlamat(window.location.search); } catch { return null; }
+}
+function pakaiTautan(params) {
+  if (params && typeof params === 'object') tautanTerpakai.add(params);
+  try {
+    const { pathname, search, hash } = window.location;
+    if (sesiDariAlamat(search)) window.history.replaceState(window.history.state, '', alamatTanpaSesi(pathname, search, hash));
+  } catch { /* alamat tidak bisa diubah: tidak apa-apa */ }
+}
+
 /** Label CV untuk Asisten AI: Gabungan tanpa "(lihat saja)" — seluruh Tahap A memang hanya membaca. */
 const labelCv = (o) => (o.code === CV_ALL ? 'Gabungan' : o.label);
+
+/** Akhir aliran jawaban: selesai bila ada isi, terhenti bila dihentikan, selain itu galat "terputus". */
+function akhiriJawaban(p, aborted) {
+  if (p.keadaan !== 'mengalir') return p;
+  if (aborted) return { ...p, keadaan: 'terhenti', statusTeks: '' };
+  return p.blok.some((b) => KONTEN.has(b.jenis))
+    ? { ...p, keadaan: 'selesai', statusTeks: '' }
+    : { ...p, keadaan: 'galat', statusTeks: '', galat: { kode: 'terputus', pesan: 'Jawaban terputus sebelum selesai. Coba lagi.' } };
+}
 
 /** Layar sempit (HP): subjudul & saran disembunyikan supaya utas pesan mendapat ruang. */
 function useSempit() {
@@ -86,7 +125,7 @@ function useTinggiPenuh(ref, min = 440) {
   return tinggi;
 }
 
-export default function AsistenAIModule({ user, onNavigate }) {
+export default function AsistenAIModule({ user, onNavigate, deepLinkParams }) {
   const peran = user?.role;
   const [status, setStatus] = useState({ memuat: true, data: null, galat: null });
   const [saran, setSaran] = useState([]);
@@ -94,17 +133,17 @@ export default function AsistenAIModule({ user, onNavigate }) {
   const [memuatSesi, setMemuatSesi] = useState(true);
   const [galatSesi, setGalatSesi] = useState(null);
   const [cari, setCari] = useState('');
-  const [aktifId, setAktifId] = useState(() => baca(KUNCI_SESI));
+  const [aktifId, setAktifId] = useState(() => sesiTautanAwal(deepLinkParams) || baca(KUNCI_SESI));
   const [pesan, setPesan] = useState([]);
   const [memuatPesan, setMemuatPesan] = useState(false);
   const [mengalir, setMengalir] = useState(false);
-  const [tampilan, setTampilan] = useState('chat');
   const [laci, setLaci] = useState(false);
   const [cvOpsi, setCvOpsi] = useState(CV_OPTIONS_FALLBACK);
   const [cv, setCvState] = useState(bacaCv);
   const [periode, setPeriode] = useState(() => thisMonthWIB());
 
   const aktifRef = useRef(aktifId);
+  const tautanRef = useRef(sesiTautanAwal(deepLinkParams)); // id sesi yang dibuka lewat tautan (pesan 404 khusus)
   const abortRef = useRef(null);
   const mengalirRef = useRef(false);
   const komposerRef = useRef(null);
@@ -150,6 +189,7 @@ export default function AsistenAIModule({ user, onNavigate }) {
     } catch (e) {
       if (aktifRef.current !== id) return;
       if (e?.status === 404) {
+        if (tautanRef.current === id) toast.error('Percakapan dari tautan tidak ditemukan atau bukan milik Anda.');
         aktifRef.current = null;
         setAktifId(null);
         tulis(KUNCI_SESI, null);
@@ -185,7 +225,6 @@ export default function AsistenAIModule({ user, onNavigate }) {
 
   const pilih = useCallback((id) => {
     setLaci(false);
-    setTampilan('chat');
     if (id === aktifRef.current) return;
     abortRef.current?.abort();
     aktifRef.current = id;
@@ -201,18 +240,17 @@ export default function AsistenAIModule({ user, onNavigate }) {
     tulis(KUNCI_SESI, null);
     setPesan([]);
     setMemuatPesan(false);
-    setTampilan('chat');
     setLaci(false);
     requestAnimationFrame(() => komposerRef.current?.fokus());
   }, []);
 
   const kirim = useCallback(async (teks) => {
     if (mengalirRef.current || !siap) return;
-    setTampilan('chat');
     mengalirRef.current = true;
     setMengalir(true);
     const kA = kunciBaru('a');
-    setPesan((prev) => [...prev, { kunci: kunciBaru('u'), peran: 'user', teks }, { ...pesanAsistenBaru(kA), kunci: kA }]);
+    // Kartu yang masih menunggu menjadi kedaluwarsa begitu ada pertanyaan baru (Kontrak D; server melakukan hal yang sama).
+    setPesan((prev) => [...kedaluwarsakanMenunggu(prev), { kunci: kunciBaru('u'), peran: 'user', teks }, { ...pesanAsistenBaru(kA), kunci: kA }]);
     const ubah = (fn) => setPesan((prev) => prev.map((p) => (p.kunci === kA ? fn(p) : p)));
     const ctrl = new AbortController();
     abortRef.current = ctrl;
@@ -232,16 +270,14 @@ export default function AsistenAIModule({ user, onNavigate }) {
       }
       const hasil = await asistenApi.kirimPesan(sid, { teks, cv, periode }, {
         signal: ctrl.signal,
-        onEvent: ({ event, data }) => ubah((p) => terapkanPeristiwa(p, event, data)),
+        onEvent: ({ event, data }) => {
+          if (aktifRef.current !== sid) return;
+          // keadaan kartu bisa berubah untuk kartu di jawaban sebelumnya → seluruh utas
+          if (event === 'tindakan_status') setPesan((prev) => terapkanStatusTindakan(prev, data));
+          else ubah((p) => terapkanPeristiwa(p, event, data));
+        },
       });
-      ubah((p) => {
-        if (p.keadaan !== 'mengalir') return p;
-        if (hasil.aborted) return { ...p, keadaan: 'terhenti', statusTeks: '' };
-        const adaIsi = p.blok.some((b) => KONTEN.has(b.jenis));
-        return adaIsi
-          ? { ...p, keadaan: 'selesai', statusTeks: '' }
-          : { ...p, keadaan: 'galat', statusTeks: '', galat: { kode: 'terputus', pesan: 'Jawaban terputus sebelum selesai. Coba lagi.' } };
-      });
+      ubah((p) => akhiriJawaban(p, hasil.aborted));
     } catch (e) {
       ubah((p) => ({ ...p, keadaan: 'galat', statusTeks: '', galat: { kode: e?.status || 'galat', pesan: e?.message || 'Asisten AI gagal menjawab.' } }));
     } finally {
@@ -251,6 +287,107 @@ export default function AsistenAIModule({ user, onNavigate }) {
       muatDaftar(true);
     }
   }, [siap, cv, periode, muatDaftar]);
+
+  /**
+   * Muat ulang isi percakapan tanpa kerangka memuat (keadaan & rencana kartu dari server = sumber kebenaran).
+   * `ubahanKartu` ({id: ubahan}) memasang lagi catatan "Diubah sebelum disetujui" di kartu yang disegarkan.
+   */
+  const segarkan = useCallback(async (id, ubahanKartu = null) => {
+    if (!id) return;
+    try {
+      const d = await asistenApi.getSession(id);
+      if (aktifRef.current !== id || mengalirRef.current) return;
+      let utas = (Array.isArray(d?.pesan) ? d.pesan : []).map((p) => ({ ...dariRiwayat(p), kunci: p.id || kunciBaru('r') }));
+      Object.entries(ubahanKartu || {}).forEach(([aid, ub]) => {
+        utas = ubahKartu(utas, aid, (b) => ({ ...b, rencana: terapkanUbahanKeRencana(b.rencana, ub) }));
+      });
+      setPesan(utas);
+    } catch { /* tampilan sekarang dibiarkan */ }
+  }, []);
+
+  /**
+   * Putuskan kartu tindakan (Kontrak E `POST /tindakan/{id}/putuskan`, SSE). `tindakan_status` mengubah kartunya
+   * di mana pun di utas; lanjutan jawaban (`mulai` … `selesai`) menjadi pesan asisten BARU di ujung utas — hanya
+   * bila semua tindakan giliran itu sudah diputuskan (bila belum, aliran berhenti setelah status).
+   * Tombol Hentikan memutus aliran seperti jawaban biasa. Mengembalikan `{ ok }` ke kartu.
+   */
+  const putuskan = useCallback(async (id, { keputusan, ubahan, alasan } = {}) => {
+    if (!id || mengalirRef.current) return { ok: false };
+    const sid = aktifRef.current;
+    mengalirRef.current = true;
+    setMengalir(true);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    let kA = null;
+    let akhir = null;
+    let ubahanTerpasang = false;
+    let segar = false;
+    let ok = true;
+    const ubahLanjutan = (fn) => { const k = kA; setPesan((prev) => prev.map((p) => (p.kunci === k ? fn(p) : p))); };
+    try {
+      const hasil = await asistenApi.putuskan(id, { keputusan, ubahan, alasan, cv }, {
+        signal: ctrl.signal,
+        onEvent: ({ event, data }) => {
+          if (aktifRef.current !== sid) return;
+          if (event === 'tindakan_status') {
+            const pasang = data?.id === id && ubahan && !ubahanTerpasang && data.keadaan !== 'dibatalkan';
+            if (data?.id === id) akhir = data.keadaan;
+            if (pasang) ubahanTerpasang = true;
+            setPesan((prev) => {
+              const utas = terapkanStatusTindakan(prev, data);
+              return pasang ? ubahKartu(utas, id, (b) => ({ ...b, rencana: terapkanUbahanKeRencana(b.rencana, ubahan) })) : utas;
+            });
+            return;
+          }
+          if (!kA) {
+            const k = kunciBaru('a');
+            kA = k;
+            setPesan((prev) => [...prev, { ...pesanAsistenBaru(k), kunci: k }]);
+          }
+          ubahLanjutan((p) => terapkanPeristiwa(p, event, data));
+        },
+      });
+      if (kA) ubahLanjutan((p) => akhiriJawaban(p, hasil.aborted));
+      // aliran putus sebelum hasil akhir kartu terlihat → ambil keadaan sebenarnya dari server. Setelah disetujui
+      // DENGAN ubahan, inti menjalankan `siapkan` lagi → tabel perubahan terbaru juga diambil dari server.
+      segar = !akhir || akhir === 'disetujui' || ubahanTerpasang;
+    } catch (e) {
+      ok = false;
+      if (kA) ubahLanjutan((p) => ({ ...p, keadaan: 'galat', statusTeks: '', galat: { kode: e?.status || 'galat', pesan: e?.message || 'Asisten AI gagal menjawab.' } }));
+      else toast.error(e?.message || 'Keputusan gagal dikirim. Coba lagi.');
+      // 409 = sudah diputuskan/kedaluwarsa di tempat lain; 404 = bukan milik Anda → tampilkan keadaan server
+      // (putus jaringan sebelum status: kartu tetap menunggu; bila ternyata sudah jalan, coba lagi → 409 → disegarkan)
+      segar = e?.status === 409 || e?.status === 404;
+    } finally {
+      if (abortRef.current === ctrl) abortRef.current = null;
+      mengalirRef.current = false;
+      setMengalir(false);
+      muatDaftar(true);
+    }
+    if (segar && aktifRef.current === sid) segarkan(sid, ubahanTerpasang ? { [id]: ubahan } : null);
+    return { ok };
+  }, [cv, muatDaftar, segarkan]);
+
+  // Tahap D: tautan langsung (alamat `?sesi=` atau `deepLinkParams` dari klik notifikasi). Saat halaman baru dipasang,
+  // sesi tautan sudah jadi `aktifId` awal (dibuka efek muat awal) — di sini hanya ditandai terpakai. Saat halaman sudah
+  // terbuka, parameter baru membuka percakapan itu (percakapan yang sama → isinya disegarkan).
+  const awalRef = useRef(true);
+  useEffect(() => {
+    const pertama = awalRef.current;
+    awalRef.current = false;
+    const p = paramsBaru(deepLinkParams);
+    let id = sesiDariParams(p);
+    if (!id && pertama) { try { id = sesiDariAlamat(window.location.search); } catch { id = null; } }
+    if (!id) { if (p) tautanTerpakai.add(p); return; }
+    pakaiTautan(p);
+    tautanRef.current = id;
+    tulis(KUNCI_SESI, id);
+    if (pertama) return;
+    setLaci(false);
+    muatDaftar(true);
+    if (id === aktifRef.current) { if (!mengalirRef.current) segarkan(id); return; }
+    pilih(id);
+  }, [deepLinkParams, pilih, segarkan, muatDaftar]);
 
   // "Coba lagi" = kirim ulang pertanyaan sebelum jawaban yang gagal, sebagai giliran baru (riwayat server append-only).
   const pesanRef = useRef(pesan);
@@ -302,13 +439,21 @@ export default function AsistenAIModule({ user, onNavigate }) {
   const model = status.data?.model || MODEL_BAWAAN;
   const cvTeks = labelCv(cvOpsi.find((o) => o.code === cv) || CV_OPTIONS_FALLBACK[0]);
   const periodeTeks = periodeOpsi.find((o) => o.value === periode)?.label || periode;
-  const judulUtas = tampilan === 'tindakan' ? 'Tindakan AI'
-    : tampilan === 'ingatan' ? 'Ingatan AI'
-      : (sesiAktif?.judul || (aktifId ? 'Percakapan' : 'Percakapan baru'));
+  const judulUtas = sesiAktif?.judul || (aktifId ? 'Percakapan' : 'Percakapan baru');
+  const tindakanAktif = status.data?.tindakan_aktif !== false;
+  const adaMenunggu = useMemo(() => kartuMenunggu(pesan).length > 0, [pesan]);
+  const catatanKomposer = !tindakanAktif ? CATATAN_TINDAKAN_MATI : (adaMenunggu ? CATATAN_ADA_MENUNGGU : undefined);
+
+  // "Tindakan AI" (Tahap B) dan "Ingatan AI" (Tahap D) = halaman sendiri.
+  const gantiTampilan = useCallback((t) => {
+    setLaci(false);
+    const tujuan = { tindakan: 'asisten-ai-tindakan', ingatan: 'asisten-ai-ingatan' }[t];
+    if (tujuan && onNavigate) onNavigate(tujuan);
+  }, [onNavigate]);
 
   const riwayat = (
     <RiwayatPercakapan sesi={sesi} memuat={memuatSesi} galat={galatSesi} aktifId={aktifId} cari={cari} onCari={setCari}
-      onPilih={pilih} onBaru={baru} tampilan={tampilan} onTampilan={(t) => { setTampilan(t); setLaci(false); }} />
+      onPilih={pilih} onBaru={baru} tampilan="chat" onTampilan={gantiTampilan} />
   );
 
   const sambutan = siap ? (
@@ -360,7 +505,7 @@ export default function AsistenAIModule({ user, onNavigate }) {
                 <p className="truncate text-sm font-semibold text-foreground" data-testid="asisten-judul">{judulUtas}</p>
                 <p className="truncate text-xs text-muted-foreground" data-testid="asisten-konteks">{model} · {cvTeks} · {periodeTeks}</p>
               </div>
-              {sesiAktif && tampilan === 'chat' && (
+              {sesiAktif && (
                 <>
                   <Button variant="outline" size="icon" className="shrink-0" onClick={ubahJudul} disabled={mengalir}
                     title="Ubah judul" aria-label="Ubah judul" data-testid="asisten-ubah-judul">
@@ -377,17 +522,12 @@ export default function AsistenAIModule({ user, onNavigate }) {
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
-            {tampilan === 'chat' ? (
-              <>
-                <UtasPesan pesan={pesan} memuat={memuatPesan} kosong={sambutan} onCobaLagi={cobaLagi} />
-                <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : saran} saranRingkas={pesan.length > 0}
-                  onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap}
-                  placeholder={!siap ? (PLACEHOLDER_BELUM_SIAP[status.data?.alasan] || 'Asisten AI belum siap')
-                    : (sempit ? 'Tanya soal penjualan, stok…' : undefined)} />
-              </>
-            ) : (
-              <TahapBerikut jenis={tampilan} onKembali={() => setTampilan('chat')} />
-            )}
+            <UtasPesan pesan={pesan} memuat={memuatPesan} kosong={sambutan} onCobaLagi={cobaLagi}
+              onPutuskan={putuskan} onNavigate={onNavigate} mengalir={mengalir} tindakanAktif={tindakanAktif} />
+            <KomposerAsisten ref={komposerRef} saran={pesan.length ? saran.slice(0, 4) : saran} saranRingkas={pesan.length > 0}
+              onKirim={kirim} onHentikan={hentikan} mengalir={mengalir} nonaktif={!siap} catatan={catatanKomposer}
+              placeholder={!siap ? (PLACEHOLDER_BELUM_SIAP[status.data?.alasan] || 'Asisten AI belum siap')
+                : (sempit ? 'Tanya soal penjualan, stok…' : undefined)} />
           </section>
         </GlassCard>
       </div>

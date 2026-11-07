@@ -383,7 +383,7 @@ def test_parameter_api_cache_model_dan_konteks_di_giliran_pengguna(env):
     assert kw["output_config"] == {"effort": "medium"}
     assert "tool_choice" not in kw and "temperature" not in kw
     assert kw["betas"] == ["server-side-fallback-2026-07-01"] and kw["fallbacks"] == "default"
-    assert kw["tools"] == ab.tools_untuk_api()
+    assert kw["tools"] == ab.tools_untuk_api(tindakan=True)  # Tahap B: saklar tindakan bawaan menyala
     # konteks yang berubah ada di giliran pengguna, bukan di system
     konteks = kw["messages"][-1]["content"][0]["text"]
     assert "Sabtu, 7 November 2026" in konteks and "CV Sukma Mitra Utama (SMU)" in konteks
@@ -967,6 +967,7 @@ def test_koleksi_chat_terdaftar_sebagai_log_dan_katalog_modul():
         assert cr.is_registered(c) and cr.kind_of(c) == "log"
     mod = mc.match_module("/api/asisten-ai/sessions/abc/messages")
     assert mod["id"] == "mgmt_asisten_ai" and mod["portal"] == "management"
-    assert mod["menus"] == ["asisten-ai", "ai-business-dashboard"]
+    # Tahap B: layar Tindakan AI; Tahap D (proaktif): layar Ingatan AI
+    assert mod["menus"] == ["asisten-ai", "ai-business-dashboard", "asisten-ai-tindakan", "asisten-ai-ingatan"]
     assert mc.detect_action("POST", "/api/asisten-ai/sessions/abc/messages", mod) == "view"
     assert t.feature_group("asisten-ai") == "asisten-ai"

@@ -17,6 +17,9 @@ from database import get_db
 from auth import require_auth
 from core.authz import only  # T-01 2.3
 from core.roles import HR_ROLES  # T-01 2.3
+# 2026-11-08 (Asisten AI Tahap B — celah izin): membuat & menerbitkan jadwal = penugasan shift karyawan
+# (dibaca aturan absen). Gerbang penulis SATU dengan `routes.hr_shifts._require_shift_writer`.
+from routes.hr_shifts import _require_shift_writer
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/shift-scheduler", tags=["shift-scheduler"])
@@ -110,7 +113,7 @@ async def delete_shift_template(request: Request, template_id: str):
 @router.post("/generate")
 async def generate_schedule(request: Request, gen_request: GenerateScheduleRequest):
     """Generate shift schedule automatically."""
-    await require_auth(request)
+    _require_shift_writer(await require_auth(request))
     db = get_db()
     
     # Fetch employees
@@ -302,7 +305,7 @@ async def get_schedule(request: Request, schedule_id: str):
 @router.patch("/schedules/{schedule_id}/publish")
 async def publish_schedule(request: Request, schedule_id: str):
     """Publish a schedule (change status to published)."""
-    await require_auth(request)
+    _require_shift_writer(await require_auth(request))
     db = get_db()
     
     result = await db.rahaza_schedules.update_one(

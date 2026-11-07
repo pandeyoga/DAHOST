@@ -397,8 +397,14 @@ async def approve_purchase_request(pr_id: str, request: Request):
     if not nxt:
         upd.update({"status": "Approved",
                     "approved_by": step["actor_name"], "approved_at": _now_iso()})
-    await db.acc_purchase_requests.update_one({"id": pr_id},
-                                              {"$set": upd, "$push": {"approval_steps": step}})
+    # 2026-11-08 (Asisten AI Tahap C, pola P9): status & tahap aktif di filter — dulu tulis tanpa syarat, jadi klik
+    # ganda / dua penyetuju bersamaan mencatat tahap yang sama dua kali, dan "setujui" bisa menimpa penolakan yang
+    # baru saja masuk. Sama dengan Permintaan Pengadaan & Purchase Order.
+    res = await db.acc_purchase_requests.update_one(
+        {"id": pr_id, "status": "Submitted", "current_approver_stage": doc.get("current_approver_stage")},
+        {"$set": upd, "$push": {"approval_steps": step}})
+    if not getattr(res, "matched_count", 1):
+        raise HTTPException(409, "Permintaan ini baru saja diproses pengguna lain — muat ulang daftar.")
     after = {**doc, **upd}
     if nxt:
         await notify_stage_approvers(db, after, nxt, chain,
@@ -454,11 +460,15 @@ async def reject_purchase_request(pr_id: str, request: Request):
         "override_reasons": list(ev["override_reasons"]),
         "timestamp": _now_iso(),
     }
-    await db.acc_purchase_requests.update_one({"id": pr_id}, {
-        "$set": {"status": "Rejected", "finance_notes": reason,
-                 "rejected_by": step["actor_name"], "rejected_at": _now_iso(),
-                 "current_approver_stage": None, "updated_at": _now_iso()},
-        "$push": {"approval_steps": step}})
+    # 2026-11-08 (pola P9): hanya yang MASIH menunggu di tahap yang dibaca — tolak tidak menimpa persetujuan baru.
+    res = await db.acc_purchase_requests.update_one(
+        {"id": pr_id, "status": "Submitted", "current_approver_stage": doc.get("current_approver_stage")}, {
+            "$set": {"status": "Rejected", "finance_notes": reason,
+                     "rejected_by": step["actor_name"], "rejected_at": _now_iso(),
+                     "current_approver_stage": None, "updated_at": _now_iso()},
+            "$push": {"approval_steps": step}})
+    if not getattr(res, "matched_count", 1):
+        raise HTTPException(409, "Permintaan ini baru saja diproses pengguna lain — muat ulang daftar.")
     await notify_requester(
         db, {**doc, "status": "Rejected"}, severity="warning",
         module_id="proc-accessory-pr", number=doc.get("pr_number", ""),

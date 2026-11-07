@@ -3,7 +3,8 @@
  * (bentuknya sama, lihat `peristiwaSse.terapkanPeristiwa`). Urutan isi = urutan datang.
  *
  *   ┌ "Menganalisis…" (bisa dibuka): langkah alat (`alat`) + ringkasan pemikiran (`pikir_ringkas`)
- *   ├ teks markdown aman · grafik · tabel · tombol unduh laporan (PDF/Excel)
+ *   ├ teks markdown aman · grafik · tabel · tombol unduh laporan (PDF/Excel) · kartu tindakan (Tahap B, KartuTindakan)
+ *   ├ chip ingatan (Tahap D): "Diingat: …" / "Dilupakan: …" + tautan ke halaman Ingatan AI (ChipIngatan)
  *   ├ sumber: data internal (label) & web (tautan, tab baru)
  *   └ galat ramah + "Coba lagi" · catatan "dihentikan"
  */
@@ -16,11 +17,13 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import MarkdownAman, { isSafeUrl } from '@/components/ui/markdown-aman';
 import { cn } from '@/lib/utils';
+import { blokIngatan } from './adapterTahapCD';
 import { unduhLaporan } from './asistenApi';
+import ChipIngatan from './ChipIngatan';
 import GrafikAsisten from './GrafikAsisten';
+import KartuTindakan from './KartuTindakan';
+import { JENIS_ISI as KONTEN } from './peristiwaSse';
 import TabelAsisten from './TabelAsisten';
-
-const KONTEN = new Set(['teks', 'grafik', 'tabel', 'laporan']);
 
 function hostOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -135,10 +138,10 @@ function TombolLaporan({ laporan }) {
   );
 }
 
-function PesanAsisten({ pesan, onCobaLagi }) {
+function PesanAsisten({ pesan, onCobaLagi, onPutuskan, onNavigate, sibukUtas = false, tindakanAktif = true }) {
   const { blok = [], keadaan, statusTeks, galat } = pesan;
   const mengalir = keadaan === 'mengalir';
-  const { langkah, pikir, konten, sumber } = useMemo(() => {
+  const { langkah, pikir, konten, sumber, ingatan } = useMemo(() => {
     const seen = new Set();
     const src = [];
     blok.filter((b) => b.jenis === 'sumber').forEach((b) => (b.item || []).forEach((it) => {
@@ -150,6 +153,7 @@ function PesanAsisten({ pesan, onCobaLagi }) {
       pikir: blok.filter((b) => b.jenis === 'pikir_ringkas').map((b) => b.isi || '').join('\n').trim(),
       konten: blok.filter((b) => KONTEN.has(b.jenis)),
       sumber: src,
+      ingatan: blok.filter((b) => b.jenis === 'ingatan').map(blokIngatan).filter(Boolean),
     };
   }, [blok]);
   const adaIsi = konten.length > 0;
@@ -169,8 +173,15 @@ function PesanAsisten({ pesan, onCobaLagi }) {
           }
           if (b.jenis === 'grafik') return <GrafikAsisten key={b.id || i} spec={b.spec} />;
           if (b.jenis === 'tabel') return <TabelAsisten key={b.id || i} judul={b.judul} kolom={b.kolom} baris={b.baris} catatan={b.catatan} />;
+          if (b.jenis === 'tindakan') {
+            return (
+              <KartuTindakan key={b.id || i} blok={b} onPutuskan={onPutuskan} onNavigate={onNavigate}
+                nonaktif={sibukUtas || !onPutuskan} tindakanAktif={tindakanAktif} />
+            );
+          }
           return <TombolLaporan key={b.id || i} laporan={b} />;
         })}
+        <ChipIngatan item={ingatan} onNavigate={onNavigate} />
         <SumberChips item={sumber} />
         {keadaan === 'galat' && (
           <div className="flex flex-wrap items-center gap-2" role="alert" data-testid="asisten-galat">

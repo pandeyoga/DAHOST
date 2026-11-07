@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timezone
 from database import get_db
-from auth import require_auth, log_activity
+from auth import require_auth, log_activity, check_role
 from services.hr_shift_service import (
     create_shift,
     assign_shift,
@@ -47,6 +47,21 @@ from utils.waktu import wib_date_str
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hr/shifts", tags=["hr-shifts"])
+
+# 2026-11-08 (Asisten AI Tahap B — celah izin): PENUGASAN shift ke karyawan (di sini dan di Penjadwal Shift
+# `routes/dewi_shift_scheduler.py`) dulu cukup login — staf mana pun bisa memindah shift karyawan lain, dan
+# jadwal itu dibaca aturan absen (`core.attendance_rules`). Kini sama dengan penghapusan penugasan yang
+# sudah ada (`only(*HR_ROLES)`): HR + manajemen (+ superadmin/admin), ditambah akun yang diberi izin modul
+# "Shift & Penjadwalan" (`hr.attendance.manage`, lihat `data/module_catalog.py`) atau `hr.manage`.
+# Master shift (buat/ubah jam shift) TIDAK diubah: keputusan "semua staf internal boleh CRUD master".
+SHIFT_WRITER_ROLES = ["admin", *HR_ROLES]
+MSG_SHIFT_WRITER = "Hanya HR dan manajemen yang boleh mengatur penugasan atau jadwal shift karyawan."
+
+
+def _require_shift_writer(user: dict) -> None:
+    if check_role(user, SHIFT_WRITER_ROLES, "hr.attendance.manage") or "hr.manage" in (user.get("_permissions") or []):
+        return
+    raise HTTPException(403, MSG_SHIFT_WRITER)
 
 
 def _now() -> str:
@@ -214,6 +229,7 @@ async def list_assignments(
 @router.post("/assignments")
 async def create_assignment(request: Request, body: AssignShiftModel):
     user = await require_auth(request)
+    _require_shift_writer(user)
     db = get_db()
     assigned_by = user.get("full_name") or user.get("email") or ""
     try:

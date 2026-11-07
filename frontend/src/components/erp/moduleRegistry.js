@@ -236,6 +236,10 @@ const ReportsHubModule            = lazyRetry(() => import('./ReportsHubModule')
 // Chat analis data (Portal Management) menggantikan "AI Business Intelligence" (keputusan owner 4, 7 Nov 2026):
 // id lama 'ai-business-dashboard' dialihkan ke 'asisten-ai' (lihat entri di MODULE_REGISTRY).
 const AsistenAIModule            = lazyRetry(() => import('./asisten/AsistenAIModule'));
+// Tahap B (8 Nov 2026): halaman "Tindakan AI" — riwayat usulan perubahan + Balikkan.
+const TindakanAIModule           = lazyRetry(() => import('./asisten/TindakanAIModule'));
+// Asisten AI (layar2) — Tahap D (8 Nov 2026): halaman "Ingatan AI" — ingatan milik sendiri (lihat/tambah/ubah/hapus).
+const IngatanAIModule            = lazyRetry(() => import('./asisten/IngatanAIModule'));
 // ── akhir Asisten AI (layar) ──
 
 // Phase 21 — Decision Support & Quality Metrics
@@ -970,6 +974,8 @@ export const MODULE_REGISTRY = {
   // ── Asisten AI (layar) — Tahap A, 8 Nov 2026 ──
   'asisten-ai':            AsistenAIModule,
   'ai-business-dashboard': makeRedirect('asisten-ai'),  // DIPENSIUNKAN → Asisten AI (4 tab laporan beku jadi saran chat)
+  'asisten-ai-tindakan':   TindakanAIModule,             // Tahap B
+  'asisten-ai-ingatan':    IngatanAIModule,              // Asisten AI (layar2) — Tahap D
   // ── akhir Asisten AI (layar) ──
 
   // Phase 21 — Decision Support & Quality Metrics

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import axios from 'axios';
+import { toast } from 'sonner';
 import { CheckCircle, XCircle, Clock, ChevronRight, RefreshCw, User, Calendar, Layers, ExternalLink } from 'lucide-react';
 
 const API = process.env.REACT_APP_BACKEND_URL;
@@ -83,8 +84,9 @@ function ApprovalCard({ item, onApprove, onReject, onView, isManager, onModuleCh
 
   const handleAction = async (action) => {
     setActing(true);
-    await (action === 'approve' ? onApprove : onReject)(item.id, note);
+    const ok = await (action === 'approve' ? onApprove : onReject)(item.id, note);
     setActing(false);
+    if (!ok) return;
     setShowNote(false);
     setNote('');
   };
@@ -177,9 +179,9 @@ function DetailModal({ item, onClose, onApprove, onReject, isManager, onModuleCh
 
   const handleAction = async (action) => {
     setActing(true);
-    await (action === 'approve' ? onApprove : onReject)(item.id, note);
+    const ok = await (action === 'approve' ? onApprove : onReject)(item.id, note);
     setActing(false);
-    onClose();
+    if (ok) onClose();
   };
 
   return (
@@ -312,8 +314,21 @@ export default function MultiLevelApprovalModule({ user, onModuleChange }) {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleApprove = async (id, note) => { await axios.post(`${API}/api/approvals/requests/${id}/approve`, { note }, { headers }); load(); };
-  const handleReject  = async (id, note) => { await axios.post(`${API}/api/approvals/requests/${id}/reject`,  { note }, { headers }); load(); };
+  // 2026-11-08: server kini menolak peran yang bukan penyetuju level aktif dan menolak penyetujuan ajuan
+  // sendiri (403). Dulu galat tidak ditangkap: tombol macet tanpa pesan apa pun.
+  const decide = async (id, note, action) => {
+    try {
+      await axios.post(`${API}/api/approvals/requests/${id}/${action}`, { note }, { headers });
+      toast.success(action === 'approve' ? 'Disetujui.' : 'Ditolak.');
+      load();
+      return true;
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || 'Keputusan gagal disimpan. Coba lagi.');
+      return false;
+    }
+  };
+  const handleApprove = (id, note) => decide(id, note, 'approve');
+  const handleReject  = (id, note) => decide(id, note, 'reject');
 
   const displayItems = tab === 'pending' ? myPending : requests;
 

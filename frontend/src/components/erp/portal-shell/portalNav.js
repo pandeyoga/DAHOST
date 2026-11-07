@@ -137,6 +137,12 @@ export const PORTAL_NAV = {
           { id: 'mgmt-okr',              label: 'OKR Tracker',     icon: Target },
           { id: 'mgmt-tools',            label: 'Digest Mingguan', icon: BarChart3 },
           { id: 'ai-usage-monitor',      label: 'Monitor AI',      icon: Activity },
+          // Asisten AI (layar) — Tahap B, 8 Nov 2026: riwayat usulan perubahan dari Asisten AI (setujui/batal/balikkan).
+          // Di bagian ini (bukan Ringkasan Eksekutif) supaya tiap bagian tetap ≤ 8 menu (PANDUAN_UI / NAV-MAX).
+          { id: 'asisten-ai-tindakan',   label: 'Tindakan AI',     icon: ClipboardCheck },
+          // Asisten AI (layar2) — Tahap D, 8 Nov 2026: ingatan Asisten AI milik sendiri (lihat/ubah/hapus).
+          // Tepat setelah Tindakan AI; bagian ini kini 8 menu (batas ≤ 8, NAV-MAX).
+          { id: 'asisten-ai-ingatan',    label: 'Ingatan AI',      icon: Brain },
         ],
       },
     ],

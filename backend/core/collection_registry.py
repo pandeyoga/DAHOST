@@ -73,7 +73,14 @@ REGISTRY: dict[str, str] = {
     # Asisten AI (inti) — 2026-11-07 Tahap A: percakapan chat analis (jenis `log`, lihat bawah)
     "ai_chat_sessions": "lain",
     "ai_chat_messages": "lain",
+    # Tahap B (8 Nov 2026): kartu tindakan AI + keputusan/jejaknya (jenis `log`, lihat bawah)
+    "ai_actions": "lain",
     # ── akhir Asisten AI (inti) ──
+    # Asisten AI (proaktif) — Tahap D: ingatan AI per pengguna (preferensi = konfigurasi) + jejak jalan
+    # briefing/peringatan/laporan mingguan (klaim sekali-sehari, jenis `log`).
+    "ai_memories": "lain",
+    "ai_proaktif_runs": "lain",
+    # ── akhir Asisten AI (proaktif) ──
     "ai_config": "lain",
     "ai_rca_history": "lain",
     "ai_response_cache": "lain",
@@ -697,7 +704,14 @@ _LOG += " ai_reports "
 _LOG += """
 ai_chat_messages ai_chat_sessions
 """
+# Tahap B (8 Nov 2026): jejak tindakan AI (kartu konfirmasi, keputusan, hasil, pembalikan).
+_LOG += " ai_actions "
 # ── akhir Asisten AI (inti) ──
+# Asisten AI (proaktif) — Tahap D: ingatan = preferensi per pengguna, jenis sama dengan `notif_user_prefs`
+# (konfigurasi: bertahan saat cutoff); jejak jalan proaktif = log (boleh dihapus saat cutoff).
+_KONFIGURASI += " ai_memories "
+_LOG += " ai_proaktif_runs "
+# ── akhir Asisten AI (proaktif) ──
 
 
 def _kind_table() -> dict[str, str]:

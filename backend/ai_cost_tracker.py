@@ -93,7 +93,9 @@ EXECUTIVE_FEATURES = ("executive-narrative",)
 # routes/ai_usage_monitor.py). Label fitur di log dicocokkan per prefiks ke grup ini
 # sehingga biaya per fitur selalu cocok dengan toggle-nya (`feature_group` di log).
 AI_FEATURE_GROUPS = [
-    {"key": "asisten-ai", "label": "Asisten AI (chat analis Portal Manajemen)"},  # 2026-11-07 Tahap A
+    # 2026-11-07 Tahap A. Asisten AI (proaktif): briefing/laporan otomatis dicatat `asisten-ai-proaktif` (grup
+    # yang sama → toggle ini juga mematikan briefing; anggaran per fitur dihitung terpisah dari chat).
+    {"key": "asisten-ai", "label": "Asisten AI (chat analis Portal Manajemen)"},
     {"key": "executive-narrative", "label": "Analisis Eksekutif AI"},
     {"key": "daily-summary", "label": "Ringkasan Bisnis Harian"},
     {"key": "revenue-forecast", "label": "Prediksi Pendapatan"},
@@ -192,6 +194,21 @@ def _default_ai_settings() -> dict:
         "per_feature_daily_usd": DEFAULT_PER_FEATURE_DAILY_USD,
         "default_tier": DEFAULT_TIER,
         "disabled_features": [],
+        # Asisten AI (inti) — Tahap B: saklar "Tindakan AI aktif" + batas tindakan per pengguna per hari.
+        "asisten_tindakan_aktif": True,
+        "asisten_batas_tindakan_harian": 30,
+        # ── akhir Asisten AI (inti) ──
+        # Asisten AI (proaktif) — Tahap D (keputusan owner no. 12–13): ingatan AI + briefing pagi 07:00,
+        # peringatan harian, laporan mingguan Senin. Penerima kosong = semua owner aktif. Jam = WIB "HH:MM".
+        "asisten_ingatan_aktif": True,
+        "asisten_briefing_aktif": True,
+        "asisten_briefing_jam": "07:00",
+        "asisten_briefing_penerima": [],
+        "asisten_peringatan_aktif": True,
+        "asisten_peringatan_jam": "07:00",
+        "asisten_laporan_mingguan_aktif": True,
+        "asisten_laporan_mingguan_jam": "07:30",
+        # ── akhir Asisten AI (proaktif) ──
     }
 
 

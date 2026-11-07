@@ -127,6 +127,37 @@ async def upsert_target(data: TargetUpsert, request: Request):
     return serialize_doc({"message": "Target disimpan", "target": doc})
 
 
+# ── HAPUS (2026-11-08, Asisten AI Tahap B) ────────────────────────────────────
+@router.delete("/{target_id}")
+async def delete_target(target_id: str, request: Request,
+                        reason: Optional[str] = Query(None, description="alasan (dicatat di jejak)")):
+    """Hapus target satu toko satu bulan.
+
+    Dipakai untuk MEMBATALKAN target yang baru dibuat (tombol "Balikkan" tindakan Asisten AI):
+    target lama yang diubah dikembalikan lewat POST biasa, sedangkan target yang sebelumnya
+    belum ada harus benar-benar hilang — target Rp 0 tampil di layar sebagai angka, bukan
+    "belum ada target". Penjaganya SAMA dengan menetapkan target: SPV/Manager Marketing/owner,
+    toko dalam lingkup pemakai, periode masih terbuka (423), dan nilai lamanya masuk jejak.
+    """
+    user = await require_auth(request)
+    db = get_db()
+    await _scope.assert_can_write_target(user, "target")
+    doc = await db.marketing_account_targets.find_one({"id": target_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Target tidak ditemukan")
+    await _scope.assert_account_visible(db, user, doc.get("account_id"))
+    period = _cycle.period_of(doc.get("year"), doc.get("month"))
+    await _cycle.assert_period_open(db, doc.get("account_id"), period, action="menghapus target")
+    await db.marketing_account_targets.delete_one({"id": target_id})
+    await _cycle.log_change(
+        db, account_id=doc.get("account_id"), entity="marketing_account_targets",
+        entity_id=target_id, action="target_delete",
+        before={"revenue_target": doc.get("revenue_target"),
+                "orders_target": doc.get("orders_target")},
+        after=None, reason=(reason or "").strip(), user=user, period=period)
+    return {"message": "Target dihapus", "id": target_id}
+
+
 # ── LIST ──────────────────────────────────────────────────────────────────────
 @router.get("")
 async def list_targets(
@@ -305,6 +336,10 @@ async def upsert_creator_target(data: CreatorTargetUpsert, request: Request):
     """
     user = await require_auth(request)
     db   = get_db()
+    # 2026-11-08 (Asisten AI Tahap B, celah izin — keputusan owner no. 11): target kreator adalah
+    # TARGET juga, jadi aturannya sama dengan target toko (matriks F6.3 "Set target/anggaran":
+    # owner/admin/SPV/Manager Marketing, atau izin `marketing.target.set`). Dulu cukup login.
+    await _scope.assert_can_write_target(user, "target kreator")
 
     creator = await db.marketing_kol_creators.find_one({"id": data.creator_id}, {"_id": 0})
     if not creator:

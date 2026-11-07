@@ -1245,6 +1245,27 @@ JOB_REGISTRY = {
 }
 
 
+# ── Asisten AI (proaktif) — Tahap D (keputusan owner no. 12) ─────────────────────────────────────────────────
+# SATU detak per menit; jam briefing pagi / peringatan harian / laporan mingguan (Senin) dibaca dari pengaturan AI
+# (Monitor AI › Pengaturan) di setiap detak, jadi perubahan jam berlaku di detak berikutnya tanpa mendaftar ulang.
+# Pekerjaan berat (loop agen) berjalan di latar; detak kembali cepat. Idempoten per hari per jenis (klaim
+# `ai_proaktif_runs`), jadi restart / detak ganda tidak membuat briefing kedua. Lihat core/asisten_ai/proaktif.py.
+async def job_asisten_ai_proaktif():
+    from core.asisten_ai import proaktif
+    return await proaktif.detak()
+
+
+JOB_REGISTRY['asisten_ai_proaktif'] = {
+    'fn': job_asisten_ai_proaktif,
+    'description': ('Asisten AI proaktif: briefing pagi (bawaan 07:00), peringatan harian (07:00) dan laporan '
+                    'mingguan (Senin 07:30). Jam & penerima diatur di Monitor AI › Pengaturan; diperiksa tiap '
+                    'menit, dikejar sampai 3 jam bila terlewat. Idempoten per hari per jenis.'),
+    'cron': {'minute': '*'},
+    'cron_label': 'Tiap menit (jam briefing/peringatan/laporan dari pengaturan, WIB)',
+}
+# ── akhir Asisten AI (proaktif) ──
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LIFECYCLE
 # ══════════════════════════════════════════════════════════════════════════════

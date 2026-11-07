@@ -17,6 +17,21 @@ Kata kunci uji tambahan: "putaran" (selalu memanggil alat), "tolak" (refusal), "
 (max_tokens lalu lanjut), "panjang2" (selalu max_tokens), "jeda" (pause_turn), "lambat" (aliran
 lambat, untuk uji tombol Hentikan).
 
+Tahap B (8 Nov 2026) — alat tindakan (kartu konfirmasi):
+  "pengingat" → `buat_pengingat` (tindakan; milik agen operasi) bila terpasang, isian dari skemanya
+  "target"    → `skenario_target` (baca; milik agen pemasaran) bila terpasang → `tampilkan_tabel` →
+                `pasang_target_toko` (tindakan) dengan isian dari skenario "realistis"
+  Alat yang belum terpasang dilewati dan dikatakan. Sesudah kartu diputuskan, tiruan melanjutkan dengan
+  teks pendek sesuai tool_result ("Disetujui dan dijalankan" / "Dibatalkan" / "Tidak diputuskan" / "Gagal").
+
+Tahap D (8 Nov 2026, agen proaktif):
+  "briefing" / "laporan mingguan" → skrip "briefing": alat baca briefing yang terpasang SEKALIGUS (penjualan,
+                target, kas, piutang, stok, PO produksi, persetujuan) → `tampilkan_grafik` → (laporan mingguan:
+                `buat_laporan`) → teks ringkasan. Dicek PALING AWAL karena teks permintaan otomatis memuat kata
+                kunci lain (omzet, target, laporan).
+  "ingat …" / "lupakan …" → `simpan_ingatan` (isi = kalimat sesudah kata "ingat") / `lupakan_ingatan` (id dari
+                daftar ingatan di blok konteks) bila alatnya ditawarkan. "pengingat"/"ingatkan" TIDAK memicu skrip ini.
+
 Tiruan ini juga memeriksa aturan API yang penting bagi loop: tool_choice paksa ditolak, thinking
 harus adaptive, tidak boleh prefill asisten, setiap tool_use wajib dibalas tool_result pada pesan
 berikutnya, dan tanda tangan blok thinking yang diputar ulang harus utuh (riwayat append-only).
@@ -30,9 +45,12 @@ import json
 import os
 import re
 import uuid
+from datetime import date, timedelta
 from typing import Any, Callable, Optional
 
 MODEL_TIRUAN = "claude-opus-5-5"
+_BULAN = ("Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September",
+          "Oktober", "November", "Desember")
 
 
 def aktif() -> bool:
@@ -158,10 +176,17 @@ class Keadaan:
         self.giliran_asisten = sum(1 for m in sesudah if m.get("role") == "assistant")
         self.peran_terakhir = msgs[-1].get("role") if msgs else None
         self.periode = "2026-11"
+        self.hari_ini: Optional[date] = None
         for b in (msgs[self.idx].get("content") if isinstance(msgs[self.idx].get("content"), list) else []):
             m = re.search(r"Periode bawaan layar:.*\((\d{4}-\d{2})\)", str(b.get("text", "")))
             if m:
                 self.periode = m.group(1)
+            h = re.search(r"Hari ini: \w+, (\d{1,2}) (\w+) (\d{4})", str(b.get("text", "")))
+            if h and h.group(2) in _BULAN:
+                try:
+                    self.hari_ini = date(int(h.group(3)), _BULAN.index(h.group(2)) + 1, int(h.group(1)))
+                except ValueError:
+                    pass
         # alat yang sudah dipanggil sejak pertanyaan: [(nama, input, isi_hasil, is_error)]
         self.dipanggil: list[tuple] = []
         hasil = {}
@@ -275,6 +300,296 @@ def _grafik_dari_hasil(isi: Any) -> Optional[dict]:
     return None
 
 
+# ── Tahap B: isian alat tindakan milik agen lain (dari skemanya) ─────────────
+def _cocok(p: dict, v: str) -> bool:
+    if "pattern" in p and not re.search(p["pattern"], v):
+        return False
+    return len(v) >= int(p.get("minLength", 0))
+
+
+def _teks_contoh(nama: str, p: dict, k: "Keadaan", petunjuk: dict) -> str:
+    n = nama.lower()
+    besok = (k.hari_ini or date(2026, 11, 7)) + timedelta(days=1)
+    calon = []
+    if "periode" in n or "bulan" in n:
+        calon.append(str(petunjuk.get("periode") or k.periode))
+    if p.get("format") == "date-time" or any(x in n for x in ("waktu", "jam", "remind", "pada", "_at")):
+        calon.append(f"{besok.isoformat()}T09:00")
+    if p.get("format") == "date" or "tanggal" in n or "date" in n:
+        calon.append(besok.isoformat())
+    if any(x in n for x in ("judul", "title", "nama", "teks", "pesan", "isi", "catatan", "deskripsi")):
+        calon.append("Pengingat dari Asisten AI (mode uji)" if "pengingat" in str(petunjuk.get("_jenis")) else
+                     "Dari Asisten AI (mode uji)")
+    calon += [str(petunjuk.get("periode") or k.periode), besok.isoformat(), f"{besok.isoformat()}T09:00", "09:00",
+              "contoh mode uji"]
+    for c in calon:
+        if _cocok(p, c):
+            return c[: int(p["maxLength"])] if "maxLength" in p else c
+    return calon[0]
+
+
+def _angka_dari(baris: dict) -> Optional[float]:
+    v = baris.get("realistis")
+    if isinstance(v, dict):
+        v = next((x for x in v.values() if isinstance(x, (int, float)) and not isinstance(x, bool)), None)
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        return v
+    return next((x for x in baris.values() if isinstance(x, (int, float)) and not isinstance(x, bool)), None)
+
+
+def _nilai_contoh(nama: str, p: dict, k: "Keadaan", petunjuk: dict, baris: Optional[list] = None):
+    if nama in petunjuk:
+        return petunjuk[nama]
+    t = p.get("type")
+    t = t[0] if isinstance(t, list) else t
+    if "enum" in p:
+        return "realistis" if "realistis" in p["enum"] else p["enum"][0]
+    if "const" in p:
+        return p["const"]
+    if t in ("integer", "number"):
+        v = max(1, p.get("minimum", 1))
+        return int(v) if t == "integer" else float(v)
+    if t == "boolean":
+        return False
+    if t == "array":
+        it = p.get("items") or {}
+        if it.get("type") == "object" and baris:
+            return [_item_dari_baris(it, r, k) for r in baris[:10]]
+        n = int(p.get("minItems", 0))
+        return [_nilai_contoh(nama, it, k, petunjuk) for _ in range(n)]
+    if t == "object":
+        return _isi_tindakan(p, k, {}, None)
+    return _teks_contoh(nama, p, k, petunjuk)
+
+
+def _item_dari_baris(skema: dict, r: dict, k: "Keadaan") -> dict:
+    props = skema.get("properties") or {}
+    out = {}
+    for q, pq in props.items():
+        tq = pq.get("type")
+        tq = tq[0] if isinstance(tq, list) else tq
+        if q in r and not isinstance(r[q], (dict, list)):
+            out[q] = r[q]
+        elif "id" in q.lower():
+            kid = next((x for x in r if "id" in x.lower() and isinstance(r[x], str)), None)
+            if kid:
+                out[q] = r[kid]
+        elif tq in ("integer", "number"):
+            v = _angka_dari(r)
+            if v is not None:
+                out[q] = int(round(v)) if tq == "integer" else v
+        elif tq == "string":
+            v = next((r[x] for x in ("nama", "toko", "label", "akun") if isinstance(r.get(x), str)), None)
+            if v:
+                out[q] = v
+        if q not in out and q in (skema.get("required") or []):
+            out[q] = _nilai_contoh(q, pq, k, {})
+    return out
+
+
+def _isi_tindakan(schema: dict, k: "Keadaan", petunjuk: Optional[dict] = None, baris: Optional[list] = None) -> dict:
+    """Isian contoh yang memenuhi skema alat tindakan agen lain (wajib diisi + petunjuk dari hasil alat baca)."""
+    petunjuk = petunjuk or {}
+    props = (schema or {}).get("properties") or {}
+    out = {}
+    for nama in list((schema or {}).get("required") or []) + [n for n in petunjuk if n in props]:
+        if nama not in out:
+            out[nama] = _nilai_contoh(nama, props.get(nama) or {}, k, petunjuk, baris)
+    return out
+
+
+def _baris_skenario(isi: Any) -> tuple[list, dict]:
+    """(daftar baris per toko, petunjuk {periode}) dari hasil `skenario_target`."""
+    try:
+        data = json.loads(isi) if isinstance(isi, str) else isi
+    except (TypeError, ValueError):
+        return [], {}
+    petunjuk = {}
+    if isinstance(data, dict):
+        hasil = data.get("hasil")
+        per = data.get("periode") or (hasil.get("periode") if isinstance(hasil, dict) else None)
+        if isinstance(per, str):
+            petunjuk["periode"] = per
+    found = []
+
+    def _cari(v, d=0):
+        if d > 4 or found:
+            return
+        if isinstance(v, list) and v and all(isinstance(x, dict) for x in v):
+            found.append(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                _cari(x, d + 1)
+    _cari(data)
+    return (found[0] if found else []), petunjuk
+
+
+_TABEL_SKENARIO_CONTOH = {
+    "judul": "Skenario target per toko (contoh mode uji)", "kolom": ["Toko", "Konservatif", "Realistis", "Agresif"],
+    "baris": [["Toko A", "Rp 130 jt", "Rp 145 jt", "Rp 160 jt"], ["Toko B", "Rp 90 jt", "Rp 100 jt", "Rp 112 jt"]],
+    "catatan": "Angka contoh mode uji, bukan data asli."}
+
+
+def _tabel_skenario(baris: list) -> Optional[dict]:
+    rows = []
+    for r in baris[:20]:
+        nama = next((r[x] for x in ("nama", "toko", "label", "akun") if isinstance(r.get(x), str)), None)
+        nilai = [r.get(s) for s in ("konservatif", "realistis", "agresif")]
+        nilai = [next((x for x in v.values() if isinstance(x, (int, float))), None) if isinstance(v, dict) else v
+                 for v in nilai]
+        if nama and all(isinstance(v, (int, float)) for v in nilai):
+            rows.append([nama[:40]] + nilai)
+    if not rows:
+        return None
+    return {"judul": "Skenario target per toko", "kolom": ["Toko", "Konservatif", "Realistis", "Agresif"],
+            "baris": rows, "catatan": "Dari alat skenario target (mode uji)."}
+
+
+def _teks_sesudah_kartu(d: tuple, teks_ok: str) -> str:
+    _n, _i, isi, err = d
+    s = isi if isinstance(isi, str) else json.dumps(isi, ensure_ascii=False)
+    s = s or ""
+    if s.startswith("Disetujui dan dijalankan"):
+        rinci = s.split(":", 1)[1].split("\n")[0].strip() if ":" in s else ""
+        return f"{teks_ok} {rinci} *(mode uji)*".replace("  ", " ")
+    if s.startswith("Dibatalkan"):
+        return "Baik, tidak jadi. Tidak ada data yang diubah *(mode uji)*."
+    if s.startswith("Tidak diputuskan"):
+        return "Kartu tadi tidak diputuskan, jadi tidak ada yang berubah *(mode uji)*."
+    if s.startswith("Gagal"):
+        return f"Tindakan belum berhasil. {s} *(mode uji)*"
+    if err:
+        return f"Kartu belum bisa disiapkan: {s} *(mode uji)*"
+    return f"Hasil tindakan: {s} *(mode uji)*"
+
+
+def _skrip_pengingat(k: "Keadaan") -> tuple[list[dict], str, dict]:
+    nama = "buat_pengingat"
+    d = k.terakhir(nama)
+    if d is not None:
+        return [_teks(_teks_sesudah_kartu(d, "Pengingat sudah dibuat."))], "end_turn", {}
+    if nama not in k.tools:
+        return ([_pikir("Pengguna minta pengingat."),
+                 _teks("*(Mode uji: alat `buat_pengingat` belum terpasang di sistem ini, jadi kartu pengingat belum "
+                       "bisa disiapkan.)*\n\nPengingat bisa dibuat langsung di Portal Saya › Pengingat.")],
+                "end_turn", {})
+    return ([_pikir("Pengguna minta pengingat; siapkan kartu konfirmasi."),
+             _teks("Saya siapkan kartu pengingatnya. Periksa isinya lalu tekan **Setujui** bila sudah sesuai."),
+             _alat(nama, _isi_tindakan(k.tools[nama], k, {"_jenis": "pengingat"}))], "tool_use", {})
+
+
+def _skrip_target(k: "Keadaan") -> tuple[list[dict], str, dict]:
+    d = k.terakhir("pasang_target_toko")
+    if d is not None:
+        return [_teks(_teks_sesudah_kartu(d, "Target sudah terpasang."))], "end_turn", {}
+    if "skenario_target" in k.tools and not k.sudah("skenario_target"):
+        return ([_pikir("Hitung tiga skenario target per toko dulu."), _teks("Saya hitung skenario targetnya dulu."),
+                 _alat("skenario_target", _isi_contoh(k.tools["skenario_target"], k.periode))], "tool_use", {})
+    sk = k.terakhir("skenario_target")
+    baris, petunjuk = _baris_skenario(sk[2]) if sk and not sk[3] else ([], {})
+    if not k.sudah("tampilkan_tabel"):
+        pre = []
+        if "skenario_target" not in k.tools:
+            pre.append(_teks("*(Mode uji: alat `skenario_target` belum terpasang, jadi tabel di bawah memakai angka "
+                             "contoh.)*\n\n"))
+        return pre + [_alat("tampilkan_tabel", _tabel_skenario(baris) or copy.deepcopy(_TABEL_SKENARIO_CONTOH))], \
+            "tool_use", {}
+    if "pasang_target_toko" not in k.tools:
+        return ([_teks("*(Mode uji: alat `pasang_target_toko` belum terpasang, jadi kartu target belum bisa "
+                       "disiapkan.)* Target bisa dipasang langsung di Portal Marketing › Target.")], "end_turn", {})
+    args = _isi_tindakan(k.tools["pasang_target_toko"], k, {**petunjuk, "skenario": "realistis"}, baris)
+    return ([_teks("Rekomendasi: skenario **realistis**. Saya siapkan kartu targetnya; periksa lalu tekan "
+                   "**Setujui** bila sudah sesuai."), _alat("pasang_target_toko", args)], "tool_use", {})
+
+
+# ── Tahap D: skrip "briefing" (briefing pagi & laporan mingguan otomatis) dan ingatan ──
+ALAT_BRIEFING = ("ringkasan_penjualan", "target_toko", "posisi_kas_bank", "umur_piutang", "stok_menipis",
+                 "pantau_produksi_ringkas", "daftar_persetujuan_menunggu")
+ALAT_MINGGUAN = ("ringkasan_penjualan", "target_toko", "posisi_kas_bank", "umur_piutang", "stok_menipis",
+                 "pantau_produksi_ringkas")
+_RX_INGAT = re.compile(r"\bingat(lah)?\b\s*:?\s*(bahwa\s+)?(.*)$", re.IGNORECASE | re.DOTALL)
+_RX_LUPA = re.compile(r"\blupakan\b", re.IGNORECASE)
+_RX_ID_INGATAN = re.compile(r"\[(ing-[0-9a-f]{6,})\]")
+
+
+def _laporan_mingguan_contoh(periode: str) -> dict:
+    lap = _laporan_contoh(periode)
+    lap["judul"] = "Laporan mingguan (mode uji)"
+    lap["periode_label"] = "Pekan lalu"
+    return lap
+
+
+def _skrip_briefing(k: "Keadaan") -> tuple[list[dict], str, dict]:
+    q = (k.pertanyaan or "").lower()
+    mingguan = "laporan mingguan" in q
+    if not k.dipanggil:
+        nama = [n for n in (ALAT_MINGGUAN if mingguan else ALAT_BRIEFING) if n in k.tools]
+        if nama:
+            return ([_pikir("Kumpulkan data briefing dengan alat baca sekaligus."),
+                     _teks("Saya kumpulkan datanya dulu.")]
+                    + [_alat(n, _isi_contoh(k.tools[n], k.periode)) for n in nama], "tool_use", {})
+    if "tampilkan_grafik" in k.tools and not k.sudah("tampilkan_grafik"):
+        d = k.terakhir("ringkasan_penjualan")
+        spec = (_grafik_dari_hasil(d[2]) if d and not d[3] else None) or copy.deepcopy(_GRAFIK_CONTOH)
+        return [_alat("tampilkan_grafik", spec)], "tool_use", {}
+    if mingguan and "buat_laporan" in k.tools and not k.sudah("buat_laporan"):
+        return ([_teks("Saya susun berkas laporannya."), _alat("buat_laporan", _laporan_mingguan_contoh(k.periode))],
+                "tool_use", {})
+    baris = []
+    for nama, _inp, isi, err in k.dipanggil:
+        if nama in ("tampilkan_grafik", "buat_laporan"):
+            continue
+        baris.append(f"- {nama.replace('_', ' ')}: " + (f"belum terbaca ({str(isi)[:120]})" if err else "terbaca"))
+    lap = k.terakhir("buat_laporan")
+    judul = "Laporan mingguan" if mingguan else "Briefing pagi"
+    teks = (f"### {judul} (mode uji)\n\n" + ("\n".join(baris) if baris else "- Tidak ada alat data yang terpasang.")
+            + "\n\n**Yang perlu diperhatikan:** ini jawaban mode uji; angkanya tidak dianalisis sungguhan.")
+    if mingguan:
+        teks += ("\n\nBerkas laporan sudah dibuat; tautan unduhan ada di bawah." if lap and not lap[3] else
+                 "\n\nBerkas laporan belum bisa dibuat di mode ini.")
+    return [_teks(teks)], "end_turn", {}
+
+
+def _blok_ingatan_terakhir(k: "Keadaan") -> str:
+    for m in reversed(k.kw.get("messages") or []):
+        if m.get("role") != "user" or not isinstance(m.get("content"), list):
+            continue
+        for b in m["content"]:
+            t = str(b.get("text") or "") if isinstance(b, dict) else ""
+            if t.startswith("<konteks_sistem>") and "Ingatan Asisten AI" in t[:120]:
+                return t
+    return ""
+
+
+def _skrip_ingatan(k: "Keadaan") -> tuple[list[dict], str, dict]:
+    q = k.pertanyaan or ""
+    lupa = bool(_RX_LUPA.search(q))
+    nama = "lupakan_ingatan" if lupa else "simpan_ingatan"
+    d = k.terakhir(nama)
+    if d is not None:
+        _n, _i, isi, err = d
+        if err:
+            return [_teks(f"Ingatan belum bisa diubah: {isi} *(mode uji)*")], "end_turn", {}
+        sudah = isinstance(isi, str) and "sudah_ada" in isi
+        return [_teks("Baik, sudah saya lupakan *(mode uji)*." if lupa else
+                      "Itu sudah saya ingat sebelumnya *(mode uji)*." if sudah else
+                      "Baik, sudah saya ingat *(mode uji)*.")], "end_turn", {}
+    if nama not in k.tools:
+        return [_teks("*(Mode uji: alat ingatan sedang tidak tersedia, jadi tidak ada ingatan yang diubah.)*")], \
+            "end_turn", {}
+    if lupa:
+        ids = _RX_ID_INGATAN.findall(q) or _RX_ID_INGATAN.findall(_blok_ingatan_terakhir(k))
+        if not ids:
+            return [_teks("Belum ada ingatan yang bisa dilupakan *(mode uji)*.")], "end_turn", {}
+        return [_pikir("Pengguna minta ingatan dilupakan."), _alat("lupakan_ingatan", {"id": ids[0]})], "tool_use", {}
+    m = _RX_INGAT.search(q)
+    isi = " ".join((m.group(3) if m else q).split()).strip(" .") or q.strip()
+    isi = (isi[:1].upper() + isi[1:])[:300]
+    kat = "gaya" if re.search(r"\b(jawab|gaya|singkat|bahasa)\b", isi, re.IGNORECASE) else "preferensi"
+    return ([_pikir("Pengguna minta preferensi diingat."), _teks("Saya simpan sebagai ingatan."),
+             _alat("simpan_ingatan", {"isi": isi, "kategori": kat})], "tool_use", {})
+
+
 def _pikir(teks: str) -> dict:
     return {"type": "thinking", "thinking": teks, "signature": tanda_tangan(teks)}
 
@@ -292,6 +607,11 @@ def skrip_bawaan(k: Keadaan) -> tuple[list[dict], str, dict]:
     q = (k.pertanyaan or "").lower()
     if k.tool_choice == "none":
         return [_teks("Ringkasan akhir dengan data yang sudah terkumpul (mode uji).")], "end_turn", {}
+    # Tahap D: permintaan otomatis memuat banyak kata kunci lain → dicek paling awal.
+    if "briefing" in q or "laporan mingguan" in q:
+        return _skrip_briefing(k)
+    if "pengingat" not in q and (_RX_LUPA.search(q) or _RX_INGAT.search(q)):
+        return _skrip_ingatan(k)
     if "putaran" in q:
         return [_pikir("Cek tanggal lagi."), _alat("tanggal_dan_periode", {})], "tool_use", {}
     if "tolak" in q:
@@ -333,6 +653,10 @@ def skrip_bawaan(k: Keadaan) -> tuple[list[dict], str, dict]:
                  _teks("Menurut sumber web, permintaan pakaian muslim naik menjelang akhir tahun.", citations=cit),
                  _teks(" Sumber lengkap ada di bawah (mode uji).")],
                 "end_turn", {"server_tool_use": {"web_search_requests": 1, "web_fetch_requests": 0}})
+    if "pengingat" in q:
+        return _skrip_pengingat(k)
+    if "target" in q:
+        return _skrip_target(k)
     if "laporan" in q:
         if "buat_laporan" not in k.tools:
             return ([_pikir("Pengguna minta laporan."),

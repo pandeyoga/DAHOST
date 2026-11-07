@@ -309,6 +309,48 @@ def _may_act_on_level(user: Dict, lv_entry: Dict) -> bool:
     return role in LEVEL_ROLE_ALIASES.get(want, {want})
 
 
+async def _is_own_request(db, user: Dict, doc: Dict) -> bool:
+    """Pemohon = akun yang mengajukan (`requester_id`) ATAU akun milik karyawan yang diajukan
+    (`meta.employee_id`, mis. cuti yang diketik HR atas nama karyawan itu) — tautan dua arah
+    `utils.employee_identity.employee_user_ids` + `employee_id` di token."""
+    uid = str(user.get("id") or user.get("_id") or "")
+    if uid and uid == str(doc.get("requester_id") or ""):
+        return True
+    emp = str((doc.get("meta") or {}).get("employee_id") or "")
+    if not emp or not uid:
+        return False
+    if emp == str(user.get("employee_id") or ""):
+        return True
+    try:
+        from utils.employee_identity import employee_user_ids
+        return uid in [str(x) for x in await employee_user_ids(db, emp)]
+    except Exception:  # noqa: BLE001 — tautan karyawan tidak terbaca ⇒ cukup cek requester_id
+        logger.warning("[approval] tautan karyawan %s tidak terbaca untuk cek ajuan sendiri", emp)
+        return False
+
+
+async def check_can_act(db, user: Dict, doc: Dict, action: str) -> None:
+    """Gerbang aksi approve/reject di LAPISAN AKSI (2026-11-08, Asisten AI Tahap B — celah izin).
+
+    Dulu `_may_act_on_level` tidak pernah dipanggil: siapa pun yang lolos gerbang modul bisa memutus level
+    mana pun lewat API, termasuk menyetujui ajuannya sendiri (catatan QA AML-OBSERVASI-2). Sekarang:
+      · peran harus cocok dengan peran level aktif (alias `LEVEL_ROLE_ALIASES`; admin/owner/superadmin
+        tetap boleh semua level, seperti aturan RBAC rantai 2026-08-07);
+      · pemohon TIDAK boleh menyetujui ajuannya sendiri — berlaku untuk semua peran (K25 pemisahan tugas).
+        Menolak ajuan sendiri tetap boleh (tidak menguntungkan diri sendiri; menarik = tombol Batalkan).
+    Melempar PermissionError (route → 403)."""
+    lv_entry = next((lv for lv in doc.get("levels") or [] if lv.get("level") == doc.get("current_level")), None)
+    if lv_entry is None:
+        raise ValueError("Level entry tidak ditemukan.")
+    if not _may_act_on_level(user, lv_entry):
+        raise PermissionError(
+            f"Level ini menunggu keputusan {lv_entry.get('label') or 'peran lain'}; peran Anda tidak berhak "
+            "memutuskan level ini.")
+    if action == "approve" and await _is_own_request(db, user, doc):
+        raise PermissionError("Pemisahan tugas: Anda tidak boleh menyetujui ajuan Anda sendiri. "
+                              "Minta penyetuju lain.")
+
+
 async def process_action(
     db,
     request_id,      # int atau str — dihandle oleh _coerce
@@ -316,13 +358,21 @@ async def process_action(
     user: Dict,
     note: str = "",
 ) -> Dict:
-    """Process approve/reject at current level. Returns updated request doc."""
+    """Process approve/reject at current level. Returns updated request doc.
+
+    2026-11-08: (1) gerbang peran level + larangan menyetujui ajuan sendiri (`check_can_act`);
+    (2) badan fungsi dulu tertulis DUA KALI sehingga setiap keputusan menulis dua kali (QA AML-OBSERVASI-1)
+    — kini satu kali; (3) tulis bersyarat (status + level yang dibaca) supaya dua klik bersamaan tidak
+    memutus level yang sama dua kali (yang kalah → ValueError "baru saja diputuskan")."""
     _id = int(request_id) if str(request_id).isdigit() else request_id
     doc = await db.approval_requests.find_one({"id": _id}, {"_id": 0})
     if not doc:
         raise ValueError(f"Approval request {request_id!r} tidak ditemukan.")
     if doc["status"] not in ("pending",):
         raise ValueError(f"Request sudah {doc['status']}, tidak bisa diubah.")
+    if action not in ("approve", "reject"):
+        raise ValueError("Aksi tidak dikenal.")
+    await check_can_act(db, user, doc, action)
 
     current_level = doc["current_level"]
     levels = doc["levels"]
@@ -366,51 +416,10 @@ async def process_action(
         "updated_at": now,
         "completed_at": completed_at if action == "reject" or new_status == "approved" else doc.get("completed_at"),
     }
-    await db.approval_requests.update_one({"id": _id}, {"$set": update})
-
-    current_level = doc["current_level"]
-    levels = doc["levels"]
-    # Find current level entry
-    lv_entry = next((lv for lv in levels if lv["level"] == current_level), None)
-    if not lv_entry:
-        raise ValueError("Level entry tidak ditemukan.")
-
-    now = _now().isoformat()
-    lv_entry["status"] = "approved" if action == "approve" else "rejected"
-    lv_entry["approver_id"] = str(user.get("id") or user.get("_id") or "")
-    lv_entry["approver_name"] = user.get("full_name") or user.get("name") or user.get("email") or ""
-    lv_entry["note"] = note
-    lv_entry["actioned_at"] = now
-
-    if action == "reject":
-        # Rejection cascades — mark remaining levels as skipped
-        for lv in levels:
-            if lv["level"] > current_level:
-                lv["status"] = "skipped"
-        new_status = "rejected"
-        completed_at = now
-    elif current_level >= doc["max_level"]:
-        # Final level approved
-        new_status = "approved"
-        completed_at = now
-    else:
-        # Move to next level
-        next_level = current_level + 1
-        next_lv = next((lv for lv in levels if lv["level"] == next_level), None)
-        if next_lv:
-            next_lv["status"] = "pending"
-        new_status = "pending"
-        current_level = next_level
-        completed_at = None
-
-    update = {
-        "status": new_status,
-        "current_level": current_level,
-        "levels": levels,
-        "updated_at": now,
-        "completed_at": completed_at if action == "reject" or new_status == "approved" else doc.get("completed_at"),
-    }
-    await db.approval_requests.update_one({"id": request_id}, {"$set": update})
+    res = await db.approval_requests.update_one(
+        {"id": _id, "status": "pending", "current_level": doc["current_level"]}, {"$set": update})
+    if not getattr(res, "matched_count", 1):
+        raise ValueError("Permintaan ini baru saja diputuskan pengguna lain. Muat ulang daftar.")
     return {**doc, **update}
 
 

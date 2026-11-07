@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from core import marketing_account_scope as _scope
 from database import get_db
 from auth import require_auth
-from routes.shared import require_portal
+from routes.shared import require_perm, require_portal
 from core.authz import only  # T-01 2.3
 from core.roles import MARKETING_ROLES  # T-01 2.3
 from utils.waktu import today_wib
@@ -276,11 +276,29 @@ async def list_discounts(
     }
 
 
+# 2026-11-08 (Asisten AI Tahap B, celah izin — keputusan owner no. 11): membuat/mengubah kampanye diskon
+# dulu cukup login, jadi staf gudang/produksi/keuangan pun bisa memasang diskon toko. Kini: izin
+# `toko.manage` (dicentang owner, termasuk lewat izin modul Konten & Diskon) atau — selama izin peran
+# belum diatur — peran Marketing pengelola toko di bawah. Staf berlingkup toko hanya untuk tokonya.
+# CS, host live, dan content creator tidak termasuk (bukan pengelola promo toko).
+DISCOUNT_WRITER_ROLES = ("manager_marketing", "spv_marketing", "pic_marketing", "staff_marketing",
+                         "pic_toko", "marketing_kol", "manager", "owner", "admin", "superadmin")
+DISCOUNT_DENIED = ("Akses ditolak: hanya tim Marketing pengelola toko (PIC/staf toko, SPV/Manager "
+                   "Marketing) atau owner yang boleh membuat dan mengubah kampanye diskon.")
+
+
+async def _require_discount_writer(request: Request, db, *account_ids) -> dict:
+    user = await require_perm(request, "toko.manage", legacy_roles=DISCOUNT_WRITER_ROLES,
+                              message=DISCOUNT_DENIED)
+    for aid in {a for a in account_ids if a}:
+        await _scope.assert_account_visible(db, user, aid)
+    return user
+
+
 @router.post("")
 async def create_discount(body: DiscountIn, request: Request):
-    await require_auth(request)
-    user = _get_user(request)
     db   = get_db()
+    user = await _require_discount_writer(request, db, body.account_id)
 
     disc = {
         "id":           str(uuid.uuid4()),
@@ -309,11 +327,13 @@ async def create_discount(body: DiscountIn, request: Request):
 
 @router.put("/{disc_id}")
 async def update_discount(disc_id: str, body: DiscountUpdate, request: Request):
-    await require_auth(request)
     db = get_db()
+    user = await _require_discount_writer(request, db, body.account_id)
     existing = await db.marketing_discounts.find_one({"id": disc_id}, {"_id": 0})
     if not existing:
         raise HTTPException(404, "Discount not found")
+    # toko LAMA juga harus dipegang pemakai (tidak boleh "memindah" diskon toko lain)
+    await _scope.assert_account_visible(db, user, existing.get("account_id"))
 
     upd = {k: v for k, v in body.dict().items() if v is not None}
     if "discount_type" in upd:

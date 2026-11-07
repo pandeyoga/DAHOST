@@ -13,6 +13,11 @@ from routes.shared import new_id, now
 
 router = APIRouter(prefix="/api", tags=["reminders"])
 
+# Peran staf DA yang boleh MENGIRIM & mengelola pengingat ke vendor CMT (dipakai juga alat Asisten AI
+# `buat_pengingat` supaya aturannya satu); hanya admin yang boleh menghapus. Nilai tidak berubah (2026-11-08).
+VENDOR_REMINDER_WRITER_ROLES = ['admin', 'admin_produksi', 'supervisor_produksi', 'ppic']
+VENDOR_REMINDER_DELETE_ROLES = ['admin']
+
 @router.get("/reminders")
 async def get_reminders(request: Request):
     """Inbox reminder vendor (modul 11 dari 11).
@@ -43,7 +48,7 @@ async def get_reminders(request: Request):
 @router.post("/reminders")
 async def create_reminder(request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin', 'admin_produksi', 'supervisor_produksi', 'ppic']):
+    if not check_role(user, VENDOR_REMINDER_WRITER_ROLES):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     body = await request.json()
@@ -106,7 +111,7 @@ async def update_reminder(reminder_id: str, request: Request):
         if _stamp:
             update.update({f'response_{k}': v for k, v in _stamp.items()})
     # Admin updating
-    if check_role(user, ['admin', 'admin_produksi', 'supervisor_produksi', 'ppic']):
+    if check_role(user, VENDOR_REMINDER_WRITER_ROLES):
         if 'status' in body:
             update['status'] = body['status']
         if 'message' in body:
@@ -117,7 +122,7 @@ async def update_reminder(reminder_id: str, request: Request):
 @router.delete("/reminders/{reminder_id}")
 async def delete_reminder(reminder_id: str, request: Request):
     user = await require_auth(request)
-    if not check_role(user, ['admin']):
+    if not check_role(user, VENDOR_REMINDER_DELETE_ROLES):
         raise HTTPException(403, 'Forbidden')
     db = get_db()
     await db.reminders.delete_one({'id': reminder_id})

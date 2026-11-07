@@ -23,6 +23,14 @@ from core import catalog_margin as _cmargin  # sesi #37: SSOT margin + "belum bi
 
 router = APIRouter(prefix='/api/marketing/catalogs', tags=['Marketing-Catalog-items'])
 
+# 2026-11-08 (Asisten AI Tahap B, celah izin) — siapa boleh MENGUBAH item katalog (termasuk harga jual):
+# daftar peran yang sama dengan hapus item katalog (T-01 2.3) + `spv_marketing` (SPV Marketing F6.1,
+# yang memang menetapkan harga) supaya SPV tidak kehilangan akses yang dulu dimilikinya.
+CATALOG_WRITER_ROLES = ('manager_marketing', 'spv_marketing', 'pic_marketing', 'staff_marketing', 'pic_toko',
+                        'marketing_kol', 'cs_staff', 'manager', 'owner', 'admin', 'superadmin')
+CATALOG_WRITE_DENIED = ('Akses ditolak: hanya tim Marketing yang boleh mengubah item katalog '
+                        '(termasuk harga jual).')
+
 # Photo upload settings (disimpan di Emergent Object Storage, URL tetap /api/uploads/products/...)
 from object_storage import put_object as _put_object
 MAX_PHOTO_BYTES = 5 * 1024 * 1024
@@ -271,6 +279,9 @@ class CatalogItemUpdate(BaseModel):
     category: Optional[str] = None
     variant_info: Optional[str] = None
     is_active: Optional[bool] = None
+    # 2026-11-08 — ALASAN perubahan harga (opsional; dicatat di riwayat harga `marketing_change_log`,
+    # tidak disimpan di item). Dipakai juga oleh "Terapkan usulan harga" (K28).
+    reason: Optional[str] = Field(default=None, max_length=500)
 
 
 class StockUpdateBody(BaseModel):
@@ -1554,8 +1565,17 @@ async def list_catalog_items(
 
 @router.put('/{catalog_id}/items/{item_id}')
 async def update_catalog_item(catalog_id: str, item_id: str, data: CatalogItemUpdate, request: Request):
-    """Update item data (termasuk harga, stok, dll)."""
-    user = await require_auth(request)
+    """Update item data (termasuk harga, stok, dll).
+
+    2026-11-08 (Asisten AI Tahap B, celah izin — keputusan owner no. 11): dulu cukup login, jadi
+    siapa pun bisa mengubah harga jual toko mana pun tanpa jejak. Kini penjaganya sama dengan
+    menghapus item katalog (izin `toko.manage`/`pricing.approve`, atau peran Marketing selama izin
+    peran belum diatur owner), staf berlingkup toko hanya untuk katalog tokonya, dan setiap
+    perubahan harga jual/harga coret dicatat sebagai RIWAYAT HARGA (siapa, kapan, lama → baru,
+    alasan) di `marketing_change_log` — entitas/aksi yang sama dengan "Terapkan usulan harga".
+    """
+    user = await require_perm(request, 'toko.manage', 'pricing.approve',
+                              legacy_roles=CATALOG_WRITER_ROLES, message=CATALOG_WRITE_DENIED)
     db = get_db()
 
     item = await db.marketing_catalog_items.find_one(
@@ -1563,8 +1583,16 @@ async def update_catalog_item(catalog_id: str, item_id: str, data: CatalogItemUp
     )
     if not item:
         raise HTTPException(404, 'Item tidak ditemukan.')
+    account_id = item.get('account_id')
+    if not account_id:
+        cat = await db.marketing_catalogs.find_one({'id': catalog_id}, {'_id': 0, 'account_id': 1})
+        account_id = (cat or {}).get('account_id')
+    from core import marketing_account_scope as _scope
+    await _scope.assert_account_visible(db, user, account_id)
 
+    reason = (data.reason or '').strip()
     patch = {k: v for k, v in data.dict().items() if v is not None}
+    patch.pop('reason', None)
     # ── T3 — kategori item katalog TIDAK BOLEH lagi ditimpa teks bebas ────────
     # Dulu `CatalogManagementModule.jsx` mengirim `category` sebagai input teks,
     # sehingga staf bisa menimpanya dengan apa saja ⇒ grouping katalog tidak bisa
@@ -1614,9 +1642,31 @@ async def update_catalog_item(catalog_id: str, item_id: str, data: CatalogItemUp
 
     await db.marketing_catalog_items.update_one({'id': item_id}, {'$set': patch})
     await _refresh_catalog_stats(db, catalog_id)
+    await _log_price_change(db, item, patch, account_id=account_id, user=user, reason=reason)
 
     updated = await db.marketing_catalog_items.find_one({'id': item_id}, {'_id': 0})
     return {'ok': True, 'item': _s(updated)}
+
+
+# 2026-11-08 — riwayat harga katalog (harga jual & harga coret). Satu-satunya jalan MENGUBAH harga item
+# yang sudah ada adalah PUT di atas (harga awal saat item dibuat bukan "perubahan").
+PRICE_HISTORY_FIELDS = ('harga_jual', 'harga_coret')
+
+
+async def _log_price_change(db, item: dict, patch: dict, *, account_id, user: dict, reason: str) -> None:
+    def _old(k):
+        legacy = {'harga_jual': 'price', 'harga_coret': 'original_price'}[k]
+        v = item.get(k) if item.get(k) is not None else item.get(legacy)
+        return float(v or 0)
+    before, after = {}, {}
+    for k in PRICE_HISTORY_FIELDS:
+        if k in patch and float(patch[k] or 0) != _old(k):
+            before[k], after[k] = _old(k), float(patch[k] or 0)
+    if not after:
+        return
+    from core.marketing_cycle import log_change
+    await log_change(db, account_id=account_id, entity='catalog_item', entity_id=item.get('id'),
+                     action='price_change', before=before, after=after, reason=reason, user=user)
 
 
 @router.delete('/{catalog_id}/items/{item_id}')
