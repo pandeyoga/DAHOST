@@ -187,7 +187,7 @@ export default function CompanySettingsModule({ token, userRole }) {
         </Button>
       )}
       filters={<>
-        <FilterChips className="w-full min-w-0 sm:w-auto" options={CV_CHOICES} value={cv} onChange={(k) => setCv(k || CV_DA)} hideWhenEmpty={false}
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={CV_CHOICES} value={cv} onChange={(k) => setCv(k || CV_DA)} hideWhenEmpty={false}
           testId="company-cv-switch" ariaLabel="Pilih profil CV" />
         <p className="text-xs text-muted-foreground" data-testid="company-cv-note">
           {cv === CV_SMU ? 'Dipakai untuk dokumen maklon (invoice, surat jalan, kwitansi klien) dan buku CV Sukma.' : 'Dipakai untuk dokumen CV Dewi Aditya (toko, penjualan, pembelian, gaji).'}

@@ -281,7 +281,7 @@ export default function UserManagementModule({ token }) {
       subtitle="Kelola akun pengguna, perannya, dan tautan ke karyawan/vendor."
       actions={<Button onClick={openCreate} data-testid="add-user-btn"><Plus />Tambah pengguna</Button>}
       filters={<>
-        <FilterChips className="w-full min-w-0 sm:w-auto" value={saringStatus} onChange={setSaringStatus} hideWhenEmpty={false} testId="user-status-filter" options={[
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={saringStatus} onChange={setSaringStatus} hideWhenEmpty={false} testId="user-status-filter" options={[
           { key: '', label: 'Semua', count: users.length },
           { key: 'active', label: 'Aktif', count: nAktif },
           { key: 'inactive', label: 'Nonaktif', count: users.length - nAktif },

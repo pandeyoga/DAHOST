@@ -184,7 +184,7 @@ export default function CareerCoachModule({ token }) {
       subtitle="Arahan karier pribadi dari asisten AI berdasarkan profil, training, dan kinerja Anda."
       actions={<Button onClick={() => setFormOpen(true)} disabled={!profile} data-testid="career-generate-btn"><Sparkles />Buat laporan karier</Button>}>
       <FilterChips value={activeTab} onChange={(k) => setActiveTab(k || 'dashboard')} hideWhenEmpty={false} testId="career-tab"
-        ariaLabel="Bagian career coach" className="w-full min-w-0 sm:w-auto" options={[
+        ariaLabel="Bagian career coach" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
           { key: 'dashboard', label: 'Ringkasan' },
           { key: 'chat', label: 'Obrolan' },
           { key: 'reports', label: 'Laporan', count: reports.length },

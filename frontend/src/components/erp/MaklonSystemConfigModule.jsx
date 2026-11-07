@@ -192,7 +192,7 @@ export default function MaklonSystemConfigModule({ token }) {
     <PageLayout testId="maklon-system-config" title="Konfigurasi maklon"
       subtitle="Setelan sistem yang bisa diatur tanpa mengubah program: pajak, ambang, jangka bayar, dan kunci integrasi."
       filters={configs.length > 0 && (
-        <FilterChips className="w-full min-w-0 sm:w-auto" value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="cfg-category-filter" options={[
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={activeTab} onChange={setActiveTab} hideWhenEmpty={false} testId="cfg-category-filter" options={[
           { key: '', label: 'Semua', count: configs.length },
           ...categories.map((cat) => ({ key: cat, label: labelKategori(cat), count: configs.filter((c) => c.category === cat).length })),
         ]} />

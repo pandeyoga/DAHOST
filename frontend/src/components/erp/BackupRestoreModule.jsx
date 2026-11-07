@@ -451,7 +451,7 @@ export default function BackupRestoreModule({ token }) {
       )}
 
       <FilterChips value={tab} onChange={(k) => setTab(k || 'backup')} hideWhenEmpty={false} testId="backup-tab"
-        ariaLabel="Bagian backup" className="w-full min-w-0 sm:w-auto" options={[
+        ariaLabel="Bagian backup" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
           { key: 'backup', label: 'Backup & pemulihan', count: backups.length },
           { key: 'collections', label: 'Koleksi database' },
         ]} />

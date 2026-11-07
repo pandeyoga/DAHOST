@@ -12,7 +12,7 @@ export default function RahazaUserGuideModule() {
     <PageLayout testId="user-guide-page" title="Panduan sistem"
       subtitle="Cara memakai tiap portal, skenario kerja langkah demi langkah, serta tips dan tanya jawab."
       tools={<span className="text-xs text-muted-foreground">Versi 2.5 · April 2026</span>}>
-      <GlassCard className="overflow-hidden p-0">
+      <GlassCard className="overflow-hidden p-0" data-konten-utama="">
         <UserGuideContent />
       </GlassCard>
     </PageLayout>

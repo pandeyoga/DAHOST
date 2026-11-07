@@ -74,7 +74,7 @@ export default function AuditFindingsBoard() {
     <PageLayout testId="audit-findings-board" title="Papan temuan audit"
       subtitle="Status temuan audit 23 Sep 2026 untuk Keuangan, Produksi/Maklon, dan R&D beserta perbaikannya."
       filters={data && <>
-        <FilterChips value={status} onChange={setStatus} hideWhenEmpty={false} testId="audit-filter-status" className="w-full sm:w-auto" options={[
+        <FilterChips value={status} onChange={setStatus} hideWhenEmpty={false} testId="audit-filter-status" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
           { key: '', label: 'Semua', count: total },
           { key: 'selesai', label: 'Selesai', count: hitung('selesai') },
           { key: 'diterima', label: 'Diterima', count: hitung('diterima') },

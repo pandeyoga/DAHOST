@@ -466,11 +466,6 @@ export default function RoleManagementModule({ token, userRole }) {
           <RefreshCw className={loading ? 'animate-spin' : ''} />
         </Button>
       </>}>
-      <Notice tone="info" testId="role-access-notice">
-        Selama daftar izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur yang mati).
-        Begitu minimal satu izin dicentang, peran itu mengikuti daftar izinnya.
-      </Notice>
-
       {loading && roles.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">Memuat peran…</p>
       ) : (
@@ -479,6 +474,12 @@ export default function RoleManagementModule({ token, userRole }) {
             description={roles.length ? 'Ubah kata pencarian.' : 'Buat peran pertama untuk mulai mengatur akses.'}
             testId="role-detail-empty" />} />
       )}
+
+      <Notice tone="info" testId="role-access-notice">
+        Selama daftar izin sebuah peran <b>masih kosong</b>, sistem memakai aturan bawaan (tidak ada fitur yang mati).
+        Begitu minimal satu izin dicentang, peran itu mengikuti daftar izinnya.
+      </Notice>
+
 
       {/* ── Popup atur peran (5 langkah) ─────────────────────────────────── */}
       <FormPopup open={editorOpen && !!selected} onClose={tutupEditor} ukuran="panjang" testId="role-detail-panel"

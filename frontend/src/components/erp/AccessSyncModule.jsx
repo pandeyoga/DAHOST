@@ -182,7 +182,7 @@ export default function AccessSyncModule({ token }) {
         </Button>
       )}
       filters={data && <>
-        <FilterChips className="w-full min-w-0 sm:w-auto" value={saring} onChange={setSaring} hideWhenEmpty={false} testId="access-sync-filter" options={[
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={saring} onChange={setSaring} hideWhenEmpty={false} testId="access-sync-filter" options={[
           { key: '', label: 'Semua', count: users.length },
           { key: 'ok', label: 'Sinkron', count: nOk },
           { key: 'error', label: 'Bermasalah', count: nError },

@@ -229,7 +229,7 @@ export default function IntegrationSettingsModule({ token, userRole }) {
       subtitle="Kunci layanan luar (AI, notifikasi, penyimpanan, email). Nilai kunci tidak pernah ditampilkan utuh."
       actions={canEdit && <Button onClick={openAdd} data-testid="add-key-btn"><Plus />Tambah kunci</Button>}
       filters={keys.length > 0 && (
-        <FilterChips className="w-full min-w-0 sm:w-auto" options={opsiKategori} value={kategori} onChange={setKategori} hideWhenEmpty={false} testId="key-category-filter" />
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={opsiKategori} value={kategori} onChange={setKategori} hideWhenEmpty={false} testId="key-category-filter" />
       )}
       tools={<>
         {/* Unduhan TIDAK memuat nilai kunci (juga tidak versi tersamar). */}

@@ -144,7 +144,7 @@ export default function PeerFeedbackModule({ token }) {
       subtitle="Beri dan terima masukan dari rekan kerja."
       actions={<Button onClick={() => setShowSendDialog(true)} data-testid="peer-send-btn"><Send />Kirim masukan</Button>}
       filters={(
-        <FilterChips className="w-full min-w-0 sm:w-auto" value={activeTab} onChange={(k) => setActiveTab(k || 'received')} hideWhenEmpty={false} testId="peer-tab"
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={activeTab} onChange={(k) => setActiveTab(k || 'received')} hideWhenEmpty={false} testId="peer-tab"
           options={[
             { key: 'received', label: 'Diterima', count: receivedFeedback.length },
             { key: 'given', label: 'Diberikan', count: givenFeedback.length },

@@ -692,7 +692,7 @@ function WorkspaceCalendar({ headers }) {
                 className={`h-16 border-r border-b border-border/40 p-1 cursor-pointer transition-colors
                   ${isSelected ? 'bg-primary/10' : isToday ? 'bg-[hsl(var(--primary)/0.12)]' : 'hover:bg-muted/40'}`}>
                 <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium mb-0.5
-                  ${isToday ? 'bg-primary text-foreground' : ''}`}>
+                  ${isToday ? 'bg-primary text-primary-foreground' : ''}`}>
                   {d}
                 </div>
                 <div className="flex flex-col gap-0.5 overflow-hidden">

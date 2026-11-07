@@ -80,6 +80,7 @@ const GANTI = [
   [/\bSSOT\b/g, 'sumber data resmi'],
   [/\bfulfillment\b/g, 'pemenuhan pesanan'],
   [/Stock Opname/g, 'Stok opname'],
+  [/stock opname/gi, 'stok opname'],
   [/Integritas Rujukan Lintas Koleksi/g, 'Keutuhan rujukan antar data'],
   [/option_code\s*=\s*['"]NA['"]/g, 'kode opsi "NA"'],
   [/\boption_code\b/g, 'kode opsi'],

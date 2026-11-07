@@ -28,8 +28,10 @@ export function labelKodePeran(kode) {
 }
 
 /** `deskripsi` = keterangan peran dari data (opsional). */
+const RAPIKAN = [[/\(View Only\)/gi, '(lihat saja)'], [/\(Legacy\)/gi, '(lama)']];
+
 export function labelPeran(kode, deskripsi) {
-  const d = String(deskripsi || '').trim();
+  const d = RAPIKAN.reduce((t, [re, ke]) => t.replace(re, ke), String(deskripsi || '').trim());
   return d || labelKodePeran(kode);
 }
 

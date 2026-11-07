@@ -110,7 +110,7 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
     <PageLayout testId="portal-notifikasi" title="Notifikasi"
       subtitle="Hal yang perlu Anda tindak lanjuti, pemberitahuan, dan riwayat tindakan."
       filters={(
-        <FilterChips className="w-full min-w-0 sm:w-auto" value={tab} hideWhenEmpty={false} testId="portal-notif-tab" ariaLabel="Jenis notifikasi"
+        <FilterChips className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" value={tab} hideWhenEmpty={false} testId="portal-notif-tab" ariaLabel="Jenis notifikasi"
           onChange={(k) => { setExpandedId(null); setTab(k || 'action'); }}
           options={INBOX_TABS.map((t) => ({
             key: t.key, label: LABEL_TAB[t.key] || t.label,
