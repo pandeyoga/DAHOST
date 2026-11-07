@@ -1,33 +1,43 @@
 /**
- * Return & Refund — Portal Gudang (Blueprint §3.7)
+ * Retur Fisik — Portal Gudang (Blueprint §3.7)
  *
  * Tipe 1: Expedition Return   — paket kembali dari ekspedisi
- * Tipe 2: Customer Refund     — customer request refund marketplace
+ * Tipe 2: Customer Refund     — pembeli minta refund di marketplace
  *
- * Workflow: Pending → Received (unboxing) → Inspected → Resolved
+ * Alur: Menunggu (Pending) → Diterima (unboxing) → Diinspeksi → Selesai (resolusi)
  *
- * Tabs:
- *   Dashboard  — stats + action-needed list
- *   Tipe 1     — expedition_return view
- *   Tipe 2     — customer_refund view
- *   Semua      — all returns tabel
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout (dulu kepala buatan + 4 tombol warna-warni + 6 kartu
+ * berwarna + 2 kartu tipe besar); tab buatan → pil tampilan; StatTile berketerangan (maks 4); tabel = TabelData
+ * + unduhan Excel/CSV; detail = DetailPopup; tiap langkah (terima, inspeksi, selesaikan, batalkan, terima &
+ * putuskan) = FormPopup — dulu form menempel di bawah panel detail; window.confirm/prompt/alert → confirmDialog
+ * & toast; status/tipe berbahasa Indonesia. Aturan, isian, dan API tidak berubah.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import FilterChips from '@/components/ui/filter-chips';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import {
-  Package, Plus, Search, X, RefreshCw, Eye, CheckCircle,
-  Clock, AlertTriangle, Truck, RotateCcw, ChevronRight,
-  ChevronDown, FileText, ArrowRight, PackageOpen, CheckSquare,
-  XCircle, ShieldAlert, Star, Send, Trash2, MoreVertical,
-  ClipboardCheck, PackageCheck, DownloadCloud, Link2, Store, Zap, MapPin
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
+import {
+  Package, Plus, Search, RefreshCw, CheckCircle, Truck, RotateCcw, ChevronDown,
+  PackageOpen, XCircle, Trash2, ClipboardCheck, DownloadCloud, Link2, Zap, MapPin, Undo2, Info,
 } from 'lucide-react';
 import OnwardCTA from './OnwardCTA';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatTile, StatusBadge } from './moduleAtoms';
 import { formatRupiah } from '@/lib/format';
 import { MoneyInput } from '@/components/ui/money-input';
-// F15-B — kelas Tailwind tidak boleh dirakit saat berjalan; lihat lib/tone.js
-import { tone } from '@/lib/tone';
 import DocNumberField, { useDocNumberPolicy, docNumberPayload } from './docnum/DocNumberField';
 // W4 (sesi #29) — barang retur WAJIB dipilih dari master produk jadi (INV-F14).
 import { FGMaterialSelect } from './masters/MasterSelects';
@@ -47,82 +57,63 @@ const APPEAL_STATUSES = ['Pending', 'Success', 'Fail'];
 // Kondisi yang boleh masuk stok JUAL. Sisanya ditahan di karantina (K-6a).
 const SELLABLE_CONDITIONS = ['Baik'];
 
+// Nilai disimpan apa adanya (kontrak backend); yang tampil label staf.
+const ACTION_LABEL = {
+  'Restock ke Gudang': 'Masuk stok gudang', 'Karantina (Rusak)': 'Karantina (rusak)',
+  [REJECT_TO_BUYER]: 'Ditolak — dikembalikan ke pembeli', Reshipment: 'Kirim ulang ke pembeli',
+  'Appeal Platform': 'Banding ke platform', 'Dibuang / Dispose': 'Dibuang', Donasi: 'Donasi',
+};
+const APPEAL_LABEL = { Pending: 'Menunggu', Success: 'Berhasil', Fail: 'Gagal' };
+const actionLabel = (a) => ACTION_LABEL[a] || a || '—';
+
 const TYPE_LABELS = {
   expedition_return: 'Tipe 1 — Ekspedisi',
-  customer_refund:   'Tipe 2 — Customer',
+  customer_refund:   'Tipe 2 — Pembeli',
 };
-const TYPE_COLORS = {
-  expedition_return: 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] ',
-  customer_refund:   'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] ',
+const TYPE_TONE = { expedition_return: 'warning', customer_refund: 'primary' };
+const STATUS_META = {
+  Pending:   { label: 'Menunggu paket', tone: 'warning' },
+  Received:  { label: 'Diterima', tone: 'info' },
+  Inspected: { label: 'Diinspeksi', tone: 'primary' },
+  Resolved:  { label: 'Selesai', tone: 'success' },
+  Cancelled: { label: 'Dibatalkan', tone: 'muted' },
+  Reversed:  { label: 'Keputusan dibalik', tone: 'warning' },
 };
-const STATUS_COLORS = {
-  Pending:   'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] ',
-  Received:  'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] ',
-  Inspected: 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] ',
-  Resolved:  'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)] ',
-  Cancelled: 'text-muted-foreground bg-muted dark:bg-slate-500/10',
-  Reversed:  'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] ',
-};
-const CONDITION_COLORS = {
-  'Baik':              'text-[hsl(var(--success))] ',
-  'Rusak':             'text-[hsl(var(--destructive))] ',
-  'Rusak Ringan':      'text-[hsl(var(--warning))] ',
-  'Rusak Berat':       'text-[hsl(var(--warning))] ',
-  'Tidak Layak Jual':  'text-[hsl(var(--destructive))] ',
-};
-const CAUSE_COLORS = {
-  'Kesalahan Gudang':     'text-[hsl(var(--destructive))] ',
-  'Kesalahan Customer':   'text-[hsl(var(--warning))] ',
-  'Kesalahan Ekspedisi':  'text-[hsl(var(--warning))] ',
-  'Lainnya':              'text-muted-foreground',
+const statusLabel = (s) => STATUS_META[s]?.label || s || '—';
+const CONDITION_TONE = {
+  Baik: 'text-[hsl(var(--success-text))]', Rusak: 'text-[hsl(var(--danger-text))]',
+  'Rusak Ringan': 'text-[hsl(var(--warning-text))]', 'Rusak Berat': 'text-[hsl(var(--warning-text))]',
+  'Tidak Layak Jual': 'text-[hsl(var(--danger-text))]',
 };
 
-function Badge({ label, colorClass }) {
-  return <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${colorClass || 'text-muted-foreground bg-secondary'}`}>{label}</span>;
+function StatusRetur({ status }) {
+  const m = STATUS_META[status] || { label: status || '—', tone: 'default' };
+  return <StatusBadge status={status} label={m.label} tone={m.tone} />;
+}
+function TipeRetur({ type }) {
+  return <StatusBadge status={type} label={TYPE_LABELS[type] || type || '—'} tone={TYPE_TONE[type] || 'default'} />;
 }
 
 // ─── W4 — LENCANA "APA YANG TERJADI PADA STOK" ────────────────────────────────
 // Pemilik harus bisa melihat, tanpa membuka detail, apakah barang retur sudah
-// benar-benar masuk stok (dan stok mana: jual atau karantina). Sebelum ini layar
-// hanya menampilkan status alur kerja, sehingga "Resolved" terlihat sama saja
-// walau stoknya tidak pernah bergerak.
-function StockBadge({ ret }) {
+// benar-benar masuk stok (dan stok mana: jual atau karantina).
+const efekStok = (ret) => {
   if (ret.restocked) {
     const sellable = ret.stock_effect === 'sellable';
-    return (
-      <span className={`px-2 py-0.5 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
-        sellable ? 'text-[hsl(var(--success))]  bg-[hsl(var(--success)/0.15)] '
-                 : 'text-[hsl(var(--warning))]  bg-[hsl(var(--warning)/0.15)] '}`}
-        data-testid={`stock-badge-${ret.id}`}>
-        <Package className="w-3 h-3" />
-        {sellable ? `+${ret.restock_qty} stok jual` : `+${ret.restock_qty} karantina`}
-      </span>
-    );
+    return { label: sellable ? `+${ret.restock_qty} stok jual` : `+${ret.restock_qty} karantina`, tone: sellable ? 'success' : 'warning' };
   }
-  if (ret.link_status && ret.link_status !== 'linked') {
-    return (
-      <span className="px-2 py-0.5 rounded-full text-xs font-medium text-[hsl(var(--destructive))] bg-[hsl(var(--destructive)/0.15)]  inline-flex items-center gap-1"
-        data-testid={`stock-badge-${ret.id}`}>
-        <Link2 className="w-3 h-3" /> belum tertaut master
-      </span>
-    );
-  }
-  return (
-    <span className="px-2 py-0.5 rounded-full text-xs font-medium text-muted-foreground bg-secondary inline-flex items-center gap-1"
-      data-testid={`stock-badge-${ret.id}`}>
-      <Clock className="w-3 h-3" /> belum masuk stok
-    </span>
-  );
+  if (ret.link_status && ret.link_status !== 'linked') return { label: 'Belum tertaut master', tone: 'danger' };
+  return { label: 'Belum masuk stok', tone: 'muted' };
+};
+function StockBadge({ ret }) {
+  const e = efekStok(ret);
+  return <span data-testid={`stock-badge-${ret.id}`}><StatusBadge label={e.label} tone={e.tone} /></span>;
 }
-
 function SourceBadge({ ret }) {
   const fromMkt = !!ret.source_marketing_return_id;
   return (
-    <span className={`px-2 py-0.5 rounded-full text-xs font-medium inline-flex items-center gap-1 ${
-      fromMkt ? 'text-[hsl(var(--primary))]  bg-[hsl(var(--primary)/0.15)] '
-              : 'text-muted-foreground bg-secondary'}`}
-      data-testid={`source-badge-${ret.id}`}>
-      {fromMkt ? <><Store className="w-3 h-3" /> Marketing</> : <>Manual</>}
+    <span data-testid={`source-badge-${ret.id}`}>
+      <StatusBadge label={fromMkt ? 'Marketing' : 'Manual'} tone={fromMkt ? 'primary' : 'muted'} />
     </span>
   );
 }
@@ -148,66 +139,24 @@ async function api(method, path, token, body) {
   return data;
 }
 
-// ─── WORKFLOW PROGRESS BAR ────────────────────────────────────────────────────
+// ─── Langkah alur (titik kecil) ───────────────────────────────────────────────
 const STEPS = ['Pending', 'Received', 'Inspected', 'Resolved'];
 function WorkflowBar({ status }) {
   const idx = STEPS.indexOf(status);
   if (status === 'Cancelled') return <span className="text-xs text-muted-foreground">Dibatalkan</span>;
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-1" aria-label={`Tahap: ${statusLabel(status)}`}>
       {STEPS.map((s, i) => (
         <div key={s} className="flex items-center gap-1">
-          <div className={`w-2 h-2 rounded-full ${i <= idx ? 'bg-primary' : 'bg-foreground/10'}`} />
-          {i < STEPS.length - 1 && <div className={`w-6 h-px ${i < idx ? 'bg-primary' : 'bg-foreground/10'}`} />}
+          <div className={`h-2 w-2 rounded-full ${i <= idx ? 'bg-primary' : 'bg-foreground/10'}`} />
+          {i < STEPS.length - 1 && <div className={`h-px w-6 ${i < idx ? 'bg-primary' : 'bg-foreground/10'}`} />}
         </div>
       ))}
-      <span className="text-xs ml-1 text-muted-foreground">{status}</span>
     </div>
   );
 }
 
-// ─── RETURN CARD (list row) ───────────────────────────────────────────────────
-function ReturnRow({ ret, onView, onDelete, onQuickRestock }) {
-  // 2026-11-02 (K1) — hanya pekerjaan yang BELUM diputuskan
-  const canQuick = !ret.restocked && ['Pending', 'Received', 'Inspected'].includes(ret.status)
-    && (ret.material_id || ret.fg_material_id);
-  return (
-    <tr className="border-b border-border hover:bg-foreground/[0.02] cursor-pointer" onClick={() => onView(ret)} data-testid={`ret-row-${ret.id}`}>
-      <td className="px-4 py-3 tabular-nums text-xs text-muted-foreground">{ret.return_code}</td>
-      <td className="px-4 py-3"><SourceBadge ret={ret} /></td>
-      <td className="px-4 py-3 font-medium text-sm">{ret.order_number || ret.resi_number || '-'}</td>
-      <td className="px-4 py-3 text-sm">
-        <div className="font-medium">{ret.product_name || '-'}</div>
-        <div className="text-xs text-muted-foreground tabular-nums">{ret.sku_code || '—'}</div>
-      </td>
-      <td className="px-4 py-3 text-sm text-center">{ret.qty || 0}</td>
-      <td className="px-4 py-3"><Badge label={ret.status} colorClass={STATUS_COLORS[ret.status]} /></td>
-      <td className="px-4 py-3"><StockBadge ret={ret} /></td>
-      <td className="px-4 py-3 text-xs text-muted-foreground">{fmtDateShort(ret.created_at)}</td>
-      <td className="px-4 py-3 text-right">
-        <div className="flex items-center justify-end gap-1">
-          {canQuick && onQuickRestock && (
-            <button onClick={e => { e.stopPropagation(); onQuickRestock(ret); }}
-              className="px-2 py-1 rounded-lg text-xs font-medium bg-[hsl(var(--success)/0.1)] border border-[hsl(var(--success)/0.35)] text-[hsl(var(--success))]  hover:bg-[hsl(var(--success)/0.2)] inline-flex items-center gap-1"
-              data-testid={`quick-restock-${ret.id}`} title="Terima (qty aktual) & putuskan masuk stok">
-              <Zap className="w-3 h-3" /> Terima &amp; Putuskan
-            </button>
-          )}
-          <button onClick={e => { e.stopPropagation(); onView(ret); }} className="p-1 hover:bg-foreground/5 rounded" data-testid={`view-ret-${ret.id}`}>
-            <Eye className="w-4 h-4 text-muted-foreground" />
-          </button>
-          {ret.status === 'Pending' && !ret.restocked && (
-            <button onClick={e => { e.stopPropagation(); onDelete(ret); }} className="p-1 hover:bg-[hsl(var(--destructive)/0.15)] rounded" data-testid={`del-ret-${ret.id}`}>
-              <Trash2 className="w-4 h-4 text-[hsl(var(--destructive))] " />
-            </button>
-          )}
-        </div>
-      </td>
-    </tr>
-  );
-}
-
-// ─── CREATE FORM MODAL ────────────────────────────────────────────────────────
+// ─── FORM CATAT RETUR (popup panjang) ─────────────────────────────────────────
 function CreateModal({ onClose, onSaved, token, defaultType }) {
   const [form, setForm] = useState({
     return_type: defaultType || 'expedition_return',
@@ -239,124 +188,75 @@ function CreateModal({ onClose, onSaved, token, defaultType }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-foreground/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-2xl shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h3 className="text-lg font-bold mb-4">Catat Return Baru</h3>
-        <div className="space-y-3">
-          <DocNumberField
-            policy={numPolicy}
-            value={returnCode}
-            onChange={setReturnCode}
-            label="Nomor Retur"
-            testId="whret-number"
-          />
-          {/* Type */}
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Tipe Return *</label>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(TYPE_LABELS).map(([v, l]) => (
-                <button key={v} onClick={() => setForm({ ...form, return_type: v })}
-                  className={`py-2 px-3 rounded-lg border text-sm transition ${form.return_type === v ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:bg-foreground/5 text-muted-foreground'}`}
-                  data-testid={`type-btn-${v}`}>
-                  {l}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Info identifikasi */}
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">No. Order</label>
-              <input value={form.order_number} onChange={e => setForm({ ...form, order_number: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="SPX-00001" data-testid="ret-order-number" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">No. Resi</label>
-              <input value={form.resi_number} onChange={e => setForm({ ...form, resi_number: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="JNE-123456" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Channel</label>
-              <SmartNativeSelect value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="ret-channel">
-                <option value="">Pilih...</option>
-                {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Nama Customer</label>
-              <input value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Nama customer" />
-            </div>
-          </div>
-          {/* W4 — BARANG DARI MASTER (bukan ketikan). Sebelumnya kolom ini teks
-              bebas "SKU / Kode Produk"; karena tidak pernah cocok dengan master,
-              tombol Restock tidak pernah menemukan barangnya ⇒ stok tak bergerak. */}
-          <div className="grid grid-cols-1 gap-3">
-            <FGMaterialSelect
-              value={form.material_id}
-              onChange={(v) => setForm({ ...form, material_id: v })}
-              label="Barang Jadi yang Kembali *"
-              hint="Wajib dari Master Produk Jadi — inilah yang membuat stok bisa bertambah tepat sasaran."
-              testId="ret-material-select"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Qty Retur</label>
-              <input type="number" min="1" value={form.qty} onChange={e => setForm({ ...form, qty: +e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="ret-qty" />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">Nilai Order</label>
-              <MoneyInput unstyled value={form.order_value} onChange={e => setForm({ ...form, order_value: +e.target.value })}
-                className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="0" data-testid="ret-order-value" />
-            </div>
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground block mb-1">Alasan Return (Awal)</label>
-            <textarea value={form.initial_reason} onChange={e => setForm({ ...form, initial_reason: e.target.value })} rows="2"
-              className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
-              placeholder="Barang tidak sampai / ukuran tidak sesuai / dll..." data-testid="ret-reason" />
-          </div>
-          {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
-        </div>
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose} className="flex-1 py-2 border border-border rounded-lg text-sm hover:bg-foreground/5" data-testid="cancel-create-return">Batal</button>
-          <button onClick={submit} disabled={saving} className="flex-1 py-2 bg-primary text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="save-return-btn">
-            {saving ? 'Menyimpan...' : 'Catat Return'}
-          </button>
-        </div>
+    <FormPopup open onClose={onClose} ukuran="panjang" testId="create-return-form"
+      judul="Catat retur baru" keterangan="Barang wajib dipilih dari master produk jadi supaya stok bisa bertambah tepat sasaran."
+      onSimpan={submit} menyimpan={saving} galat={err} labelSimpan="Catat retur">
+      <DocNumberField policy={numPolicy} value={returnCode} onChange={setReturnCode} label="Nomor retur" testId="whret-number" />
+      <Isian label="Tipe retur" wajib htmlFor="ret-tipe">
+        <SmartNativeSelect id="ret-tipe" value={form.return_type} onChange={e => setForm({ ...form, return_type: e.target.value })}
+          data-testid="ret-type">
+          {Object.entries(TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </SmartNativeSelect>
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="No. order" htmlFor="ret-order" petunjuk="Isi no. order atau no. resi (salah satu wajib).">
+          <Input id="ret-order" value={form.order_number} onChange={e => setForm({ ...form, order_number: e.target.value })}
+            placeholder="SPX-00001" data-testid="ret-order-number" />
+        </Isian>
+        <Isian label="No. resi" htmlFor="ret-resi">
+          <Input id="ret-resi" value={form.resi_number} onChange={e => setForm({ ...form, resi_number: e.target.value })}
+            placeholder="JNE-123456" data-testid="ret-resi-number" />
+        </Isian>
+        <Isian label="Channel" htmlFor="ret-channel">
+          <SmartNativeSelect id="ret-channel" value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })} data-testid="ret-channel">
+            <option value="">Pilih channel</option>
+            {CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Nama pembeli" htmlFor="ret-customer">
+          <Input id="ret-customer" value={form.customer_name} onChange={e => setForm({ ...form, customer_name: e.target.value })}
+            placeholder="Nama pembeli" data-testid="ret-customer-name" />
+        </Isian>
       </div>
-    </div>
+      {/* W4 — BARANG DARI MASTER (bukan ketikan): teks bebas tidak pernah cocok dengan master ⇒ stok tak bergerak. */}
+      <Isian label="Barang jadi yang kembali" wajib petunjuk="Wajib dari Master Produk Jadi — inilah yang membuat stok bisa bertambah tepat sasaran.">
+        <FGMaterialSelect value={form.material_id} onChange={(v) => setForm({ ...form, material_id: v })}
+          label={null} testId="ret-material-select" />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Qty retur" htmlFor="ret-qty">
+          <Input id="ret-qty" type="number" min="1" value={form.qty} onChange={e => setForm({ ...form, qty: +e.target.value })} data-testid="ret-qty" />
+        </Isian>
+        <Isian label="Nilai order (Rp)" htmlFor="ret-nilai">
+          <MoneyInput id="ret-nilai" value={form.order_value} onChange={e => setForm({ ...form, order_value: +e.target.value })}
+            placeholder="0" data-testid="ret-order-value" />
+        </Isian>
+      </div>
+      <Isian label="Alasan retur (awal)" htmlFor="ret-alasan">
+        <Textarea id="ret-alasan" rows={2} value={form.initial_reason} onChange={e => setForm({ ...form, initial_reason: e.target.value })}
+          placeholder="Barang tidak sampai / ukuran tidak sesuai / dll." data-testid="ret-reason" />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ─── DETAIL PANEL (full workflow) ─────────────────────────────────────────────
+// ─── DETAIL (popup) + FORM LANGKAH (popup) ───────────────────────────────────
 function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
   const [data, setData] = useState(ret);
-  const [step, setStep] = useState(null); // 'receive' | 'inspect' | 'resolve' | 'cancel' | 'quick'
+  // Dibuka dari tombol "Terima & putuskan" di tabel → langsung form cepat (tanpa kedip popup detail).
+  const [step, setStep] = useState(ret?._openQuick ? 'quick' : null); // 'receive' | 'inspect' | 'resolve' | 'cancel' | 'quick'
   const [form, setForm] = useState({});
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
   const [info, setInfo] = useState('');
 
-  // Aksi cepat dari tabel membuka detail LANGSUNG pada langkah restock.
+  // Aksi cepat dari tabel membuka form "Terima & putuskan" LANGSUNG.
   useEffect(() => {
     if (ret && ret._openQuick) { setStep('quick'); setForm({}); setErr(''); setInfo(''); }
   }, [ret]);
 
-  const reload = async () => {
-    try {
-      const d = await api('GET', `/api/wh/returns/${ret.id}`, token);
-      setData(d);
-    } catch (e) { /* muat ulang gagal — detail yang sudah tampil dibiarkan apa adanya */ }
-  };
-
   const openStep = (s) => { setStep(s); setForm({}); setErr(''); setInfo(''); };
+  const tutupStep = () => { if (!saving) { setStep(null); setErr(''); } };
 
   const doReceive = async () => {
     if (!form.unboxing_condition_notes) { setErr('Catatan unboxing wajib diisi'); return; }
@@ -391,32 +291,36 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
   // 2026-11-02 (K1) — keputusan yang SUDAH dibukukan hanya bisa dibalik: stok keluar
   // berjejak + jurnal pembalik; pekerjaan baru dibuka untuk diputuskan ulang.
   const doReverse = async () => {
-    const reason = window.prompt('Alasan membalik keputusan (wajib) — mis. "Marketing menolak retur, barang dikembalikan ke pembeli":');
-    if (!reason || !reason.trim()) return;
+    const reason = await confirmDialog({
+      title: 'Balik keputusan retur ini?',
+      body: 'Stok yang sudah masuk dikeluarkan lagi (berjejak) dan jurnal pembalik dibuat; pekerjaan dibuka ulang untuk diputuskan.',
+      confirmLabel: 'Balik keputusan', danger: true,
+      input: { label: 'Alasan (wajib)', placeholder: 'mis. Marketing menolak retur, barang dikembalikan ke pembeli', minLength: 1 },
+    });
+    if (!reason || !String(reason).trim()) return;
     setSaving(true); setErr('');
     try {
       const res = await api('POST', `/api/wh/returns/${data.id}/reverse-decision`, token, { reason, reopen: true });
       setData(res.reopened || res.data || data);
       setInfo(res.message || 'Keputusan dibalik');
+      toast.success(res.message || 'Keputusan dibalik');
       onRefresh();
-    } catch (e) { setErr(e.message); }
+    } catch (e) { setErr(e.message); toast.error(e.message); }
     finally { setSaving(false); }
   };
 
   const doCancel = async () => {
-    if (!window.confirm('Batalkan return ini?')) return;
+    if (!(await confirmDialog({ title: 'Batalkan retur ini?', body: `${data.return_code} tidak diproses lagi.`, confirmLabel: 'Batalkan retur', danger: true }))) return;
     setSaving(true);
     try {
       const d = await api('POST', `/api/wh/returns/${data.id}/cancel`, token, { reason: form.reason || 'Dibatalkan manual' });
       setData(d); setStep(null); onRefresh();
-    } catch (e) { alert(e.message); }
+    } catch (e) { setErr(e.message); toast.error(e.message); }
     finally { setSaving(false); }
   };
 
   // ── W4 (sesi #29) — SATU KLIK: terima + inspeksi + selesai + masuk stok ────
-  // Kondisi menentukan lokasi: Baik → ZNA-FG (ikut stok jual), Rusak →
-  // ZNA-KARANTINA (tidak boleh dijual). Backend yang memutuskan lokasinya
-  // supaya tidak ada dua versi aturan.
+  // Kondisi menentukan lokasi: Baik → ZNA-FG (ikut stok jual), Rusak → ZNA-KARANTINA.
   const doQuickRestock = async () => {
     setSaving(true); setErr('');
     try {
@@ -428,6 +332,7 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
       setData(res.data || data);
       setStep(null);
       setInfo(res.message || 'Stok diperbarui');
+      toast.success(res.message || 'Stok diperbarui');
       onRefresh();
     } catch (e) { setErr(e.message); }
     finally { setSaving(false); }
@@ -439,615 +344,379 @@ function DetailPanel({ ret, token, onClose, onRefresh, onNavigate }) {
       const res = await api('POST', `/api/wh/returns/${data.id}/relink`, token, {});
       setData(res.data || data);
       setInfo(res.link_status === 'linked'
-        ? 'Berhasil ditautkan ke master barang — sekarang bisa di-restock.'
+        ? 'Berhasil ditautkan ke master barang — sekarang bisa dimasukkan ke stok.'
         : (res.reason || 'Masih belum bisa ditautkan.'));
     } catch (e) { setErr(e.message); }
     finally { setSaving(false); }
   };
 
   const linked = !!(data.material_id || data.fg_material_id);
-
   const isEditable = !['Resolved', 'Cancelled', 'Reversed'].includes(data.status);
+  const aksiResolve = form.action_taken || data.recommended_action || '';
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
-  return (
-    <div className="fixed inset-0 bg-foreground/40 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
-      <div className="bg-[var(--card-surface)] rounded-t-2xl sm:rounded-2xl shadow-xl w-full sm:max-w-2xl max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="sticky top-0 bg-[var(--card-surface)] border-b border-border px-6 py-4 flex items-start justify-between z-10 rounded-t-2xl">
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-lg font-bold">{data.return_code}</h3>
-              <Badge label={TYPE_LABELS[data.return_type]} colorClass={TYPE_COLORS[data.return_type]} />
-              <Badge label={data.status} colorClass={STATUS_COLORS[data.status]} />
-            </div>
-            <WorkflowBar status={data.status} />
-          </div>
-          <button onClick={onClose} className="p-2 hover:bg-foreground/5 rounded-lg" data-testid="close-detail" aria-label="Tutup detail retur"><X className="w-5 h-5" /></button>
-        </div>
-
-        <div className="px-6 py-4 space-y-5">
-          {/* Info Utama */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-            {[
-              { label: 'No. Order', val: data.order_number || '-' },
-              { label: 'No. Resi', val: data.resi_number || '-' },
-              { label: 'Channel', val: data.channel || '-' },
-              { label: 'Customer', val: data.customer_name || '-' },
-              { label: 'Produk', val: data.product_name || data.sku_code || '-' },
-              { label: 'Qty', val: `${data.qty} pcs` },
-              { label: 'Nilai Order', val: fmtCurrency(data.order_value) },
-              { label: 'Dicatat Tgl', val: fmtDateShort(data.created_at) },
-              { label: 'Oleh', val: data.created_by },
-            ].map(f => (
-              <div key={f.label}>
-                <div className="text-xs text-muted-foreground">{f.label}</div>
-                <div className="font-medium mt-0.5">{f.val}</div>
-              </div>
-            ))}
-          </div>
-          {data.initial_reason && (
-            <div className="bg-foreground/[0.03] rounded-xl p-3">
-              <div className="text-xs text-muted-foreground mb-1">Alasan Awal</div>
-              <div className="text-sm">{data.initial_reason}</div>
-            </div>
-          )}
-
-          {/* ── W4 — TAUTAN MASTER BARANG & EFEK STOK ─────────────────────────
-              Blok ini menjawab pertanyaan yang dulu tidak bisa dijawab layar ini:
-              "barang apa persisnya yang kembali, dan apakah stoknya sudah masuk?" */}
-          <div className="rounded-xl border border-border p-4 space-y-3" data-testid="ret-master-link">
-            <div className="flex items-center gap-2">
-              <Link2 className="w-4 h-4 text-primary" />
-              <span className="text-sm font-semibold">Tautan Master Barang &amp; Stok</span>
-              <span className="ml-auto"><StockBadge ret={data} /></span>
-            </div>
-            {linked ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">Kode master:</span> <span className="ml-1 tabular-nums" data-testid="ret-sku-code">{data.sku_code || '—'}</span></div>
-                <div><span className="text-muted-foreground">Nama:</span> <span className="ml-1">{data.product_name || '—'}</span></div>
-                <div><span className="text-muted-foreground">Kategori:</span> <span className="ml-1">{data.material_category || '—'}</span></div>
-                <div><span className="text-muted-foreground">Warna / Opsi:</span> <span className="ml-1">{[data.material_color, data.material_option].filter(Boolean).join(' · ') || '—'}</span></div>
-                {data.restocked && (
-                  <>
-                    <div><span className="text-muted-foreground">Masuk lokasi:</span>
-                      <span className="ml-1 inline-flex items-center gap-1" data-testid="ret-restock-location">
-                        <MapPin className="w-3 h-3" />{data.restock_location_name || data.restock_location_code || '—'}
-                      </span>
-                    </div>
-                    <div><span className="text-muted-foreground">Kondisi:</span>
-                      <span className={`ml-1 font-medium ${CONDITION_COLORS[data.restock_condition] || ''}`}>{data.restock_condition || '—'}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <div className="flex items-start gap-2 text-sm text-[hsl(var(--warning))] ">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span data-testid="ret-link-reason">{data.link_reason || 'Barang retur ini belum tertaut ke master produk jadi, jadi stok tidak bisa ditambah.'}</span>
-                </div>
-                {(data.link_candidates || []).length > 0 && (
-                  <div className="text-xs text-muted-foreground">
-                    Kandidat barang di pesanan ini:
-                    <ul className="list-disc ml-5 mt-1 space-y-0.5">
-                      {data.link_candidates.map((c, i) => (
-                        <li key={i}>{c.product_name} {c.variation ? `· ${c.variation}` : ''} ({c.quantity} pcs)</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {data.source_marketing_return_id && (
-                  <button onClick={doRelink} disabled={saving}
-                    className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5 inline-flex items-center gap-1 disabled:opacity-50"
-                    data-testid="btn-relink">
-                    <RefreshCw className="w-3.5 h-3.5" /> Coba tautkan ulang ke master
-                  </button>
-                )}
-              </div>
-            )}
-            {data.restock_error && (
-              <div className="text-xs text-[hsl(var(--destructive))] ">Gagal restock: {data.restock_error}</div>
-            )}
-            {info && <div className="text-xs text-[hsl(var(--success))] " data-testid="ret-info">{info}</div>}
-          </div>
-
-          {/* Step: Received */}
-          {data.status !== 'Pending' && (
-            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <PackageOpen className="w-4 h-4 text-[hsl(var(--primary))] " />
-                <span className="text-sm font-semibold text-[hsl(var(--primary))] ">Penerimaan & Unboxing</span>
-                <span className="text-xs text-muted-foreground ml-auto">{fmtDate(data.received_at)} · {data.received_by}</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">Kondisi Kemasan:</span> <span className="ml-1">{data.package_condition || '-'}</span></div>
-                <div><span className="text-muted-foreground">Bukti Foto/Video:</span> <span className="ml-1">{data.unboxing_photo_notes || '-'}</span></div>
-                <div className="sm:col-span-2"><span className="text-muted-foreground">Catatan Unboxing:</span> <span className="ml-1">{data.unboxing_condition_notes}</span></div>
-              </div>
-            </div>
-          )}
-
-          {/* Step: Inspected */}
-          {['Inspected', 'Resolved'].includes(data.status) && (
-            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <ClipboardCheck className="w-4 h-4 text-[hsl(var(--primary))] " />
-                <span className="text-sm font-semibold text-[hsl(var(--primary))] ">Hasil Inspeksi</span>
-                <span className="text-xs text-muted-foreground ml-auto">{fmtDate(data.inspected_at)} · {data.inspected_by}</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Kondisi Item:</span>
-                  <span className={`ml-1 font-medium ${CONDITION_COLORS[data.item_condition] || ''}`}>{data.item_condition || '-'}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Penyebab:</span>
-                  <span className={`ml-1 font-medium ${CAUSE_COLORS[data.return_cause] || ''}`}>{data.return_cause || '-'}</span>
-                </div>
-                {data.cause_detail && <div className="sm:col-span-2"><span className="text-muted-foreground">Detail:</span> <span className="ml-1">{data.cause_detail}</span></div>}
-                <div><span className="text-muted-foreground">Rekomendasi:</span> <span className="ml-1 font-medium">{data.recommended_action || '-'}</span></div>
-              </div>
-            </div>
-          )}
-
-          {/* Step: Resolved */}
-          {data.status === 'Resolved' && (
-            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <PackageCheck className="w-4 h-4 text-[hsl(var(--success))] " />
-                <span className="text-sm font-semibold text-[hsl(var(--success))] ">Resolusi</span>
-                <span className="text-xs text-muted-foreground ml-auto">{fmtDate(data.resolved_at)} · {data.resolved_by}</span>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">Aksi:</span> <span className="ml-1 font-medium">{data.action_taken}</span></div>
-                {data.reshipment_resi && <div><span className="text-muted-foreground">Resi Reshipment:</span> <span className="ml-1 tabular-nums">{data.reshipment_resi}</span></div>}
-                {data.appeal_status && <div><span className="text-muted-foreground">Status Appeal:</span> <span className="ml-1">{data.appeal_status}</span></div>}
-                {data.received_qty != null && <div><span className="text-muted-foreground">Qty Diterima:</span> <span className="ml-1">{data.received_qty} pcs</span></div>}
-                {data.restock_qty > 0 && <div><span className="text-muted-foreground">Qty Restock:</span> <span className="ml-1">{data.restock_qty} pcs</span></div>}
-                {data.marketing_rejected_after_decision && (
-                  <div className="sm:col-span-2 text-xs text-[hsl(var(--warning))] " data-testid="wh-mkt-rejected-after">
-                    Marketing menolak/menghapus retur ini SETELAH keputusan gudang. Bila barang harus keluar lagi,
-                    tekan <b>Balik Keputusan</b> (stok keluar berjejak + jurnal pembalik).
-                  </div>
-                )}
-                <div className="sm:col-span-2 pt-1">
-                  <button onClick={doReverse} disabled={saving}
-                    className="px-3 py-1.5 border border-[hsl(var(--warning)/0.5)] text-[hsl(var(--warning))] rounded-lg text-xs hover:bg-[hsl(var(--warning)/0.1)] disabled:opacity-50"
-                    data-testid="btn-reverse-decision">
-                    Balik Keputusan (jurnal pembalik + stok keluar)
-                  </button>
-                </div>
-                {data.action_notes && <div className="sm:col-span-2"><span className="text-muted-foreground">Catatan:</span> <span className="ml-1">{data.action_notes}</span></div>}
-                {data.source_marketing_return_id && (
-                  <div className="sm:col-span-2 pt-1">
-                    <span className="text-muted-foreground">Retur Toko asal:</span>
-                    <span className="ml-1 tabular-nums text-xs">{data.source_marketing_return_id.slice(0, 8)}…</span>
-                  </div>
-                )}
-              </div>
-
-              {/* RC-FLOW-UX-11b: retur asal Toko selesai di-restock → CTA balik ke Marketing untuk credit note */}
-              {data.source_marketing_return_id && onNavigate && (
-                <div className="mt-3">
-                  <OnwardCTA
-                    onNavigate={onNavigate}
-                    title="Barang Sudah di Restock — Langkah Berikutnya"
-                    actions={[
-                      {
-                        module: 'marketing-after-sales',
-                        params: { tab: 'returns', return_id: data.source_marketing_return_id },
-                        label: 'Terbitkan Credit Note & Refund',
-                        primary: true,
-                        hint: 'Kembali ke portal Toko untuk menerbitkan credit note',
-                        testId: 'onward-issue-credit-note',
-                      },
-                      {
-                        module: 'wms-stock-hub',
-                        params: { tab: 'stock' },
-                        label: 'Cek Stok FG',
-                        hint: 'Verifikasi stok setelah restock',
-                        testId: 'onward-check-stock',
-                      },
-                    ]}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Timeline */}
-          {(data.timeline || []).length > 0 && (
-            <div>
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Timeline</h4>
-              <div className="relative pl-4 space-y-3">
-                <div className="absolute left-1.5 top-0 bottom-0 w-px bg-foreground/10" />
-                {[...(data.timeline || [])].reverse().map((t, i) => (
-                  <div key={i} className="relative flex gap-3">
-                    <div className="absolute -left-3 top-1 w-2 h-2 rounded-full bg-primary/60" />
-                    <div className="ml-3">
-                      <div className="flex items-center gap-2">
-                        <Badge label={t.status} colorClass={STATUS_COLORS[t.status]} />
-                        <span className="text-xs text-muted-foreground">oleh {t.by} · {fmtDate(t.at)}</span>
-                      </div>
-                      {t.note && <p className="text-xs text-muted-foreground mt-0.5">{t.note}</p>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          {isEditable && (
-            <div className="border-t border-border pt-4">
-              <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Lanjutkan Proses</h4>
-              <div className="flex flex-wrap gap-2">
-                {!data.restocked && linked && (
-                  <button onClick={() => openStep('quick')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--success))] text-white rounded-lg text-sm hover:brightness-110" data-testid="btn-quick-restock">
-                    <Zap className="w-4 h-4" /> Terima &amp; Putuskan (1 klik)
-                  </button>
-                )}
-                {data.status === 'Pending' && (
-                  <button onClick={() => openStep('receive')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-receive">
-                    <PackageOpen className="w-4 h-4" /> Terima Barang (Unboxing)
-                  </button>
-                )}
-                {data.status === 'Received' && (
-                  <button onClick={() => openStep('inspect')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-inspect">
-                    <ClipboardCheck className="w-4 h-4" /> Inspeksi Kondisi
-                  </button>
-                )}
-                {data.status === 'Inspected' && (
-                  <button onClick={() => openStep('resolve')} className="flex items-center gap-2 px-4 py-2 bg-[hsl(var(--success))] text-foreground rounded-lg text-sm hover:brightness-110" data-testid="btn-resolve">
-                    <CheckCircle className="w-4 h-4" /> Selesaikan (Resolusi)
-                  </button>
-                )}
-                <button onClick={() => openStep('cancel')} className="flex items-center gap-2 px-3 py-2 border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--destructive))]  rounded-lg text-sm hover:bg-[hsl(var(--destructive)/0.15)] ">
-                  <XCircle className="w-4 h-4" /> Batalkan
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* QUICK RESTOCK form (W4) */}
-          {step === 'quick' && (
-            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-[hsl(var(--success))] flex items-center gap-2">
-                <Zap className="w-4 h-4" /> Terima &amp; Masukkan ke Stok
-              </h4>
-              <p className="text-xs text-muted-foreground">
-                Keputusan gudang dalam satu langkah: barang diterima (qty AKTUAL), diperiksa, lalu diputuskan.
-                Kondisi <strong>Baik</strong> masuk <strong>Area Produk Jadi</strong> (ikut stok jual);
-                kondisi <strong>Rusak</strong> masuk <strong>Area Karantina</strong> (tidak dijual).
-                Untuk menolak (kembalikan ke pembeli) atau membuang, pakai alur Terima → Inspeksi → Selesaikan.
-              </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Kondisi Barang *</label>
-                  <SmartNativeSelect value={form.condition || 'Baik'} onChange={e => setForm({ ...form, condition: e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quick-condition">
-                    {CONDITIONS.map(c => <option key={c} value={c}>{c}{SELLABLE_CONDITIONS.includes(c) ? ' — masuk stok jual' : ' — masuk karantina'}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Qty Aktual Masuk * (pengajuan {data.qty})</label>
-                  <input type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty}
-                    onChange={e => setForm({ ...form, restock_qty: +e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="quick-qty" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan</label>
-                <input value={form.action_notes || ''} onChange={e => setForm({ ...form, action_notes: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Opsional" data-testid="quick-note" />
-              </div>
-              {err && <div className="text-xs text-[hsl(var(--destructive))] " data-testid="quick-err">{err}</div>}
-              <div className="flex gap-2">
-                <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doQuickRestock} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--success))] text-white rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-quick-restock-btn">
-                  {saving ? '...' : 'Masukkan ke Stok'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Inline Step Forms */}
-
-          {/* RECEIVE form */}
-          {step === 'receive' && (
-            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-[hsl(var(--primary))] flex items-center gap-2"><PackageOpen className="w-4 h-4" /> Terima & Unboxing</h4>
-              <div>
-                {/* 2026-11-02 (K1) — qty AKTUAL di paket = batas qty keputusan */}
-                <label className="text-xs text-muted-foreground block mb-1">Qty Aktual Diterima * (pengajuan {data.qty})</label>
-                <input type="number" min="0" value={form.received_qty ?? data.qty}
-                  onChange={e => setForm({ ...form, received_qty: Math.max(0, parseInt(e.target.value || '0', 10)) })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="receive-qty" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Kondisi Kemasan Luar</label>
-                <input value={form.package_condition || ''} onChange={e => setForm({ ...form, package_condition: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Segel utuh / basah / sobek / dll" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Kode / Link Bukti Foto/Video Unboxing</label>
-                <input value={form.unboxing_photo_notes || ''} onChange={e => setForm({ ...form, unboxing_photo_notes: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="IMG_001 / Google Drive link / dll" data-testid="unboxing-photo" />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan Kondisi Saat Unboxing *</label>
-                <textarea value={form.unboxing_condition_notes || ''} onChange={e => setForm({ ...form, unboxing_condition_notes: e.target.value })} rows="3"
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
-                  placeholder="Barang tampak normal, bungkus dalam sobek, item masih berplastik..." data-testid="unboxing-notes" />
-              </div>
-              {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
-              <div className="flex gap-2">
-                <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doReceive} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-receive-btn">
-                  {saving ? '...' : 'Konfirmasi Terima'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* INSPECT form */}
-          {step === 'inspect' && (
-            <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-[hsl(var(--primary))] flex items-center gap-2"><ClipboardCheck className="w-4 h-4" /> Inspeksi Kondisi Item</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Kondisi Item *</label>
-                  <SmartNativeSelect value={form.item_condition || ''} onChange={e => setForm({ ...form, item_condition: e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="inspect-condition">
-                    <option value="">Pilih...</option>
-                    {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
-                  </SmartNativeSelect>
-                </div>
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Penyebab Return *</label>
-                  <SmartNativeSelect value={form.return_cause || ''} onChange={e => setForm({ ...form, return_cause: e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="inspect-cause">
-                    <option value="">Pilih...</option>
-                    {CAUSES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </SmartNativeSelect>
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Detail Penyebab</label>
-                <input value={form.cause_detail || ''} onChange={e => setForm({ ...form, cause_detail: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Jelaskan lebih detail..." />
-              </div>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Rekomendasi Tindakan</label>
-                <SmartNativeSelect value={form.recommended_action || ''} onChange={e => setForm({ ...form, recommended_action: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="inspect-action">
-                  <option value="">Auto (dari penyebab)</option>
-                  {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-                </SmartNativeSelect>
-              </div>
-              {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
-              <div className="flex gap-2">
-                <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doInspect} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--primary))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-inspect-btn">
-                  {saving ? '...' : 'Simpan Inspeksi'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* RESOLVE form */}
-          {step === 'resolve' && (
-            <div className="bg-[hsl(var(--success)/0.15)] border border-[hsl(var(--success)/0.35)]  rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-[hsl(var(--success))] flex items-center gap-2"><CheckCircle className="w-4 h-4" /> Resolusi Return</h4>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Tindakan yang Diambil *</label>
-                <SmartNativeSelect value={form.action_taken || data.recommended_action || ''} onChange={e => setForm({ ...form, action_taken: e.target.value })}
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="resolve-action">
-                  <option value="">Pilih tindakan...</option>
-                  {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-                </SmartNativeSelect>
-              </div>
-
-              {/* Conditional extra fields */}
-              {(form.action_taken || data.recommended_action) === 'Reshipment' && (
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">No. Resi Reshipment</label>
-                  <input value={form.reshipment_resi || ''} onChange={e => setForm({ ...form, reshipment_resi: e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" placeholder="Masukkan resi pengiriman ulang..." data-testid="reshipment-resi" />
-                </div>
-              )}
-              {(form.action_taken || data.recommended_action) === 'Appeal Platform' && (
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Status Appeal</label>
-                  <SmartNativeSelect value={form.appeal_status || ''} onChange={e => setForm({ ...form, appeal_status: e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="appeal-status">
-                    <option value="">Pilih...</option>
-                    {APPEAL_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </SmartNativeSelect>
-                </div>
-              )}
-              {QTY_ACTIONS.includes(form.action_taken || data.recommended_action) && (
-                <div>
-                  <label className="text-xs text-muted-foreground block mb-1">Qty Restock/Karantina (maks. diterima {data.received_qty ?? data.qty})</label>
-                  <input type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty} onChange={e => setForm({ ...form, restock_qty: +e.target.value })}
-                    className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)]" data-testid="restock-qty" />
-                </div>
-              )}
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Catatan Resolusi</label>
-                <textarea value={form.action_notes || ''} onChange={e => setForm({ ...form, action_notes: e.target.value })} rows="2"
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
-                  placeholder="Catatan tambahan tindakan yang diambil..." />
-              </div>
-              {err && <div className="text-xs text-[hsl(var(--destructive))] ">{err}</div>}
-              <div className="flex gap-2">
-                <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doResolve} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--success))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-resolve-btn">
-                  {saving ? '...' : 'Selesaikan'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* CANCEL form */}
-          {step === 'cancel' && (
-            <div className="bg-[hsl(var(--destructive)/0.15)] border border-[hsl(var(--destructive)/0.35)]  rounded-xl p-4 space-y-3">
-              <h4 className="font-semibold text-[hsl(var(--destructive))] flex items-center gap-2"><XCircle className="w-4 h-4" /> Batalkan Return</h4>
-              <div>
-                <label className="text-xs text-muted-foreground block mb-1">Alasan Pembatalan</label>
-                <textarea value={form.reason || ''} onChange={e => setForm({ ...form, reason: e.target.value })} rows="2"
-                  className="w-full border border-border rounded-lg px-3 py-2 text-sm bg-[var(--card-surface)] resize-none"
-                  placeholder="Kenapa return ini dibatalkan?..." />
-              </div>
-              <div className="flex gap-2">
-                <button onClick={() => setStep(null)} className="px-3 py-1.5 border border-border rounded-lg text-sm hover:bg-foreground/5">Batal</button>
-                <button onClick={doCancel} disabled={saving} className="px-4 py-1.5 bg-[hsl(var(--destructive))] text-foreground rounded-lg text-sm hover:brightness-110 disabled:opacity-50" data-testid="confirm-cancel-btn">
-                  {saving ? '...' : 'Ya, Batalkan'}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── RETURNS TABLE ────────────────────────────────────────────────────────────
-function ReturnsTable({ returns, loading, onView, onDelete, onQuickRestock }) {
-  const { page, setPage, totalPages, total, paged } = useClientPagination(returns, 10);
-  if (loading) return <div className="text-center py-10 text-muted-foreground">Memuat...</div>;
-  if (!returns.length) {
+  // Satu popup terbuka pada satu waktu: form langkah menggantikan popup detail; Batal kembali ke detail.
+  if (step === 'quick') {
     return (
-      <div className="text-center py-12 text-muted-foreground" data-testid="wh-ret-empty">
-        <RotateCcw className="w-10 h-10 mx-auto mb-3 opacity-40" />
-        <p className="font-medium">Belum ada retur fisik di daftar ini</p>
-        <p className="text-sm">Retur pembeli dari Marketing masuk ke sini otomatis. Bila ada yang tertinggal, tekan <strong>Tarik Retur dari Marketing</strong> di atas.</p>
-      </div>
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="quick-restock-form"
+        judul={`Terima & putuskan · ${data.return_code}`}
+        keterangan="Barang diterima (qty aktual), diperiksa, lalu diputuskan dalam satu langkah. Baik → Area Produk Jadi (stok jual); Rusak → Area Karantina. Untuk menolak atau membuang, pakai alur Terima → Inspeksi → Selesaikan."
+        onSimpan={doQuickRestock} menyimpan={saving} galat={err} labelSimpan="Masukkan ke stok">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kondisi barang" wajib htmlFor="q-kondisi">
+            <SmartNativeSelect id="q-kondisi" value={form.condition || 'Baik'} onChange={set('condition')} data-testid="quick-condition">
+              {CONDITIONS.map(c => <option key={c} value={c}>{c}{SELLABLE_CONDITIONS.includes(c) ? ' — masuk stok jual' : ' — masuk karantina'}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label={`Qty aktual masuk (pengajuan ${data.qty})`} wajib htmlFor="q-qty">
+            <Input id="q-qty" type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty}
+              onChange={e => setForm({ ...form, restock_qty: +e.target.value })} data-testid="quick-qty" />
+          </Isian>
+        </div>
+        <Isian label="Catatan" htmlFor="q-catatan">
+          <Input id="q-catatan" value={form.action_notes || ''} onChange={set('action_notes')} placeholder="Opsional" data-testid="quick-note" />
+        </Isian>
+        {err && <span className="sr-only" data-testid="quick-err">{err}</span>}
+      </FormPopup>
     );
   }
+  if (step === 'receive') {
+    return (
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="receive-form"
+        judul={`Terima & unboxing · ${data.return_code}`} onSimpan={doReceive} menyimpan={saving} galat={err} labelSimpan="Konfirmasi terima">
+        {/* 2026-11-02 (K1) — qty AKTUAL di paket = batas qty keputusan */}
+        <Isian label={`Qty aktual diterima (pengajuan ${data.qty})`} wajib htmlFor="rcv-qty">
+          <Input id="rcv-qty" type="number" min="0" value={form.received_qty ?? data.qty}
+            onChange={e => setForm({ ...form, received_qty: Math.max(0, parseInt(e.target.value || '0', 10)) })} data-testid="receive-qty" />
+        </Isian>
+        <Isian label="Kondisi kemasan luar" htmlFor="rcv-kemasan">
+          <Input id="rcv-kemasan" value={form.package_condition || ''} onChange={set('package_condition')} placeholder="Segel utuh / basah / sobek / dll." />
+        </Isian>
+        <Isian label="Kode / tautan bukti foto atau video unboxing" htmlFor="rcv-bukti">
+          <Input id="rcv-bukti" value={form.unboxing_photo_notes || ''} onChange={set('unboxing_photo_notes')}
+            placeholder="IMG_001 / tautan Google Drive / dll." data-testid="unboxing-photo" />
+        </Isian>
+        <Isian label="Catatan kondisi saat unboxing" wajib htmlFor="rcv-catatan">
+          <Textarea id="rcv-catatan" rows={3} value={form.unboxing_condition_notes || ''} onChange={set('unboxing_condition_notes')}
+            placeholder="Barang tampak normal, bungkus dalam sobek, item masih berplastik…" data-testid="unboxing-notes" />
+        </Isian>
+      </FormPopup>
+    );
+  }
+  if (step === 'inspect') {
+    return (
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="inspect-form"
+        judul={`Inspeksi kondisi · ${data.return_code}`} onSimpan={doInspect} menyimpan={saving} galat={err} labelSimpan="Simpan inspeksi">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Isian label="Kondisi item" wajib htmlFor="ins-kondisi">
+            <SmartNativeSelect id="ins-kondisi" value={form.item_condition || ''} onChange={set('item_condition')} data-testid="inspect-condition">
+              <option value="">Pilih kondisi</option>
+              {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+          <Isian label="Penyebab retur" wajib htmlFor="ins-penyebab">
+            <SmartNativeSelect id="ins-penyebab" value={form.return_cause || ''} onChange={set('return_cause')} data-testid="inspect-cause">
+              <option value="">Pilih penyebab</option>
+              {CAUSES.map(c => <option key={c} value={c}>{c}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        </div>
+        <Isian label="Detail penyebab" htmlFor="ins-detail">
+          <Input id="ins-detail" value={form.cause_detail || ''} onChange={set('cause_detail')} placeholder="Jelaskan lebih rinci…" />
+        </Isian>
+        <Isian label="Rekomendasi tindakan" htmlFor="ins-rekomendasi">
+          <SmartNativeSelect id="ins-rekomendasi" value={form.recommended_action || ''} onChange={set('recommended_action')} data-testid="inspect-action">
+            <option value="">Otomatis (dari penyebab)</option>
+            {ACTIONS.map(a => <option key={a} value={a}>{actionLabel(a)}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+      </FormPopup>
+    );
+  }
+  if (step === 'resolve') {
+    return (
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="resolve-form"
+        judul={`Selesaikan retur · ${data.return_code}`} onSimpan={doResolve} menyimpan={saving} galat={err} labelSimpan="Selesaikan">
+        <Isian label="Tindakan yang diambil" wajib htmlFor="res-aksi">
+          <SmartNativeSelect id="res-aksi" value={aksiResolve} onChange={set('action_taken')} data-testid="resolve-action">
+            <option value="">Pilih tindakan</option>
+            {ACTIONS.map(a => <option key={a} value={a}>{actionLabel(a)}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        {aksiResolve === 'Reshipment' && (
+          <Isian label="No. resi kirim ulang" htmlFor="res-resi">
+            <Input id="res-resi" value={form.reshipment_resi || ''} onChange={set('reshipment_resi')}
+              placeholder="Resi pengiriman ulang" data-testid="reshipment-resi" />
+          </Isian>
+        )}
+        {aksiResolve === 'Appeal Platform' && (
+          <Isian label="Status banding" htmlFor="res-banding">
+            <SmartNativeSelect id="res-banding" value={form.appeal_status || ''} onChange={set('appeal_status')} data-testid="appeal-status">
+              <option value="">Pilih status</option>
+              {APPEAL_STATUSES.map(s => <option key={s} value={s}>{APPEAL_LABEL[s] || s}</option>)}
+            </SmartNativeSelect>
+          </Isian>
+        )}
+        {QTY_ACTIONS.includes(aksiResolve) && (
+          <Isian label={`Qty masuk stok / karantina (maks. diterima ${data.received_qty ?? data.qty})`} htmlFor="res-qty">
+            <Input id="res-qty" type="number" min="1" max={data.received_qty ?? data.qty} value={form.restock_qty ?? data.received_qty ?? data.qty}
+              onChange={e => setForm({ ...form, restock_qty: +e.target.value })} data-testid="restock-qty" />
+          </Isian>
+        )}
+        <Isian label="Catatan resolusi" htmlFor="res-catatan">
+          <Textarea id="res-catatan" rows={2} value={form.action_notes || ''} onChange={set('action_notes')}
+            placeholder="Catatan tambahan tindakan yang diambil…" />
+        </Isian>
+      </FormPopup>
+    );
+  }
+  if (step === 'cancel') {
+    return (
+      <FormPopup open onClose={tutupStep} ukuran="pendek" testId="cancel-form"
+        judul={`Batalkan retur · ${data.return_code}`} onSimpan={doCancel} menyimpan={saving} galat={err} labelSimpan="Batalkan retur">
+        <Isian label="Alasan pembatalan" htmlFor="btl-alasan">
+          <Textarea id="btl-alasan" rows={2} value={form.reason || ''} onChange={set('reason')} placeholder="Kenapa retur ini dibatalkan?" />
+        </Isian>
+      </FormPopup>
+    );
+  }
+
   return (
-    <div className="bg-[var(--card-surface)] rounded-xl border border-border overflow-x-auto">
-      <table className="w-full text-sm min-w-[900px]">
-        <thead className="bg-[var(--glass-bg)] border-b border-border">
-          <tr>
-            <th className="text-left px-4 py-3 text-muted-foreground font-medium">Kode</th>
-            <th className="text-left px-4 py-3 text-muted-foreground font-medium">Asal</th>
-            <th className="text-left px-4 py-3 text-muted-foreground font-medium">No. Order/Resi</th>
-            <th className="text-left px-4 py-3 text-muted-foreground font-medium">Barang (master)</th>
-            <th className="text-center px-4 py-3 text-muted-foreground font-medium">Qty</th>
-            <th className="text-center px-4 py-3 text-muted-foreground font-medium">Status</th>
-            <th className="text-left px-4 py-3 text-muted-foreground font-medium">Efek Stok</th>
-            <th className="text-right px-4 py-3 text-muted-foreground font-medium">Tanggal</th>
-            <th className="px-4 py-3" />
-          </tr>
-        </thead>
-        <tbody>
-          {paged.map(r => <ReturnRow key={r.id} ret={r} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />)}
-        </tbody>
-      </table>
-      <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
+    <DetailPopup open onClose={onClose} testId="wh-return-detail"
+      judul={data.return_code}
+      keterangan={`Tahap: ${statusLabel(data.status)}`}
+      status={<><TipeRetur type={data.return_type} /><StatusRetur status={data.status} /></>}
+      aksi={isEditable ? (
+        <>
+          {!data.restocked && linked && (
+            <Button size="sm" variant="success" onClick={() => openStep('quick')} data-testid="btn-quick-restock"><Zap />Terima &amp; putuskan</Button>
+          )}
+          {data.status === 'Pending' && (
+            <Button size="sm" onClick={() => openStep('receive')} data-testid="btn-receive"><PackageOpen />Terima barang</Button>
+          )}
+          {data.status === 'Received' && (
+            <Button size="sm" onClick={() => openStep('inspect')} data-testid="btn-inspect"><ClipboardCheck />Inspeksi kondisi</Button>
+          )}
+          {data.status === 'Inspected' && (
+            <Button size="sm" variant="success" onClick={() => openStep('resolve')} data-testid="btn-resolve"><CheckCircle />Selesaikan</Button>
+          )}
+          <Button size="sm" variant="destructive" onClick={() => openStep('cancel')} data-testid="btn-cancel-return"><XCircle />Batalkan</Button>
+        </>
+      ) : data.status === 'Resolved' ? (
+        <Button size="sm" variant="outline" onClick={doReverse} disabled={saving} data-testid="btn-reverse-decision">
+          <Undo2 />Balik keputusan
+        </Button>
+      ) : null}>
+      <WorkflowBar status={data.status} />
+      {err && <Notice tone="danger" title={err} />}
+      {info && <Notice tone="success" icon={CheckCircle} testId="ret-info" title={info} />}
+      <dl className="grid gap-x-6 sm:grid-cols-2">
+        <BarisDetail label="No. order">{data.order_number || '-'}</BarisDetail>
+        <BarisDetail label="No. resi">{data.resi_number || '-'}</BarisDetail>
+        <BarisDetail label="Channel">{data.channel || '-'}</BarisDetail>
+        <BarisDetail label="Pembeli">{data.customer_name || '-'}</BarisDetail>
+        <BarisDetail label="Produk">{data.product_name || data.sku_code || '-'}</BarisDetail>
+        <BarisDetail label="Qty">{data.qty} pcs</BarisDetail>
+        <BarisDetail label="Nilai order">{fmtCurrency(data.order_value)}</BarisDetail>
+        <BarisDetail label="Dicatat">{fmtDateShort(data.created_at)}{data.created_by ? ` · ${data.created_by}` : ''}</BarisDetail>
+        {data.initial_reason && <BarisDetail label="Alasan awal">{data.initial_reason}</BarisDetail>}
+      </dl>
+
+      {/* ── W4 — TAUTAN MASTER BARANG & EFEK STOK: "barang apa persisnya yang kembali, dan sudah masuk stok?" */}
+      <section className="space-y-2" data-testid="ret-master-link">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link2 className="h-4 w-4 text-primary" />
+          <p className="text-sm font-medium">Tautan master barang &amp; stok</p>
+          <StockBadge ret={data} />
+        </div>
+        {linked ? (
+          <dl className="grid gap-x-6 sm:grid-cols-2">
+            <BarisDetail label="Kode master"><span className="tabular-nums" data-testid="ret-sku-code">{data.sku_code || '—'}</span></BarisDetail>
+            <BarisDetail label="Nama">{data.product_name || '—'}</BarisDetail>
+            <BarisDetail label="Kategori">{data.material_category || '—'}</BarisDetail>
+            <BarisDetail label="Warna / opsi">{[data.material_color, data.material_option].filter(Boolean).join(' · ') || '—'}</BarisDetail>
+            {data.restocked && (
+              <>
+                <BarisDetail label="Masuk lokasi">
+                  <span className="inline-flex items-center gap-1" data-testid="ret-restock-location">
+                    <MapPin className="h-3 w-3" />{data.restock_location_name || data.restock_location_code || '—'}
+                  </span>
+                </BarisDetail>
+                <BarisDetail label="Kondisi"><span className={`font-medium ${CONDITION_TONE[data.restock_condition] || ''}`}>{data.restock_condition || '—'}</span></BarisDetail>
+              </>
+            )}
+          </dl>
+        ) : (
+          <Notice tone="warning" title={<span data-testid="ret-link-reason">{data.link_reason || 'Barang retur ini belum tertaut ke master produk jadi, jadi stok tidak bisa ditambah.'}</span>}
+            action={data.source_marketing_return_id && (
+              <Button size="sm" variant="outline" onClick={doRelink} disabled={saving} data-testid="btn-relink">
+                <RefreshCw />Coba tautkan ulang
+              </Button>
+            )}>
+            {(data.link_candidates || []).length > 0 && (
+              <>
+                Kandidat barang di pesanan ini:
+                <ul className="ml-5 mt-1 list-disc space-y-0.5">
+                  {data.link_candidates.map((c, i) => (
+                    <li key={i}>{c.product_name} {c.variation ? `· ${c.variation}` : ''} ({c.quantity} pcs)</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </Notice>
+        )}
+        {data.restock_error && <p className="text-xs text-[hsl(var(--danger-text))]">Gagal masuk stok: {data.restock_error}</p>}
+      </section>
+
+      {data.status !== 'Pending' && data.received_at && (
+        <section className="space-y-1">
+          <p className="text-sm font-medium">Penerimaan &amp; unboxing <span className="font-normal text-muted-foreground">· {fmtDate(data.received_at)} · {data.received_by}</span></p>
+          <dl className="grid gap-x-6 sm:grid-cols-2">
+            <BarisDetail label="Kondisi kemasan">{data.package_condition || '-'}</BarisDetail>
+            <BarisDetail label="Bukti foto/video">{data.unboxing_photo_notes || '-'}</BarisDetail>
+            <BarisDetail label="Catatan unboxing">{data.unboxing_condition_notes || '-'}</BarisDetail>
+          </dl>
+        </section>
+      )}
+
+      {['Inspected', 'Resolved'].includes(data.status) && (
+        <section className="space-y-1">
+          <p className="text-sm font-medium">Hasil inspeksi <span className="font-normal text-muted-foreground">· {fmtDate(data.inspected_at)} · {data.inspected_by}</span></p>
+          <dl className="grid gap-x-6 sm:grid-cols-2">
+            <BarisDetail label="Kondisi item"><span className={`font-medium ${CONDITION_TONE[data.item_condition] || ''}`}>{data.item_condition || '-'}</span></BarisDetail>
+            <BarisDetail label="Penyebab">{data.return_cause || '-'}</BarisDetail>
+            {data.cause_detail && <BarisDetail label="Detail">{data.cause_detail}</BarisDetail>}
+            <BarisDetail label="Rekomendasi">{actionLabel(data.recommended_action)}</BarisDetail>
+          </dl>
+        </section>
+      )}
+
+      {data.status === 'Resolved' && (
+        <section className="space-y-1">
+          <p className="text-sm font-medium">Resolusi <span className="font-normal text-muted-foreground">· {fmtDate(data.resolved_at)} · {data.resolved_by}</span></p>
+          <dl className="grid gap-x-6 sm:grid-cols-2">
+            <BarisDetail label="Tindakan">{actionLabel(data.action_taken)}</BarisDetail>
+            {data.reshipment_resi && <BarisDetail label="Resi kirim ulang"><span className="tabular-nums">{data.reshipment_resi}</span></BarisDetail>}
+            {data.appeal_status && <BarisDetail label="Status banding">{APPEAL_LABEL[data.appeal_status] || data.appeal_status}</BarisDetail>}
+            {data.received_qty != null && <BarisDetail label="Qty diterima">{data.received_qty} pcs</BarisDetail>}
+            {data.restock_qty > 0 && <BarisDetail label="Qty masuk stok">{data.restock_qty} pcs</BarisDetail>}
+            {data.action_notes && <BarisDetail label="Catatan">{data.action_notes}</BarisDetail>}
+            {data.source_marketing_return_id && (
+              <BarisDetail label="Retur Toko asal"><span className="tabular-nums">{data.source_marketing_return_id.slice(0, 8)}…</span></BarisDetail>
+            )}
+          </dl>
+          {data.marketing_rejected_after_decision && (
+            <Notice tone="warning" testId="wh-mkt-rejected-after" title="Marketing menolak/menghapus retur ini setelah keputusan gudang">
+              Bila barang harus keluar lagi, tekan <b>Balik keputusan</b> (stok keluar berjejak + jurnal pembalik).
+            </Notice>
+          )}
+          {/* RC-FLOW-UX-11b: retur asal Toko selesai → kembali ke Marketing untuk credit note */}
+          {data.source_marketing_return_id && onNavigate && (
+            <OnwardCTA
+              onNavigate={onNavigate}
+              title="Barang sudah masuk stok — langkah berikutnya"
+              actions={[
+                { module: 'marketing-after-sales', params: { tab: 'returns', return_id: data.source_marketing_return_id },
+                  label: 'Terbitkan credit note & refund', primary: true,
+                  hint: 'Kembali ke portal Toko untuk menerbitkan credit note', testId: 'onward-issue-credit-note' },
+                { module: 'wms-stock-hub', params: { tab: 'stock' }, label: 'Cek stok barang jadi',
+                  hint: 'Periksa stok setelah barang masuk', testId: 'onward-check-stock' },
+              ]}
+            />
+          )}
+        </section>
+      )}
+
+      {(data.timeline || []).length > 0 && (
+        <section className="space-y-2">
+          <p className="text-sm font-medium">Riwayat</p>
+          <ol className="space-y-2 border-l border-[var(--glass-border)] pl-4">
+            {[...(data.timeline || [])].reverse().map((t, i) => (
+              <li key={i} className="text-sm">
+                <span className="inline-flex flex-wrap items-center gap-2">
+                  <StatusRetur status={t.status} />
+                  <span className="text-xs text-muted-foreground">oleh {t.by} · {fmtDate(t.at)}</span>
+                </span>
+                {t.note && <p className="mt-0.5 text-xs text-muted-foreground">{t.note}</p>}
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+    </DetailPopup>
+  );
+}
+
+// ─── TABEL RETUR ──────────────────────────────────────────────────────────────
+const KOLOM_UNDUH = [
+  { label: 'Kode', nilai: (r) => r.return_code },
+  { label: 'Asal', nilai: (r) => (r.source_marketing_return_id ? 'Marketing' : 'Manual') },
+  { label: 'Tipe', nilai: (r) => TYPE_LABELS[r.return_type] || r.return_type },
+  { label: 'No. order', nilai: (r) => r.order_number || '' },
+  { label: 'No. resi', nilai: (r) => r.resi_number || '' },
+  { label: 'Channel', nilai: (r) => r.channel || '' },
+  { label: 'Pembeli', nilai: (r) => r.customer_name || '' },
+  { label: 'Barang', nilai: (r) => r.product_name || '' },
+  { label: 'Kode master', nilai: (r) => r.sku_code || '' },
+  { label: 'Qty', nilai: (r) => Number(r.qty || 0) },
+  { label: 'Status', nilai: (r) => statusLabel(r.status) },
+  { label: 'Efek stok', nilai: (r) => efekStok(r).label },
+  { label: 'Tanggal', nilai: (r) => fmtDateShort(r.created_at) },
+];
+
+function ReturnsTable({ returns, loading, onView, onDelete, onQuickRestock, kosong }) {
+  const { page, setPage, totalPages, total, paged, pageSize } = useClientPagination(returns, 25);
+  if (loading && !returns.length) return <p className="py-6 text-center text-sm text-muted-foreground">Memuat…</p>;
+  const kolom = [
+    { kunci: 'kode', label: 'Kode', hp: 'judul', isi: (r) => <span className="font-medium tabular-nums" data-testid={`ret-row-${r.id}`}>{r.return_code}</span> },
+    { kunci: 'asal', label: 'Asal', isi: (r) => <SourceBadge ret={r} /> },
+    { kunci: 'order', label: 'No. order / resi', hp: 'keterangan', isi: (r) => r.order_number || r.resi_number || '-' },
+    { kunci: 'barang', label: 'Barang (master)', isi: (r) => (
+      <div className="min-w-0">
+        <p className="font-medium">{r.product_name || '-'}</p>
+        <p className="text-xs tabular-nums text-muted-foreground">{r.sku_code || '—'}</p>
+      </div>) },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => <span className="tabular-nums">{r.qty || 0}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <StatusRetur status={r.status} /> },
+    { kunci: 'stok', label: 'Efek stok', isi: (r) => <StockBadge ret={r} /> },
+    { kunci: 'tgl', label: 'Tanggal', isi: (r) => <span className="whitespace-nowrap">{fmtDateShort(r.created_at)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => {
+      // 2026-11-02 (K1) — hanya pekerjaan yang BELUM diputuskan
+      const canQuick = !r.restocked && ['Pending', 'Received', 'Inspected'].includes(r.status) && (r.material_id || r.fg_material_id);
+      return (
+        <div className="flex items-center justify-end gap-1.5">
+          {canQuick && onQuickRestock && (
+            <Button size="sm" variant="success" onClick={() => onQuickRestock(r)} title="Terima (qty aktual) & putuskan masuk stok"
+              data-testid={`quick-restock-${r.id}`}>
+              <Zap />Terima &amp; putuskan
+            </Button>
+          )}
+          {r.status === 'Pending' && !r.restocked && (
+            <Button size="icon-sm" variant="ghost" onClick={() => onDelete(r)} aria-label={`Hapus retur ${r.return_code}`}
+              title="Hapus retur" data-testid={`del-ret-${r.id}`}>
+              <Trash2 className="text-[hsl(var(--danger-text))]" />
+            </Button>
+          )}
+        </div>
+      );
+    } },
+  ];
+  return (
+    <div className="space-y-3">
+      <TabelData kolom={kolom} baris={paged} onKlikBaris={onView} testId="wh-returns-table" kosong={kosong} />
+      {total > 0 && <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />}
     </div>
   );
 }
 
-// ─── DASHBOARD TAB ────────────────────────────────────────────────────────────
-function DashboardTab({ token, onView, onDelete, onQuickRestock }) {
-  const [summary, setSummary] = useState(null);
-  const [actionItems, setActionItems] = useState([]);
-  const [loading, setLoading] = useState(true);
+const TAMPILAN = [
+  { key: 'dashboard', label: 'Ringkasan' },
+  { key: 'expedition', label: 'Tipe 1 — Ekspedisi' },
+  { key: 'customer', label: 'Tipe 2 — Pembeli' },
+  { key: 'all', label: 'Semua retur' },
+];
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [s, items] = await Promise.all([
-        api('GET', '/api/wh/returns/summary', token),
-        // Items yang perlu aksi (Pending + Received + Inspected)
-        api('GET', '/api/wh/returns?status=Pending', token).then(d =>
-          api('GET', '/api/wh/returns?status=Received', token).then(d2 =>
-            api('GET', '/api/wh/returns?status=Inspected', token).then(d3 =>
-              [...(Array.isArray(d) ? d : []), ...(Array.isArray(d2) ? d2 : []), ...(Array.isArray(d3) ? d3 : [])]
-            )
-          )
-        )
-      ]);
-      setSummary(s);
-      setActionItems(items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20));
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  return (
-    <div className="space-y-5">
-      {/* Stat cards */}
-      {summary && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-          {[
-            { label: 'Total Return', val: summary.total, color: 'slate', icon: Package },
-            { label: 'Pending', val: summary.pending, color: 'amber', icon: Clock },
-            { label: 'Diterima', val: summary.received, color: 'sky', icon: PackageOpen },
-            { label: 'Diinspeksi', val: summary.inspected, color: 'violet', icon: ClipboardCheck },
-            { label: 'Selesai', val: summary.resolved, color: 'emerald', icon: CheckCircle },
-            { label: 'Perlu Aksi', val: summary.action_needed, color: 'red', icon: AlertTriangle },
-          ].map(s => (
-            <div key={s.label} className={`border rounded-xl p-3 ${tone(s.color).surface}`}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <s.icon className={`w-3.5 h-3.5 ${tone(s.color).text}`} />
-                <span className="text-xs text-muted-foreground">{s.label}</span>
-              </div>
-              <div className={`text-2xl font-bold ${tone(s.color).text}`}>{s.val}</div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Type breakdown */}
-      {summary && (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="bg-[hsl(var(--warning)/0.15)] border border-[hsl(var(--warning)/0.35)]  rounded-xl p-4 flex items-center gap-3">
-            <Truck className="w-8 h-8 text-[hsl(var(--warning))] " />
-            <div>
-              <div className="text-xs text-muted-foreground">Tipe 1 — Ekspedisi</div>
-              <div className="text-2xl font-bold text-[hsl(var(--warning))] ">{summary.expedition_returns}</div>
-              <div className="text-xs text-muted-foreground">paket kembali dari ekspedisi</div>
-            </div>
-          </div>
-          <div className="bg-[hsl(var(--primary)/0.15)] border border-[hsl(var(--primary)/0.35)]  rounded-xl p-4 flex items-center gap-3">
-            <RotateCcw className="w-8 h-8 text-[hsl(var(--primary))] " />
-            <div>
-              <div className="text-xs text-muted-foreground">Tipe 2 — Customer</div>
-              <div className="text-2xl font-bold text-[hsl(var(--primary))] ">{summary.customer_refunds}</div>
-              <div className="text-xs text-muted-foreground">customer request refund</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Perlu Aksi */}
-      {actionItems.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-[hsl(var(--warning))] " />
-            Perlu Tindakan Segera ({actionItems.length})
-          </h3>
-          <ReturnsTable returns={actionItems} loading={loading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />
-        </div>
-      )}
-
-      {!loading && actionItems.length === 0 && (
-        <div className="text-center py-12 text-muted-foreground">
-          <CheckCircle className="w-12 h-12 mx-auto mb-3 text-[hsl(var(--success))] opacity-50" />
-          <p className="font-medium">Semua return sudah ditangani!</p>
-          <p className="text-sm">Tidak ada yang perlu tindakan saat ini.</p>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── ROOT COMPONENT ───────────────────────────────────────────────────────────
+// ─── ROOT ─────────────────────────────────────────────────────────────────────
 export default function WHReturnsModule({ token, onNavigate }) {
   const [tab, setTab]         = useState('dashboard');
   const [returns, setReturns] = useState([]);
@@ -1061,13 +730,31 @@ export default function WHReturnsModule({ token, onNavigate }) {
   const [gap, setGap] = useState(null);
   const [pulling, setPulling] = useState(false);
   const [pullMsg, setPullMsg] = useState('');
+  // Ringkasan (dulu komponen tab sendiri) — diangkat ke sini supaya bisa dimuat ulang & diunduh dari toolbar.
+  const [summary, setSummary] = useState(null);
+  const [actionItems, setActionItems] = useState([]);
+  const [dashLoading, setDashLoading] = useState(true);
 
   const loadGap = useCallback(async () => {
     try { setGap(await api('GET', '/api/wh/returns/marketing-gap', token)); }
-    catch (e) { /* spanduk jembatan bersifat informatif — jangan matikan layar */ }
+    catch (e) { /* ringkasan jembatan bersifat informatif — jangan matikan layar */ }
   }, [token]);
-
   useEffect(() => { loadGap(); }, [loadGap]);
+
+  const loadDashboard = useCallback(async () => {
+    setDashLoading(true);
+    try {
+      const [s, items] = await Promise.all([
+        api('GET', '/api/wh/returns/summary', token),
+        // Item yang perlu aksi (Menunggu + Diterima + Diinspeksi)
+        Promise.all(['Pending', 'Received', 'Inspected'].map((st) => api('GET', `/api/wh/returns?status=${st}`, token)))
+          .then((ls) => ls.flatMap((d) => (Array.isArray(d) ? d : []))),
+      ]);
+      setSummary(s);
+      setActionItems(items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 20));
+    } catch (e) { console.error(e); }
+    finally { setDashLoading(false); }
+  }, [token]);
 
   const load = useCallback(async (type, extra = {}) => {
     setLoading(true);
@@ -1083,37 +770,41 @@ export default function WHReturnsModule({ token, onNavigate }) {
   }, [token]);
 
   useEffect(() => {
+    if (tab === 'dashboard')  loadDashboard();
     if (tab === 'expedition') load('expedition_return', { status: statusF, search });
     if (tab === 'customer')   load('customer_refund',   { status: statusF, search });
     if (tab === 'all')        load('', { status: statusF, search });
-  }, [tab, statusF, search, load]);
-
-  const onView = (ret) => setSelected(ret);
-  const onDelete = async (ret) => {
-    if (!window.confirm(`Hapus return ${ret.return_code}?`)) return;
-    try { await api('DELETE', `/api/wh/returns/${ret.id}`, token); refreshCurrent(); }
-    catch (e) { alert(e.message); }
-  };
+  }, [tab, statusF, search, load, loadDashboard]);
 
   const refreshCurrent = () => {
     loadGap();
+    if (tab === 'dashboard')  loadDashboard();
     if (tab === 'expedition') load('expedition_return', { status: statusF, search });
     if (tab === 'customer')   load('customer_refund',   { status: statusF, search });
     if (tab === 'all')        load('', { status: statusF, search });
   };
 
-  // Aksi cepat dari baris tabel: buka detail langsung pada langkah restock supaya
-  // kondisi (Baik/Rusak) & qty tetap DIPILIH manusia — bukan diam-diam ditebak.
+  const onView = (ret) => setSelected(ret);
+  const onDelete = async (ret) => {
+    if (!(await confirmDialog({ title: `Hapus retur ${ret.return_code}?`, body: 'Pekerjaan retur yang belum diterima ini dihapus.', confirmLabel: 'Hapus', danger: true }))) return;
+    try {
+      await api('DELETE', `/api/wh/returns/${ret.id}`, token);
+      toast.success(`Retur ${ret.return_code} dihapus.`);
+      refreshCurrent();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  // Aksi cepat dari baris tabel: langsung ke form "Terima & putuskan" supaya kondisi (Baik/Rusak) & qty
+  // tetap DIPILIH manusia — bukan diam-diam ditebak.
   const onQuickRestock = (ret) => setSelected({ ...ret, _openQuick: true });
 
   // Tarik retur pembeli dari Marketing (idempoten; aman ditekan berulang).
   const pullFromMarketing = async () => {
     setPulling(true); setPullMsg('');
     try {
-      const res = await api('POST', '/api/wh/returns/sync-marketing', token,
-        { dry_run: false });
+      const res = await api('POST', '/api/wh/returns/sync-marketing', token, { dry_run: false });
       const d = res.data || {};
-      // 2026-11-02 (K1) — tarik HANYA membuat pekerjaan Pending; stok menunggu keputusan.
+      // 2026-11-02 (K1) — tarik HANYA membuat pekerjaan Menunggu; stok menunggu keputusan.
       setPullMsg(`Diperiksa ${d.scanned} retur Marketing · ${d.created} pekerjaan baru (menunggu paket) · `
         + `${d.skipped} perlu dipilih produknya`
         + (d.failed ? ` · ${d.failed} gagal` : ''));
@@ -1122,139 +813,133 @@ export default function WHReturnsModule({ token, onNavigate }) {
     finally { setPulling(false); }
   };
 
-  const TABS = [
-    { id: 'dashboard',  label: 'Dashboard',         icon: BarChartIcon },
-    { id: 'expedition', label: 'Tipe 1 — Ekspedisi', icon: Truck },
-    { id: 'customer',   label: 'Tipe 2 — Customer',  icon: RotateCcw },
-    { id: 'all',        label: 'Semua Return',        icon: Package },
-  ];
-
-  // Quick create shortcuts
   const quickCreate = (type) => { setCreateType(type); setShowCreate(true); };
+  const ringkasan = tab === 'dashboard';
+  const barisUnduh = ringkasan ? actionItems : returns;
+  const kosongDaftar = (
+    <EmptyState icon={RotateCcw} testId="wh-ret-empty" title="Belum ada retur fisik di daftar ini"
+      description='Retur pembeli dari Marketing masuk ke sini otomatis. Bila ada yang tertinggal, tekan "Tarik retur dari Marketing".' />
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h2 className="text-2xl font-bold">Retur Fisik & Restock (Gudang)</h2>
-          <p className="text-muted-foreground text-sm mt-1">Proses fisik: penerimaan barang, inspeksi kondisi, dan resolusi (restock / karantina / reshipment / dispose)</p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <button onClick={pullFromMarketing} disabled={pulling}
-            className="flex items-center gap-2 px-3 py-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))]  rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.2)] disabled:opacity-50"
-            data-testid="btn-pull-marketing">
-            <DownloadCloud className={`w-4 h-4 ${pulling ? 'animate-pulse' : ''}`} />
-            {pulling ? 'Menarik...' : 'Tarik Retur dari Marketing'}
-          </button>
-          <button onClick={() => quickCreate('expedition_return')}
-            className="flex items-center gap-2 px-3 py-2 bg-[hsl(var(--warning)/0.1)] border border-[hsl(var(--warning)/0.35)] text-[hsl(var(--warning))]  rounded-lg text-sm hover:bg-[hsl(var(--warning)/0.2)]" data-testid="btn-add-expedition">
-            <Truck className="w-4 h-4" /> + Tipe 1
-          </button>
-          <button onClick={() => quickCreate('customer_refund')}
-            className="flex items-center gap-2 px-3 py-2 bg-[hsl(var(--primary)/0.1)] border border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))]  rounded-lg text-sm hover:bg-[hsl(var(--primary)/0.2)]" data-testid="btn-add-customer">
-            <RotateCcw className="w-4 h-4" /> + Tipe 2
-          </button>
-          <button onClick={() => { setCreateType(null); setShowCreate(true); }}
-            className="flex items-center gap-2 px-4 py-2 bg-primary text-foreground rounded-lg text-sm font-medium hover:brightness-110" data-testid="btn-add-return">
-            <Plus className="w-4 h-4" /> Catat Return
-          </button>
-        </div>
-      </div>
-
-      {/* ── W4 — SPANDUK JEMBATAN MARKETING → GUDANG ───────────────────────────
-          Angka-angka ini dulu tidak pernah terlihat siapa pun: retur pembeli
-          menumpuk di Marketing sementara antrean gudang kosong permanen. */}
-      {gap && (
-        <div className="rounded-xl border border-border p-4 bg-[var(--card-surface)]" data-testid="mkt-bridge-banner">
-          <div className="flex flex-wrap items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Store className="w-4 h-4 text-[hsl(var(--primary))] " />
-              <span className="text-sm font-semibold">Jembatan Retur Marketing → Gudang</span>
+    <PageLayout testId="wh-returns-module" title="Retur Fisik"
+      subtitle="Terima, periksa, dan putuskan barang retur: masuk stok, karantina, kirim ulang, atau dibuang."
+      actions={<>
+        <Button variant="outline" onClick={pullFromMarketing} disabled={pulling} data-testid="btn-pull-marketing">
+          <DownloadCloud className={pulling ? 'animate-pulse' : ''} />{pulling ? 'Menarik…' : 'Tarik retur dari Marketing'}
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" data-testid="btn-add-typed">Catat per tipe<ChevronDown /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => quickCreate('expedition_return')} data-testid="btn-add-expedition">
+              <Truck className="mr-2 h-4 w-4" />Tipe 1 — paket kembali dari ekspedisi
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => quickCreate('customer_refund')} data-testid="btn-add-customer">
+              <RotateCcw className="mr-2 h-4 w-4" />Tipe 2 — pembeli minta refund
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <Button onClick={() => { setCreateType(null); setShowCreate(true); }} data-testid="btn-add-return"><Plus />Catat retur</Button>
+      </>}
+      filters={<>
+        <FilterChips className="w-full sm:w-auto" options={TAMPILAN} value={tab} onChange={setTab} hideWhenEmpty={false} testId="wh-ret-tab" />
+        {!ringkasan && (
+          <>
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari kode, no. order, resi, pembeli"
+                className="pl-8" data-testid="wh-ret-search" />
             </div>
-            <div className="flex flex-wrap gap-4 text-sm">
-              <span><span className="text-muted-foreground">Retur pembeli:</span> <strong data-testid="gap-mkt-total">{gap.marketing_returns_total}</strong></span>
-              <span><span className="text-muted-foreground">Sudah terhubung:</span> <strong data-testid="gap-bridged">{gap.already_bridged}</strong></span>
-              <span><span className="text-muted-foreground">Belum ditarik:</span>
-                <strong className={gap.pending_bridge > 0 ? 'text-[hsl(var(--warning))]  ml-1' : 'text-[hsl(var(--success))]  ml-1'}
-                  data-testid="gap-pending">{gap.pending_bridge}</strong>
-              </span>
-              <span><span className="text-muted-foreground">Sudah masuk stok:</span> <strong className="text-[hsl(var(--success))] " data-testid="gap-restocked">{gap.restocked}</strong></span>
-              {gap.needs_link > 0 && (
-                <span><span className="text-muted-foreground">Perlu dipilih produknya:</span> <strong className="text-[hsl(var(--destructive))] " data-testid="gap-needs-link">{gap.needs_link}</strong></span>
-              )}
-            </div>
+            <SmartNativeSelect value={statusF} onChange={e => setStatusF(e.target.value)} aria-label="Status retur"
+              className="w-full sm:w-44" wrapperClassName="w-full sm:w-44" data-testid="wh-ret-status-filter">
+              <option value="">Semua status</option>
+              {Object.entries(STATUS_META).map(([s, m]) => <option key={s} value={s}>{m.label}</option>)}
+            </SmartNativeSelect>
+          </>
+        )}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <TombolUnduh namaBerkas={ringkasan ? 'retur-perlu-tindakan' : 'retur-fisik'} namaLembar="Retur fisik"
+            baris={barisUnduh} kolom={KOLOM_UNDUH} testId="wh-ret-unduh" />
+          <Button variant="outline" size="icon" onClick={refreshCurrent} disabled={loading || (ringkasan && dashLoading)}
+            title="Muat ulang" aria-label="Muat ulang" data-testid="wh-ret-refresh">
+            <RefreshCw className={loading || (ringkasan && dashLoading) ? 'animate-spin' : ''} />
+          </Button>
+        </div>
+      </>}
+      summary={<>
+        {/* W4 — jembatan Marketing → Gudang: retur pembeli yang belum punya pekerjaan fisik di sini. */}
+        {gap && (
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" data-testid="mkt-bridge-banner">
+            <span className="font-medium">Retur dari Marketing</span>
+            <span><span className="text-muted-foreground">Retur pembeli </span><strong className="tabular-nums" data-testid="gap-mkt-total">{gap.marketing_returns_total}</strong></span>
+            <span><span className="text-muted-foreground">Sudah terhubung </span><strong className="tabular-nums" data-testid="gap-bridged">{gap.already_bridged}</strong></span>
+            <span><span className="text-muted-foreground">Belum ditarik </span>
+              <strong className={`tabular-nums ${gap.pending_bridge > 0 ? 'text-[hsl(var(--warning-text))]' : ''}`} data-testid="gap-pending">{gap.pending_bridge}</strong>
+            </span>
+            <span><span className="text-muted-foreground">Sudah masuk stok </span><strong className="tabular-nums" data-testid="gap-restocked">{gap.restocked}</strong></span>
+            {gap.needs_link > 0 && (
+              <span><span className="text-muted-foreground">Perlu dipilih produknya </span><strong className="tabular-nums text-[hsl(var(--danger-text))]" data-testid="gap-needs-link">{gap.needs_link}</strong></span>
+            )}
+          </p>
+        )}
+        {pullMsg && <Notice tone="info" icon={Info} testId="pull-msg" title={pullMsg} />}
+        {ringkasan && summary && summary.total > 0 && (
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-testid="wh-ret-stats">
+            <StatTile label="Total retur" value={summary.total}
+              sub={`Tipe 1 ekspedisi ${summary.expedition_returns} · tipe 2 pembeli ${summary.customer_refunds}`} />
+            <StatTile label="Perlu tindakan" value={summary.action_needed} accent={summary.action_needed > 0 ? 'warning' : 'default'}
+              sub={`Menunggu ${summary.pending} · diterima ${summary.received} · diinspeksi ${summary.inspected}`} />
+            <StatTile label="Selesai" value={summary.resolved} sub="Sudah diputuskan (masuk stok, karantina, kirim ulang, dll.)" />
+            <StatTile label="Lainnya" value={Math.max(0, summary.total - summary.action_needed - summary.resolved)}
+              sub="Dibatalkan atau keputusan dibalik" />
           </div>
-          {pullMsg && <p className="text-xs text-muted-foreground mt-2" data-testid="pull-msg">{pullMsg}</p>}
-        </div>
+        )}
+      </>}
+      footer={(
+        // RC-FLOW-UX — setelah barang retur diterima → cek/perbarui stok (Alur 8 selesai)
+        <OnwardCTA
+          onNavigate={onNavigate}
+          title="Setelah barang retur diterima"
+          actions={[
+            { module: 'wms-stock-hub', label: 'Lihat & sesuaikan stok', icon: Package, primary: true, hint: 'Barang retur layak jual masuk kembali ke stok' },
+          ]}
+        />
+      )}>
+      {ringkasan ? (
+        dashLoading && !summary ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat ringkasan…</p>
+        ) : actionItems.length > 0 ? (
+          <section className="space-y-2">
+            {/* Daftar dibatasi 20 terbaru — judul menyebut jumlah sebenarnya (dulu jumlah yang ditampilkan saja). */}
+            <p className="text-sm font-medium">
+              Perlu tindakan ({summary?.action_needed ?? actionItems.length})
+              {(summary?.action_needed ?? 0) > actionItems.length && <span className="font-normal text-muted-foreground"> · menampilkan {actionItems.length} terbaru</span>}
+            </p>
+            <ReturnsTable returns={actionItems} loading={dashLoading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} kosong={kosongDaftar} />
+          </section>
+        ) : (
+          <EmptyState icon={CheckCircle} title="Semua retur sudah ditangani"
+            description={gap?.pending_bridge > 0
+              ? `Tidak ada pekerjaan di gudang, tetapi ${gap.pending_bridge} retur pembeli di Marketing belum ditarik.`
+              : 'Tidak ada yang perlu tindakan saat ini.'}
+            action={gap?.pending_bridge > 0 ? <Button variant="outline" onClick={pullFromMarketing} disabled={pulling}><DownloadCloud />Tarik retur dari Marketing</Button> : null} />
+        )
+      ) : (
+        <ReturnsTable returns={returns} loading={loading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} kosong={kosongDaftar} />
       )}
 
-      {/* RC-FLOW-UX — onward CTA: setelah barang retur diterima → cek/perbarui stok (Alur 8 selesai) */}
-      <OnwardCTA
-        onNavigate={onNavigate}
-        title="Setelah Barang Retur Diterima"
-        actions={[
-          { module: 'wms-stock-hub', label: 'Lihat & Sesuaikan Stok', icon: Package, primary: true, hint: 'Barang retur layak jual masuk kembali ke stok' },
-        ]}
-      />
-
-      {/* Tabs */}
-      <div className="flex items-center gap-1 border-b border-border overflow-x-auto pb-0">
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            data-testid={`wh-ret-tab-${t.id}`}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition whitespace-nowrap -mb-px ${
-              tab === t.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}>
-            <t.icon className="w-4 h-4" />
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Toolbar (only for non-dashboard tabs) */}
-      {tab !== 'dashboard' && (
-        <div className="flex flex-wrap gap-3 items-center">
-          <div className="flex items-center gap-2 border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] flex-1 min-w-48">
-            <Search className="w-4 h-4 text-muted-foreground" />
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Cari kode, no. order, resi, customer..."
-              className="flex-1 bg-transparent text-sm focus:outline-none" data-testid="wh-ret-search" />
-            {search && <button onClick={() => setSearch('')}><X className="w-4 h-4 text-muted-foreground" /></button>}
-          </div>
-          <SmartNativeSelect value={statusF} onChange={e => setStatusF(e.target.value)} className="border border-border rounded-lg px-3 py-2 bg-[var(--card-surface)] text-sm" data-testid="wh-ret-status-filter">
-            <option value="">Semua Status</option>
-            {['Pending', 'Received', 'Inspected', 'Resolved', 'Cancelled', 'Reversed'].map(s => <option key={s} value={s}>{s}</option>)}
-          </SmartNativeSelect>
-          <button onClick={refreshCurrent} className="p-2 border border-border rounded-lg hover:bg-foreground/5"><RefreshCw className="w-4 h-4" /></button>
-        </div>
-      )}
-
-      {/* Tab Content */}
-      {tab === 'dashboard'  && <DashboardTab token={token} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />}
-      {tab === 'expedition' && <ReturnsTable returns={returns} loading={loading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />}
-      {tab === 'customer'   && <ReturnsTable returns={returns} loading={loading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />}
-      {tab === 'all'        && <ReturnsTable returns={returns} loading={loading} onView={onView} onDelete={onDelete} onQuickRestock={onQuickRestock} />}
-
-      {/* Detail Panel */}
       {selected && (
         <DetailPanel ret={selected} token={token} onClose={() => setSelected(null)}
           onRefresh={() => { setSelected(null); refreshCurrent(); }} onNavigate={onNavigate} />
       )}
 
-      {/* Create Modal */}
       {showCreate && (
         <CreateModal token={token} defaultType={createType}
           onClose={() => setShowCreate(false)}
           onSaved={(ret) => { setShowCreate(false); setSelected(ret); refreshCurrent(); }} />
       )}
-    </div>
-  );
-}
-
-// Inline icon
-function BarChartIcon({ className }) {
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="12" width="4" height="8" /><rect x="10" y="8" width="4" height="12" /><rect x="17" y="4" width="4" height="16" />
-    </svg>
+    </PageLayout>
   );
 }
