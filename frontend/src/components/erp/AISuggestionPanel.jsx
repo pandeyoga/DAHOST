@@ -65,12 +65,12 @@ export default function AISuggestionPanel({ suggestion, fields, decideUrl, heade
   };
 
   return (
-    <div className="rounded-lg border border-[hsl(var(--primary)/0.6)] bg-[hsl(var(--primary)/0.5)] p-3 space-y-2" data-testid={testId}>
+    <div className="rounded-[var(--radius-md)] border border-[hsl(var(--primary)/0.3)] bg-[hsl(var(--primary)/0.06)] p-3 space-y-2" data-testid={testId}>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-[hsl(var(--primary))] flex items-center gap-1">
+        <p className="text-sm font-medium text-[hsl(var(--primary))] flex items-center gap-1">
           <Bot size={13} /> Usulan AI — belum mengubah data resmi sebelum diterima
         </p>
-        <Badge variant="outline" className="text-xs">{STATUS_LABEL[suggestion.status] || suggestion.status}</Badge>
+        <Badge variant="outline" className="text-xs">{STATUS_LABEL[suggestion.status] || 'Menunggu'}</Badge>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -106,22 +106,22 @@ export default function AISuggestionPanel({ suggestion, fields, decideUrl, heade
         <div className="flex flex-wrap gap-2 pt-1">
           {!editing ? (
             <>
-              <Button size="sm" className="h-7 text-xs" onClick={() => decide('accept')} disabled={!!busy} data-testid={`${testId}-accept`}>
-                {busy === 'accept' ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Check size={12} className="mr-1" />} Terima
+              <Button size="sm" variant="success" onClick={() => decide('accept')} disabled={!!busy} data-testid={`${testId}-accept`}>
+                {busy === 'accept' ? <Loader2 className="animate-spin" /> : <Check />} Terima
               </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { setDraft({}); setEditing(true); }} disabled={!!busy} data-testid={`${testId}-modify`}>
-                <Pencil size={12} className="mr-1" /> Ubah
+              <Button size="sm" variant="outline" onClick={() => { setDraft({}); setEditing(true); }} disabled={!!busy} data-testid={`${testId}-modify`}>
+                <Pencil /> Ubah
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs text-[hsl(var(--danger-text))]" onClick={() => decide('reject')} disabled={!!busy} data-testid={`${testId}-reject`}>
-                {busy === 'reject' ? <Loader2 size={12} className="mr-1 animate-spin" /> : <X size={12} className="mr-1" />} Tolak
+              <Button size="sm" variant="destructive" onClick={() => decide('reject')} disabled={!!busy} data-testid={`${testId}-reject`}>
+                {busy === 'reject' ? <Loader2 className="animate-spin" /> : <X />} Tolak
               </Button>
             </>
           ) : (
             <>
-              <Button size="sm" className="h-7 text-xs" onClick={() => decide('modify')} disabled={!!busy || Object.keys(draft).length === 0} data-testid={`${testId}-save`}>
-                {busy === 'modify' ? <Loader2 size={12} className="mr-1 animate-spin" /> : <Check size={12} className="mr-1" />} Simpan perubahan
+              <Button size="sm" variant="success" onClick={() => decide('modify')} disabled={!!busy || Object.keys(draft).length === 0} data-testid={`${testId}-save`}>
+                {busy === 'modify' ? <Loader2 className="animate-spin" /> : <Check />} Simpan perubahan
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setEditing(false)} disabled={!!busy}>Batal</Button>
+              <Button size="sm" variant="outline" onClick={() => setEditing(false)} disabled={!!busy}>Batal</Button>
             </>
           )}
         </div>
