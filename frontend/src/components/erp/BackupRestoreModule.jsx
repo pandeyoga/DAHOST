@@ -394,6 +394,11 @@ export default function BackupRestoreModule({ token }) {
           <Database />{processing === 'create' ? 'Membuat…' : 'Buat backup'}
         </Button>
       )}
+      filters={<FilterChips value={tab} onChange={(k) => setTab(k || 'backup')} hideWhenEmpty={false} testId="backup-tab"
+        ariaLabel="Bagian backup" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
+          { key: 'backup', label: 'Backup & pemulihan', count: backups.length },
+          { key: 'collections', label: 'Koleksi database' },
+        ]} />}
       tools={<>
         <input
           type="file"
@@ -450,11 +455,6 @@ export default function BackupRestoreModule({ token }) {
         </Notice>
       )}
 
-      <FilterChips value={tab} onChange={(k) => setTab(k || 'backup')} hideWhenEmpty={false} testId="backup-tab"
-        ariaLabel="Bagian backup" className="w-full min-w-0 flex-wrap overflow-visible pb-0 sm:w-auto" options={[
-          { key: 'backup', label: 'Backup & pemulihan', count: backups.length },
-          { key: 'collections', label: 'Koleksi database' },
-        ]} />
 
       {tab === 'collections' && <DatabaseCollectionsPanel token={token} />}
 
