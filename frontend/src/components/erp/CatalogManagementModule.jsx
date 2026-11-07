@@ -573,24 +573,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
   return (
     <PageLayout testId="catalog-management" title="Manajemen katalog"
       subtitle="Katalog per toko, isi itemnya, dan stok jual yang dihitung langsung dari gudang barang jadi."
-      actions={pageAction}
-      summary={dashboard && (
-        // Stats — 2026-11-06 (Tahap 2): dihitung server dari ISI katalog yang boleh Anda lihat, dengan stok
-        // jual LIVE; item yang belum tertaut master dihitung terpisah (summary?.unlinked).
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="catalog-stock-tiles">
-          <StatTile label="Item aktif" value={angka(sm.total_items)}
-            sub={[sm.catalogs ? `di ${sm.catalogs} katalog aktif` : null,
-              dashboard.summary?.unlinked ? `${angka(dashboard.summary.unlinked)} belum tertaut master` : null]
-              .filter(Boolean).join(' · ') || 'Item aktif di katalog aktif'}
-            testId="catalog-stock-total" />
-          <StatTile label="Tersedia" value={angka(sm.in_stock)} accent="success"
-            sub={`${persen(sm.in_stock || 0, sm.total_items || 0)} dari item aktif`} />
-          <StatTile label="Stok menipis" value={angka(sm.low_stock)} accent="warning"
-            sub="Stok jual di bawah batas peringatan" />
-          <StatTile label="Stok habis" value={angka(sm.out_of_stock)} accent="danger"
-            sub="Stok jual di gudang 0" testId="catalog-stock-out" />
-        </div>
-      )}>
+      actions={pageAction}>
       <Tabs value={tab} onValueChange={setTab}>
         <div className="flex flex-wrap items-center gap-3">
           <TabsList className={TAB_LIST_CLASS}>
@@ -619,6 +602,18 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
               {tombolMuat(reloadCatalogs, loading, 'catalog-refresh')}
             </>} />
 
+          {dashboard && (
+            // Ringkasan stok satu kalimat — sumber sama dengan kartu di tab "Ringkasan stok" (stok jual LIVE,
+            // item aktif di katalog aktif yang boleh Anda lihat); item belum tertaut master = summary?.unlinked.
+            <p className="text-sm text-muted-foreground" data-testid="catalog-stock-sentence">
+              <b className="text-foreground">{angka(sm.total_items)}</b> item aktif di {angka(sm.catalogs)} katalog aktif ·{' '}
+              <b className="text-foreground">{angka(sm.in_stock)}</b> tersedia ·{' '}
+              <b className={sm.low_stock ? 'text-[hsl(var(--warning-text))]' : 'text-foreground'}>{angka(sm.low_stock)}</b> stok menipis ·{' '}
+              <b className={sm.out_of_stock ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}>{angka(sm.out_of_stock)}</b> stok habis
+              {dashboard.summary?.unlinked ? <> · {angka(dashboard.summary.unlinked)} belum tertaut master</> : null}
+              {' '}(stok jual dihitung langsung dari gudang barang jadi).
+            </p>
+          )}
           {loading && catalogs.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">Memuat katalog…</p>
           ) : (
@@ -733,6 +728,7 @@ export default function CatalogManagementModule({ token, moduleId, initialTab })
 function StockSummaryTab({ dashboard, onReload, tombolMuat }) {
   if (!dashboard) return <p className="py-10 text-center text-sm text-muted-foreground">Memuat ringkasan stok…</p>;
   const s = dashboard.summary || {};
+  const sm = s;
   const plat = dashboard.platform_breakdown || [];
   const rendah = dashboard.low_stock_items || [];
   const totalMasalah = (s.low_stock || 0) + (s.out_of_stock || 0);
@@ -759,18 +755,28 @@ function StockSummaryTab({ dashboard, onReload, tombolMuat }) {
   ];
   return (
     <>
-      <Toolbar
-        filters={(
-          <p className="text-sm text-muted-foreground">
-            Stok jual dihitung langsung dari gudang barang jadi untuk {angka(s.total_items)} item aktif di {angka(s.catalogs)} katalog.
-            {dashboard.last_sync?.synced_at && ` Sinkron terakhir ${jam(dashboard.last_sync.synced_at)}.`}
-          </p>
-        )}
-        tools={tombolMuat(onReload, false, 'catalog-stock-refresh')} />
+      {/* Stats — 2026-11-06 (Tahap 2): dihitung server dari ISI katalog yang boleh Anda lihat, dengan stok jual LIVE;
+          item yang belum tertaut master dihitung terpisah (summary?.unlinked). */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="catalog-stock-tiles">
+        <StatTile label="Item aktif" value={angka(sm.total_items)}
+          sub={[sm.catalogs ? `di ${sm.catalogs} katalog aktif` : null,
+            s.unlinked ? `${angka(s.unlinked)} belum tertaut master` : null]
+            .filter(Boolean).join(' · ') || 'Item aktif di katalog aktif'}
+          testId="catalog-stock-total" />
+        <StatTile label="Tersedia" value={angka(sm.in_stock)} accent="success"
+          sub={`${persen(sm.in_stock || 0, sm.total_items || 0)} dari item aktif`} />
+        <StatTile label="Stok menipis" value={angka(sm.low_stock)} accent="warning"
+          sub="Stok jual di bawah batas peringatan" />
+        <StatTile label="Stok habis" value={angka(sm.out_of_stock)} accent="danger"
+          sub="Stok jual di gudang 0" testId="catalog-stock-out" />
+      </div>
 
       <section className="space-y-2" data-testid="catalog-stock-platform">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-base font-semibold">Per platform</p>
+          <div className="flex items-center gap-2">
+          {dashboard.last_sync?.synced_at && <span className="text-xs text-muted-foreground">Sinkron terakhir {jam(dashboard.last_sync.synced_at)}</span>}
+          {tombolMuat(onReload, false, 'catalog-stock-refresh')}
           <TombolUnduh namaBerkas="stok-katalog-per-platform" namaLembar="Per platform" baris={plat} testId="catalog-platform-unduh"
             kolom={[
               { label: 'Platform', nilai: (p) => labelPlatform(p.platform) },
@@ -780,6 +786,7 @@ function StockSummaryTab({ dashboard, onReload, tombolMuat }) {
               { label: 'Stok habis', nilai: (p) => p.out_of_stock || 0 },
               { label: 'Belum tertaut master', nilai: (p) => p.unlinked || 0 },
             ]} />
+          </div>
         </div>
         <TabelData kolom={kolomPlatform} baris={plat} kunci={(p) => p.platform} testId="catalog-platform-table"
           kosong={<EmptyState title="Belum ada item aktif" description="Isi katalog lewat tab Isi dari master." />} />
