@@ -273,7 +273,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                 {videos.map((v, idx) => {
                   const yid = ytId(v.url);
                   return (
-                    <GlassCard key={idx} className="flex items-center gap-3 p-2" data-testid={`ref-video-${idx}`}>
+                    <div key={idx} className="flex items-center gap-3 rounded-lg border border-border p-2" data-testid={`ref-video-${idx}`}>
                       {yid ? <img src={`https://img.youtube.com/vi/${yid}/default.jpg`} alt="yt" className="w-16 h-12 rounded object-cover" />
                            : <div className="w-16 h-12 rounded bg-foreground/10 flex items-center justify-center"><Video className="w-5 h-5 text-muted-foreground" /></div>}
                       <div className="flex-1 space-y-1">
@@ -281,7 +281,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                         <GlassInput value={v.url} onChange={(e) => updateVideo(idx, { url: e.target.value })} placeholder="https://youtu.be/... atau link Drive" data-testid={`ref-video-${idx}-url`} />
                       </div>
                       <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeVideo(idx)} title="Hapus video" aria-label="Hapus video" data-testid={`ref-video-${idx}-remove`}><Trash2 className="w-4 h-4" /></Button>
-                    </GlassCard>
+                    </div>
                   );
                 })}
                 {videos.length === 0 && (
