@@ -12,11 +12,11 @@ export default function MarketingKOLHub(props) {
     <HubTabs
       hubId="marketing-kol-hub"
       title="KOL & Kreator"
-      subtitle="Kelola KOL/kreator, permintaan kolaborasi, dan leaderboard performa."
+      subtitle="Kelola KOL/kreator, permintaan kolaborasi, dan peringkat performa."
       tabs={[
         { key: 'manage', label: 'Kelola KOL', Component: KOLCreatorModule },
-        { key: 'requests', label: 'Permintaan Kreator', Component: KREATORRequestModule },
-        { key: 'leaderboard', label: 'Leaderboard', Component: KOLLeaderboardModule },
+        { key: 'requests', label: 'Permintaan kreator', Component: KREATORRequestModule },
+        { key: 'leaderboard', label: 'Peringkat', Component: KOLLeaderboardModule },
       ]}
       {...props}
     />

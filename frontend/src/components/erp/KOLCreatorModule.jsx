@@ -1,69 +1,69 @@
 /**
- * KOL & Creator Management Module (Phase 5)
- * Admin view: Daftar Creator, Performa Live, Catalog & Requests, Leaderboard
+ * Kelola KOL (tab di KOL & Kreator, Portal Toko) — daftar kreator, performa live, permintaan produk, peringkat,
+ * rapor mingguan.
+ *
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (judul disembunyikan di hub); lima tampilan dipilih dengan pil penyaring
+ * (dulu deret tab buatan sendiri = tab di dalam tab); daftar kreator = tabel (dulu kartu besar per kreator) + rincian
+ * popup; form kreator & sesi = FormPopup (dulu jendela buatan sendiri); tolak permintaan = confirmDialog berisi alasan
+ * (dulu prompt peramban); bulan peringkat = pilihan bulan (dulu input bulan bawaan); setiap tabel bisa diunduh.
+ * Panggilan API, isian, dan isi yang dikirim tidak berubah.
  */
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { confirmDialog } from '@/components/ui/confirm-dialog';
-import SmartNativeSelect from '@/components/ui/smart-native-select';
-import { Users, Video, ShoppingBag, Trophy, Plus, Edit2, Trash2, Check, X, RefreshCw,
-  ChevronDown, Star, TrendingUp, Eye, Package, Search, Filter, Target, Award,
-  UserPlus, Settings, ExternalLink, BarChart2, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Users, Video, ShoppingBag, Trophy, BarChart2, Plus, Pencil, Trash2, Check, X, Target, Package, Search, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Progress } from '@/components/ui/progress';
 import { MoneyInput } from '@/components/ui/money-input';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import FilterChips from '@/components/ui/filter-chips';
+import DatePicker from '@/components/ui/date-picker';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
 import { todayWIB, thisMonthWIB } from '@/lib/waktu';
+import { formatDateID } from '@/lib/format';
+import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
 import PaginationBar from './PaginationBar';
+import PageLayout from './layout/PageLayout';
+import { EmptyState, Notice, StatusBadge } from './moduleAtoms';
+import { monthOptions } from './finance/PeriodPicker';
 import CreatorIncentivePanel from './marketing/CreatorIncentivePanel';
 import CreatorWeeklyReportPanel from './marketing/CreatorWeeklyReportPanel';
-import { AccountBadge, getPlatformConfig } from './marketing/AccountBadge';
-import { ActiveAccountBar } from './marketing/ActiveAccountBar';
-import { useActiveMarketingAccount } from '@/hooks/useActiveMarketingAccount';
-import PaginationLite, { useClientPagination } from '@/components/ui/pagination-lite';
+import { getPlatformConfig } from './marketing/AccountBadge';
 
 const API = process.env.REACT_APP_BACKEND_URL;
 
-// ─── helpers ─────────────────────────────────────────────────────────────────
+// ─── pembantu ───────────────────────────────────────────────────────────────
 const fmt = (n) => new Intl.NumberFormat('id-ID').format(n || 0);
 const fmtRp = (n) => `Rp ${fmt(n)}`;
-
-const PLATFORM_COLORS = {
-  shopee: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] ',
-  tiktokshop: 'bg-black/30 text-[hsl(var(--primary))] border-[hsl(var(--primary)/0.35)] ',
-  tokopedia: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
+const tgl = (v) => (v ? formatDateID(String(v).slice(0, 10)) : '—');
+const STATUS = {
+  active: ['Aktif', 'success'], inactive: ['Nonaktif', 'muted'],
+  pending: ['Menunggu', 'warning'], approved: ['Disetujui', 'success'], rejected: ['Ditolak', 'danger'],
 };
-
-const STATUS_BADGE = {
-  active: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
-  inactive: 'bg-muted text-muted-foreground border-border ',
-  pending: 'bg-[hsl(var(--warning)/0.12)] text-[hsl(var(--warning-text))] border-[hsl(var(--warning)/0.35)] ',
-  approved: 'bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border-[hsl(var(--success)/0.35)] ',
-  rejected: 'bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] border-[hsl(var(--destructive)/0.35)] ',
-};
-
-function Badge({ cls, children }) {
-  return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}>
-      {children}
-    </span>
-  );
-}
+const Lencana = ({ s }) => <StatusBadge status={s} label={(STATUS[s] || [s || '—'])[0]} tone={(STATUS[s] || [])[1]} />;
+const TIPE = { new: 'Kreator baru', kontrak: 'Kreator kontrak', continue: 'Kreator lanjutan' };
+const labelPlatform = (p) => (getPlatformConfig(p).label !== 'Platform' ? getPlatformConfig(p).label : (p ? p.charAt(0).toUpperCase() + p.slice(1) : '—'));
 
 function KPIBar({ label, value, target, unit = '' }) {
   const pct = target ? Math.min(100, Math.round((value / target) * 100)) : 0;
-  const color = pct >= 80 ? 'bg-[hsl(var(--success-strong))]' : pct >= 50 ? 'bg-[hsl(var(--warning))]' : 'bg-[hsl(var(--destructive-strong))]';
   return (
-    <div>
-      <div className="flex justify-between text-xs mb-1">
+    <div className="space-y-1">
+      <div className="flex justify-between gap-2 text-xs">
         <span className="text-muted-foreground">{label}</span>
-        <span className="text-foreground font-medium">{unit}{fmt(value)} / {unit}{fmt(target)} ({pct}%)</span>
+        <span className="font-medium tabular-nums">{unit}{fmt(value)} / {unit}{fmt(target)} ({pct}%)</span>
       </div>
-      <div className="h-1.5 rounded-full bg-foreground/10">
-        <div className={`h-full rounded-full ${color} transition-all`} style={{ width: `${pct}%` }} />
-      </div>
+      <Progress value={pct} className="h-1.5" />
     </div>
   );
 }
 
-// ─── Creator Form Modal ───────────────────────────────────────────────────────
+// ─── Form kreator ───────────────────────────────────────────────────────────
 function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
   const isEdit = !!editCreator;
   const [form, setForm] = useState({
@@ -71,9 +71,8 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
     creator_code: editCreator?.creator_code || '',
     login_email: editCreator?.login_email || '',
     login_password: '',
-    // SESI #34 — tipe kreator & domisili. Kreator tipe `new` BELUM punya akun
-    // portal: pemilik menegaskan datanya diinput manual dari portal marketing,
-    // jadi email/password boleh kosong untuk tipe ini.
+    // SESI #34 — tipe kreator & domisili. Kreator tipe `new` BELUM punya akun portal (input manual dari portal
+    // marketing), jadi email/password boleh kosong untuk tipe ini.
     creator_type: editCreator?.creator_type || 'new',
     domicile: editCreator?.domicile || '',
     domicile_detail: editCreator?.domicile_detail || '',
@@ -84,11 +83,11 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
     notes: editCreator?.notes || '',
   });
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
   const setKpi = (k, v) => setForm(f => ({ ...f, kpi_targets: { ...f.kpi_targets, [k]: Number(v) } }));
   const setPlatform = (k, v) => setForm(f => ({ ...f, platforms: { ...f.platforms, [k]: v } }));
-
   const toggleAccount = (id) => {
     const ids = form.assigned_account_ids.includes(id)
       ? form.assigned_account_ids.filter(x => x !== id)
@@ -96,23 +95,12 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
     set('assigned_account_ids', ids);
   };
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!form.name || !form.creator_code) {
-      toast.error('Nama dan kode creator wajib diisi');
-      return;
-    }
-    // Akun portal hanya wajib untuk kreator kontrak/continue. Tipe `new` sengaja
-    // boleh tanpa akun (keputusan pemilik) — tetapi kalau emailnya diisi,
-    // passwordnya harus ada, kalau tidak akunnya mustahil dipakai login.
-    if (form.creator_type !== 'new' && !form.login_email) {
-      toast.error('Kreator kontrak/continue butuh email login untuk akses portal');
-      return;
-    }
-    if (!isEdit && form.login_email && !form.login_password) {
-      toast.error('Email diisi — password wajib minimal 6 karakter');
-      return;
-    }
+  async function handleSubmit() {
+    setGalat('');
+    if (!form.name || !form.creator_code) { setGalat('Nama dan kode kreator wajib diisi.'); return; }
+    // Akun portal hanya wajib untuk kreator kontrak/lanjutan; bila email diisi, sandi harus ada.
+    if (form.creator_type !== 'new' && !form.login_email) { setGalat('Kreator kontrak/lanjutan butuh email login untuk akses portal.'); return; }
+    if (!isEdit && form.login_email && !form.login_password) { setGalat('Email diisi — sandi wajib minimal 6 karakter.'); return; }
     setSaving(true);
     try {
       const url = isEdit ? `${API}/api/marketing/kol/creators/${editCreator.id}` : `${API}/api/marketing/kol/creators`;
@@ -122,137 +110,88 @@ function CreatorFormModal({ token, accounts, onClose, onSaved, editCreator }) {
       const r = await fetch(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Gagal menyimpan');
-      toast.success(isEdit ? 'Creator diupdate' : 'Creator berhasil dibuat');
+      toast.success(isEdit ? 'Kreator disimpan.' : 'Kreator dibuat.');
       onSaved();
-    } catch (err) { toast.error(err.message); }
+    } catch (err) { setGalat(err.message); }
     finally { setSaving(false); }
   }
 
   return (
-    <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4 overflow-auto">
-      <div className="bg-[hsl(var(--card))] border border-foreground/10 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-auto">
-        <div className="p-4 border-b border-foreground/10 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{isEdit ? 'Edit Creator' : 'Tambah Creator Baru'}</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={20} /></button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Nama Creator *</label>
-              <input data-testid="creator-name-input" value={form.name} onChange={e => set('name', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="Ayu Dewi" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Kode Creator *</label>
-              <input data-testid="creator-code-input" value={form.creator_code} onChange={e => set('creator_code', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="KOL-001" />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Tipe Kreator *</label>
-              <SmartNativeSelect data-testid="creator-type-select" value={form.creator_type}
-                onChange={e => set('creator_type', e.target.value)}
-                className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                <option value="new">Kreator New (tanpa akun portal)</option>
-                <option value="kontrak">Kreator Kontrak (dapat insentif)</option>
-                <option value="continue">Kreator Continue (dapat insentif)</option>
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Domisili (Kota/Kab.)</label>
-              <input data-testid="creator-domicile-input" value={form.domicile}
-                onChange={e => set('domicile', e.target.value)}
-                className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
-                placeholder="Bandung" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Alamat Domisili</label>
-              <input data-testid="creator-domicile-detail-input" value={form.domicile_detail}
-                onChange={e => set('domicile_detail', e.target.value)}
-                className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
-                placeholder="Kec. Coblong, Jl. ..." />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">
-                Email Login {form.creator_type === 'new' ? '(opsional)' : '*'}
-              </label>
-              <input data-testid="creator-email-input" type="email" value={form.login_email} onChange={e => set('login_email', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="creator@email.com" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">{isEdit ? 'Password Baru (kosongkan jika tidak diubah)' : 'Password *'}</label>
-              <input data-testid="creator-password-input" type="password" value={form.login_password} onChange={e => set('login_password', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="Min 6 karakter" />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">No. HP</label>
-              <input value={form.phone} onChange={e => set('phone', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="08..." />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">TikTok Handle</label>
-              <input value={form.platforms?.tiktok || ''} onChange={e => setPlatform('tiktok', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="@handle" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Shopee Handle</label>
-              <input value={form.platforms?.shopee || ''} onChange={e => setPlatform('shopee', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="nama_toko" />
-            </div>
-          </div>
-          {/* KPI Targets */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Target KPI Bulanan</label>
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Revenue (Rp)</label>
-                <MoneyInput unstyled value={form.kpi_targets.monthly_revenue} onChange={e => setKpi('monthly_revenue', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="50.000.000" />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Sesi Live</label>
-                <input type="number" value={form.kpi_targets.monthly_sessions} onChange={e => setKpi('monthly_sessions', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="12" />
-              </div>
-              <div>
-                <label className="block text-xs text-muted-foreground mb-1">Total Penonton</label>
-                <input type="number" value={form.kpi_targets.monthly_viewers} onChange={e => setKpi('monthly_viewers', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="80000" />
-              </div>
-            </div>
-          </div>
-          {/* Assign Accounts */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Assign ke Akun</label>
-            <div className="flex flex-wrap gap-2">
-              {accounts.map(acc => (
-                <button
-                  key={acc.id}
-                  type="button"
-                  onClick={() => toggleAccount(acc.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs border transition-all ${
-                    form.assigned_account_ids.includes(acc.id)
-                      ? 'bg-[hsl(var(--primary)/0.3)] border-[hsl(var(--primary)/0.35)] text-[hsl(var(--primary))] '
-                      : 'bg-foreground/5 border-foreground/10 text-muted-foreground hover:border-foreground/20'
-                  }`}
-                >
-                  {acc.account_name}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Catatan</label>
-            <textarea value={form.notes} onChange={e => set('notes', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm resize-none" rows={2} placeholder="Catatan tambahan..." />
-          </div>
-          <div className="flex gap-3 pt-2">
-            <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5 transition-colors">Batal</button>
-            <button data-testid="save-creator-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors disabled:opacity-50">
-              {saving ? 'Menyimpan...' : isEdit ? 'Simpan Perubahan' : 'Buat Creator'}
-            </button>
-          </div>
-        </form>
+    <FormPopup open onClose={onClose} ukuran="panjang" judul={isEdit ? 'Ubah kreator' : 'Tambah kreator baru'}
+      onSimpan={handleSubmit} menyimpan={saving} galat={galat} labelSimpan={isEdit ? 'Simpan perubahan' : 'Buat kreator'}
+      testId="creator-form">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Nama kreator" wajib htmlFor="cr-name">
+          <Input id="cr-name" data-testid="creator-name-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Nama lengkap" />
+        </Isian>
+        <Isian label="Kode kreator" wajib htmlFor="cr-code">
+          <Input id="cr-code" data-testid="creator-code-input" value={form.creator_code} onChange={e => set('creator_code', e.target.value)} placeholder="KOL-001" />
+        </Isian>
+        <Isian label="Tipe kreator" wajib htmlFor="cr-type">
+          <SmartNativeSelect id="cr-type" data-testid="creator-type-select" value={form.creator_type} searchable={false}
+            onChange={e => set('creator_type', e.target.value)}>
+            <option value="new">Kreator baru (tanpa akun portal)</option>
+            <option value="kontrak">Kreator kontrak (dapat insentif)</option>
+            <option value="continue">Kreator lanjutan (dapat insentif)</option>
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Domisili (kota/kab.)" htmlFor="cr-dom">
+          <Input id="cr-dom" data-testid="creator-domicile-input" value={form.domicile} onChange={e => set('domicile', e.target.value)} placeholder="Bandung" />
+        </Isian>
       </div>
-    </div>
+      <Isian label="Alamat domisili" htmlFor="cr-dom-det">
+        <Input id="cr-dom-det" data-testid="creator-domicile-detail-input" value={form.domicile_detail}
+          onChange={e => set('domicile_detail', e.target.value)} placeholder="Kec. Coblong, Jl. ..." />
+      </Isian>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Email login" wajib={form.creator_type !== 'new'} petunjuk={form.creator_type === 'new' ? 'Opsional untuk kreator baru.' : undefined} htmlFor="cr-email">
+          <Input id="cr-email" data-testid="creator-email-input" type="email" value={form.login_email} onChange={e => set('login_email', e.target.value)} placeholder="kreator@email.com" />
+        </Isian>
+        <Isian label={isEdit ? 'Sandi baru' : 'Sandi'} wajib={!isEdit && !!form.login_email}
+          petunjuk={isEdit ? 'Kosongkan bila tidak diubah.' : 'Minimal 6 karakter.'} htmlFor="cr-pass">
+          <Input id="cr-pass" data-testid="creator-password-input" type="password" value={form.login_password} onChange={e => set('login_password', e.target.value)} />
+        </Isian>
+        <Isian label="Nomor HP" htmlFor="cr-phone">
+          <Input id="cr-phone" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="08…" />
+        </Isian>
+        <Isian label="Akun TikTok" htmlFor="cr-tt">
+          <Input id="cr-tt" value={form.platforms?.tiktok || ''} onChange={e => setPlatform('tiktok', e.target.value)} placeholder="@nama" />
+        </Isian>
+        <Isian label="Akun Shopee" htmlFor="cr-sp">
+          <Input id="cr-sp" value={form.platforms?.shopee || ''} onChange={e => setPlatform('shopee', e.target.value)} placeholder="@nama" />
+        </Isian>
+      </div>
+      <p className="border-t border-[var(--glass-border)] pt-3 text-sm font-medium">Target KPI bulanan</p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Isian label="Omzet (Rp)">
+          <MoneyInput value={form.kpi_targets.monthly_revenue} onChange={e => setKpi('monthly_revenue', e.target.value)} />
+        </Isian>
+        <Isian label="Sesi live" htmlFor="cr-kpi-s">
+          <Input id="cr-kpi-s" type="number" value={form.kpi_targets.monthly_sessions} onChange={e => setKpi('monthly_sessions', e.target.value)} />
+        </Isian>
+        <Isian label="Total penonton" htmlFor="cr-kpi-v">
+          <Input id="cr-kpi-v" type="number" value={form.kpi_targets.monthly_viewers} onChange={e => setKpi('monthly_viewers', e.target.value)} />
+        </Isian>
+      </div>
+      <Isian label="Toko yang ditugaskan">
+        <div className="flex flex-wrap gap-1.5">
+          {accounts.map(acc => {
+            const aktif = form.assigned_account_ids.includes(acc.id);
+            return (
+              <Button key={acc.id} type="button" size="sm" variant={aktif ? 'default' : 'outline'} aria-pressed={aktif}
+                onClick={() => toggleAccount(acc.id)}>{acc.account_name}</Button>
+            );
+          })}
+        </div>
+      </Isian>
+      <Isian label="Catatan" htmlFor="cr-notes">
+        <Textarea id="cr-notes" value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} />
+      </Isian>
+    </FormPopup>
   );
 }
 
-// ─── Session Form Modal ───────────────────────────────────────────────────────
+// ─── Form sesi live ─────────────────────────────────────────────────────────
 function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
   const [form, setForm] = useState({
     creator_id: '', account_id: '', date: todayWIB(),
@@ -260,26 +199,23 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
     viewers: 0, peak_viewers: 0, revenue: 0, orders: 0, notes: '',
   });
   const [saving, setSaving] = useState(false);
+  const [galat, setGalat] = useState('');
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Filter akun hanya ke yang di-assign ke creator yang dipilih
+  // Akun hanya yang ditugaskan ke kreator terpilih
   const selectedCreator = creators.find(c => c.id === form.creator_id);
   const assignedIds = selectedCreator?.assigned_account_ids || [];
-  const availableAccounts = assignedIds.length > 0
-    ? accounts.filter(a => assignedIds.includes(a.id))
-    : accounts;
+  const availableAccounts = assignedIds.length > 0 ? accounts.filter(a => assignedIds.includes(a.id)) : accounts;
 
-  // Auto-clear account jika tidak lagi tersedia setelah creator berganti
   useEffect(() => {
-    if (form.account_id && availableAccounts.length > 0 &&
-        !availableAccounts.find(a => a.id === form.account_id)) {
+    if (form.account_id && availableAccounts.length > 0 && !availableAccounts.find(a => a.id === form.account_id)) {
       set('account_id', '');
     }
   }, [form.creator_id]); // eslint-disable-line
 
-  async function handleSubmit(e) {
-    e.preventDefault();
-    if (!form.creator_id || !form.account_id) { toast.error('Pilih creator dan akun'); return; }
+  async function handleSubmit() {
+    setGalat('');
+    if (!form.creator_id || !form.account_id) { setGalat('Pilih kreator dan akun toko.'); return; }
     setSaving(true);
     try {
       const r = await fetch(`${API}/api/marketing/kol/sessions`, {
@@ -289,103 +225,62 @@ function SessionFormModal({ token, creators, accounts, onClose, onSaved }) {
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Gagal menyimpan');
-      toast.success('Sesi berhasil dicatat');
+      toast.success('Sesi live dicatat.');
       onSaved();
-    } catch (err) { toast.error(err.message); }
+    } catch (err) { setGalat(err.message); }
     finally { setSaving(false); }
   }
 
+  const akunTerpilih = accounts.find(x => x.id === form.account_id);
   return (
-    <div className="fixed inset-0 bg-foreground/60 z-50 flex items-center justify-center p-4 overflow-auto">
-      <div className="bg-[hsl(var(--card))] border border-foreground/10 rounded-2xl w-full max-w-lg">
-        <div className="p-5 border-b border-foreground/10 flex items-center justify-between">
-          <h2 className="text-base font-semibold">Catat Sesi Live</h2>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X size={18} /></button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Creator *</label>
-              <SmartNativeSelect value={form.creator_id} onChange={e => set('creator_id', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                <option value="">Pilih Creator</option>
-                {creators.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </SmartNativeSelect>
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Akun *</label>
-              <SmartNativeSelect value={form.account_id} onChange={e => set('account_id', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm">
-                <option value="">Pilih Akun</option>
-                {availableAccounts.map(a => {
-                  const cfg = getPlatformConfig(a.platform);
-                  return <option key={a.id} value={a.id}>{cfg.icon} {a.account_name} ({cfg.label})</option>;
-                })}
-              </SmartNativeSelect>
-              {form.creator_id && assignedIds.length === 0 && (
-                <p className="text-xs text-[hsl(var(--warning-text))] mt-1">Creator belum di-assign ke akun manapun</p>
-              )}
-              {form.account_id && availableAccounts.find(a => a.id === form.account_id) && (() => {
-                const acc = availableAccounts.find(a => a.id === form.account_id);
-                const cfg = getPlatformConfig(acc.platform);
-                return (
-                  <div className={`mt-1.5 flex items-center gap-1.5 px-2 py-1 rounded border text-xs font-medium ${cfg.bg} ${cfg.border} ${cfg.text}`}>
-                    {cfg.icon} Input ke: {acc.account_name}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Tanggal</label>
-              <input type="date" value={form.date} onChange={e => set('date', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Platform</label>
-              <div data-testid="session-platform-readonly" className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm text-foreground/70">
-                {(() => { const a = accounts.find(x => x.id === form.account_id); return a ? getPlatformConfig(a.platform).label : 'otomatis dari akun'; })()}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Durasi (menit)</label>
-              <input type="number" value={form.duration_minutes} onChange={e => set('duration_minutes', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium mb-1.5">Nama Sesi</label>
-            <input value={form.session_name} onChange={e => set('session_name', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" placeholder="Live Sesi Malam" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Revenue (Rp)</label>
-              <MoneyInput unstyled value={form.revenue} onChange={e => set('revenue', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Orders</label>
-              <input type="number" value={form.orders} onChange={e => set('orders', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Penonton</label>
-              <input type="number" value={form.viewers} onChange={e => set('viewers', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium mb-1.5">Peak Penonton</label>
-              <input type="number" value={form.peak_viewers} onChange={e => set('peak_viewers', e.target.value)} className="w-full bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} className="flex-1 py-2 rounded-lg border border-foreground/10 text-sm hover:bg-foreground/5">Batal</button>
-            <button data-testid="save-session-btn" type="submit" disabled={saving} className="flex-1 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium disabled:opacity-50">
-              {saving ? 'Menyimpan...' : 'Catat Sesi'}
-            </button>
-          </div>
-        </form>
+    <FormPopup open onClose={onClose} ukuran="panjang" judul="Catat sesi live" onSimpan={handleSubmit} menyimpan={saving}
+      galat={galat} labelSimpan="Catat sesi" testId="session-form">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Isian label="Kreator" wajib htmlFor="ss-creator">
+          <SmartNativeSelect id="ss-creator" value={form.creator_id} onChange={e => set('creator_id', e.target.value)}>
+            <option value="">Pilih kreator</option>
+            {creators.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Akun toko" wajib htmlFor="ss-acc"
+          petunjuk={form.creator_id && assignedIds.length === 0 ? 'Kreator belum ditugaskan ke toko mana pun.' : akunTerpilih ? `Dicatat ke: ${akunTerpilih.account_name}` : undefined}>
+          <SmartNativeSelect id="ss-acc" value={form.account_id} onChange={e => set('account_id', e.target.value)}>
+            <option value="">Pilih akun</option>
+            {availableAccounts.map(a => <option key={a.id} value={a.id}>{`${a.account_name} (${labelPlatform(a.platform)})`}</option>)}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Tanggal">
+          <DatePicker value={form.date} onChange={(v) => set('date', v)} testId="session-date" />
+        </Isian>
+        <Isian label="Platform">
+          <p className="flex h-9 items-center text-sm text-muted-foreground" data-testid="session-platform-readonly">
+            {akunTerpilih ? labelPlatform(akunTerpilih.platform) : 'Otomatis dari akun'}
+          </p>
+        </Isian>
+        <Isian label="Durasi (menit)" htmlFor="ss-dur">
+          <Input id="ss-dur" type="number" value={form.duration_minutes} onChange={e => set('duration_minutes', e.target.value)} />
+        </Isian>
+        <Isian label="Nama sesi" htmlFor="ss-name">
+          <Input id="ss-name" value={form.session_name} onChange={e => set('session_name', e.target.value)} placeholder="Live flash sale" />
+        </Isian>
+        <Isian label="Omzet (Rp)">
+          <MoneyInput value={form.revenue} onChange={e => set('revenue', e.target.value)} />
+        </Isian>
+        <Isian label="Pesanan" htmlFor="ss-ord">
+          <Input id="ss-ord" type="number" value={form.orders} onChange={e => set('orders', e.target.value)} />
+        </Isian>
+        <Isian label="Penonton" htmlFor="ss-view">
+          <Input id="ss-view" type="number" value={form.viewers} onChange={e => set('viewers', e.target.value)} />
+        </Isian>
+        <Isian label="Penonton puncak" htmlFor="ss-peak">
+          <Input id="ss-peak" type="number" value={form.peak_viewers} onChange={e => set('peak_viewers', e.target.value)} />
+        </Isian>
       </div>
-    </div>
+    </FormPopup>
   );
 }
 
+// ─── Modul ──────────────────────────────────────────────────────────────────
 export default function KOLCreatorModule({ token }) {
   const [tab, setTab] = useState('creators');
   const [creators, setCreators] = useState([]);
@@ -404,15 +299,12 @@ export default function KOLCreatorModule({ token }) {
   };
   const [showCreatorForm, setShowCreatorForm] = useState(false);
   const [editCreator, setEditCreator] = useState(null);
-  // SESI #34 — insentif per kreator (konfigurasi + tracker pcs) & pembuatan akun
-  // portal untuk kreator yang belum punya (penyebab "tidak bisa login").
+  const [detailCreator, setDetailCreator] = useState(null);
+  // SESI #34 — insentif per kreator (konfigurasi + tracker pcs) & pembuatan akun portal.
   const [incentiveCreator, setIncentiveCreator] = useState(null);
   const [showSessionForm, setShowSessionForm] = useState(false);
   const [leaderMonth, setLeaderMonth] = useState(() => thisMonthWIB());
-  // Per-month creator targets: { creator_id → target doc }
   const [creatorTargets, setCreatorTargets] = useState({});
-
-  // Pagination state
   const [creatorPage, setCreatorPage] = useState(1);
   const [creatorPagination, setCreatorPagination] = useState(null);
   const [requestPage, setRequestPage] = useState(1);
@@ -433,7 +325,6 @@ export default function KOLCreatorModule({ token }) {
         fetch(`${API}/api/marketing/kol/leaderboard?month=${leaderMonth}`, { headers }).then(r => r.json()),
         fetch(`${API}/api/marketing/targets/creator?year=${cy}&month=${cm}`, { headers }).then(r => r.ok ? r.json() : []),
       ]);
-      // Handle paginated creators response
       if (crRes?.creators) {
         setCreators(crRes.creators);
         setCreatorPagination(crRes.pagination || null);
@@ -441,7 +332,6 @@ export default function KOLCreatorModule({ token }) {
         setCreators(Array.isArray(crRes) ? crRes : []);
         setCreatorPagination(null);
       }
-      // Handle paginated requests response
       if (reqs?.requests) {
         setRequests(reqs.requests);
         setRequestPagination(reqs.pagination || null);
@@ -452,7 +342,6 @@ export default function KOLCreatorModule({ token }) {
       setAccounts(Array.isArray(ac) ? ac.filter(a => a.status === 'active') : []);
       setSessions(Array.isArray(sess) ? sess : []);
       setLeaderboard(lb?.leaderboard || []);
-      // Build creator targets map: { creator_id → target }
       const tMap = {};
       if (Array.isArray(tgtsRaw)) tgtsRaw.forEach(t => { tMap[t.creator_id] = t; });
       setCreatorTargets(tMap);
@@ -466,38 +355,36 @@ export default function KOLCreatorModule({ token }) {
     try {
       const r = await fetch(`${API}/api/marketing/kol/requests/${id}/approve`, { method: 'POST', headers });
       if (!r.ok) throw new Error((await r.json()).detail);
-      toast.success('Request disetujui');
+      toast.success('Permintaan disetujui.');
       load();
     } catch (err) { toast.error(err.message); }
   }
-
   async function handleRejectRequest(id) {
-    const reason = prompt('Alasan penolakan:');
+    const reason = await confirmDialog({ title: 'Tolak permintaan ini?', confirmLabel: 'Tolak', danger: true, input: { label: 'Alasan penolakan' } });
     if (!reason) return;
     try {
       const r = await fetch(`${API}/api/marketing/kol/requests/${id}/reject?reason=${encodeURIComponent(reason)}`, { method: 'POST', headers });
       if (!r.ok) throw new Error((await r.json()).detail);
-      toast.success('Request ditolak');
+      toast.success('Permintaan ditolak.');
       load();
     } catch (err) { toast.error(err.message); }
   }
-
   async function handleDeleteSession(id) {
-    if (!(await confirmDialog('Hapus sesi ini?'))) return;
+    if (!(await confirmDialog({ title: 'Hapus sesi ini?', body: 'Catatan sesi live dihapus.', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       const r = await fetch(`${API}/api/marketing/kol/sessions/${id}`, { method: 'DELETE', headers });
       if (!r.ok) throw new Error((await r.json()).detail);
-      toast.success('Sesi dihapus');
+      toast.success('Sesi dihapus.');
       load();
     } catch (err) { toast.error(err.message); }
   }
-
   async function handleDeactivateCreator(id) {
-    if (!(await confirmDialog('Nonaktifkan creator ini?'))) return;
+    if (!(await confirmDialog({ title: 'Nonaktifkan kreator ini?', body: 'Kreator tidak tampil lagi di daftar aktif.', confirmLabel: 'Nonaktifkan', danger: true }))) return;
     try {
       const r = await fetch(`${API}/api/marketing/kol/creators/${id}`, { method: 'DELETE', headers });
       if (!r.ok) throw new Error((await r.json()).detail);
-      toast.success('Creator dinonaktifkan');
+      toast.success('Kreator dinonaktifkan.');
+      setDetailCreator(null);
       load();
     } catch (err) { toast.error(err.message); }
   }
@@ -508,508 +395,251 @@ export default function KOLCreatorModule({ token }) {
     const matchAccount = !filterAccountId || (c.assigned_account_ids || []).includes(filterAccountId);
     return matchSearch && matchStatus && matchAccount;
   });
-
   const pendingRequests = requests.filter(r => r.status === 'pending');
-  const TABS = [
-    { id: 'creators', label: 'Daftar Creator', icon: Users },
-    { id: 'performance', label: 'Performa Live', icon: Video },
-    { id: 'catalog', label: 'Permintaan Produk', icon: ShoppingBag, badge: pendingRequests.length || null },
-    { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
-    { id: 'weekly', label: 'Rapor Mingguan', icon: BarChart2 },
+  const { page, setPage, totalPages, total, paged } = useClientPagination(sessions, 10);
+  const namaAkun = (id) => accounts.find(a => a.id === id)?.account_name;
+  const targetDari = (c) => {
+    const mt = creatorTargets[c.id];
+    return {
+      rev: mt?.revenue_target || c.kpi_targets?.monthly_revenue || 0,
+      sess: mt?.sessions_target || c.kpi_targets?.monthly_sessions || 0,
+      view: mt?.viewers_target || 0,
+      bulanan: !!mt,
+    };
+  };
+  const adaAktivitas = leaderboard.some((e) => (e.total_revenue || 0) > 0 || (e.total_sessions || 0) > 0);
+
+  const TAMPILAN = [
+    { key: 'creators', label: 'Daftar kreator', icon: Users },
+    { key: 'performance', label: 'Performa live', icon: Video },
+    { key: 'catalog', label: pendingRequests.length ? `Permintaan produk (${pendingRequests.length})` : 'Permintaan produk', icon: ShoppingBag },
+    { key: 'leaderboard', label: 'Peringkat', icon: Trophy },
+    { key: 'weekly', label: 'Rapor mingguan', icon: BarChart2 },
   ];
 
-  const { page, setPage, totalPages, total, paged } = useClientPagination(sessions, 10);
+  const kolomKreator = [
+    { kunci: 'nama', label: 'Kreator', hp: 'judul', isi: (c) => (
+      <span data-testid="creator-card"><span className="font-medium">{c.name}</span>
+        <span className="block text-xs text-muted-foreground">{c.creator_code} · {TIPE[c.creator_type || 'new'] || 'Kreator'}</span></span>) },
+    { kunci: 'toko', label: 'Toko', isi: (c) => (
+      <span className="text-sm">{(c.assigned_account_ids || []).map(namaAkun).filter(Boolean).join(', ') || <span className="text-muted-foreground">Belum ditugaskan</span>}</span>) },
+    { kunci: 'sesi', label: 'Sesi bulan ini', rata: 'kanan', isi: (c) => <span className="tabular-nums">{fmt(c.this_month?.sessions)}</span> },
+    { kunci: 'omzet', label: 'Omzet bulan ini', rata: 'kanan', isi: (c) => <span className="tabular-nums md:whitespace-nowrap">{fmtRp(c.this_month?.revenue)}</span> },
+    { kunci: 'target', label: 'Target omzet', isi: (c) => {
+      const t = targetDari(c);
+      if (!t.rev) return <span className="text-muted-foreground">—</span>;
+      const pct = Math.min(100, Math.round(((c.this_month?.revenue || 0) / t.rev) * 100));
+      return <div className="min-w-[7rem] space-y-1"><span className="text-xs tabular-nums">{pct}% dari {fmtRp(t.rev)}</span><Progress value={pct} className="h-1.5" /></div>;
+    } },
+    { kunci: 'portal', label: 'Akun portal', isi: (c) => (c.login_email
+      ? <StatusBadge status="siap" label="Siap" tone="success" />
+      : <span data-testid={`creator-no-portal-${c.creator_code}`}><StatusBadge status="belum" label="Belum ada" tone="warning" /></span>) },
+    { kunci: 'status', label: 'Status', isi: (c) => <Lencana s={c.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (c) => (
+      <div className="flex justify-end gap-1">
+        <Button size="icon-sm" variant="ghost" data-testid="edit-creator-btn" title="Ubah kreator" aria-label="Ubah kreator"
+          onClick={() => { setEditCreator(c); setShowCreatorForm(true); }}><Pencil /></Button>
+        <Button size="sm" variant="outline" data-testid={`creator-incentive-btn-${c.creator_code}`} onClick={() => setIncentiveCreator(c)}><Target />Insentif</Button>
+      </div>) },
+  ];
+  const kolomSesi = [
+    { kunci: 'tgl', label: 'Tanggal', hp: 'keterangan', isi: (s) => <span className="tabular-nums md:whitespace-nowrap" data-testid="session-row">{tgl(s.date)}</span> },
+    { kunci: 'kreator', label: 'Kreator', hp: 'judul', isi: (s) => <span className="font-medium">{s.creator_name}</span> },
+    { kunci: 'akun', label: 'Toko', isi: (s) => s.account_name || '—' },
+    { kunci: 'durasi', label: 'Durasi', rata: 'kanan', isi: (s) => `${fmt(s.duration_minutes)} menit` },
+    { kunci: 'penonton', label: 'Penonton', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmt(s.viewers)}</span> },
+    { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (s) => <span className="tabular-nums font-medium md:whitespace-nowrap">{fmtRp(s.revenue)}</span> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (s) => <span className="tabular-nums">{fmt(s.orders)}</span> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (s) => (
+      <Button size="icon-sm" variant="ghost" className="text-[hsl(var(--danger-text))]" onClick={() => handleDeleteSession(s.id)} title="Hapus sesi" aria-label="Hapus sesi"><Trash2 /></Button>) },
+  ];
+  const kolomPermintaan = [
+    { kunci: 'kreator', label: 'Kreator', hp: 'judul', isi: (r) => <span className="font-medium" data-testid="request-row">{r.creator_name}</span> },
+    { kunci: 'produk', label: 'Produk', isi: (r) => <span>{r.product_name}<span className="block text-xs text-muted-foreground">{r.sku}</span></span> },
+    { kunci: 'qty', label: 'Qty', rata: 'kanan', isi: (r) => `${fmt(r.quantity_requested)} pcs` },
+    { kunci: 'stok', label: 'Stok sekarang', rata: 'kanan', isi: (r) => (
+      <span className={r.current_stock >= r.quantity_requested ? '' : 'text-[hsl(var(--danger-text))]'}>{fmt(r.current_stock)} pcs
+        <span className="block text-xs text-muted-foreground">saat diminta {fmt(r.stock_at_request)}</span></span>) },
+    { kunci: 'tujuan', label: 'Tujuan', isi: (r) => <span className="text-sm text-muted-foreground">{r.purpose || '—'}</span> },
+    { kunci: 'status', label: 'Status', isi: (r) => <Lencana s={r.status} /> },
+    { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => (r.status === 'pending' ? (
+      <div className="flex justify-end gap-1">
+        <Button size="sm" variant="success" data-testid="approve-request-btn" onClick={() => handleApproveRequest(r.id)}><Check />Setujui</Button>
+        <Button size="sm" variant="destructive" data-testid="reject-request-btn" onClick={() => handleRejectRequest(r.id)}><X />Tolak</Button>
+      </div>) : <span className="text-xs text-muted-foreground">{r.reviewed_by ? `oleh ${r.reviewed_by}` : ''}</span>) },
+  ];
+  const kolomPeringkat = [
+    { kunci: 'rank', label: 'Peringkat', rata: 'tengah', isi: (e) => <span className="font-semibold tabular-nums" data-testid="leaderboard-row">{adaAktivitas ? e.rank : '—'}</span> },
+    { kunci: 'nama', label: 'Kreator', hp: 'judul', isi: (e) => <span className="font-medium">{e.name}<span className="block text-xs font-normal text-muted-foreground">{e.creator_code}</span></span> },
+    { kunci: 'sesi', label: 'Sesi', rata: 'kanan', isi: (e) => <span className="tabular-nums">{fmt(e.total_sessions)}</span> },
+    { kunci: 'penonton', label: 'Penonton', rata: 'kanan', isi: (e) => <span className="tabular-nums">{fmt(e.total_viewers)}</span> },
+    { kunci: 'pesanan', label: 'Pesanan', rata: 'kanan', isi: (e) => <span className="tabular-nums">{fmt(e.total_orders)}</span> },
+    { kunci: 'omzet', label: 'Omzet', rata: 'kanan', isi: (e) => <span className="tabular-nums font-medium md:whitespace-nowrap">{fmtRp(e.total_revenue)}</span> },
+    { kunci: 'target', label: 'Dari target', rata: 'kanan', isi: (e) => (e.kpi_revenue_pct === null || e.kpi_revenue_pct === undefined
+      ? <span className="text-muted-foreground">—</span>
+      : <span className={`tabular-nums ${e.kpi_revenue_pct >= 100 ? 'text-[hsl(var(--success-text))]' : e.kpi_revenue_pct >= 50 ? 'text-[hsl(var(--warning-text))]' : 'text-[hsl(var(--danger-text))]'}`}>{e.kpi_revenue_pct}%</span>) },
+  ];
+
+  const unduh = {
+    creators: { nama: 'kreator-kol', baris: filteredCreators, kolom: [
+      { label: 'Nama', nilai: (c) => c.name }, { label: 'Kode', nilai: (c) => c.creator_code },
+      { label: 'Tipe', nilai: (c) => TIPE[c.creator_type || 'new'] || '' }, { label: 'Domisili', nilai: (c) => c.domicile || '' },
+      { label: 'Nomor HP', nilai: (c) => c.phone || '' }, { label: 'Email login', nilai: (c) => c.login_email || '' },
+      { label: 'Toko', nilai: (c) => (c.assigned_account_ids || []).map(namaAkun).filter(Boolean).join(', ') },
+      { label: 'Sesi bulan ini', nilai: (c) => c.this_month?.sessions || 0 }, { label: 'Omzet bulan ini', nilai: (c) => c.this_month?.revenue || 0 },
+      { label: 'Penonton bulan ini', nilai: (c) => c.this_month?.viewers || 0 }, { label: 'Target omzet', nilai: (c) => targetDari(c).rev || '' },
+      { label: 'Status', nilai: (c) => (STATUS[c.status] || [c.status])[0] }] },
+    performance: { nama: 'sesi-live-kreator', baris: sessions, kolom: [
+      { label: 'Tanggal', nilai: (s) => tgl(s.date) }, { label: 'Kreator', nilai: (s) => s.creator_name }, { label: 'Toko', nilai: (s) => s.account_name || '' },
+      { label: 'Durasi (menit)', nilai: (s) => Number(s.duration_minutes) || 0 }, { label: 'Penonton', nilai: (s) => Number(s.viewers) || 0 },
+      { label: 'Penonton puncak', nilai: (s) => Number(s.peak_viewers) || 0 }, { label: 'Omzet', nilai: (s) => Number(s.revenue) || 0 },
+      { label: 'Pesanan', nilai: (s) => Number(s.orders) || 0 }] },
+    catalog: { nama: 'permintaan-produk-kreator', baris: requests, kolom: [
+      { label: 'Kreator', nilai: (r) => r.creator_name }, { label: 'Produk', nilai: (r) => r.product_name }, { label: 'SKU', nilai: (r) => r.sku || '' },
+      { label: 'Qty', nilai: (r) => Number(r.quantity_requested) || 0 }, { label: 'Stok saat diminta', nilai: (r) => Number(r.stock_at_request) || 0 },
+      { label: 'Stok sekarang', nilai: (r) => Number(r.current_stock) || 0 }, { label: 'Tujuan', nilai: (r) => r.purpose || '' },
+      { label: 'Status', nilai: (r) => (STATUS[r.status] || [r.status])[0] }, { label: 'Ditinjau oleh', nilai: (r) => r.reviewed_by || '' }] },
+    leaderboard: { nama: `peringkat-kreator-${leaderMonth}`, baris: leaderboard, kolom: [
+      { label: 'Peringkat', nilai: (e) => (adaAktivitas ? e.rank : '') }, { label: 'Kreator', nilai: (e) => e.name }, { label: 'Kode', nilai: (e) => e.creator_code },
+      { label: 'Sesi', nilai: (e) => e.total_sessions || 0 }, { label: 'Penonton', nilai: (e) => e.total_viewers || 0 },
+      { label: 'Pesanan', nilai: (e) => e.total_orders || 0 }, { label: 'Omzet', nilai: (e) => e.total_revenue || 0 },
+      { label: 'Persen target', nilai: (e) => e.kpi_revenue_pct ?? '' }] },
+  }[tab];
+
   return (
-    <div data-testid="kol-creator-module" className="space-y-4 p-4">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">KOL & Creator Management</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Kelola creator, performa live, dan permintaan produk
-          </p>
-        </div>
-        <div className="flex gap-2">
-          {tab === 'creators' && (
-            <button
-              data-testid="add-creator-btn"
-              onClick={() => { setEditCreator(null); setShowCreatorForm(true); }}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors"
-            >
-              <UserPlus size={16} />
-              Tambah Creator
-            </button>
-          )}
-          {tab === 'performance' && (
-            <button
-              data-testid="add-session-btn"
-              onClick={() => setShowSessionForm(true)}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[hsl(var(--primary))] hover:bg-[hsl(var(--primary)/0.9)] text-sm font-medium transition-colors"
-            >
-              <Plus size={16} />
-              Catat Sesi
-            </button>
-          )}
-        </div>
-      </div>
+    <PageLayout testId="kol-creator-module" title="Kelola KOL"
+      subtitle="Kreator, performa live, permintaan produk, peringkat, dan rapor mingguan."
+      actions={tab === 'creators'
+        ? <Button data-testid="add-creator-btn" onClick={() => { setEditCreator(null); setShowCreatorForm(true); }}><UserPlus />Tambah kreator</Button>
+        : tab === 'performance'
+          ? <Button data-testid="add-session-btn" onClick={() => setShowSessionForm(true)}><Plus />Catat sesi</Button>
+          : null}
+      filters={<>
+        <FilterChips options={TAMPILAN} value={tab} onChange={setTab} hideWhenEmpty={false} testId="kol-view" ariaLabel="Tampilan" />
+        {tab === 'creators' && <>
+          <div className="relative w-full sm:w-56">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input data-testid="creator-search" value={search} onChange={e => setSearch(e.target.value)} className="pl-8" placeholder="Cari kreator" />
+          </div>
+          <SmartNativeSelect value={filterAccountId} onChange={(e) => setFilterAccountId(e.target.value)} className="w-48" data-testid="creator-account-filter">
+            <option value="">Semua toko</option>
+            {accounts.map((a) => <option key={a.id} value={a.id}>{a.account_name}</option>)}
+          </SmartNativeSelect>
+          <SmartNativeSelect value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="w-36" searchable={false}>
+            <option value="">Semua status</option>
+            <option value="active">Aktif</option>
+            <option value="inactive">Nonaktif</option>
+          </SmartNativeSelect>
+        </>}
+        {tab === 'leaderboard' && (
+          <SmartNativeSelect value={leaderMonth} onChange={(e) => setLeaderMonth(e.target.value)} className="w-44" searchable={false} data-testid="leader-month">
+            {monthOptions(24).map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </SmartNativeSelect>
+        )}
+      </>}
+      tools={unduh && (
+        <TombolUnduh namaBerkas={unduh.nama} namaLembar="Data" baris={unduh.baris} kolom={unduh.kolom} testId={`kol-unduh-${tab}`} />
+      )}>
+      {loading && <p className="py-6 text-center text-sm text-muted-foreground">Memuat data…</p>}
 
-      {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-foreground/5 rounded-xl w-fit">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            data-testid={`tab-${t.id}`}
-            onClick={() => setTab(t.id)}
-            className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-              tab === t.id ? 'bg-[hsl(var(--primary))] text-foreground shadow-lg' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/5'
-            }`}
-          >
-            <t.icon size={15} />
-            {t.label}
-            {t.badge ? (
-              <span className="absolute -top-1 -right-1 bg-[hsl(var(--warning))] text-foreground text-xs rounded-full w-4 h-4 flex items-center justify-center">
-                {t.badge}
-              </span>
-            ) : null}
-          </button>
-        ))}
-      </div>
-
-      {loading && <div className="text-center py-6 text-muted-foreground">Memuat data...</div>}
-
-      {/* ═══ TAB: CREATORS ═══ */}
+      {/* ═══ DAFTAR KREATOR ═══ */}
       {!loading && tab === 'creators' && (
-        <div className="space-y-4">
-          {/* Active Account Bar */}
-          <ActiveAccountBar
-            accounts={accounts}
-            activeAccount={accounts.find(a => a.id === filterAccountId) || null}
-            onAccountChange={(acc) => setFilterAccountId(acc ? acc.id : '')}
-            hint="Filter creator by akun:"
-          />
-
-          {/* Filters */}
-          <div className="flex gap-3 flex-wrap">
-            <div className="relative flex-1 max-w-xs">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                data-testid="creator-search"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                className="w-full bg-foreground/5 border border-foreground/10 rounded-lg pl-9 pr-3 py-2 text-sm"
-                placeholder="Cari creator..."
-              />
-            </div>
-            <SmartNativeSelect
-              value={filterStatus}
-              onChange={e => setFilterStatus(e.target.value)}
-              className="w-40 bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
-            >
-              <option value="">Semua Status</option>
-              <option value="active">Aktif</option>
-              <option value="inactive">Nonaktif</option>
-            </SmartNativeSelect>
-          </div>
-
-          {filteredCreators.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">
-              <Users className="mx-auto mb-3 opacity-30" size={40} />
-              <p className="text-sm">Belum ada kreator. Klik "Tambah Creator" untuk memulai.</p>
-            </div>
-          ) : (
-            <>
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {filteredCreators.map(creator => (
-                <div
-                  key={creator.id}
-                  data-testid="creator-card"
-                  className="bg-foreground/[0.03] border border-foreground/[0.08] rounded-2xl p-5 hover:border-[hsl(var(--primary)/0.35)] transition-all group"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-full flex items-center justify-center text-foreground font-bold text-sm">
-                        {creator.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="font-semibold text-sm">{creator.name}</div>
-                        <div className="text-xs text-muted-foreground">{creator.creator_code}</div>
-                      </div>
-                    </div>
-                    <Badge cls={STATUS_BADGE[creator.status]}>{creator.status}</Badge>
-                  </div>
-
-                  {/* Platform handles */}
-                  <div className="flex gap-1.5 flex-wrap mb-2">
-                    {Object.entries(creator.platforms || {}).filter(([, v]) => v).map(([k, v]) => (
-                      <span key={k} className="text-xs bg-foreground/5 border border-foreground/10 rounded px-2 py-0.5 text-muted-foreground">
-                        {k}: {v}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Assigned accounts badges */}
-                  <div className="flex gap-1 flex-wrap mb-3">
-                    {(creator.assigned_account_ids || []).length > 0 ? (
-                      creator.assigned_account_ids.map(id => {
-                        const acc = accounts.find(a => a.id === id);
-                        return acc ? <AccountBadge key={id} account={acc} size="xs" /> : null;
-                      })
-                    ) : (
-                      <span className="text-xs text-muted-foreground italic px-1">Belum di-assign ke akun</span>
-                    )}
-                  </div>
-
-                  {/* This month stats */}
-                  <div className="grid grid-cols-3 gap-2 mb-3">
-                    <div className="bg-foreground/5 rounded-lg p-2 text-center">
-                      <div className="text-xs text-muted-foreground">Sesi</div>
-                      <div className="font-bold text-sm">{creator.this_month?.sessions || 0}</div>
-                    </div>
-                    <div className="bg-foreground/5 rounded-lg p-2 text-center">
-                      <div className="text-xs text-muted-foreground">Revenue</div>
-                      <div className="font-bold text-xs text-[hsl(var(--success-text))] ">{fmtRp(creator.this_month?.revenue || 0)}</div>
-                    </div>
-                    <div className="bg-foreground/5 rounded-lg p-2 text-center">
-                      <div className="text-xs text-muted-foreground">Penonton</div>
-                      <div className="font-bold text-sm">{fmt(creator.this_month?.viewers || 0)}</div>
-                    </div>
-                  </div>
-
-                  {/* KPI progress — per-bulan (jika ada) atau global */}
-                  {(() => {
-                    const mt = creatorTargets[creator.id];
-                    const revTgt  = mt?.revenue_target  || creator.kpi_targets?.monthly_revenue  || 0;
-                    const sessTgt = mt?.sessions_target || creator.kpi_targets?.monthly_sessions || 0;
-                    if (!revTgt && !sessTgt) return null;
-                    return (
-                      <div className="space-y-1.5 mt-2 pt-2 border-t border-foreground/5">
-                        {revTgt > 0 && (
-                          <KPIBar label="Revenue" value={creator.this_month?.revenue || 0} target={revTgt} unit="Rp " />
-                        )}
-                        {sessTgt > 0 && (
-                          <KPIBar label="Sesi" value={creator.this_month?.sessions || 0} target={sessTgt} />
-                        )}
-                        {mt && mt.viewers_target > 0 && (
-                          <KPIBar label="Viewers" value={creator.this_month?.viewers || 0} target={mt.viewers_target} />
-                        )}
-                        {mt && (
-                          <p className="text-xs text-[hsl(var(--primary))] text-right mt-0.5">target bulanan</p>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-                  <div className="flex flex-wrap items-center gap-1.5 mt-2 text-xs">
-                    <span className="px-1.5 py-0.5 rounded-full bg-foreground/5 "
-                      data-testid={`creator-type-badge-${creator.creator_code}`}>
-                      {creator.creator_type || 'new'}
-                    </span>
-                    {creator.domicile ? (
-                      <span className="px-1.5 py-0.5 rounded-full bg-foreground/5">{creator.domicile}</span>
-                    ) : null}
-                    {/* Kreator tanpa akun portal DIKATAKAN, bukan dibiarkan
-                        gagal login diam-diam. */}
-                    {creator.login_email ? (
-                      <span className="px-1.5 py-0.5 rounded-full bg-[hsl(var(--success)/0.1)] text-[hsl(var(--success-text))]">
-                        akun portal siap
-                      </span>
-                    ) : (
-                      <span className="px-1.5 py-0.5 rounded-full bg-[hsl(var(--warning)/0.1)] text-[hsl(var(--warning-text))]"
-                        data-testid={`creator-no-portal-${creator.creator_code}`}>
-                        belum ada akun portal
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex gap-2 mt-3 pt-3 border-t border-foreground/5">
-                    <button
-                      data-testid="edit-creator-btn"
-                      onClick={() => { setEditCreator(creator); setShowCreatorForm(true); }}
-                      className="flex-1 text-xs py-1.5 rounded-lg border border-foreground/10 hover:bg-foreground/5 transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <Edit2 size={12} /> Edit
-                    </button>
-                    <button
-                      data-testid={`creator-incentive-btn-${creator.creator_code}`}
-                      onClick={() => setIncentiveCreator(creator)}
-                      className="flex-1 text-xs py-1.5 rounded-lg border border-foreground/10 hover:bg-foreground/5 transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <Target size={12} /> Insentif
-                    </button>
-                    <button
-                      onClick={() => handleDeactivateCreator(creator.id)}
-                      className="flex-1 text-xs py-1.5 rounded-lg border border-[hsl(var(--destructive)/0.35)] text-[hsl(var(--danger-text))] hover:bg-[hsl(var(--destructive)/0.12)] transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <Trash2 size={12} /> Nonaktifkan
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {creatorPagination && (
-              <PaginationBar
-                pagination={creatorPagination}
-                onPageChange={(p) => setCreatorPage(p)}
-              />
-            )}
-            </>
-          )}
-        </div>
+        <>
+          <TabelData kolom={kolomKreator} baris={filteredCreators} onKlikBaris={setDetailCreator} testId="creator-table"
+            kosong={<EmptyState icon={Users} title="Belum ada kreator" description='Klik "Tambah kreator" untuk memulai, atau ubah penyaring.' />} />
+          {creatorPagination && <PaginationBar pagination={creatorPagination} onPageChange={(p) => setCreatorPage(p)} />}
+        </>
       )}
 
-      {/* ═══ TAB: PERFORMANCE ═══ */}
+      {/* ═══ PERFORMA LIVE ═══ */}
       {!loading && tab === 'performance' && (
-        <div className="space-y-4">
-          {sessions.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">
-              <Video className="mx-auto mb-3 opacity-30" size={40} />
-              <p className="text-sm">Belum ada sesi live. Klik "Catat Sesi" untuk mulai.</p>
-            </div>
-          ) : (
-            <div className="overflow-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-              <table className="w-full text-sm">
-                <thead className="bg-foreground/[0.03]">
-                  <tr>
-                    {['Tanggal', 'Creator', 'Akun', 'Durasi', 'Penonton', 'Revenue', 'Orders', 'Aksi'].map(h => (
-                      <th key={h} className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {paged.map(s => (
-                    <tr key={s.id} data-testid="session-row" className="border-t border-foreground/5 hover:bg-foreground/[0.02]">
-                      <td className="px-4 py-3 text-xs">{s.date}</td>
-                      <td className="px-4 py-3 font-medium">{s.creator_name}</td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground">{s.account_name}</td>
-                      <td className="px-4 py-3 text-xs">{s.duration_minutes}m</td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <Eye size={12} className="text-muted-foreground" />
-                          {fmt(s.viewers)}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-medium text-[hsl(var(--success-text))] ">{fmtRp(s.revenue)}</td>
-                      <td className="px-4 py-3">{fmt(s.orders)}</td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => handleDeleteSession(s.id)} className="text-[hsl(var(--danger-text))] hover:text-[hsl(var(--danger-text))] transition-colors">
-                          <Trash2 size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} className="px-1" />
-            </div>
-          )}
-        </div>
+        <>
+          <TabelData kolom={kolomSesi} baris={paged} testId="session-table"
+            kosong={<EmptyState icon={Video} title="Belum ada sesi live" description='Klik "Catat sesi" untuk mulai.' />} />
+          {sessions.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
+        </>
       )}
 
-      {/* ═══ TAB: CATALOG & REQUESTS ═══ */}
+      {/* ═══ PERMINTAAN PRODUK ═══ */}
       {!loading && tab === 'catalog' && (
-        <div className="space-y-4">
-          {/* Pending Requests */}
-          {pendingRequests.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <span className="w-5 h-5 rounded-full bg-[hsl(var(--warning))] flex items-center justify-center text-foreground text-xs">{pendingRequests.length}</span>
-                Request Pending Persetujuan
-              </h3>
-              <div className="space-y-2">
-                {pendingRequests.map(req => (
-                  <div key={req.id} data-testid="request-row" className="flex items-center justify-between bg-[hsl(var(--warning)/0.12)] border border-[hsl(var(--warning)/0.35)] rounded-xl p-4">
-                    <div>
-                      <div className="font-medium text-sm">{req.product_name} <span className="text-xs text-muted-foreground">({req.sku})</span></div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {req.creator_name} · {req.quantity_requested} pcs · Stok: {fmt(req.current_stock)} pcs
-                        {req.purpose && ` · ${req.purpose}`}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <button
-                        data-testid="approve-request-btn"
-                        onClick={() => handleApproveRequest(req.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--success)/0.12)] text-[hsl(var(--success-text))] border border-[hsl(var(--success)/0.35)] text-xs hover:bg-[hsl(var(--success)/0.3)] transition-colors"
-                      >
-                        <Check size={12} /> Setujui
-                      </button>
-                      <button
-                        data-testid="reject-request-btn"
-                        onClick={() => handleRejectRequest(req.id)}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[hsl(var(--destructive)/0.12)] text-[hsl(var(--danger-text))] border border-[hsl(var(--destructive)/0.35)] text-xs hover:bg-[hsl(var(--destructive)/0.3)] transition-colors"
-                      >
-                        <X size={12} /> Tolak
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* All Requests History */}
-          <div>
-            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <ShoppingBag size={15} />
-              Semua Request {requestPagination ? `(${requestPagination.total})` : `(${requests.length})`}
-            </h3>
-            {requests.length === 0 ? (
-              <div className="text-center py-6 text-muted-foreground text-sm">Belum ada request dari creator.</div>
-            ) : (
-              <>
-              <div className="overflow-auto rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] shadow-[var(--shadow-card)]">
-                <table className="w-full text-sm">
-                  <thead className="bg-foreground/[0.03]">
-                    <tr>
-                      {['Creator', 'Produk', 'Qty', 'Stok Saat Req', 'Stok Sekarang', 'Tujuan', 'Status', 'Diulas'].map(h => (
-                        <th key={h} className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {requests.map(req => (
-                      <tr key={req.id} className="border-t border-foreground/5 hover:bg-foreground/[0.02]">
-                        <td className="px-4 py-3 font-medium text-sm">{req.creator_name}</td>
-                        <td className="px-4 py-3">
-                          <div className="font-medium text-sm">{req.product_name}</div>
-                          <div className="text-xs text-muted-foreground">{req.sku}</div>
-                        </td>
-                        <td className="px-4 py-3">{req.quantity_requested} pcs</td>
-                        <td className="px-4 py-3 text-xs">{fmt(req.stock_at_request)} pcs</td>
-                        <td className="px-4 py-3 text-xs">
-                          <span className={req.current_stock >= req.quantity_requested ? 'text-[hsl(var(--success-text))] ' : 'text-[hsl(var(--danger-text))] '}>
-                            {fmt(req.current_stock)} pcs
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{req.purpose || '-'}</td>
-                        <td className="px-4 py-3"><Badge cls={STATUS_BADGE[req.status]}>{req.status}</Badge></td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{req.reviewed_by || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {requestPagination && (
-                <PaginationBar
-                  pagination={requestPagination}
-                  onPageChange={(p) => setRequestPage(p)}
-                />
-              )}
-              </>
-            )}
-          </div>
-
+        <>
+          <p className="text-base font-semibold">Semua permintaan · {requestPagination ? requestPagination.total : requests.length}
+            {pendingRequests.length > 0 && <span className="ml-2 text-sm font-normal text-[hsl(var(--warning-text))]">{pendingRequests.length} menunggu persetujuan di halaman ini</span>}
+          </p>
+          <TabelData kolom={kolomPermintaan} baris={requests} testId="request-table"
+            kosong={<EmptyState icon={ShoppingBag} title="Belum ada permintaan dari kreator" />} />
+          {requestPagination && <PaginationBar pagination={requestPagination} onPageChange={(p) => setRequestPage(p)} />}
           {/* Katalog — satu sumber (keputusan owner 4 Nov 2026) */}
-          <div className="rounded-xl border border-[var(--glass-border)] bg-[var(--card-surface)] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3" data-testid="kol-catalog-one-door">
-            <div className="text-sm">
-              <div className="font-medium text-foreground flex items-center gap-2"><Package size={15} />Produk untuk kreator</div>
-              <p className="text-muted-foreground mt-0.5">Kreator melihat katalog toko yang ditugaskan kepadanya. Tambah, ubah, atau nonaktifkan produk di Manajemen Katalog.</p>
-            </div>
-            <button type="button" onClick={() => { window.location.hash = '#marketing-catalog'; }}
-              className="shrink-0 inline-flex items-center gap-2 h-9 px-3 rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--card-surface)] hover:bg-[var(--card-surface-hover)] text-sm">
-              Buka Manajemen Katalog
-            </button>
+          <div data-testid="kol-catalog-one-door">
+            <Notice tone="info" icon={Package} title="Produk untuk kreator"
+              action={<Button size="sm" variant="outline" onClick={() => { window.location.hash = '#marketing-catalog'; }}>Buka Manajemen Katalog</Button>}>
+              Kreator melihat katalog toko yang ditugaskan kepadanya. Tambah, ubah, atau nonaktifkan produk di Manajemen Katalog.
+            </Notice>
           </div>
-        </div>
+        </>
       )}
 
-      {/* ═══ TAB: RAPOR MINGGUAN ═══ */}
-      {!loading && tab === 'weekly' && (
-        <CreatorWeeklyReportPanel token={token} />
-      )}
+      {/* ═══ RAPOR MINGGUAN ═══ */}
+      {!loading && tab === 'weekly' && <CreatorWeeklyReportPanel token={token} />}
 
-      {/* ═══ TAB: LEADERBOARD ═══ */}
+      {/* ═══ PERINGKAT ═══ */}
       {!loading && tab === 'leaderboard' && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-muted-foreground">Bulan:</label>
-            <input
-              type="month"
-              value={leaderMonth}
-              onChange={e => setLeaderMonth(e.target.value)}
-              className="bg-foreground/5 border border-foreground/10 rounded-lg px-3 py-2 text-sm"
-            />
-          </div>
-
-          {leaderboard.length === 0 ? (
-            <div className="text-center py-6 text-muted-foreground">
-              <Trophy className="mx-auto mb-3 opacity-30" size={40} />
-              <p className="text-sm">Belum ada data performa untuk periode ini.</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {leaderboard.map(entry => (
-                <div
-                  key={entry.creator_id}
-                  data-testid="leaderboard-row"
-                  className={`flex items-center gap-4 p-4 rounded-2xl border transition-all ${
-                    entry.rank === 1 ? 'bg-[hsl(var(--warning)/0.12)] border-[hsl(var(--warning)/0.35)] ' :
-                    entry.rank === 2 ? 'bg-muted border-border ' :
-                    entry.rank === 3 ? 'bg-[hsl(var(--warning)/0.1)] border-[hsl(var(--warning)/0.3)]' :
-                    'bg-foreground/[0.03] border-foreground/[0.08]'
-                  }`}
-                >
-                  {/* Rank */}
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg flex-shrink-0 ${
-                    entry.rank === 1 ? 'bg-[hsl(var(--warning))] text-foreground' :
-                    entry.rank === 2 ? 'bg-muted text-foreground' :
-                    entry.rank === 3 ? 'bg-[hsl(var(--warning))] text-foreground' :
-                    'bg-foreground/10 text-muted-foreground'
-                  }`}>
-                    {entry.rank <= 3 ? ['🥇', '🥈', '🥉'][entry.rank - 1] : entry.rank}
-                  </div>
-
-                  {/* Creator info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{entry.name}</span>
-                      <span className="text-xs text-muted-foreground">{entry.creator_code}</span>
-                    </div>
-                    <div className="flex gap-4 mt-1 text-xs text-muted-foreground">
-                      <span>{entry.total_sessions} sesi</span>
-                      <span>{fmt(entry.total_viewers)} penonton</span>
-                      <span>{fmt(entry.total_orders)} orders</span>
-                    </div>
-                  </div>
-
-                  {/* Revenue + KPI */}
-                  <div className="text-right flex-shrink-0">
-                    <div className="text-lg font-bold text-[hsl(var(--success-text))] ">{fmtRp(entry.total_revenue)}</div>
-                    {entry.kpi_revenue_pct !== null && (
-                      <div className={`text-xs font-medium ${entry.kpi_revenue_pct >= 100 ? 'text-emerald-600 dark:text-emerald-400' : entry.kpi_revenue_pct >= 50 ? 'text-amber-700 dark:text-amber-400' : 'text-red-700 dark:text-red-400'}`}>
-                        {entry.kpi_revenue_pct}% dari target
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+        <>
+          {leaderboard.length > 0 && !adaAktivitas && (
+            <Notice tone="info" title="Belum ada aktivitas bulan ini">Semua kreator masih 0 sesi dan 0 omzet, jadi urutan peringkat belum bermakna.</Notice>
           )}
-        </div>
+          <TabelData kolom={kolomPeringkat} baris={leaderboard} kunci={(e) => e.creator_id} testId="leaderboard-table"
+            kosong={<EmptyState icon={Trophy} title="Belum ada data performa untuk periode ini" />} />
+        </>
       )}
 
-      {/* Modals */}
+      {/* Rincian kreator */}
+      {detailCreator && (() => {
+        const c = detailCreator;
+        const t = targetDari(c);
+        return (
+          <DetailPopup open onClose={() => setDetailCreator(null)} judul={c.name} testId="creator-detail"
+            status={<><Lencana s={c.status} /><span data-testid={`creator-type-badge-${c.creator_code}`}><StatusBadge status="tipe" label={TIPE[c.creator_type || 'new'] || 'Kreator'} tone="muted" /></span></>}
+            keterangan={c.creator_code}
+            aksi={<>
+              <Button size="sm" variant="outline" onClick={() => { setDetailCreator(null); setEditCreator(c); setShowCreatorForm(true); }}><Pencil />Ubah</Button>
+              <Button size="sm" variant="outline" onClick={() => { setDetailCreator(null); setIncentiveCreator(c); }}><Target />Insentif</Button>
+              <Button size="sm" variant="destructive" onClick={() => handleDeactivateCreator(c.id)}><Trash2 />Nonaktifkan</Button>
+            </>}>
+            <dl className="divide-y divide-[var(--glass-border)]">
+              <BarisDetail label="Toko">{(c.assigned_account_ids || []).map(namaAkun).filter(Boolean).join(', ') || 'Belum ditugaskan ke toko'}</BarisDetail>
+              <BarisDetail label="Akun platform">{Object.entries(c.platforms || {}).filter(([, v]) => v).map(([k, v]) => `${labelPlatform(k)}: ${v}`).join(' · ') || '—'}</BarisDetail>
+              <BarisDetail label="Domisili">{[c.domicile, c.domicile_detail].filter(Boolean).join(' — ') || '—'}</BarisDetail>
+              <BarisDetail label="Nomor HP">{c.phone || '—'}</BarisDetail>
+              <BarisDetail label="Akun portal">{c.login_email ? `Siap (${c.login_email})` : 'Belum ada akun portal'}</BarisDetail>
+              <BarisDetail label="Bulan ini">{fmt(c.this_month?.sessions)} sesi · {fmtRp(c.this_month?.revenue)} · {fmt(c.this_month?.viewers)} penonton</BarisDetail>
+            </dl>
+            {(t.rev > 0 || t.sess > 0 || t.view > 0) && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Target {t.bulanan ? 'bulanan' : 'umum'}</p>
+                {t.rev > 0 && <KPIBar label="Omzet" value={c.this_month?.revenue || 0} target={t.rev} unit="Rp " />}
+                {t.sess > 0 && <KPIBar label="Sesi" value={c.this_month?.sessions || 0} target={t.sess} />}
+                {t.view > 0 && <KPIBar label="Penonton" value={c.this_month?.viewers || 0} target={t.view} />}
+              </div>
+            )}
+          </DetailPopup>
+        );
+      })()}
+
       {incentiveCreator && (
         <CreatorIncentivePanel token={token} creator={incentiveCreator}
           onClose={() => { setIncentiveCreator(null); load(); }} />
       )}
       {showCreatorForm && (
-        <CreatorFormModal
-          token={token}
-          accounts={accounts}
-          editCreator={editCreator}
+        <CreatorFormModal token={token} accounts={accounts} editCreator={editCreator}
           onClose={() => { setShowCreatorForm(false); setEditCreator(null); }}
-          onSaved={() => { setShowCreatorForm(false); setEditCreator(null); load(); }}
-        />
+          onSaved={() => { setShowCreatorForm(false); setEditCreator(null); load(); }} />
       )}
       {showSessionForm && (
-        <SessionFormModal
-          token={token}
-          creators={creators.filter(c => c.status === 'active')}
-          accounts={accounts}
+        <SessionFormModal token={token} creators={creators.filter(c => c.status === 'active')} accounts={accounts}
           onClose={() => setShowSessionForm(false)}
-          onSaved={() => { setShowSessionForm(false); load(); }}
-        />
+          onSaved={() => { setShowSessionForm(false); load(); }} />
       )}
-    </div>
+    </PageLayout>
   );
 }
