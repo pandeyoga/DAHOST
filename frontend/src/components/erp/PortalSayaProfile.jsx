@@ -172,7 +172,7 @@ export default function PortalSayaProfile({ user, headers }) {
   if (loading) {
     return (
       <PageLayout title="Profil" subtitle="Data akun dan kontak Anda.">
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat profil…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat profil…</p>
       </PageLayout>
     );
   }

@@ -113,7 +113,7 @@ export default function AuditFindingsBoard() {
       {err ? (
         <Notice tone="danger" title="Papan temuan gagal dimuat" testId="audit-board-error">{err}</Notice>
       ) : !data ? (
-        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="audit-board-loading">Memuat papan temuan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground" data-testid="audit-board-loading">Memuat papan temuan…</p>
       ) : (<>
         <p className="text-xs text-muted-foreground">
           Sumber: {(data.sumber || []).length} dokumen temuan & rencana perbaikan.{' '}

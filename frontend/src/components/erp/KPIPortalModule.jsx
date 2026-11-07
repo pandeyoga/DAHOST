@@ -294,7 +294,7 @@ export default function KPIPortalModule({ token }) {
         </Button>
       </>}>
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat KPI…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat KPI…</p>
       ) : periods.length === 0 && myResults.length === 0 ? (
         <EmptyState title="Belum ada periode KPI" description="HR akan membuka periode KPI saat tersedia." />
       ) : (

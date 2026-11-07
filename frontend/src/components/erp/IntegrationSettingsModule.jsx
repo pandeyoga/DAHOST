@@ -251,7 +251,7 @@ export default function IntegrationSettingsModule({ token, userRole }) {
       {error && <Notice tone="danger">{error}</Notice>}
 
       {loading && keys.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat kunci…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat kunci…</p>
       ) : (
         <TabelData kolom={kolom} baris={baris} kunci={(k) => k.key_name} testId="key-table"
           kosong={<EmptyState title="Belum ada kunci" description="Tambahkan kunci layanan yang dipakai sistem."

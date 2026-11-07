@@ -272,7 +272,7 @@ export default function PortalSayaCuti({ user, headers }) {
     return (
       <PageLayout testId="portal-cuti" title="Cuti & lembur" subtitle="Ajukan cuti, izin, sakit, dan lembur, lalu pantau statusnya.">
         {!empChecked ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Mencari data karyawan…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">Mencari data karyawan…</p>
         ) : (
           <EmptyState title="Akun belum terhubung ke data karyawan"
             description="Minta HR menautkannya di Data Karyawan › Tautkan akun. Setelah itu Anda bisa mengajukan cuti dan lembur di sini." />

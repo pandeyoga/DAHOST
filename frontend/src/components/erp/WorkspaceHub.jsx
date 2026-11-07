@@ -22,6 +22,7 @@ import {
   Pin, PinOff, Clock, AlertTriangle, Repeat, LayoutGrid, GripVertical
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
@@ -126,7 +127,7 @@ function WorkspaceNotepad({ headers }) {
   }, [editTitle, editContent, editColor]); // eslint-disable-line
 
   const deleteNote = async (id) => {
-    if (!window.confirm('Hapus catatan ini?')) return;
+    if (!(await confirmDialog({ title: 'Hapus catatan ini?', confirmLabel: 'Hapus', danger: true }))) return;
     try {
       await axios.delete(`${API}/api/portal/notes/${id}`, { headers });
       setNotes(prev => prev.filter(n => n.id !== id));
@@ -342,7 +343,7 @@ function WorkspaceTodo({ headers }) {
       {loading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> : (
         <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
           {todos.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <CheckSquare className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p className="text-sm">Tidak ada tugas {filter === 'done' ? 'selesai' : filter === 'active' ? 'aktif' : ''}.</p>
             </div>
@@ -503,7 +504,7 @@ function WorkspaceReminder({ headers }) {
       {loading ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin" /></div> : (
         <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
           {reminders.length === 0 && (
-            <div className="text-center py-10 text-muted-foreground">
+            <div className="text-center py-6 text-muted-foreground">
               <Bell className="w-10 h-10 mx-auto mb-2 opacity-30" />
               <p className="text-sm">Belum ada reminder.</p>
             </div>
@@ -880,7 +881,7 @@ function WorkspaceQuickLinks({ headers, onNavigate }) {
       </FormPopup>
 
       {links.length === 0 && (
-        <div className="text-center py-10 text-muted-foreground">
+        <div className="text-center py-6 text-muted-foreground">
           <LinkIcon className="w-10 h-10 mx-auto mb-2 opacity-30" />
           <p className="text-sm">Belum ada tautan cepat. Tambahkan pintasan ke modul favorit Anda.</p>
         </div>

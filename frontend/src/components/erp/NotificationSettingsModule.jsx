@@ -139,7 +139,7 @@ export default function NotificationSettingsModule({ token }) {
 
       <GlassCard className="overflow-hidden p-0">
         {loading && !data ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengaturan…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengaturan…</p>
         ) : (
           <div className="overflow-x-auto">
             <Table data-testid="notif-matrix-table">

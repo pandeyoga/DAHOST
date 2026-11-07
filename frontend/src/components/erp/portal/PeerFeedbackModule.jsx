@@ -166,7 +166,7 @@ export default function PeerFeedbackModule({ token }) {
         </div>
       )}>
       {loading && baris.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat masukan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat masukan…</p>
       ) : (
         <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="peer-table"
           kosong={<EmptyState title={diterima ? 'Belum ada masukan yang diterima' : 'Belum ada masukan yang diberikan'}

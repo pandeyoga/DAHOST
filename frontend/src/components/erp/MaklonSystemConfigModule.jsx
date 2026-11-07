@@ -218,7 +218,7 @@ export default function MaklonSystemConfigModule({ token }) {
       )}
 
       {loading && configs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat konfigurasi…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat konfigurasi…</p>
       ) : (
         <TabelData kolom={kolom} baris={byCategory} kunci={(c) => c.key} onKlikBaris={(c) => { setEdited({}); setUbah(c); }}
           testId="cfg-table" kosong={<EmptyState title="Tidak ada setelan di kategori ini" />} />

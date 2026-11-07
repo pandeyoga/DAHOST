@@ -194,7 +194,7 @@ export default function CompanySettingsModule({ token, userRole }) {
         </p>
       </>}>
       {loading ? (
-        <p className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+        <p className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
           <RefreshCw className="h-4 w-4 animate-spin" />Memuat profil…
         </p>
       ) : (

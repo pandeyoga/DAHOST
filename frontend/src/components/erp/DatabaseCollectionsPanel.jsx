@@ -97,7 +97,7 @@ export default function DatabaseCollectionsPanel({ token }) {
   };
 
   if (loading && !data) {
-    return <p className="py-10 text-center text-sm text-muted-foreground" data-testid="collections-loading">Memuat koleksi…</p>;
+    return <p className="py-6 text-center text-sm text-muted-foreground" data-testid="collections-loading">Memuat koleksi…</p>;
   }
 
   return (

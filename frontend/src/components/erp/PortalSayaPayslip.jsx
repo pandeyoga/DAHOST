@@ -159,7 +159,7 @@ export default function PortalSayaPayslip({ user, headers, token }) {
         ]} />
       )}>
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat slip gaji…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat slip gaji…</p>
       ) : data?.error ? (
         <Notice tone="warning" title="Slip gaji belum bisa ditampilkan">{data.error}</Notice>
       ) : (

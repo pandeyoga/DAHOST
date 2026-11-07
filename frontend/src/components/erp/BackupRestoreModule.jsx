@@ -11,7 +11,7 @@ import { confirmDialog } from '@/components/ui/confirm-dialog';
 import { CheckSquare, Database, Download, FileUp, MoreHorizontal, RefreshCw, RotateCcw, Trash2 } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
@@ -450,12 +450,11 @@ export default function BackupRestoreModule({ token }) {
         </Notice>
       )}
 
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList data-testid="backup-tabs">
-          <TabsTrigger value="backup" data-testid="backup-tab-backup">Backup &amp; pemulihan</TabsTrigger>
-          <TabsTrigger value="collections" data-testid="backup-tab-collections">Koleksi database</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <FilterChips value={tab} onChange={(k) => setTab(k || 'backup')} hideWhenEmpty={false} testId="backup-tab"
+        ariaLabel="Bagian backup" className="w-full min-w-0 sm:w-auto" options={[
+          { key: 'backup', label: 'Backup & pemulihan', count: backups.length },
+          { key: 'collections', label: 'Koleksi database' },
+        ]} />
 
       {tab === 'collections' && <DatabaseCollectionsPanel token={token} />}
 
@@ -481,7 +480,7 @@ export default function BackupRestoreModule({ token }) {
         )}
 
         {loading && backups.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Memuat daftar backup…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat daftar backup…</p>
         ) : (
           <TabelData kolom={kolomBackup} baris={backups} kunci={(b) => b.backup_id} testId="backup-table"
             kosong={<EmptyState title="Belum ada backup" description="Tekan Buat backup untuk membuat backup pertama." />} />

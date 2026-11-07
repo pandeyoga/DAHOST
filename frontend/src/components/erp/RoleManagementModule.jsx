@@ -472,7 +472,7 @@ export default function RoleManagementModule({ token, userRole }) {
       </Notice>
 
       {loading && roles.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat peran…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat peran…</p>
       ) : (
         <TabelData kolom={kolomPeran} baris={filteredRoles} onKlikBaris={selectRole} testId="role-list"
           kosong={<EmptyState title={roles.length ? 'Tidak ada peran yang cocok' : 'Belum ada peran'}

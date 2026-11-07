@@ -1,7 +1,7 @@
 /**
  * Portal Saya › Career Coach — arahan karier dari asisten AI: ringkasan profil, obrolan, dan laporan karier.
  *
- * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala berikon gradien + `p-6`), tab buatan → Tabs standar,
+ * Standar UI/UX v2 (8 Nov 2026): PageLayout (dulu kepala berikon gradien + `p-6`), tab buatan → pil penyaring (FilterChips),
  * angka profil = StatTile, "Buat laporan karier" = FormPopup (dulu form di halaman), daftar laporan = TabelData +
  * unduh Excel/CSV, isi laporan di DetailPopup, istilah Indonesia. Endpoint & isi permintaan AI tidak berubah.
  */
@@ -9,7 +9,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
@@ -183,17 +183,17 @@ export default function CareerCoachModule({ token }) {
     <PageLayout testId="career-coach-module" title="Career coach"
       subtitle="Arahan karier pribadi dari asisten AI berdasarkan profil, training, dan kinerja Anda."
       actions={<Button onClick={() => setFormOpen(true)} disabled={!profile} data-testid="career-generate-btn"><Sparkles />Buat laporan karier</Button>}>
-      <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="dashboard">Ringkasan</TabsTrigger>
-          <TabsTrigger value="chat">Obrolan</TabsTrigger>
-          <TabsTrigger value="reports">Laporan ({reports.length})</TabsTrigger>
-        </TabsList>
+      <FilterChips value={activeTab} onChange={(k) => setActiveTab(k || 'dashboard')} hideWhenEmpty={false} testId="career-tab"
+        ariaLabel="Bagian career coach" className="w-full min-w-0 sm:w-auto" options={[
+          { key: 'dashboard', label: 'Ringkasan' },
+          { key: 'chat', label: 'Obrolan' },
+          { key: 'reports', label: 'Laporan', count: reports.length },
+        ]} />
 
         {/* Ringkasan */}
-        <TabsContent value="dashboard" className="mt-4 space-y-4">
+        {activeTab === 'dashboard' && (<div className="space-y-4">
           {loading ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Memuat profil karier…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground">Memuat profil karier…</p>
           ) : profile ? (
             <>
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -217,10 +217,10 @@ export default function CareerCoachModule({ token }) {
             <EmptyState title="Profil karier belum bisa dimuat"
               description="Pastikan akun Anda sudah terhubung ke data karyawan, lalu muat ulang halaman." />
           )}
-        </TabsContent>
+        </div>)}
 
         {/* Obrolan */}
-        <TabsContent value="chat" className="mt-4">
+        {activeTab === 'chat' && (<div>
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
             <GlassCard className="space-y-3 p-4 lg:col-span-1">
               <div className="flex items-center justify-between gap-2">
@@ -281,10 +281,10 @@ export default function CareerCoachModule({ token }) {
               </div>
             </GlassCard>
           </div>
-        </TabsContent>
+        </div>)}
 
         {/* Laporan */}
-        <TabsContent value="reports" className="mt-4 space-y-3">
+        {activeTab === 'reports' && (<div className="space-y-3">
           {reports.length > 0 && (
             <div className="flex justify-end">
               <TombolUnduh namaBerkas="laporan-karier-saya" namaLembar="Laporan" baris={reports} testId="career-unduh" kolom={[
@@ -301,8 +301,7 @@ export default function CareerCoachModule({ token }) {
               { kunci: 'ringkasan', label: 'Ringkasan', isi: (r) => <p className="line-clamp-2 text-sm text-muted-foreground md:max-w-[34rem]">{r.report?.summary || '—'}</p> },
               { kunci: 'aksi', label: '', rata: 'kanan', hp: 'aksi', isi: (r) => <Button size="sm" variant="outline" onClick={() => setSelectedReport(r)}>Buka</Button> },
             ]} />
-        </TabsContent>
-      </Tabs>
+        </div>)}
 
       {/* Buat laporan karier */}
       <FormPopup open={formOpen} onClose={() => setFormOpen(false)} ukuran="pendek" testId="career-generate-form"

@@ -299,7 +299,7 @@ export default function UserManagementModule({ token }) {
       </>}
       tools={<ImportExportToolbar collectionKey="users" label="Pengguna Sistem" onImported={fetchUsers} />}>
       {loading && users.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengguna…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengguna…</p>
       ) : (
         <TabelData kolom={columns} baris={tampil} testId="user-table"
           kosong={<EmptyState title={users.length ? 'Tidak ada pengguna yang cocok' : 'Belum ada pengguna'}

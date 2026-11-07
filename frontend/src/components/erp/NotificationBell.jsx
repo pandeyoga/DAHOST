@@ -395,7 +395,7 @@ export function NotificationBell({ token, onNavigateModule }) {
 
   const renderList = (t, { compact }) => {
     if (loading) {
-      return <div className="py-10 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>;
+      return <div className="py-6 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" /></div>;
     }
     const groups = t === 'action' && !filter ? (box.groups || []) : [];
     if (groups.length === 0 && box.items.length === 0) {

@@ -212,7 +212,7 @@ export default function DocNumberingModule({ token }) {
         </p>
       )}>
       {loading && items.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground" data-testid="docnum-loading">Memuat penomoran…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground" data-testid="docnum-loading">Memuat penomoran…</p>
       ) : (
         <TabelData kolom={kolom} baris={visible} kunci={(i) => i.key} onKlikBaris={(i) => setEditKey(i.key)} testId="docnum-table"
           kosong={<EmptyState title="Tidak ada jenis dokumen yang cocok" description="Ubah kata pencarian atau kelompok." />} />

@@ -354,7 +354,7 @@ export default function KasbonStaffModule() {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}>
       {loading && requests.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pengajuan…</p>
       ) : rows.length === 0 ? (
         <EmptyState title={requests.length ? 'Tidak ada pengajuan di status ini' : 'Belum ada pengajuan'}
           description={requests.length ? 'Pilih status lain.' : 'Ajukan kasbon atau pinjaman bila perlu.'}

@@ -108,7 +108,7 @@ export default function RbacAuditModule({ token }) {
         </div>
       )}>
       {loading && !data ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memeriksa kode dan data…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memeriksa kode dan data…</p>
       ) : !data ? (
         <EmptyState title="Audit belum bisa dimuat" description="Coba periksa ulang beberapa saat lagi."
           action={{ label: 'Periksa ulang', onClick: load }} />

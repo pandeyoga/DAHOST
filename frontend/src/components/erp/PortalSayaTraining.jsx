@@ -106,7 +106,7 @@ export default function PortalSayaTraining({ user, headers }) {
         </div>
       )}>
       {loading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat training…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat training…</p>
       ) : data?.error ? (
         <Notice tone="warning" title="Training belum bisa ditampilkan">{data.error}</Notice>
       ) : (

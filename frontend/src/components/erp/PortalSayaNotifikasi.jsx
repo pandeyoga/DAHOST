@@ -139,7 +139,7 @@ export default function PortalSayaNotifikasi({ headers, onNavigate }) {
 
       {error && <Notice tone="danger">{error}</Notice>}
 
-      {loading && <p className="py-10 text-center text-sm text-muted-foreground">Memuat notifikasi…</p>}
+      {loading && <p className="py-6 text-center text-sm text-muted-foreground">Memuat notifikasi…</p>}
 
       {empty && (
         <EmptyState title={tab === 'action' ? 'Tidak ada yang perlu ditindaklanjuti.'

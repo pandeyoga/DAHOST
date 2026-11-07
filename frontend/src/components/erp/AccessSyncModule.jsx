@@ -209,7 +209,7 @@ export default function AccessSyncModule({ token }) {
       </>}
       >
       {!data ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">{busy ? 'Memeriksa akun…' : 'Data akun belum bisa dimuat.'}</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">{busy ? 'Memeriksa akun…' : 'Data akun belum bisa dimuat.'}</p>
       ) : (
         <TabelData kolom={kolom} baris={tampil} onKlikBaris={(u) => setDetail(u.id)} testId="access-sync-table"
           kosong={<EmptyState title="Tidak ada akun yang cocok" description="Ubah saringan atau kata pencarian." />} />

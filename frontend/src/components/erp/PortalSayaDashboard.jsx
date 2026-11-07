@@ -43,7 +43,7 @@ export default function PortalSayaDashboard({ user, headers, onNavigate }) {
     return (
       <PageLayout testId="portal-saya-dashboard" title="Dashboard" subtitle={`Selamat datang, ${nama}.`}>
         {loading
-          ? <p className="py-10 text-center text-sm text-muted-foreground">Memuat ringkasan…</p>
+          ? <p className="py-6 text-center text-sm text-muted-foreground">Memuat ringkasan…</p>
           : <EmptyState title="Ringkasan belum bisa dimuat" description="Periksa koneksi lalu muat ulang halaman." />}
       </PageLayout>
     );

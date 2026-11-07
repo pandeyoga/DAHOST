@@ -212,7 +212,7 @@ export default function SyncAuditModule({ onNavigate }) {
         </div>
       )}>
       {loading && !report ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Mengukur tautan antar data…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Mengukur tautan antar data…</p>
       ) : !report ? (
         <EmptyState title="Hasil pemeriksaan belum bisa dimuat" description="Coba periksa ulang beberapa saat lagi."
           action={{ label: 'Periksa ulang', onClick: load }} />

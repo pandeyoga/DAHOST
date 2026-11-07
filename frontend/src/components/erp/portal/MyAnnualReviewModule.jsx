@@ -80,7 +80,7 @@ export default function MyAnnualReviewModule({ token }) {
         </Button>
       )}>
       {loading && !data ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat penilaian…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat penilaian…</p>
       ) : kosongSemua ? (
         <EmptyState title="Belum ada data penilaian tahunan" description="Periode review dan hasil penilaian dari HR akan muncul di sini." />
       ) : (
