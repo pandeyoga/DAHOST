@@ -103,13 +103,13 @@ export default function PayrollDashboardModule({ token, headers }) {
       summary={!muatAwal && (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <StatTile label="Dibayar tahun ini" value={formatRupiah(d.total_disbursed_ytd || 0)} accent="success" testId="pd-paid-ytd"
-            sub="Gaji bersih run final yang sudah dibayar, periode mulai 1 Januari." />
+            sub="Gaji bersih run final yang sudah dibayar." />
           <StatTile label="Run draf tahun ini" value={String(runSummary.draft?.count ?? 0)} testId="pd-draft"
             sub={`${formatRupiah(runSummary.draft?.total_net_rp || 0)} gaji bersih, belum final.`} />
           <StatTile label="Final belum dibayar" value={formatRupiah(d.total_unpaid_finalized || 0)} accent="warning" testId="pd-unpaid"
-            sub="Gaji bersih run final tahun ini yang belum dicatat dibayar." />
+            sub="Gaji bersih run final, belum dibayar." />
           <StatTile label="Cakupan profil gaji" value={`${String(coverage.coverage_pct ?? 0).replace('.', ',')}%`} testId="pd-coverage"
-            sub={`${coverage.with_payroll_profile ?? 0} dari ${coverage.total_active_employees ?? 0} karyawan aktif punya profil gaji aktif.`} />
+            sub={`${coverage.with_payroll_profile ?? 0} dari ${coverage.total_active_employees ?? 0} karyawan aktif.`} />
         </div>
       )}
       footer={history.length > 10 && (

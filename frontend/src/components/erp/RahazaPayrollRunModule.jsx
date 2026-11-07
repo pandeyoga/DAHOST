@@ -532,8 +532,7 @@ export default function RahazaPayrollRunModule({ token, onNavigate }) {
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={(r) => openRun(r.id)} testId="pr-table"
           kosong={<EmptyState title={runs.length ? 'Tidak ada run dengan status ini' : 'Belum ada proses gaji'}
-            description={runs.length ? 'Pilih status lain.' : 'Tekan “Buat proses gaji” atau “Salin bulan lalu” untuk memulai.'}
-            action={!runs.length && <Button onClick={() => { setCreateInitial(null); setCreating(true); }}><Plus />Buat proses gaji</Button>} />} />
+            description={runs.length ? 'Pilih status lain.' : 'Tekan “Buat proses gaji” atau “Salin bulan lalu” untuk memulai.'} />} />
       )}
 
       {creating && (

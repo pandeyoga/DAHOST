@@ -263,7 +263,7 @@ export default function RahazaSalaryAdjustmentModule({ token, user }) {
             className="pl-8" data-testid="adj-search-input" />
         </div>
         <SmartNativeSelect value={filterType} onChange={(e) => setFilterType(e.target.value)} searchable={false}
-          className="w-full sm:w-48" aria-label="Jenis penyesuaian" data-testid="adj-filter-type">
+          wrapperClassName="w-full sm:w-48" aria-label="Jenis penyesuaian" data-testid="adj-filter-type">
           <option value="all">Semua jenis</option>
           {Object.entries(TYPE_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </SmartNativeSelect>

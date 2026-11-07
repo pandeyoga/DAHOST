@@ -215,20 +215,21 @@ export default function RahazaPayrollSettingsModule({ token }) {
     const nama = (ids || []).map(id => allowanceList.find(a => a.allowance_id === id)?.name).filter(Boolean);
     return nama.length ? nama.join(', ') : 'Tunjangan yang namanya memuat kata "kehadiran"';
   };
-  const ptkpNilai = sPph ? PTKP_CODES.map(c => Number(sPph.ptkp?.[c] || 0)) : [];
+  const ptkpUrut = sPph ? PTKP_CODES.map(c => [c, Number(sPph.ptkp?.[c] || 0)]).sort((a, b) => a[1] - b[1]) : [];
   const brk = sPph?.brackets || [];
 
+  // Kelompok mengalir dalam dua kolom (bukan grid berbaris) supaya kartu pendek tidak menyisakan ruang kosong.
   const kelompok = (judul, isi) => (
-    <section className="space-y-2">
+    <section className="mb-4 space-y-2 break-inside-avoid">
       <h3 className="text-lg font-semibold text-foreground">{judul}</h3>
-      <div className="grid items-start gap-4 lg:grid-cols-2 2xl:grid-cols-3">{isi}</div>
+      <div className="space-y-4">{isi}</div>
     </section>
   );
 
   return (
     <PageLayout title="Pengaturan penggajian" testId="payroll-settings-page"
       subtitle="Aturan penggajian: hari kerja, PPh21, BPJS, lembur, kehadiran, dan kasbon." tools={tools}>
-
+      <div className="gap-4 lg:columns-2" data-testid="ps-ringkasan">
       {kelompok('Gaji & pajak', <>
         <Ringkasan title={SEKSI_JUDUL.cal} testId="ps-calendar" onEdit={() => buka('cal')}
           note="Pembagi gaji harian = hari kerja aktif periode (hari libur dari Kalender Libur).">
@@ -246,7 +247,7 @@ export default function RahazaPayrollSettingsModule({ token }) {
             <BarisDetail label="Tambahan tanpa NPWP/NIK">{sPph.no_npwp_surcharge_enabled ? pctTeks(sPph.no_npwp_surcharge_rate) : 'Mati'}</BarisDetail>
             <BarisDetail label="Biaya jabatan">{pctTeks(sPph.biaya_jabatan_rate)}, maks {rp(sPph.biaya_jabatan_max_month)} per bulan</BarisDetail>
             <BarisDetail label="PTKP setahun">
-              {ptkpNilai.length ? `${rp(Math.min(...ptkpNilai))} (TK/0) sampai ${rp(Math.max(...ptkpNilai))} (K/3)` : '—'}
+              {ptkpUrut.length ? `${rp(ptkpUrut[0][1])} (${ptkpUrut[0][0]}) sampai ${rp(ptkpUrut[ptkpUrut.length - 1][1])} (${ptkpUrut[ptkpUrut.length - 1][0]})` : '—'}
             </BarisDetail>
             <BarisDetail label="Tarif progresif">
               {brk.length ? `${brk.length} lapis, ${pctTeks(brk[0]?.[1])} sampai ${pctTeks(brk[brk.length - 1]?.[1])}` : '—'}
@@ -310,6 +311,7 @@ export default function RahazaPayrollSettingsModule({ token }) {
           <BarisDetail label="Maks jumlah cicilan">{Number(sKa.max_installments || 0) > 0 ? `${sKa.max_installments} kali` : 'Tanpa batas'}</BarisDetail>
         </Ringkasan>
       ))}
+      </div>
 
       {/* ── KALENDER KERJA (Tahap 2) ─────────────────────────────────────── */}
       <FormPopup open={edit === 'cal'} onClose={tutup} ukuran="pendek" judul={SEKSI_JUDUL.cal} testId="ps-calendar-form"

@@ -145,7 +145,7 @@ export default function RahazaPayrollProfilesModule({ token }) {
         </div>
         <FilterChips options={opsiSkema} value={skema} onChange={setSkema} testId="pp-scheme" ariaLabel="Skema gaji" />
       </>}
-      tools={<>
+      tools={<div className="flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-end gap-2">
         <ImportExportToolbar collectionKey="payroll_profiles" label="Profil gaji karyawan" onImported={fetchAll}
           size="default" caption="format impor" importLabel="Impor profil" />
         <TombolUnduh namaBerkas="profil-gaji" namaLembar="Profil gaji" baris={baris} testId="pp-unduh"
@@ -160,7 +160,7 @@ export default function RahazaPayrollProfilesModule({ token }) {
           ]} />
         <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
           data-testid="pp-refresh"><RefreshCw className={loading ? 'animate-spin' : ''} /></Button>
-      </>}
+      </div>}
       footer={baris.length > 10 && <PaginationLite page={page} totalPages={totalPages} total={total} onPageChange={setPage} />}
     >
       {error && <Notice tone="danger" title={error} testId="pp-error" />}
