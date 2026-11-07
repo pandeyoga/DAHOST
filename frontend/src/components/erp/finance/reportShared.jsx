@@ -1,3 +1,4 @@
+import SmartNativeSelect from '@/components/ui/smart-native-select';
 // Alat bersama laporan keuangan turunan buku besar (12 bulan · neraca lajur · arus kas · saldo awal).
 export const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 export const fmtCell = (n) => (Number(n || 0) === 0 ? '' : fmt(n));
@@ -24,24 +25,21 @@ export function yearOptions(span = 5) {
 
 export function YearSelect({ value, onChange, testId }) {
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(Number(e.target.value))}
-      className="h-8 rounded-[var(--radius-sm)] bg-[var(--card-surface)] border border-[var(--glass-border)] px-2 text-xs text-foreground"
-      data-testid={testId}
-    >
+    // Standar UI/UX v2: pemilih aplikasi (SmartNativeSelect), bukan <select> bawaan peramban.
+    <SmartNativeSelect value={String(value)} onChange={(e) => onChange(Number(e.target.value))} searchable={false}
+      className="w-28" aria-label="Tahun" data-testid={testId}>
       {yearOptions().map((y) => <option key={y} value={y}>{y}</option>)}
-    </select>
+    </SmartNativeSelect>
   );
 }
 
-const cellCls = 'py-1.5 px-2 text-right font-mono text-xs whitespace-nowrap';
+const cellCls = 'py-1.5 px-2 text-right tabular-nums text-xs whitespace-nowrap';
 
 export function MonthlyRow({ code, name, months, total, bold, tone, testId, indent = true }) {
   const cls = `${cellCls} ${bold ? 'font-semibold' : ''} ${tone || ''}`;
   return (
     <tr className={`border-b border-[var(--glass-border)] ${bold ? 'bg-[var(--card-surface)]' : 'hover:bg-foreground/5'}`} data-testid={testId}>
-      <td className="py-1.5 px-2 font-mono text-xs text-muted-foreground sticky left-0 bg-[var(--card-surface)]">{code}</td>
+      <td className="py-1.5 px-2 tabular-nums text-xs text-muted-foreground sticky left-0 bg-[var(--card-surface)]">{code}</td>
       <td className={`py-1.5 px-2 text-xs whitespace-nowrap sticky left-[88px] bg-[var(--card-surface)] ${bold ? 'font-semibold' : indent ? 'pl-5' : ''}`}>{name}</td>
       {months.map((v, i) => <td key={i} className={cls}>{fmtCell(v)}</td>)}
       {total !== undefined && <td className={`${cls} border-l border-[var(--glass-border)]`}>{fmtCell(total)}</td>}

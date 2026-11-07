@@ -89,7 +89,7 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
 
   if (!entityId) {
     return (
-      <div className="border border-dashed border-border rounded-lg p-4 text-center text-sm text-muted-foreground/70">
+      <div className="border border-dashed border-[var(--glass-border)] rounded-lg p-4 text-center text-sm text-muted-foreground">
         Simpan record terlebih dahulu untuk menambahkan lampiran.
       </div>
     );
@@ -98,9 +98,9 @@ export default function FileAttachmentPanel({ token, entityType, entityId, userR
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h4 className="text-sm font-semibold text-foreground/90 flex items-center gap-2">
+        <p className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Paperclip className="w-4 h-4" /> Lampiran ({attachments.length})
-        </h4>
+        </p>
         <Button
           type="button"
           size="sm"
