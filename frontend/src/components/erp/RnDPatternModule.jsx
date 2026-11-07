@@ -407,7 +407,7 @@ export default function RnDPatternModule({ token }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}>
       {loading && patterns.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat pola…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat pola…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="rnd-pattern-table"
           kosong={<EmptyState icon={Ruler}
@@ -595,7 +595,7 @@ export default function RnDPatternModule({ token }) {
               ))}
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">Belum ada dokumentasi marking. Klik "Unggah foto/video".</p>
+            <p className="text-xs text-muted-foreground">Dokumentasi marking masih kosong — klik "Unggah foto/video".</p>
           )}
         </section>
 

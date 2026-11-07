@@ -11,7 +11,7 @@ import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import FilterChips from '@/components/ui/filter-chips';
 import TabelData from '@/components/ui/tabel-data';
 import TombolUnduh from '@/components/ui/tombol-unduh';
 import FormPopup, { Isian } from '@/components/ui/form-popup';
@@ -42,6 +42,11 @@ const STATUS_CONF = {
   superseded: { label: 'Digantikan', tone: 'muted' },
 };
 const statusTp = (s) => STATUS_CONF[s] || STATUS_CONF.draft;
+/** Bagian form tech pack (kunci = nilai state `tab`, tidak berubah). */
+const BAGIAN_FORM = [
+  { key: 'info', label: 'Informasi' }, { key: 'konstruksi', label: 'Konstruksi' }, { key: 'bahan', label: 'Bahan' },
+  { key: 'bom', label: 'BOM' }, { key: 'measurements', label: 'Ukuran' },
+];
 const peranKain = (r) => (r === 'main' ? 'Utama' : 'Kombinasi');
 /** Baris BOM yang belum tertaut master (dihitung server: `master_linked`). */
 const bomTanpaMaster = (tp) => (tp.bom_unlinked_count || 0);
@@ -546,7 +551,7 @@ export default function RnDTechPackModule({ token }) {
         <PaginationLite page={pg.page} totalPages={pg.totalPages} total={pg.total} pageSize={pg.pageSize} onPageChange={pg.setPage} />
       )}>
       {loading && techPacks.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat tech pack…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat tech pack…</p>
       ) : (
         <TabelData kolom={kolom} baris={pg.paged} onKlikBaris={setDetail} testId="techpack-table"
           kosong={<EmptyState icon={FileText}
@@ -817,15 +822,11 @@ export default function RnDTechPackModule({ token }) {
         keterangan="Lima bagian: informasi, konstruksi, bahan, BOM, dan ukuran. Simpan menyimpan semua bagian."
         testId="techpack-form">
         <div className="space-y-4" onKeyDown={tahanEnter}>
-          <Tabs value={tab} onValueChange={setTab}>
-            <TabsList className="max-w-full flex-wrap justify-start">
-              {[['info', 'Informasi'], ['konstruksi', 'Konstruksi'], ['bahan', 'Bahan'], ['bom', 'BOM'], ['measurements', 'Ukuran']].map(([id, lbl]) => (
-                <TabsTrigger key={id} value={id} data-testid={`techpack-form-tab-${id}`}>
-                  {lbl}{id === 'bom' && unlinkedBom > 0 ? ` (${unlinkedBom} tanpa master)` : ''}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+          {/* Pindah bagian form (pil standar, bukan tab buatan). */}
+          <FilterChips value={tab} onChange={setTab} hideWhenEmpty={false} ariaLabel="Bagian form tech pack"
+            testId="techpack-form-tab" options={BAGIAN_FORM.map(b => ({
+              key: b.key, label: b.key === 'bom' && unlinkedBom > 0 ? `${b.label} (${unlinkedBom} tanpa master)` : b.label,
+            }))} />
 
           {tab === 'info' && (
             <div className="space-y-4">
@@ -928,7 +929,7 @@ export default function RnDTechPackModule({ token }) {
                 <Button type="button" variant="outline" size="sm" onClick={addCP}><Plus />Tambah poin</Button>
               </div>
               {(form.construction_points || []).length === 0 && (
-                <p className="py-4 text-center text-sm text-muted-foreground">Belum ada poin konstruksi. Klik "Tambah poin".</p>
+                <p className="py-4 text-center text-sm text-muted-foreground">Poin konstruksi masih kosong — klik "Tambah poin".</p>
               )}
               {(form.construction_points || []).map((cp, i) => (
                 <div key={i} className="flex items-start gap-2 rounded-[var(--radius-md)] border border-[var(--glass-border)] p-2">
@@ -1004,7 +1005,7 @@ export default function RnDTechPackModule({ token }) {
                   <Button type="button" variant="outline" size="sm" onClick={addCons}><Plus />Tambah baris</Button>
                 </div>
                 {(form.fabric_consumption || []).length === 0 && (
-                  <p className="py-2 text-center text-sm text-muted-foreground">Belum ada data pemakaian. Contoh: M / Utama / 463 cm / 150 / 5 pcs.</p>
+                  <p className="py-2 text-center text-sm text-muted-foreground">Data pemakaian masih kosong. Contoh isian: M / Utama / 463 cm / 150 / 5 pcs.</p>
                 )}
                 {(styleSizes.size_list || []).length === 0 && (
                   <Notice tone="warning">
@@ -1202,7 +1203,7 @@ export default function RnDTechPackModule({ token }) {
                 </Table>
               )}
               {(form.measurements || []).length === 0 && (
-                <p className="py-4 text-center text-sm text-muted-foreground">Belum ada titik ukur. Klik "Titik ukur" untuk mulai.</p>
+                <p className="py-4 text-center text-sm text-muted-foreground">Titik ukur masih kosong — klik "Titik ukur" untuk mulai.</p>
               )}
             </div>
           )}

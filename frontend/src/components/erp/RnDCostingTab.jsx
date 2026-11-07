@@ -325,7 +325,7 @@ export default function RnDCostingTab({ token }) {
         </Button>
       </>}>
       {loading && costings.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat biaya sample…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat biaya sample…</p>
       ) : (
         <TabelData kolom={kolom} baris={baris} onKlikBaris={setDetail} testId="costing-table"
           kosong={<EmptyState icon={Calculator}

@@ -208,7 +208,7 @@ export default function RnDRevisionsTab({ token }) {
         </Button>
       </>}>
       {loading && revisions.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat revisi…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat revisi…</p>
       ) : (
         <TabelData kolom={kolom} baris={filtered} onKlikBaris={setDetail} testId="revision-table"
           kosong={<EmptyState icon={GitBranch}

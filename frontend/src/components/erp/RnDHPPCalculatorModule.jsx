@@ -524,7 +524,7 @@ export default function RnDHPPCalculatorModule({ token }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}>
       {loading && records.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Memuat kalkulasi HPP…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">Memuat kalkulasi HPP…</p>
       ) : (
         <TabelData kolom={kolom} baris={paged} onKlikBaris={setDetail} testId="rnd-hpp-table"
           kosong={<EmptyState icon={Calculator}
