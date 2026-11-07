@@ -152,7 +152,9 @@ export default function RnDVariantModule({ token }) {
 
   const loadAudit = useCallback(async () => {
     try {
-      const qs = filterStyle ? `?style_id=${filterStyle}` : '';
+      // 2026-11-08: server memeriksa 500 varian terbaru bila `limit` tidak dikirim — data uji 644 varian (VPS 921),
+      // sehingga jumlah "SKU tidak sesuai aturan" bisa kurang. Minta batas maksimum yang diizinkan server (2000).
+      const qs = `?limit=2000${filterStyle ? `&style_id=${filterStyle}` : ''}`;
       const res = await fetch(`${API}/api/dewi/rnd/variants/sku-audit${qs}`, { headers: h });
       if (res.ok) setAudit(await res.json());
     } catch { /* ignore */ }
