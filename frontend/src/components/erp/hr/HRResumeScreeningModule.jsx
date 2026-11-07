@@ -1,44 +1,115 @@
+/**
+ * Screening CV (Portal SDM) — analisis CV pelamar dengan AI sebagai USULAN (K28: HR yang memutuskan).
+ *
+ * Standar UI/UX v2 (8 Nov 2026): cetakan PageLayout, form screening = FormPopup (dulu panel besar di halaman),
+ * hasil = DetailPopup, riwayat = tabel + unduh Excel/CSV (dulu kartu berulang, diam-diam 10 terakhir),
+ * label rekomendasi/kecocokan/area fokus berbahasa Indonesia (nilai yang dikirim ke server tetap sama),
+ * tanpa gradien/ikon besar, warna token.
+ */
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { GlassCard } from '@/components/ui/glass';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Label } from '@/components/ui/label';
-import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
-import { FileSearch, Sparkles, AlertTriangle, CheckCircle, XCircle, Loader2, TrendingUp, Award } from 'lucide-react';
-import { IconButton } from '../IconButton';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import SmartNativeSelect from '@/components/ui/smart-native-select';
+import TabelData from '@/components/ui/tabel-data';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DetailPopup, { BarisDetail } from '@/components/ui/detail-popup';
+import { cn } from '@/lib/utils';
+import { formatDateID } from '@/lib/format';
+import PageLayout from '../layout/PageLayout';
+import { EmptyState, StatusBadge } from '../moduleAtoms';
 import AISuggestionPanel from '../AISuggestionPanel';
 
-const RECOMMENDATION_COLOR = {
-  'Strongly Recommended': '#10b981',
-  'Recommended': '#3b82f6',
-  'Consider': '#f59e0b',
-  'Not Recommended': '#ef4444',
+// Nilai dari server (bahasa Inggris) → label layar.
+const REKOMENDASI = {
+  'Strongly Recommended': { label: 'Sangat disarankan', tone: 'success' },
+  'Recommended': { label: 'Disarankan', tone: 'info' },
+  'Consider': { label: 'Pertimbangkan', tone: 'warning' },
+  'Not Recommended': { label: 'Tidak disarankan', tone: 'danger' },
 };
+const labelRek = (r) => REKOMENDASI[r]?.label || r || '—';
+function Rekomendasi({ nilai }) {
+  if (!nilai) return <span className="text-muted-foreground">—</span>;
+  const r = REKOMENDASI[nilai] || { label: nilai, tone: 'default' };
+  return <StatusBadge status={nilai} label={r.label} tone={r.tone} />;
+}
 
 // K28 (2026-11-02): skor AI kandidat = usulan; HR Terima/Ubah/Tolak sebelum jadi skor resmi.
 const SCORE_SUGGESTION_FIELDS = [
   { key: 'ai_score', label: 'Skor AI (0–100)', type: 'number' },
-  { key: 'ai_recommendation', label: 'Rekomendasi', options: Object.keys(RECOMMENDATION_COLOR).map(v => ({ value: v, label: v })) },
+  { key: 'ai_recommendation', label: 'Rekomendasi', options: Object.entries(REKOMENDASI).map(([v, r]) => ({ value: v, label: r.label })) },
 ];
 
 const MATCH_BADGE = {
-  yes: { label: 'Match', color: '#10b981' },
-  partial: { label: 'Partial', color: '#f59e0b' },
-  no: { label: 'No Match', color: '#ef4444' },
+  yes: { label: 'Cocok', tone: 'success' },
+  partial: { label: 'Sebagian', tone: 'warning' },
+  no: { label: 'Tidak cocok', tone: 'danger' },
 };
+const AREA_FOKUS = [
+  { nilai: 'skills', label: 'Keahlian' },
+  { nilai: 'experience', label: 'Pengalaman' },
+  { nilai: 'education', label: 'Pendidikan' },
+  { nilai: 'communication', label: 'Komunikasi' },
+];
+const KOSONG = { job_requirements: '', focus_areas: [] };
+
+/** Isi hasil analisis (dipakai untuk hasil baru dan riwayat). */
+function IsiAnalisis({ analysis = {} }) {
+  return (
+    <>
+      <dl className="divide-y divide-[var(--glass-border)]">
+        <BarisDetail label="Skor keseluruhan">
+          <span className="text-base font-semibold tabular-nums">{analysis.overall_score ?? '—'}</span>
+          <span className="text-muted-foreground"> / 100</span>
+        </BarisDetail>
+        <BarisDetail label="Rekomendasi"><Rekomendasi nilai={analysis.recommendation} /></BarisDetail>
+      </dl>
+      {analysis.summary && <p className="text-sm leading-relaxed text-foreground">{analysis.summary}</p>}
+      {analysis.strengths?.length > 0 && (
+        <div>
+          <p className="mb-1 text-sm font-medium text-foreground">Kekuatan</p>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+            {analysis.strengths.map((s, i) => <li key={i}>{s}</li>)}
+          </ul>
+        </div>
+      )}
+      {analysis.weaknesses?.length > 0 && (
+        <div>
+          <p className="mb-1 text-sm font-medium text-foreground">Area pengembangan</p>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+            {analysis.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
+          </ul>
+        </div>
+      )}
+      {analysis.skill_match?.length > 0 && (
+        <div>
+          <p className="mb-1 text-sm font-medium text-foreground">Kesesuaian keahlian</p>
+          <TabelData baris={analysis.skill_match} kunci={(sm) => sm.skill} testId="resume-skill-match"
+            kolom={[
+              { kunci: 'skill', label: 'Keahlian', hp: 'judul' },
+              { kunci: 'match', label: 'Kecocokan', isi: (sm) => {
+                const b = MATCH_BADGE[sm.match] || MATCH_BADGE.no;
+                return <StatusBadge status={sm.match} label={b.label} tone={b.tone} />;
+              } },
+            ]} />
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function HRResumeScreeningModule({ token }) {
   const [candidates, setCandidates] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [screening, setScreening] = useState(false);
+  const [bukaForm, setBukaForm] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState(null);
-  const [result, setResult] = useState(null);
-  const [formData, setFormData] = useState({ job_requirements: '', focus_areas: [] });
+  const [result, setResult] = useState(null);       // hasil screening baru (popup)
+  const [lihat, setLihat] = useState(null);         // baris riwayat (popup)
+  const [formData, setFormData] = useState(KOSONG);
 
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }), [token]);
 
@@ -60,7 +131,8 @@ export default function HRResumeScreeningModule({ token }) {
 
   const fetchHistory = useCallback(async () => {
     try {
-      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/resume-screen/history`, { headers });
+      // Dulu 20 terakhir & hanya 10 yang tampil; kini sampai 200 riwayat.
+      const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/resume-screen/history?limit=200`, { headers });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setHistory(data?.data || []);
@@ -73,6 +145,8 @@ export default function HRResumeScreeningModule({ token }) {
     fetchCandidates();
     fetchHistory();
   }, [fetchCandidates, fetchHistory]);
+
+  const muatUlang = () => { fetchCandidates(); fetchHistory(); };
 
   const handleScreen = async () => {
     if (!selectedCandidate) {
@@ -90,7 +164,8 @@ export default function HRResumeScreeningModule({ token }) {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
       setResult(data?.data);
-      toast.success('Screening selesai!', { icon: <Sparkles className="w-4 h-4" /> });
+      setBukaForm(false);
+      toast.success('Screening selesai!', { icon: <Sparkles className="h-4 w-4" /> });
       fetchHistory();
     } catch (e) {
       toast.error(`Screening gagal: ${e.message}`);
@@ -99,211 +174,117 @@ export default function HRResumeScreeningModule({ token }) {
     }
   };
 
-  const recColor = result?.analysis?.recommendation ? RECOMMENDATION_COLOR[result.analysis.recommendation] : '#64748b';
+  const alihFokus = (area) => setFormData((f) => ({
+    ...f,
+    focus_areas: f.focus_areas.includes(area) ? f.focus_areas.filter((a) => a !== area) : [...f.focus_areas, area],
+  }));
+  const namaKandidat = (id) => {
+    const c = candidates.find((x) => x.candidate_id === id);
+    return c ? `${c.name} — ${c.job_title || c.position_applied || 'posisi belum diisi'}` : '';
+  };
+
+  const kolom = [
+    { kunci: 'nama', label: 'Kandidat', hp: 'judul', isi: (h) => <span className="font-medium text-foreground">{h.candidate_name || '—'}</span> },
+    { kunci: 'posisi', label: 'Posisi', hp: 'keterangan', isi: (h) => <span className="text-sm">{h.position || '—'}</span> },
+    { kunci: 'tanggal', label: 'Tanggal', isi: (h) => <span className="text-sm md:whitespace-nowrap">{formatDateID(h.generated_at)}</span> },
+    { kunci: 'skor', label: 'Skor', rata: 'kanan', isi: (h) => <span className="font-semibold tabular-nums">{h.analysis?.overall_score ?? '—'}</span> },
+    { kunci: 'rek', label: 'Rekomendasi', isi: (h) => <Rekomendasi nilai={h.analysis?.recommendation} /> },
+  ];
 
   return (
-    <div className="space-y-6 p-6" data-testid="hr-resume-screening">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
-            <FileSearch className="w-5 h-5 text-foreground" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">AI Resume Screening</h1>
-            <p className="text-sm text-muted-foreground">Analisis CV kandidat dengan AI untuk penilaian objektif</p>
-          </div>
-        </div>
-        <IconButton icon={Sparkles} onClick={fetchCandidates} disabled={loading} tooltip="Refresh" />
-      </div>
+    <PageLayout testId="hr-resume-screening" title="Screening CV"
+      subtitle="Nilai CV pelamar dengan AI sebagai usulan; keputusan skor tetap di tangan SDM."
+      actions={<Button onClick={() => setBukaForm(true)} data-testid="resume-screen-new"><Sparkles />Screening baru</Button>}
+      tools={<>
+        <TombolUnduh namaBerkas="riwayat-screening-cv" namaLembar="Riwayat" baris={history} testId="resume-history-unduh"
+          kolom={[
+            { label: 'Kandidat', nilai: (h) => h.candidate_name || '' },
+            { label: 'Posisi', nilai: (h) => h.position || '' },
+            { label: 'Tanggal', nilai: (h) => formatDateID(h.generated_at) },
+            { label: 'Skor', nilai: (h) => h.analysis?.overall_score ?? '' },
+            { label: 'Rekomendasi', nilai: (h) => labelRek(h.analysis?.recommendation) },
+            { label: 'Ringkasan', nilai: (h) => h.analysis?.summary || '' },
+          ]} />
+        <Button variant="outline" size="icon" onClick={muatUlang} disabled={loading} title="Muat ulang" aria-label="Muat ulang">
+          <RefreshCw className={loading ? 'animate-spin' : ''} />
+        </Button>
+      </>}>
+      <TabelData kolom={kolom} baris={history} kunci={(h) => h.id || `${h.candidate_id}-${h.generated_at}`} onKlikBaris={setLihat}
+        testId="resume-history"
+        kosong={<EmptyState title="Belum ada riwayat screening"
+          description={candidates.length ? 'Klik "Screening baru", pilih pelamar, lalu biarkan AI menilai CV-nya.'
+            : 'Belum ada pelamar. Tambahkan pelamar di menu Rekrutmen & ATS terlebih dahulu.'}
+          action={<Button onClick={() => setBukaForm(true)}><Sparkles />Screening baru</Button>} />} />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Form Panel */}
-        <GlassCard className="p-6 space-y-4">
-          <div className="flex items-center gap-2 mb-4">
-            <Sparkles className="w-5 h-5 text-blue-500" />
-            <h2 className="text-lg font-semibold text-foreground">Pilih Kandidat & Kriteria</h2>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <Label>Kandidat</Label>
-              <Select value={selectedCandidate || ''} onValueChange={setSelectedCandidate}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Pilih kandidat..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {candidates.map(c => (
-                    <SelectItem key={c.candidate_id} value={c.candidate_id}>
-                      {c.name} - {c.job_title || c.position_applied || 'N/A'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Label>Persyaratan Tambahan (Opsional)</Label>
-              <Textarea
-                placeholder="Misal: Minimal 3 tahun pengalaman di garment manufacturing..."
-                value={formData.job_requirements}
-                onChange={e => setFormData({ ...formData, job_requirements: e.target.value })}
-                rows={3}
-              />
-            </div>
-
-            <div>
-              <Label>Area Fokus</Label>
-              <div className="flex flex-wrap gap-2 mt-2">
-                {['skills', 'experience', 'education', 'communication'].map(area => (
-                  <Badge
-                    key={area}
-                    variant={formData.focus_areas.includes(area) ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => {
-                      const newAreas = formData.focus_areas.includes(area)
-                        ? formData.focus_areas.filter(a => a !== area)
-                        : [...formData.focus_areas, area];
-                      setFormData({ ...formData, focus_areas: newAreas });
-                    }}
-                  >
-                    {area}
-                  </Badge>
-                ))}
-              </div>
-            </div>
-
-            <Button onClick={handleScreen} disabled={screening || !selectedCandidate} className="w-full">
-              {screening ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Menganalisis...</> : <><Sparkles className="w-4 h-4 mr-2" /> Mulai Screening</>}
-            </Button>
-          </div>
-        </GlassCard>
-
-        {/* Result Panel */}
-        <GlassCard className="p-6">
-          <div className="flex items-center gap-2 mb-4">
-            <Award className="w-5 h-5 text-amber-500" />
-            <h2 className="text-lg font-semibold text-foreground">Hasil Analisis</h2>
-          </div>
-
-          {result ? (
-            <div className="space-y-4">
-              {/* Overall Score */}
-              <div className="text-center p-4 rounded-xl" style={{ background: `${recColor}15`, border: `1px solid ${recColor}35` }}>
-                <div className="text-4xl font-bold" style={{ color: recColor }}>{result.analysis.overall_score || 0}</div>
-                <div className="text-xs text-muted-foreground mt-1">Skor Keseluruhan</div>
-                <Badge className="mt-2" style={{ background: recColor }}>{result.analysis.recommendation}</Badge>
-              </div>
-
-              {result.ai_suggestion && (
-                <AISuggestionPanel
-                  suggestion={result.ai_suggestion}
-                  fields={SCORE_SUGGESTION_FIELDS}
-                  decideUrl={`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/resume-screen/${selectedCandidate}/suggestion`}
-                  headers={{ Authorization: headers.Authorization }}
-                  testId="candidate-ai-suggestion"
-                  onDecided={(data) => {
-                    setResult(prev => ({ ...prev, ai_suggestion: data?.data?.ai_suggestion || prev.ai_suggestion }));
-                    toast.success('Keputusan skor AI tersimpan');
-                  }}
-                />
-              )}
-
-              {/* Strengths */}
-              {result.analysis.strengths && result.analysis.strengths.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-green-500" /> Kekuatan
-                  </h3>
-                  <ul className="space-y-1">
-                    {result.analysis.strengths.map((s, i) => (
-                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
-                        <span className="text-green-500 mt-0.5">•</span>{s}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Weaknesses */}
-              {result.analysis.weaknesses && result.analysis.weaknesses.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-2">
-                    <XCircle className="w-4 h-4 text-amber-500" /> Area Pengembangan
-                  </h3>
-                  <ul className="space-y-1">
-                    {result.analysis.weaknesses.map((w, i) => (
-                      <li key={i} className="text-xs text-muted-foreground flex items-start gap-2">
-                        <span className="text-amber-500 mt-0.5">•</span>{w}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Skill Match */}
-              {result.analysis.skill_match && result.analysis.skill_match.length > 0 && (
-                <div>
-                  <h3 className="text-sm font-semibold text-foreground mb-2">Kesesuaian Skill</h3>
-                  <div className="space-y-1">
-                    {result.analysis.skill_match.map((sm, i) => {
-                      const badge = MATCH_BADGE[sm.match] || MATCH_BADGE.no;
-                      return (
-                        <div key={i} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{sm.skill}</span>
-                          <Badge variant="outline" style={{ borderColor: badge.color, color: badge.color }}>{badge.label}</Badge>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Summary */}
-              {result.analysis.summary && (
-                <div className="p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)]">
-                  <p className="text-xs text-muted-foreground leading-relaxed">{result.analysis.summary}</p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center h-64 text-center">
-              <FileSearch className="w-12 h-12 text-muted-foreground/40 mb-3" />
-              <p className="text-sm text-muted-foreground">Pilih kandidat dan klik "Mulai Screening" untuk melihat hasil analisis AI</p>
-            </div>
-          )}
-        </GlassCard>
-      </div>
-
-      {/* History */}
-      <GlassCard className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <TrendingUp className="w-5 h-5 text-indigo-500" />
-          <h2 className="text-lg font-semibold text-foreground">Riwayat Screening</h2>
-        </div>
-        {history.length === 0 ? (
-          <p className="text-sm text-muted-foreground text-center py-8">Belum ada riwayat screening</p>
-        ) : (
-          <div className="space-y-2">
-            {history.slice(0, 10).map((h, i) => {
-              const hRec = h.analysis?.recommendation;
-              const hColor = hRec ? RECOMMENDATION_COLOR[hRec] : '#64748b';
+      {/* ─── Form screening (popup) ─── */}
+      <FormPopup open={bukaForm} onClose={() => setBukaForm(false)} ukuran="pendek" onSimpan={handleScreen}
+        menyimpan={screening} bisaSimpan={!!selectedCandidate} labelSimpan="Mulai screening" testId="resume-screen-form"
+        judul="Screening CV baru" keterangan="AI membaca CV pelamar dan memberi skor serta rekomendasi sebagai usulan.">
+        <Isian label="Kandidat" wajib htmlFor="resume-kandidat"
+          petunjuk={candidates.length ? `${candidates.length} pelamar tersedia.` : 'Belum ada pelamar di Rekrutmen & ATS.'}>
+          <SmartNativeSelect id="resume-kandidat" value={selectedCandidate || ''} onChange={(e) => setSelectedCandidate(e.target.value || null)}
+            data-testid="resume-candidate-select">
+            <option value="">Pilih kandidat…</option>
+            {candidates.map((c) => (
+              <option key={c.candidate_id} value={c.candidate_id}>{c.name} - {c.job_title || c.position_applied || 'posisi belum diisi'}</option>
+            ))}
+          </SmartNativeSelect>
+        </Isian>
+        <Isian label="Persyaratan tambahan (opsional)" htmlFor="resume-syarat">
+          <Textarea id="resume-syarat" rows={3} value={formData.job_requirements}
+            onChange={(e) => setFormData({ ...formData, job_requirements: e.target.value })}
+            placeholder="Misal: minimal 3 tahun pengalaman di garmen" />
+        </Isian>
+        <Isian label="Area fokus" petunjuk="Boleh lebih dari satu, atau kosongkan untuk penilaian umum.">
+          <div className="flex flex-wrap gap-1.5">
+            {AREA_FOKUS.map((a) => {
+              const aktif = formData.focus_areas.includes(a.nilai);
               return (
-                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-[var(--glass)] border border-[var(--glass-border)] hover:bg-[var(--glass-hover)] transition-colors">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{h.candidate_name}</p>
-                    <p className="text-xs text-muted-foreground">{h.position} • {new Date(h.generated_at).toLocaleDateString('id-ID')}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-lg font-bold" style={{ color: hColor }}>{h.analysis?.overall_score || 0}</span>
-                    <Badge variant="outline" style={{ borderColor: hColor, color: hColor }}>{hRec || 'N/A'}</Badge>
-                  </div>
-                </div>
+                <button key={a.nilai} type="button" onClick={() => alihFokus(a.nilai)} aria-pressed={aktif}
+                  data-testid={`resume-focus-${a.nilai}`}
+                  className={cn('rounded-full border px-3 py-1 text-sm transition-colors',
+                    aktif ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-[var(--glass-border)] bg-[var(--card-surface)] text-foreground hover:border-[hsl(var(--primary)/0.4)]')}>
+                  {a.label}
+                </button>
               );
             })}
           </div>
-        )}
-      </GlassCard>
-    </div>
+        </Isian>
+      </FormPopup>
+
+      {/* ─── Hasil screening baru (popup) ─── */}
+      {result && (
+        <DetailPopup open onClose={() => setResult(null)} testId="resume-result"
+          judul={result.candidate?.name || namaKandidat(selectedCandidate) || 'Hasil screening'}
+          keterangan="Skor dan rekomendasi AI adalah usulan — terima, ubah, atau tolak di bawah."
+          status={<Rekomendasi nilai={result.analysis?.recommendation} />}>
+          {result.ai_suggestion && (
+            <AISuggestionPanel
+              suggestion={result.ai_suggestion}
+              fields={SCORE_SUGGESTION_FIELDS}
+              decideUrl={`${process.env.REACT_APP_BACKEND_URL}/api/hr/ai/resume-screen/${selectedCandidate}/suggestion`}
+              headers={{ Authorization: headers.Authorization }}
+              testId="candidate-ai-suggestion"
+              onDecided={(data) => {
+                setResult(prev => ({ ...prev, ai_suggestion: data?.data?.ai_suggestion || prev.ai_suggestion }));
+                toast.success('Keputusan skor AI tersimpan');
+              }}
+            />
+          )}
+          <IsiAnalisis analysis={result.analysis} />
+        </DetailPopup>
+      )}
+
+      {/* ─── Rincian riwayat (popup) ─── */}
+      {lihat && (
+        <DetailPopup open onClose={() => setLihat(null)} testId="resume-history-detail"
+          judul={lihat.candidate_name || 'Riwayat screening'}
+          keterangan={[lihat.position, formatDateID(lihat.generated_at)].filter(Boolean).join(' · ')}
+          status={<Rekomendasi nilai={lihat.analysis?.recommendation} />}>
+          <IsiAnalisis analysis={lihat.analysis} />
+        </DetailPopup>
+      )}
+    </PageLayout>
   );
 }
