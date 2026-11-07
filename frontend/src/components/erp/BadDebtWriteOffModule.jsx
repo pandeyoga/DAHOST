@@ -7,13 +7,16 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, ShieldAlert, AlertTriangle, FileText } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
 import SmartNativeSelect from '@/components/ui/smart-native-select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatTile, StatusBadge, EmptyState, Notice } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
-import Modal from './Modal';
+import FormPopup, { Isian } from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { formatRupiah, formatDateID } from '@/lib/format';
 import { todayWIB } from '@/lib/waktu';
@@ -86,8 +89,15 @@ export default function BadDebtWriteOffModule({ token }) {
     }
   };
 
-  const summary = overdueData?.summary || {};
+  // ringkasan server (overdueData.summary) tidak dipakai untuk kartu — lihat catatan di bawah
   const invoices = overdueData?.invoices || [];
+
+  // 2026-11-08 (Standar UI/UX v2, verifikasi kartu): laporan server ikut menghitung faktur yang jatuh tempo HARI INI
+  // (terlambat 0 hari) sebagai "lewat jatuh tempo" — beda dengan Umur piutang & Beranda. Kartu dihitung dari daftar
+  // yang sama dengan tabel, hanya faktur yang benar-benar terlambat (≥ 1 hari).
+  const telat = invoices.filter((i) => Number(i.overdue_days) > 0);
+  const berisiko = invoices.filter((i) => Number(i.overdue_days) > 180);
+  const jumlah = (xs) => xs.reduce((s, i) => s + (Number(i.balance) || 0), 0);
 
   return (
     <PageLayout
@@ -110,17 +120,26 @@ export default function BadDebtWriteOffModule({ token }) {
           <option value="180">Terlambat 180+ hari</option>
         </SmartNativeSelect>
       }
-      tools={
+      tools={<>
+        <TombolUnduh namaBerkas="piutang-lewat-jatuh-tempo" namaLembar="Piutang terlambat" baris={invoices} testId="bd-unduh"
+          kolom={[
+            { label: 'No. faktur', nilai: (i) => i.invoice_number },
+            { label: 'Pelanggan', nilai: (i) => i.customer_name || '' },
+            { label: 'Jatuh tempo', nilai: (i) => formatDateID(i.due_date) },
+            { label: 'Terlambat (hari)', nilai: (i) => Number(i.overdue_days) || 0 },
+            { label: 'Kelompok umur', nilai: (i) => AGING_BUCKETS[i.aging_bucket]?.label || String(i.aging_bucket || '').replace(/ days?/, ' hari') },
+            { label: 'Sisa', nilai: (i) => Number(i.balance) || 0 },
+          ]} />
         <Button title="Muat ulang" aria-label="Muat ulang" size="icon" variant="outline" onClick={fetchOverdueReport} data-testid="bd-refresh">
           <RefreshCw className="w-4 h-4" />
         </Button>
-      }
-      summary={Number(summary.total_overdue_invoices) > 0 && ( // G10: kartu angka hanya bila ada yang terlambat
+      </>}
+      summary={telat.length > 0 && ( // G10: kartu angka hanya bila ada yang terlambat
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <StatTile label="Faktur lewat jatuh tempo" value={summary.total_overdue_invoices || 0} />
-          <StatTile label="Nilai lewat jatuh tempo" value={fmt(summary.total_overdue_amount)} accent="warning" />
-          <StatTile label="Berisiko (>180 hari)" value={summary.high_risk_count || 0} accent="danger" />
-          <StatTile label="Nilai berisiko" value={fmt(summary.high_risk_amount)} accent="danger" />
+          <StatTile label="Faktur lewat jatuh tempo" value={telat.length} sub="Terlambat 1 hari atau lebih" />
+          <StatTile label="Nilai lewat jatuh tempo" value={fmt(jumlah(telat))} accent="warning" sub="Sisa faktur yang terlambat" />
+          <StatTile label="Berisiko (> 180 hari)" value={berisiko.length} accent="danger" sub="Kandidat hapus buku" />
+          <StatTile label="Nilai berisiko" value={fmt(jumlah(berisiko))} accent="danger" sub="Sisa faktur > 180 hari" />
         </div>
       )}
     >
@@ -134,13 +153,13 @@ export default function BadDebtWriteOffModule({ token }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm" data-testid="bd-invoice-table">
               <thead>
-                <tr className="text-left text-xs text-muted-foreground border-b border-[var(--glass-border)]">
-                  <th className="px-4 py-2">No. faktur</th>
-                  <th className="px-3 py-2">Jatuh tempo</th>
-                  <th className="px-3 py-2 text-right">Terlambat</th>
-                  <th className="px-3 py-2">Kelompok umur</th>
-                  <th className="px-3 py-2 text-right">Sisa</th>
-                  <th className="px-4 py-2 text-right">Aksi</th>
+                <tr className="text-left">
+                  <th>No. faktur</th>
+                  <th>Jatuh tempo</th>
+                  <th className="text-right">Terlambat</th>
+                  <th className="hidden md:table-cell">Kelompok umur</th>
+                  <th className="text-right">Sisa</th>
+                  <th className="text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody>
@@ -150,14 +169,14 @@ export default function BadDebtWriteOffModule({ token }) {
                     className={`border-b border-[var(--glass-border)] hover:bg-[var(--glass-border)]/30 ${inv.overdue_days > 180 ? 'bg-[hsl(var(--destructive)/0.05)]' : ''}`}
                     data-testid={`bd-row-${inv.id}`}
                   >
-                    <td className="px-4 py-3 text-xs whitespace-nowrap">{inv.invoice_number}</td>
-                    <td className="px-3 py-3 text-xs whitespace-nowrap">{formatDateID(inv.due_date)}</td>
-                    <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap">
-                      <span className="text-[hsl(var(--destructive))] font-semibold">{inv.overdue_days} hari</span>
+                    <td className="whitespace-nowrap">{inv.invoice_number}</td>
+                    <td className="whitespace-nowrap">{formatDateID(inv.due_date)}</td>
+                    <td className="text-right tabular-nums whitespace-nowrap">
+                      <span className={Number(inv.overdue_days) > 0 ? 'text-[hsl(var(--danger-text))] font-semibold' : 'text-muted-foreground'}>{Number(inv.overdue_days) > 0 ? `${inv.overdue_days} hari` : 'jatuh tempo hari ini'}</span>
                     </td>
-                    <td className="px-3 py-3"><BucketBadge bucket={inv.aging_bucket} /></td>
-                    <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap">{fmt(inv.balance)}</td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="hidden md:table-cell"><BucketBadge bucket={inv.aging_bucket} /></td>
+                    <td className="text-right tabular-nums whitespace-nowrap">{fmt(inv.balance)}</td>
+                    <td className="text-right">
                       <Button
                         size="sm"
                         variant="outline"
@@ -176,72 +195,31 @@ export default function BadDebtWriteOffModule({ token }) {
         )}
       </GlassCard>
 
-      {/* Konfirmasi + isian pendek (alasan, tanggal) — boleh popup (G13) */}
+      {/* Isian pendek (alasan, tanggal) — popup form standar (FormPopup pendek) */}
       {writeOffTarget && (
-        <Modal onClose={() => setWriteOffTarget(null)} title="Hapus buku piutang macet" size="md" data-testid="bd-writeoff-dialog"
-          description="Konfirmasi penghapusan buku piutang">
-          <Notice tone="danger" icon={AlertTriangle} className="mb-4"
-            title="Piutang faktur ini dihapus dari buku dan jurnal beban piutang tak tertagih dicatat otomatis.">
-            <div className="space-y-1 mt-2">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Faktur</span>
-                <span className="font-semibold">{writeOffTarget.invoice_number}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Terlambat</span>
-                <span className="text-[hsl(var(--destructive))] font-semibold tabular-nums">{writeOffTarget.overdue_days} hari</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Jumlah</span>
-                <span className="text-lg font-bold tabular-nums text-[hsl(var(--destructive))]">{fmt(writeOffTarget.balance)}</span>
-              </div>
-            </div>
+        <FormPopup open onClose={() => setWriteOffTarget(null)} ukuran="pendek" testId="bd-writeoff-dialog"
+          judul="Hapus buku piutang macet" keterangan="Jurnal beban piutang tak tertagih dicatat otomatis."
+          onSimpan={() => writeOff(writeOffTarget)} labelSimpan="Catat hapus buku"
+          bisaSimpan={!!writeOffTarget.reason && writeOffTarget.reason.length >= 10}>
+          <Notice tone="danger" icon={AlertTriangle}
+            title="Piutang faktur ini dihapus dari buku.">
+            <dl className="space-y-1 mt-2 text-foreground">
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Faktur</dt><dd className="font-semibold">{writeOffTarget.invoice_number}</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Terlambat</dt><dd className="font-semibold tabular-nums">{writeOffTarget.overdue_days} hari</dd></div>
+              <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Jumlah</dt><dd className="font-semibold tabular-nums">{fmt(writeOffTarget.balance)}</dd></div>
+            </dl>
           </Notice>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1" htmlFor="bd-writeoff-date">Tanggal hapus buku</label>
-              <GlassInput
-                id="bd-writeoff-date"
-                type="date"
-                value={writeOffTarget.write_off_date}
-                onChange={e => setWriteOffTarget(w => ({ ...w, write_off_date: e.target.value }))}
-                data-testid="bd-writeoff-date"
-              />
-              <div className="text-xs text-muted-foreground mt-1">Kosong = hari ini.</div>
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1" htmlFor="bd-writeoff-reason">
-                Alasan <span className="text-[hsl(var(--destructive))]">*</span>
-              </label>
-              <textarea
-                id="bd-writeoff-reason"
-                value={writeOffTarget.reason}
-                onChange={e => setWriteOffTarget(w => ({ ...w, reason: e.target.value }))}
-                className="w-full px-3 py-2 rounded-lg border border-[var(--glass-border)] bg-[var(--input-surface)] text-sm text-foreground"
-                rows={4}
-                placeholder="Contoh: pelanggan bangkrut, tidak tertagih setelah 6 bulan penagihan"
-                data-testid="bd-writeoff-reason"
-              />
-              <div className="text-xs text-muted-foreground mt-1">
-                Minimal 10 karakter untuk jejak audit. Saat ini: {writeOffTarget.reason.length} karakter
-              </div>
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4 justify-end">
-            <Button variant="outline" onClick={() => setWriteOffTarget(null)} data-testid="bd-cancel">
-              Batal
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => writeOff(writeOffTarget)}
-              disabled={!writeOffTarget.reason || writeOffTarget.reason.length < 10}
-              data-testid="bd-confirm-writeoff"
-            >
-              <ShieldAlert className="w-4 h-4" />
-              Hapus buku
-            </Button>
-          </div>
-        </Modal>
+          <Isian label="Tanggal hapus buku" petunjuk="Kosong = hari ini.">
+            <DatePicker id="bd-writeoff-date" value={writeOffTarget.write_off_date} placeholder="Hari ini"
+              onChange={(v) => setWriteOffTarget(w => ({ ...w, write_off_date: v }))} testId="bd-writeoff-date" />
+          </Isian>
+          <Isian label="Alasan" wajib htmlFor="bd-writeoff-reason"
+            petunjuk={`Minimal 10 karakter untuk jejak audit. Saat ini: ${writeOffTarget.reason.length} karakter.`}>
+            <Textarea id="bd-writeoff-reason" rows={4} value={writeOffTarget.reason}
+              onChange={e => setWriteOffTarget(w => ({ ...w, reason: e.target.value }))}
+              placeholder="Contoh: pelanggan bangkrut, tidak tertagih setelah 6 bulan penagihan" data-testid="bd-writeoff-reason" />
+          </Isian>
+        </FormPopup>
       )}
     </PageLayout>
   );
