@@ -219,8 +219,8 @@ export default function SyncAuditModule({ onNavigate }) {
           action={{ label: 'Periksa ulang', onClick: load }} />
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <p className="min-w-0 flex-1 text-xs text-muted-foreground">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <p className="min-w-0 text-xs text-muted-foreground sm:flex-1">
               Diperiksa {report.generated_at ? formatDateTimeID(report.generated_at) : '—'}. Skor turun 25 per temuan kritis,
               10 per tinggi, 3 per sedang.
             </p>

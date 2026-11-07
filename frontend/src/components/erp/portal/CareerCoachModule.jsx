@@ -58,6 +58,8 @@ export default function CareerCoachModule({ token }) {
     setLoading(true);
     try {
       const r = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/portal-saya/career-coach/profile`, { headers });
+      // 404 = akun belum terhubung ke data karyawan — dijelaskan di layar, tidak perlu pesan galat.
+      if (r.status === 404) { setProfile(null); return; }
       if (!r.ok) throw new Error(`kode ${r.status}`);
       const data = await r.json();
       setProfile(data?.data);
