@@ -20,12 +20,19 @@
 import { Fragment, useEffect, useMemo, useState, useCallback } from 'react';
 import {
   ClipboardCheck, RefreshCw, Search, CheckCircle2, Info, Loader2, Wrench, Undo2, Ban,
-  Pencil, FileWarning, FileText, Calculator, PackageSearch, Package,
+  Pencil, FileWarning, FileText, Calculator, PackageSearch, Package, MoreHorizontal,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import StaffEntryBadge from './StaffEntryBadge';
 import AqlSamplingTool from './AqlSamplingTool';
-import FormDialog, { Field } from './FormDialog';
+import { Field } from './FormDialog';
+import FormPopup from '@/components/ui/form-popup';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { Input } from '@/components/ui/input';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { PdfColumnPicker } from '../pdf/PdfColumnPicker';
 import { apiGet, apiPost, apiPut, apiFetch } from '../../../lib/api';
 import { postWithOverQtyReason } from '../../../lib/overQty';
@@ -337,10 +344,10 @@ export default function DAReceiveFromCMTModule({ portalId }) {
       title="Terima & QC"
       subtitle="Barang jadi dari CMT: hitung fisik, catat lolos dan ditolak, lalu selesaikan QC."
       filters={<>
-        <div className="relative w-72 max-w-full">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <GlassInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode / CMT / PO / SKU…"
-            data-testid="receipt-search" className="pl-9 h-9" />
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari kode, CMT, PO, SKU"
+            data-testid="receipt-search" className="pl-8" />
         </div>
         <FilterChips value={view} onChange={setView} testId="receipt-view" ariaLabel="Tampilan" hideWhenEmpty={false}
           options={viewOptions.filter((o) => o.key === 'receipts' || o.count > 0 || view === o.key)} />
@@ -350,6 +357,31 @@ export default function DAReceiveFromCMTModule({ portalId }) {
         )}
       </>}
       tools={<>
+        {/* Standar UI/UX v2: unduh Excel/CSV isi tampilan yang aktif (penerimaan / ditolak / belum sampai). */}
+        {view === 'rejects' ? (
+          <TombolUnduh namaBerkas="ditolak-belum-diputuskan" baris={rejectRows} testId="receipt-unduh" kolom={[
+            { label: 'Penerimaan', nilai: (r) => r.receipt_code || '' }, { label: 'PO', nilai: (r) => r.po_number || '' },
+            { label: 'Vendor', nilai: (r) => r.vendor_name || '' }, { label: 'SKU', nilai: (r) => r.sku || r.sku_code || '' },
+            { label: 'Belum diputuskan (pcs)', nilai: (r) => Number(r.qty_undecided) || 0 },
+          ]} />
+        ) : view === 'shorts' ? (
+          <TombolUnduh namaBerkas="barang-belum-sampai" baris={shortRows} testId="receipt-unduh" kolom={[
+            { label: 'No. selisih', nilai: (s) => s.short_number || '' }, { label: 'PO', nilai: (s) => s.po_number || '' },
+            { label: 'Vendor', nilai: (s) => s.vendor_name || '' }, { label: 'SKU', nilai: (s) => s.sku || '' },
+            { label: 'Klaim', nilai: (s) => Number(s.qty_claimed) || 0 }, { label: 'Sampai', nilai: (s) => Number(s.qty_arrived) || 0 },
+            { label: 'Belum sampai', nilai: (s) => Number(s.qty_open ?? s.qty_short) || 0 }, { label: 'Penerimaan', nilai: (s) => s.receipt_code || '' },
+          ]} />
+        ) : (
+          <TombolUnduh namaBerkas="terima-qc-cmt" namaLembar="Penerimaan" baris={filtered} testId="receipt-unduh" kolom={[
+            { label: 'Kode', nilai: (r) => r.receipt_code }, { label: 'Tanggal', nilai: (r) => fmtDate(r.receipt_date || r.created_at) },
+            { label: 'Vendor CMT', nilai: (r) => r.cmt_name || '' }, { label: 'PO', nilai: (r) => r.po_number || '' },
+            { label: 'Klaim vendor', nilai: (r) => Number(r.total_claimed_by_cmt ?? r.total_shipped_by_cmt) || 0 },
+            { label: 'Lolos QC', nilai: (r) => Number(r.total_qty_actual) || 0 }, { label: 'Ditolak', nilai: (r) => Number(r.total_qty_reject) || 0 },
+            { label: 'Ditolak belum diputuskan', nilai: (r) => Number(r.total_reject_undecided) || 0 },
+            { label: 'Belum sampai', nilai: (r) => Number(r.total_qty_short_open ?? r.total_qty_short) || 0 },
+            { label: 'Status', nilai: (r) => r.status_label || STATUS_LABEL[r.status] || r.status || '' },
+          ]} />
+        )}
         <Button variant="outline" onClick={() => openAql(undefined, '')} data-testid="receipt-aql-open">
           <Calculator className="w-4 h-4" />Hitung sampel AQL
         </Button>
@@ -360,10 +392,10 @@ export default function DAReceiveFromCMTModule({ portalId }) {
       </>}
       summary={anyKpi ? (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <StatTile testId="receipt-kpi-on_qc" label="Sedang QC" value={fmtNum(kpi.on_qc)} accent="warning"
+          <StatTile testId="receipt-kpi-on_qc" label="Penerimaan sedang QC" value={fmtNum(kpi.on_qc)} accent="warning"
             sub={`${fmtNum(kpi.uncounted)} baris belum dihitung`} />
-          <StatTile testId="receipt-kpi-accepted" label="Lolos QC (pcs)" value={fmtNum(kpi.accepted)} accent="success"
-            sub={`ditolak ${fmtNum(kpi.reject)} pcs (karantina)`} />
+          <StatTile testId="receipt-kpi-accepted" label="Lolos QC kumulatif (pcs)" value={fmtNum(kpi.accepted)} accent="success"
+            sub={`ditolak ${fmtNum(kpi.reject)} pcs · penerimaan selesai QC`} />
           <StatTile testId="receipt-kpi-undecided" label="Ditolak belum diputuskan" value={fmtNum(kpi.undecided)} accent="warning"
             sub="perlu permak atau retur ke CMT" onClick={kpi.undecided ? () => setView('rejects') : undefined} />
           <StatTile testId="receipt-kpi-short" label="Belum sampai (pcs)" value={fmtNum(kpi.short_open)} accent="danger"
@@ -380,7 +412,7 @@ export default function DAReceiveFromCMTModule({ portalId }) {
         <PaginationLite page={page} totalPages={totalPages} total={total} pageSize={pageSize} onPageChange={setPage} />
       )}
     >
-      <GlassCard className="p-0 overflow-hidden">
+      <GlassCard className="p-0 overflow-x-auto">
         {view === 'rejects' ? (
           <RejectTable rows={rejectRows} onRework={openRework} />
         ) : view === 'shorts' ? (
@@ -450,8 +482,15 @@ export default function DAReceiveFromCMTModule({ portalId }) {
                                 title={r.can_complete_qc ? 'Selesaikan QC' : 'Isi qty lolos semua baris dulu'} data-testid={`receipt-complete-${r.receipt_code}`}>
                                 {finishing[r.id] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}Selesaikan QC
                               </Button>
-                              <Button size="icon-sm" variant="ghost" onClick={() => cancelReceipt(r)} data-testid={`receipt-cancel-${r.receipt_code}`}
-                                title="Batalkan penerimaan" aria-label="Batalkan penerimaan"><Ban className="w-4 h-4" /></Button>
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button size="icon-sm" variant="ghost" title="Aksi lainnya" aria-label="Aksi lainnya"><MoreHorizontal className="w-4 h-4" /></Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onSelect={() => cancelReceipt(r)} data-testid={`receipt-cancel-${r.receipt_code}`}
+                                    className="text-[hsl(var(--danger-text))] focus:text-[hsl(var(--danger-text))]"><Ban className="mr-2 h-4 w-4" />Batalkan penerimaan</DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </>
                           )}
                         </div>
@@ -476,15 +515,10 @@ export default function DAReceiveFromCMTModule({ portalId }) {
 
       {/* ── Formulir pendek: permak sendiri / retur ke CMT ─────────────────── */}
       {rework && (
-        <FormDialog onClose={() => setRework(null)} testId="rework-dialog"
-          title={rwType === 'retur_ke_cmt' ? 'Retur barang ditolak ke vendor CMT' : 'Permak sendiri'}
-          description={`Penerimaan ${rework.receipt.receipt_code} · ditolak tercatat ${fmtNum(rework.line.reject_qty)} pcs`}
-          footer={<>
-            <Button variant="outline" onClick={() => setRework(null)}>Batal</Button>
-            <Button onClick={submitRework} disabled={rwSaving} data-testid="rework-submit">
-              {rwSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}Proses
-            </Button>
-          </>}>
+        <FormPopup open onClose={() => setRework(null)} testId="rework-dialog" ukuran="pendek"
+          judul={rwType === 'retur_ke_cmt' ? 'Retur barang ditolak ke vendor CMT' : 'Permak sendiri'}
+          keterangan={`Penerimaan ${rework.receipt.receipt_code} · ditolak tercatat ${fmtNum(rework.line.reject_qty)} pcs`}
+          onSimpan={submitRework} menyimpan={rwSaving} labelSimpan="Proses">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Jenis penanganan">
               <SmartNativeSelect value={rwType} onChange={(e) => setRwType(e.target.value)} data-testid="rework-type" className="w-full h-9">
@@ -499,7 +533,7 @@ export default function DAReceiveFromCMTModule({ portalId }) {
               <MoneyInput glass value={rwCost} onChange={(e) => setRwCost(e.target.value)} className="h-9" />
             </Field>
             <Field label="Target kembali">
-              <GlassInput type="date" value={rwDeadline} onChange={(e) => setRwDeadline(e.target.value)} className="h-9" />
+              <DatePicker value={rwDeadline} onChange={setRwDeadline} placeholder="Belum diisi" testId="rework-deadline" />
             </Field>
           </div>
           <Field label="Alasan / instruksi">
@@ -510,20 +544,15 @@ export default function DAReceiveFromCMTModule({ portalId }) {
               ? 'Barang keluar dari karantina dan dikirim balik ke vendor lewat surat jalan perbaikan. Qty diterima PO bertambah saat kiriman ulangnya selesai QC.'
               : 'Barang tetap di DA (karantina). Saat permak berhasil, stok barang jadi dan qty diterima PO bertambah otomatis.'}
           </Notice>
-        </FormDialog>
+        </FormPopup>
       )}
 
       {/* ── Formulir pendek: koreksi resmi ─────────────────────────────────── */}
       {koreksi && (
-        <FormDialog onClose={() => setKoreksi(null)} testId="koreksi-dialog"
-          title={koreksi.mode === 'qc' ? 'Koreksi hasil QC' : 'Koreksi klaim kirim vendor'}
-          description={`${koreksi.receipt.receipt_code} · ${koreksi.line.sku_code || '—'} · klaim ${fmtNum(koreksi.line.qty_claimed_by_cmt || koreksi.line.qty_shipped_by_cmt)} · lolos ${fmtNum(koreksi.line.qty_actual)} · ditolak ${fmtNum(koreksi.line.reject_qty)}`}
-          footer={<>
-            <Button variant="outline" onClick={() => setKoreksi(null)}>Batal</Button>
-            <Button onClick={submitKoreksi} disabled={korSaving} data-testid="koreksi-submit">
-              {korSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Pencil className="w-4 h-4" />}Simpan koreksi
-            </Button>
-          </>}>
+        <FormPopup open onClose={() => setKoreksi(null)} testId="koreksi-dialog" ukuran="pendek"
+          judul={koreksi.mode === 'qc' ? 'Koreksi hasil QC' : 'Koreksi klaim kirim vendor'}
+          keterangan={`${koreksi.receipt.receipt_code} · ${koreksi.line.sku_code || '—'} · klaim ${fmtNum(koreksi.line.qty_claimed_by_cmt || koreksi.line.qty_shipped_by_cmt)} · lolos ${fmtNum(koreksi.line.qty_actual)} · ditolak ${fmtNum(koreksi.line.reject_qty)}`}
+          onSimpan={submitKoreksi} menyimpan={korSaving} labelSimpan="Simpan koreksi">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label={koreksi.mode === 'qc' ? 'Qty lolos QC yang benar' : 'Qty klaim vendor yang benar'}>
               <GlassInput type="number" min={0} value={korQty} onChange={(e) => setKorQty(e.target.value)} data-testid="koreksi-qty" className="h-9" />
@@ -543,20 +572,15 @@ export default function DAReceiveFromCMTModule({ portalId }) {
               ? 'Stok barang jadi dikoreksi sebesar selisihnya, buku kuantitas dihitung ulang dari dokumen, dan dokumen selisih kirim diperbarui. Semua tercatat di jejak audit.'
               : 'Klaim vendor diperbarui di dokumen deklarasi kirim vendor (dengan jejak audit) dan vendor mendapat pemberitahuan berisi angka baru.'}
           </Notice>
-        </FormDialog>
+        </FormPopup>
       )}
 
       {/* ── Formulir pendek: penyelesaian selisih kirim ─────────────────────── */}
       {resolveShort && (
-        <FormDialog onClose={() => setResolveShort(null)} testId="short-resolve-dialog"
-          title={`Selesaikan selisih ${resolveShort.short_number}`}
-          description={`${resolveShort.po_number || '—'} · ${resolveShort.vendor_name || '—'} · ${resolveShort.sku || '—'} · klaim ${fmtNum(resolveShort.qty_claimed)} · sampai ${fmtNum(resolveShort.qty_arrived)} · belum sampai ${fmtNum(resolveShort.qty_open ?? resolveShort.qty_short)} pcs`}
-          footer={<>
-            <Button variant="outline" onClick={() => setResolveShort(null)}>Batal</Button>
-            <Button onClick={submitResolveShort} disabled={resSaving} data-testid="short-resolve-submit">
-              {resSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}Simpan keputusan
-            </Button>
-          </>}>
+        <FormPopup open onClose={() => setResolveShort(null)} testId="short-resolve-dialog" ukuran="pendek"
+          judul={`Selesaikan selisih ${resolveShort.short_number}`}
+          keterangan={`${resolveShort.po_number || '—'} · ${resolveShort.vendor_name || '—'} · ${resolveShort.sku || '—'} · klaim ${fmtNum(resolveShort.qty_claimed)} · sampai ${fmtNum(resolveShort.qty_arrived)} · belum sampai ${fmtNum(resolveShort.qty_open ?? resolveShort.qty_short)} pcs`}
+          onSimpan={submitResolveShort} menyimpan={resSaving} labelSimpan="Simpan keputusan">
           <Field label="Keputusan">
             <SmartNativeSelect value={resType} onChange={(e) => setResType(e.target.value)} data-testid="short-resolve-type" className="w-full h-9">
               {SHORT_RESOLUTIONS.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -570,7 +594,7 @@ export default function DAReceiveFromCMTModule({ portalId }) {
             Tidak ada pemotongan tagihan otomatis: keputusan hanya dicatat dan vendor diberi tahu, lalu Keuangan
             memprosesnya di Tagihan CMT. Selisih boleh tetap terbuka sampai barang ditemukan.
           </Notice>
-        </FormDialog>
+        </FormPopup>
       )}
 
       {sjReceipt && (
