@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, FileBarChart } from 'lucide-react';
+import { RefreshCw, FileBarChart } from 'lucide-react';
 import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { StatTile, EmptyState } from './moduleAtoms';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
 import IntercompanyNotes from './finance/IntercompanyNotes';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateID } from '@/lib/format';
 import PeriodPicker, { periodFromPreset } from './finance/PeriodPicker';
-import StatementTable from './finance/StatementTable';
+import StatementTable, { unduhanLaporan } from './finance/StatementTable';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 
@@ -18,6 +19,8 @@ const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigit
  * berupa "pil" berlabel Inggris (Gross Profit / Operating Income), angka berhuruf mesin ketik.
  * Beban & HPP ditulis minus supaya alurnya terbaca: Pendapatan − HPP = Laba kotor − Beban = Laba usaha.
  * 2026-11-05 (PANDUAN_UI G1): cetakan PageLayout — periode di toolbar kiri, muat ulang & unduh di kanan.
+ * 2026-11-08 (Standar UI/UX v2): unduh Excel/CSV (dulu CSV saja); 4 kartu angka yang mengulang baris subtotal di
+ * tabel diganti satu kalimat ringkas (angka sama) supaya laporan tidak terdorong ke bawah, terutama di HP.
  */
 export default function RahazaPnLModule({ token }) {
   const [data, setData] = useState(null);
@@ -37,22 +40,6 @@ export default function RahazaPnLModule({ token }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, period.from, period.to]);
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  const exportCSV = () => {
-    if (!data) return;
-    const lines = [['Kelompok', 'Kode', 'Akun', 'Jumlah']];
-    Object.values(data.groups || {}).forEach((g) => {
-      (g.accounts || []).forEach((a) => lines.push([g.label, a.code, a.name, a.amount]));
-      lines.push([`Total ${g.label}`, '', '', g.total]);
-    });
-    const t = data.totals || {};
-    lines.push(['Laba kotor', '', '', t.gross_profit], ['Laba usaha', '', '', t.operating_income], ['Laba bersih', '', '', t.net_income]);
-    const csv = lines.map((r) => r.map((c) => (typeof c === 'string' && c.includes(',')) ? `"${c}"` : c).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url; link.download = `laba-rugi-${period.from}-${period.to}.csv`; link.click();
-    URL.revokeObjectURL(url);
-  };
 
   const t = data?.totals || {};
   const g = data?.groups || {};
@@ -74,6 +61,8 @@ export default function RahazaPnLModule({ token }) {
     { kind: 'total', label: Number(t.net_income) >= 0 ? 'Laba bersih' : 'Rugi bersih', values: { amount: t.net_income }, testId: 'pnl-net-summary' },
   ] : [];
   const periodLabel = `${formatDateID(period.from)} – ${formatDateID(period.to)}`;
+  const kolomLap = [{ key: 'amount', label: periodLabel }];
+  const neg = (n) => (Number(n) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground');
 
   return (
     <PageLayout
@@ -83,19 +72,20 @@ export default function RahazaPnLModule({ token }) {
       filters={<PeriodPicker value={period} onChange={setPeriod} testId="pnl-period" />}
       tools={<>
         <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="pnl-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="pnl-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+        <TombolUnduh namaBerkas={`laba-rugi-${period.from}-${period.to}`} namaLembar="Laba rugi" testId="pnl-export"
+          baris={unduhanLaporan(kolomLap, rows).baris} kolom={unduhanLaporan(kolomLap, rows).kolom} />
       </>}
       summary={<>
-        {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="pnl-error">{error}</p>}
+        {error && <p className="text-sm text-[hsl(var(--danger-text))]" data-testid="pnl-error">{error}</p>}
         {/* Tahap 8 fase 3: Gabungan = setelah eliminasi antar CV; selisih yang belum tereliminasi tampil di sini */}
         <IntercompanyNotes data={data} testId="pnl-ic-notes" />
         {data && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Pendapatan" value={fmt(t.revenue)} testId="pnl-kpi-revenue" />
-            <StatTile label="HPP" value={fmt(t.cogs)} testId="pnl-kpi-cogs" />
-            <StatTile label="Laba kotor" value={fmt(t.gross_profit)} accent={Number(t.gross_profit) < 0 ? 'danger' : 'default'} testId="pnl-kpi-gross" />
-            <StatTile label={Number(t.net_income) >= 0 ? 'Laba bersih' : 'Rugi bersih'} value={fmt(t.net_income)} accent={Number(t.net_income) < 0 ? 'danger' : 'default'} testId="pnl-kpi-net" />
-          </div>
+          <p className="text-sm text-muted-foreground" data-testid="pnl-ringkas">
+            Pendapatan <b className="text-foreground tabular-nums" data-testid="pnl-kpi-revenue">{fmt(t.revenue)}</b>
+            {' '}− HPP <b className="text-foreground tabular-nums" data-testid="pnl-kpi-cogs">{fmt(t.cogs)}</b>
+            {' '}= laba kotor <b className={`tabular-nums ${neg(t.gross_profit)}`} data-testid="pnl-kpi-gross">{fmt(t.gross_profit)}</b>
+            {' '}· {Number(t.net_income) >= 0 ? 'laba' : 'rugi'} bersih <b className={`tabular-nums ${neg(t.net_income)}`} data-testid="pnl-kpi-net">{fmt(t.net_income)}</b>
+          </p>
         )}
       </>}
     >
@@ -106,7 +96,7 @@ export default function RahazaPnLModule({ token }) {
           <EmptyState icon={FileBarChart} title="Belum ada laporan" description="Laba rugi muncul setelah ada jurnal di periode ini." />
         </GlassCard>
       ) : (
-        <StatementTable testId="pnl" columns={[{ key: 'amount', label: periodLabel }]} rows={rows} />
+        <StatementTable testId="pnl" columns={kolomLap} rows={rows} />
       )}
     </PageLayout>
   );

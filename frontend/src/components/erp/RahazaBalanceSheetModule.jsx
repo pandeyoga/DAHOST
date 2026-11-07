@@ -1,14 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Download, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
-import { GlassCard, GlassInput } from '@/components/ui/glass';
+import { RefreshCw, FileBarChart, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { GlassCard } from '@/components/ui/glass';
 import { Button } from '@/components/ui/button';
-import { StatTile, EmptyState } from './moduleAtoms';
+import DatePicker from '@/components/ui/date-picker';
+import TombolUnduh from '@/components/ui/tombol-unduh';
+import { EmptyState } from './moduleAtoms';
 import PageLayout from './layout/PageLayout';
 import IntercompanyNotes from './finance/IntercompanyNotes';
 import { Skeleton } from '@/components/ui/skeleton';
 import { todayWIB } from '@/lib/waktu';
 import { formatDateID } from '@/lib/format';
-import StatementTable from './finance/StatementTable';
+import StatementTable, { unduhanLaporan } from './finance/StatementTable';
 
 const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigits: 0 });
 
@@ -17,6 +19,9 @@ const fmt = (n) => Number(n || 0).toLocaleString('id-ID', { maximumFractionDigit
  * 2026-11-04 (PANDUAN_UI G7): dua tabel laporan berdampingan (Aset | Liabilitas + Ekuitas) — dulu tiga
  * kartu dengan tabel tanpa judul kolom dan angka berhuruf mesin ketik berwarna-warni.
  * 2026-11-05 (PANDUAN_UI G1/G6): cetakan PageLayout — satu pilihan "Per tanggal" di toolbar kiri.
+ * 2026-11-08 (Standar UI/UX v2): "Per tanggal" = DatePicker; unduh Excel/CSV; 4 kartu angka yang mengulang baris
+ * total di tabel diganti satu kalimat (angka sama) supaya laporan tidak terdorong ke bawah; kode program
+ * "LABA_BERJALAN" tidak ditampilkan (baris itu = laba tahun berjalan hasil hitung Laba Rugi).
  */
 export default function RahazaBalanceSheetModule({ token }) {
   const [data, setData] = useState(null);
@@ -36,25 +41,16 @@ export default function RahazaBalanceSheetModule({ token }) {
   }, [token, asOf]);
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  const exportCSV = () => {
-    if (!data) return;
-    const lines = [['Kelompok', 'Kode', 'Akun', 'Jumlah']];
-    [['Aset', data.assets], ['Liabilitas', data.liabilities], ['Ekuitas', data.equity]].forEach(([label, sec]) => {
-      (sec.accounts || []).forEach((a) => lines.push([label, a.code, a.name, a.amount]));
-      lines.push([`Total ${label}`, '', '', sec.total]);
-    });
-    const csv = lines.map((r) => r.map((c) => (typeof c === 'string' && c.includes(',')) ? `"${c}"` : c).join(',')).join('\n');
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url; link.download = `neraca-${asOf}.csv`; link.click();
-    URL.revokeObjectURL(url);
-  };
-
   const t = data?.totals || {};
   const grp = (id, label, sec) => ({
     kind: 'group', id, label, values: { amount: sec?.total },
-    children: (sec?.accounts || []).map((a) => ({ code: a.code, label: a.name, note: a.computed ? '(laba berjalan)' : '', values: { amount: a.amount } })),
+    children: (sec?.accounts || []).map((a) => (a.computed || a.code === 'LABA_BERJALAN'
+      ? { code: '', label: 'Laba tahun berjalan (dihitung dari Laba Rugi)', values: { amount: a.amount } }
+      : { code: a.code, label: a.name, values: { amount: a.amount } })),
   });
+  const kiri = data ? [grp('assets', 'Aset', data.assets), { kind: 'total', label: 'Total aset', values: { amount: data.assets.total } }] : [];
+  const kanan = data ? [grp('liabilities', 'Liabilitas', data.liabilities), grp('equity', 'Ekuitas', data.equity),
+    { kind: 'total', label: 'Total liabilitas + ekuitas', values: { amount: t.liab_plus_equity } }] : [];
   const col = [{ key: 'amount', label: `Per ${formatDateID(asOf)}` }];
 
   return (
@@ -64,30 +60,25 @@ export default function RahazaBalanceSheetModule({ token }) {
       subtitle="Posisi aset, liabilitas, dan ekuitas pada satu tanggal."
       filters={<>
         <span className="text-sm text-muted-foreground">Per tanggal</span>
-        <GlassInput type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} className="h-9 w-40" aria-label="Per tanggal" data-testid="bs-as-of" />
+        <div className="w-44"><DatePicker value={asOf} onChange={(v) => setAsOf(v || todayWIB())} bolehKosong={false} testId="bs-as-of" /></div>
       </>}
       tools={<>
         <Button variant="outline" size="icon" onClick={fetchData} title="Muat ulang" aria-label="Muat ulang" data-testid="bs-refresh"><RefreshCw className="w-4 h-4" /></Button>
-        <Button variant="outline" onClick={exportCSV} disabled={!data} data-testid="bs-export"><Download className="w-4 h-4" />Unduh CSV</Button>
+        <TombolUnduh namaBerkas={`neraca-${asOf}`} namaLembar="Neraca" testId="bs-export"
+          baris={data ? unduhanLaporan(col, [...kiri, ...kanan]).baris : []} kolom={unduhanLaporan(col, []).kolom} />
       </>}
       summary={<>
-        {error && <p className="text-sm text-[hsl(var(--destructive))]" data-testid="bs-error">{error}</p>}
+        {error && <p className="text-sm text-[hsl(var(--danger-text))]" data-testid="bs-error">{error}</p>}
         {/* Tahap 8 fase 3: Gabungan = setelah eliminasi antar CV; selisih yang belum tereliminasi tampil di sini */}
         <IntercompanyNotes data={data} testId="bs-ic-notes" />
         {data && (
-          <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--destructive))] font-medium'}`} data-testid="bs-balanced">
+          <p className={`flex items-center gap-1.5 text-sm ${data.balanced ? 'text-muted-foreground' : 'text-[hsl(var(--danger-text))] font-medium'}`} data-testid="bs-balanced">
             {data.balanced
-              ? <><CheckCircle2 className="w-4 h-4 text-[hsl(var(--success))]" /> Seimbang: aset = liabilitas + ekuitas</>
-              : <><AlertTriangle className="w-4 h-4" /> Tidak seimbang, selisih {fmt(t.diff)} — periksa jurnal tanpa akun neraca</>}
+              ? <><CheckCircle2 className="w-4 h-4 shrink-0 text-[hsl(var(--success-text))]" />
+                  <span>Seimbang: aset <b className="text-foreground tabular-nums" data-testid="bs-kpi-assets">{fmt(t.assets)}</b> = liabilitas <b className="text-foreground tabular-nums" data-testid="bs-kpi-liab">{fmt(t.liabilities)}</b> + ekuitas <b className="text-foreground tabular-nums" data-testid="bs-kpi-equity">{fmt(t.equity)}</b>
+                  {' '}(termasuk {Number(t.current_earnings) >= 0 ? 'laba' : 'rugi'} tahun berjalan <b className={`tabular-nums ${Number(t.current_earnings) < 0 ? 'text-[hsl(var(--danger-text))]' : 'text-foreground'}`} data-testid="bs-kpi-earnings">{fmt(t.current_earnings)}</b>)</span></>
+              : <><AlertTriangle className="w-4 h-4 shrink-0" /> Tidak seimbang, selisih {fmt(t.diff)} — periksa jurnal tanpa akun neraca</>}
           </p>
-        )}
-        {data && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatTile label="Total aset" value={fmt(t.assets)} testId="bs-kpi-assets" />
-            <StatTile label="Total liabilitas" value={fmt(t.liabilities)} testId="bs-kpi-liab" />
-            <StatTile label="Total ekuitas" value={fmt(t.equity)} testId="bs-kpi-equity" />
-            <StatTile label={Number(t.current_earnings) >= 0 ? 'Laba tahun berjalan' : 'Rugi tahun berjalan'} value={fmt(t.current_earnings)} accent={Number(t.current_earnings) < 0 ? 'danger' : 'default'} testId="bs-kpi-earnings" />
-          </div>
         )}
       </>}
     >
@@ -99,11 +90,8 @@ export default function RahazaBalanceSheetModule({ token }) {
         </GlassCard>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
-          <StatementTable testId="bs-assets" defaultOpen columns={col}
-            rows={[grp('assets', 'Aset', data.assets), { kind: 'total', label: 'Total aset', values: { amount: data.assets.total } }]} />
-          <StatementTable testId="bs-liab" defaultOpen columns={col}
-            rows={[grp('liabilities', 'Liabilitas', data.liabilities), grp('equity', 'Ekuitas', data.equity),
-              { kind: 'total', label: 'Total liabilitas + ekuitas', values: { amount: t.liab_plus_equity } }]} />
+          <StatementTable testId="bs-assets" defaultOpen columns={col} rows={kiri} />
+          <StatementTable testId="bs-liab" defaultOpen columns={col} rows={kanan} />
         </div>
       )}
     </PageLayout>
