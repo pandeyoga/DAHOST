@@ -1,5 +1,6 @@
 
 import { Factory, Handshake } from 'lucide-react';
+import FilterChips from '@/components/ui/filter-chips';
 
 /**
  * Identifier visual untuk membedakan data proses bisnis:
@@ -28,46 +29,19 @@ export function BizBadge({ type, size = 'sm', className = '' }) {
 }
 
 /**
- * Segmented filter Semua / Internal / Maklon (client-side).
+ * Penyaring Semua / Internal / Maklon (client-side).
  * value: 'all' | 'internal' | 'maklon'
+ * Standar UI/UX v2: memakai FilterChips (dulu segmen buatan sendiri); props & data-testid tetap.
  */
 export function BizFilter({ value = 'all', onChange, counts = null, className = '' }) {
   const opts = [
-    { v: 'all', l: 'Semua' },
-    { v: 'internal', l: 'Internal' },
-    { v: 'maklon', l: 'Maklon' },
-  ];
+    { key: 'all', label: 'Semua' },
+    { key: 'internal', label: 'Internal' },
+    { key: 'maklon', label: 'Maklon' },
+  ].map((o) => (counts ? { ...o, count: counts[o.key] ?? null } : o));
   return (
-    <div
-      className={`inline-flex items-center rounded-lg border border-border bg-muted/40 p-0.5 ${className}`}
-      data-testid="biz-filter"
-      role="tablist"
-      aria-label="Filter proses bisnis"
-    >
-      {opts.map(o => {
-        const active = value === o.v;
-        const count = counts ? counts[o.v] : null;
-        return (
-          <button
-            key={o.v}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(o.v)}
-            data-testid={`biz-filter-${o.v}`}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[hsl(var(--primary)/0.35)]
-              ${active ? 'bg-card text-[hsl(var(--primary))] shadow-sm' : 'text-muted-foreground hover:text-foreground/90'}`}
-          >
-            {o.l}
-            {count != null && (
-              <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-xs font-semibold ${active ? 'bg-[hsl(var(--primary)/0.15)] text-[hsl(var(--primary))]' : 'bg-muted text-muted-foreground'}`}>
-                {count}
-              </span>
-            )}
-          </button>
-        );
-      })}
-    </div>
+    <FilterChips options={opts} value={value} onChange={onChange} hideWhenEmpty={false}
+      className={className} testId="biz-filter" ariaLabel="Jenis proses bisnis" />
   );
 }
 

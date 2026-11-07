@@ -215,7 +215,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
             </p>
             <div className="space-y-3 max-h-[45vh] overflow-y-auto pr-1">
               {steps.map((st, idx) => (
-                <GlassCard key={st.id} className="p-3" data-testid={`sop-step-${idx}`}>
+                <div key={st.id} className="rounded-lg border border-border p-3" data-testid={`sop-step-${idx}`}>
                   <div className="flex items-start gap-3">
                     <div className="flex flex-col items-center gap-1 pt-1">
                       <span className="w-6 h-6 rounded-full bg-primary/15 text-primary text-xs font-bold flex items-center justify-center">{idx + 1}</span>
@@ -250,7 +250,7 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
                       </div>
                     </div>
                   </div>
-                </GlassCard>
+                </div>
               ))}
               {steps.length === 0 && (
                 <EmptyState icon={ListChecks} className="py-8" title="Belum ada langkah"
@@ -297,14 +297,14 @@ function PanduanProduksiDialog({ model, token, onClose, onUpdated }) {
               </div>
               <div className="space-y-2">
                 {refImages.map((v, idx) => (
-                  <GlassCard key={idx} className="flex items-center gap-3 p-2" data-testid={`ref-image-${idx}`}>
+                  <div key={idx} className="flex items-center gap-3 rounded-lg border border-border p-2" data-testid={`ref-image-${idx}`}>
                     <img src={v.url || IMAGE_FALLBACK} alt="ref" className="w-14 h-14 rounded object-cover bg-foreground/5" onError={(e) => { e.target.src = IMAGE_FALLBACK; e.target.style.objectFit = 'contain'; e.target.style.padding = '4px'; }} />
                     <div className="flex-1 space-y-1">
                       <GlassInput value={v.caption} onChange={(e) => updateRefImage(idx, { caption: e.target.value })} placeholder="Keterangan" data-testid={`ref-image-${idx}-caption`} />
                       <GlassInput value={v.url} onChange={(e) => updateRefImage(idx, { url: e.target.value })} placeholder="https://.../gambar.jpg" data-testid={`ref-image-${idx}-url`} />
                     </div>
                     <Button type="button" variant="ghost" size="icon-sm" onClick={() => removeRefImage(idx)} title="Hapus gambar" aria-label="Hapus gambar" data-testid={`ref-image-${idx}-remove`}><Trash2 className="w-4 h-4" /></Button>
-                  </GlassCard>
+                  </div>
                 ))}
                 {refImages.length === 0 && (
                   <EmptyState icon={ImageIcon} className="py-6" title="Belum ada gambar referensi"
