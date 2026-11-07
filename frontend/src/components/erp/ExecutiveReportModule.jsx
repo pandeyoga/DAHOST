@@ -3,7 +3,7 @@
  * Fitur: ringkasan per bulan, analisis naratif AI, perbandingan 6 bulan, tren multi-indikator.
  *
  * Standar UI/UX v2 (keputusan owner 8 Nov 2026): cetakan PageLayout (pilihan bulan di `filters`, muat ulang di
- * `tools`), bagian = tab standar rata kiri (dulu deret tombol buatan sendiri), kartu angka satu gaya (StatTile),
+ * `tools`), bagian = pil penyaring di baris yang sama (dulu deret tombol buatan sendiri; tanpa tab di dalam modul), kartu angka satu gaya (StatTile),
  * tabel standar yang bisa diunduh Excel/CSV, grafik tren memakai recharts dengan DUA seri yang memang ditampilkan
  * (dulu legenda menyebut 2 seri tetapi batang hanya pendapatan), tanpa warna mentah / istilah Inggris.
  * Angka diperiksa (lihat LAPORAN): "Piutang lewat jatuh tempo" adalah posisi SAAT INI (bukan per bulan) → label
@@ -17,7 +17,7 @@ import {
 } from 'recharts';
 import { Button } from '../ui/button';
 import SmartNativeSelect from '../ui/smart-native-select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
+import FilterChips from '../ui/filter-chips';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import TombolUnduh from '../ui/tombol-unduh';
 import { GlassCard } from '../ui/glass';
@@ -215,11 +215,19 @@ export default function ExecutiveReportModule({ user, headers }) {
     ...barisPemasaran.map(([k, x]) => ({ bagian: 'Pemasaran', k, x })),
   ];
 
+  const BAGIAN = [
+    { key: 'summary', label: 'Ringkasan' }, { key: 'ai', label: 'Analisis AI' }, { key: 'finance', label: 'Keuangan' },
+    { key: 'production', label: 'Produksi' }, { key: 'hr', label: 'SDM' }, { key: 'trend', label: 'Tren' },
+  ];
   const filters = (
-    <SmartNativeSelect value={bulan} onChange={(e) => setBulan(e.target.value)} searchable={false}
-      className="h-9 w-48" aria-label="Bulan laporan" data-testid="exec-bulan">
-      {bulanOpsi.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </SmartNativeSelect>
+    <>
+      <FilterChips options={BAGIAN} value={activeSection} onChange={setActiveSection} hideWhenEmpty={false}
+        ariaLabel="Bagian laporan" testId="tab-exec" />
+      <SmartNativeSelect value={bulan} onChange={(e) => setBulan(e.target.value)} searchable={false}
+        className="h-9 w-48" aria-label="Bulan laporan" data-testid="exec-bulan">
+        {bulanOpsi.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </SmartNativeSelect>
+    </>
   );
   const tools = (
     <Button variant="outline" size="icon" onClick={fetchAll} disabled={loading} title="Muat ulang" aria-label="Muat ulang"
@@ -246,18 +254,10 @@ export default function ExecutiveReportModule({ user, headers }) {
           {summary.period?.range && ` (${summary.period.range.from} s.d. ${summary.period.range.to})`}
         </p>
       ) : null}>
-      <Tabs value={activeSection} onValueChange={setActiveSection} className="space-y-4">
-        <TabsList className="h-auto w-auto flex-wrap justify-start">
-          <TabsTrigger value="summary" data-testid="tab-exec-summary">Ringkasan</TabsTrigger>
-          <TabsTrigger value="ai" data-testid="tab-exec-ai">Analisis AI</TabsTrigger>
-          <TabsTrigger value="finance" data-testid="tab-exec-finance">Keuangan</TabsTrigger>
-          <TabsTrigger value="production" data-testid="tab-exec-production">Produksi</TabsTrigger>
-          <TabsTrigger value="hr" data-testid="tab-exec-hr">SDM</TabsTrigger>
-          <TabsTrigger value="trend" data-testid="tab-exec-trend">Tren</TabsTrigger>
-        </TabsList>
+      <div className="space-y-4">
 
         {/* Ringkasan */}
-        <TabsContent value="summary" className="mt-0 space-y-4">
+        {activeSection === 'summary' && (<div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
             <StatTile label="Pendapatan bulan ini" value={v(FMT_IDR(fin.revenue_rp))} sub={teksDelta(fin.revenue_delta_vs_prev_pct)}
               testId="exec-kpi-pendapatan" />
@@ -279,10 +279,10 @@ export default function ExecutiveReportModule({ user, headers }) {
             <KartuBagian judul="Pemasaran" baris={barisPemasaran} loading={loading}
               catatan="*GMV konten adalah angka platform per konten — jangan dijumlah dengan omzet pesanan (menghitung satu penjualan dua kali)." />
           </div>
-        </TabsContent>
+        </div>)}
 
         {/* Analisis AI (WS-B a) */}
-        <TabsContent value="ai" className="mt-0 space-y-4">
+        {activeSection === 'ai' && (<div className="space-y-4">
           <GlassCard className="space-y-3 p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
@@ -320,10 +320,10 @@ export default function ExecutiveReportModule({ user, headers }) {
               </div>
             )}
           </GlassCard>
-        </TabsContent>
+        </div>)}
 
         {/* Keuangan */}
-        <TabsContent value="finance" className="mt-0 space-y-4">
+        {activeSection === 'finance' && (<div className="space-y-4">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3" data-konten-utama="">
             <StatTile label="Pendapatan (buku besar)" value={v(FMT_IDR(fin.revenue_rp))} sub={teksDelta(fin.revenue_delta_vs_prev_pct)} />
             <StatTile label="Laba bersih" value={v(FMT_IDR(fin.net_income_rp))} sub={`Margin ${FMT_PCT(fin.profit_margin_pct)}`}
@@ -366,10 +366,10 @@ export default function ExecutiveReportModule({ user, headers }) {
               </Table>
             )}
           </ChartCard>
-        </TabsContent>
+        </div>)}
 
         {/* Produksi */}
-        <TabsContent value="production" className="mt-0">
+        {activeSection === 'production' && (<div className="space-y-0">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
             <StatTile label="Total WO" value={v(FMT_NUM(prod.total_wo))}
               sub={`${FMT_NUM(prod.completed_wo)} selesai (${FMT_PCT(prod.completion_rate_pct)}) · ${FMT_NUM(prod.active_wo)} aktif`} />
@@ -377,10 +377,10 @@ export default function ExecutiveReportModule({ user, headers }) {
             <StatTile label="Qty selesai" value={v(FMT_NUM(prod.total_qty_completed))} sub={`${FMT_PCT(prod.fulfillment_rate_pct)} dari qty dipesan`} />
             <StatTile label="Tingkat cacat" value={v(FMT_PCT(prod.defect_rate_pct))} accent={prod.defect_rate_pct > 2 ? 'danger' : 'default'} />
           </div>
-        </TabsContent>
+        </div>)}
 
         {/* SDM */}
-        <TabsContent value="hr" className="mt-0">
+        {activeSection === 'hr' && (<div className="space-y-0">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
             <StatTile label="Karyawan aktif" value={v(FMT_NUM(hr.total_active_employees))} sub={`${FMT_NUM(hr.new_hires)} karyawan baru bulan ini`} />
             <StatTile label="Tingkat kehadiran" value={v(FMT_PCT(hr.attendance_rate_pct))}
@@ -388,10 +388,10 @@ export default function ExecutiveReportModule({ user, headers }) {
             <StatTile label="Jam lembur" value={v(`${FMT_NUM(hr.overtime_hours)} jam`)} />
             <StatTile label="Total gaji" value={v(FMT_IDR(hr.payroll_total_rp))} />
           </div>
-        </TabsContent>
+        </div>)}
 
         {/* Tren */}
-        <TabsContent value="trend" className="mt-0 space-y-4" data-konten-utama="">
+        {activeSection === 'trend' && (<div className="space-y-4" data-konten-utama="">
           <ChartCard title="Pendapatan dan laba bersih" subtitle="Per bulan, dari buku besar."
             actions={(
               <SmartNativeSelect value={trendMonths} onChange={(e) => setTrendMonths(e.target.value)} searchable={false}
@@ -453,8 +453,8 @@ export default function ExecutiveReportModule({ user, headers }) {
               </Table>
             )}
           </ChartCard>
-        </TabsContent>
-      </Tabs>
+        </div>)}
+      </div>
     </PageLayout>
   );
 }

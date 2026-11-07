@@ -273,10 +273,10 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
 
         <TabsContent value="today" className="mt-0 space-y-4">
           {!today ? (
-            <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="ai-usage-today-tiles">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="ai-usage-today-tiles" data-konten-utama="">
                 <StatTile label="Panggilan AI" value={fmtNum(today.total_calls)} sub={`Biaya ${fmtUSD(today.total_cost_usd)}`}
                   testId="ai-usage-today-calls" />
                 <StatTile label="Berhasil" value={fmtNum(today.successful_calls)} accent="success" sub="Dijawab AI" />
@@ -286,9 +286,48 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
                   testId="ai-usage-today-cache" />
               </div>
 
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <GlassCard className="space-y-3 p-4 lg:col-span-2">
+                <KepalaBagian judul="Fitur terbanyak hari ini" keterangan="Biaya per fitur dan porsinya dari biaya hari ini.">
+                  <TombolUnduh namaBerkas="ai-fitur-hari-ini" namaLembar="Fitur hari ini" baris={today.top_features || []}
+                    testId="ai-usage-top-unduh"
+                    kolom={[
+                      { label: 'Fitur', nilai: (f) => labelFitur(f.feature) },
+                      { label: 'Panggilan', nilai: (f) => f.calls },
+                      { label: 'Biaya (USD)', nilai: (f) => f.cost_usd },
+                    ]} />
+                </KepalaBagian>
+                {today.top_features?.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Fitur</TableHead>
+                        <TableHead className="text-right">Panggilan</TableHead>
+                        <TableHead className="text-right">Biaya</TableHead>
+                        <TableHead className="hidden w-48 sm:table-cell">Porsi biaya</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {today.top_features.map((f) => {
+                        const pct = today.total_cost_usd > 0 ? (f.cost_usd / today.total_cost_usd * 100) : 0;
+                        return (
+                          <TableRow key={f.feature}>
+                            <TableCell className="font-medium" title={f.feature}>{labelFitur(f.feature)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{fmtNum(f.calls)}</TableCell>
+                            <TableCell className="text-right tabular-nums">{fmtUSD(f.cost_usd)}</TableCell>
+                            <TableCell className="hidden sm:table-cell"><Progress value={pct} className="h-1.5" /></TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <EmptyState icon={Sparkles} className="py-8" title="Belum ada panggilan AI hari ini"
+                    description="Statistik muncul setelah fitur AI (Asisten AI, ringkasan harian, dll.) dipakai." />
+                )}
+              </GlassCard>
               <GlassCard className="space-y-3 p-4" data-testid="ai-usage-status">
-                <KepalaBagian judul={`Status hari ini (${today.date})`}
-                  keterangan={`${fmtNum(today.total_calls)} panggilan · ${fmtNum(today.total_tokens)} token · ${fmtUSD(today.total_cost_usd)}`}>
+                <KepalaBagian judul="Status & anggaran" keterangan={`Hari ini, ${today.date}`}>
                   <StatusBadge status={today.health} label={kesehatan.label} tone={kesehatan.tone} testId="ai-usage-health" />
                 </KepalaBagian>
                 <div className="space-y-1">
@@ -329,45 +368,7 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
               </GlassCard>
 
 
-              <GlassCard className="space-y-3 p-4">
-                <KepalaBagian judul="Fitur terbanyak hari ini" keterangan="Biaya per fitur dan porsinya dari biaya hari ini.">
-                  <TombolUnduh namaBerkas="ai-fitur-hari-ini" namaLembar="Fitur hari ini" baris={today.top_features || []}
-                    testId="ai-usage-top-unduh"
-                    kolom={[
-                      { label: 'Fitur', nilai: (f) => labelFitur(f.feature) },
-                      { label: 'Panggilan', nilai: (f) => f.calls },
-                      { label: 'Biaya (USD)', nilai: (f) => f.cost_usd },
-                    ]} />
-                </KepalaBagian>
-                {today.top_features?.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Fitur</TableHead>
-                        <TableHead className="text-right">Panggilan</TableHead>
-                        <TableHead className="text-right">Biaya</TableHead>
-                        <TableHead className="hidden w-48 sm:table-cell">Porsi biaya</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {today.top_features.map((f) => {
-                        const pct = today.total_cost_usd > 0 ? (f.cost_usd / today.total_cost_usd * 100) : 0;
-                        return (
-                          <TableRow key={f.feature}>
-                            <TableCell className="font-medium" title={f.feature}>{labelFitur(f.feature)}</TableCell>
-                            <TableCell className="text-right tabular-nums">{fmtNum(f.calls)}</TableCell>
-                            <TableCell className="text-right tabular-nums">{fmtUSD(f.cost_usd)}</TableCell>
-                            <TableCell className="hidden sm:table-cell"><Progress value={pct} className="h-1.5" /></TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <EmptyState icon={Sparkles} className="py-8" title="Belum ada panggilan AI hari ini"
-                    description="Statistik muncul setelah fitur AI (Asisten AI, ringkasan harian, dll.) dipakai." />
-                )}
-              </GlassCard>
+              </div>
             </>
           )}
         </TabsContent>
@@ -386,10 +387,10 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
           </div>
 
           {!summary ? (
-            <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-konten-utama="">
                 <StatTile label="Total biaya" value={fmtUSD(summary.overall.total_cost_usd)} sub={`${summary.from_date} s.d. ${summary.to_date}`} />
                 <StatTile label="Panggilan AI" value={fmtNum(summary.overall.total_calls)}
                   sub={`${fmtNum(summary.overall.successful_calls)} berhasil · ${fmtNum(summary.overall.failed_calls)} gagal`} />
@@ -548,7 +549,7 @@ export default function AIUsageMonitorModule({ token, user, onNavigate }) {
 
         <TabsContent value="settings" className="mt-0 space-y-4">
           {!form ? (
-            <p className="py-10 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
+            <p className="py-6 text-center text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Memuat…</p>
           ) : (
             <GlassCard className="space-y-3 p-4" data-testid="ai-set-ringkas">
               <KepalaBagian judul="Pengaturan yang berlaku" keterangan="Ubah lewat tombol di kanan; perubahan berlaku setelah disimpan.">

@@ -411,9 +411,7 @@ export default function ReportsModule({ token }) {
       params.set('domain', domain);
       params.set('page', p);
       params.set('limit', PER_HALAMAN_UNDUH);
-      // eslint-disable-next-line no-await-in-loop
       const res = await fetch(`/api/rahaza/reports/${activeReport}?${params.toString()}`, { headers: { Authorization: `Bearer ${token}` } });
-      // eslint-disable-next-line no-await-in-loop
       const r = await res.json();
       const items = r?.items || (Array.isArray(r) ? r : []);
       semua.push(...items);
@@ -541,9 +539,9 @@ export default function ReportsModule({ token }) {
         </div>
 
         {loading ? (
-          <p className="py-10 text-center text-sm text-muted-foreground">Memuat laporan…</p>
+          <p className="py-6 text-center text-sm text-muted-foreground">Memuat laporan…</p>
         ) : !data.length ? (
-          <EmptyState icon={FileText} className="py-10" title="Tidak ada data untuk laporan ini"
+          <EmptyState icon={FileText} className="py-6" title="Tidak ada data untuk laporan ini"
             description="Coba ubah domain, periode, atau status." />
         ) : (
           <div className="overflow-x-auto">

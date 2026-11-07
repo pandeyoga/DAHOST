@@ -181,7 +181,6 @@ export default function TindakanAIModule({ user, onNavigate }) {
   const ambilSemua = async () => {
     const semuaBaris = [];
     for (let h = 1; h <= 40; h += 1) {
-      // eslint-disable-next-line no-await-in-loop
       const d = bacaDaftarTindakan(await asistenApi.daftarTindakan(queryDaftar({ status, period, halaman: h, semua: bolehSemua && semua })), h);
       semuaBaris.push(...d.baris);
       if (!d.baris.length || semuaBaris.length >= d.total) break;

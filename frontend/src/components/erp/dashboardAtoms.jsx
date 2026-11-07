@@ -144,8 +144,7 @@ export function GlassTooltip({ active, payload, label, formatter }) {
 /*  HeroCrystalCard — kepala halaman TIPIS (Standar UI/UX v2: tanpa cahaya,   */
 /*  kristal, gradasi, atau eyebrow huruf besar). Props lama tetap diterima.   */
 /* ───────────────────────────────────────────────────────────────────────── */
-// eslint-disable-next-line no-unused-vars
-export function HeroCrystalCard({ eyebrow, title, description, children, className, testId, actions }) {
+export function HeroCrystalCard({ eyebrow: _eyebrow, title, description, children, className, testId, actions }) {
   return (
     <div data-testid={testId} className={cn('space-y-3', className)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
